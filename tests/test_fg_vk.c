@@ -226,7 +226,6 @@ static int test_ple_prefill_scan(void){
 }
 
 static int run_test(const char *name,int (*fn)(void)){fprintf(stderr,"  [%s] ... ",name);fflush(stderr);int ok=fn();fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
-static int run_test_u(const char *name,int (*fn)(uint32_t),uint32_t arg){fprintf(stderr,"  [%s(%u)] ... ",name,arg);fflush(stderr);int ok=fn(arg);fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 static int run_test_i(const char *name,int (*fn)(int),int arg){fprintf(stderr,"  [%s(%d)] ... ",name,arg);fflush(stderr);int ok=fn(arg);fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 int main(void){if(fg_vk_open(&context,&error)!=FG_OK){fprintf(stderr,"Vulkan unavailable: %s\n",error.message);return 77;}fprintf(stderr,"Flash Gordon Vulkan device: %s\n",fg_vk_device_name(context));int ok=1;
 ok=run_test("q8_dense",test_q8_dense)&&ok;
