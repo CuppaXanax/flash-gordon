@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #define FG_QSA_OWNER_LAYERS 6u
 #define FG_QSA_SELECTED_TOKENS (FG_Q38_INDEX_BUDGET+FG_Q38_QSA_COMPRESS_RATIO-1u)
@@ -97,7 +98,7 @@ fg_status fg_qsa_session_decode(fg_qsa_session *s,uint32_t layer,uint32_t token,
     fg_vk_tensor_destroy(position_view);if(status!=FG_OK)return status;
     status=commit_and_attend(s,slot,token,position,fg_vk_tensor_map(s->key_q8),fg_vk_tensor_map(s->value_q4),fg_vk_tensor_map(s->index_key_q8),s->index_query,s->query,s->gate,s->attention,err);if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,s->output,ow,s->attention,6144u,2560u,1u,1.0f,err);
     if(status==FG_OK&&token<30u){const float *ap=fg_vk_tensor_map(s->attention),*op=fg_vk_tensor_map(s->output);double a2=0.0,o2=0.0;for(uint32_t i=0;i<6144u;i++)a2+=(double)ap[i]*ap[i];for(uint32_t i=0;i<2560u;i++)o2+=(double)op[i]*op[i];fprintf(stderr,"qsa[%u] t=%u selected=%u attn_rms=%.6f out_rms=%.6f\n",layer,token,token+1u,sqrt(a2/6144.0),sqrt(o2/2560.0));}
-    if(status==FG_OK)*output=s->output;return status;
+    if(status==FG_OK){*output=s->output;}return status;
 }
 
 fg_status fg_qsa_session_prefill(fg_qsa_session *s,uint32_t layer,uint32_t first_token,const uint32_t *positions,uint32_t token_count,const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err){
