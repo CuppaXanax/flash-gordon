@@ -65,6 +65,7 @@ fg_status fg_output_greedy(fg_output_executor *executor,const fg_vk_tensor *hype
     if(!isfinite(best_value)){fg_error_set(err,FG_ERR_MISMATCH,"non-finite output logit at token 0");return FG_ERR_MISMATCH;}
     uint32_t second=0u,third=0u;float second_value=-1e30f,third_value=-1e30f;
     for(uint32_t i=1;i<FG_Q38_VOCAB_SIZE;i++){if(!isfinite(values[i])){fg_error_set(err,FG_ERR_MISMATCH,"non-finite output logit at token %u",i);return FG_ERR_MISMATCH;}if(values[i]>best_value){third=second;third_value=second_value;second=best;second_value=best_value;best=i;best_value=values[i];}else if(values[i]>second_value){third=second;third_value=second_value;second=i;second_value=values[i];}else if(values[i]>third_value){third=i;third_value=values[i];}}
-    fprintf(stderr,"greedy: top3 %u=%.4f %u=%.4f %u=%.4f\n",best,best_value,second,second_value,third,third_value);
+    const float *hyper_raw=fg_vk_tensor_map((fg_vk_tensor *)hyper);const float *hidden_raw=fg_vk_tensor_map(executor->hidden);
+    fprintf(stderr,"greedy: top3 %u=%.4f %u=%.4f %u=%.4f hyper[0:4]=%.4f,%.4f,%.4f,%.4f hidden[0:4]=%.4f,%.4f,%.4f,%.4f\n",best,best_value,second,second_value,third,third_value,hyper_raw[0],hyper_raw[1],hyper_raw[2],hyper_raw[3],hidden_raw[0],hidden_raw[1],hidden_raw[2],hidden_raw[3]);
     *token=best;if(logit)*logit=best_value;return FG_OK;
 }
