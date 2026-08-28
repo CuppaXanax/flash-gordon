@@ -225,4 +225,35 @@ static int test_ple_prefill_scan(void){
     fg_vk_tensor_destroy(gob);fg_vk_tensor_destroy(gos);fg_vk_tensor_destroy(ggb);fg_vk_tensor_destroy(ggs);fg_vk_tensor_destroy(gsb);fg_vk_tensor_destroy(gss);fg_vk_tensor_destroy(gw);fg_vk_tensor_destroy(gn);fg_vk_tensor_destroy(gv);fg_vk_tensor_destroy(gq);fg_vk_tensor_destroy(gk);free(state_batched);free(state_sequential);free(conv_batched);free(conv_sequential);free(gate_batched);free(gate_sequential);free(state_initial);free(weight);free(normalized);free(value);free(query);free(key);return ok;
 }
 
-int main(void){if(fg_vk_open(&context,&error)!=FG_OK){fprintf(stderr,"Vulkan unavailable: %s\n",error.message);return 77;}fprintf(stderr,"Flash Gordon Vulkan device: %s\n",fg_vk_device_name(context));int ok=test_q8_dense()&&test_q8_embedding()&&test_hc_finalize()&&test_q8_k_quant()&&test_q4_0_bytes()&&test_iq4_nl_dequant()&&test_ngram_direct_lookup()&&test_ngram_prefill_lookup()&&test_ple_decode()&&test_ple_prefill_scan()&&test_qsa_quant_and_bf16()&&test_swiglu()&&test_dense_f32_and_silu()&&test_group_norm()&&test_gr_mix()&&test_gr_batch()&&test_q5_1_down()&&test_q8_0_down()&&test_kquant(12)&&test_kquant(13)&&test_kquant_expert_major_batch(12)&&test_kquant_expert_major_batch(13)&&test_gdn_decode()&&test_gdn_prefill_scan()&&test_qsa_indexer()&&test_qsa_prefill_prepare()&&test_qsa_attention_single()&&test_qsa_attention();fg_vk_close(context);if(!ok){fprintf(stderr,"native Vulkan oracle failed: %s\n",error.message);return 1;}puts("Flash Gordon native Vulkan production-dimension oracles: PASS");return 0;}
+static int run_test(const char *name,int (*fn)(void)){fprintf(stderr,"  [%s] ... ",name);fflush(stderr);int ok=fn();fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
+static int run_test_u(const char *name,int (*fn)(uint32_t),uint32_t arg){fprintf(stderr,"  [%s(%u)] ... ",name,arg);fflush(stderr);int ok=fn(arg);fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
+int main(void){if(fg_vk_open(&context,&error)!=FG_OK){fprintf(stderr,"Vulkan unavailable: %s\n",error.message);return 77;}fprintf(stderr,"Flash Gordon Vulkan device: %s\n",fg_vk_device_name(context));int ok=1;
+ok=run_test("q8_dense",test_q8_dense)&&ok;
+ok=run_test("q8_embedding",test_q8_embedding)&&ok;
+ok=run_test("hc_finalize",test_hc_finalize)&&ok;
+ok=run_test("q8_k_quant",test_q8_k_quant)&&ok;
+ok=run_test("q4_0_bytes",test_q4_0_bytes)&&ok;
+ok=run_test("iq4_nl_dequant",test_iq4_nl_dequant)&&ok;
+ok=run_test("ngram_direct_lookup",test_ngram_direct_lookup)&&ok;
+ok=run_test("ngram_prefill_lookup",test_ngram_prefill_lookup)&&ok;
+ok=run_test("ple_decode",test_ple_decode)&&ok;
+ok=run_test("ple_prefill_scan",test_ple_prefill_scan)&&ok;
+ok=run_test("qsa_quant_and_bf16",test_qsa_quant_and_bf16)&&ok;
+ok=run_test("swiglu",test_swiglu)&&ok;
+ok=run_test("dense_f32_and_silu",test_dense_f32_and_silu)&&ok;
+ok=run_test("group_norm",test_group_norm)&&ok;
+ok=run_test("gr_mix",test_gr_mix)&&ok;
+ok=run_test("gr_batch",test_gr_batch)&&ok;
+ok=run_test("q5_1_down",test_q5_1_down)&&ok;
+ok=run_test("q8_0_down",test_q8_0_down)&&ok;
+ok=run_test_u("kquant",test_kquant,12)&&ok;
+ok=run_test_u("kquant",test_kquant,13)&&ok;
+ok=run_test_u("kquant_expert_major_batch",test_kquant_expert_major_batch,12)&&ok;
+ok=run_test_u("kquant_expert_major_batch",test_kquant_expert_major_batch,13)&&ok;
+ok=run_test("gdn_decode",test_gdn_decode)&&ok;
+ok=run_test("gdn_prefill_scan",test_gdn_prefill_scan)&&ok;
+ok=run_test("qsa_indexer",test_qsa_indexer)&&ok;
+ok=run_test("qsa_prefill_prepare",test_qsa_prefill_prepare)&&ok;
+ok=run_test("qsa_attention_single",test_qsa_attention_single)&&ok;
+ok=run_test("qsa_attention",test_qsa_attention)&&ok;
+fg_vk_close(context);if(!ok){fprintf(stderr,"native Vulkan oracle failed: %s\n",error.message);return 1;}puts("Flash Gordon native Vulkan production-dimension oracles: PASS");return 0;}
