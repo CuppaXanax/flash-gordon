@@ -14,6 +14,6 @@ void main(){
         float qscale=inversesqrt(sum_q[0]+pc.epsilon)/sqrt(float(pc.head_dim)),kscale=inversesqrt(sum_k[0]+pc.epsilon);query[lane]*=qscale;key[lane]*=kscale;barrier();
         float decay=exp(a_decay[head]*softplus(alpha[head_base+head]+dt_bias[head])),mix=1.0/(1.0+exp(-beta[head_base+head]));float memory=0.0;for(uint k=0u;k<pc.head_dim;k++)memory=fma(recurrent[state_base+k*pc.head_dim+lane]*decay,key[k],memory);delta[lane]=(value-memory)*mix;barrier();
         for(uint v=0u;v<pc.head_dim;v++){uint index=state_base+lane*pc.head_dim+v;recurrent[index]=recurrent[index]*decay+key[lane]*delta[v];}barrier();float result=0.0;for(uint k=0u;k<pc.head_dim;k++)result=fma(recurrent[state_base+k*pc.head_dim+lane],query[k],result);attention[lane]=result;sum_out[lane]=result*result;barrier();
-        for(uint stride=64u;stride>0u;stride>>=1u){if(lane<stride)sum_out[lane]+=sum_out[lane+stride];barrier();}float normalized=attention[lane]*inversesqrt(sum_out[0]/float(pc.head_dim)+pc.epsilon)*norm_weight[lane],gate=z[z_base+head*pc.head_dim+lane];output_value[z_base+head*pc.head_dim+lane]=normalized*(gate/(1.0+exp(-gate)));barrier();
+        for(uint stride=64u;stride>0u;stride>>=1u){if(lane<stride)sum_out[lane]+=sum_out[lane+stride];barrier();}float normalized=attention[lane]*inversesqrt(sum_out[0]/float(pc.head_dim)+pc.epsilon)*norm_weight[lane],gate=z[z_base+head*pc.head_dim+lane];output_value[z_base+head*pc.head_dim+lane]=normalized*(1.0/(1.0+exp(-gate)));barrier();
     }
 }
