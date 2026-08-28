@@ -1,0 +1,9 @@
+# Shell scripts must keep LF endings
+*.sh text eol=lf
+glslc text eol=lf
+
+# Shaders
+*.comp text eol=lf
+
+# SPIR-V binaries
+*.spv binary

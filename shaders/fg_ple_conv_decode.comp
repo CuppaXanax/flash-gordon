@@ -1,0 +1,8 @@
+#version 460
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Gated{float gated[];};
+layout(set=0,binding=1)readonly buffer Normalized{float normalized[];};
+layout(set=0,binding=2)readonly buffer Weight{float weight[];};
+layout(set=0,binding=3)buffer State{float state[];};
+layout(set=0,binding=4)writeonly buffer Output{float output_value[];};
+void main(){uint channel=gl_GlobalInvocationID.x;if(channel>=10240u)return;uint base=channel*9u;float conv=weight[channel*4u]*state[base]+weight[channel*4u+1u]*state[base+3u]+weight[channel*4u+2u]*state[base+6u]+weight[channel*4u+3u]*normalized[channel];for(uint i=0u;i<8u;i++)state[base+i]=state[base+i+1u];state[base+8u]=normalized[channel];output_value[channel]=gated[channel]+conv/(1.0+exp(-conv));}

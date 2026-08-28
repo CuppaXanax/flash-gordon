@@ -1,0 +1,8 @@
+#version 460
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Key{float key[];};
+layout(set=0,binding=1)readonly buffer Query{float query[];};
+layout(set=0,binding=2)readonly buffer Value{float value[];};
+layout(set=0,binding=3)writeonly buffer Output{float output_value[];};
+shared float sum[256];
+void main(){uint lane=gl_LocalInvocationID.x,group=gl_WorkGroupID.x;if(group>=4u)return;float partial=0.0;for(uint i=lane;i<2560u;i+=256u)partial=fma(key[group*2560u+i],query[group*2560u+i],partial);sum[lane]=partial;barrier();for(uint stride=128u;stride>0u;stride>>=1u){if(lane<stride)sum[lane]+=sum[lane+stride];barrier();}float gate=sum[0]*0.01976423537605237;gate=sign(gate)*sqrt(max(abs(gate),1e-6));float scale=1.0/(1.0+exp(-gate));for(uint i=lane;i<2560u;i+=256u)output_value[group*2560u+i]=scale*value[i];}

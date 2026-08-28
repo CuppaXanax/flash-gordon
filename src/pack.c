@@ -1,0 +1,93 @@
+#include "fg_pack.h"
+#include "fg_q38_schema.h"
+#include "fg_sha256.h"
+#include "fg_topology.h"
+#include "fg_tokenizer.h"
+
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+typedef struct pack_output{FILE *file;char path[1024];uint64_t offset;}pack_output;
+static fg_status pad_to(pack_output *out,uint64_t target,fg_error *err);
+
+typedef struct canonical_shard {
+    uint64_t bytes;
+    const char *sha256_hex;
+} canonical_shard;
+
+static const canonical_shard q38_ud_q4_k_xl[4]={
+    {UINT64_C(10946624),"4448186216b3af4cc558bbce2c3213f01608f8f8b2e5267a9767971dd3ec8082"},
+    {UINT64_C(49859583136),"3f342f1c1580473f1ee94ddd5b28206e8c07a70fa1a366f59d1d6c922919a6c9"},
+    {UINT64_C(49376141504),"56758f40269cad5cd9b0d3d6fbae0f40f6d5be6de49e4ab392dbe83157d9cbd3"},
+    {UINT64_C(12087983520),"753bda48b98ba4f1636134a90a967de1b2d3908a236c026e464777342e53510a"}
+};
+
+static uint8_t hex_nibble(char value){
+    if(value>='0'&&value<='9')return (uint8_t)(value-'0');
+    if(value>='a'&&value<='f')return (uint8_t)(value-'a'+10);
+    return UINT8_MAX;
+}
+
+static bool canonical_digest(uint32_t shard,uint8_t digest[32]){
+    if(shard>=4u)return false;
+    const char *hex=q38_ud_q4_k_xl[shard].sha256_hex;
+    for(uint32_t i=0;i<32u;i++){uint8_t hi=hex_nibble(hex[i*2u]),lo=hex_nibble(hex[i*2u+1u]);if(hi==UINT8_MAX||lo==UINT8_MAX)return false;digest[i]=(uint8_t)((hi<<4u)|lo);}return hex[64]==0;
+}
+
+static fg_status hash_pack_sources(const fg_pack_options *options,uint8_t composite[32],fg_error *err){
+    if(!options->skip_model_validation&&options->source_count!=4u){fg_error_set(err,FG_ERR_MISMATCH,"canonical UD-Q4_K_XL pack requires exactly four shards");return FG_ERR_MISMATCH;}
+    fg_sha256 source_hash;fg_sha256_init(&source_hash);
+    for(uint32_t shard=0;shard<options->source_count;shard++){
+        struct stat info;if(stat(options->source_paths[shard],&info)!=0||info.st_size<0){fg_error_set(err,FG_ERR_IO,"stat source %s: %s",options->source_paths[shard],strerror(errno));return FG_ERR_IO;}
+        uint8_t digest[32];
+        if(!options->skip_model_validation){
+            if((uint64_t)info.st_size!=q38_ud_q4_k_xl[shard].bytes||!canonical_digest(shard,digest)){fg_error_set(err,FG_ERR_MISMATCH,"canonical UD-Q4_K_XL shard %u has the wrong size",shard+1u);return FG_ERR_MISMATCH;}
+            if(!options->dry_run){uint8_t expected[32];fg_status status=fg_sha256_file(options->source_paths[shard],digest,err);if(status!=FG_OK)return status;if(!canonical_digest(shard,expected)||memcmp(digest,expected,32)!=0){fg_error_set(err,FG_ERR_MISMATCH,"canonical UD-Q4_K_XL shard %u SHA-256 mismatch",shard+1u);return FG_ERR_MISMATCH;}}
+        }else if(options->dry_run){
+            uint64_t bytes=(uint64_t)info.st_size;fg_sha256_update(&source_hash,&bytes,sizeof(bytes));fg_sha256_update(&source_hash,options->source_paths[shard],strlen(options->source_paths[shard]));continue;
+        }else{fg_status status=fg_sha256_file(options->source_paths[shard],digest,err);if(status!=FG_OK)return status;}
+        fg_sha256_update(&source_hash,digest,32);
+    }
+    fg_sha256_final(&source_hash,composite);
+    if(options->dry_run&&!options->skip_model_validation)fprintf(stderr,"pack dry-run: canonical shard sizes/schema verified; payload SHA-256 verification is deferred to the full pack\n");
+    return FG_OK;
+}
+
+static fg_status mkdir_one(const char *p,fg_error *err){if(mkdir(p,0755)==0||errno==EEXIST)return FG_OK;fg_error_set(err,FG_ERR_IO,"mkdir %s: %s",p,strerror(errno));return FG_ERR_IO;}
+static fg_status open_outputs(const fg_pack_options *o,pack_output rank[FG_RANK_COUNT],pack_output *ngram,fg_error *err){if(o->dry_run)return FG_OK;if(mkdir_one(o->output_dir,err)!=FG_OK)return err->code;for(uint32_t r=0;r<FG_RANK_COUNT;r++){snprintf(rank[r].path,sizeof(rank[r].path),"%s/rank-%02u.fgw",o->output_dir,r);rank[r].file=fopen(rank[r].path,"wb");if(!rank[r].file){fg_error_set(err,FG_ERR_IO,"create %s: %s",rank[r].path,strerror(errno));return FG_ERR_IO;}}snprintf(ngram->path,sizeof(ngram->path),"%s/ngram.iq4nl",o->output_dir);ngram->file=fopen(ngram->path,"wb");if(!ngram->file){fg_error_set(err,FG_ERR_IO,"create %s: %s",ngram->path,strerror(errno));return FG_ERR_IO;}return FG_OK;}
+static fg_status finalize_output(pack_output *out,fg_error *err){if(!out->file)return FG_OK;fg_status rc=pad_to(out,fg_align_up_u64(out->offset,FG_ALIGNMENT),err);if(rc==FG_OK&&(fflush(out->file)!=0||fsync(fileno(out->file))!=0)){fg_error_set(err,FG_ERR_IO,"flush %s: %s",out->path,strerror(errno));rc=FG_ERR_IO;}if(fclose(out->file)!=0&&rc==FG_OK){fg_error_set(err,FG_ERR_IO,"close %s: %s",out->path,strerror(errno));rc=FG_ERR_IO;}out->file=NULL;return rc;}
+static fg_status close_outputs(pack_output rank[FG_RANK_COUNT],pack_output *ngram,fg_error *err){fg_status rc=FG_OK;for(uint32_t r=0;r<FG_RANK_COUNT;r++){fg_status one=finalize_output(&rank[r],err);if(rc==FG_OK)rc=one;}fg_status one=finalize_output(ngram,err);if(rc==FG_OK)rc=one;return rc;}
+static fg_status pad_to(pack_output *out,uint64_t target,fg_error *err){static const uint8_t zero[FG_ALIGNMENT]={0};while(out->offset<target){size_t n=(size_t)(target-out->offset);if(n>sizeof(zero))n=sizeof(zero);if(out->file&&fwrite(zero,1,n,out->file)!=n){fg_error_set(err,FG_ERR_IO,"pad %s: %s",out->path,strerror(errno));return FG_ERR_IO;}out->offset+=n;}return FG_OK;}
+static fg_status copy_range(FILE *src,uint64_t offset,uint64_t bytes,pack_output *out,fg_sha256 *hash,fg_error *err){if(!out->file){uint8_t descriptor[16];memcpy(descriptor,&offset,8);memcpy(descriptor+8,&bytes,8);fg_sha256_update(hash,descriptor,sizeof(descriptor));out->offset+=bytes;return FG_OK;}uint8_t *buf=malloc(1u<<20);if(!buf){fg_error_set(err,FG_ERR_OOM,"allocate pack copy buffer");return FG_ERR_OOM;}if(fseeko(src,(off_t)offset,SEEK_SET)!=0){free(buf);fg_error_set(err,FG_ERR_IO,"seek source: %s",strerror(errno));return FG_ERR_IO;}while(bytes){size_t n=bytes>(1u<<20)?(1u<<20):(size_t)bytes;if(fread(buf,1,n,src)!=n||fwrite(buf,1,n,out->file)!=n){free(buf);fg_error_set(err,FG_ERR_IO,"copy tensor: %s",ferror(src)?"unexpected end of source":strerror(errno));return FG_ERR_IO;}fg_sha256_update(hash,buf,n);out->offset+=n;bytes-=n;}free(buf);return FG_OK;}
+static fg_status load_profile(const char *path,double profile[FG_LAYER_COUNT][FG_EXPERT_COUNT],fg_error *err){FILE *f=fopen(path,"r");if(!f){fg_error_set(err,FG_ERR_IO,"open router profile %s: %s",path,strerror(errno));return FG_ERR_IO;}unsigned l,e;double v;while(fscanf(f,"%u %u %lf",&l,&e,&v)==3){if(l>=FG_LAYER_COUNT||e>=FG_EXPERT_COUNT||v<0){fclose(f);fg_error_set(err,FG_ERR_FORMAT,"invalid router profile row");return FG_ERR_FORMAT;}profile[l][e]=v;}if(!feof(f)){fclose(f);fg_error_set(err,FG_ERR_FORMAT,"malformed router profile");return FG_ERR_FORMAT;}fclose(f);return FG_OK;}
+static fg_status record_segment(fg_manifest *m,const fg_gguf_tensor *source,const char *name,uint64_t start,uint64_t bytes,uint32_t rank,uint32_t layer,uint32_t expert,fg_tensor_kind kind,uint64_t local_experts,fg_sha256 *hash,fg_error *err){fg_tensor_record r={0};snprintf(r.name,sizeof(r.name),"%s",name);r.offset=start;r.bytes=bytes;r.ggml_type=source->type;r.dims=source->dims;memcpy(r.shape,source->shape,sizeof(r.shape));if(local_experts)r.shape[r.dims-1]=local_experts;r.rank=(uint16_t)rank;r.layer=(uint16_t)(layer<FG_LAYER_COUNT?layer:UINT16_MAX);r.expert=(uint16_t)(expert<FG_EXPERT_COUNT?expert:UINT16_MAX);r.kind=(uint8_t)kind;fg_sha256_final(hash,r.sha256);fg_status rc=fg_manifest_add_tensor(m,&r,err);if(rc==FG_OK){if(kind==FG_TENSOR_COMMON||kind==FG_TENSOR_ROUTED_EXPERT)m->flags|=FG_MANIFEST_HAS_TEXT;else if(kind==FG_TENSOR_NGRAM)m->flags|=FG_MANIFEST_HAS_NGRAM;else if(kind==FG_TENSOR_VISION)m->flags|=FG_MANIFEST_HAS_VISION;else if(kind==FG_TENSOR_MTP)m->flags|=FG_MANIFEST_HAS_MTP;else if(kind==FG_TENSOR_TOKENIZER)m->flags|=FG_MANIFEST_HAS_TOKENIZER;}if(rc==FG_OK&&rank<FG_RANK_COUNT){m->ranks[rank].tensor_count++;m->ranks[rank].persistent_bytes+=fg_align_up_u64(bytes,FG_ALIGNMENT);}return rc;}
+
+static uint32_t common_owner(const fg_gguf_tensor *tensor,int layer){if(layer>=0)return (uint32_t)layer%FG_RANK_COUNT;if(strcmp(tensor->name,"token_embd.weight")==0)return 0u;if(strcmp(tensor->name,"output.weight")==0||strncmp(tensor->name,"output_hc_",10u)==0)return 4u;return 0u;}
+static fg_status pack_common(const fg_gguf_tensor *t,FILE *src,fg_manifest *m,pack_output rank[FG_RANK_COUNT],pack_output *ngram,fg_error *err){fg_tensor_kind kind=fg_gguf_tensor_kind(t->name);int layer=fg_gguf_tensor_layer(t->name);uint32_t owner=common_owner(t,layer);pack_output *out=kind==FG_TENSOR_NGRAM?ngram:&rank[owner];uint64_t start=fg_align_up_u64(out->offset,FG_ALIGNMENT);fg_status rc=pad_to(out,start,err);if(rc!=FG_OK)return rc;fg_sha256 hash;fg_sha256_init(&hash);rc=copy_range(src,t->offset,t->bytes,out,&hash,err);if(rc!=FG_OK)return rc;return record_segment(m,t,t->name,start,t->bytes,kind==FG_TENSOR_NGRAM?UINT16_MAX:owner,layer<0?UINT32_MAX:(uint32_t)layer,UINT32_MAX,kind,0,&hash,err);}
+
+static fg_status pack_expert_tensor(const fg_gguf *g,const fg_gguf_tensor *t,FILE *src,fg_manifest *m,pack_output rank[FG_RANK_COUNT],fg_error *err){
+    (void)g;int layer=fg_gguf_tensor_layer(t->name);if(layer<0||t->shape[t->dims-1]!=FG_EXPERT_COUNT||t->bytes%FG_EXPERT_COUNT){fg_error_set(err,FG_ERR_FORMAT,"routed tensor %s is not a 512-expert layer tensor",t->name);return FG_ERR_FORMAT;}uint64_t expert_bytes=t->bytes/FG_EXPERT_COUNT;
+    for(uint32_t gi=0;gi<FG_GROUP_SIZE;gi++){uint32_t r=m->layer_groups[layer][gi];pack_output *out=&rank[r];uint64_t start=fg_align_up_u64(out->offset,FG_ALIGNMENT);fg_status rc=pad_to(out,start,err);if(rc!=FG_OK)return rc;fg_sha256 hash;fg_sha256_init(&hash);uint32_t copied=0;
+        for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)if(m->expert_rank[layer][e]==r){rc=copy_range(src,t->offset+(uint64_t)e*expert_bytes,expert_bytes,out,&hash,err);if(rc!=FG_OK)return rc;copied++;}
+        if(copied!=FG_EXPERTS_PER_RANK){fg_error_set(err,FG_ERR_FORMAT,"layer %d rank %u selected %u experts",layer,r,copied);return FG_ERR_FORMAT;}char name[FG_TENSOR_NAME_MAX];snprintf(name,sizeof(name),"%.80s.rank%u",t->name,r);rc=record_segment(m,t,name,start,expert_bytes*copied,r,(uint32_t)layer,UINT32_MAX,FG_TENSOR_ROUTED_EXPERT,FG_EXPERTS_PER_RANK,&hash,err);if(rc!=FG_OK)return rc;
+    }return FG_OK;
+}
+
+fg_status fg_pack_run(const fg_pack_options *o,fg_error *err){
+    if(!o||!o->output_dir||!o->source_paths||!o->source_count){fg_error_set(err,FG_ERR_ARGUMENT,"pack requires --output and at least one --source");return FG_ERR_ARGUMENT;}fg_gguf g;fg_status rc=fg_gguf_open(o->source_paths,o->source_count,&g,err);if(rc!=FG_OK)return rc;if(!o->skip_model_validation){rc=fg_q38_validate_gguf(&g,err);if(rc!=FG_OK){fg_gguf_close(&g);return rc;}}fg_manifest *m=malloc(sizeof(*m));if(!m){fg_gguf_close(&g);fg_error_set(err,FG_ERR_OOM,"allocate manifest");return FG_ERR_OOM;}fg_manifest_init(m);
+    if(o->router_profile_path){double (*profile)[FG_EXPERT_COUNT]=calloc(FG_LAYER_COUNT,sizeof(*profile));if(!profile){rc=FG_ERR_OOM;fg_error_set(err,rc,"allocate router profile");goto done;}rc=load_profile(o->router_profile_path,profile,err);if(rc==FG_OK)rc=fg_topology_assign_profile(m,(const double (*)[FG_EXPERT_COUNT])profile,err);free(profile);if(rc!=FG_OK)goto done;}
+    rc=hash_pack_sources(o,m->source_sha256,err);if(rc!=FG_OK)goto done;
+    pack_output rank[FG_RANK_COUNT]={0},ngram={0};rc=open_outputs(o,rank,&ngram,err);if(rc!=FG_OK){(void)close_outputs(rank,&ngram,err);goto done;}for(uint32_t r=0;r<FG_RANK_COUNT;r++){snprintf(m->ranks[r].endpoint,sizeof(m->ranks[r].endpoint),"192.168.42.%u:19100",42u+r);m->ranks[r].driver_reserve_bytes=512ull<<20;m->ranks[r].scratch_bytes=fg_q38_runtime_scratch_bytes(r,m->prefill_microbatch,m->prefill_window,m->max_context);}
+    for(uint64_t i=0;i<g.tensor_count;i++){const fg_gguf_tensor *t=&g.tensors[i];FILE *src=fopen(g.paths[t->shard],"rb");if(!src){fg_error_set(err,FG_ERR_IO,"reopen %s: %s",g.paths[t->shard],strerror(errno));rc=FG_ERR_IO;break;}if(fg_gguf_tensor_kind(t->name)==FG_TENSOR_ROUTED_EXPERT)rc=pack_expert_tensor(&g,t,src,m,rank,err);else rc=pack_common(t,src,m,rank,&ngram,err);fclose(src);if(rc!=FG_OK)break;}
+    {fg_status close_rc=close_outputs(rank,&ngram,err);if(rc==FG_OK)rc=close_rc;}if(rc!=FG_OK)goto done;if(!o->skip_model_validation&&!o->dry_run){rc=fg_tokenizer_pack_gguf(o->source_paths[0],o->output_dir,m,err);if(rc!=FG_OK)goto done;}for(uint32_t r=0;r<FG_RANK_COUNT;r++)m->ranks[r].transient_bytes=512ull<<20;fg_q38_account_session_state(m);
+    for(uint32_t r=0;r<FG_RANK_COUNT;r++){uint64_t resident=m->ranks[r].persistent_bytes+m->ranks[r].transient_bytes+m->ranks[r].kv_bytes+m->ranks[r].scratch_bytes+m->ranks[r].driver_reserve_bytes;if(m->ranks[r].persistent_bytes>m->persistent_cap_bytes||resident>m->residency_cap_bytes){fg_error_set(err,FG_ERR_LIMIT,"memory cap failed on rank %u",r);rc=FG_ERR_LIMIT;break;}}if(rc!=FG_OK)goto done;
+    if(!o->skip_model_validation){rc=fg_q38_validate_packed_manifest(m,err);if(rc!=FG_OK)goto done;}
+    uint8_t zero[32]={0};memcpy(m->manifest_sha256,zero,32);if(!o->dry_run){char path[1024];snprintf(path,sizeof(path),"%s/manifest.fgm",o->output_dir);rc=fg_manifest_write(path,m,err);if(rc==FG_OK)fg_manifest_print(m);}else fg_manifest_print(m);
+done:free(m);fg_gguf_close(&g);return rc;
+}
