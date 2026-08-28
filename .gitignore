@@ -1,0 +1,23 @@
+# Flash Gordon build products
+/flash-gordon
+*.a
+
+# Object files and dependency files
+src/*.o
+src/*.d
+src/*_vulkan.o
+tests/*.o
+tests/*.d
+
+# Test binaries
+tests/test_core
+tests/test_fg_vk
+tests/test_model_load
+tests/test_tokenizer
+tests/test_fabric
+
+# Compiled SPIR-V shaders
+vulkan/*.spv
+
+# macOS
+.DS_Store

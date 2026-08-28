@@ -1,0 +1,18 @@
+#version 460
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Normalized{float normalized[];};
+layout(set=0,binding=1)readonly buffer Up{float up[];};
+layout(set=0,binding=2)writeonly buffer Output{float output_value[];};
+layout(push_constant)uniform Push{uint hidden;uint groups;uint tokens;}pc;
+float sigmoid(float value){return 1.0/(1.0+exp(-value));}
+void main(){
+    uint index=gl_GlobalInvocationID.x,total=pc.hidden*pc.tokens;
+    if(index>=total)return;
+    uint token=index/pc.hidden,element=index-token*pc.hidden;
+    float sum=0.0;
+    for(uint group=0u;group<pc.groups;group++){
+        uint source=(token*pc.groups+group)*pc.hidden+element;
+        sum=fma(sigmoid(up[source]),normalized[source],sum);
+    }
+    output_value[index]=sum/float(pc.groups);
+}

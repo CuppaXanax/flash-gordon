@@ -1,0 +1,6 @@
+#version 460
+layout(local_size_x=64,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Weights{uint weights[];};layout(set=0,binding=1)readonly buffer Input{float x[];};layout(set=0,binding=2)writeonly buffer Output{float y[];};
+layout(push_constant)uniform Push{uint input_width;uint output_width;uint tokens;}pc;shared float partial[64];
+float bf16(uint index){uint word=weights[index>>1u],bits=(index&1u)==0u?(word&65535u):(word>>16u);return uintBitsToFloat(bits<<16u);}
+void main(){uint lane=gl_LocalInvocationID.x,row=gl_WorkGroupID.x,token=gl_WorkGroupID.y;if(row>=pc.output_width||token>=pc.tokens)return;float sum=0.0;uint base=row*pc.input_width;for(uint i=lane;i<pc.input_width;i+=64u)sum=fma(bf16(base+i),x[token*pc.input_width+i],sum);partial[lane]=sum;barrier();for(uint stride=32u;stride>0u;stride>>=1u){if(lane<stride)partial[lane]+=partial[lane+stride];barrier();}if(lane==0u)y[token*pc.output_width+row]=partial[0];}

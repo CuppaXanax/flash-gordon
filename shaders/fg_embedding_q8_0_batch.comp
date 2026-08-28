@@ -1,0 +1,8 @@
+#version 460
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Weight{uint packed[];};
+layout(set=0,binding=1)readonly buffer Tokens{uint token_ids[];};
+layout(set=0,binding=2)writeonly buffer Output{float output_value[];};
+layout(push_constant)uniform Push{uint token_count;uint width;uint rows;uint copies;}pc;
+uint load_byte(uint offset){return(packed[offset>>2u]>>((offset&3u)*8u))&255u;}
+void main(){uint index=gl_GlobalInvocationID.x,per_token=pc.width*pc.copies,total=pc.token_count*per_token;if(index>=total)return;uint token_slot=index/per_token,token=token_ids[token_slot];if(token>=pc.rows)return;uint element=index%pc.width,row_bytes=(pc.width/32u)*34u,base=token*row_bytes+(element>>5u)*34u;uint half_bits=load_byte(base)|(load_byte(base+1u)<<8u),q=load_byte(base+2u+(element&31u));int signed_q=q>=128u?int(q)-256:int(q);output_value[index]=unpackHalf2x16(half_bits).x*float(signed_q);}

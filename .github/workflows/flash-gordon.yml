@@ -1,0 +1,17 @@
+name: flash-gordon
+
+on:
+  push:
+    paths: ["src/**", "include/**", "shaders/**", "tests/**", "Makefile", "glslc", ".github/workflows/flash-gordon.yml"]
+  pull_request:
+    paths: ["src/**", "include/**", "shaders/**", "tests/**", "Makefile", "glslc", ".github/workflows/flash-gordon.yml"]
+
+jobs:
+  c17:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y glslang-tools libvulkan-dev mesa-vulkan-drivers
+      - run: make -j2
+      - run: make test
+      - run: make test-vulkan
