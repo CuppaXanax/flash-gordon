@@ -19,46 +19,27 @@ static fg_status load_checked(const char *path,fg_manifest **out,fg_error *err){
 static fg_status manifest_directory(const char *path,char output[1024],fg_error *err){size_t length=strlen(path);if(!length||length>=1024u){fg_error_set(err,FG_ERR_ARGUMENT,"manifest path is invalid");return FG_ERR_ARGUMENT;}memcpy(output,path,length+1u);char *slash=strrchr(output,'/');if(!slash){snprintf(output,1024,".");return FG_OK;}if(slash==output)slash[1]=0;else *slash=0;return FG_OK;}
 
 static fg_status rank_ready(fg_fabric *fabric,uint32_t self,fg_error *err){
-    /* Phase 1: exchange READY with all peers. */
+    /* Send READY to every peer first (fire-and-forget into TCP). */
     for(uint32_t peer=0;peer<FG_RANK_COUNT;peer++){
         if(peer!=self){
             fg_status status=fg_fabric_send(fabric,peer,FG_FABRIC_CONTROL,FG_MSG_READY,0,0,0,NULL,0,err);
             if(status!=FG_OK)return status;
         }
     }
-    bool ready[FG_RANK_COUNT]={0};
-    for(uint32_t received=0;received<FG_RANK_COUNT-1u;received++){
-        uint32_t peer=0,bytes=0;
-        fg_frame_header header;
-        fg_status status=fg_fabric_recv_any(fabric,FG_FABRIC_CONTROL,&peer,&header,NULL,0,&bytes,err);
-        if(status!=FG_OK)return status;
-        if(fg_frame_type(&header)!=FG_MSG_READY||bytes||ready[peer]){
-            fg_error_set(err,FG_ERR_MISMATCH,"invalid or duplicate READY from rank %u",peer);
-            return FG_ERR_MISMATCH;
-        }
-        ready[peer]=true;
-    }
-    /* Phase 2: barrier — every rank has received all READY messages.
-       Send CONTROL to all peers, then wait for CONTROL from all peers.
-       This prevents the coordinator from sending SESSION_BEGIN before
-       slower ranks have finished draining the READY round. */
+    /* Receive READY from each peer individually.  Using per-peer recv
+       (not recv_any) guarantees we read exactly one frame per peer and
+       never accidentally consume a later message — such as
+       SESSION_BEGIN — that a faster peer already queued. */
     for(uint32_t peer=0;peer<FG_RANK_COUNT;peer++){
-        if(peer!=self){
-            fg_status status=fg_fabric_send(fabric,peer,FG_FABRIC_CONTROL,FG_MSG_CONTROL,0,0,0,NULL,0,err);
-            if(status!=FG_OK)return status;
-        }
-    }
-    memset(ready,0,sizeof(ready));
-    for(uint32_t received=0;received<FG_RANK_COUNT-1u;received++){
-        uint32_t peer=0,bytes=0;
+        if(peer==self)continue;
+        uint32_t bytes=0;
         fg_frame_header header;
-        fg_status status=fg_fabric_recv_any(fabric,FG_FABRIC_CONTROL,&peer,&header,NULL,0,&bytes,err);
+        fg_status status=fg_fabric_recv(fabric,peer,FG_FABRIC_CONTROL,&header,NULL,0,&bytes,err);
         if(status!=FG_OK)return status;
-        if(fg_frame_type(&header)!=FG_MSG_CONTROL||bytes||ready[peer]){
-            fg_error_set(err,FG_ERR_MISMATCH,"invalid or duplicate READY barrier from rank %u",peer);
+        if(fg_frame_type(&header)!=FG_MSG_READY||bytes){
+            fg_error_set(err,FG_ERR_MISMATCH,"invalid READY from rank %u",peer);
             return FG_ERR_MISMATCH;
         }
-        ready[peer]=true;
     }
     return FG_OK;
 }
