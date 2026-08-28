@@ -227,6 +227,7 @@ static int test_ple_prefill_scan(void){
 
 static int run_test(const char *name,int (*fn)(void)){fprintf(stderr,"  [%s] ... ",name);fflush(stderr);int ok=fn();fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 static int run_test_u(const char *name,int (*fn)(uint32_t),uint32_t arg){fprintf(stderr,"  [%s(%u)] ... ",name,arg);fflush(stderr);int ok=fn(arg);fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
+static int run_test_i(const char *name,int (*fn)(int),int arg){fprintf(stderr,"  [%s(%d)] ... ",name,arg);fflush(stderr);int ok=fn(arg);fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 int main(void){if(fg_vk_open(&context,&error)!=FG_OK){fprintf(stderr,"Vulkan unavailable: %s\n",error.message);return 77;}fprintf(stderr,"Flash Gordon Vulkan device: %s\n",fg_vk_device_name(context));int ok=1;
 ok=run_test("q8_dense",test_q8_dense)&&ok;
 ok=run_test("q8_embedding",test_q8_embedding)&&ok;
@@ -248,8 +249,8 @@ ok=run_test("q5_1_down",test_q5_1_down)&&ok;
 ok=run_test("q8_0_down",test_q8_0_down)&&ok;
 ok=run_test_u("kquant",test_kquant,12)&&ok;
 ok=run_test_u("kquant",test_kquant,13)&&ok;
-ok=run_test_u("kquant_expert_major_batch",test_kquant_expert_major_batch,12)&&ok;
-ok=run_test_u("kquant_expert_major_batch",test_kquant_expert_major_batch,13)&&ok;
+ok=run_test_i("kquant_expert_major_batch",test_kquant_expert_major_batch,12)&&ok;
+ok=run_test_i("kquant_expert_major_batch",test_kquant_expert_major_batch,13)&&ok;
 ok=run_test("gdn_decode",test_gdn_decode)&&ok;
 ok=run_test("gdn_prefill_scan",test_gdn_prefill_scan)&&ok;
 ok=run_test("qsa_indexer",test_qsa_indexer)&&ok;
