@@ -27,6 +27,8 @@ fg_status fg_vk_dequantize_iq4_nl(fg_vk_context *context,fg_vk_tensor *output,co
                                   uint32_t rows,uint32_t width,fg_error *err);
 fg_status fg_vk_swiglu(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *gate,
                        const fg_vk_tensor *up,uint32_t values,fg_error *err);
+fg_status fg_vk_swiglu_scaled(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *gate,
+                              const fg_vk_tensor *up,const fg_vk_tensor *scale,uint32_t values,uint32_t width,fg_error *err);
 
 fg_status fg_vk_dense_q8_0_f32(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *weights,
                                const fg_vk_tensor *input,uint32_t input_width,uint32_t output_width,

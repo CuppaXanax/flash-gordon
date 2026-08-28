@@ -10,7 +10,7 @@
 
 struct fg_expert_executor {
     fg_model *model;
-    fg_vk_tensor *activation,*tiles,*gate,*up,*mid,*down;
+    fg_vk_tensor *activation,*tiles,*gate,*up,*mid,*down,*gate_scale;
     uint32_t max_tokens,max_pairs;
 };
 
@@ -23,11 +23,12 @@ static fg_status create_scratch(fg_expert_executor *executor,fg_error *err){
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*640u*4u,&executor->up,err);
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*640u*4u,&executor->mid,err);
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*FG_HIDDEN_SIZE*4u,&executor->down,err);
+    if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*4u,&executor->gate_scale,err);
     return status;
 }
 
 fg_status fg_expert_executor_create(fg_expert_executor **out,fg_model *model,fg_error *err){if(!out||!model){fg_error_set(err,FG_ERR_ARGUMENT,"invalid expert executor arguments");return FG_ERR_ARGUMENT;}*out=NULL;fg_expert_executor *executor=calloc(1,sizeof(*executor));if(!executor){fg_error_set(err,FG_ERR_OOM,"allocate expert executor");return FG_ERR_OOM;}executor->model=model;fg_status status=create_scratch(executor,err);if(status!=FG_OK){fg_expert_executor_destroy(executor);return status;}*out=executor;return FG_OK;}
-void fg_expert_executor_destroy(fg_expert_executor *executor){if(!executor)return;fg_vk_tensor_destroy(executor->down);fg_vk_tensor_destroy(executor->mid);fg_vk_tensor_destroy(executor->up);fg_vk_tensor_destroy(executor->gate);fg_vk_tensor_destroy(executor->tiles);fg_vk_tensor_destroy(executor->activation);free(executor);}
+void fg_expert_executor_destroy(fg_expert_executor *executor){if(!executor)return;fg_vk_tensor_destroy(executor->gate_scale);fg_vk_tensor_destroy(executor->down);fg_vk_tensor_destroy(executor->mid);fg_vk_tensor_destroy(executor->up);fg_vk_tensor_destroy(executor->gate);fg_vk_tensor_destroy(executor->tiles);fg_vk_tensor_destroy(executor->activation);free(executor);}
 
 static uint32_t local_expert(const fg_manifest *manifest,uint32_t layer,uint32_t rank,uint32_t global){uint32_t local=0;for(uint32_t expert=0;expert<global;expert++)if(manifest->expert_rank[layer][expert]==rank)local++;return local;}
 static bool tensor_name(char output[FG_TENSOR_NAME_MAX],uint32_t layer,const char *family,uint32_t rank){int length=snprintf(output,FG_TENSOR_NAME_MAX,"blk.%u.%s.weight.rank%u",layer,family,rank);return length>=0&&(uint32_t)length<FG_TENSOR_NAME_MAX;}
@@ -39,7 +40,7 @@ fg_status fg_expert_decode(fg_expert_executor *executor,const fg_decode_work *wo
     fg_vk_context *vk=fg_model_vk(executor->model);fg_status status=fg_vk_tensor_write(executor->activation,0,work->activation_q8k,FG_Q8K_ACTIVATION_BYTES,err);if(status==FG_OK)status=fg_vk_tensor_write(executor->tiles,0,schedule,sizeof(schedule),err);uint32_t tiles=work->selected_count;
     if(status==FG_OK)status=fg_vk_moe_kquant(vk,executor->gate,gate_weight,executor->activation,executor->tiles,gate_record->ggml_type,640u,FG_HIDDEN_SIZE,(uint32_t)(gate_record->bytes/FG_EXPERTS_PER_RANK),FG_TOP_K,FG_TOP_K,false,tiles,err);
     if(status==FG_OK)status=fg_vk_moe_kquant(vk,executor->up,up_weight,executor->activation,executor->tiles,up_record->ggml_type,640u,FG_HIDDEN_SIZE,(uint32_t)(up_record->bytes/FG_EXPERTS_PER_RANK),FG_TOP_K,FG_TOP_K,false,tiles,err);
-    if(status==FG_OK)status=fg_vk_swiglu(vk,executor->mid,executor->gate,executor->up,FG_EXPERT_MID_VALUES,err);
+    if(status==FG_OK){float *gs=fg_vk_tensor_map(executor->gate_scale);memset(gs,0,FG_TOP_K*4u);for(uint32_t i=0;i<work->selected_count;i++)gs[work->routing_slots[i]]=work->gates[i];status=fg_vk_swiglu_scaled(vk,executor->mid,executor->gate,executor->up,executor->gate_scale,FG_EXPERT_MID_VALUES,640u,err);}
     uint32_t down_stride=(uint32_t)(down_record->bytes/FG_EXPERTS_PER_RANK);
     if(status==FG_OK&&down_record->ggml_type==7u)status=fg_vk_moe_q5_1_down(vk,executor->down,down_weight,executor->tiles,executor->mid,FG_HIDDEN_SIZE,640u,down_stride,FG_TOP_K,false,tiles,err);else if(status==FG_OK&&down_record->ggml_type==8u)status=fg_vk_moe_q8_0_down(vk,executor->down,down_weight,executor->tiles,executor->mid,FG_HIDDEN_SIZE,640u,down_stride,FG_TOP_K,false,tiles,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"unsupported expert down quant %u",down_record->ggml_type);status=FG_ERR_FORMAT;}if(status!=FG_OK)return status;
     float *host=fg_vk_tensor_map(executor->down);memset(result,0,sizeof(*result));result->layer=work->layer;result->source_rank=(uint8_t)rank;result->destination_rank=work->source_rank;result->selected_count=work->selected_count;result->position=work->position;for(uint32_t i=0;i<work->selected_count;i++){uint32_t slot=work->routing_slots[i];result->routing_slots[i]=(uint8_t)slot;memcpy(result->outputs[i],host+(uint64_t)slot*FG_HIDDEN_SIZE,FG_HIDDEN_SIZE*4u);}return FG_OK;
@@ -61,7 +62,7 @@ fg_status fg_expert_prefill(fg_expert_executor *executor,const fg_prefill_work *
     if(status==FG_OK)status=fg_vk_tensor_write(executor->tiles,0,schedule,(uint64_t)tile_count*9u*4u,err);
     if(status==FG_OK)status=fg_vk_moe_kquant(vk,executor->gate,gate_weight,executor->activation,executor->tiles,gate_record->ggml_type,640u,FG_HIDDEN_SIZE,(uint32_t)(gate_record->bytes/FG_EXPERTS_PER_RANK),FG_TOP_K,dense_pairs,false,tile_count,err);
     if(status==FG_OK)status=fg_vk_moe_kquant(vk,executor->up,up_weight,executor->activation,executor->tiles,up_record->ggml_type,640u,FG_HIDDEN_SIZE,(uint32_t)(up_record->bytes/FG_EXPERTS_PER_RANK),FG_TOP_K,dense_pairs,false,tile_count,err);
-    if(status==FG_OK)status=fg_vk_swiglu(vk,executor->mid,executor->gate,executor->up,(uint32_t)((uint64_t)dense_pairs*640u),err);
+    if(status==FG_OK){float *gs=fg_vk_tensor_map(executor->gate_scale);memset(gs,0,(uint64_t)dense_pairs*4u);for(uint32_t i=0;i<work->pair_count;i++){uint32_t pair_id=work->pairs[i].token_slot*FG_TOP_K+work->pairs[i].routing_slot;gs[pair_id]=work->pairs[i].gate;}status=fg_vk_swiglu_scaled(vk,executor->mid,executor->gate,executor->up,executor->gate_scale,(uint32_t)((uint64_t)dense_pairs*640u),640u,err);}
     uint32_t down_stride=status==FG_OK?(uint32_t)(down_record->bytes/FG_EXPERTS_PER_RANK):0u;
     if(status==FG_OK&&down_record->ggml_type==7u)status=fg_vk_moe_q5_1_down(vk,executor->down,down_weight,executor->tiles,executor->mid,FG_HIDDEN_SIZE,640u,down_stride,FG_TOP_K,false,tile_count,err);else if(status==FG_OK&&down_record->ggml_type==8u)status=fg_vk_moe_q8_0_down(vk,executor->down,down_weight,executor->tiles,executor->mid,FG_HIDDEN_SIZE,640u,down_stride,FG_TOP_K,false,tile_count,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"unsupported expert down quant %u",down_record->ggml_type);status=FG_ERR_FORMAT;}
     if(status==FG_OK){const float *host=fg_vk_tensor_map(executor->down);memset(result,0,sizeof(*result));result->layer=work->layer;result->source_rank=(uint8_t)rank;result->destination_rank=work->source_rank;result->first_position=work->first_position;result->token_count=work->token_count;result->pair_count=work->pair_count;result->pairs=pair_storage;result->outputs=output_storage;for(uint32_t i=0;i<work->pair_count;i++){uint32_t pair_id=work->pairs[i].token_slot*FG_TOP_K+work->pairs[i].routing_slot;pair_storage[i].token_slot=work->pairs[i].token_slot;pair_storage[i].routing_slot=work->pairs[i].routing_slot;memcpy(output_storage+(uint64_t)i*FG_HIDDEN_SIZE,host+(uint64_t)pair_id*FG_HIDDEN_SIZE,FG_HIDDEN_SIZE*4u);}}
