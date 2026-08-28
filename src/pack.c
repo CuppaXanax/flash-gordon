@@ -91,3 +91,165 @@ fg_status fg_pack_run(const fg_pack_options *o,fg_error *err){
     uint8_t zero[32]={0};memcpy(m->manifest_sha256,zero,32);if(!o->dry_run){char path[1024];snprintf(path,sizeof(path),"%s/manifest.fgm",o->output_dir);rc=fg_manifest_write(path,m,err);if(rc==FG_OK)fg_manifest_print(m);}else fg_manifest_print(m);
 done:free(m);fg_gguf_close(&g);return rc;
 }
+
+/* ---------- pack verification ---------- */
+
+static fg_status hash_gguf_range(FILE *src,uint64_t offset,uint64_t bytes,uint8_t digest[32],fg_error *err){
+    fg_sha256 ctx;fg_sha256_init(&ctx);uint8_t *buf=malloc(1u<<20);if(!buf){fg_error_set(err,FG_ERR_OOM,"allocate verify buffer");return FG_ERR_OOM;}
+    if(fseeko(src,(off_t)offset,SEEK_SET)!=0){free(buf);fg_error_set(err,FG_ERR_IO,"seek source for verify: %s",strerror(errno));return FG_ERR_IO;}
+    uint64_t remaining=bytes;while(remaining){size_t n=remaining>(1u<<20)?(1u<<20):(size_t)remaining;if(fread(buf,1,n,src)!=n){free(buf);fg_error_set(err,FG_ERR_IO,"read source for verify: %s",strerror(errno));return FG_ERR_IO;}fg_sha256_update(&ctx,buf,n);remaining-=n;}
+    free(buf);fg_sha256_final(&ctx,digest);return FG_OK;
+}
+
+static const fg_gguf_tensor *find_gguf_tensor(const fg_gguf *g,const char *name){
+    for(uint64_t i=0;i<g->tensor_count;i++)if(strcmp(g->tensors[i].name,name)==0)return &g->tensors[i];
+    return NULL;
+}
+
+fg_status fg_pack_verify(const fg_verify_options *o,fg_error *err){
+    if(!o||!o->manifest_path||!o->pack_dir||!o->source_paths||!o->source_count){fg_error_set(err,FG_ERR_ARGUMENT,"verify requires --manifest, --pack-dir, and --source");return FG_ERR_ARGUMENT;}
+
+    fg_manifest *m=malloc(sizeof(*m));if(!m){fg_error_set(err,FG_ERR_OOM,"allocate manifest");return FG_ERR_OOM;}
+    fg_status rc=fg_manifest_read(o->manifest_path,m,err);if(rc!=FG_OK){free(m);return rc;}
+    fg_gguf g;rc=fg_gguf_open(o->source_paths,o->source_count,&g,err);if(rc!=FG_OK){free(m);return rc;}
+
+    printf("Verifying %u manifest tensors against %llu GGUF tensors\n",m->tensor_count,(unsigned long long)g.tensor_count);
+
+    /* Phase 1: dump tensor inventory */
+    uint32_t common_count=0,expert_count=0,ngram_count=0,token_count=0;
+    for(uint32_t i=0;i<m->tensor_count;i++){
+        const fg_tensor_record *t=&m->tensors[i];
+        switch(t->kind){
+            case FG_TENSOR_COMMON:common_count++;break;
+            case FG_TENSOR_ROUTED_EXPERT:expert_count++;break;
+            case FG_TENSOR_NGRAM:ngram_count++;break;
+            case FG_TENSOR_TOKENIZER:token_count++;break;
+            default:break;
+        }
+    }
+    printf("  common=%u expert=%u ngram=%u tokenizer=%u\n",common_count,expert_count,ngram_count,token_count);
+
+    /* Phase 2: verify common tensors */
+    uint32_t pass=0,fail=0,skip=0;
+    for(uint32_t i=0;i<m->tensor_count;i++){
+        const fg_tensor_record *t=&m->tensors[i];
+        if(t->kind!=FG_TENSOR_COMMON)continue;
+        const fg_gguf_tensor *gt=find_gguf_tensor(&g,t->name);
+        if(!gt){printf("  SKIP common %.80s (not in GGUF)\n",t->name);skip++;continue;}
+        if(gt->bytes!=t->bytes){printf("  FAIL common %.80s size mismatch: manifest=%llu gguf=%llu\n",t->name,(unsigned long long)t->bytes,(unsigned long long)gt->bytes);fail++;continue;}
+        FILE *src=fopen(g.paths[gt->shard],"rb");if(!src){printf("  FAIL common %.80s cannot open shard %u\n",t->name,gt->shard);fail++;continue;}
+        uint8_t digest[32];rc=hash_gguf_range(src,gt->offset,gt->bytes,digest,err);fclose(src);
+        if(rc!=FG_OK){printf("  FAIL common %.80s hash error: %s\n",t->name,err->message);fail++;continue;}
+        if(memcmp(digest,t->sha256,32)==0){pass++;}else{
+            char got[17],exp[17];fg_sha256_hex(digest,got);fg_sha256_hex(t->sha256,exp);got[16]=exp[16]=0;
+            printf("  FAIL common %.80s SHA-256 mismatch got=%s... expected=%s...\n",t->name,got,exp);fail++;
+        }
+    }
+    printf("Common tensors: %u pass, %u fail, %u skip\n",pass,fail,skip);
+
+    /* Phase 3: verify expert tensors */
+    uint32_t epass=0,efail=0,eskip=0;
+    for(uint32_t i=0;i<m->tensor_count;i++){
+        const fg_tensor_record *t=&m->tensors[i];
+        if(t->kind!=FG_TENSOR_ROUTED_EXPERT)continue;
+
+        /* Parse "blk.L.ffn_xyz.weight.rankR" */
+        char gguf_name[FG_TENSOR_NAME_MAX];
+        const char *rank_suffix=strstr(t->name,".rank");
+        if(!rank_suffix){printf("  FAIL expert %.80s: cannot parse rank suffix\n",t->name);efail++;continue;}
+        size_t base_len=(size_t)(rank_suffix-t->name);
+        if(base_len>=sizeof(gguf_name)){efail++;continue;}
+        memcpy(gguf_name,t->name,base_len);gguf_name[base_len]=0;
+        uint32_t rank=(uint32_t)strtoul(rank_suffix+5,NULL,10);
+        int layer=fg_gguf_tensor_layer(gguf_name);
+        if(layer<0||rank>=FG_RANK_COUNT){printf("  FAIL expert %.80s: bad layer/rank\n",t->name);efail++;continue;}
+
+        const fg_gguf_tensor *gt=find_gguf_tensor(&g,gguf_name);
+        if(!gt){printf("  FAIL expert %.80s: GGUF tensor %s not found\n",t->name,gguf_name);efail++;continue;}
+        if(gt->bytes%FG_EXPERT_COUNT){printf("  FAIL expert %.80s: bytes not divisible by expert count\n",t->name);efail++;continue;}
+        uint64_t expert_bytes=gt->bytes/FG_EXPERT_COUNT;
+        if(t->bytes!=expert_bytes*FG_EXPERTS_PER_RANK){printf("  FAIL expert %.80s: size mismatch manifest=%llu expected=%llu\n",t->name,(unsigned long long)t->bytes,(unsigned long long)(expert_bytes*FG_EXPERTS_PER_RANK));efail++;continue;}
+
+        /* Replay the pack hashing: iterate global experts in ascending order, hash those belonging to this rank */
+        FILE *src=fopen(g.paths[gt->shard],"rb");if(!src){printf("  FAIL expert %.80s: cannot open shard\n",t->name);efail++;continue;}
+        fg_sha256 ctx;fg_sha256_init(&ctx);uint8_t *buf=malloc((size_t)expert_bytes);
+        if(!buf){fclose(src);printf("  FAIL expert %.80s: OOM\n",t->name);efail++;continue;}
+        uint32_t copied=0;bool ok=true;
+        for(uint32_t e=0;e<FG_EXPERT_COUNT&&ok;e++){
+            if(m->expert_rank[layer][e]!=rank)continue;
+            if(fseeko(src,(off_t)(gt->offset+e*expert_bytes),SEEK_SET)!=0){ok=false;break;}
+            if(fread(buf,1,(size_t)expert_bytes,src)!=(size_t)expert_bytes){ok=false;break;}
+            fg_sha256_update(&ctx,buf,(size_t)expert_bytes);
+            copied++;
+        }
+        free(buf);fclose(src);
+        if(!ok||copied!=FG_EXPERTS_PER_RANK){printf("  FAIL expert %.80s: read error or count mismatch (copied=%u)\n",t->name,copied);efail++;continue;}
+        uint8_t digest[32];fg_sha256_final(&ctx,digest);
+        if(memcmp(digest,t->sha256,32)==0){epass++;}else{
+            char got[17],exp[17];fg_sha256_hex(digest,got);fg_sha256_hex(t->sha256,exp);got[16]=exp[16]=0;
+            printf("  FAIL expert %.80s SHA-256 mismatch got=%s... expected=%s...\n",t->name,got,exp);
+            /* Print first mismatching expert for debugging */
+            FILE *src2=fopen(g.paths[gt->shard],"rb");
+            if(src2){
+                fg_sha256 per;uint8_t per_digest[32];
+                uint8_t *ebuf=malloc((size_t)expert_bytes);
+                if(ebuf){
+                    uint32_t local=0;
+                    for(uint32_t e=0;e<FG_EXPERT_COUNT;e++){
+                        if(m->expert_rank[layer][e]!=rank)continue;
+                        printf("    local[%u] = global expert %u\n",local,e);
+                        local++;if(local>=4)break; /* first 4 only */
+                    }
+                    free(ebuf);
+                }
+                fclose(src2);
+            }
+            efail++;
+        }
+    }
+    printf("Expert tensors: %u pass, %u fail, %u skip\n",epass,efail,eskip);
+
+    /* Phase 4: verify .fgw data matches GGUF via direct byte comparison (spot check) */
+    printf("\nPhase 4: Direct byte comparison (first expert of layer 0 on each rank)\n");
+    for(uint32_t gi=0;gi<FG_GROUP_SIZE;gi++){
+        uint32_t rank=m->layer_groups[0][gi];
+        char tname[FG_TENSOR_NAME_MAX];
+        snprintf(tname,sizeof(tname),"blk.0.ffn_gate_exps.weight.rank%u",rank);
+        const fg_tensor_record *t=NULL;
+        for(uint32_t i=0;i<m->tensor_count;i++)if(strcmp(m->tensors[i].name,tname)==0){t=&m->tensors[i];break;}
+        if(!t){printf("  SKIP rank %u: tensor %s not in manifest\n",rank,tname);continue;}
+
+        const fg_gguf_tensor *gt=find_gguf_tensor(&g,"blk.0.ffn_gate_exps.weight");
+        if(!gt)continue;
+        uint64_t expert_bytes=gt->bytes/FG_EXPERT_COUNT;
+
+        /* Find first global expert assigned to this rank */
+        uint32_t first_global=UINT32_MAX;
+        for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)if(m->expert_rank[0][e]==rank){first_global=e;break;}
+        if(first_global==UINT32_MAX)continue;
+
+        /* Read first 64 bytes from GGUF source */
+        FILE *src=fopen(g.paths[gt->shard],"rb");if(!src)continue;
+        uint8_t gguf_head[64]={0};
+        fseeko(src,(off_t)(gt->offset+first_global*expert_bytes),SEEK_SET);
+        fread(gguf_head,1,64,src);fclose(src);
+
+        /* Read first 64 bytes from .fgw */
+        char fgw_path[1024];snprintf(fgw_path,sizeof(fgw_path),"%s/rank-%02u.fgw",o->pack_dir,rank);
+        FILE *fgw=fopen(fgw_path,"rb");if(!fgw){printf("  SKIP rank %u: cannot open %s\n",rank,fgw_path);continue;}
+        uint8_t fgw_head[64]={0};
+        fseeko(fgw,(off_t)t->offset,SEEK_SET);
+        fread(fgw_head,1,64,fgw);fclose(fgw);
+
+        bool match=memcmp(gguf_head,fgw_head,64)==0;
+        printf("  rank %u (global expert %u): %s  [gguf: %02x%02x%02x%02x fgw: %02x%02x%02x%02x]\n",
+            rank,first_global,match?"PASS":"FAIL",
+            gguf_head[0],gguf_head[1],gguf_head[2],gguf_head[3],
+            fgw_head[0],fgw_head[1],fgw_head[2],fgw_head[3]);
+    }
+
+    uint32_t total_pass=pass+epass,total_fail=fail+efail;
+    printf("\n=== VERIFICATION %s: %u pass, %u fail ===\n",total_fail?"FAILED":"PASSED",total_pass,total_fail);
+    fg_gguf_close(&g);free(m);
+    return total_fail?FG_ERR_MISMATCH:FG_OK;
+}
