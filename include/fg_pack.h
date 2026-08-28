@@ -15,4 +15,13 @@ typedef struct fg_pack_options {
 
 fg_status fg_pack_run(const fg_pack_options *options, fg_error *err);
 
+typedef struct fg_verify_options {
+    const char *manifest_path;
+    const char *pack_dir;
+    const char **source_paths;
+    uint32_t source_count;
+} fg_verify_options;
+
+fg_status fg_pack_verify(const fg_verify_options *options, fg_error *err);
+
 #endif
