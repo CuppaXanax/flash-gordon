@@ -6,7 +6,7 @@ shared float query[128],key[128],delta[128],attention[128],sum_q[128],sum_k[128]
 float softplus(float value){return max(value,0.0)+log(1.0+exp(-abs(value)));}
 void main(){
     uint lane=gl_LocalInvocationID.x,head=gl_WorkGroupID.x;if(head>=pc.value_heads||lane>=pc.head_dim)return;
-    uint key_head=head/(pc.value_heads/pc.key_heads),key_width=pc.key_heads*pc.head_dim,value_width=pc.value_heads*pc.head_dim,qkv_width=2u*key_width+value_width,state_base=head*pc.head_dim*pc.head_dim;
+    uint key_head=head%pc.key_heads,key_width=pc.key_heads*pc.head_dim,value_width=pc.value_heads*pc.head_dim,qkv_width=2u*key_width+value_width,state_base=head*pc.head_dim*pc.head_dim;
     for(uint token=0u;token<pc.tokens;token++){
         uint qkv_base=token*qkv_width,z_base=token*value_width,head_base=token*pc.value_heads;
         query[lane]=qkv[qkv_base+key_head*pc.head_dim+lane];key[lane]=qkv[qkv_base+key_width+key_head*pc.head_dim+lane];float value=qkv[qkv_base+2u*key_width+head*pc.head_dim+lane];sum_q[lane]=query[lane]*query[lane];sum_k[lane]=key[lane]*key[lane];barrier();
