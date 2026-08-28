@@ -11,10 +11,10 @@
 #include <unistd.h>
 
 #define FG_QSA_PAGE_MAGIC UINT32_C(0x31534151) /* QAS1, little endian */
-#define FG_QSA_PAGE_VERSION 1u
+#define FG_QSA_PAGE_VERSION 2u
 #define FG_QSA_PAGE_HEADER_BYTES 32u
 #define FG_QSA_FILE_MAGIC UINT32_C(0x31534651) /* QFS1, little endian */
-#define FG_QSA_FILE_VERSION 1u
+#define FG_QSA_FILE_VERSION 2u
 #define FG_QSA_FILE_CRC_OFFSET 400u
 
 #if FG_QSA_PAGE_HEADER_BYTES + FG_Q38_QSA_COMPRESS_RATIO * FG_Q38_QSA_TOKEN_RECORD_BYTES > FG_Q38_QSA_STATE_PAGE_BYTES
@@ -34,20 +34,20 @@ uint64_t fg_qsa_state_required_bytes(uint32_t layers,uint32_t max_context){
 void fg_qsa_encode_token_record(const float key[FG_Q38_ATTN_KV_WIDTH],const float value[FG_Q38_ATTN_KV_WIDTH],uint8_t record[FG_Q38_QSA_TOKEN_RECORD_BYTES]){
     if(!key||!value||!record)return;
     memset(record,0,FG_Q38_QSA_TOKEN_RECORD_BYTES);
-    fg_quantize_q8_0(key,record,FG_Q38_ATTN_KV_WIDTH);fg_quantize_q4_0(value,record+FG_Q38_QSA_KEY_BYTES,FG_Q38_ATTN_KV_WIDTH);
+    fg_quantize_q8_0(key,record,FG_Q38_ATTN_KV_WIDTH);fg_quantize_q8_0(value,record+FG_Q38_QSA_KEY_BYTES,FG_Q38_ATTN_KV_WIDTH);
 }
 
 void fg_qsa_encode_full_token_record(const float key[FG_Q38_ATTN_KV_WIDTH],const float value[FG_Q38_ATTN_KV_WIDTH],const float index_key[FG_Q38_INDEX_WIDTH],const uint32_t position[3],uint8_t record[FG_Q38_QSA_TOKEN_RECORD_BYTES]){
     if(!key||!value||!index_key||!position||!record)return;
     fg_quantize_q8_0(key,record,FG_Q38_ATTN_KV_WIDTH);
-    fg_quantize_q4_0(value,record+FG_Q38_QSA_KEY_BYTES,FG_Q38_ATTN_KV_WIDTH);
+    fg_quantize_q8_0(value,record+FG_Q38_QSA_KEY_BYTES,FG_Q38_ATTN_KV_WIDTH);
     fg_quantize_q8_0(index_key,record+FG_Q38_QSA_KEY_BYTES+FG_Q38_QSA_VALUE_BYTES,FG_Q38_INDEX_WIDTH);
     for(uint32_t axis=0;axis<3u;axis++)put_u32_le(record+FG_Q38_QSA_KEY_BYTES+FG_Q38_QSA_VALUE_BYTES+FG_Q38_QSA_INDEX_KEY_BYTES+axis*4u,position[axis]);
 }
 
 void fg_qsa_decode_token_record(const uint8_t record[FG_Q38_QSA_TOKEN_RECORD_BYTES],float key[FG_Q38_ATTN_KV_WIDTH],float value[FG_Q38_ATTN_KV_WIDTH]){
     if(!key||!value||!record)return;
-    fg_dequantize_q8_0(record,key,FG_Q38_ATTN_KV_WIDTH);fg_dequantize_q4_0(record+FG_Q38_QSA_KEY_BYTES,value,FG_Q38_ATTN_KV_WIDTH);
+    fg_dequantize_q8_0(record,key,FG_Q38_ATTN_KV_WIDTH);fg_dequantize_q8_0(record+FG_Q38_QSA_KEY_BYTES,value,FG_Q38_ATTN_KV_WIDTH);
 }
 
 void fg_qsa_decode_token_metadata(const uint8_t record[FG_Q38_QSA_TOKEN_RECORD_BYTES],float index_key[FG_Q38_INDEX_WIDTH],uint32_t position[3]){

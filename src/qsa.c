@@ -93,7 +93,7 @@ fg_status fg_qsa_session_decode(fg_qsa_session *s,uint32_t layer,uint32_t token,
     if(status==FG_OK)status=fg_vk_dense_bf16_f32(vk,s->raw_index_key,ikw,hidden,2560u,128u,1u,err);
     if(status==FG_OK)status=fg_vk_qsa_index_prepare(vk,s->index_query,s->raw_index_query,iqn,position_view,err);
     if(status==FG_OK)status=fg_vk_quantize_q8_0(vk,s->key_q8,s->key,512u,1u,err);
-    if(status==FG_OK)status=fg_vk_quantize_q4_0(vk,s->value_q4,s->raw_value,512u,1u,err);
+    if(status==FG_OK)status=fg_vk_quantize_q8_0(vk,s->value_q4,s->raw_value,512u,1u,err);
     if(status==FG_OK)status=fg_vk_quantize_q8_0(vk,s->index_key_q8,s->raw_index_key,128u,1u,err);
     fg_vk_tensor_destroy(position_view);if(status!=FG_OK)return status;
     status=commit_and_attend(s,slot,token,position,fg_vk_tensor_map(s->key_q8),fg_vk_tensor_map(s->value_q4),fg_vk_tensor_map(s->index_key_q8),s->index_query,s->query,s->gate,s->attention,err);if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,s->output,ow,s->attention,6144u,2560u,1u,1.0f,err);
@@ -114,7 +114,7 @@ fg_status fg_qsa_session_prefill(fg_qsa_session *s,uint32_t layer,uint32_t first
     if(status==FG_OK)status=fg_vk_dense_bf16_f32(vk,s->raw_index_key,ikw,hidden,FG_HIDDEN_SIZE,128u,token_count,err);
     if(status==FG_OK)status=fg_vk_qsa_index_prepare_prefill(vk,s->index_query,s->raw_index_query,iqn,position_view,token_count,err);
     if(status==FG_OK)status=fg_vk_quantize_q8_0(vk,s->key_q8,s->key,512u,token_count,err);
-    if(status==FG_OK)status=fg_vk_quantize_q4_0(vk,s->value_q4,s->raw_value,512u,token_count,err);
+    if(status==FG_OK)status=fg_vk_quantize_q8_0(vk,s->value_q4,s->raw_value,512u,token_count,err);
     if(status==FG_OK)status=fg_vk_quantize_q8_0(vk,s->index_key_q8,s->raw_index_key,128u,token_count,err);
     fg_vk_tensor_destroy(position_view);if(status!=FG_OK)return status;
     const uint8_t *keys=fg_vk_tensor_map(s->key_q8),*values=fg_vk_tensor_map(s->value_q4),*index_keys=fg_vk_tensor_map(s->index_key_q8);for(uint32_t i=0;status==FG_OK&&i<token_count;i++){fg_vk_tensor *index_query=NULL,*query=NULL,*gate=NULL,*attention=NULL;status=fg_vk_tensor_view(s->index_query,(uint64_t)i*512u*4u,512u*4u,&index_query,err);if(status==FG_OK)status=fg_vk_tensor_view(s->query,(uint64_t)i*6144u*4u,6144u*4u,&query,err);if(status==FG_OK)status=fg_vk_tensor_view(s->gate,(uint64_t)i*6144u*4u,6144u*4u,&gate,err);if(status==FG_OK)status=fg_vk_tensor_view(s->attention,(uint64_t)i*6144u*4u,6144u*4u,&attention,err);if(status==FG_OK)status=commit_and_attend(s,slot,first_token+i,positions+(uint64_t)i*3u,keys+(uint64_t)i*FG_Q38_QSA_KEY_BYTES,values+(uint64_t)i*FG_Q38_QSA_VALUE_BYTES,index_keys+(uint64_t)i*FG_Q38_QSA_INDEX_KEY_BYTES,index_query,query,gate,attention,err);fg_vk_tensor_destroy(attention);fg_vk_tensor_destroy(gate);fg_vk_tensor_destroy(query);fg_vk_tensor_destroy(index_query);}
