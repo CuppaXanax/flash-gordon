@@ -58,14 +58,14 @@ static void test_q38_math(void){
     q5[4]=0x01;
     float expected=0.0f;for(uint32_t i=0;i<32;i++){x[i]=(float)(i+1);uint32_t lo=i<16?i:31u-i;uint32_t hi=i==0?16u:0u;expected=fmaf((float)(lo+hi)+0.5f,x[i],expected);}
     CHECK(fabsf(fg_q5_1_dot_f32(q5,x,32)-expected)<1e-3f);
-    float norm_in[]={3,4,0,0,1,1,1,1},norm_w[8]={0},norm_out[8];
+    float norm_in[]={3,4,0,0,1,1,1,1},norm_w[]={1,1,1,1,1,1,1,1},norm_out[8];
     fg_q38_group_rms_norm(norm_out,norm_in,norm_w,2,4,0.0f);
     CHECK(fabsf(norm_out[0]-1.2f)<1e-6f&&fabsf(norm_out[1]-1.6f)<1e-6f);
     CHECK(fabsf(norm_out[4]-1.0f)<1e-6f&&fabsf(norm_out[7]-1.0f)<1e-6f);
     float logits[]={1,3,3,0};uint32_t ids[2];float gates[2];fg_error err={0};
     CHECK(fg_q38_router_topk(logits,4,2,ids,gates,&err)==FG_OK);
     CHECK(ids[0]==1&&ids[1]==2&&fabsf(gates[0]-0.5f)<1e-6f&&fabsf(gates[1]-0.5f)<1e-6f);
-    float rope[128],rope_weight[128];for(uint32_t i=0;i<128u;i++){rope[i]=sinf((float)i*0.071f)+0.03f*cosf((float)i*0.013f);rope_weight[i]=0.1f*cosf((float)i*0.027f);}uint32_t media_position[3]={17,23,31};CHECK(fg_q38_rms_mrope(rope,1,128,rope_weight,media_position,&err)==FG_OK);const uint32_t probe_index[]={0,1,2,31,32,33,34,63,64,127};const float probe_value[]={1.1080422f,-1.02584225f,1.04547368f,1.23273355f,-0.364600268f,0.407246308f,0.0768160129f,-1.29797908f,-1.31442412f,0.492792885f};for(uint32_t i=0;i<10u;i++)CHECK(fabsf(rope[probe_index[i]]-probe_value[i])<3e-5f);
+    float rope[128],rope_weight[128];for(uint32_t i=0;i<128u;i++){rope[i]=sinf((float)i*0.071f)+0.03f*cosf((float)i*0.013f);rope_weight[i]=1.0f+0.1f*cosf((float)i*0.027f);}uint32_t media_position[3]={17,23,31};CHECK(fg_q38_rms_mrope(rope,1,128,rope_weight,media_position,&err)==FG_OK);const uint32_t probe_index[]={0,1,2,31,32,33,34,63,64,127};const float probe_value[]={1.1080422f,-1.02584225f,1.04547368f,1.23273355f,-0.364600268f,0.407246308f,0.0768160129f,-1.29797908f,-1.31442412f,0.492792885f};for(uint32_t i=0;i<10u;i++)CHECK(fabsf(rope[probe_index[i]]-probe_value[i])<3e-5f);
     enum{INDEX_TOKENS=13};float query[FG_Q38_INDEX_QUERY_WIDTH],raw[INDEX_TOKENS*FG_Q38_INDEX_WIDTH],qnorm[FG_Q38_INDEX_WIDTH],knorm[FG_Q38_INDEX_WIDTH];for(uint32_t i=0;i<FG_Q38_INDEX_QUERY_WIDTH;i++)query[i]=sinf((float)(i+3u)*0.019f)+0.2f*cosf((float)i*0.007f);for(uint32_t i=0;i<FG_Q38_INDEX_WIDTH;i++){qnorm[i]=0.03f*sinf((float)i*0.051f);knorm[i]=0.04f*cosf((float)i*0.037f);}for(uint32_t token=0;token<INDEX_TOKENS;token++)for(uint32_t i=0;i<FG_Q38_INDEX_WIDTH;i++)raw[token*FG_Q38_INDEX_WIDTH+i]=sinf((float)(token+1u)*(float)(i+1u)*0.0017f)+0.15f*cosf((float)(token+2u)*(float)(i+3u)*0.0009f);uint32_t selected[INDEX_TOKENS],selected_count=0;const uint32_t selected_golden[]={8,9,10,11,4,5,6,7,0,1,2,3,12};CHECK(fg_q38_qsa_index_select_reference(query,raw,INDEX_TOKENS,qnorm,knorm,selected,INDEX_TOKENS,&selected_count,&err)==FG_OK);CHECK(selected_count==INDEX_TOKENS&&memcmp(selected,selected_golden,sizeof(selected_golden))==0);
 }
 

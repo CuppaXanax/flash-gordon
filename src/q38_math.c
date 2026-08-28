@@ -41,7 +41,7 @@ void fg_q38_group_rms_norm(float *out,const float *x,const float *weight,uint32_
         const float *src=x+(uint64_t)g*width;float *dst=out+(uint64_t)g*width;double sum=0.0;
         for(uint32_t i=0;i<width;i++)sum+=(double)src[i]*(double)src[i];
         float scale=1.0f/sqrtf((float)(sum/(double)width)+eps);
-        for(uint32_t i=0;i<width;i++){uint64_t j=(uint64_t)g*width+i;dst[i]=src[i]*scale*(weight?1.0f+weight[j]:1.0f);}
+        for(uint32_t i=0;i<width;i++){uint64_t j=(uint64_t)g*width+i;dst[i]=src[i]*scale*(weight?weight[j]:1.0f);}
     }
 }
 
@@ -66,7 +66,7 @@ fg_status fg_q38_router_topk(const float *logits,uint32_t count,uint32_t k,uint3
 fg_status fg_q38_rms_mrope(float *vector,uint32_t heads,uint32_t width,const float *weight,const uint32_t position[3],fg_error *err){
     if(!vector||!weight||!position||!heads||width<FG_Q38_ROTARY_WIDTH){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Qwen RMS/MRoPE arguments");return FG_ERR_ARGUMENT;}
     for(uint32_t head=0;head<heads;head++){
-        float *x=vector+(uint64_t)head*width;double ss=0.0;for(uint32_t i=0;i<width;i++)ss+=(double)x[i]*x[i];float scale=1.0f/sqrtf((float)(ss/width)+1e-6f);for(uint32_t i=0;i<width;i++)x[i]*=scale*(1.0f+weight[i]);
+        float *x=vector+(uint64_t)head*width;double ss=0.0;for(uint32_t i=0;i<width;i++)ss+=(double)x[i]*x[i];float scale=1.0f/sqrtf((float)(ss/width)+1e-6f);for(uint32_t i=0;i<width;i++)x[i]*=scale*weight[i];
         float first[FG_Q38_ROTARY_WIDTH/2u],second[FG_Q38_ROTARY_WIDTH/2u];memcpy(first,x,sizeof(first));memcpy(second,x+FG_Q38_ROTARY_WIDTH/2u,sizeof(second));
         for(uint32_t i=0;i<FG_Q38_ROTARY_WIDTH/2u;i++){
             uint32_t axis=0;if(i%3u==1u&&i<33u)axis=1u;else if(i%3u==2u&&i<30u)axis=2u;
