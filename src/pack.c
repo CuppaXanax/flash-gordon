@@ -141,8 +141,8 @@ fg_status fg_pack_verify(const fg_verify_options *o,fg_error *err){
         uint8_t digest[32];rc=hash_gguf_range(src,gt->offset,gt->bytes,digest,err);fclose(src);
         if(rc!=FG_OK){printf("  FAIL common %.80s hash error: %s\n",t->name,err->message);fail++;continue;}
         if(memcmp(digest,t->sha256,32)==0){pass++;}else{
-            char got[17],exp[17];fg_sha256_hex(digest,got);fg_sha256_hex(t->sha256,exp);got[16]=exp[16]=0;
-            printf("  FAIL common %.80s SHA-256 mismatch got=%s... expected=%s...\n",t->name,got,exp);fail++;
+            char got[65],exp[65];fg_sha256_hex(digest,got);fg_sha256_hex(t->sha256,exp);
+            printf("  FAIL common %.80s SHA-256 mismatch got=%.16s... expected=%.16s...\n",t->name,got,exp);fail++;
         }
     }
     printf("Common tensors: %u pass, %u fail, %u skip\n",pass,fail,skip);
@@ -186,23 +186,14 @@ fg_status fg_pack_verify(const fg_verify_options *o,fg_error *err){
         if(!ok||copied!=FG_EXPERTS_PER_RANK){printf("  FAIL expert %.80s: read error or count mismatch (copied=%u)\n",t->name,copied);efail++;continue;}
         uint8_t digest[32];fg_sha256_final(&ctx,digest);
         if(memcmp(digest,t->sha256,32)==0){epass++;}else{
-            char got[17],exp[17];fg_sha256_hex(digest,got);fg_sha256_hex(t->sha256,exp);got[16]=exp[16]=0;
-            printf("  FAIL expert %.80s SHA-256 mismatch got=%s... expected=%s...\n",t->name,got,exp);
-            /* Print first mismatching expert for debugging */
-            FILE *src2=fopen(g.paths[gt->shard],"rb");
-            if(src2){
-                fg_sha256 per;uint8_t per_digest[32];
-                uint8_t *ebuf=malloc((size_t)expert_bytes);
-                if(ebuf){
-                    uint32_t local=0;
-                    for(uint32_t e=0;e<FG_EXPERT_COUNT;e++){
-                        if(m->expert_rank[layer][e]!=rank)continue;
-                        printf("    local[%u] = global expert %u\n",local,e);
-                        local++;if(local>=4)break; /* first 4 only */
-                    }
-                    free(ebuf);
-                }
-                fclose(src2);
+            char got[65],exp[65];fg_sha256_hex(digest,got);fg_sha256_hex(t->sha256,exp);
+            printf("  FAIL expert %.80s SHA-256 mismatch got=%.16s... expected=%.16s...\n",t->name,got,exp);
+            /* Print first few local-to-global expert mappings for debugging */
+            uint32_t local=0;
+            for(uint32_t e=0;e<FG_EXPERT_COUNT;e++){
+                if(m->expert_rank[layer][e]!=rank)continue;
+                printf("    local[%u] = global expert %u\n",local,e);
+                local++;if(local>=4)break;
             }
             efail++;
         }
