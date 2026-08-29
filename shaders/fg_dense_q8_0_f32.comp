@@ -1,68 +1,71 @@
 #version 460
 #extension GL_KHR_shader_subgroup_arithmetic : require
-layout(local_size_x=32,local_size_y=1,local_size_z=1)in;
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
 layout(set=0,binding=0)readonly buffer Weights{uint wb[];};
 layout(set=0,binding=1)readonly buffer Input{float x[];};
 layout(set=0,binding=2)writeonly buffer Output{float y[];};
 layout(push_constant)uniform Push{uint out_dim;uint n_tok;uint blocks;uint row_bytes;float scale;}pc;
 
-/* Q8_0 block layout: 2 bytes (f16 scale) + 32 bytes (int8 quants) = 34 bytes
-   34 bytes / 4 = 8.5 uint32 words.  We load as 9 uint32 words (36 bytes),
-   the last word overlaps with the next block's scale — safe for reads.
-   
-   Word layout within a block (byte offset / 4):
-     word 0: [scale_lo, scale_hi, q0, q1]
-     word 1: [q2, q3, q4, q5]
-     word 2: [q6, q7, q8, q9]
-     ...
-     word 8: [q30, q31, next_scale_lo, next_scale_hi]
-   
-   Strategy: 32 threads process 4 Q8_0 blocks per iteration (128 elements).
-   Each thread loads 1 uint32 from the quant region, extracts 4 int8 values,
-   and does 4 FMA operations.  Scale is loaded by thread 0 of each 8-thread
-   group and broadcast via subgroup shuffle.  */
+/* 256 threads = 8 waves of 32.  Each thread accumulates a partial dot product,
+   subgroupAdd reduces within each wave (no barrier), then 8 partial sums are
+   reduced via shared memory with a single barrier. */
+shared float wave_sums[8];
 
 void main(){
-    uint tid=gl_LocalInvocationID.x; /* 0..31, matches wave32 */
+    uint tid=gl_LocalInvocationID.x; /* 0..255 */
+    uint wave_id=tid>>5u;            /* 0..7 */
+    uint lane=tid&31u;               /* 0..31 within wave */
     uint row=gl_WorkGroupID.x,tok=gl_WorkGroupID.y;
     if(row>=pc.out_dim||tok>=pc.n_tok)return;
 
     uint in_dim=pc.blocks*32u;
     uint row_base=row*pc.row_bytes;
-    /* Byte offset to first quant word of block b: row_base + b*34 + 2.
-       In uint32 words: (row_base + b*34 + 2) >> 2 = (row_base + b*34) >> 2
-       when row_base is aligned, but 34 is NOT a multiple of 4, so we must
-       use byte-addressed loads via the uint buffer.  We load the QUANT portion
-       as 8 consecutive uint32 words starting at byte offset (row_base + b*34 + 2).
-       But 34*b + 2 is not always 4-byte aligned.  Use the shift-mask approach
-       but at uint32 granularity: load 2 consecutive uint32 words and combine.  */
-
     float acc=0.0;
 
-    /* Process 4 blocks per iteration: 32 threads × 4 elements = 128 elements.
-       Each thread handles element (block*32 + tid) for 4 consecutive blocks. */
-    for(uint block=0;block<pc.blocks;block++){
-        uint base=row_base+block*34u; /* byte offset of this Q8 block */
+    /* Each thread processes elements with stride 256.
+       All 32 lanes in a wave hit the same Q8 block when i is in the same
+       block-of-32, giving coalesced quant loads.  Scale is hoisted: loaded
+       once per block, shared across all 32 lanes via the first iteration
+       that enters a new block. */
+    float cached_scale=0.0;
+    uint prev_block=0xFFFFFFFFu;
 
-        /* Load scale: 2 bytes at offset 'base'. Only need it once per block. */
-        uint scale_word=wb[base>>2u];
-        uint scale_shift=(base&3u)*8u;
-        uint scale_raw=(scale_word>>scale_shift)&0xFFFFu;
-        /* If the 2 scale bytes straddle a uint32 boundary, grab from next word */
-        if((base&3u)==3u){scale_raw=(scale_word>>24u)|(wb[(base>>2u)+1u]<<8u);scale_raw&=0xFFFFu;}
-        float d=unpackHalf2x16(scale_raw).x;
+    for(uint i=tid;i<in_dim;i+=256u){
+        uint block=i>>5u;
+        uint within=i&31u;
+        uint base=row_base+block*34u;
 
-        /* Load this thread's quant byte: byte offset = base + 2 + tid */
-        uint qoff=base+2u+tid;
-        uint qword=wb[qoff>>2u];
-        uint q=(qword>>((qoff&3u)*8u))&255u;
+        /* Hoist scale decode: only re-read when we enter a new block */
+        if(block!=prev_block){
+            uint soff=base;
+            uint sw=wb[soff>>2u];
+            uint ss=(soff&3u)*8u;
+            uint sr=(sw>>ss)&0xFFFFu;
+            if((soff&3u)==3u){sr=(sw>>24u)|(wb[(soff>>2u)+1u]<<8u);sr&=0xFFFFu;}
+            cached_scale=unpackHalf2x16(sr).x;
+            prev_block=block;
+        }
+
+        /* Load quant byte */
+        uint qoff=base+2u+within;
+        uint qw=wb[qoff>>2u];
+        uint q=(qw>>((qoff&3u)*8u))&255u;
         int qi=int(q)-((q>=128u)?256:0);
 
-        acc=fma(d*float(qi),x[tok*in_dim+block*32u+tid],acc);
+        acc=fma(cached_scale*float(qi),x[tok*in_dim+i],acc);
     }
 
-    /* Wave32 subgroup reduction — no shared memory, no barriers */
-    acc=subgroupAdd(acc);
+    /* Per-wave reduction: subgroupAdd (no barrier, hardware shuffle) */
+    float wave_sum=subgroupAdd(acc);
 
-    if(tid==0u)y[tok*pc.out_dim+row]=acc*pc.scale;
+    /* Write per-wave result to shared memory */
+    if(lane==0u)wave_sums[wave_id]=wave_sum;
+    barrier();
+
+    /* Final reduction: wave 0 lane 0 sums the 8 partial results */
+    if(tid==0u){
+        float total=0.0;
+        for(uint w=0u;w<8u;w++)total+=wave_sums[w];
+        y[tok*pc.out_dim+row]=total*pc.scale;
+    }
 }
