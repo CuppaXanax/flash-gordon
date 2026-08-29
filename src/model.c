@@ -1,6 +1,8 @@
 #include "fg_model.h"
 #include "fg_loader.h"
 
+#include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
