@@ -322,7 +322,7 @@ fg_status fg_bench_main(const char *path,fg_error *err){
     fprintf(stderr,"warmup=%u  iterations=%u  tokens=1\n\n",warmup,iters);
     fprintf(stderr,"%-25s %8s %8s %10s %10s %6s\n","shape","weight","wall","eff.BW","roofline","util");
     fprintf(stderr,"%-25s %8s %8s %10s %10s %6s\n","","(MB)","(us)","(GB/s)","(GB/s)","(%)");
-    fprintf(stderr,"--------------------------------------------------------------------\n");
+    fprintf(stderr,"----------------------------------------------------------------------\n");
     for(uint32_t s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++){
         uint32_t in_dim=shapes[s].in,out_dim=shapes[s].out;
         uint32_t blocks=in_dim/32u;uint64_t row_bytes=(uint64_t)blocks*34u;
@@ -359,6 +359,11 @@ fg_status fg_bench_main(const char *path,fg_error *err){
             fprintf(stderr,"%-25s %7.2f %7.1f %9.1f %9.1f %5.1f%%\n",
                 shapes[s].name,(double)weight_bytes/1e6,per_call_us,eff_gbps,roofline,util);
         }
+        double standalone_us=0;
+        if(status==FG_OK){
+            double elapsed_s=(double)(ts1.tv_sec-ts0.tv_sec)+(double)(ts1.tv_nsec-ts0.tv_nsec)*1e-9;
+            standalone_us=elapsed_s*1e6/(double)iters;
+        }
         /* Now measure batched dispatch (N dispatches in one command buffer) to isolate kernel vs overhead */
         if(status==FG_OK){
             uint32_t batch_iters=50;
@@ -379,6 +384,10 @@ fg_status fg_bench_main(const char *path,fg_error *err){
                 double util=eff_gbps/roofline*100.0;
                 fprintf(stderr,"  └ batched (%u in 1 CB)  %7s %7.1f %9.1f %9.1f %5.1f%%\n",
                     batch_iters,""  ,per_call_us,eff_gbps,roofline,util);
+                double dispatch_overhead=standalone_us-per_call_us;
+                double theoretical_us=(double)(weight_bytes+input_bytes+output_bytes)/(357.0*1e3);
+                fprintf(stderr,"  └ dispatch overhead     %7s %7.1f   (theoretical minimum: %.1f μs)\n",
+                    "",dispatch_overhead,theoretical_us);
             }
         }
         fg_vk_tensor_destroy(y);fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);
