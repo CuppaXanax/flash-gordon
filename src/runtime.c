@@ -219,7 +219,7 @@ static fg_status coordinator_decode_pipelined(fg_coordinator *coordinator,int32_
         fg_vk_tensor *ngram=NULL;if(status==FG_OK)status=fg_ngram_store_lookup(coordinator->ngram,history,history_count,&ngram,err);
         expert_dispatch_context dispatch={coordinator->fabric,coordinator->expert,coordinator->manifest,0u,coordinator->session_id,ti*FG_LAYER_COUNT};fg_vk_tensor *l0out=NULL;if(status==FG_OK)status=fg_owner_decode_layer(coordinator->owner,0u,ti,slot->position,coordinator->hyper,NULL,dispatch_experts,&dispatch,&l0out,err);
         memset(lw,0,sizeof(*lw));lw->layer=1u;lw->source_rank=0u;lw->destination_rank=coordinator->manifest->layer_owner[1u];lw->flags=FG_LAYER_WORK_HAS_NGRAM;lw->token_index=ti;memcpy(lw->position,slot->position,sizeof(lw->position));
-        if(status==FG_OK)status=fg_vk_tensor_read(l0out,0,lw->hyper,sizeof(lw->hyper),err);if(status==FG_OK&&ngram)status=fg_vk_tensor_read(ngram,0,lw->ngram_embedding,sizeof(lw->ngram_embedding),err);
+        if(status==FG_OK){status=fg_vk_tensor_read(l0out,0,lw->hyper,sizeof(lw->hyper),err);}if(status==FG_OK&&ngram){status=fg_vk_tensor_read(ngram,0,lw->ngram_embedding,sizeof(lw->ngram_embedding),err);}
         uint32_t wb=0;uint64_t seq1=(uint64_t)ti*FG_LAYER_COUNT+1u;if(status==FG_OK&&seq1>UINT32_MAX){fg_error_set(err,FG_ERR_LIMIT,"pipeline sequence overflow");status=FG_ERR_LIMIT;}if(status==FG_OK)status=fg_layer_work_encode(lw_wire,FG_LAYER_WORK_MAX_BYTES,&wb,lw,err);if(status==FG_OK)status=fg_fabric_send(coordinator->fabric,lw->destination_rank,FG_FABRIC_CONTROL,FG_MSG_LAYER_WORK,coordinator->session_id,(uint32_t)seq1,0,lw_wire,wb,err);
         slot->last_committed_layer=0;if(status!=FG_OK)break;}
         /* ---- DRAIN: handle messages until OUTPUT_RESULT ---- */
