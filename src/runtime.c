@@ -10,6 +10,7 @@
 #include "fg_uring.h"
 
 #include <arpa/inet.h>
+#include <math.h>
 
 #include <stdio.h>
 #include <stdlib.h>
