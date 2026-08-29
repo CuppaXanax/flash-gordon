@@ -11,6 +11,7 @@ fg_status fg_qsa_session_open_decode(fg_qsa_session **out,fg_model *model,const 
                                      uint32_t resident_tokens,fg_error *err);
 void fg_qsa_session_close(fg_qsa_session *session);
 uint32_t fg_qsa_session_tokens(const fg_qsa_session *session,uint32_t layer);
+void fg_qsa_session_set_tokens(fg_qsa_session *session,uint32_t tokens);
 fg_status fg_qsa_session_decode(fg_qsa_session *session,uint32_t layer,uint32_t token_index,
                                 const uint32_t position[3],const fg_vk_tensor *hidden,
                                 fg_vk_tensor **output,fg_error *err);
