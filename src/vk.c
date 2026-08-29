@@ -21,7 +21,7 @@ struct fg_vk_context {
     VkInstance instance;VkPhysicalDevice physical;VkDevice device;VkQueue queue;uint32_t queue_family;
     VkCommandPool command_pool;VkCommandBuffer command;VkFence fence;VkDescriptorPool descriptor_pool;VkPipelineCache pipeline_cache;
     VkPhysicalDeviceMemoryProperties memory;char device_name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
-    bool in_batch;uint32_t batch_set_count;VkDescriptorSet batch_sets[256];
+    uint32_t batch_depth;uint32_t batch_set_count;VkDescriptorSet batch_sets[256];
     fg_vk_kernel quant_q8k,quant_q8,quant_q4,dequant_iq4nl,embedding,embedding_batch,swiglu,silu_scaled,dense,dense_f32,dense_bf16,rms,gr,hc_finalize,gr_write,ple_gate,ple_gate_prefill,ple_conv,ple_conv_prefill,add,gdn_conv,gdn_conv_prefill,gdn_recurrent,gdn_recurrent_prefill,qsa_prepare,qsa_prepare_prefill,qsa_index_prepare,qsa_index_prepare_prefill,qsa_score,qsa_attention,topk,moe_q5_1,moe_q8_0,kquant;
 };
 
@@ -92,32 +92,34 @@ fg_status fg_vk_tensor_read(const fg_vk_tensor *t,uint64_t offset,void *data,uin
 
 static fg_status dispatch(fg_vk_context *c,fg_vk_kernel *kernel,const fg_vk_tensor *const *tensors,const void *push,uint32_t gx,uint32_t gy,uint32_t gz,fg_error *err){
     fg_status status=create_kernel(c,kernel,err);if(status!=FG_OK)return status;VkDescriptorSetAllocateInfo da={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,.descriptorPool=c->descriptor_pool,.descriptorSetCount=1,.pSetLayouts=&kernel->set_layout};VkDescriptorSet set;VkResult vr=vkAllocateDescriptorSets(c->device,&da,&set);if(vr!=VK_SUCCESS)return vk_error(err,"allocate descriptor set",vr);VkDescriptorBufferInfo info[16];VkWriteDescriptorSet write[16];for(uint32_t i=0;i<kernel->bindings;i++){info[i]=(VkDescriptorBufferInfo){.buffer=tensors[i]->allocation->buffer,.offset=tensors[i]->offset,.range=tensors[i]->bytes};write[i]=(VkWriteDescriptorSet){.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=set,.dstBinding=i,.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.pBufferInfo=&info[i]};}vkUpdateDescriptorSets(c->device,kernel->bindings,write,0,NULL);
-    if(c->in_batch){VkMemoryBarrier bar={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT};vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&bar,0,NULL,0,NULL);vkCmdBindPipeline(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->pipeline);vkCmdBindDescriptorSets(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->layout,0,1,&set,0,NULL);if(kernel->push_bytes)vkCmdPushConstants(c->command,kernel->layout,VK_SHADER_STAGE_COMPUTE_BIT,0,kernel->push_bytes,push);vkCmdDispatch(c->command,gx,gy,gz);if(c->batch_set_count<256)c->batch_sets[c->batch_set_count++]=set;return FG_OK;}
+    if(c->batch_depth){VkMemoryBarrier bar={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT};vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&bar,0,NULL,0,NULL);vkCmdBindPipeline(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->pipeline);vkCmdBindDescriptorSets(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->layout,0,1,&set,0,NULL);if(kernel->push_bytes)vkCmdPushConstants(c->command,kernel->layout,VK_SHADER_STAGE_COMPUTE_BIT,0,kernel->push_bytes,push);vkCmdDispatch(c->command,gx,gy,gz);if(c->batch_set_count<256)c->batch_sets[c->batch_set_count++]=set;return FG_OK;}
     vkResetFences(c->device,1,&c->fence);vkResetCommandBuffer(c->command,0);VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};if((vr=vkBeginCommandBuffer(c->command,&begin))!=VK_SUCCESS)return vk_error(err,"begin compute command",vr);VkMemoryBarrier before={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT,.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT};vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&before,0,NULL,0,NULL);vkCmdBindPipeline(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->pipeline);vkCmdBindDescriptorSets(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->layout,0,1,&set,0,NULL);if(kernel->push_bytes)vkCmdPushConstants(c->command,kernel->layout,VK_SHADER_STAGE_COMPUTE_BIT,0,kernel->push_bytes,push);vkCmdDispatch(c->command,gx,gy,gz);VkMemoryBarrier after={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&after,0,NULL,0,NULL);if((vr=vkEndCommandBuffer(c->command))!=VK_SUCCESS)return vk_error(err,"end compute command",vr);VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&c->command};if((vr=vkQueueSubmit(c->queue,1,&submit,c->fence))!=VK_SUCCESS)return vk_error(err,"submit compute command",vr);if((vr=vkWaitForFences(c->device,1,&c->fence,VK_TRUE,UINT64_MAX))!=VK_SUCCESS)return vk_error(err,"wait for compute command",vr);vkFreeDescriptorSets(c->device,c->descriptor_pool,1,&set);return FG_OK;
 }
 
 fg_status fg_vk_begin(fg_vk_context *c,fg_error *err){
     if(!c){fg_error_set(err,FG_ERR_ARGUMENT,"null context");return FG_ERR_ARGUMENT;}
-    if(c->in_batch){fg_error_set(err,FG_ERR_ARGUMENT,"already in batch");return FG_ERR_ARGUMENT;}
+    if(c->batch_depth){c->batch_depth++;return FG_OK;}
     VkResult vr;vkResetFences(c->device,1,&c->fence);vkResetCommandBuffer(c->command,0);
     VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     if((vr=vkBeginCommandBuffer(c->command,&begin))!=VK_SUCCESS)return vk_error(err,"begin batch command",vr);
     VkMemoryBarrier before={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT,.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT};
     vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&before,0,NULL,0,NULL);
-    c->in_batch=true;c->batch_set_count=0;return FG_OK;
+    c->batch_depth=1;c->batch_set_count=0;return FG_OK;
 }
 
 fg_status fg_vk_end(fg_vk_context *c,fg_error *err){
-    if(!c||!c->in_batch){fg_error_set(err,FG_ERR_ARGUMENT,"not in batch");return FG_ERR_ARGUMENT;}
+    if(!c||!c->batch_depth){fg_error_set(err,FG_ERR_ARGUMENT,"not in batch");return FG_ERR_ARGUMENT;}
+    if(c->batch_depth>1){c->batch_depth--;return FG_OK;}
     VkMemoryBarrier after={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};
     vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&after,0,NULL,0,NULL);
-    VkResult vr;if((vr=vkEndCommandBuffer(c->command))!=VK_SUCCESS){c->in_batch=false;return vk_error(err,"end batch command",vr);}
+    VkResult vr;if((vr=vkEndCommandBuffer(c->command))!=VK_SUCCESS){c->batch_depth=0;return vk_error(err,"end batch command",vr);}
     VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&c->command};
-    if((vr=vkQueueSubmit(c->queue,1,&submit,c->fence))!=VK_SUCCESS){c->in_batch=false;return vk_error(err,"submit batch command",vr);}
-    if((vr=vkWaitForFences(c->device,1,&c->fence,VK_TRUE,UINT64_MAX))!=VK_SUCCESS){c->in_batch=false;return vk_error(err,"wait for batch command",vr);}
+    if((vr=vkQueueSubmit(c->queue,1,&submit,c->fence))!=VK_SUCCESS){c->batch_depth=0;return vk_error(err,"submit batch command",vr);}
+    if((vr=vkWaitForFences(c->device,1,&c->fence,VK_TRUE,UINT64_MAX))!=VK_SUCCESS){c->batch_depth=0;return vk_error(err,"wait for batch command",vr);}
     for(uint32_t i=0;i<c->batch_set_count;i++)vkFreeDescriptorSets(c->device,c->descriptor_pool,1,&c->batch_sets[i]);
-    c->in_batch=false;c->batch_set_count=0;return FG_OK;
+    c->batch_depth=0;c->batch_set_count=0;return FG_OK;
 }
+bool fg_vk_batch_active(const fg_vk_context *c){return c&&c->batch_depth>0;}
 
 fg_status fg_vk_quantize_q8_k(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *input,uint32_t width,uint32_t tokens,fg_error *err){if(!c||!width||width%256u||!tokens||!tensor_range(input,0,(uint64_t)width*tokens*4u)||!tensor_range(out,0,(uint64_t)(width/256u)*tokens*296u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Q8_K quantization dispatch");return FG_ERR_ARGUMENT;}struct {uint32_t width,blocks,tokens;}push={width,width/256u,tokens};const fg_vk_tensor *bindings[]={input,out};return dispatch(c,&c->quant_q8k,bindings,&push,width/256u,tokens,1,err);}
 fg_status fg_vk_quantize_q8_0(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *input,uint32_t width,uint32_t tokens,fg_error *err){uint32_t blocks=width/32u;uint64_t bytes=(uint64_t)blocks*34u*tokens;if(!c||!width||width%64u||!tokens||!tensor_range(input,0,(uint64_t)width*tokens*4u)||!tensor_range(out,0,bytes)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Q8_0 quantization dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t width,blocks,tokens;}push={width,blocks,tokens};const fg_vk_tensor *bindings[]={input,out};return dispatch(c,&c->quant_q8,bindings,&push,tokens,1,1,err);}
