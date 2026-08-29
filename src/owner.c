@@ -129,8 +129,7 @@ fg_status fg_owner_decode_layer(fg_owner_executor *e,uint32_t layer,uint32_t tok
     fg_vk_context *vk=fg_model_vk(e->model);
     /* ---- FUSED BATCH 1: gr_read(attn) + attention + gr_write + gr_read(FFN) + router ---- */
     fg_vk_tensor *mixed=NULL,*injection=NULL,*block=NULL,*after_attention=NULL;const fg_vk_tensor *residual=NULL;
-    fg_status status=fg_vk_begin(vk,err); /* outer batch — nested begin/end inside sub-functions become no-ops */
-    if(status==FG_OK)status=fg_owner_gr_read(e,layer,false,layer_input,&mixed,&residual,&injection,err);double t_gr1=ts_ms();
+    fg_status status=fg_vk_begin(vk,err);if(status==FG_OK)status=fg_owner_gr_read(e,layer,false,layer_input,&mixed,&residual,&injection,err);double t_gr1=ts_ms();
     if(status==FG_OK)status=(layer&3u)==3u?fg_owner_qsa_decode(e,layer,token,position,mixed,&block,err):fg_owner_gdn_decode(e,layer,mixed,&block,err);double t_attn=ts_ms();
     if(status==FG_OK)status=fg_owner_gr_write(e,residual,block,injection,&after_attention,err);double t_grw1=ts_ms();
     if(status==FG_OK)status=fg_owner_gr_read(e,layer,true,after_attention,&mixed,&residual,&injection,err);double t_gr2=ts_ms();
