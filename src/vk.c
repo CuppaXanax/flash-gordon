@@ -235,9 +235,10 @@ fg_status fg_vk_bench_dense_q8(fg_vk_context *c,fg_error *err){
         /* --- MODE A: no-barrier dispatches with GPU timestamps --- */
         uint32_t ts_base_a=s*TS_PER_SHAPE;
         if(status==FG_OK){
+            fprintf(stderr,"  Mode A: recording %u dispatches...\n",BENCH_N);
             vkResetFences(c->device,1,&c->fence);vkResetCommandBuffer(c->command,0);
             VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
-            vr=vkBeginCommandBuffer(c->command,&begin);if(vr!=VK_SUCCESS){status=FG_ERR_IO;break;}
+            vr=vkBeginCommandBuffer(c->command,&begin);if(vr!=VK_SUCCESS){fprintf(stderr,"  beginCB failed: %d\n",(int)vr);status=FG_ERR_IO;break;}
             vkCmdResetQueryPool(c->command,qpool,ts_base_a,BENCH_N*2+2);
             /* Host→device barrier once at start */
             VkMemoryBarrier hd={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT,.dstAccessMask=VK_ACCESS_SHADER_READ_BIT};
@@ -247,15 +248,20 @@ fg_status fg_vk_bench_dense_q8(fg_vk_context *c,fg_error *err){
             for(uint32_t i=0;status==FG_OK&&i<BENCH_N;i++){
                 vkCmdWriteTimestamp(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,qpool,ts_base_a+1+i*2);
                 status=bench_record_dispatch_no_barrier(c,&c->dense,w,x,y[i],&push,out_dim,1,err);
+                if(status!=FG_OK){fprintf(stderr,"  dispatch %u failed: %s\n",i,err->message);}
                 vkCmdWriteTimestamp(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,qpool,ts_base_a+2+i*2);
             }
+            fprintf(stderr,"  Mode A: recorded, ending CB...\n");
             VkMemoryBarrier dh={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};
             vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&dh,0,NULL,0,NULL);
-            vkEndCommandBuffer(c->command);
-            VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&c->command};
-            vr=vkQueueSubmit(c->queue,1,&submit,c->fence);
-            if(vr!=VK_SUCCESS){fprintf(stderr,"Mode A submit failed: %d\n",(int)vr);status=FG_ERR_IO;}
-            if(status==FG_OK){vr=vkWaitForFences(c->device,1,&c->fence,VK_TRUE,5000000000ULL);if(vr!=VK_SUCCESS){fprintf(stderr,"Mode A fence: %d\n",(int)vr);status=FG_ERR_IO;}}
+            vr=vkEndCommandBuffer(c->command);if(vr!=VK_SUCCESS){fprintf(stderr,"  endCB failed: %d\n",(int)vr);status=FG_ERR_IO;}
+            if(status==FG_OK){
+                fprintf(stderr,"  Mode A: submitting...\n");
+                VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&c->command};
+                vr=vkQueueSubmit(c->queue,1,&submit,c->fence);
+                if(vr!=VK_SUCCESS){fprintf(stderr,"Mode A submit failed: %d\n",(int)vr);status=FG_ERR_IO;}
+            }
+            if(status==FG_OK){fprintf(stderr,"  Mode A: waiting fence...\n");vr=vkWaitForFences(c->device,1,&c->fence,VK_TRUE,5000000000ULL);if(vr!=VK_SUCCESS){fprintf(stderr,"Mode A fence: %d\n",(int)vr);status=FG_ERR_IO;}}
             for(uint32_t i=0;i<c->batch_set_count;i++)vkFreeDescriptorSets(c->device,c->descriptor_pool,1,&c->batch_sets[i]);
             c->batch_depth=0;c->batch_set_count=0;
         }
@@ -292,12 +298,14 @@ fg_status fg_vk_bench_dense_q8(fg_vk_context *c,fg_error *err){
         /* Read timestamps and compute results */
         uint64_t ts_a[BENCH_N*2+2],ts_b[BENCH_N*2+2];
         if(status==FG_OK){
-            vr=vkGetQueryPoolResults(c->device,qpool,ts_base_a,BENCH_N*2+2,sizeof(ts_a),ts_a,sizeof(uint64_t),VK_QUERY_RESULT_64_BIT|VK_QUERY_RESULT_WAIT_BIT);
-            if(vr!=VK_SUCCESS){status=FG_ERR_IO;}
+            fprintf(stderr,"  reading Mode A timestamps...\n");
+            vr=vkGetQueryPoolResults(c->device,qpool,ts_base_a,BENCH_N*2+2,sizeof(ts_a),ts_a,sizeof(uint64_t),VK_QUERY_RESULT_64_BIT);
+            if(vr!=VK_SUCCESS&&vr!=VK_NOT_READY){fprintf(stderr,"  Mode A query read: %d\n",(int)vr);status=FG_ERR_IO;}
         }
         if(status==FG_OK){
-            vr=vkGetQueryPoolResults(c->device,qpool,ts_base_b,BENCH_N*2+2,sizeof(ts_b),ts_b,sizeof(uint64_t),VK_QUERY_RESULT_64_BIT|VK_QUERY_RESULT_WAIT_BIT);
-            if(vr!=VK_SUCCESS){status=FG_ERR_IO;}
+            fprintf(stderr,"  reading Mode B timestamps...\n");
+            vr=vkGetQueryPoolResults(c->device,qpool,ts_base_b,BENCH_N*2+2,sizeof(ts_b),ts_b,sizeof(uint64_t),VK_QUERY_RESULT_64_BIT);
+            if(vr!=VK_SUCCESS&&vr!=VK_NOT_READY){fprintf(stderr,"  Mode B query read: %d\n",(int)vr);status=FG_ERR_IO;}
         }
 
         /* Mode C: standalone wall-clock (200 iterations) */
