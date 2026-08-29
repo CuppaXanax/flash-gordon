@@ -10,7 +10,6 @@ typedef struct fg_fabric fg_fabric;
 
 fg_status fg_fabric_open(fg_fabric **out,const fg_manifest *manifest,uint32_t rank,fg_error *err);
 void fg_fabric_close(fg_fabric *fabric);
-bool fg_fabric_uses_direct_io(const fg_fabric *fabric);
 fg_status fg_fabric_send(fg_fabric *fabric,uint32_t peer,fg_fabric_class cls,fg_message_type type,uint64_t request_id,uint32_t sequence,uint32_t flags,const void *payload,uint32_t bytes,fg_error *err);
 fg_status fg_fabric_recv(fg_fabric *fabric,uint32_t peer,fg_fabric_class cls,fg_frame_header *header,void *payload,uint32_t capacity,uint32_t *bytes,fg_error *err);
 fg_status fg_fabric_recv_any(fg_fabric *fabric,fg_fabric_class cls,uint32_t *peer,fg_frame_header *header,
