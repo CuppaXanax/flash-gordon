@@ -9,6 +9,14 @@ typedef fg_status (*fg_owner_expert_dispatch_fn)(void *context,uint32_t layer,ui
                                                   const float gates[FG_TOP_K],const uint8_t *activation_q8k,
                                                   fg_expert_result results[FG_GROUP_SIZE],
                                                   uint32_t *result_count,fg_error *err);
+/* Async expert dispatch: fire sends + submit recvs, then collect results later. */
+typedef fg_status (*fg_owner_expert_fire_fn)(void *context,uint32_t layer,uint32_t token_index,
+                                             const uint16_t expert_ids[FG_TOP_K],
+                                             const float gates[FG_TOP_K],const uint8_t *activation_q8k,
+                                             fg_error *err);
+typedef fg_status (*fg_owner_expert_collect_fn)(void *context,uint32_t layer,uint32_t token_index,
+                                                fg_expert_result results[FG_GROUP_SIZE],
+                                                uint32_t *result_count,fg_error *err);
 typedef fg_status (*fg_owner_prefill_dispatch_fn)(void *context,uint32_t layer,
                                                    uint32_t first_token,uint16_t token_count,
                                                    const uint16_t *expert_ids,const float *gates,
@@ -71,6 +79,11 @@ fg_status fg_owner_decode_layer(fg_owner_executor *executor,uint32_t layer,uint3
                                 const fg_vk_tensor *ngram_embedding,
                                 fg_owner_expert_dispatch_fn dispatch,void *dispatch_context,
                                 fg_vk_tensor **output,fg_error *err);
+fg_status fg_owner_decode_layer_async(fg_owner_executor *executor,uint32_t layer,uint32_t token_index,
+                                      const uint32_t position[3],const fg_vk_tensor *hyper_input,
+                                      const fg_vk_tensor *ngram_embedding,
+                                      fg_owner_expert_fire_fn fire,fg_owner_expert_collect_fn collect,
+                                      void *dispatch_context,fg_vk_tensor **output,fg_error *err);
 fg_status fg_owner_prefill_layer(fg_owner_executor *executor,uint32_t layer,
                                  uint32_t first_token,const uint32_t *positions,
                                  uint16_t token_count,const fg_vk_tensor *hyper_input,
