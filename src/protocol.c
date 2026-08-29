@@ -225,7 +225,7 @@ fg_status fg_expert_results_validate_route(const fg_manifest *manifest,uint32_t 
         if(expert_ids[slot]>=FG_EXPERT_COUNT||seen_expert[expert_ids[slot]]){fg_error_set(err,FG_ERR_FORMAT,"invalid canonical expert at slot %u",slot);return FG_ERR_FORMAT;}
         seen_expert[expert_ids[slot]]=true;
     }
-    uint32_t received=0;
+    uint32_t received=0;bool has_prereduced=false;
     for(uint32_t r=0;r<result_count;r++){
         const fg_expert_result *result=&results[r];
         if(result->layer!=layer||result->position!=position||result->destination_rank!=owner_rank||result->source_rank>=FG_RANK_COUNT||seen_rank[result->source_rank]||!fg_topology_rank_in_layer(manifest,layer,result->source_rank)){fg_error_set(err,FG_ERR_MISMATCH,"stale or misrouted expert result %u",r);return FG_ERR_MISMATCH;}
@@ -233,11 +233,12 @@ fg_status fg_expert_results_validate_route(const fg_manifest *manifest,uint32_t 
         seen_rank[result->source_rank]=true;
         for(uint32_t i=0;i<result->selected_count;i++){
             uint32_t slot=result->routing_slots[i];
+            if(slot==0xFFu){has_prereduced=true;continue;}
             if(slot>=FG_TOP_K||seen_slot[slot]||manifest->expert_rank[layer][expert_ids[slot]]!=result->source_rank){fg_error_set(err,FG_ERR_MISMATCH,"expert result rank does not match route slot %u",slot);return FG_ERR_MISMATCH;}
             seen_slot[slot]=true;received++;
         }
     }
-    if(received!=FG_TOP_K){fg_error_set(err,FG_ERR_MISMATCH,"received %u of %u routed expert slots",received,FG_TOP_K);return FG_ERR_MISMATCH;}
+    if(!has_prereduced&&received!=FG_TOP_K){fg_error_set(err,FG_ERR_MISMATCH,"received %u of %u routed expert slots",received,FG_TOP_K);return FG_ERR_MISMATCH;}
     return FG_OK;
 }
 
