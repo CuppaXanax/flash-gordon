@@ -16,10 +16,6 @@ fg_status fg_fabric_recv_any(fg_fabric *fabric,fg_fabric_class cls,uint32_t *pee
                              void *payload,uint32_t capacity,uint32_t *bytes,fg_error *err);
 fg_status fg_fabric_wait_ready(fg_fabric *fabric,uint32_t class_mask,uint32_t *peer,
                                fg_fabric_class *ready_class,fg_error *err);
-fg_status fg_fabric_prep_frame_send(fg_fabric *fabric,uint32_t peer,fg_fabric_class cls,
-                                    const void *frame,uint32_t bytes,uint64_t tag,fg_error *err);
-fg_status fg_fabric_prep_frame_recv(fg_fabric *fabric,uint32_t peer,fg_fabric_class cls,
-                                    void *frame,uint32_t bytes,uint64_t tag,fg_error *err);
 /* Async recv: prep header recv SQEs, flush, reap, then prep payload recvs. */
 fg_status fg_fabric_prep_header_recv(fg_fabric *fabric,uint32_t peer,fg_fabric_class cls,
                                      fg_frame_header *header,uint64_t tag,fg_error *err);
