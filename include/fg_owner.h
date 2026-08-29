@@ -57,6 +57,8 @@ fg_status fg_owner_ple_prefill(fg_owner_executor *executor,const fg_vk_tensor *h
                                fg_vk_tensor **output,fg_error *err);
 fg_status fg_owner_qsa_open(fg_owner_executor *executor,const char *state_path,bool create,
                             fg_error *err);
+fg_status fg_owner_qsa_open_decode(fg_owner_executor *executor,const char *state_path,
+                                   uint32_t resident_tokens,fg_error *err);
 fg_status fg_owner_qsa_decode(fg_owner_executor *executor,uint32_t layer,uint32_t token_index,
                               const uint32_t position[3],const fg_vk_tensor *hidden,
                               fg_vk_tensor **output,fg_error *err);

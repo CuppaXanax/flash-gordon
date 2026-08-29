@@ -113,6 +113,11 @@ fg_status fg_owner_qsa_open(fg_owner_executor *executor,const char *state_path,b
     if(executor->qsa){fg_error_set(err,FG_ERR_MISMATCH,"owner QSA session is already open");return FG_ERR_MISMATCH;}
     return fg_qsa_session_open(&executor->qsa,executor->model,state_path,create,err);
 }
+fg_status fg_owner_qsa_open_decode(fg_owner_executor *executor,const char *state_path,uint32_t resident_tokens,fg_error *err){
+    if(!executor||!state_path){fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner QSA decode open arguments");return FG_ERR_ARGUMENT;}
+    if(executor->qsa){fg_error_set(err,FG_ERR_MISMATCH,"owner QSA session is already open");return FG_ERR_MISMATCH;}
+    return fg_qsa_session_open_decode(&executor->qsa,executor->model,state_path,resident_tokens,err);
+}
 
 fg_status fg_owner_qsa_decode(fg_owner_executor *executor,uint32_t layer,uint32_t token,const uint32_t position[3],const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err){
     if(!executor||!executor->qsa||!owns_layer(executor,layer)||(layer&3u)!=3u){fg_error_set(err,FG_ERR_MISMATCH,"QSA decode is not on an initialized QSA layer owner");return FG_ERR_MISMATCH;}
