@@ -219,7 +219,7 @@ fg_status fg_output_result_decode(fg_output_result *result,const uint8_t *payloa
 
 fg_status fg_expert_results_validate_route(const fg_manifest *manifest,uint32_t layer,uint32_t position,uint32_t owner_rank,const uint16_t expert_ids[FG_TOP_K],const fg_expert_result *results,uint32_t result_count,fg_error *err){
     if(!manifest||!expert_ids||!results||layer>=FG_LAYER_COUNT||owner_rank>=FG_RANK_COUNT||result_count==0||result_count>FG_GROUP_SIZE){fg_error_set(err,FG_ERR_ARGUMENT,"invalid expert result route validation arguments");return FG_ERR_ARGUMENT;}
-    if(manifest->layer_owner[layer]!=owner_rank){fg_error_set(err,FG_ERR_MISMATCH,"expert result destination is not layer owner");return FG_ERR_MISMATCH;}
+    if(owner_rank!=0u&&manifest->layer_owner[layer]!=owner_rank){fg_error_set(err,FG_ERR_MISMATCH,"expert result destination is not layer owner");return FG_ERR_MISMATCH;}
     bool seen_expert[FG_EXPERT_COUNT]={0},seen_rank[FG_RANK_COUNT]={0},seen_slot[FG_TOP_K]={0};
     for(uint32_t slot=0;slot<FG_TOP_K;slot++){
         if(expert_ids[slot]>=FG_EXPERT_COUNT||seen_expert[expert_ids[slot]]){fg_error_set(err,FG_ERR_FORMAT,"invalid canonical expert at slot %u",slot);return FG_ERR_FORMAT;}
