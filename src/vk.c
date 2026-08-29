@@ -187,7 +187,7 @@ fg_status fg_vk_bench_dense_q8(fg_vk_context *c,fg_error *err){
     VkResult vr=vkCreateDescriptorPool(c->device,&bdp,NULL,&c->descriptor_pool);
     if(vr!=VK_SUCCESS){c->descriptor_pool=saved_pool;return vk_error(err,"create bench descriptor pool",vr);}
 
-    #define BENCH_N 50
+    #define BENCH_N 10
     #define TS_PER_SHAPE (2+BENCH_N*2+BENCH_N*2) /* warmup boundary + A pairs + B pairs */
     struct {uint32_t in,out;const char *name;} shapes[]={
         {10240,320,"hc_down 10240→320"},{320,10240,"hc_up 320→10240"},
@@ -251,8 +251,9 @@ fg_status fg_vk_bench_dense_q8(fg_vk_context *c,fg_error *err){
             vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&dh,0,NULL,0,NULL);
             vkEndCommandBuffer(c->command);
             VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&c->command};
-            vkQueueSubmit(c->queue,1,&submit,c->fence);
-            vkWaitForFences(c->device,1,&c->fence,VK_TRUE,UINT64_MAX);
+            vr=vkQueueSubmit(c->queue,1,&submit,c->fence);
+            if(vr!=VK_SUCCESS){fprintf(stderr,"Mode A submit failed: %d\n",(int)vr);status=FG_ERR_IO;}
+            if(status==FG_OK){vr=vkWaitForFences(c->device,1,&c->fence,VK_TRUE,5000000000ULL);if(vr!=VK_SUCCESS){fprintf(stderr,"Mode A fence: %d\n",(int)vr);status=FG_ERR_IO;}}
             for(uint32_t i=0;i<c->batch_set_count;i++)vkFreeDescriptorSets(c->device,c->descriptor_pool,1,&c->batch_sets[i]);
             c->batch_depth=0;c->batch_set_count=0;
         }
@@ -279,8 +280,9 @@ fg_status fg_vk_bench_dense_q8(fg_vk_context *c,fg_error *err){
             vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&dh,0,NULL,0,NULL);
             vkEndCommandBuffer(c->command);
             VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&c->command};
-            vkQueueSubmit(c->queue,1,&submit,c->fence);
-            vkWaitForFences(c->device,1,&c->fence,VK_TRUE,UINT64_MAX);
+            vr=vkQueueSubmit(c->queue,1,&submit,c->fence);
+            if(vr!=VK_SUCCESS){fprintf(stderr,"Mode B submit failed: %d\n",(int)vr);status=FG_ERR_IO;}
+            if(status==FG_OK){vr=vkWaitForFences(c->device,1,&c->fence,VK_TRUE,5000000000ULL);if(vr!=VK_SUCCESS){fprintf(stderr,"Mode B fence: %d\n",(int)vr);status=FG_ERR_IO;}}
             for(uint32_t i=0;i<c->batch_set_count;i++)vkFreeDescriptorSets(c->device,c->descriptor_pool,1,&c->batch_sets[i]);
             c->batch_depth=0;c->batch_set_count=0;
         }
