@@ -57,10 +57,11 @@ fg_status fg_owner_moe_reduce(fg_owner_executor *e,uint32_t layer,uint32_t posit
     const fg_manifest *manifest=fg_model_manifest(e->model);uint32_t owner=fg_model_rank(e->model);const float *slot_output[FG_TOP_K]={0};bool seen_expert[FG_EXPERT_COUNT]={0};
     for(uint32_t slot=0;slot<FG_TOP_K;slot++){if(expert_ids[slot]>=FG_EXPERT_COUNT||seen_expert[expert_ids[slot]]||!isfinite(gates[slot])){fg_error_set(err,FG_ERR_FORMAT,"invalid canonical route slot %u",slot);return FG_ERR_FORMAT;}seen_expert[expert_ids[slot]]=true;}
     fg_status route_status=fg_expert_results_validate_route(manifest,layer,position,owner,expert_ids,results,result_count,err);if(route_status!=FG_OK)return route_status;
-    for(uint32_t r=0;r<result_count;r++)for(uint32_t i=0;i<results[r].selected_count;i++)slot_output[results[r].routing_slots[i]]=results[r].outputs[i];
-    for(uint32_t slot=0;slot<FG_TOP_K;slot++){
-        if(!slot_output[slot]){fg_error_set(err,FG_ERR_MISMATCH,"missing expert result slot %u",slot);return FG_ERR_MISMATCH;}
-    }
+    /* Check for pre-reduced results (routing_slot 0xFF = worker already applied gates) */
+    bool has_prereduced=false;
+    float prereduced[FG_HIDDEN_SIZE]={0};
+    for(uint32_t r=0;r<result_count;r++)for(uint32_t i=0;i<results[r].selected_count;i++){if(results[r].routing_slots[i]==0xFFu){has_prereduced=true;const float *out=results[r].outputs[i];for(uint32_t j=0;j<FG_HIDDEN_SIZE;j++)prereduced[j]+=out[j];}else{slot_output[results[r].routing_slots[i]]=results[r].outputs[i];}}
+    if(!has_prereduced){for(uint32_t slot=0;slot<FG_TOP_K;slot++){if(!slot_output[slot]){fg_error_set(err,FG_ERR_MISMATCH,"missing expert result slot %u",slot);return FG_ERR_MISMATCH;}}}
     float shared_scale=1.0f/(1.0f+expf(-*(const float *)fg_vk_tensor_map(e->shared_scalar)));
     /* Cache-friendly reduction: copy GPU-mapped (write-combining) data to stack,
        reduce in L1, then write result back.  The WC mapping makes scattered reads
@@ -68,7 +69,10 @@ fg_status fg_owner_moe_reduce(fg_owner_executor *e,uint32_t layer,uint32_t posit
     float shared_local[FG_HIDDEN_SIZE],result_local[FG_HIDDEN_SIZE];
     memcpy(shared_local,fg_vk_tensor_map(e->shared_output),FG_HIDDEN_SIZE*sizeof(float));
     for(uint32_t element=0;element<FG_HIDDEN_SIZE;element++)result_local[element]=shared_scale*shared_local[element];
-    for(uint32_t slot=0;slot<FG_TOP_K;slot++){float g=gates[slot];const float *out=slot_output[slot];for(uint32_t element=0;element<FG_HIDDEN_SIZE;element++)result_local[element]=fmaf(g,out[element],result_local[element]);}
+    if(has_prereduced){for(uint32_t element=0;element<FG_HIDDEN_SIZE;element++)result_local[element]+=prereduced[element];
+    /* Add any non-pre-reduced slot outputs (e.g., local experts on coordinator) */
+    for(uint32_t slot=0;slot<FG_TOP_K;slot++){if(slot_output[slot]){float g=gates[slot];const float *out=slot_output[slot];for(uint32_t element=0;element<FG_HIDDEN_SIZE;element++)result_local[element]=fmaf(g,out[element],result_local[element]);}}
+    }else{for(uint32_t slot=0;slot<FG_TOP_K;slot++){float g=gates[slot];const float *out=slot_output[slot];for(uint32_t element=0;element<FG_HIDDEN_SIZE;element++)result_local[element]=fmaf(g,out[element],result_local[element]);}}
     memcpy(fg_vk_tensor_map(e->reduced),result_local,FG_HIDDEN_SIZE*sizeof(float));
     *output=e->reduced;return FG_OK;
 }

@@ -160,11 +160,24 @@ static fg_status handle_expert_work(fg_fabric *fabric,fg_expert_executor *expert
     double tw_decode=dispatch_ts();
     uint32_t result_bytes=0;if(status==FG_OK)status=fg_expert_decode(expert,&work,result,err);
     double tw_gpu=dispatch_ts();
+    /* Worker-local weighted reduction: apply gates and sum to ONE vector */
+    if(status==FG_OK&&result->selected_count>0u){
+        float reduced[FG_HIDDEN_SIZE]={0};
+        for(uint32_t i=0;i<result->selected_count;i++){
+            float g=work.gates[i];
+            const float *out=result->outputs[i];
+            for(uint32_t j=0;j<FG_HIDDEN_SIZE;j++)reduced[j]=fmaf(g,out[j],reduced[j]);
+        }
+        memcpy(result->outputs[0],reduced,sizeof(reduced));
+        result->selected_count=1;
+        result->routing_slots[0]=0xFFu; /* pre-reduced sentinel */
+    }
+    double tw_reduce=dispatch_ts();
     if(status==FG_OK)status=fg_expert_result_encode(wire,FG_EXPERT_RESULT_MAX_BYTES,&result_bytes,result,err);
     double tw_encode=dispatch_ts();
     if(status==FG_OK)status=fg_fabric_send(fabric,peer,FG_FABRIC_BULK,FG_MSG_EXPERT_RESULT,fg_frame_request_id(header),fg_frame_sequence(header),0,wire,result_bytes,err);
     double tw_send=dispatch_ts();
-    if(status==FG_OK&&work.position>=26u&&work.position<28u){fprintf(stderr,"WORKER_EXPERT layer[%u] t=%u rank=%u sel=%u decode=%.2f gpu=%.2f encode=%.2f send=%.2f total=%.2f\n",work.layer,work.position,self,work.selected_count,tw_decode-tw0,tw_gpu-tw_decode,tw_encode-tw_gpu,tw_send-tw_encode,tw_send-tw0);}
+    if(status==FG_OK&&work.position>=26u&&work.position<28u){fprintf(stderr,"WORKER_EXPERT layer[%u] t=%u rank=%u sel=%u decode=%.2f gpu=%.2f reduce=%.2f encode=%.2f send=%.2f total=%.2f\n",work.layer,work.position,self,work.selected_count,tw_decode-tw0,tw_gpu-tw_decode,tw_reduce-tw_gpu,tw_encode-tw_reduce,tw_send-tw_encode,tw_send-tw0);}
     return status;
 }
 
