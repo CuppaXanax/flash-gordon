@@ -113,10 +113,10 @@ fg_status fg_owner_qsa_open(fg_owner_executor *executor,const char *state_path,b
     if(executor->qsa){fg_error_set(err,FG_ERR_MISMATCH,"owner QSA session is already open");return FG_ERR_MISMATCH;}
     return fg_qsa_session_open(&executor->qsa,executor->model,state_path,create,err);
 }
-fg_status fg_owner_qsa_open_decode(fg_owner_executor *executor,const char *state_path,uint32_t resident_tokens,fg_error *err){
+fg_status fg_owner_qsa_open_decode(fg_owner_executor *executor,const char *state_path,uint32_t resident_tokens,uint32_t batch_size,fg_error *err){
     if(!executor||!state_path){fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner QSA decode open arguments");return FG_ERR_ARGUMENT;}
     if(executor->qsa){fg_error_set(err,FG_ERR_MISMATCH,"owner QSA session is already open");return FG_ERR_MISMATCH;}
-    return fg_qsa_session_open_decode(&executor->qsa,executor->model,state_path,resident_tokens,err);
+    return fg_qsa_session_open_decode(&executor->qsa,executor->model,state_path,resident_tokens,batch_size,err);
 }
 void fg_owner_qsa_set_tokens(fg_owner_executor *executor,uint32_t tokens){if(executor&&executor->qsa)fg_qsa_session_set_tokens(executor->qsa,tokens);}
 
