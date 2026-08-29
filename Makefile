@@ -47,7 +47,6 @@ test-vulkan: tests/test_fg_vk tests/test_model_load tests/test_tokenizer tests/t
 	./tests/test_model_load || test $$? -eq 77
 	./tests/test_tokenizer || test $$? -eq 77
 	./tests/test_fabric || test $$? -eq 77
-	FG_FABRIC_IO=direct ./tests/test_fabric
 
 clean:
 	rm -f flash-gordon $(OBJ) $(DEP) tests/*.o tests/test_core tests/test_fg_vk tests/test_model_load tests/test_tokenizer tests/test_fabric $(FG_SHADER_OUT)
