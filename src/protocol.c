@@ -67,7 +67,7 @@ fg_status fg_decode_work_decode(fg_decode_work *w,const uint8_t *p,uint32_t byte
 
 static fg_status validate_expert_result(const fg_expert_result *result,fg_error *err){
     if(!result||result->layer>=FG_LAYER_COUNT||result->source_rank>=FG_RANK_COUNT||result->destination_rank>=FG_RANK_COUNT||result->selected_count==0||result->selected_count>FG_TOP_K){fg_error_set(err,FG_ERR_FORMAT,"invalid expert result header");return FG_ERR_FORMAT;}
-    bool seen[FG_TOP_K]={0};for(uint32_t i=0;i<result->selected_count;i++){uint32_t slot=result->routing_slots[i];if(slot>=FG_TOP_K||seen[slot]){fg_error_set(err,FG_ERR_FORMAT,"invalid expert result slot %u",slot);return FG_ERR_FORMAT;}seen[slot]=true;for(uint32_t j=0;j<FG_HIDDEN_SIZE;j++)if(!isfinite(result->outputs[i][j])){fg_error_set(err,FG_ERR_FORMAT,"non-finite expert result at slot %u element %u",slot,j);return FG_ERR_FORMAT;}}
+    bool seen[FG_TOP_K]={0};for(uint32_t i=0;i<result->selected_count;i++){uint32_t slot=result->routing_slots[i];if(slot==0xFFu){/* pre-reduced sentinel — skip slot validation */}else if(slot>=FG_TOP_K||seen[slot]){fg_error_set(err,FG_ERR_FORMAT,"invalid expert result slot %u",slot);return FG_ERR_FORMAT;}else{seen[slot]=true;}for(uint32_t j=0;j<FG_HIDDEN_SIZE;j++)if(!isfinite(result->outputs[i][j])){fg_error_set(err,FG_ERR_FORMAT,"non-finite expert result at slot %u element %u",slot,j);return FG_ERR_FORMAT;}}
     return FG_OK;
 }
 
