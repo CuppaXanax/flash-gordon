@@ -107,6 +107,7 @@ static fg_status fire_experts(void *opaque,uint32_t layer,uint32_t token,const u
 
 /* Async collect: reap header CQEs, submit payload recvs, reap payloads, decode results */
 static fg_status collect_experts(void *opaque,uint32_t layer,uint32_t token,fg_expert_result results[FG_GROUP_SIZE],uint32_t *result_count,fg_error *err){
+    (void)layer;(void)token;
     async_expert_context *ctx=opaque;*result_count=0;fg_status status=FG_OK;
     /* Copy local results first */
     for(uint32_t i=0;i<ctx->local_count;i++){results[(*result_count)++]=ctx->local_results[i];}
