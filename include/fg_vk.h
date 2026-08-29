@@ -19,6 +19,8 @@ typedef struct fg_vk_profile {
     uint32_t kernel_count;
     uint64_t submissions;
     uint64_t dispatches;
+    uint64_t descriptor_updates;
+    uint64_t descriptor_cache_hits;
     double gpu_ms;
     double kernel_ms;
     fg_vk_profile_kernel kernels[FG_VK_PROFILE_MAX_KERNELS];
