@@ -1,5 +1,6 @@
 #include "fg_manifest.h"
 #include "fg_loader.h"
+#include "fg_pipeline.h"
 #include "fg_ngram.h"
 #include "fg_pack.h"
 #include "fg_protocol.h"
@@ -119,4 +120,10 @@ static void test_prefill_protocol(void){
     free(result_wire);free(decoded_outputs);free(outputs);free(wire);free(decoded_activations);free(activations);
 }
 
-int main(void){test_sha();test_topology();test_profile();test_deployment_profile();test_protocol();test_layer_protocol();test_output_protocol();test_ngram();test_ngram_planner_batch_capacity();test_qsa_state();test_qsa_state_batch();test_q38_math();test_decode_protocol();test_prefill_protocol();test_pack();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}
+static void test_pipeline_ring_init(void){fg_pipeline_ring ring;fg_pipeline_ring_init(&ring);CHECK(ring.count==0);CHECK(ring.head==0);CHECK(ring.tail==0);}
+static void test_pipeline_ring_push(void){fg_pipeline_ring ring;fg_pipeline_ring_init(&ring);fg_pipeline_slot *s=fg_pipeline_ring_push(&ring);CHECK(s!=NULL);CHECK(ring.count==1);CHECK(ring.head==1);CHECK(ring.tail==0);CHECK(s->last_committed_layer==-1);s->token_index=42;CHECK(ring.slots[0].token_index==42);}
+static void test_pipeline_ring_pop(void){fg_pipeline_ring ring;fg_pipeline_ring_init(&ring);fg_pipeline_slot *s=fg_pipeline_ring_push(&ring);s->token_index=7;s->next_token=99;fg_pipeline_slot *p=fg_pipeline_ring_pop(&ring);CHECK(p!=NULL);CHECK(p->token_index==7);CHECK(p->next_token==99);CHECK(ring.count==0);CHECK(ring.tail==1);CHECK(fg_pipeline_ring_pop(&ring)==NULL);}
+static void test_pipeline_ring_full(void){fg_pipeline_ring ring;fg_pipeline_ring_init(&ring);for(uint32_t i=0;i<FG_PIPELINE_DEPTH;i++){fg_pipeline_slot *s=fg_pipeline_ring_push(&ring);CHECK(s!=NULL);if(s)s->token_index=i;}CHECK(ring.count==FG_PIPELINE_DEPTH);CHECK(fg_pipeline_ring_push(&ring)==NULL);}
+static void test_pipeline_ring_lookup(void){fg_pipeline_ring ring;fg_pipeline_ring_init(&ring);for(uint32_t i=0;i<4;i++){fg_pipeline_slot *s=fg_pipeline_ring_push(&ring);s->token_index=100+i;}fg_pipeline_slot *found=fg_pipeline_ring_lookup(&ring,102);CHECK(found!=NULL);CHECK(found->token_index==102);CHECK(fg_pipeline_ring_lookup(&ring,999)==NULL);fg_pipeline_ring_pop(&ring);CHECK(fg_pipeline_ring_lookup(&ring,100)==NULL);CHECK(fg_pipeline_ring_lookup(&ring,101)!=NULL);/* wrap-around */for(uint32_t i=4;i<4+FG_PIPELINE_DEPTH-3;i++){fg_pipeline_slot *s=fg_pipeline_ring_push(&ring);if(s)s->token_index=100+i;}CHECK(ring.count==FG_PIPELINE_DEPTH);CHECK(fg_pipeline_ring_lookup(&ring,100+FG_PIPELINE_DEPTH)==NULL);CHECK(fg_pipeline_ring_lookup(&ring,101)!=NULL);CHECK(fg_pipeline_ring_lookup(&ring,100+FG_PIPELINE_DEPTH-1)!=NULL);}
+
+int main(void){test_sha();test_topology();test_profile();test_deployment_profile();test_protocol();test_layer_protocol();test_output_protocol();test_ngram();test_ngram_planner_batch_capacity();test_qsa_state();test_qsa_state_batch();test_q38_math();test_decode_protocol();test_prefill_protocol();test_pack();test_pipeline_ring_init();test_pipeline_ring_push();test_pipeline_ring_pop();test_pipeline_ring_full();test_pipeline_ring_lookup();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}
