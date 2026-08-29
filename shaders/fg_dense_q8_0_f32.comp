@@ -6,22 +6,24 @@ layout(set=0,binding=2)writeonly buffer Output{float y[];};
 layout(push_constant)uniform Push{uint out_dim;uint n_tok;uint blocks;uint row_bytes;float scale;}pc;
 shared float sum[64];
 
-/* Production Q8_0 matvec — block-sequential, 4-quants-per-load.
-   Each thread processes complete Q8_0 blocks with stride 64.
-   Per block: 1 scale load + 8 groups of 4 quants (8 or 16 uint loads).
-   For even blocks (quant byte offset ≡ 2 mod 4): combine 2 words.
-   For odd blocks (quant byte offset ≡ 0 mod 4): direct word load.
-   Processes 4× more quants per loop iteration than the original kernel. */
+/* Production Q8_0 matvec — 4-element unroll with coalesced wave access.
+   Each thread processes 4 consecutive quant elements per iteration
+   (1 uint32 word = 4 int8 quants), stride 256 across threads.
+   All threads in a wave stay in nearby blocks → good spatial locality.
+   ~2.5× fewer VMEM load instructions than per-byte baseline. */
 
 void main(){
     uint tid=gl_LocalInvocationID.x,row=gl_WorkGroupID.x,tok=gl_WorkGroupID.y;
     if(row>=pc.out_dim||tok>=pc.n_tok)return;
+    uint in_dim=pc.blocks*32u;
     uint row_byte=row*pc.row_bytes;
-    uint x_base=tok*pc.blocks*32u;
+    uint x_base=tok*in_dim;
     float acc=0.0;
 
-    for(uint block=tid;block<pc.blocks;block+=64u){
-        uint bb=row_byte+block*34u; /* byte offset of this Q8_0 block */
+    for(uint i=tid*4u;i+3u<in_dim;i+=256u){
+        uint block=i>>5u;
+        uint within=i&31u; /* always multiple of 4: 0,4,8,...,28 */
+        uint bb=row_byte+block*34u;
 
         /* Load scale: 2 bytes at bb */
         uint sw=wb[bb>>2u];
@@ -30,27 +32,25 @@ void main(){
         if((bb&3u)==3u){sr=(sw>>24u)|((wb[(bb>>2u)+1u]&0xFFu)<<8u);}
         float d=unpackHalf2x16(sr).x;
 
-        /* Quant start byte and its alignment */
-        uint qs=bb+2u;
-        uint qw0=qs>>2u;        /* first word containing quant data */
-        uint qshift=(qs&3u)*8u; /* 0 or 16 — constant for all 8 groups in this block */
-        uint elem=block*32u;
-
-        /* 8 groups of 4 quants each */
-        for(uint g=0u;g<8u;g++){
-            uint combined;
-            if(qshift==0u){
-                combined=wb[qw0+g];
-            }else{
-                combined=(wb[qw0+g]>>qshift)|(wb[qw0+g+1u]<<(32u-qshift));
-            }
-            int q0=int(combined&0xFFu);q0-=(q0>=128)?256:0;
-            int q1=int((combined>>8u)&0xFFu);q1-=(q1>=128)?256:0;
-            int q2=int((combined>>16u)&0xFFu);q2-=(q2>=128)?256:0;
-            int q3=int(combined>>24u);q3-=(q3>=128)?256:0;
-            uint e=x_base+elem+g*4u;
-            acc+=d*(float(q0)*x[e]+float(q1)*x[e+1u]+float(q2)*x[e+2u]+float(q3)*x[e+3u]);
+        /* Load 4 quant bytes as one uint32.
+           qoff = bb + 2 + within. Extract 4 consecutive bytes. */
+        uint qoff=bb+2u+within;
+        uint qw=qoff>>2u;
+        uint qs=(qoff&3u)*8u;
+        uint combined;
+        if(qs==0u){
+            combined=wb[qw];
+        }else{
+            combined=(wb[qw]>>qs)|(wb[qw+1u]<<(32u-qs));
         }
+
+        int q0=int(combined&0xFFu);q0-=(q0>=128)?256:0;
+        int q1=int((combined>>8u)&0xFFu);q1-=(q1>=128)?256:0;
+        int q2=int((combined>>16u)&0xFFu);q2-=(q2>=128)?256:0;
+        int q3=int(combined>>24u);q3-=(q3>=128)?256:0;
+
+        uint e=x_base+i;
+        acc+=d*(float(q0)*x[e]+float(q1)*x[e+1u]+float(q2)*x[e+2u]+float(q3)*x[e+3u]);
     }
 
     sum[tid]=acc;barrier();
