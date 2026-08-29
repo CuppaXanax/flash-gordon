@@ -1,10 +1,13 @@
 #include "fg_model.h"
 #include "fg_loader.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 struct fg_model {
     fg_vk_context *vk;
@@ -64,28 +67,32 @@ fg_status fg_model_open_replicated(fg_model **out,const fg_manifest *manifest,co
     if(status==FG_OK)status=fg_vk_tensor_create(model->vk,cursor,&model->arena,err);
     void *mapped=status==FG_OK?fg_vk_tensor_map(model->arena):NULL;
     if(status==FG_OK&&(!mapped||!fg_is_aligned_u64((uintptr_t)mapped,FG_ALIGNMENT))){fg_error_set(err,FG_ERR_UNAVAILABLE,"replicated arena is not 4 KiB aligned");status=FG_ERR_UNAVAILABLE;}
-    /* Phase 3: load weights from each source rank's file */
+    /* Phase 3: load weights — read each tensor directly from its source rank file
+       using a small bounce buffer instead of loading entire rank files. */
+    const uint32_t chunk=8u*1024u*1024u;
+    void *bounce=status==FG_OK?aligned_alloc(FG_ALIGNMENT,chunk):NULL;
+    if(status==FG_OK&&!bounce){fg_error_set(err,FG_ERR_OOM,"allocate replicated bounce chunk");status=FG_ERR_OOM;}
     for(uint32_t src=0;status==FG_OK&&src<FG_RANK_COUNT;src++){
-        /* Check if any included tensor comes from this source rank */
         bool need_src=false;
         for(uint32_t i=0;!need_src&&i<manifest->tensor_count;i++)
             if(included[i]&&manifest->tensors[i].rank==src)need_src=true;
         if(!need_src)continue;
-        /* Load the source rank's full file into a temp bounce buffer, then copy
-           each included tensor into the combined arena at its remapped offset. */
-        uint64_t src_bytes=rank_high_water(manifest,src);
-        void *bounce=aligned_alloc(FG_ALIGNMENT,(size_t)src_bytes);
-        if(!bounce){fg_error_set(err,FG_ERR_OOM,"allocate replicated bounce for rank %u",src);status=FG_ERR_OOM;break;}
-        status=fg_load_rank_weights(manifest,pack_dir,src,bounce,src_bytes,err);
-        if(status==FG_OK){
-            for(uint32_t i=0;i<manifest->tensor_count;i++){
-                if(!included[i]||manifest->tensors[i].rank!=src)continue;
-                const fg_tensor_record *t=&manifest->tensors[i];
-                memcpy((uint8_t *)mapped+remap[i],(const uint8_t *)bounce+t->offset,(size_t)t->bytes);
+        char path[1024];if(snprintf(path,sizeof(path),"%s/rank-%02u.fgw",pack_dir,src)>=(int)sizeof(path)){fg_error_set(err,FG_ERR_LIMIT,"rank file path overflow");status=FG_ERR_LIMIT;break;}
+        int fd=open(path,O_RDONLY|O_CLOEXEC);if(fd<0){fg_error_set(err,FG_ERR_IO,"open rank %u weights: %s",src,strerror(errno));status=FG_ERR_IO;break;}
+        for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++){
+            if(!included[i]||manifest->tensors[i].rank!=src)continue;
+            const fg_tensor_record *t=&manifest->tensors[i];
+            /* Copy tensor from rank file to arena via small bounce */
+            for(uint64_t off=0;status==FG_OK&&off<t->bytes;off+=chunk){
+                uint32_t n=(uint32_t)((t->bytes-off)>chunk?chunk:t->bytes-off);
+                ssize_t got=pread(fd,bounce,n,(off_t)(t->offset+off));
+                if(got!=(ssize_t)n){fg_error_set(err,FG_ERR_IO,"pread rank %u tensor %.48s: %s",src,t->name,got<0?strerror(errno):"short read");status=FG_ERR_IO;}
+                else memcpy((uint8_t *)mapped+remap[i]+off,bounce,n);
             }
         }
-        free(bounce);
+        close(fd);
     }
+    free(bounce);
     /* Phase 4: create tensor views at remapped offsets */
     for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++){
         if(!included[i])continue;
