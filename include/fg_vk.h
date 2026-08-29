@@ -24,6 +24,11 @@ typedef struct fg_vk_profile {
     fg_vk_profile_kernel kernels[FG_VK_PROFILE_MAX_KERNELS];
 } fg_vk_profile;
 
+typedef struct fg_vk_counters {
+    uint64_t submissions;
+    uint64_t dispatches;
+} fg_vk_counters;
+
 fg_status fg_vk_open(fg_vk_context **out,fg_error *err);
 void fg_vk_close(fg_vk_context *context);
 const char *fg_vk_device_name(const fg_vk_context *context);
@@ -32,6 +37,7 @@ fg_status fg_vk_profile_begin(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_profile_set_scope(fg_vk_context *context,const char *scope,fg_error *err);
 fg_status fg_vk_profile_end(fg_vk_context *context,fg_vk_profile *profile,fg_error *err);
 bool fg_vk_profile_active(const fg_vk_context *context);
+void fg_vk_get_counters(const fg_vk_context *context,fg_vk_counters *counters);
 
 fg_status fg_vk_begin(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_end(fg_vk_context *context,fg_error *err);

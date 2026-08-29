@@ -2,6 +2,8 @@
 
 Flash Gordon is a Linux-only C17 inference appliance specialized for Qwen3.8-Flash-Next on eight BC250 blades. It deliberately has no generic-model compatibility layer.
 
+Its distributed execution model is expert parallelism only. The coordinator executes the sequential common graph for one autoregressive token while each layer's routed experts fan out across their owning blades; pipeline parallelism is not part of the design. The immediate raw single-stream decode contract is a 10 tok/s floor and a 20 tok/s engineering target before MTP or multiple sessions.
+
 The implementation owns its complete runtime boundary: artifact format, rotating expert topology, memory ledger, GGUF parser and repacker, raw io_uring storage, fail-closed wire protocol, quantization primitives, Vulkan allocation/dispatch, and Qwen3.8-specific shaders. There is no linked or vendored inference runtime. Code adapted from another project is copied into Flash Gordon, renamed and maintained here, and admitted to a production path only after model-specific reference and Vulkan parity tests pass. Qwen's published architecture and processor behavior are the semantic authority; behavior inherited from another model runtime is not. Rank and text evaluation refuse a pack until text weights, the n-gram tensor, and tokenizer are sealed into the manifest. Vision and MTP are separately flagged overlays and are not prerequisites for the sealed text profile. HTTP serving is not enabled until its full request path is owned and qualified; the command fails closed rather than simulating inference.
 
 ## Build and test
@@ -12,7 +14,7 @@ make test
 make test-vulkan
 ```
 
-The build requires Linux headers with io_uring support, Vulkan headers and loader, and `glslangValidator`. It does not require liburing. The Vulkan suite executes production-dimension Qwen grouped-RMS, gated-residual, dense Q8_0, and routed-expert Q5_1 parity oracles.
+The build requires Linux headers with io_uring support, Vulkan headers and loader, and `glslangValidator`. It does not require liburing. The Vulkan suite executes production-dimension Qwen grouped-RMS, gated-residual, dense Q8_0, and routed-expert Q5_1 parity oracles. The core suite also validates the machine-readable 48-layer expert-parallel fleet-trace contract and proves corrupted expert coverage fails closed.
 
 ## Inspect a prospective pack
 
