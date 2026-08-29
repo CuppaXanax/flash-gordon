@@ -7,6 +7,7 @@
 typedef struct fg_model fg_model;
 
 fg_status fg_model_open(fg_model **out,const fg_manifest *manifest,const char *pack_dir,uint32_t rank,fg_error *err);
+fg_status fg_model_open_replicated(fg_model **out,const fg_manifest *manifest,const char *pack_dir,uint32_t rank,fg_error *err);
 void fg_model_close(fg_model *model);
 fg_vk_context *fg_model_vk(fg_model *model);
 fg_vk_tensor *fg_model_tensor(fg_model *model,const char *name);
