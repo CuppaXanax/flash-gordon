@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#define FG_OUTPUT_TOPK_CAPACITY (((FG_Q38_VOCAB_SIZE+4095u)/4096u)*512u)
+
 struct fg_output_executor {
     fg_model *model;
     fg_vk_tensor *normalized;
@@ -13,6 +15,9 @@ struct fg_output_executor {
     fg_vk_tensor *up;
     fg_vk_tensor *hidden;
     fg_vk_tensor *logits;
+    fg_vk_tensor *vocabulary_ids;
+    fg_vk_tensor *topk_scores[2];
+    fg_vk_tensor *topk_ids[2];
 };
 
 static fg_status scratch(fg_vk_context *vk,uint64_t values,fg_vk_tensor **out,fg_error *err){
@@ -34,12 +39,17 @@ fg_status fg_output_executor_create(fg_output_executor **out,fg_model *model,fg_
     if(status==FG_OK)status=scratch(vk,FG_Q38_HYPER_WIDTH,&executor->up,err);
     if(status==FG_OK)status=scratch(vk,FG_HIDDEN_SIZE,&executor->hidden,err);
     if(status==FG_OK)status=scratch(vk,FG_Q38_VOCAB_SIZE,&executor->logits,err);
+    if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)FG_Q38_VOCAB_SIZE*4u,&executor->vocabulary_ids,err);
+    for(uint32_t i=0;status==FG_OK&&i<2u;i++){status=scratch(vk,FG_OUTPUT_TOPK_CAPACITY,&executor->topk_scores[i],err);if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)FG_OUTPUT_TOPK_CAPACITY*4u,&executor->topk_ids[i],err);}
+    if(status==FG_OK){uint32_t *ids=fg_vk_tensor_map(executor->vocabulary_ids);for(uint32_t i=0;i<FG_Q38_VOCAB_SIZE;i++)ids[i]=i;}
     if(status!=FG_OK){fg_output_executor_destroy(executor);return status;}
     *out=executor;return FG_OK;
 }
 
 void fg_output_executor_destroy(fg_output_executor *executor){
     if(!executor)return;
+    for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(executor->topk_ids[i]);fg_vk_tensor_destroy(executor->topk_scores[i]);}
+    fg_vk_tensor_destroy(executor->vocabulary_ids);
     fg_vk_tensor_destroy(executor->logits);fg_vk_tensor_destroy(executor->hidden);
     fg_vk_tensor_destroy(executor->up);fg_vk_tensor_destroy(executor->activated);
     fg_vk_tensor_destroy(executor->down);fg_vk_tensor_destroy(executor->normalized);free(executor);
@@ -60,12 +70,17 @@ fg_status fg_output_logits(fg_output_executor *executor,const fg_vk_tensor *hype
 }
 
 fg_status fg_output_greedy(fg_output_executor *executor,const fg_vk_tensor *hyper,uint32_t *token,float *logit,fg_error *err){
-    if(!token){fg_error_set(err,FG_ERR_ARGUMENT,"greedy token output is null");return FG_ERR_ARGUMENT;}
-    fg_vk_tensor *logits=NULL;fg_status status=fg_output_logits(executor,hyper,&logits,err);if(status!=FG_OK)return status;
-    const float *values=fg_vk_tensor_map(logits);uint32_t best=0u;float best_value=values[0];
-    if(!isfinite(best_value)){fg_error_set(err,FG_ERR_MISMATCH,"non-finite output logit at token 0");return FG_ERR_MISMATCH;}
+    if(!executor||!token){fg_error_set(err,FG_ERR_ARGUMENT,"invalid greedy output arguments");return FG_ERR_ARGUMENT;}
+    fg_vk_context *vk=fg_model_vk(executor->model);if(fg_vk_batch_active(vk)){fg_error_set(err,FG_ERR_ARGUMENT,"greedy output cannot run inside a Vulkan batch");return FG_ERR_ARGUMENT;}
+    fg_vk_tensor *logits=NULL;fg_status status=fg_vk_begin(vk,err);if(status==FG_OK)status=fg_output_logits(executor,hyper,&logits,err);const fg_vk_tensor *scores=logits,*ids=executor->vocabulary_ids;uint32_t count=FG_Q38_VOCAB_SIZE,slot=0;
+    if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"output_topk",err);
+    while(status==FG_OK&&count>512u){uint32_t next=0;status=fg_vk_topk_reduce(vk,executor->topk_scores[slot],executor->topk_ids[slot],scores,ids,count,&next,err);scores=executor->topk_scores[slot];ids=executor->topk_ids[slot];count=next;slot^=1u;}
+    if(status==FG_OK){fg_status end_status=fg_vk_end(vk,err);if(end_status!=FG_OK)status=end_status;}else if(fg_vk_batch_active(vk))fg_vk_end(vk,err);
+    if(status!=FG_OK)return status;
+    const float *values=fg_vk_tensor_map((fg_vk_tensor *)scores);const uint32_t *indices=fg_vk_tensor_map((fg_vk_tensor *)ids);uint32_t best=indices[0];float best_value=values[0];
+    if(best>=FG_Q38_VOCAB_SIZE||!isfinite(best_value)){fg_error_set(err,FG_ERR_MISMATCH,"invalid output finalist at token %u",best);return FG_ERR_MISMATCH;}
     uint32_t second=0u,third=0u;float second_value=-1e30f,third_value=-1e30f;
-    for(uint32_t i=1;i<FG_Q38_VOCAB_SIZE;i++){if(!isfinite(values[i])){fg_error_set(err,FG_ERR_MISMATCH,"non-finite output logit at token %u",i);return FG_ERR_MISMATCH;}if(values[i]>best_value){third=second;third_value=second_value;second=best;second_value=best_value;best=i;best_value=values[i];}else if(values[i]>second_value){third=second;third_value=second_value;second=i;second_value=values[i];}else if(values[i]>third_value){third=i;third_value=values[i];}}
+    for(uint32_t i=1;i<count;i++){uint32_t index=indices[i];if(index>=FG_Q38_VOCAB_SIZE||!isfinite(values[i])){fg_error_set(err,FG_ERR_MISMATCH,"invalid output finalist at token %u",index);return FG_ERR_MISMATCH;}if(values[i]>best_value){third=second;third_value=second_value;second=best;second_value=best_value;best=index;best_value=values[i];}else if(values[i]>second_value){third=second;third_value=second_value;second=index;second_value=values[i];}else if(values[i]>third_value){third=index;third_value=values[i];}}
     const float *hyper_raw=fg_vk_tensor_map((fg_vk_tensor *)hyper);const float *hidden_raw=fg_vk_tensor_map(executor->hidden);
     fprintf(stderr,"greedy: top3 %u=%.4f %u=%.4f %u=%.4f hyper[0:4]=%.4f,%.4f,%.4f,%.4f hidden[0:4]=%.4f,%.4f,%.4f,%.4f\n",best,best_value,second,second_value,third,third_value,hyper_raw[0],hyper_raw[1],hyper_raw[2],hyper_raw[3],hidden_raw[0],hidden_raw[1],hidden_raw[2],hidden_raw[3]);
     *token=best;if(logit)*logit=best_value;return FG_OK;
