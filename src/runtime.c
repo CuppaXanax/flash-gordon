@@ -34,7 +34,7 @@ static fg_status token_profile_end(token_profile_capture *capture,uint32_t rank,
     fg_vk_profile profile={0};fg_error profile_error={0};fg_status profile_status=fg_vk_profile_end(capture->vk,&profile,status==FG_OK?err:&profile_error);
     if(profile_status!=FG_OK)return status==FG_OK?profile_status:status;
     struct timespec end;clock_gettime(CLOCK_MONOTONIC,&end);double wall_ms=(double)(end.tv_sec-capture->start.tv_sec)*1000.0+(double)(end.tv_nsec-capture->start.tv_nsec)*1e-6;
-    fprintf(stderr,"TOKEN_PROFILE rank=%u token=%u kind=%s layer=%u wall_ms=%.3f gpu_ms=%.3f kernel_ms=%.3f vk_overhead_ms=%.3f wall_residual_ms=%.3f submissions=%llu dispatches=%llu\n",rank,token,kind,layer,wall_ms,profile.gpu_ms,profile.kernel_ms,profile.gpu_ms-profile.kernel_ms,wall_ms-profile.gpu_ms,(unsigned long long)profile.submissions,(unsigned long long)profile.dispatches);
+    fprintf(stderr,"TOKEN_PROFILE rank=%u token=%u kind=%s layer=%u wall_ms=%.3f gpu_ms=%.3f kernel_ms=%.3f vk_overhead_ms=%.3f wall_residual_ms=%.3f submissions=%llu dispatches=%llu descriptor_updates=%llu descriptor_hits=%llu\n",rank,token,kind,layer,wall_ms,profile.gpu_ms,profile.kernel_ms,profile.gpu_ms-profile.kernel_ms,wall_ms-profile.gpu_ms,(unsigned long long)profile.submissions,(unsigned long long)profile.dispatches,(unsigned long long)profile.descriptor_updates,(unsigned long long)profile.descriptor_cache_hits);
     for(uint32_t i=0;i<profile.kernel_count;i++){const fg_vk_profile_kernel *kernel=&profile.kernels[i];fprintf(stderr,"TOKEN_PROFILE_KERNEL rank=%u token=%u kind=%s layer=%u scope=%s kernel=%s calls=%llu gpu_ms=%.3f\n",rank,token,kind,layer,kernel->scope,kernel->name,(unsigned long long)kernel->invocations,kernel->gpu_ms);}
     return status;
 }
