@@ -21,6 +21,7 @@ fg_status fg_qsa_state_read_blocks(fg_qsa_state *state,uint32_t layer_slot,const
                                    fg_error *err);
 uint64_t fg_qsa_state_required_bytes(uint32_t layer_count,uint32_t max_context);
 uint32_t fg_qsa_state_layer_tokens(const fg_qsa_state *state,uint32_t layer_slot);
+void fg_qsa_state_set_layer_tokens(fg_qsa_state *state,uint32_t layer_slot,uint32_t tokens);
 void fg_qsa_encode_token_record(const float key[FG_Q38_ATTN_KV_WIDTH],
                                 const float value[FG_Q38_ATTN_KV_WIDTH],
                                 uint8_t record[FG_Q38_QSA_TOKEN_RECORD_BYTES]);

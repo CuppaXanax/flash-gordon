@@ -98,6 +98,7 @@ fg_status fg_qsa_state_write_block(fg_qsa_state *state,uint32_t layer_slot,uint3
 }
 
 uint32_t fg_qsa_state_layer_tokens(const fg_qsa_state *state,uint32_t layer_slot){return state&&layer_slot<state->layer_count?state->layer_tokens[layer_slot]:0;}
+void fg_qsa_state_set_layer_tokens(fg_qsa_state *state,uint32_t layer_slot,uint32_t tokens){if(state&&layer_slot<state->layer_count)state->layer_tokens[layer_slot]=tokens;}
 
 static fg_status decode_page(const fg_qsa_state *state,const uint8_t *page,uint32_t layer_slot,uint32_t block,uint8_t *records,uint32_t *committed,fg_error *err){uint32_t count=get_u32_le(page+16u),bytes=count*FG_Q38_QSA_TOKEN_RECORD_BYTES;if(get_u32_le(page)!=FG_QSA_PAGE_MAGIC||get_u32_le(page+4u)!=FG_QSA_PAGE_VERSION||get_u32_le(page+8u)!=state->layers[layer_slot]||get_u32_le(page+12u)!=block||count==0||count>FG_Q38_QSA_COMPRESS_RATIO||get_u32_le(page+20u)!=fg_crc32c(page+FG_QSA_PAGE_HEADER_BYTES,bytes)){fg_error_set(err,FG_ERR_MISMATCH,"stale, torn, or corrupt QSA state page");return FG_ERR_MISMATCH;}memcpy(records,page+FG_QSA_PAGE_HEADER_BYTES,bytes);if(count<FG_Q38_QSA_COMPRESS_RATIO)memset(records+(uint64_t)count*FG_Q38_QSA_TOKEN_RECORD_BYTES,0,(FG_Q38_QSA_COMPRESS_RATIO-count)*FG_Q38_QSA_TOKEN_RECORD_BYTES);*committed=count;return FG_OK;}
 
