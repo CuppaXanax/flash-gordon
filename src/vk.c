@@ -222,13 +222,15 @@ fg_status fg_vk_bench_dense_q8(fg_vk_context *c,fg_error *err){
         if(status==FG_OK)status=fg_vk_tensor_create(c,(uint64_t)in_dim*4u,&x,err);
         for(uint32_t i=0;status==FG_OK&&i<BENCH_N;i++)
             status=fg_vk_tensor_create(c,(uint64_t)out_dim*4u,&y[i],err);
-        if(status!=FG_OK){for(uint32_t i=0;i<BENCH_N;i++)fg_vk_tensor_destroy(y[i]);fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);break;}
+        if(status!=FG_OK){fprintf(stderr,"tensor alloc failed: %s\n",err->message);for(uint32_t i=0;i<BENCH_N;i++)fg_vk_tensor_destroy(y[i]);fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);break;}
         memset(fg_vk_tensor_map(w),0x42,weight_bytes);
         float *xp=fg_vk_tensor_map(x);for(uint32_t i=0;i<in_dim;i++)xp[i]=1.0f/(float)(i+1);
 
         /* Warmup: 20 standalone dispatches */
         for(uint32_t i=0;status==FG_OK&&i<20;i++)
             status=fg_vk_dense_q8_0_f32(c,y[0],w,x,in_dim,out_dim,1u,1.0f,err);
+        if(status!=FG_OK){fprintf(stderr,"warmup failed at shape %s: %s\n",shapes[s].name,err->message);}
+        else{fprintf(stderr,"  warmup OK for %s\n",shapes[s].name);}
 
         /* --- MODE A: no-barrier dispatches with GPU timestamps --- */
         uint32_t ts_base_a=s*TS_PER_SHAPE;
