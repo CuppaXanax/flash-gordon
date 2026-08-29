@@ -80,7 +80,7 @@ static fg_status dispatch_experts(void *opaque,uint32_t layer,uint32_t token,con
 static fg_status fire_experts(void *opaque,uint32_t layer,uint32_t token,const uint16_t expert_ids[FG_TOP_K],const float gates[FG_TOP_K],const uint8_t *activation,fg_error *err){
     async_expert_context *ctx=opaque;fg_expert_route routes[FG_GROUP_SIZE];uint32_t route_count=0;
     fg_status status=fg_partition_route(ctx->manifest,layer,expert_ids,gates,routes,&route_count,err);
-    uint8_t work_wire[FG_DECODE_WORK_BYTES];ctx->remote_count=0;ctx->local_count=0;
+    uint8_t work_wire[FG_DECODE_WORK_BYTES];ctx->remote_count=0;
     /* Save local routes for deferred compute in collect */
     ctx->route_count=route_count;
     memcpy(ctx->routes,routes,sizeof(routes));
