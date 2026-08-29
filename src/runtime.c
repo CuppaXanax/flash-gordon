@@ -75,6 +75,9 @@ static fg_status dispatch_experts(void *opaque,uint32_t layer,uint32_t token,con
     return status;
 }
 
+/* Async dispatch functions — reserved for future multi-token batching.
+   Single-token decode uses sync dispatch (poll-based recv is faster). */
+#if 0
 /* Async fire: send remote expert work + submit header recv SQEs, return immediately.
    Local experts are computed in collect to overlap with network wait. */
 static fg_status fire_experts(void *opaque,uint32_t layer,uint32_t token,const uint16_t expert_ids[FG_TOP_K],const float gates[FG_TOP_K],const uint8_t *activation,fg_error *err){
@@ -149,6 +152,7 @@ static fg_status collect_experts(void *opaque,uint32_t layer,uint32_t token,fg_e
     }
     return status;
 }
+#endif /* async dispatch — reserved for multi-token batching */
 
 static fg_status handle_expert_work(fg_fabric *fabric,fg_expert_executor *expert,uint32_t self,uint32_t peer,const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,fg_expert_result *result,uint8_t *wire,fg_error *err){fg_decode_work work;fg_status status=fg_decode_work_decode(&work,payload,bytes,err);if(status==FG_OK&&(peer!=work.source_rank||work.destination_rank!=self)){fg_error_set(err,FG_ERR_MISMATCH,"decode work peer/rank mismatch");status=FG_ERR_MISMATCH;}uint32_t result_bytes=0;if(status==FG_OK)status=fg_expert_decode(expert,&work,result,err);if(status==FG_OK)status=fg_expert_result_encode(wire,FG_EXPERT_RESULT_MAX_BYTES,&result_bytes,result,err);if(status==FG_OK)status=fg_fabric_send(fabric,peer,FG_FABRIC_BULK,FG_MSG_EXPERT_RESULT,fg_frame_request_id(header),fg_frame_sequence(header),0,wire,result_bytes,err);return status;}
 
