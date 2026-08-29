@@ -102,7 +102,7 @@ static fg_status commit_and_attend(fg_qsa_session *s,uint32_t slot,uint32_t toke
 
 fg_status fg_qsa_session_decode(fg_qsa_session *s,uint32_t layer,uint32_t token,const uint32_t position[3],const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err){
     int signed_slot=s?layer_slot(s,layer):-1;if(!s||signed_slot<0||!position||!hidden||!output){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA decode arguments");return FG_ERR_ARGUMENT;}uint32_t slot=(uint32_t)signed_slot;if(token!=fg_qsa_state_layer_tokens(s->state,slot)||token>=s->max_context){fg_error_set(err,FG_ERR_MISMATCH,"QSA token position does not match committed state");return FG_ERR_MISMATCH;}fg_vk_tensor *qw=layer_weight(s,layer,"attn_q.weight",err),*kw=layer_weight(s,layer,"attn_k.weight",err),*vw=layer_weight(s,layer,"attn_v.weight",err),*qn=layer_weight(s,layer,"attn_q_norm.weight",err),*kn=layer_weight(s,layer,"attn_k_norm.weight",err),*ow=layer_weight(s,layer,"attn_output.weight",err),*iqw=layer_weight(s,layer,"indexer.q_proj.weight",err),*ikw=layer_weight(s,layer,"indexer.k_proj.weight",err),*iqn=layer_weight(s,layer,"indexer.q_norm.weight",err);if(!qw||!kw||!vw||!qn||!kn||!ow||!iqw||!ikw||!iqn)return FG_ERR_MISMATCH;
-    uint32_t *resident_positions=fg_vk_tensor_map(s->positions);if(slot==0)memcpy(resident_positions+(uint64_t)token*3u,position,12u);else if(memcmp(resident_positions+(uint64_t)token*3u,position,12u)!=0){fg_error_set(err,FG_ERR_MISMATCH,"QSA layers received inconsistent MRoPE positions");return FG_ERR_MISMATCH;}fg_vk_tensor *position_view=NULL;fg_status status=fg_vk_tensor_view(s->positions,(uint64_t)token*12u,12u,&position_view,err);fg_vk_context *vk=fg_model_vk(s->model);
+    uint32_t *resident_positions=fg_vk_tensor_map(s->positions);if(slot==0)memcpy(resident_positions+(uint64_t)token*3u,position,12u);else if(memcmp(resident_positions+(uint64_t)token*3u,position,12u)!=0){fg_error_set(err,FG_ERR_MISMATCH,"QSA layers received inconsistent MRoPE positions");return FG_ERR_MISMATCH;}fg_vk_tensor *position_view=NULL;fg_status status=fg_vk_tensor_view(s->positions,(uint64_t)token*12u,12u,&position_view,err);fg_vk_context *vk=fg_model_vk(s->model);if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"qsa_projection",err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,s->raw_query_gate,qw,hidden,2560u,12288u,1u,1.0f,err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,s->raw_key,kw,hidden,2560u,512u,1u,1.0f,err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,s->raw_value,vw,hidden,2560u,512u,1u,1.0f,err);
@@ -114,7 +114,10 @@ fg_status fg_qsa_session_decode(fg_qsa_session *s,uint32_t layer,uint32_t token,
     if(status==FG_OK)status=fg_vk_quantize_q8_0(vk,s->value_q4,s->raw_value,512u,1u,err);
     if(status==FG_OK)status=fg_vk_quantize_q8_0(vk,s->index_key_q8,s->raw_index_key,128u,1u,err);
     fg_vk_tensor_destroy(position_view);if(status!=FG_OK)return status;
-    status=commit_and_attend(s,slot,token,position,fg_vk_tensor_map(s->key_q8),fg_vk_tensor_map(s->value_q4),fg_vk_tensor_map(s->index_key_q8),s->index_query,s->query,s->gate,s->attention,err);if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,s->output,ow,s->attention,6144u,2560u,1u,1.0f,err);
+    if(fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"qsa_state_attention",err);
+    if(status==FG_OK)status=commit_and_attend(s,slot,token,position,fg_vk_tensor_map(s->key_q8),fg_vk_tensor_map(s->value_q4),fg_vk_tensor_map(s->index_key_q8),s->index_query,s->query,s->gate,s->attention,err);
+    if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"qsa_output",err);
+    if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,s->output,ow,s->attention,6144u,2560u,1u,1.0f,err);
     if(status==FG_OK&&token<30u){const float *ap=fg_vk_tensor_map(s->attention),*op=fg_vk_tensor_map(s->output);double a2=0.0,o2=0.0;for(uint32_t i=0;i<6144u;i++)a2+=(double)ap[i]*ap[i];for(uint32_t i=0;i<2560u;i++)o2+=(double)op[i]*op[i];fprintf(stderr,"qsa[%u] t=%u selected=%u attn_rms=%.6f out_rms=%.6f\n",layer,token,token+1u,sqrt(a2/6144.0),sqrt(o2/2560.0));}
     if(status==FG_OK){*output=s->output;}return status;
 }

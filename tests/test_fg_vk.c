@@ -231,9 +231,15 @@ static int test_ple_prefill_scan(void){
     fg_vk_tensor_destroy(gob);fg_vk_tensor_destroy(gos);fg_vk_tensor_destroy(ggb);fg_vk_tensor_destroy(ggs);fg_vk_tensor_destroy(gsb);fg_vk_tensor_destroy(gss);fg_vk_tensor_destroy(gw);fg_vk_tensor_destroy(gn);fg_vk_tensor_destroy(gv);fg_vk_tensor_destroy(gq);fg_vk_tensor_destroy(gk);free(state_batched);free(state_sequential);free(conv_batched);free(conv_sequential);free(gate_batched);free(gate_sequential);free(state_initial);free(weight);free(normalized);free(value);free(query);free(key);return ok;
 }
 
+static const fg_vk_profile_kernel *find_profile_kernel(const fg_vk_profile *profile,const char *scope,const char *name){for(uint32_t i=0;i<profile->kernel_count;i++)if(strcmp(profile->kernels[i].scope,scope)==0&&strcmp(profile->kernels[i].name,name)==0)return &profile->kernels[i];return NULL;}
+static int test_gpu_profile(void){
+    enum{VALUES=256};float left[VALUES],right[VALUES];for(uint32_t i=0;i<VALUES;i++){left[i]=sinf((float)i*0.031f);right[i]=cosf((float)i*0.017f);}fg_vk_tensor *l=tensor(left,sizeof(left)),*r=tensor(right,sizeof(right)),*sum=tensor(NULL,sizeof(left)),*out=tensor(NULL,sizeof(left));fg_vk_profile profile={0};int ok=l&&r&&sum&&out&&!fg_vk_batch_active(context)&&!fg_vk_profile_active(context)&&fg_vk_profile_begin(context,&error)==FG_OK&&fg_vk_profile_active(context)&&fg_vk_begin(context,&error)==FG_OK&&fg_vk_batch_active(context)&&fg_vk_profile_set_scope(context,"sum",&error)==FG_OK&&fg_vk_add_f32(context,sum,l,r,VALUES,&error)==FG_OK&&fg_vk_profile_set_scope(context,"activation",&error)==FG_OK&&fg_vk_silu_scaled(context,out,sum,VALUES,1.0f,&error)==FG_OK&&fg_vk_end(context,&error)==FG_OK&&!fg_vk_batch_active(context)&&fg_vk_profile_end(context,&profile,&error)==FG_OK&&!fg_vk_profile_active(context);const fg_vk_profile_kernel *add=ok?find_profile_kernel(&profile,"sum","fg_add_f32.spv"):NULL,*silu=ok?find_profile_kernel(&profile,"activation","fg_silu_scaled.spv"):NULL;ok=ok&&profile.submissions==1u&&profile.dispatches==2u&&profile.gpu_ms>0.0&&profile.kernel_ms>0.0&&profile.gpu_ms>=profile.kernel_ms&&add&&add->invocations==1u&&add->gpu_ms>0.0&&silu&&silu->invocations==1u&&silu->gpu_ms>0.0;fg_vk_tensor_destroy(out);fg_vk_tensor_destroy(sum);fg_vk_tensor_destroy(r);fg_vk_tensor_destroy(l);return ok;
+}
+
 static int run_test(const char *name,int (*fn)(void)){fprintf(stderr,"  [%s] ... ",name);fflush(stderr);int ok=fn();fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 static int run_test_i(const char *name,int (*fn)(int),int arg){fprintf(stderr,"  [%s(%d)] ... ",name,arg);fflush(stderr);int ok=fn(arg);fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 int main(void){if(fg_vk_open(&context,&error)!=FG_OK){fprintf(stderr,"Vulkan unavailable: %s\n",error.message);return 77;}fprintf(stderr,"Flash Gordon Vulkan device: %s\n",fg_vk_device_name(context));int ok=1;
+ok=run_test("gpu_profile",test_gpu_profile)&&ok;
 ok=run_test("q8_dense",test_q8_dense)&&ok;
 ok=run_test("q8_embedding",test_q8_embedding)&&ok;
 ok=run_test("hc_finalize",test_hc_finalize)&&ok;

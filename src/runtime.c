@@ -21,6 +21,24 @@
 static fg_status load_checked(const char *path,fg_manifest **out,fg_error *err){fg_manifest *m=malloc(sizeof(*m));if(!m){fg_error_set(err,FG_ERR_OOM,"allocate manifest");return FG_ERR_OOM;}fg_status rc=fg_manifest_read(path,m,err);if(rc==FG_OK)rc=fg_manifest_validate_deployment(m,err);if(rc!=FG_OK){free(m);return rc;}*out=m;return FG_OK;}
 static fg_status manifest_directory(const char *path,char output[1024],fg_error *err){size_t length=strlen(path);if(!length||length>=1024u){fg_error_set(err,FG_ERR_ARGUMENT,"manifest path is invalid");return FG_ERR_ARGUMENT;}memcpy(output,path,length+1u);char *slash=strrchr(output,'/');if(!slash){snprintf(output,1024,".");return FG_OK;}if(slash==output)slash[1]=0;else *slash=0;return FG_OK;}
 
+typedef struct token_profile_capture {fg_vk_context *vk;struct timespec start;bool owned;} token_profile_capture;
+
+static bool token_profile_requested(uint32_t token){const char *requested=getenv("FG_PROFILE_TOKEN");char value[16];if(!requested||!*requested)return false;snprintf(value,sizeof(value),"%u",token);return strcmp(requested,value)==0;}
+
+static fg_status token_profile_begin(token_profile_capture *capture,fg_vk_context *vk,uint32_t token,fg_error *err){
+    memset(capture,0,sizeof(*capture));capture->vk=vk;if(!token_profile_requested(token)||fg_vk_profile_active(vk))return FG_OK;fg_status status=fg_vk_profile_begin(vk,err);if(status==FG_OK){clock_gettime(CLOCK_MONOTONIC,&capture->start);capture->owned=true;}return status;
+}
+
+static fg_status token_profile_end(token_profile_capture *capture,uint32_t rank,const char *kind,uint32_t token,uint32_t layer,fg_status status,fg_error *err){
+    if(!capture->owned)return status;
+    fg_vk_profile profile={0};fg_error profile_error={0};fg_status profile_status=fg_vk_profile_end(capture->vk,&profile,status==FG_OK?err:&profile_error);
+    if(profile_status!=FG_OK)return status==FG_OK?profile_status:status;
+    struct timespec end;clock_gettime(CLOCK_MONOTONIC,&end);double wall_ms=(double)(end.tv_sec-capture->start.tv_sec)*1000.0+(double)(end.tv_nsec-capture->start.tv_nsec)*1e-6;
+    fprintf(stderr,"TOKEN_PROFILE rank=%u token=%u kind=%s layer=%u wall_ms=%.3f gpu_ms=%.3f kernel_ms=%.3f vk_overhead_ms=%.3f wall_residual_ms=%.3f submissions=%llu dispatches=%llu\n",rank,token,kind,layer,wall_ms,profile.gpu_ms,profile.kernel_ms,profile.gpu_ms-profile.kernel_ms,wall_ms-profile.gpu_ms,(unsigned long long)profile.submissions,(unsigned long long)profile.dispatches);
+    for(uint32_t i=0;i<profile.kernel_count;i++){const fg_vk_profile_kernel *kernel=&profile.kernels[i];fprintf(stderr,"TOKEN_PROFILE_KERNEL rank=%u token=%u kind=%s layer=%u scope=%s kernel=%s calls=%llu gpu_ms=%.3f\n",rank,token,kind,layer,kernel->scope,kernel->name,(unsigned long long)kernel->invocations,kernel->gpu_ms);}
+    return status;
+}
+
 static fg_status rank_ready(fg_fabric *fabric,uint32_t self,fg_error *err){
     /* Send READY to every peer first (fire-and-forget into TCP). */
     for(uint32_t peer=0;peer<FG_RANK_COUNT;peer++){
@@ -72,7 +90,7 @@ static fg_status dispatch_experts(void *opaque,uint32_t layer,uint32_t token,con
     for(uint32_t r=0;status==FG_OK&&r<route_count;r++){if(routes[r].destination_rank!=context->self)continue;fg_decode_work work={.layer=(uint8_t)layer,.source_rank=(uint8_t)context->self,.destination_rank=(uint8_t)context->self,.selected_count=routes[r].selected_count,.position=token};for(uint32_t i=0;i<routes[r].selected_count;i++){work.expert_ids[i]=routes[r].global_expert_ids[i];work.routing_slots[i]=routes[r].routing_slots[i];work.gates[i]=routes[r].gates[i];}memcpy(work.activation_q8k,activation,FG_Q8K_ACTIVATION_BYTES);status=fg_expert_decode(context->expert,&work,&results[*result_count],err);if(status==FG_OK)(*result_count)++;}double t_local=dispatch_ts();
     /* Phase 3: collect remote results in arrival order (not route order) */
     uint8_t *result_wire=context->recv_wire;if(remote_count&&status==FG_OK&&!result_wire){fg_error_set(err,FG_ERR_OOM,"pre-allocated expert recv buffer is null");status=FG_ERR_OOM;}double t_recv[4]={0};for(uint32_t received=0;status==FG_OK&&received<remote_count;received++){uint32_t peer=0;fg_frame_header header;uint32_t bytes=0;status=fg_fabric_recv_any(context->fabric,FG_FABRIC_BULK,&peer,&header,result_wire,FG_EXPERT_RESULT_MAX_BYTES,&bytes,err);t_recv[received]=dispatch_ts();if(status==FG_OK&&(fg_frame_type(&header)!=FG_MSG_EXPERT_RESULT||fg_frame_request_id(&header)!=context->request_id||fg_frame_sequence(&header)!=context->sequence)){fg_error_set(err,FG_ERR_MISMATCH,"stale expert result frame from rank %u",peer);status=FG_ERR_MISMATCH;}if(status==FG_OK)status=fg_expert_result_decode(&results[*result_count],result_wire,bytes,err);if(status==FG_OK)(*result_count)++;}double t_end=dispatch_ts();
-    if(token>=26u&&token<28u&&status==FG_OK){fprintf(stderr,"EXPERT_DIAG layer[%u] t=%u route=%.2f send=%.2f(%u) local=%.2f wait1st=%.2f recv_span=%.2f total=%.2f\n",layer,token,t_route-t0,t_send-t_route,remote_count,t_local-t_send,remote_count>=1?t_recv[0]-t_local:0.0,remote_count>=2?t_recv[remote_count-1]-t_recv[0]:0.0,t_end-t0);}
+    if(((token>=26u&&token<28u)||token_profile_requested(token))&&status==FG_OK){fprintf(stderr,"EXPERT_DIAG layer[%u] t=%u route=%.2f send=%.2f(%u) local=%.2f wait1st=%.2f recv_span=%.2f total=%.2f\n",layer,token,t_route-t0,t_send-t_route,remote_count,t_local-t_send,remote_count>=1?t_recv[0]-t_local:0.0,remote_count>=2?t_recv[remote_count-1]-t_recv[0]:0.0,t_end-t0);}
     return status;
 }
 
@@ -155,10 +173,11 @@ static fg_status collect_experts(void *opaque,uint32_t layer,uint32_t token,fg_e
 }
 #endif /* async dispatch — reserved for multi-token batching */
 
-static fg_status handle_expert_work(fg_fabric *fabric,fg_expert_executor *expert,uint32_t self,uint32_t peer,const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,fg_expert_result *result,uint8_t *wire,fg_error *err){
+static fg_status handle_expert_work(fg_fabric *fabric,fg_expert_executor *expert,fg_vk_context *vk,uint32_t self,uint32_t peer,const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,fg_expert_result *result,uint8_t *wire,fg_error *err){
     double tw0=dispatch_ts();
     fg_decode_work work;fg_status status=fg_decode_work_decode(&work,payload,bytes,err);if(status==FG_OK&&(peer!=work.source_rank||work.destination_rank!=self)){fg_error_set(err,FG_ERR_MISMATCH,"decode work peer/rank mismatch");status=FG_ERR_MISMATCH;}
     double tw_decode=dispatch_ts();
+    token_profile_capture capture={0};if(status==FG_OK)status=token_profile_begin(&capture,vk,work.position,err);
     uint32_t result_bytes=0;if(status==FG_OK)status=fg_expert_decode(expert,&work,result,err);
     double tw_gpu=dispatch_ts();
     /* Worker-local weighted reduction: apply gates and sum to ONE vector */
@@ -178,7 +197,8 @@ static fg_status handle_expert_work(fg_fabric *fabric,fg_expert_executor *expert
     double tw_encode=dispatch_ts();
     if(status==FG_OK)status=fg_fabric_send(fabric,peer,FG_FABRIC_BULK,FG_MSG_EXPERT_RESULT,fg_frame_request_id(header),fg_frame_sequence(header),0,wire,result_bytes,err);
     double tw_send=dispatch_ts();
-    if(status==FG_OK&&work.position>=26u&&work.position<28u){fprintf(stderr,"WORKER_EXPERT layer[%u] t=%u rank=%u sel=%u decode=%.2f gpu=%.2f reduce=%.2f encode=%.2f send=%.2f total=%.2f\n",work.layer,work.position,self,work.selected_count,tw_decode-tw0,tw_gpu-tw_decode,tw_reduce-tw_gpu,tw_encode-tw_reduce,tw_send-tw_encode,tw_send-tw0);}
+    status=token_profile_end(&capture,self,"routed_expert",work.position,work.layer,status,err);
+    if(status==FG_OK&&((work.position>=26u&&work.position<28u)||token_profile_requested(work.position))){fprintf(stderr,"WORKER_EXPERT layer[%u] t=%u rank=%u sel=%u decode=%.2f gpu=%.2f reduce=%.2f encode=%.2f send=%.2f total=%.2f\n",work.layer,work.position,self,work.selected_count,tw_decode-tw0,tw_gpu-tw_decode,tw_reduce-tw_gpu,tw_encode-tw_reduce,tw_send-tw_encode,tw_send-tw0);}
     return status;
 }
 
@@ -248,16 +268,18 @@ static fg_status handle_prefill_layer_work(fg_fabric *fabric,fg_expert_executor 
     fg_prefill_layer_work work={0};fg_status status=fg_prefill_layer_work_decode(&work,layer_buffers->positions,layer_buffers->tokens*3u,layer_buffers->hyper,(uint64_t)layer_buffers->tokens*FG_HYPER_WIDTH,layer_buffers->ngram,(uint64_t)layer_buffers->tokens*FG_NGRAM_EMBED_VALUES,payload,bytes,err);uint64_t request=fg_frame_request_id(header);if(status==FG_OK&&(!session_id||request!=session_id||peer!=work.source_rank||work.destination_rank!=self||manifest->layer_owner[work.layer]!=self||work.layer==0u||work.source_rank!=manifest->layer_owner[work.layer-1u]||work.token_count>manifest->prefill_microbatch||work.token_count>manifest->max_context||work.first_token>manifest->max_context-work.token_count||fg_frame_sequence(header)!=work.first_token*FG_LAYER_COUNT+work.layer)){fg_error_set(err,FG_ERR_MISMATCH,"stale, oversized, or misrouted prefill layer work");status=FG_ERR_MISMATCH;}uint64_t hyper_bytes=(uint64_t)work.token_count*FG_HYPER_WIDTH*4u,ngram_bytes=(uint64_t)work.token_count*FG_NGRAM_EMBED_VALUES*4u;if(status==FG_OK)status=fg_vk_tensor_write(layer_buffers->hyper_tensor,0,work.hyper,hyper_bytes,err);const fg_vk_tensor *ngram=NULL;if(status==FG_OK&&(work.flags&FG_LAYER_WORK_HAS_NGRAM)){status=fg_vk_tensor_write(layer_buffers->ngram_tensor,0,work.ngram_embeddings,ngram_bytes,err);ngram=layer_buffers->ngram_tensor;}prefill_dispatch_context dispatch={fabric,expert,manifest,self,request,fg_frame_sequence(header),expert_buffers};fg_vk_tensor *output=NULL;if(status==FG_OK)status=fg_owner_prefill_layer(owner,work.layer,work.first_token,work.positions,work.token_count,layer_buffers->hyper_tensor,ngram,dispatch_prefill_experts,&dispatch,&output,err);if(status==FG_OK)status=fg_vk_tensor_read(output,0,layer_buffers->output,hyper_bytes,err);uint32_t send_bytes=0;if(status==FG_OK&&work.layer+1u<FG_LAYER_COUNT){uint32_t next_layer=work.layer+1u,next_owner=manifest->layer_owner[next_layer];fg_prefill_layer_work next={.layer=(uint8_t)next_layer,.source_rank=(uint8_t)self,.destination_rank=(uint8_t)next_owner,.first_token=work.first_token,.token_count=work.token_count,.positions=work.positions,.hyper=layer_buffers->output};status=fg_prefill_layer_work_encode(layer_buffers->receive,layer_buffers->receive_capacity,&send_bytes,&next,err);if(status==FG_OK)status=fg_fabric_send(fabric,next_owner,FG_FABRIC_BULK,FG_MSG_PREFILL_LAYER_WORK,request,work.first_token*FG_LAYER_COUNT+next_layer,0,layer_buffers->receive,send_bytes,err);}else if(status==FG_OK){fg_prefill_layer_result result={.layer=work.layer,.source_rank=(uint8_t)self,.destination_rank=0u,.first_token=work.first_token,.token_count=work.token_count,.hyper=layer_buffers->output};status=fg_prefill_layer_result_encode(layer_buffers->result_wire,layer_buffers->result_capacity,&send_bytes,&result,err);if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,FG_MSG_PREFILL_LAYER_RESULT,request,work.first_token*FG_LAYER_COUNT+FG_LAYER_COUNT,0,layer_buffers->result_wire,send_bytes,err);}return status;
 }
 
-static fg_status handle_output_work(fg_fabric *fabric,fg_output_executor *output,uint32_t self,uint64_t session_id,uint32_t peer,const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,fg_vk_tensor *hyper_tensor,fg_error *err){
+static fg_status handle_output_work(fg_fabric *fabric,fg_output_executor *output,fg_vk_context *vk,uint32_t self,uint64_t session_id,uint32_t peer,const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,fg_vk_tensor *hyper_tensor,fg_error *err){
     if(self!=4u||!output){fg_error_set(err,FG_ERR_MISMATCH,"output work reached a non-output rank");return FG_ERR_MISMATCH;}
     fg_output_work *work=calloc(1,sizeof(*work));if(!work){fg_error_set(err,FG_ERR_OOM,"allocate output work");return FG_ERR_OOM;}
     fg_status status=fg_output_work_decode(work,payload,bytes,err);uint64_t request=fg_frame_request_id(header);
     if(status==FG_OK&&(!session_id||request!=session_id||peer!=work->source_rank||work->destination_rank!=self)){fg_error_set(err,FG_ERR_MISMATCH,"stale or misrouted output work");status=FG_ERR_MISMATCH;}
+    token_profile_capture capture={0};if(status==FG_OK)status=token_profile_begin(&capture,vk,work->token_index,err);
     if(status==FG_OK)status=fg_vk_tensor_write(hyper_tensor,0,work->hyper,sizeof(work->hyper),err);
     fg_output_result result={.source_rank=(uint8_t)self,.destination_rank=work->source_rank,.token_index=work->token_index};
     if(status==FG_OK)status=fg_output_greedy(output,hyper_tensor,&result.token,&result.logit,err);
     uint8_t wire[FG_OUTPUT_RESULT_BYTES];if(status==FG_OK)status=fg_output_result_encode(wire,&result,err);
     if(status==FG_OK)status=fg_fabric_send(fabric,peer,FG_FABRIC_BULK,FG_MSG_OUTPUT_RESULT,request,fg_frame_sequence(header),0,wire,sizeof(wire),err);
+    status=token_profile_end(&capture,self,"output",work->token_index,UINT32_MAX,status,err);
     free(work);return status;
 }
 
@@ -269,7 +291,7 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_expert_executor *expert,f
     fg_expert_result *ew_result=malloc(sizeof(*ew_result));uint8_t *ew_wire=malloc(FG_EXPERT_RESULT_MAX_BYTES);uint8_t *expert_recv=malloc(FG_EXPERT_RESULT_MAX_BYTES);
     if(!control||!lw_buf||!lr_buf||!lr_wire||!lw_wire||!ew_result||!ew_wire||!expert_recv){free(expert_recv);free(ew_wire);free(ew_result);free(lw_wire);free(lr_wire);free(lr_buf);free(lw_buf);free(control);fg_error_set(err,FG_ERR_OOM,"allocate rank worker buffers");return FG_ERR_OOM;}
     fg_status status=prefill_worker_buffers_create(&prefill,manifest->prefill_microbatch,err);if(status==FG_OK)status=prefill_layer_buffers_create(&layer_prefill,model,manifest->prefill_microbatch,err);if(status==FG_OK)status=fg_vk_tensor_create(fg_model_vk(model),FG_HYPER_WIDTH*4u,&hyper,err);if(status==FG_OK)status=fg_vk_tensor_create(fg_model_vk(model),FG_NGRAM_EMBED_VALUES*4u,&ngram,err);uint64_t session_id=0;
-    while(status==FG_OK){uint32_t peer=0,bytes=0;fg_frame_header header;fg_fabric_class ready_class;status=fg_fabric_wait_ready(fabric,3u,&peer,&ready_class,err);if(status!=FG_OK)break;if(ready_class==FG_FABRIC_BULK){status=fg_fabric_recv(fabric,peer,FG_FABRIC_BULK,&header,layer_prefill.receive,layer_prefill.receive_capacity,&bytes,err);fg_message_type type=status==FG_OK?fg_frame_type(&header):0;if(status==FG_OK&&type==FG_MSG_PREFILL_WORK)status=handle_prefill_expert_work(fabric,expert,manifest,self,session_id,peer,&header,layer_prefill.receive,bytes,&prefill,err);else if(status==FG_OK&&type==FG_MSG_PREFILL_LAYER_WORK)status=handle_prefill_layer_work(fabric,expert,owner,manifest,self,session_id,peer,&header,layer_prefill.receive,bytes,&prefill,&layer_prefill,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported bulk message %u",self,type);status=FG_ERR_FORMAT;}continue;}status=fg_fabric_recv(fabric,peer,FG_FABRIC_CONTROL,&header,control,FG_LAYER_WORK_MAX_BYTES,&bytes,err);if(status!=FG_OK)break;fg_message_type type=fg_frame_type(&header);if(type==FG_MSG_DECODE_WORK){if(!session_id||fg_frame_request_id(&header)!=session_id){fg_error_set(err,FG_ERR_MISMATCH,"stale expert work request");status=FG_ERR_MISMATCH;}else status=handle_expert_work(fabric,expert,self,peer,&header,control,bytes,ew_result,ew_wire,err);}else if(type==FG_MSG_SESSION_BEGIN){if(bytes){fg_error_set(err,FG_ERR_FORMAT,"session begin payload must be empty");status=FG_ERR_FORMAT;}else status=begin_session(fabric,owner,directory,self,peer,&header,&session_id,err);}else if(type==FG_MSG_LAYER_WORK)status=handle_layer_work(fabric,expert,owner,manifest,self,session_id,peer,&header,control,bytes,hyper,ngram,lw_buf,lr_buf,lr_wire,lw_wire,expert_recv,err);else if(type==FG_MSG_OUTPUT_WORK)status=handle_output_work(fabric,output,self,session_id,peer,&header,control,bytes,hyper,err);else{fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported control message %u",self,type);status=FG_ERR_FORMAT;}}
+    while(status==FG_OK){uint32_t peer=0,bytes=0;fg_frame_header header;fg_fabric_class ready_class;status=fg_fabric_wait_ready(fabric,3u,&peer,&ready_class,err);if(status!=FG_OK)break;if(ready_class==FG_FABRIC_BULK){status=fg_fabric_recv(fabric,peer,FG_FABRIC_BULK,&header,layer_prefill.receive,layer_prefill.receive_capacity,&bytes,err);fg_message_type type=status==FG_OK?fg_frame_type(&header):0;if(status==FG_OK&&type==FG_MSG_PREFILL_WORK)status=handle_prefill_expert_work(fabric,expert,manifest,self,session_id,peer,&header,layer_prefill.receive,bytes,&prefill,err);else if(status==FG_OK&&type==FG_MSG_PREFILL_LAYER_WORK)status=handle_prefill_layer_work(fabric,expert,owner,manifest,self,session_id,peer,&header,layer_prefill.receive,bytes,&prefill,&layer_prefill,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported bulk message %u",self,type);status=FG_ERR_FORMAT;}continue;}status=fg_fabric_recv(fabric,peer,FG_FABRIC_CONTROL,&header,control,FG_LAYER_WORK_MAX_BYTES,&bytes,err);if(status!=FG_OK)break;fg_message_type type=fg_frame_type(&header);if(type==FG_MSG_DECODE_WORK){if(!session_id||fg_frame_request_id(&header)!=session_id){fg_error_set(err,FG_ERR_MISMATCH,"stale expert work request");status=FG_ERR_MISMATCH;}else status=handle_expert_work(fabric,expert,fg_model_vk(model),self,peer,&header,control,bytes,ew_result,ew_wire,err);}else if(type==FG_MSG_SESSION_BEGIN){if(bytes){fg_error_set(err,FG_ERR_FORMAT,"session begin payload must be empty");status=FG_ERR_FORMAT;}else status=begin_session(fabric,owner,directory,self,peer,&header,&session_id,err);}else if(type==FG_MSG_LAYER_WORK)status=handle_layer_work(fabric,expert,owner,manifest,self,session_id,peer,&header,control,bytes,hyper,ngram,lw_buf,lr_buf,lr_wire,lw_wire,expert_recv,err);else if(type==FG_MSG_OUTPUT_WORK)status=handle_output_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,err);else{fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported control message %u",self,type);status=FG_ERR_FORMAT;}}
     fg_vk_tensor_destroy(ngram);fg_vk_tensor_destroy(hyper);prefill_layer_buffers_destroy(&layer_prefill);prefill_worker_buffers_destroy(&prefill);free(expert_recv);free(ew_wire);free(ew_result);free(lw_wire);free(lr_wire);free(lr_buf);free(lw_buf);free(control);return status;
 }
 
@@ -307,8 +329,11 @@ static fg_status coordinator_output(fg_coordinator *coordinator,uint32_t token_i
 /* Expert-parallel decode: all 48 layers on the coordinator, MoE dispatched to workers */
 static fg_status coordinator_decode_token_local(fg_coordinator *coordinator,const int32_t *history,size_t history_count,uint32_t token_index,uint32_t *next_token,float *logit,fg_error *err){
     if(!history||!history_count||(uint32_t)history[history_count-1u]>=FG_Q38_VOCAB_SIZE){fg_error_set(err,FG_ERR_ARGUMENT,"invalid local decode token history");return FG_ERR_ARGUMENT;}
+    fg_vk_context *vk=fg_model_vk(coordinator->model);token_profile_capture capture={0};fg_status status=token_profile_begin(&capture,vk,token_index,err);
     fg_vk_tensor *embedding=fg_model_tensor(coordinator->model,"token_embd.weight");
-    fg_status status=fg_vk_embedding_q8_0(fg_model_vk(coordinator->model),coordinator->hyper,embedding,(uint32_t)history[history_count-1u],FG_HIDDEN_SIZE,FG_Q38_VOCAB_SIZE,FG_Q38_HYPER_COUNT,err);
+    if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"embedding",err);
+    if(status==FG_OK)status=fg_vk_embedding_q8_0(vk,coordinator->hyper,embedding,(uint32_t)history[history_count-1u],FG_HIDDEN_SIZE,FG_Q38_VOCAB_SIZE,FG_Q38_HYPER_COUNT,err);
+    if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"ngram",err);
     fg_vk_tensor *ngram=NULL;if(status==FG_OK)status=fg_ngram_store_lookup(coordinator->ngram,history,history_count,&ngram,err);
     uint32_t position[3]={token_index,token_index,token_index};
     fg_vk_tensor *current=coordinator->hyper;
@@ -321,7 +346,7 @@ static fg_status coordinator_decode_token_local(fg_coordinator *coordinator,cons
         if(status==FG_OK)current=layer_out;
     }
     if(status==FG_OK)status=coordinator_output(coordinator,token_index,current,next_token,logit,err);
-    return status;
+    return token_profile_end(&capture,0u,"token",token_index,UINT32_MAX,status,err);
 }
 
 static void coordinator_close(fg_coordinator *coordinator){if(!coordinator)return;for(uint32_t i=0;i<FG_GROUP_SIZE;i++)free(coordinator->async_recv_payloads[i]);free(coordinator->expert_recv);prefill_layer_buffers_destroy(&coordinator->prefill_layer);prefill_worker_buffers_destroy(&coordinator->prefill_expert);fg_vk_tensor_destroy(coordinator->hyper);fg_ngram_store_close(coordinator->ngram);fg_tokenizer_close(coordinator->tokenizer);fg_fabric_close(coordinator->fabric);fg_owner_executor_destroy(coordinator->owner);fg_expert_executor_destroy(coordinator->expert);fg_model_close(coordinator->model);memset(coordinator,0,sizeof(*coordinator));}
