@@ -7,16 +7,17 @@
 #include <math.h>
 
 #define FG_QSA_OWNER_LAYERS 6u
+#define FG_QSA_MAX_LAYERS 12u
 #define FG_QSA_SELECTED_TOKENS (FG_Q38_INDEX_BUDGET+FG_Q38_QSA_COMPRESS_RATIO-1u)
 
 struct fg_qsa_session {
     fg_model *model;
     fg_qsa_state *state;
     uint32_t max_context,max_blocks,max_tokens,layer_count;
-    uint8_t layers[FG_QSA_OWNER_LAYERS];
+    uint8_t layers[FG_QSA_MAX_LAYERS];
     fg_vk_tensor *positions;
-    fg_vk_tensor *index_keys[FG_QSA_OWNER_LAYERS];
-    uint8_t partial[FG_QSA_OWNER_LAYERS][FG_Q38_QSA_COMPRESS_RATIO*FG_Q38_QSA_TOKEN_RECORD_BYTES];
+    fg_vk_tensor *index_keys[FG_QSA_MAX_LAYERS];
+    uint8_t partial[FG_QSA_MAX_LAYERS][FG_Q38_QSA_COMPRESS_RATIO*FG_Q38_QSA_TOKEN_RECORD_BYTES];
     fg_vk_tensor *raw_query_gate,*raw_key,*raw_value,*query,*gate,*key;
     fg_vk_tensor *raw_index_query,*raw_index_key,*index_query;
     fg_vk_tensor *key_q8,*value_q4,*index_key_q8;
@@ -45,9 +46,10 @@ static fg_status restore_state(fg_qsa_session *s,fg_error *err){
 fg_status fg_qsa_session_open(fg_qsa_session **out,fg_model *model,const char *path,bool create,fg_error *err){
     if(!out||!model||!path){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA session arguments");return FG_ERR_ARGUMENT;}*out=NULL;const fg_manifest *manifest=fg_model_manifest(model);uint32_t rank=fg_model_rank(model);fg_qsa_session *s=calloc(1,sizeof(*s));if(!s){fg_error_set(err,FG_ERR_OOM,"allocate QSA session");return FG_ERR_OOM;}s->model=model;s->max_context=manifest->max_context;s->max_blocks=(s->max_context+3u)/4u;s->max_tokens=manifest->prefill_microbatch;if(!s->max_tokens||s->max_tokens>512u){fg_error_set(err,FG_ERR_MISMATCH,"manifest prefill microbatch exceeds QSA session limit");fg_qsa_session_close(s);return FG_ERR_MISMATCH;}
     for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u){
-        if(manifest->layer_owner[layer]==rank)s->layers[s->layer_count++]=(uint8_t)layer;
+        if(rank==0u||manifest->layer_owner[layer]==rank)s->layers[s->layer_count++]=(uint8_t)layer;
     }
-    if(s->layer_count!=FG_QSA_OWNER_LAYERS){fg_error_set(err,FG_ERR_MISMATCH,"rank %u does not own exactly six QSA layers",rank);fg_qsa_session_close(s);return FG_ERR_MISMATCH;}
+    uint32_t expected_layers=rank==0u?FG_QSA_MAX_LAYERS:FG_QSA_OWNER_LAYERS;
+    if(s->layer_count!=expected_layers){fg_error_set(err,FG_ERR_MISMATCH,"rank %u has %u QSA layers, expected %u",rank,s->layer_count,expected_layers);fg_qsa_session_close(s);return FG_ERR_MISMATCH;}
     fg_status status=fg_qsa_state_open(&s->state,path,s->layers,s->layer_count,s->max_context,create,err);if(status==FG_OK)status=make_tensor(s,(uint64_t)s->max_context*FG_Q38_QSA_POSITION_BYTES,&s->positions,err);for(uint32_t i=0;status==FG_OK&&i<s->layer_count;i++)status=make_tensor(s,(uint64_t)s->max_context*FG_Q38_QSA_INDEX_KEY_BYTES,&s->index_keys[i],err);
     uint64_t batch=s->max_tokens;if(status==FG_OK)status=make_tensor(s,batch*12288u*4u,&s->raw_query_gate,err);
     if(status==FG_OK)status=make_tensor(s,batch*512u*4u,&s->raw_key,err);
@@ -68,7 +70,7 @@ fg_status fg_qsa_session_open(fg_qsa_session **out,fg_model *model,const char *p
     s->read_records=status==FG_OK?malloc((uint64_t)FG_QSA_MAX_SELECTED_BLOCKS*4u*FG_Q38_QSA_TOKEN_RECORD_BYTES):NULL;if(status==FG_OK&&!s->read_records){fg_error_set(err,FG_ERR_OOM,"allocate QSA state staging");status=FG_ERR_OOM;}if(status==FG_OK&&!create)status=restore_state(s,err);if(status!=FG_OK){fg_qsa_session_close(s);return status;}*out=s;return FG_OK;
 }
 
-void fg_qsa_session_close(fg_qsa_session *s){if(!s)return;free(s->read_records);fg_vk_tensor_destroy(s->output);fg_vk_tensor_destroy(s->attention);fg_vk_tensor_destroy(s->selected_records);for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(s->ids[i]);fg_vk_tensor_destroy(s->scores[i]);}fg_vk_tensor_destroy(s->index_key_q8);fg_vk_tensor_destroy(s->value_q4);fg_vk_tensor_destroy(s->key_q8);fg_vk_tensor_destroy(s->index_query);fg_vk_tensor_destroy(s->raw_index_key);fg_vk_tensor_destroy(s->raw_index_query);fg_vk_tensor_destroy(s->key);fg_vk_tensor_destroy(s->gate);fg_vk_tensor_destroy(s->query);fg_vk_tensor_destroy(s->raw_value);fg_vk_tensor_destroy(s->raw_key);fg_vk_tensor_destroy(s->raw_query_gate);for(uint32_t i=0;i<FG_QSA_OWNER_LAYERS;i++)fg_vk_tensor_destroy(s->index_keys[i]);fg_vk_tensor_destroy(s->positions);fg_qsa_state_close(s->state);free(s);}
+void fg_qsa_session_close(fg_qsa_session *s){if(!s)return;free(s->read_records);fg_vk_tensor_destroy(s->output);fg_vk_tensor_destroy(s->attention);fg_vk_tensor_destroy(s->selected_records);for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(s->ids[i]);fg_vk_tensor_destroy(s->scores[i]);}fg_vk_tensor_destroy(s->index_key_q8);fg_vk_tensor_destroy(s->value_q4);fg_vk_tensor_destroy(s->key_q8);fg_vk_tensor_destroy(s->index_query);fg_vk_tensor_destroy(s->raw_index_key);fg_vk_tensor_destroy(s->raw_index_query);fg_vk_tensor_destroy(s->key);fg_vk_tensor_destroy(s->gate);fg_vk_tensor_destroy(s->query);fg_vk_tensor_destroy(s->raw_value);fg_vk_tensor_destroy(s->raw_key);fg_vk_tensor_destroy(s->raw_query_gate);for(uint32_t i=0;i<FG_QSA_MAX_LAYERS;i++)fg_vk_tensor_destroy(s->index_keys[i]);fg_vk_tensor_destroy(s->positions);fg_qsa_state_close(s->state);free(s);}
 
 uint32_t fg_qsa_session_tokens(const fg_qsa_session *s,uint32_t layer){int slot=s?layer_slot(s,layer):-1;return slot<0?0:fg_qsa_state_layer_tokens(s->state,(uint32_t)slot);}
 
