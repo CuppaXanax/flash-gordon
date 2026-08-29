@@ -1,0 +1,12 @@
+#version 460
+/* DECOMPOSITION 3: Dot product without reduction.
+   Full dequant + input read + FMA, but write per-lane partial sums.
+   No shared-memory reduction, no barriers. */
+layout(local_size_x=64,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Weights{uint wb[];};
+layout(set=0,binding=1)readonly buffer Input{float x[];};
+layout(set=0,binding=2)writeonly buffer Output{float y[];};
+layout(push_constant)uniform Push{uint out_dim;uint n_tok;uint blocks;uint row_bytes;float scale;}pc;
+uint load_u8(uint off){return(wb[off>>2u]>>((off&3u)*8u))&255u;}
+uint load_u16(uint off){return load_u8(off)|(load_u8(off+1u)<<8u);}
+void main(){uint tid=gl_LocalInvocationID.x,row=gl_WorkGroupID.x,tok=gl_WorkGroupID.y;if(row>=pc.out_dim||tok>=pc.n_tok)return;uint in_dim=pc.blocks*32u,row_base=row*pc.row_bytes;float acc=0.0;for(uint i=tid;i<in_dim;i+=64u){uint block=i>>5u,within=i&31u,base=row_base+block*34u;float d=unpackHalf2x16(load_u16(base)).x;uint q=load_u8(base+2u+within);int qi=q>=128u?int(q)-256:int(q);acc=fma(d*float(qi),x[tok*in_dim+i],acc);}y[tok*pc.out_dim*64u+row*64u+tid]=acc;}

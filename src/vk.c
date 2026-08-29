@@ -24,6 +24,8 @@ struct fg_vk_context {
     VkPhysicalDeviceMemoryProperties memory;char device_name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
     uint32_t batch_depth;uint32_t batch_set_count;VkDescriptorSet batch_sets[256];
     fg_vk_kernel quant_q8k,quant_q8,quant_q4,dequant_iq4nl,embedding,embedding_batch,swiglu,silu_scaled,dense,dense_f32,dense_bf16,rms,gr,hc_finalize,gr_write,ple_gate,ple_gate_prefill,ple_conv,ple_conv_prefill,add,gdn_conv,gdn_conv_prefill,gdn_recurrent,gdn_recurrent_prefill,qsa_prepare,qsa_prepare_prefill,qsa_index_prepare,qsa_index_prepare_prefill,qsa_score,qsa_attention,topk,moe_q5_1,moe_q8_0,kquant;
+    /* Decomposition benchmark kernels */
+    fg_vk_kernel bench_stream,bench_dequant,bench_dot_nored;
 };
 
 static fg_status vk_error(fg_error *err,const char *operation,VkResult result){fg_error_set(err,FG_ERR_UNAVAILABLE,"%s: Vulkan result %d",operation,(int)result);return FG_ERR_UNAVAILABLE;}
@@ -74,10 +76,12 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
     c->dequant_iq4nl=(fg_vk_kernel){.file="fg_dequantize_iq4_nl.spv",.bindings=2,.push_bytes=8};c->embedding=(fg_vk_kernel){.file="fg_embedding_q8_0.spv",.bindings=2,.push_bytes=16};c->embedding_batch=(fg_vk_kernel){.file="fg_embedding_q8_0_batch.spv",.bindings=3,.push_bytes=16};c->swiglu=(fg_vk_kernel){.file="fg_swiglu.spv",.bindings=3,.push_bytes=4};c->silu_scaled=(fg_vk_kernel){.file="fg_silu_scaled.spv",.bindings=2,.push_bytes=8};c->dense=(fg_vk_kernel){.file="fg_dense_q8_0_f32.spv",.bindings=3,.push_bytes=20};c->dense_f32=(fg_vk_kernel){.file="fg_dense_f32.spv",.bindings=3,.push_bytes=12};c->dense_bf16=(fg_vk_kernel){.file="fg_dense_bf16_f32.spv",.bindings=3,.push_bytes=12};
     c->rms=(fg_vk_kernel){.file="fg_group_rms_norm.spv",.bindings=3,.push_bytes=16};c->gr=(fg_vk_kernel){.file="fg_gr_mix.spv",.bindings=5,.push_bytes=12};c->hc_finalize=(fg_vk_kernel){.file="fg_hc_finalize.spv",.bindings=3,.push_bytes=12};c->gr_write=(fg_vk_kernel){.file="fg_gr_write.spv",.bindings=4,.push_bytes=12};c->ple_gate=(fg_vk_kernel){.file="fg_ple_gate.spv",.bindings=4,.push_bytes=0};c->ple_gate_prefill=(fg_vk_kernel){.file="fg_ple_gate_prefill.spv",.bindings=4,.push_bytes=4};c->ple_conv=(fg_vk_kernel){.file="fg_ple_conv_decode.spv",.bindings=5,.push_bytes=0};c->ple_conv_prefill=(fg_vk_kernel){.file="fg_ple_conv_prefill.spv",.bindings=5,.push_bytes=4};c->add=(fg_vk_kernel){.file="fg_add_f32.spv",.bindings=3,.push_bytes=4};c->gdn_conv=(fg_vk_kernel){.file="fg_gdn_conv_decode.spv",.bindings=4,.push_bytes=4};c->gdn_conv_prefill=(fg_vk_kernel){.file="fg_gdn_conv_prefill.spv",.bindings=4,.push_bytes=8};c->gdn_recurrent=(fg_vk_kernel){.file="fg_gdn_recurrent_decode.spv",.bindings=9,.push_bytes=16};c->gdn_recurrent_prefill=(fg_vk_kernel){.file="fg_gdn_recurrent_prefill.spv",.bindings=9,.push_bytes=20};
     c->qsa_prepare=(fg_vk_kernel){.file="fg_qsa_prepare.spv",.bindings=8,.push_bytes=0};c->qsa_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_prepare_prefill.spv",.bindings=8,.push_bytes=4};c->qsa_index_prepare=(fg_vk_kernel){.file="fg_qsa_index_prepare.spv",.bindings=4,.push_bytes=0};c->qsa_index_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_index_prepare_prefill.spv",.bindings=4,.push_bytes=4};c->qsa_score=(fg_vk_kernel){.file="fg_qsa_index_score.spv",.bindings=6,.push_bytes=8};c->qsa_attention=(fg_vk_kernel){.file="fg_qsa_attention.spv",.bindings=4,.push_bytes=4};c->topk=(fg_vk_kernel){.file="fg_topk_reduce.spv",.bindings=4,.push_bytes=4};
-    c->moe_q5_1=(fg_vk_kernel){.file="fg_moe_q5_1_down.spv",.bindings=4,.push_bytes=28};c->moe_q8_0=(fg_vk_kernel){.file="fg_moe_q8_0_down.spv",.bindings=4,.push_bytes=28};c->kquant=(fg_vk_kernel){.file="fg_moe_kquant.spv",.bindings=4,.push_bytes=36};*out=c;return FG_OK;
+    c->moe_q5_1=(fg_vk_kernel){.file="fg_moe_q5_1_down.spv",.bindings=4,.push_bytes=28};c->moe_q8_0=(fg_vk_kernel){.file="fg_moe_q8_0_down.spv",.bindings=4,.push_bytes=28};c->kquant=(fg_vk_kernel){.file="fg_moe_kquant.spv",.bindings=4,.push_bytes=36};
+    c->bench_stream=(fg_vk_kernel){.file="fg_bench_stream.spv",.bindings=3,.push_bytes=20};c->bench_dequant=(fg_vk_kernel){.file="fg_bench_dequant.spv",.bindings=3,.push_bytes=20};c->bench_dot_nored=(fg_vk_kernel){.file="fg_bench_dot_nored.spv",.bindings=3,.push_bytes=20};
+    *out=c;return FG_OK;
 }
 
-void fg_vk_close(fg_vk_context *c){if(!c)return;if(c->device)vkDeviceWaitIdle(c->device);destroy_kernel(c,&c->kquant);destroy_kernel(c,&c->moe_q8_0);destroy_kernel(c,&c->moe_q5_1);destroy_kernel(c,&c->topk);destroy_kernel(c,&c->qsa_attention);destroy_kernel(c,&c->qsa_score);destroy_kernel(c,&c->qsa_index_prepare_prefill);destroy_kernel(c,&c->qsa_index_prepare);destroy_kernel(c,&c->qsa_prepare_prefill);destroy_kernel(c,&c->qsa_prepare);destroy_kernel(c,&c->gdn_recurrent_prefill);destroy_kernel(c,&c->gdn_recurrent);destroy_kernel(c,&c->gdn_conv_prefill);destroy_kernel(c,&c->gdn_conv);destroy_kernel(c,&c->add);destroy_kernel(c,&c->ple_conv_prefill);destroy_kernel(c,&c->ple_conv);destroy_kernel(c,&c->ple_gate_prefill);destroy_kernel(c,&c->ple_gate);destroy_kernel(c,&c->gr_write);destroy_kernel(c,&c->hc_finalize);destroy_kernel(c,&c->gr);destroy_kernel(c,&c->rms);destroy_kernel(c,&c->dense_bf16);destroy_kernel(c,&c->dense_f32);destroy_kernel(c,&c->dense);destroy_kernel(c,&c->silu_scaled);destroy_kernel(c,&c->swiglu);destroy_kernel(c,&c->embedding_batch);destroy_kernel(c,&c->embedding);destroy_kernel(c,&c->dequant_iq4nl);destroy_kernel(c,&c->quant_q4);destroy_kernel(c,&c->quant_q8);destroy_kernel(c,&c->quant_q8k);if(c->pipeline_cache)vkDestroyPipelineCache(c->device,c->pipeline_cache,NULL);if(c->descriptor_pool)vkDestroyDescriptorPool(c->device,c->descriptor_pool,NULL);if(c->fence)vkDestroyFence(c->device,c->fence,NULL);if(c->command_pool)vkDestroyCommandPool(c->device,c->command_pool,NULL);if(c->device)vkDestroyDevice(c->device,NULL);if(c->instance)vkDestroyInstance(c->instance,NULL);free(c);}
+void fg_vk_close(fg_vk_context *c){if(!c)return;if(c->device)vkDeviceWaitIdle(c->device);destroy_kernel(c,&c->bench_dot_nored);destroy_kernel(c,&c->bench_dequant);destroy_kernel(c,&c->bench_stream);destroy_kernel(c,&c->kquant);destroy_kernel(c,&c->moe_q8_0);destroy_kernel(c,&c->moe_q5_1);destroy_kernel(c,&c->topk);destroy_kernel(c,&c->qsa_attention);destroy_kernel(c,&c->qsa_score);destroy_kernel(c,&c->qsa_index_prepare_prefill);destroy_kernel(c,&c->qsa_index_prepare);destroy_kernel(c,&c->qsa_prepare_prefill);destroy_kernel(c,&c->qsa_prepare);destroy_kernel(c,&c->gdn_recurrent_prefill);destroy_kernel(c,&c->gdn_recurrent);destroy_kernel(c,&c->gdn_conv_prefill);destroy_kernel(c,&c->gdn_conv);destroy_kernel(c,&c->add);destroy_kernel(c,&c->ple_conv_prefill);destroy_kernel(c,&c->ple_conv);destroy_kernel(c,&c->ple_gate_prefill);destroy_kernel(c,&c->ple_gate);destroy_kernel(c,&c->gr_write);destroy_kernel(c,&c->hc_finalize);destroy_kernel(c,&c->gr);destroy_kernel(c,&c->rms);destroy_kernel(c,&c->dense_bf16);destroy_kernel(c,&c->dense_f32);destroy_kernel(c,&c->dense);destroy_kernel(c,&c->silu_scaled);destroy_kernel(c,&c->swiglu);destroy_kernel(c,&c->embedding_batch);destroy_kernel(c,&c->embedding);destroy_kernel(c,&c->dequant_iq4nl);destroy_kernel(c,&c->quant_q4);destroy_kernel(c,&c->quant_q8);destroy_kernel(c,&c->quant_q8k);if(c->pipeline_cache)vkDestroyPipelineCache(c->device,c->pipeline_cache,NULL);if(c->descriptor_pool)vkDestroyDescriptorPool(c->device,c->descriptor_pool,NULL);if(c->fence)vkDestroyFence(c->device,c->fence,NULL);if(c->command_pool)vkDestroyCommandPool(c->device,c->command_pool,NULL);if(c->device)vkDestroyDevice(c->device,NULL);if(c->instance)vkDestroyInstance(c->instance,NULL);free(c);}
 const char *fg_vk_device_name(const fg_vk_context *c){return c?c->device_name:"";}
 
 fg_status fg_vk_tensor_create(fg_vk_context *c,uint64_t bytes,fg_vk_tensor **out,fg_error *err){
@@ -373,3 +377,124 @@ fg_status fg_vk_topk_reduce(fg_vk_context *c,fg_vk_tensor *out_scores,fg_vk_tens
 fg_status fg_vk_moe_q5_1_down(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *weights,const fg_vk_tensor *tiles,const fg_vk_tensor *input,uint32_t output_width,uint32_t input_width,uint32_t expert_stride,uint32_t used_experts,bool packed,uint32_t tile_count,fg_error *err){uint64_t row_bytes=(uint64_t)(input_width/32u)*24u;if(!c||!output_width||!input_width||input_width%32u||!tile_count||expert_stride<row_bytes*output_width||!tensor_range(tiles,0,(uint64_t)tile_count*9u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Q5_1 expert dispatch");return FG_ERR_ARGUMENT;}struct {uint32_t out_dim,in_dim,row_bytes,expert_stride,n_used,packed_weights,reserved;} push={output_width,input_width,(uint32_t)row_bytes,expert_stride,used_experts,packed?1u:0u,0};const fg_vk_tensor *bindings[]={weights,tiles,input,out};return dispatch(c,&c->moe_q5_1,bindings,&push,(output_width+7u)/8u,tile_count,1,err);}
 fg_status fg_vk_moe_q8_0_down(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *weights,const fg_vk_tensor *tiles,const fg_vk_tensor *input,uint32_t output_width,uint32_t input_width,uint32_t expert_stride,uint32_t used_experts,bool packed,uint32_t tile_count,fg_error *err){uint64_t row_bytes=(uint64_t)(input_width/32u)*34u;if(!c||!output_width||!input_width||input_width%32u||!tile_count||expert_stride<row_bytes*output_width||!tensor_range(tiles,0,(uint64_t)tile_count*9u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Q8_0 expert dispatch");return FG_ERR_ARGUMENT;}struct {uint32_t out_dim,in_dim,row_bytes,expert_stride,n_used,packed_weights,reserved;} push={output_width,input_width,(uint32_t)row_bytes,expert_stride,used_experts,packed?1u:0u,0};const fg_vk_tensor *bindings[]={weights,tiles,input,out};return dispatch(c,&c->moe_q8_0,bindings,&push,(output_width+7u)/8u,tile_count,1,err);}
 fg_status fg_vk_moe_kquant(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *weights,const fg_vk_tensor *activation,const fg_vk_tensor *tiles,uint32_t type,uint32_t output_width,uint32_t input_width,uint32_t expert_stride,uint32_t used_experts,uint32_t routed_pairs,bool packed,uint32_t tile_count,fg_error *err){uint32_t block_bytes=type==12u?144u:type==13u?176u:0u;uint64_t row_bytes=(uint64_t)(input_width/256u)*block_bytes;if(!c||!block_bytes||!output_width||!input_width||input_width%256u||!used_experts||!routed_pairs||!tile_count||row_bytes>UINT32_MAX||expert_stride<row_bytes*output_width||!tensor_range(tiles,0,(uint64_t)tile_count*9u*4u)||!tensor_range(activation,0,(uint64_t)((input_width/256u)*296u)*(routed_pairs/used_experts+(routed_pairs%used_experts?1u:0u)))||!tensor_range(out,0,(uint64_t)routed_pairs*output_width*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Q4_K/Q5_K expert dispatch");return FG_ERR_ARGUMENT;}struct {uint32_t out_dim,blocks,row_bytes,expert_stride,type,n_used,routed_pairs,packed_weights,reserved;} push={output_width,input_width/256u,(uint32_t)row_bytes,expert_stride,type,used_experts,routed_pairs,packed?1u:0u,0};const fg_vk_tensor *bindings[]={weights,activation,tiles,out};return dispatch(c,&c->kquant,bindings,&push,(output_width+7u)/8u,tile_count,1,err);}
+
+/* -------- Decomposition benchmark: stream / dequant / dot-no-reduce / full -------- */
+
+static double bench_run_timestamped(fg_vk_context *c,fg_vk_kernel *kernel,
+    const fg_vk_tensor *w,const fg_vk_tensor *x,fg_vk_tensor **ys,uint32_t n,
+    const void *push,uint32_t gx,uint32_t gy,
+    VkQueryPool qpool,uint32_t ts_base,float ts_period,fg_error *err)
+{
+    vkResetFences(c->device,1,&c->fence);vkResetCommandBuffer(c->command,0);
+    VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+    VkResult vr=vkBeginCommandBuffer(c->command,&begin);if(vr!=VK_SUCCESS)return -1.0;
+    vkCmdResetQueryPool(c->command,qpool,ts_base,n*2+2);
+    VkMemoryBarrier hd={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT,.dstAccessMask=VK_ACCESS_SHADER_READ_BIT};
+    vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&hd,0,NULL,0,NULL);
+    c->batch_depth=1;c->batch_set_count=0;
+    vkCmdWriteTimestamp(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,qpool,ts_base);
+    for(uint32_t i=0;i<n;i++){
+        vkCmdWriteTimestamp(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,qpool,ts_base+1+i*2);
+        fg_status s=bench_record_dispatch_no_barrier(c,kernel,w,x,ys[i],push,gx,gy,err);
+        if(s!=FG_OK){c->batch_depth=0;return -1.0;}
+        vkCmdWriteTimestamp(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,qpool,ts_base+2+i*2);
+    }
+    VkMemoryBarrier dh={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};
+    vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&dh,0,NULL,0,NULL);
+    vkEndCommandBuffer(c->command);
+    VkSubmitInfo sub={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&c->command};
+    vr=vkQueueSubmit(c->queue,1,&sub,c->fence);if(vr!=VK_SUCCESS){c->batch_depth=0;return -1.0;}
+    vr=vkWaitForFences(c->device,1,&c->fence,VK_TRUE,5000000000ULL);
+    for(uint32_t i=0;i<c->batch_set_count;i++)vkFreeDescriptorSets(c->device,c->descriptor_pool,1,&c->batch_sets[i]);
+    c->batch_depth=0;c->batch_set_count=0;
+    if(vr!=VK_SUCCESS)return -1.0;
+    uint64_t *ts=malloc((n*2+2)*sizeof(uint64_t));if(!ts)return -1.0;
+    vr=vkGetQueryPoolResults(c->device,qpool,ts_base,n*2+2,(n*2+2)*sizeof(uint64_t),ts,sizeof(uint64_t),VK_QUERY_RESULT_64_BIT);
+    if(vr!=VK_SUCCESS&&vr!=VK_NOT_READY){free(ts);return -1.0;}
+    double total_ns=0;for(uint32_t i=0;i<n;i++){total_ns+=(double)(ts[1+i*2+1]-ts[1+i*2])*(double)ts_period;}
+    free(ts);return total_ns/1e3/(double)n; /* average μs per dispatch */
+}
+
+fg_status fg_vk_bench_decompose(fg_vk_context *c,fg_error *err){
+    if(!c){fg_error_set(err,FG_ERR_ARGUMENT,"null context");return FG_ERR_ARGUMENT;}
+    VkPhysicalDeviceProperties props;vkGetPhysicalDeviceProperties(c->physical,&props);
+    float ts_period=props.limits.timestampPeriod;
+    VkDescriptorPoolSize bps={.type=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.descriptorCount=2048};
+    VkDescriptorPoolCreateInfo bdp={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags=VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,.maxSets=512,.poolSizeCount=1,.pPoolSizes=&bps};
+    VkDescriptorPool saved=c->descriptor_pool;
+    VkResult vr=vkCreateDescriptorPool(c->device,&bdp,NULL,&c->descriptor_pool);
+    if(vr!=VK_SUCCESS){c->descriptor_pool=saved;return vk_error(err,"decompose pool",vr);}
+    VkQueryPoolCreateInfo qpc={.sType=VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,.queryType=VK_QUERY_TYPE_TIMESTAMP,.queryCount=512};
+    VkQueryPool qpool=VK_NULL_HANDLE;
+    vr=vkCreateQueryPool(c->device,&qpc,NULL,&qpool);
+    if(vr!=VK_SUCCESS){vkDestroyDescriptorPool(c->device,c->descriptor_pool,NULL);c->descriptor_pool=saved;return vk_error(err,"decompose qpool",vr);}
+
+    #define DEC_N 10
+    struct {uint32_t in,out;const char *name;} shapes[]={
+        {10240,320,"hc_down 10240→320"},{320,10240,"hc_up 320→10240"},
+        {2560,640,"shexp_gate 2560→640"},{640,2560,"shexp_down 640→2560"},
+        {2560,512,"qsa_attn_q 2560→512"},{2560,10240,"ple_key 2560→10240"},
+    };
+    fprintf(stderr,"\n=== Q8_0 kernel decomposition (GPU timestamps, %u dispatches) ===\n",DEC_N);
+    fprintf(stderr,"%-20s %7s │ %8s %8s │ %8s %8s │ %8s │ %8s %8s │ %8s\n",
+        "shape","wt MB","stream","GB/s","dequant","GB/s","dot_nr","full","GB/s","theor");
+    fprintf(stderr,"─────────────────────────────────────────────────────────────────────────────────────────\n");
+
+    fg_status status=FG_OK;
+    fg_vk_kernel *kernels[]={&c->bench_stream,&c->bench_dequant,&c->bench_dot_nored,&c->dense};
+
+    for(uint32_t s=0;s<sizeof(shapes)/sizeof(shapes[0])&&status==FG_OK;s++){
+        uint32_t in_dim=shapes[s].in,out_dim=shapes[s].out;
+        uint32_t blocks=in_dim/32u;uint64_t row_bytes=(uint64_t)blocks*34u;
+        uint64_t weight_bytes=row_bytes*out_dim;
+        uint64_t total_data=weight_bytes+(uint64_t)in_dim*4u+(uint64_t)out_dim*4u;
+        struct{uint32_t od,nt,bl,rb;float sc;}push={out_dim,1,blocks,(uint32_t)row_bytes,1.0f};
+
+        fg_vk_tensor *w=NULL,*x=NULL;
+        /* dot_nored writes 64 floats per row, so output needs out_dim*64*4 bytes */
+        uint64_t big_out=(uint64_t)out_dim*64u*4u;
+        fg_vk_tensor *ys[DEC_N]={0};
+        status=fg_vk_tensor_create(c,weight_bytes,&w,err);
+        if(status==FG_OK)status=fg_vk_tensor_create(c,(uint64_t)in_dim*4u,&x,err);
+        for(uint32_t i=0;status==FG_OK&&i<DEC_N;i++)
+            status=fg_vk_tensor_create(c,big_out,&ys[i],err);
+        if(status!=FG_OK)break;
+        memset(fg_vk_tensor_map(w),0x42,weight_bytes);
+        float *xp=fg_vk_tensor_map(x);for(uint32_t i=0;i<in_dim;i++)xp[i]=1.0f/(float)(i+1);
+
+        /* Warmup all kernels */
+        for(uint32_t k=0;k<4&&status==FG_OK;k++){
+            for(uint32_t i=0;status==FG_OK&&i<5;i++){
+                const fg_vk_tensor *bindings[]={w,x,ys[0]};
+                status=dispatch(c,kernels[k],bindings,&push,out_dim,1,1,err);
+            }
+        }
+
+        double times[4]={0};
+        uint32_t ts_off=0;
+        for(uint32_t k=0;k<4&&status==FG_OK;k++){
+            times[k]=bench_run_timestamped(c,kernels[k],w,x,ys,DEC_N,&push,out_dim,1,qpool,ts_off,ts_period,err);
+            ts_off+=DEC_N*2+2;
+            if(times[k]<0){status=FG_ERR_IO;break;}
+        }
+
+        if(status==FG_OK){
+            double theor=(double)total_data/(357.0*1e3);
+            fprintf(stderr,"%-20s %6.2f │ %7.1f %7.1f │ %7.1f %7.1f │ %7.1f │ %7.1f %7.1f │ %7.1f\n",
+                shapes[s].name,(double)weight_bytes/1e6,
+                times[0],(double)weight_bytes/(times[0]*1e-6)/1e9,
+                times[1],(double)weight_bytes/(times[1]*1e-6)/1e9,
+                times[2],
+                times[3],(double)total_data/(times[3]*1e-6)/1e9,
+                theor);
+        }
+        for(uint32_t i=0;i<DEC_N;i++)fg_vk_tensor_destroy(ys[i]);
+        fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);
+    }
+    #undef DEC_N
+    vkDestroyQueryPool(c->device,qpool,NULL);
+    vkDestroyDescriptorPool(c->device,c->descriptor_pool,NULL);
+    c->descriptor_pool=saved;
+    return status;
+}
