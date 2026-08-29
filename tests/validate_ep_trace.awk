@@ -35,7 +35,12 @@ $0 ~ /EP_LAYER_TRACE / {
     if (layer_seen[layer]++) { fail("duplicate layer trace " layer); next }
     if (value("status") + 0 != 0) fail("layer " layer " status " value("status"))
     total = value("total_ms") + 0
-    phases = value("sync1_ms") + value("fire_ms") + value("shared_ms") + value("collect_ms") + value("finish_ms")
+    sync1 = value("sync1_ms") + 0
+    fire = value("fire_ms") + 0
+    shared = value("shared_ms") + 0
+    collect = value("collect_ms") + 0
+    finish = value("finish_ms") + 0
+    phases = sync1 + fire + shared + collect + finish
     difference = total - phases
     if (difference < 0) difference = -difference
     if (difference > 0.02) fail("layer " layer " phase sum differs by " difference " ms")
@@ -46,6 +51,12 @@ $0 ~ /EP_LAYER_TRACE / {
     layer_submissions += submissions
     layer_dispatches += dispatches
     layer_total += total
+    sync1_total += sync1
+    fire_total += fire
+    shared_total += shared
+    collect_total += collect
+    finish_total += finish
+    submission_layers[submissions]++
     if (total > maximum_layer_ms) { maximum_layer_ms = total; maximum_layer = layer }
     layer_count++
 }
@@ -62,6 +73,9 @@ $0 ~ /EP_ROUTE_TRACE / {
     local_selected[layer] = value("local_selected") + 0
     selected_count[layer] = value("selected") + 0
     rank_mask[layer] = value("rank_mask") + 0
+    remote_routes += remote_count[layer]
+    local_routes += local_count[layer]
+    local_selections += local_selected[layer]
     routes++
 }
 
@@ -76,6 +90,12 @@ $0 ~ /WORKER_EXPERT / {
     }
     if (worker_seen[layer,rank]++) fail("duplicate worker trace layer=" layer " rank=" rank)
     worker_selected[layer,rank] = value("sel") + 0
+    rank_requests[rank]++
+    rank_selections[rank] += worker_selected[layer,rank]
+    rank_gpu_ms[rank] += value("gpu") + 0
+    rank_reduce_ms[rank] += value("reduce") + 0
+    rank_send_ms[rank] += value("send") + 0
+    rank_total_ms[rank] += value("total") + 0
     worker_requests++
 }
 
@@ -84,6 +104,9 @@ $0 ~ /TOKEN_PROFILE / && $0 !~ /TOKEN_PROFILE_KERNEL/ {
         profile_count++
         profile_submissions = value("submissions") + 0
         profile_dispatches = value("dispatches") + 0
+        profile_wall_ms = value("wall_ms") + 0
+        profile_gpu_ms = value("gpu_ms") + 0
+        profile_kernel_ms = value("kernel_ms") + 0
     }
 }
 
@@ -127,4 +150,7 @@ END {
 
     if (errors) exit 1
     printf "EP_INTEGRATION_PASS token=%u layers=%u routes=%u worker_requests=%u layer_ms=%.3f max_layer=%u max_layer_ms=%.3f submissions=%u dispatches=%u\n", expected_token, layer_count, routes, worker_requests, layer_total, maximum_layer, maximum_layer_ms, profile_submissions, profile_dispatches
+    printf "EP_PHASE_SUM token=%u sync1_ms=%.3f fire_ms=%.3f shared_ms=%.3f collect_ms=%.3f finish_ms=%.3f nonlayer_ms=%.3f gpu_ms=%.3f kernel_ms=%.3f submit3_layers=%u submit4_layers=%u\n", expected_token, sync1_total, fire_total, shared_total, collect_total, finish_total, profile_wall_ms-layer_total, profile_gpu_ms, profile_kernel_ms, submission_layers[3], submission_layers[4]
+    printf "EP_ROUTE_SUM token=%u remote_routes=%u local_routes=%u local_selections=%u remote_selections=%u\n", expected_token, remote_routes, local_routes, local_selections, 480-local_selections
+    for (rank = 1; rank < 8; rank++) printf "EP_WORKER_SUM token=%u rank=%u requests=%u selections=%u gpu_ms=%.3f reduce_ms=%.3f send_ms=%.3f total_ms=%.3f\n", expected_token, rank, rank_requests[rank], rank_selections[rank], rank_gpu_ms[rank], rank_reduce_ms[rank], rank_send_ms[rank], rank_total_ms[rank]
 }
