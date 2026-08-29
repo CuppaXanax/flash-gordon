@@ -13,6 +13,8 @@ struct fg_model {
     fg_vk_context *vk;
     fg_vk_tensor *arena;
     fg_vk_tensor **tensor;
+    uint32_t *tensor_lookup;
+    uint32_t tensor_lookup_capacity;
     const fg_manifest *manifest;
     uint64_t weight_bytes;
     uint32_t rank;
@@ -24,16 +26,27 @@ static uint64_t rank_high_water(const fg_manifest *manifest,uint32_t rank){
     return high;
 }
 
+static uint64_t tensor_name_hash(const char *name){uint64_t hash=UINT64_C(1469598103934665603);for(const uint8_t *p=(const uint8_t *)name;*p;p++){hash^=*p;hash*=UINT64_C(1099511628211);}return hash;}
+
+static fg_status build_tensor_lookup(fg_model *model,fg_error *err){
+    uint32_t capacity=1u;while(capacity<model->manifest->tensor_count*2u)capacity<<=1u;model->tensor_lookup=calloc(capacity,sizeof(*model->tensor_lookup));if(!model->tensor_lookup){fg_error_set(err,FG_ERR_OOM,"allocate model tensor lookup");return FG_ERR_OOM;}model->tensor_lookup_capacity=capacity;
+    for(uint32_t i=0;i<model->manifest->tensor_count;i++)if(model->tensor[i]){const char *name=model->manifest->tensors[i].name;uint32_t slot=(uint32_t)tensor_name_hash(name)&(capacity-1u);while(model->tensor_lookup[slot]){uint32_t existing=model->tensor_lookup[slot]-1u;if(strcmp(model->manifest->tensors[existing].name,name)==0)break;slot=(slot+1u)&(capacity-1u);}if(!model->tensor_lookup[slot])model->tensor_lookup[slot]=i+1u;}
+    return FG_OK;
+}
+
+static uint32_t find_tensor(const fg_model *model,const char *name){if(!model||!name||!model->tensor_lookup_capacity)return UINT32_MAX;uint32_t slot=(uint32_t)tensor_name_hash(name)&(model->tensor_lookup_capacity-1u);for(uint32_t probes=0;probes<model->tensor_lookup_capacity;probes++){uint32_t entry=model->tensor_lookup[slot];if(!entry)return UINT32_MAX;uint32_t index=entry-1u;if(strcmp(model->manifest->tensors[index].name,name)==0)return index;slot=(slot+1u)&(model->tensor_lookup_capacity-1u);}return UINT32_MAX;}
+
 fg_status fg_model_open(fg_model **out,const fg_manifest *manifest,const char *pack_dir,uint32_t rank,fg_error *err){
     if(!out||!manifest||!pack_dir||rank>=FG_RANK_COUNT){fg_error_set(err,FG_ERR_ARGUMENT,"invalid model open arguments");return FG_ERR_ARGUMENT;}*out=NULL;uint64_t bytes=rank_high_water(manifest,rank);if(bytes==0||bytes>manifest->persistent_cap_bytes){fg_error_set(err,FG_ERR_LIMIT,"rank %u weight arena is invalid or exceeds persistent cap",rank);return FG_ERR_LIMIT;}
     fg_model *model=calloc(1,sizeof(*model));if(!model){fg_error_set(err,FG_ERR_OOM,"allocate model binding");return FG_ERR_OOM;}model->manifest=manifest;model->rank=rank;model->weight_bytes=bytes;model->tensor=calloc(manifest->tensor_count,sizeof(*model->tensor));if(!model->tensor){fg_model_close(model);fg_error_set(err,FG_ERR_OOM,"allocate model tensor index");return FG_ERR_OOM;}
     fg_status status=fg_vk_open(&model->vk,err);if(status==FG_OK)status=fg_vk_tensor_create(model->vk,bytes,&model->arena,err);void *mapped=status==FG_OK?fg_vk_tensor_map(model->arena):NULL;if(status==FG_OK&&(!mapped||!fg_is_aligned_u64((uintptr_t)mapped,FG_ALIGNMENT))){fg_error_set(err,FG_ERR_UNAVAILABLE,"Vulkan weight arena is not 4 KiB aligned for O_DIRECT");status=FG_ERR_UNAVAILABLE;}
     if(status==FG_OK)status=fg_load_rank_weights(manifest,pack_dir,rank,mapped,bytes,err);
     for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++)if(manifest->tensors[i].rank==rank)status=fg_vk_tensor_view(model->arena,manifest->tensors[i].offset,manifest->tensors[i].bytes,&model->tensor[i],err);
+    if(status==FG_OK)status=build_tensor_lookup(model,err);
     if(status!=FG_OK){fg_model_close(model);return status;}*out=model;return FG_OK;
 }
 
-void fg_model_close(fg_model *model){if(!model)return;if(model->tensor){for(uint32_t i=0;i<model->manifest->tensor_count;i++)fg_vk_tensor_destroy(model->tensor[i]);}free(model->tensor);fg_vk_tensor_destroy(model->arena);fg_vk_close(model->vk);free(model);}
+void fg_model_close(fg_model *model){if(!model)return;if(model->tensor){for(uint32_t i=0;i<model->manifest->tensor_count;i++)fg_vk_tensor_destroy(model->tensor[i]);}free(model->tensor_lookup);free(model->tensor);fg_vk_tensor_destroy(model->arena);fg_vk_close(model->vk);free(model);}
 
 /* Expert-parallel model loading: loads ALL shared weights from ALL rank files,
    plus this rank's expert weights, into a single combined arena.  Every rank
@@ -98,14 +111,15 @@ fg_status fg_model_open_replicated(fg_model **out,const fg_manifest *manifest,co
         if(!included[i])continue;
         status=fg_vk_tensor_view(model->arena,remap[i],manifest->tensors[i].bytes,&model->tensor[i],err);
     }
+    if(status==FG_OK)status=build_tensor_lookup(model,err);
     free(included);free(remap);
     if(status!=FG_OK){fg_model_close(model);return status;}
     fprintf(stderr,"[rank %u] replicated model: %.3f GiB (%u tensors from %u ranks)\n",rank,(double)cursor/(1024.0*1024.0*1024.0),manifest->tensor_count,FG_RANK_COUNT);
     *out=model;return FG_OK;
 }
 fg_vk_context *fg_model_vk(fg_model *model){return model?model->vk:NULL;}
-fg_vk_tensor *fg_model_tensor(fg_model *model,const char *name){if(!model||!name)return NULL;for(uint32_t i=0;i<model->manifest->tensor_count;i++)if(model->tensor[i]&&strcmp(model->manifest->tensors[i].name,name)==0)return model->tensor[i];return NULL;}
-const fg_tensor_record *fg_model_tensor_record(const fg_model *model,const char *name){if(!model||!name)return NULL;for(uint32_t i=0;i<model->manifest->tensor_count;i++)if(model->tensor[i]&&strcmp(model->manifest->tensors[i].name,name)==0)return &model->manifest->tensors[i];return NULL;}
+fg_vk_tensor *fg_model_tensor(fg_model *model,const char *name){uint32_t index=find_tensor(model,name);return index==UINT32_MAX?NULL:model->tensor[index];}
+const fg_tensor_record *fg_model_tensor_record(const fg_model *model,const char *name){uint32_t index=find_tensor(model,name);return index==UINT32_MAX?NULL:&model->manifest->tensors[index];}
 const fg_manifest *fg_model_manifest(const fg_model *model){return model?model->manifest:NULL;}
 uint64_t fg_model_weight_bytes(const fg_model *model){return model?model->weight_bytes:0;}
 uint32_t fg_model_rank(const fg_model *model){return model?model->rank:UINT32_MAX;}
