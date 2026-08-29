@@ -59,6 +59,26 @@ static fg_status socket_all(fg_uring *r,uint8_t op,uint32_t slot,void *b,uint32_
 fg_status fg_uring_send_all(fg_uring *r,uint32_t slot,const void *b,uint32_t n,fg_error *e){return socket_all(r,IORING_OP_SEND,slot,(void *)b,n,e);}
 fg_status fg_uring_recv_all(fg_uring *r,uint32_t slot,void *b,uint32_t n,fg_error *e){return socket_all(r,IORING_OP_RECV,slot,b,n,e);}
 
+fg_status fg_uring_prep_send(fg_uring *r,uint32_t slot,const void *buf,uint32_t bytes,uint64_t tag,fg_error *err){
+    if(!r||!buf||!bytes||slot>=r->file_count){fg_error_set(err,FG_ERR_ARGUMENT,"invalid async send arguments");return FG_ERR_ARGUMENT;}
+    unsigned tail=atomic_load_explicit((_Atomic unsigned *)r->sq_tail,memory_order_relaxed);
+    unsigned head=atomic_load_explicit((_Atomic unsigned *)r->sq_head,memory_order_acquire);
+    if(tail-head>=*r->sq_entries){fg_error_set(err,FG_ERR_LIMIT,"SQ full in prep_send");return FG_ERR_LIMIT;}
+    unsigned index=tail&*r->sq_mask;
+    struct io_uring_sqe *sqe=&r->sqes[index];
+    memset(sqe,0,sizeof(*sqe));
+    sqe->opcode=IORING_OP_SEND;
+    sqe->flags=IOSQE_FIXED_FILE;
+    sqe->fd=(int)slot;
+    sqe->addr=(uint64_t)(uintptr_t)buf;
+    sqe->len=bytes;
+    sqe->msg_flags=MSG_NOSIGNAL;
+    sqe->user_data=tag;
+    r->sq_array[index]=index;
+    atomic_store_explicit((_Atomic unsigned *)r->sq_tail,tail+1,memory_order_release);
+    return FG_OK;
+}
+
 fg_status fg_uring_prep_recv(fg_uring *r,uint32_t slot,void *buf,uint32_t bytes,uint64_t tag,fg_error *err){
     if(!r||!buf||!bytes||slot>=r->file_count){fg_error_set(err,FG_ERR_ARGUMENT,"invalid async recv arguments");return FG_ERR_ARGUMENT;}
     unsigned tail=atomic_load_explicit((_Atomic unsigned *)r->sq_tail,memory_order_relaxed);
@@ -108,5 +128,5 @@ fg_status fg_uring_reap(fg_uring *r,uint32_t min_count,fg_uring_cqe *out,uint32_
 struct fg_uring{int unavailable;};
 fg_status fg_uring_create(fg_uring **out,fg_ring_class c,uint32_t n,fg_error *e){(void)out;(void)c;(void)n;fg_error_set(e,FG_ERR_UNAVAILABLE,"Flash Gordon requires Linux io_uring");return FG_ERR_UNAVAILABLE;}
 void fg_uring_destroy(fg_uring *r){(void)r;}fg_status fg_uring_register_file(fg_uring*r,int f,uint32_t*s,fg_error*e){(void)r;(void)f;(void)s;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_register_buffer(fg_uring*r,void*b,uint64_t n,fg_error*e){(void)r;(void)b;(void)n;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_pread(fg_uring*r,uint32_t s,void*b,uint32_t n,uint64_t o,fg_error*e){(void)r;(void)s;(void)b;(void)n;(void)o;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_pread_batch(fg_uring*r,uint32_t s,const fg_uring_read*q,uint32_t n,fg_error*e){(void)r;(void)s;(void)q;(void)n;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_pwrite(fg_uring*r,uint32_t s,const void*b,uint32_t n,uint64_t o,fg_error*e){(void)r;(void)s;(void)b;(void)n;(void)o;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_send_all(fg_uring*r,uint32_t s,const void*b,uint32_t n,fg_error*e){(void)r;(void)s;(void)b;(void)n;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_recv_all(fg_uring*r,uint32_t s,void*b,uint32_t n,fg_error*e){(void)r;(void)s;(void)b;(void)n;return fg_uring_create(NULL,0,0,e);}
-fg_status fg_uring_prep_recv(fg_uring*r,uint32_t s,void*b,uint32_t n,uint64_t t,fg_error*e){(void)r;(void)s;(void)b;(void)n;(void)t;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_flush(fg_uring*r,uint32_t n,fg_error*e){(void)r;(void)n;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_reap(fg_uring*r,uint32_t m,fg_uring_cqe*o,uint32_t c,uint32_t*d,fg_error*e){(void)r;(void)m;(void)o;(void)c;(void)d;return fg_uring_create(NULL,0,0,e);}
+fg_status fg_uring_prep_send(fg_uring*r,uint32_t s,const void*b,uint32_t n,uint64_t t,fg_error*e){(void)r;(void)s;(void)b;(void)n;(void)t;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_prep_recv(fg_uring*r,uint32_t s,void*b,uint32_t n,uint64_t t,fg_error*e){(void)r;(void)s;(void)b;(void)n;(void)t;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_flush(fg_uring*r,uint32_t n,fg_error*e){(void)r;(void)n;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_reap(fg_uring*r,uint32_t m,fg_uring_cqe*o,uint32_t c,uint32_t*d,fg_error*e){(void)r;(void)m;(void)o;(void)c;(void)d;return fg_uring_create(NULL,0,0,e);}
 #endif
