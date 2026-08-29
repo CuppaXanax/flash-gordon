@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 typedef struct fg_vk_allocation {
     VkBuffer buffer;
@@ -139,6 +140,210 @@ fg_status fg_vk_hc_finalize(fg_vk_context *c,fg_vk_tensor *output,const fg_vk_te
 fg_status fg_vk_gr_write(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *hyper,const fg_vk_tensor *block,const fg_vk_tensor *injection,uint32_t hidden,uint32_t groups,uint32_t tokens,fg_error *err){uint64_t values=(uint64_t)hidden*groups*tokens;if(!c||!hidden||!groups||!tokens||!tensor_range(hyper,0,values*4u)||!tensor_range(block,0,(uint64_t)hidden*tokens*4u)||!tensor_range(injection,0,(uint64_t)groups*tokens*4u)||!tensor_range(out,0,values*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid gated residual write dispatch");return FG_ERR_ARGUMENT;}struct {uint32_t hidden,groups,tokens;}push={hidden,groups,tokens};const fg_vk_tensor *bindings[]={hyper,block,injection,out};return dispatch(c,&c->gr_write,bindings,&push,(uint32_t)((values+255u)/256u),1,1,err);}
 fg_status fg_vk_ple_gate(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *key,const fg_vk_tensor *query,const fg_vk_tensor *value,fg_error *err){if(!c||!tensor_range(key,0,10240u*4u)||!tensor_range(query,0,10240u*4u)||!tensor_range(value,0,2560u*4u)||!tensor_range(out,0,10240u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid PLE gate dispatch");return FG_ERR_ARGUMENT;}const fg_vk_tensor *bindings[]={key,query,value,out};return dispatch(c,&c->ple_gate,bindings,NULL,4u,1,1,err);}
 fg_status fg_vk_ple_gate_prefill(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *key,const fg_vk_tensor *query,const fg_vk_tensor *value,uint32_t tokens,fg_error *err){if(!c||!tokens||!tensor_range(key,0,(uint64_t)tokens*10240u*4u)||!tensor_range(query,0,(uint64_t)tokens*10240u*4u)||!tensor_range(value,0,(uint64_t)tokens*2560u*4u)||!tensor_range(out,0,(uint64_t)tokens*10240u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid PLE gate prefill dispatch");return FG_ERR_ARGUMENT;}const fg_vk_tensor *bindings[]={key,query,value,out};return dispatch(c,&c->ple_gate_prefill,bindings,&tokens,tokens*4u,1,1,err);}
+
+/* -------- GPU-timestamped dense Q8_0 kernel benchmark -------- */
+
+static fg_status bench_record_dispatch_no_barrier(fg_vk_context *c,fg_vk_kernel *kernel,
+    const fg_vk_tensor *w,const fg_vk_tensor *x,fg_vk_tensor *y,
+    const void *push,uint32_t gx,uint32_t gy,fg_error *err)
+{
+    fg_status status=create_kernel(c,kernel,err);if(status!=FG_OK)return status;
+    VkDescriptorSetAllocateInfo da={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool=c->descriptor_pool,.descriptorSetCount=1,.pSetLayouts=&kernel->set_layout};
+    VkDescriptorSet set;VkResult vr=vkAllocateDescriptorSets(c->device,&da,&set);
+    if(vr!=VK_SUCCESS)return vk_error(err,"bench alloc descriptor",vr);
+    VkDescriptorBufferInfo info[3];VkWriteDescriptorSet write[3];
+    const fg_vk_tensor *tensors[]={w,x,y};
+    for(uint32_t i=0;i<3;i++){
+        info[i]=(VkDescriptorBufferInfo){.buffer=tensors[i]->allocation->buffer,.offset=tensors[i]->offset,.range=tensors[i]->bytes};
+        write[i]=(VkWriteDescriptorSet){.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=set,.dstBinding=i,.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.pBufferInfo=&info[i]};
+    }
+    vkUpdateDescriptorSets(c->device,3,write,0,NULL);
+    /* NO barrier — caller manages dependencies via independent output tensors */
+    vkCmdBindPipeline(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->pipeline);
+    vkCmdBindDescriptorSets(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->layout,0,1,&set,0,NULL);
+    vkCmdPushConstants(c->command,kernel->layout,VK_SHADER_STAGE_COMPUTE_BIT,0,kernel->push_bytes,push);
+    vkCmdDispatch(c->command,gx,gy,1);
+    if(c->batch_set_count<256)c->batch_sets[c->batch_set_count++]=set;
+    return FG_OK;
+}
+
+fg_status fg_vk_bench_dense_q8(fg_vk_context *c,fg_error *err){
+    if(!c){fg_error_set(err,FG_ERR_ARGUMENT,"null context");return FG_ERR_ARGUMENT;}
+    /* Get timestamp period */
+    VkPhysicalDeviceProperties props;vkGetPhysicalDeviceProperties(c->physical,&props);
+    float ts_period=props.limits.timestampPeriod; /* nanoseconds per tick */
+    uint32_t ts_valid=0;
+    {uint32_t fc=0;vkGetPhysicalDeviceQueueFamilyProperties(c->physical,&fc,NULL);
+     VkQueueFamilyProperties *fp=malloc(fc*sizeof(*fp));if(fp){vkGetPhysicalDeviceQueueFamilyProperties(c->physical,&fc,fp);ts_valid=fp[c->queue_family].timestampValidBits;free(fp);}}
+    fprintf(stderr,"timestamp: period=%.2f ns, validBits=%u, device=%s\n",ts_period,ts_valid,c->device_name);
+    if(!ts_valid){fg_error_set(err,FG_ERR_UNAVAILABLE,"GPU does not support timestamp queries");return FG_ERR_UNAVAILABLE;}
+
+    /* Create a large descriptor pool and query pool for benchmarking */
+    VkDescriptorPoolSize bps={.type=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.descriptorCount=2048};
+    VkDescriptorPoolCreateInfo bdp={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags=VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,.maxSets=512,.poolSizeCount=1,.pPoolSizes=&bps};
+    VkDescriptorPool saved_pool=c->descriptor_pool;
+    VkResult vr=vkCreateDescriptorPool(c->device,&bdp,NULL,&c->descriptor_pool);
+    if(vr!=VK_SUCCESS){c->descriptor_pool=saved_pool;return vk_error(err,"create bench descriptor pool",vr);}
+
+    #define BENCH_N 50
+    #define TS_PER_SHAPE (2+BENCH_N*2+BENCH_N*2) /* warmup boundary + A pairs + B pairs */
+    struct {uint32_t in,out;const char *name;} shapes[]={
+        {10240,320,"hc_down 10240→320"},{320,10240,"hc_up 320→10240"},
+        {2560,640,"shexp_gate 2560→640"},{640,2560,"shexp_down 640→2560"},
+        {2560,512,"qsa_attn_q 2560→512"},{2560,10240,"ple_key 2560→10240"},
+    };
+    uint32_t n_shapes=sizeof(shapes)/sizeof(shapes[0]);
+    uint32_t max_ts=n_shapes*TS_PER_SHAPE+16;
+
+    VkQueryPoolCreateInfo qpc={.sType=VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+        .queryType=VK_QUERY_TYPE_TIMESTAMP,.queryCount=max_ts};
+    VkQueryPool qpool=VK_NULL_HANDLE;
+    vr=vkCreateQueryPool(c->device,&qpc,NULL,&qpool);
+    if(vr!=VK_SUCCESS){vkDestroyDescriptorPool(c->device,c->descriptor_pool,NULL);c->descriptor_pool=saved_pool;return vk_error(err,"create timestamp query pool",vr);}
+
+    fprintf(stderr,"\n=== GPU-timestamped Q8_0 dense matvec benchmark ===\n");
+    fprintf(stderr,"%-20s %7s │ %8s %8s %8s │ %8s %8s %8s │ %8s\n",
+        "shape","wt MB","A:nobar","A:GB/s","A:rfl%","B:bar","B:GB/s","B:rfl%","C:stalone");
+    fprintf(stderr,"─────────────────────────────────────────────────────────────────────────────────\n");
+
+    fg_status status=FG_OK;
+    for(uint32_t s=0;s<n_shapes&&status==FG_OK;s++){
+        uint32_t in_dim=shapes[s].in,out_dim=shapes[s].out;
+        uint32_t blocks=in_dim/32u;uint64_t row_bytes=(uint64_t)blocks*34u;
+        uint64_t weight_bytes=row_bytes*out_dim;
+        uint64_t total_data=weight_bytes+(uint64_t)in_dim*4u+(uint64_t)out_dim*4u;
+        struct{uint32_t out_dim,n_tok,blocks,row_bytes;float scale;}push={out_dim,1,blocks,(uint32_t)row_bytes,1.0f};
+
+        /* Create tensors: 1 weight, 1 input, BENCH_N independent outputs */
+        fg_vk_tensor *w=NULL,*x=NULL,*y[BENCH_N]={0};
+        status=fg_vk_tensor_create(c,weight_bytes,&w,err);
+        if(status==FG_OK)status=fg_vk_tensor_create(c,(uint64_t)in_dim*4u,&x,err);
+        for(uint32_t i=0;status==FG_OK&&i<BENCH_N;i++)
+            status=fg_vk_tensor_create(c,(uint64_t)out_dim*4u,&y[i],err);
+        if(status!=FG_OK){for(uint32_t i=0;i<BENCH_N;i++)fg_vk_tensor_destroy(y[i]);fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);break;}
+        memset(fg_vk_tensor_map(w),0x42,weight_bytes);
+        float *xp=fg_vk_tensor_map(x);for(uint32_t i=0;i<in_dim;i++)xp[i]=1.0f/(float)(i+1);
+
+        /* Warmup: 20 standalone dispatches */
+        for(uint32_t i=0;status==FG_OK&&i<20;i++)
+            status=fg_vk_dense_q8_0_f32(c,y[0],w,x,in_dim,out_dim,1u,1.0f,err);
+
+        /* --- MODE A: no-barrier dispatches with GPU timestamps --- */
+        uint32_t ts_base_a=s*TS_PER_SHAPE;
+        if(status==FG_OK){
+            vkResetFences(c->device,1,&c->fence);vkResetCommandBuffer(c->command,0);
+            VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+            vr=vkBeginCommandBuffer(c->command,&begin);if(vr!=VK_SUCCESS){status=FG_ERR_IO;break;}
+            vkCmdResetQueryPool(c->command,qpool,ts_base_a,BENCH_N*2+2);
+            /* Host→device barrier once at start */
+            VkMemoryBarrier hd={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT,.dstAccessMask=VK_ACCESS_SHADER_READ_BIT};
+            vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&hd,0,NULL,0,NULL);
+            c->batch_depth=1;c->batch_set_count=0;
+            vkCmdWriteTimestamp(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,qpool,ts_base_a); /* start marker */
+            for(uint32_t i=0;status==FG_OK&&i<BENCH_N;i++){
+                vkCmdWriteTimestamp(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,qpool,ts_base_a+1+i*2);
+                status=bench_record_dispatch_no_barrier(c,&c->dense,w,x,y[i],&push,out_dim,1,err);
+                vkCmdWriteTimestamp(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,qpool,ts_base_a+2+i*2);
+            }
+            VkMemoryBarrier dh={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};
+            vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&dh,0,NULL,0,NULL);
+            vkEndCommandBuffer(c->command);
+            VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&c->command};
+            vkQueueSubmit(c->queue,1,&submit,c->fence);
+            vkWaitForFences(c->device,1,&c->fence,VK_TRUE,UINT64_MAX);
+            for(uint32_t i=0;i<c->batch_set_count;i++)vkFreeDescriptorSets(c->device,c->descriptor_pool,1,&c->batch_sets[i]);
+            c->batch_depth=0;c->batch_set_count=0;
+        }
+
+        /* --- MODE B: with-barrier dispatches with GPU timestamps --- */
+        uint32_t ts_base_b=ts_base_a+BENCH_N*2+2;
+        if(status==FG_OK){
+            vkResetFences(c->device,1,&c->fence);vkResetCommandBuffer(c->command,0);
+            VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+            vkBeginCommandBuffer(c->command,&begin);
+            vkCmdResetQueryPool(c->command,qpool,ts_base_b,BENCH_N*2+2);
+            VkMemoryBarrier hd={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT,.dstAccessMask=VK_ACCESS_SHADER_READ_BIT};
+            vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&hd,0,NULL,0,NULL);
+            c->batch_depth=1;c->batch_set_count=0;
+            vkCmdWriteTimestamp(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,qpool,ts_base_b);
+            for(uint32_t i=0;status==FG_OK&&i<BENCH_N;i++){
+                vkCmdWriteTimestamp(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,qpool,ts_base_b+1+i*2);
+                /* Use dispatch() which inserts compute→compute barrier */
+                const fg_vk_tensor *bindings[]={w,x,y[i%BENCH_N]};
+                status=dispatch(c,&c->dense,bindings,&push,out_dim,1,1,err);
+                vkCmdWriteTimestamp(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,qpool,ts_base_b+2+i*2);
+            }
+            VkMemoryBarrier dh={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};
+            vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&dh,0,NULL,0,NULL);
+            vkEndCommandBuffer(c->command);
+            VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&c->command};
+            vkQueueSubmit(c->queue,1,&submit,c->fence);
+            vkWaitForFences(c->device,1,&c->fence,VK_TRUE,UINT64_MAX);
+            for(uint32_t i=0;i<c->batch_set_count;i++)vkFreeDescriptorSets(c->device,c->descriptor_pool,1,&c->batch_sets[i]);
+            c->batch_depth=0;c->batch_set_count=0;
+        }
+
+        /* Read timestamps and compute results */
+        uint64_t ts_a[BENCH_N*2+2],ts_b[BENCH_N*2+2];
+        if(status==FG_OK){
+            vr=vkGetQueryPoolResults(c->device,qpool,ts_base_a,BENCH_N*2+2,sizeof(ts_a),ts_a,sizeof(uint64_t),VK_QUERY_RESULT_64_BIT|VK_QUERY_RESULT_WAIT_BIT);
+            if(vr!=VK_SUCCESS){status=FG_ERR_IO;}
+        }
+        if(status==FG_OK){
+            vr=vkGetQueryPoolResults(c->device,qpool,ts_base_b,BENCH_N*2+2,sizeof(ts_b),ts_b,sizeof(uint64_t),VK_QUERY_RESULT_64_BIT|VK_QUERY_RESULT_WAIT_BIT);
+            if(vr!=VK_SUCCESS){status=FG_ERR_IO;}
+        }
+
+        /* Mode C: standalone wall-clock (200 iterations) */
+        double standalone_us=0;
+        if(status==FG_OK){
+            struct timespec t0,t1;uint32_t c_iters=200;
+            clock_gettime(CLOCK_MONOTONIC,&t0);
+            for(uint32_t i=0;status==FG_OK&&i<c_iters;i++)
+                status=fg_vk_dense_q8_0_f32(c,y[0],w,x,in_dim,out_dim,1u,1.0f,err);
+            clock_gettime(CLOCK_MONOTONIC,&t1);
+            standalone_us=((double)(t1.tv_sec-t0.tv_sec)+(double)(t1.tv_nsec-t0.tv_nsec)*1e-9)*1e6/(double)c_iters;
+        }
+
+        if(status==FG_OK){
+            /* Compute per-dispatch GPU time for Mode A (no barriers) */
+            double a_total_ns=0;
+            for(uint32_t i=0;i<BENCH_N;i++){
+                uint64_t dt=ts_a[1+i*2+1]-ts_a[1+i*2];
+                a_total_ns+=(double)dt*(double)ts_period;
+            }
+            double a_us=a_total_ns/1e3/(double)BENCH_N;
+            double a_gbps=(double)total_data/(a_us*1e-6)/1e9;
+
+            /* Compute per-dispatch GPU time for Mode B (with barriers) */
+            double b_total_ns=0;
+            for(uint32_t i=0;i<BENCH_N;i++){
+                uint64_t dt=ts_b[1+i*2+1]-ts_b[1+i*2];
+                b_total_ns+=(double)dt*(double)ts_period;
+            }
+            double b_us=b_total_ns/1e3/(double)BENCH_N;
+            double b_gbps=(double)total_data/(b_us*1e-6)/1e9;
+
+            fprintf(stderr,"%-20s %6.2f │ %7.1f %7.1f %7.1f%% │ %7.1f %7.1f %7.1f%% │ %7.1f\n",
+                shapes[s].name,(double)weight_bytes/1e6,
+                a_us,a_gbps,a_gbps/357.0*100.0,
+                b_us,b_gbps,b_gbps/357.0*100.0,
+                standalone_us);
+        }
+
+        for(uint32_t i=0;i<BENCH_N;i++)fg_vk_tensor_destroy(y[i]);
+        fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);
+    }
+    #undef BENCH_N
+    #undef TS_PER_SHAPE
+
+    vkDestroyQueryPool(c->device,qpool,NULL);
+    vkDestroyDescriptorPool(c->device,c->descriptor_pool,NULL);
+    c->descriptor_pool=saved_pool;
+    return status;
+}
 fg_status fg_vk_ple_conv_decode(fg_vk_context *c,fg_vk_tensor *out,fg_vk_tensor *state,const fg_vk_tensor *gated,const fg_vk_tensor *normalized,const fg_vk_tensor *weight,fg_error *err){if(!c||!tensor_range(gated,0,10240u*4u)||!tensor_range(normalized,0,10240u*4u)||!tensor_range(weight,0,10240u*4u*4u)||!tensor_range(state,0,10240u*9u*4u)||!tensor_range(out,0,10240u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid PLE convolution dispatch");return FG_ERR_ARGUMENT;}const fg_vk_tensor *bindings[]={gated,normalized,weight,state,out};return dispatch(c,&c->ple_conv,bindings,NULL,40u,1,1,err);}
 fg_status fg_vk_ple_conv_prefill(fg_vk_context *c,fg_vk_tensor *out,fg_vk_tensor *state,const fg_vk_tensor *gated,const fg_vk_tensor *normalized,const fg_vk_tensor *weight,uint32_t tokens,fg_error *err){if(!c||!tokens||!tensor_range(gated,0,(uint64_t)tokens*10240u*4u)||!tensor_range(normalized,0,(uint64_t)tokens*10240u*4u)||!tensor_range(weight,0,10240u*4u*4u)||!tensor_range(state,0,10240u*9u*4u)||!tensor_range(out,0,(uint64_t)tokens*10240u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid PLE convolution prefill dispatch");return FG_ERR_ARGUMENT;}const fg_vk_tensor *bindings[]={gated,normalized,weight,state,out};return dispatch(c,&c->ple_conv_prefill,bindings,&tokens,40u,1,1,err);}
 fg_status fg_vk_add_f32(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *left,const fg_vk_tensor *right,uint32_t values,fg_error *err){if(!c||!values||!tensor_range(left,0,(uint64_t)values*4u)||!tensor_range(right,0,(uint64_t)values*4u)||!tensor_range(out,0,(uint64_t)values*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid F32 add dispatch");return FG_ERR_ARGUMENT;}const fg_vk_tensor *bindings[]={left,right,out};return dispatch(c,&c->add,bindings,&values,(values+255u)/256u,1,1,err);}

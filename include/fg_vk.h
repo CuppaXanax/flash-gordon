@@ -135,4 +135,10 @@ fg_status fg_vk_moe_kquant(fg_vk_context *context,fg_vk_tensor *output,const fg_
                            uint32_t output_width,uint32_t input_width,uint32_t expert_stride,uint32_t used_experts,
                            uint32_t routed_pairs,bool packed_weights,uint32_t tile_count,fg_error *err);
 
+/* GPU timestamp-profiled kernel benchmark. Reports per-shape:
+   A. raw GPU kernel GB/s (no inter-dispatch barriers)
+   B. kernel with current barrier policy
+   C. complete standalone dispatch (full Vulkan overhead) */
+fg_status fg_vk_bench_dense_q8(fg_vk_context *context,fg_error *err);
+
 #endif

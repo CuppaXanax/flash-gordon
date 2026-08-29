@@ -308,6 +308,12 @@ fg_status fg_bench_main(const char *path,fg_error *err){
     (void)path;
     fg_vk_context *vk=NULL;fg_status status=fg_vk_open(&vk,err);
     if(status!=FG_OK)return status;
+
+    /* GPU-timestamped benchmark: measures device-side kernel execution */
+    status=fg_vk_bench_dense_q8(vk,err);
+    if(status!=FG_OK){fg_vk_close(vk);return status;}
+
+    fprintf(stderr,"\n--- Wall-clock reference (includes CPU overhead) ---\n");
     /* Production decode matmul dimensions: {in_dim, out_dim, label} */
     struct {uint32_t in,out;const char *name;} shapes[]={
         {10240,320, "hc_down (10240→320)"},
