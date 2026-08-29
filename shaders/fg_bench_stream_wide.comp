@@ -1,0 +1,26 @@
+#version 460
+/* STREAM B: Current Q8_0 layout, wide sequential uint32 loads.
+   4 independent accumulators, 4 words per thread per iteration.
+   No byte extraction, no Q8_0 block awareness.
+   Tests whether wider/parallel loads improve VMEM throughput. */
+layout(local_size_x=64,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Weights{uint wb[];};
+layout(set=0,binding=1)readonly buffer Input{float x[];};
+layout(set=0,binding=2)writeonly buffer Output{float y[];};
+layout(push_constant)uniform Push{uint out_dim;uint n_tok;uint blocks;uint row_bytes;float scale;}pc;
+void main(){
+    uint tid=gl_LocalInvocationID.x,row=gl_WorkGroupID.x,tok=gl_WorkGroupID.y;
+    if(row>=pc.out_dim||tok>=pc.n_tok)return;
+    uint total_words=pc.row_bytes>>2u;
+    uint row_start=row*(pc.row_bytes>>2u);
+    uint acc0=0u,acc1=0u,acc2=0u,acc3=0u;
+    /* 4 independent loads per thread per iteration, stride 256 words */
+    for(uint i=tid*4u;i+3u<total_words;i+=256u){
+        uint base=row_start+i;
+        acc0+=wb[base];
+        acc1+=wb[base+1u];
+        acc2+=wb[base+2u];
+        acc3+=wb[base+3u];
+    }
+    if(tid==0u)y[tok*pc.out_dim+row]=float(acc0+acc1+acc2+acc3)*pc.scale;
+}

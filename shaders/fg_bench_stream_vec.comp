@@ -1,0 +1,24 @@
+#version 460
+/* STREAM C: Widest possible loads — uvec4 (16 bytes per load).
+   Same physical buffer, but accessed as 128-bit aligned reads.
+   2 independent uvec4 accumulators (32 bytes per iteration per thread).
+   Tests maximum achievable VMEM throughput on this hardware. */
+layout(local_size_x=64,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Weights{uvec4 wb4[];};
+layout(set=0,binding=1)readonly buffer Input{float x[];};
+layout(set=0,binding=2)writeonly buffer Output{float y[];};
+layout(push_constant)uniform Push{uint out_dim;uint n_tok;uint blocks;uint row_bytes;float scale;}pc;
+void main(){
+    uint tid=gl_LocalInvocationID.x,row=gl_WorkGroupID.x,tok=gl_WorkGroupID.y;
+    if(row>=pc.out_dim||tok>=pc.n_tok)return;
+    uint total_vec4s=pc.row_bytes>>4u; /* row_bytes / 16 */
+    uint row_start=row*(pc.row_bytes>>4u);
+    uvec4 acc0=uvec4(0u),acc1=uvec4(0u);
+    /* 2 independent uvec4 loads per thread per iteration = 32 bytes, stride 128 vec4s */
+    for(uint i=tid*2u;i+1u<total_vec4s;i+=128u){
+        acc0+=wb4[row_start+i];
+        acc1+=wb4[row_start+i+1u];
+    }
+    uvec4 s=acc0+acc1;
+    if(tid==0u)y[tok*pc.out_dim+row]=float(s.x+s.y+s.z+s.w)*pc.scale;
+}
