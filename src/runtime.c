@@ -361,7 +361,7 @@ fg_status fg_bench_main(const char *path,fg_error *err){
         }
         /* Now measure batched dispatch (N dispatches in one command buffer) to isolate kernel vs overhead */
         if(status==FG_OK){
-            uint32_t batch_iters=200;
+            uint32_t batch_iters=50;
             status=fg_vk_begin(vk,err);
             clock_gettime(CLOCK_MONOTONIC,&ts0);
             for(uint32_t i=0;status==FG_OK&&i<batch_iters;i++){
