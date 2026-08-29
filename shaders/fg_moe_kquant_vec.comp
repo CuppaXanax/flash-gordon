@@ -1,0 +1,40 @@
+#version 460
+layout(local_size_x=64,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Weights{uint wb[];};
+layout(set=0,binding=1)readonly buffer Activation{uint q8[];};
+layout(set=0,binding=2)readonly buffer Tiles{uint tiles[];};
+layout(set=0,binding=3)writeonly buffer Output{float y[];};
+layout(push_constant)uniform Push{uint out_dim;uint blocks;uint row_bytes;uint expert_stride;uint type;uint n_used;uint routed_pairs;uint packed_weights;uint reserved;}pc;
+const uint Q4_K=12u,Q5_K=13u,PAIR_TILE=8u,TILE_WORDS=9u,INVALID_PAIR=0xffffffffu,Q8K_WORDS=74u,ROWS=4u,MAX_BLOCK_WORDS=44u;
+shared uint shared_q8[PAIR_TILE*Q8K_WORDS];
+shared uint shared_weight[ROWS*MAX_BLOCK_WORDS];
+shared float partial[ROWS*PAIR_TILE*64u];
+uint load_u8(uint row_slot,uint off){return(shared_weight[row_slot*MAX_BLOCK_WORDS+(off>>2u)]>>((off&3u)*8u))&255u;}
+uint load_u16(uint row_slot,uint off){return load_u8(row_slot,off)|(load_u8(row_slot,off+1u)<<8u);}
+float load_f16(uint row_slot,uint off){return unpackHalf2x16(load_u16(row_slot,off)).x;}
+int q8_value(uint slot,uint index){uint value=(shared_q8[slot*Q8K_WORDS+2u+(index>>2u)]>>((index&3u)*8u))&255u;return value>=128u?int(value)-256:int(value);}
+float q8_delta(uint slot){return uintBitsToFloat(shared_q8[slot*Q8K_WORDS]);}
+int q8_sum(uint slot,uint index){uint word=shared_q8[slot*Q8K_WORDS+66u+(index>>1u)],value=(index&1u)==0u?word&65535u:word>>16u;return value>=32768u?int(value)-65536:int(value);}
+void scale_min(uint row_slot,uint group,out uint scale,out uint minimum){uint s0=load_u8(row_slot,4u+group);if(group<4u){scale=s0&63u;minimum=load_u8(row_slot,8u+group)&63u;}else{uint upper=load_u8(row_slot,8u+group),lower=load_u8(row_slot,group);scale=(upper&15u)|((lower>>6u)<<4u);minimum=(upper>>4u)|((s0>>6u)<<4u);}}
+uint q4_value(uint row_slot,uint index){uint group=index>>5u,i=index&31u,packed=load_u8(row_slot,16u+(group>>1u)*32u+i);return(group&1u)==0u?packed&15u:packed>>4u;}
+uint q5_value(uint row_slot,uint index){uint group=index>>5u,i=index&31u,packed=load_u8(row_slot,48u+(group>>1u)*32u+i),low=(group&1u)==0u?packed&15u:packed>>4u,high=(load_u8(row_slot,16u+i)>>group)&1u;return low|(high<<4u);}
+void main(){
+    uint lane=gl_LocalInvocationID.x,first_row=gl_WorkGroupID.x*ROWS,tile=gl_WorkGroupID.y,tile_base=tile*TILE_WORDS,expert=tiles[tile_base];
+    if(expert==INVALID_PAIR)return;
+    uint weight_index=pc.packed_weights!=0u?tile:expert,block_bytes=pc.row_bytes/pc.blocks,block_words=block_bytes>>2u;
+    uint pair[PAIR_TILE];float acc[ROWS][PAIR_TILE];
+    for(uint slot=0u;slot<PAIR_TILE;slot++)pair[slot]=tiles[tile_base+1u+slot];
+    for(uint row_slot=0u;row_slot<ROWS;row_slot++)for(uint slot=0u;slot<PAIR_TILE;slot++)acc[row_slot][slot]=0.0;
+    uint group=lane>>3u,index_in_group=(lane&7u)*4u,index=group*32u+index_in_group;
+    for(uint block=0u;block<pc.blocks;block++){
+        for(uint item=lane;item<ROWS*block_words;item+=64u){uint row_slot=item/block_words,word=item-row_slot*block_words,row=first_row+row_slot,row_base=weight_index*pc.expert_stride+min(row,pc.out_dim-1u)*pc.row_bytes;shared_weight[row_slot*MAX_BLOCK_WORDS+word]=row<pc.out_dim?wb[(row_base+block*block_bytes)/4u+word]:0u;}
+        for(uint slot=0u;slot<PAIR_TILE;slot++){uint selected=pair[slot],qbase=(selected!=INVALID_PAIR?selected/pc.n_used:0u)*pc.blocks*Q8K_WORDS+block*Q8K_WORDS;for(uint word=lane;word<Q8K_WORDS;word+=64u)shared_q8[slot*Q8K_WORDS+word]=selected!=INVALID_PAIR?q8[qbase+word]:0u;}
+        barrier();
+        for(uint row_slot=0u;row_slot<ROWS;row_slot++)if(first_row+row_slot<pc.out_dim){uint scale,minimum;scale_min(row_slot,group,scale,minimum);float wd=load_f16(row_slot,0u),wdmin=load_f16(row_slot,2u);for(uint slot=0u;slot<PAIR_TILE;slot++)if(pair[slot]!=INVALID_PAIR){int integer_dot=int(scale)*(int(pc.type==Q4_K?q4_value(row_slot,index):q5_value(row_slot,index))*q8_value(slot,index)+int(pc.type==Q4_K?q4_value(row_slot,index+1u):q5_value(row_slot,index+1u))*q8_value(slot,index+1u)+int(pc.type==Q4_K?q4_value(row_slot,index+2u):q5_value(row_slot,index+2u))*q8_value(slot,index+2u)+int(pc.type==Q4_K?q4_value(row_slot,index+3u):q5_value(row_slot,index+3u))*q8_value(slot,index+3u));acc[row_slot][slot]=fma(wd*q8_delta(slot),float(integer_dot),acc[row_slot][slot]);if(index_in_group==0u)acc[row_slot][slot]=fma(-wdmin*q8_delta(slot),float(int(minimum)*(q8_sum(slot,group*2u)+q8_sum(slot,group*2u+1u))),acc[row_slot][slot]);}}
+        barrier();
+    }
+    for(uint row_slot=0u;row_slot<ROWS;row_slot++)for(uint slot=0u;slot<PAIR_TILE;slot++)partial[(row_slot*PAIR_TILE+slot)*64u+lane]=acc[row_slot][slot];
+    barrier();
+    for(uint stride=32u;stride>0u;stride>>=1u){if(lane<stride)for(uint row_slot=0u;row_slot<ROWS;row_slot++)for(uint slot=0u;slot<PAIR_TILE;slot++)partial[(row_slot*PAIR_TILE+slot)*64u+lane]+=partial[(row_slot*PAIR_TILE+slot)*64u+lane+stride];barrier();}
+    if(lane==0u)for(uint row_slot=0u;row_slot<ROWS;row_slot++){uint row=first_row+row_slot;if(row<pc.out_dim)for(uint slot=0u;slot<PAIR_TILE;slot++){uint selected=pair[slot];if(selected!=INVALID_PAIR&&selected<pc.routed_pairs)y[selected*pc.out_dim+row]=partial[(row_slot*PAIR_TILE+slot)*64u];}}
+}
