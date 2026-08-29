@@ -304,7 +304,89 @@ static fg_status coordinator_open(fg_coordinator *coordinator,const fg_manifest 
     /* Allocate per-group async recv payload buffers */
     for(uint32_t i=0;status==FG_OK&&i<FG_GROUP_SIZE;i++){coordinator->async_recv_payloads[i]=malloc(FG_EXPERT_RESULT_MAX_BYTES);if(!coordinator->async_recv_payloads[i]){fg_error_set(err,FG_ERR_OOM,"allocate async expert recv buffer %u",i);status=FG_ERR_OOM;}}if(status==FG_OK)status=prefill_worker_buffers_create(&coordinator->prefill_expert,manifest->prefill_microbatch,err);if(status==FG_OK)status=prefill_layer_buffers_create(&coordinator->prefill_layer,coordinator->model,manifest->prefill_microbatch,err);if(status==FG_OK)status=fg_fabric_open(&coordinator->fabric,manifest,0u,err);if(status==FG_OK)status=rank_ready(coordinator->fabric,0u,err);if(status==FG_OK)status=coordinator_begin_session(coordinator,err);if(status!=FG_OK)coordinator_close(coordinator);coordinator->directory=directory;return status;}
 fg_status fg_serve_main(const char *path,fg_error *err){fg_manifest *m=NULL;fg_status rc=load_checked(path,&m,err);if(rc==FG_OK){fg_manifest_print(m);fg_error_set(err,FG_ERR_UNAVAILABLE,"HTTP serving is not enabled until the owned request path is qualified");rc=FG_ERR_UNAVAILABLE;}free(m);return rc;}
-fg_status fg_bench_main(const char *path,fg_error *err){fg_manifest *m=NULL;fg_status rc=load_checked(path,&m,err);if(rc==FG_OK){fg_manifest_print(m);puts("qualification matrix: microbatch={128,256,512} window={1,2,3,4}; canonical prompt=32768 tokens; repetitions=3");}free(m);return rc;}
+fg_status fg_bench_main(const char *path,fg_error *err){
+    (void)path;
+    fg_vk_context *vk=NULL;fg_status status=fg_vk_open(&vk,err);
+    if(status!=FG_OK)return status;
+    /* Production decode matmul dimensions: {in_dim, out_dim, label} */
+    struct {uint32_t in,out;const char *name;} shapes[]={
+        {10240,320, "hc_down (10240→320)"},
+        {320,10240, "hc_up   (320→10240)"},
+        {2560,640,  "shexp_gate (2560→640)"},
+        {640,2560,  "shexp_down (640→2560)"},
+        {2560,512,  "qsa_attn_q (2560→512)"},
+        {2560,10240,"ple_key (2560→10240)"},
+    };
+    uint32_t warmup=50,iters=200;
+    fprintf(stderr,"=== Q8_0→F32 dense matvec kernel benchmark (GFX1013) ===\n");
+    fprintf(stderr,"warmup=%u  iterations=%u  tokens=1\n\n",warmup,iters);
+    fprintf(stderr,"%-25s %8s %8s %10s %10s %6s\n","shape","weight","wall","eff.BW","roofline","util");
+    fprintf(stderr,"%-25s %8s %8s %10s %10s %6s\n","","(MB)","(us)","(GB/s)","(GB/s)","(%)");
+    fprintf(stderr,"--------------------------------------------------------------------\n");
+    for(uint32_t s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++){
+        uint32_t in_dim=shapes[s].in,out_dim=shapes[s].out;
+        uint32_t blocks=in_dim/32u;uint64_t row_bytes=(uint64_t)blocks*34u;
+        uint64_t weight_bytes=row_bytes*out_dim;
+        uint64_t input_bytes=(uint64_t)in_dim*4u;
+        uint64_t output_bytes=(uint64_t)out_dim*4u;
+        fg_vk_tensor *w=NULL,*x=NULL,*y=NULL;
+        status=fg_vk_tensor_create(vk,weight_bytes,&w,err);
+        if(status==FG_OK)status=fg_vk_tensor_create(vk,input_bytes,&x,err);
+        if(status==FG_OK)status=fg_vk_tensor_create(vk,output_bytes,&y,err);
+        if(status!=FG_OK){fg_vk_tensor_destroy(y);fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);break;}
+        /* Fill with test pattern */
+        memset(fg_vk_tensor_map(w),0x42,weight_bytes);
+        float *xp=fg_vk_tensor_map(x);for(uint32_t i=0;i<in_dim;i++)xp[i]=1.0f/(float)(i+1);
+        /* Warmup: standalone dispatches (not batched) to include full Vulkan overhead */
+        for(uint32_t i=0;i<warmup;i++){
+            status=fg_vk_dense_q8_0_f32(vk,y,w,x,in_dim,out_dim,1u,1.0f,err);
+            if(status!=FG_OK)break;
+        }
+        /* Timed iterations — measure EACH dispatch independently (standalone, not batched) */
+        struct timespec ts0,ts1;
+        clock_gettime(CLOCK_MONOTONIC,&ts0);
+        for(uint32_t i=0;status==FG_OK&&i<iters;i++){
+            status=fg_vk_dense_q8_0_f32(vk,y,w,x,in_dim,out_dim,1u,1.0f,err);
+        }
+        clock_gettime(CLOCK_MONOTONIC,&ts1);
+        if(status==FG_OK){
+            double elapsed_s=(double)(ts1.tv_sec-ts0.tv_sec)+(double)(ts1.tv_nsec-ts0.tv_nsec)*1e-9;
+            double per_call_us=elapsed_s*1e6/(double)iters;
+            double total_bytes=(double)(weight_bytes+input_bytes+output_bytes);
+            double eff_gbps=total_bytes/(per_call_us*1e-6)/1e9;
+            double roofline=357.0;
+            double util=eff_gbps/roofline*100.0;
+            fprintf(stderr,"%-25s %7.2f %7.1f %9.1f %9.1f %5.1f%%\n",
+                shapes[s].name,(double)weight_bytes/1e6,per_call_us,eff_gbps,roofline,util);
+        }
+        /* Now measure batched dispatch (N dispatches in one command buffer) to isolate kernel vs overhead */
+        if(status==FG_OK){
+            uint32_t batch_iters=200;
+            status=fg_vk_begin(vk,err);
+            clock_gettime(CLOCK_MONOTONIC,&ts0);
+            for(uint32_t i=0;status==FG_OK&&i<batch_iters;i++){
+                status=fg_vk_dense_q8_0_f32(vk,y,w,x,in_dim,out_dim,1u,1.0f,err);
+            }
+            if(status==FG_OK){fg_status es=fg_vk_end(vk,err);if(es!=FG_OK)status=es;}
+            else if(fg_vk_batch_active(vk))fg_vk_end(vk,err);
+            clock_gettime(CLOCK_MONOTONIC,&ts1);
+            if(status==FG_OK){
+                double elapsed_s=(double)(ts1.tv_sec-ts0.tv_sec)+(double)(ts1.tv_nsec-ts0.tv_nsec)*1e-9;
+                double per_call_us=elapsed_s*1e6/(double)batch_iters;
+                double total_bytes=(double)(weight_bytes+input_bytes+output_bytes);
+                double eff_gbps=total_bytes/(per_call_us*1e-6)/1e9;
+                double roofline=357.0;
+                double util=eff_gbps/roofline*100.0;
+                fprintf(stderr,"  └ batched (%u in 1 CB)  %7s %7.1f %9.1f %9.1f %5.1f%%\n",
+                    batch_iters,""  ,per_call_us,eff_gbps,roofline,util);
+            }
+        }
+        fg_vk_tensor_destroy(y);fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);
+        if(status!=FG_OK)break;
+    }
+    fg_vk_close(vk);
+    return status;
+}
 fg_status fg_eval_main(const char *path,const char *prompt,uint32_t generate,fg_error *err){
     if(!prompt||generate>4096u){fg_error_set(err,FG_ERR_ARGUMENT,"eval prompt is null or generation exceeds 4096 tokens");return FG_ERR_ARGUMENT;}
     /* Wrap in Qwen chat template if the user passed raw text. */
