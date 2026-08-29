@@ -71,7 +71,7 @@ static fg_status dispatch_experts(void *opaque,uint32_t layer,uint32_t token,con
     for(uint32_t r=0;status==FG_OK&&r<route_count;r++){if(routes[r].destination_rank!=context->self)continue;fg_decode_work work={.layer=(uint8_t)layer,.source_rank=(uint8_t)context->self,.destination_rank=(uint8_t)context->self,.selected_count=routes[r].selected_count,.position=token};for(uint32_t i=0;i<routes[r].selected_count;i++){work.expert_ids[i]=routes[r].global_expert_ids[i];work.routing_slots[i]=routes[r].routing_slots[i];work.gates[i]=routes[r].gates[i];}memcpy(work.activation_q8k,activation,FG_Q8K_ACTIVATION_BYTES);status=fg_expert_decode(context->expert,&work,&results[*result_count],err);if(status==FG_OK)(*result_count)++;}double t_local=dispatch_ts();
     /* Phase 3: collect remote results in arrival order (not route order) */
     uint8_t *result_wire=context->recv_wire;if(remote_count&&status==FG_OK&&!result_wire){fg_error_set(err,FG_ERR_OOM,"pre-allocated expert recv buffer is null");status=FG_ERR_OOM;}double t_recv[4]={0};for(uint32_t received=0;status==FG_OK&&received<remote_count;received++){uint32_t peer=0;fg_frame_header header;uint32_t bytes=0;status=fg_fabric_recv_any(context->fabric,FG_FABRIC_BULK,&peer,&header,result_wire,FG_EXPERT_RESULT_MAX_BYTES,&bytes,err);t_recv[received]=dispatch_ts();if(status==FG_OK&&(fg_frame_type(&header)!=FG_MSG_EXPERT_RESULT||fg_frame_request_id(&header)!=context->request_id||fg_frame_sequence(&header)!=context->sequence)){fg_error_set(err,FG_ERR_MISMATCH,"stale expert result frame from rank %u",peer);status=FG_ERR_MISMATCH;}if(status==FG_OK)status=fg_expert_result_decode(&results[*result_count],result_wire,bytes,err);if(status==FG_OK)(*result_count)++;}double t_end=dispatch_ts();
-    if(token>=26u&&token<28u&&status==FG_OK){fprintf(stderr,"EXPERT_DIAG layer[%u] t=%u route=%.2f send=%.2f(%u) local=%.2f recv1=%.2f recv2=%.2f recv3=%.2f total=%.2f\n",layer,token,t_route-t0,t_send-t_route,remote_count,t_local-t_send,remote_count>=1?t_recv[0]-t_local:0.0,remote_count>=2?t_recv[1]-t_recv[0]:0.0,remote_count>=3?t_recv[2]-t_recv[1]:0.0,t_end-t0);}
+    if(token>=26u&&token<28u&&status==FG_OK){fprintf(stderr,"EXPERT_DIAG layer[%u] t=%u route=%.2f send=%.2f(%u) local=%.2f wait1st=%.2f recv_span=%.2f total=%.2f\n",layer,token,t_route-t0,t_send-t_route,remote_count,t_local-t_send,remote_count>=1?t_recv[0]-t_local:0.0,remote_count>=2?t_recv[remote_count-1]-t_recv[0]:0.0,t_end-t0);}
     return status;
 }
 
@@ -154,7 +154,19 @@ static fg_status collect_experts(void *opaque,uint32_t layer,uint32_t token,fg_e
 }
 #endif /* async dispatch — reserved for multi-token batching */
 
-static fg_status handle_expert_work(fg_fabric *fabric,fg_expert_executor *expert,uint32_t self,uint32_t peer,const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,fg_expert_result *result,uint8_t *wire,fg_error *err){fg_decode_work work;fg_status status=fg_decode_work_decode(&work,payload,bytes,err);if(status==FG_OK&&(peer!=work.source_rank||work.destination_rank!=self)){fg_error_set(err,FG_ERR_MISMATCH,"decode work peer/rank mismatch");status=FG_ERR_MISMATCH;}uint32_t result_bytes=0;if(status==FG_OK)status=fg_expert_decode(expert,&work,result,err);if(status==FG_OK)status=fg_expert_result_encode(wire,FG_EXPERT_RESULT_MAX_BYTES,&result_bytes,result,err);if(status==FG_OK)status=fg_fabric_send(fabric,peer,FG_FABRIC_BULK,FG_MSG_EXPERT_RESULT,fg_frame_request_id(header),fg_frame_sequence(header),0,wire,result_bytes,err);return status;}
+static fg_status handle_expert_work(fg_fabric *fabric,fg_expert_executor *expert,uint32_t self,uint32_t peer,const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,fg_expert_result *result,uint8_t *wire,fg_error *err){
+    double tw0=dispatch_ts();
+    fg_decode_work work;fg_status status=fg_decode_work_decode(&work,payload,bytes,err);if(status==FG_OK&&(peer!=work.source_rank||work.destination_rank!=self)){fg_error_set(err,FG_ERR_MISMATCH,"decode work peer/rank mismatch");status=FG_ERR_MISMATCH;}
+    double tw_decode=dispatch_ts();
+    uint32_t result_bytes=0;if(status==FG_OK)status=fg_expert_decode(expert,&work,result,err);
+    double tw_gpu=dispatch_ts();
+    if(status==FG_OK)status=fg_expert_result_encode(wire,FG_EXPERT_RESULT_MAX_BYTES,&result_bytes,result,err);
+    double tw_encode=dispatch_ts();
+    if(status==FG_OK)status=fg_fabric_send(fabric,peer,FG_FABRIC_BULK,FG_MSG_EXPERT_RESULT,fg_frame_request_id(header),fg_frame_sequence(header),0,wire,result_bytes,err);
+    double tw_send=dispatch_ts();
+    if(status==FG_OK&&work.position>=26u&&work.position<28u){fprintf(stderr,"WORKER_EXPERT layer[%u] t=%u rank=%u sel=%u decode=%.2f gpu=%.2f encode=%.2f send=%.2f total=%.2f\n",work.layer,work.position,self,work.selected_count,tw_decode-tw0,tw_gpu-tw_decode,tw_encode-tw_gpu,tw_send-tw_encode,tw_send-tw0);}
+    return status;
+}
 
 typedef struct prefill_worker_buffers {
     uint8_t *receive,*activations,*result_wire;
