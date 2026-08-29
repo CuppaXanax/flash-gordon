@@ -16,6 +16,8 @@ Produce a fleet-testable Flash Gordon build that:
 - Packs it into eight rank-local weight files plus the direct-I/O n-gram table and tokenizer.
 - Starts one coordinator on blade 42 and seven workers on blades 43–49.
 - Executes semantically correct batched text prefill and token decode across all 48 layers.
+- Uses expert parallelism as its only distributed inference architecture: one sequential model graph per autoregressive token, with each layer's routed experts fanned out across their owning blades.
+- Reaches at least 10 tok/s raw single-stream decode, with 20 tok/s as the engineering target, before MTP or multiple concurrent sessions enter scope.
 - Uses every compute unit exposed by each blade's Vulkan driver. The runtime must not reject a blade merely because it exposes 24 versus 40 CUs; CU mode is telemetry and a benchmark label, not a correctness gate.
 - Preserves hard pack-time limits of 10.4 GiB persistent weights and 13.5 GiB accounted Vulkan residency per rank.
 - Fails closed on artifact, manifest, topology, protocol, session, rank, sequence, routing, truncation, checksum, direct-I/O, and allocation errors.
@@ -27,6 +29,7 @@ The immediate milestone is correct text prefill/decode and measured TPS on the r
 - Production implementations only. Do not add placeholder inference, fake success, stub kernels, minimal quant stand-ins, or simulated output.
 - q36 is prior art only. Copy and adapt useful internals into owned Flash Gordon source; never link, vendor, submodule, or treat q36 as an upstream runtime.
 - No worktrees, speculative branches, or competing parallel experiments. Use the current checkout.
+- Pipeline parallelism is out of scope. Do not trade raw single-session expert-parallel throughput for inter-layer or inter-token pipeline scheduling.
 - Subagents may implement bounded, non-overlapping components, but the primary agent owns architecture, reviews every accepted diff, reruns the full suite, and oversees commits.
 - Preserve the specialized appliance design. Generic-model abstractions are out of scope unless they directly improve this model's correctness or TPS.
 - Prefer io_uring and fixed registered files/buffers on steady-state storage and fabric paths.
@@ -68,10 +71,10 @@ The real schema contains 1,224 tensors. Splitting each of the 144 routed-expert 
 - Batched QSA prefill commits causally in token order without repeating the decode API.
 - Batched n-gram lookup computes every prompt position, sorts/deduplicates/coalesces 4–8 KiB reads, uses a fixed 64 MiB cache, and performs one Vulkan IQ4_NL dequantization dispatch per microbatch.
 - Prefill is a true microbatch graph, not decode repeated over prompt tokens.
-- Prefill layer activations forward directly owner-to-owner; only layer 47 returns to the coordinator.
-- Decode executes coordinator-local layer 0, forwards layers 1–47 directly owner-to-owner, includes rank-0 boundary layers 8/16/24/32/40, and returns only the final layer result.
+- The coordinator holds the replicated common path and executes all 48 dependent layers for prefill and decode.
+- At every layer, the router's top-10 experts are partitioned by expert owner and dispatched concurrently. Coordinator shared-expert work overlaps routed-expert execution; all routed results are validated and reduced before the next layer begins.
 - Layer 1 alone carries the n-gram injection. Wire validation rejects missing or misplaced n-gram data.
-- Protocol version is 5 so older coordinator-bounce binaries cannot join silently.
+- Protocol version is 5 so incompatible coordinator and expert-worker binaries cannot join silently.
 
 ### Current text deployment profile
 
@@ -97,7 +100,7 @@ Evidence:
 - Fixed-buffer `O_DIRECT` to final Vulkan arena test passes.
 - Sealed direct-I/O tokenizer test passes.
 - Eight-process dual-channel TCP/io_uring mesh test passes.
-- The direct decode transport test covers all 48 layers, all rank-0 boundaries, exact source/destination/session/sequence invariants, and final-only return.
+- The expert-parallel trace validator accepts a complete 48-layer coordinator/worker artifact and rejects corrupted expert-slot coverage.
 - Real public shard headers were range-fetched into exact-size sparse fixtures and parsed as the actual 1,224-tensor schema.
 - Canonical dry-run packing produces 1,656 model records and the following memory ledger:
 
@@ -163,20 +166,20 @@ Canonical measurements use three warm repetitions and the median:
 | Workload | Release floor | Target |
 |---|---:|---:|
 | 32K prefill | 250 tok/s | 300 tok/s |
-| 32K sustained decode | 30 tok/s | 35+ tok/s |
+| Raw single-stream decode | 10 tok/s | 20 tok/s |
 | Filled 1M sustained decode | 20 tok/s | 25+ tok/s |
 
 Report tokenizer time separately from graph prefill. Graph prefill covers exactly 32,768 already-tokenized tokens from first graph submission until final prompt logits are ready. Also report end-to-end time to first streamed token.
 
 Optimization order after correctness:
 
-1. Capture per-layer GPU, fabric, n-gram, routing, and bubble timings.
-2. Remove steady-state heap allocation and avoid redundant host/Vulkan copies.
-3. Realize the sealed two-microbatch prefill window and overlap routing/fabric/GPU stages.
-4. Measure fabric utilization and result traffic before changing numerical formats.
-5. Tune 128/256/512 microbatches and windows 1–4, preserving exact output equivalence.
-6. Tune shaders for RADV/GFX1013 and every CU exposed by each blade.
-7. Change quantization or return formats only behind explicit quality/parity gates.
+1. Capture and validate a real eight-rank, 48-layer expert-parallel integration trace for a correct decode token.
+2. Account for the complete token wall time across coordinator GPU work, Vulkan submissions, route fan-out, worker execution, fabric transfer, straggler barriers, and reduction.
+3. Choose system changes from that critical path and measure them end to end; isolated microbenchmarks are supporting evidence, not promotion gates.
+4. Remove steady-state allocation, redundant host/Vulkan copies, and avoidable synchronization identified by the integration trace.
+5. Realize the sealed two-microbatch prefill window and overlap routing/fabric/GPU stages.
+6. Tune 128/256/512 microbatches and windows 1–4, preserving exact output equivalence.
+7. Change kernels, layouts, or numerical formats only behind correctness and whole-appliance performance gates.
 
 ## Useful commands
 

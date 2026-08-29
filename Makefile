@@ -22,6 +22,7 @@ tests/test_core: tests/test_core.o $(TEST_COMMON)
 
 test: tests/test_core
 	./tests/test_core
+	bash tests/test_ep_trace_validator.sh
 
 shaders: $(FG_SHADER_OUT)
 

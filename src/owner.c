@@ -193,7 +193,7 @@ fg_status fg_owner_decode_layer(fg_owner_executor *e,uint32_t layer,uint32_t tok
 }
 
 fg_status fg_owner_decode_layer_async(fg_owner_executor *e,uint32_t layer,uint32_t token,const uint32_t position[3],const fg_vk_tensor *hyper_input,const fg_vk_tensor *ngram_embedding,fg_owner_expert_fire_fn fire,fg_owner_expert_collect_fn collect,void *dispatch_context,fg_vk_tensor **output,fg_error *err){
-    if(!e||!position||!hyper_input||!fire||!collect||!output||!owns_layer(e,layer)){fg_error_set(err,FG_ERR_MISMATCH,"async decode layer precondition");return FG_ERR_MISMATCH;}if((layer==1u)!=(ngram_embedding!=NULL)){fg_error_set(err,FG_ERR_MISMATCH,"layer-1 PLE embedding presence mismatch");return FG_ERR_MISMATCH;}double t0=ts_ms();fg_vk_context *vk=fg_model_vk(e->model);const fg_vk_tensor *layer_input=hyper_input;if(layer==1u){fg_vk_tensor *ple_input=NULL;fg_status status=fg_vk_profile_active(vk)?fg_vk_profile_set_scope(vk,"ple",err):FG_OK;if(status==FG_OK)status=fg_owner_ple_decode(e,hyper_input,ngram_embedding,&ple_input,err);if(status!=FG_OK)return status;layer_input=ple_input;}
+    if(!e||!position||!hyper_input||!fire||!collect||!output||!owns_layer(e,layer)){fg_error_set(err,FG_ERR_MISMATCH,"async decode layer precondition");return FG_ERR_MISMATCH;}if((layer==1u)!=(ngram_embedding!=NULL)){fg_error_set(err,FG_ERR_MISMATCH,"layer-1 PLE embedding presence mismatch");return FG_ERR_MISMATCH;}double t0=ts_ms();fg_vk_context *vk=fg_model_vk(e->model);bool ep_trace=fg_vk_profile_active(vk);fg_vk_counters counters_before={0};if(ep_trace)fg_vk_get_counters(vk,&counters_before);const fg_vk_tensor *layer_input=hyper_input;if(layer==1u){fg_vk_tensor *ple_input=NULL;fg_status status=fg_vk_profile_active(vk)?fg_vk_profile_set_scope(vk,"ple",err):FG_OK;if(status==FG_OK)status=fg_owner_ple_decode(e,hyper_input,ngram_embedding,&ple_input,err);if(status!=FG_OK)return status;layer_input=ple_input;}
     fg_vk_tensor *mixed=NULL,*injection=NULL,*block=NULL,*after_attention=NULL;const fg_vk_tensor *residual=NULL;
     /* Quantization joins Batch 1 so routed work can fire before shared expert compute. */
     fg_status status=fg_vk_profile_active(vk)?fg_vk_profile_set_scope(vk,"gr_attn_read",err):FG_OK;
@@ -237,6 +237,7 @@ fg_status fg_owner_decode_layer_async(fg_owner_executor *e,uint32_t layer,uint32
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_ffn_write",err);
     if(status==FG_OK)status=fg_owner_gr_write(e,residual,block,injection,output,err);
     double t_end=ts_ms();
+    if(ep_trace){fg_vk_counters counters_after={0};fg_vk_get_counters(vk,&counters_after);fprintf(stderr,"EP_LAYER_TRACE token=%u layer=%u status=%d total_ms=%.3f sync1_ms=%.3f fire_ms=%.3f shared_ms=%.3f collect_ms=%.3f finish_ms=%.3f submissions=%llu dispatches=%llu\n",token,layer,(int)status,t_end-t0,t_sync1-t0,t_fire-t_sync1,t_sync2-t_fire,t_collect-t_sync2,t_end-t_collect,(unsigned long long)(counters_after.submissions-counters_before.submissions),(unsigned long long)(counters_after.dispatches-counters_before.dispatches));}
     if(token>=26u&&token<32u){fprintf(stderr,"OVERLAP_TIMING layer[%u] t=%u total=%.1f sync1=%.1f fire=%.1f shared=%.1f collect=%.1f reduce+grw=%.1f\n",layer,token,t_end-t0,t_sync1-t0,t_fire-t_sync1,t_sync2-t_fire,t_collect-t_sync2,t_end-t_collect);}
     return status;
 }

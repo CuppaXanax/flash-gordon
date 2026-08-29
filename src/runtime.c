@@ -112,6 +112,7 @@ static fg_status fire_experts(void *opaque,uint32_t layer,uint32_t token,const u
         if(status==FG_OK)status=fg_fabric_send(ctx->fabric,work.destination_rank,FG_FABRIC_CONTROL,FG_MSG_DECODE_WORK,ctx->request_id,ctx->sequence,0,work_wire,sizeof(work_wire),err);
         if(status==FG_OK)ctx->remote_count++;
     }
+    if(status==FG_OK&&token_profile_requested(token)){uint32_t local=0,local_selected=0,selected=0,rank_mask=0;for(uint32_t r=0;r<route_count;r++){bool is_local=routes[r].destination_rank==ctx->self;local+=is_local;local_selected+=is_local?routes[r].selected_count:0u;selected+=routes[r].selected_count;rank_mask|=1u<<routes[r].destination_rank;}fprintf(stderr,"EP_ROUTE_TRACE token=%u layer=%u routes=%u remotes=%u local=%u local_selected=%u selected=%u rank_mask=%u\n",token,layer,route_count,ctx->remote_count,local,local_selected,selected,rank_mask);}
     return status;
 }
 
