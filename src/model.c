@@ -50,8 +50,7 @@ fg_status fg_model_open_replicated(fg_model **out,const fg_manifest *manifest,co
     for(uint32_t i=0;i<manifest->tensor_count;i++){
         const fg_tensor_record *t=&manifest->tensors[i];
         bool is_shared=(t->kind==FG_TENSOR_COMMON);
-        bool is_my_expert=(t->kind==FG_TENSOR_ROUTED_EXPERT&&t->rank==rank);
-        if(is_shared||is_my_expert){
+        if(is_shared){
             remap[i]=fg_align_up_u64(cursor,FG_ALIGNMENT);
             cursor=remap[i]+fg_align_up_u64(t->bytes,FG_ALIGNMENT);
             included[i]=true;
