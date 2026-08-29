@@ -26,6 +26,7 @@ struct fg_vk_context {
     fg_vk_kernel quant_q8k,quant_q8,quant_q4,dequant_iq4nl,embedding,embedding_batch,swiglu,silu_scaled,dense,dense_f32,dense_bf16,rms,gr,hc_finalize,gr_write,ple_gate,ple_gate_prefill,ple_conv,ple_conv_prefill,add,gdn_conv,gdn_conv_prefill,gdn_recurrent,gdn_recurrent_prefill,qsa_prepare,qsa_prepare_prefill,qsa_index_prepare,qsa_index_prepare_prefill,qsa_score,qsa_attention,topk,moe_q5_1,moe_q8_0,kquant;
     /* Decomposition benchmark kernels */
     fg_vk_kernel bench_stream,bench_dequant,bench_dot_nored;
+    fg_vk_kernel bench_stream_wide,bench_stream_vec;
 };
 
 static fg_status vk_error(fg_error *err,const char *operation,VkResult result){fg_error_set(err,FG_ERR_UNAVAILABLE,"%s: Vulkan result %d",operation,(int)result);return FG_ERR_UNAVAILABLE;}
@@ -78,10 +79,11 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
     c->qsa_prepare=(fg_vk_kernel){.file="fg_qsa_prepare.spv",.bindings=8,.push_bytes=0};c->qsa_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_prepare_prefill.spv",.bindings=8,.push_bytes=4};c->qsa_index_prepare=(fg_vk_kernel){.file="fg_qsa_index_prepare.spv",.bindings=4,.push_bytes=0};c->qsa_index_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_index_prepare_prefill.spv",.bindings=4,.push_bytes=4};c->qsa_score=(fg_vk_kernel){.file="fg_qsa_index_score.spv",.bindings=6,.push_bytes=8};c->qsa_attention=(fg_vk_kernel){.file="fg_qsa_attention.spv",.bindings=4,.push_bytes=4};c->topk=(fg_vk_kernel){.file="fg_topk_reduce.spv",.bindings=4,.push_bytes=4};
     c->moe_q5_1=(fg_vk_kernel){.file="fg_moe_q5_1_down.spv",.bindings=4,.push_bytes=28};c->moe_q8_0=(fg_vk_kernel){.file="fg_moe_q8_0_down.spv",.bindings=4,.push_bytes=28};c->kquant=(fg_vk_kernel){.file="fg_moe_kquant.spv",.bindings=4,.push_bytes=36};
     c->bench_stream=(fg_vk_kernel){.file="fg_bench_stream.spv",.bindings=3,.push_bytes=20};c->bench_dequant=(fg_vk_kernel){.file="fg_bench_dequant.spv",.bindings=3,.push_bytes=20};c->bench_dot_nored=(fg_vk_kernel){.file="fg_bench_dot_nored.spv",.bindings=3,.push_bytes=20};
+    c->bench_stream_wide=(fg_vk_kernel){.file="fg_bench_stream_wide.spv",.bindings=3,.push_bytes=20};c->bench_stream_vec=(fg_vk_kernel){.file="fg_bench_stream_vec.spv",.bindings=3,.push_bytes=20};
     *out=c;return FG_OK;
 }
 
-void fg_vk_close(fg_vk_context *c){if(!c)return;if(c->device)vkDeviceWaitIdle(c->device);destroy_kernel(c,&c->bench_dot_nored);destroy_kernel(c,&c->bench_dequant);destroy_kernel(c,&c->bench_stream);destroy_kernel(c,&c->kquant);destroy_kernel(c,&c->moe_q8_0);destroy_kernel(c,&c->moe_q5_1);destroy_kernel(c,&c->topk);destroy_kernel(c,&c->qsa_attention);destroy_kernel(c,&c->qsa_score);destroy_kernel(c,&c->qsa_index_prepare_prefill);destroy_kernel(c,&c->qsa_index_prepare);destroy_kernel(c,&c->qsa_prepare_prefill);destroy_kernel(c,&c->qsa_prepare);destroy_kernel(c,&c->gdn_recurrent_prefill);destroy_kernel(c,&c->gdn_recurrent);destroy_kernel(c,&c->gdn_conv_prefill);destroy_kernel(c,&c->gdn_conv);destroy_kernel(c,&c->add);destroy_kernel(c,&c->ple_conv_prefill);destroy_kernel(c,&c->ple_conv);destroy_kernel(c,&c->ple_gate_prefill);destroy_kernel(c,&c->ple_gate);destroy_kernel(c,&c->gr_write);destroy_kernel(c,&c->hc_finalize);destroy_kernel(c,&c->gr);destroy_kernel(c,&c->rms);destroy_kernel(c,&c->dense_bf16);destroy_kernel(c,&c->dense_f32);destroy_kernel(c,&c->dense);destroy_kernel(c,&c->silu_scaled);destroy_kernel(c,&c->swiglu);destroy_kernel(c,&c->embedding_batch);destroy_kernel(c,&c->embedding);destroy_kernel(c,&c->dequant_iq4nl);destroy_kernel(c,&c->quant_q4);destroy_kernel(c,&c->quant_q8);destroy_kernel(c,&c->quant_q8k);if(c->pipeline_cache)vkDestroyPipelineCache(c->device,c->pipeline_cache,NULL);if(c->descriptor_pool)vkDestroyDescriptorPool(c->device,c->descriptor_pool,NULL);if(c->fence)vkDestroyFence(c->device,c->fence,NULL);if(c->command_pool)vkDestroyCommandPool(c->device,c->command_pool,NULL);if(c->device)vkDestroyDevice(c->device,NULL);if(c->instance)vkDestroyInstance(c->instance,NULL);free(c);}
+void fg_vk_close(fg_vk_context *c){if(!c)return;if(c->device)vkDeviceWaitIdle(c->device);destroy_kernel(c,&c->bench_stream_vec);destroy_kernel(c,&c->bench_stream_wide);destroy_kernel(c,&c->bench_dot_nored);destroy_kernel(c,&c->bench_dequant);destroy_kernel(c,&c->bench_stream);destroy_kernel(c,&c->kquant);destroy_kernel(c,&c->moe_q8_0);destroy_kernel(c,&c->moe_q5_1);destroy_kernel(c,&c->topk);destroy_kernel(c,&c->qsa_attention);destroy_kernel(c,&c->qsa_score);destroy_kernel(c,&c->qsa_index_prepare_prefill);destroy_kernel(c,&c->qsa_index_prepare);destroy_kernel(c,&c->qsa_prepare_prefill);destroy_kernel(c,&c->qsa_prepare);destroy_kernel(c,&c->gdn_recurrent_prefill);destroy_kernel(c,&c->gdn_recurrent);destroy_kernel(c,&c->gdn_conv_prefill);destroy_kernel(c,&c->gdn_conv);destroy_kernel(c,&c->add);destroy_kernel(c,&c->ple_conv_prefill);destroy_kernel(c,&c->ple_conv);destroy_kernel(c,&c->ple_gate_prefill);destroy_kernel(c,&c->ple_gate);destroy_kernel(c,&c->gr_write);destroy_kernel(c,&c->hc_finalize);destroy_kernel(c,&c->gr);destroy_kernel(c,&c->rms);destroy_kernel(c,&c->dense_bf16);destroy_kernel(c,&c->dense_f32);destroy_kernel(c,&c->dense);destroy_kernel(c,&c->silu_scaled);destroy_kernel(c,&c->swiglu);destroy_kernel(c,&c->embedding_batch);destroy_kernel(c,&c->embedding);destroy_kernel(c,&c->dequant_iq4nl);destroy_kernel(c,&c->quant_q4);destroy_kernel(c,&c->quant_q8);destroy_kernel(c,&c->quant_q8k);if(c->pipeline_cache)vkDestroyPipelineCache(c->device,c->pipeline_cache,NULL);if(c->descriptor_pool)vkDestroyDescriptorPool(c->device,c->descriptor_pool,NULL);if(c->fence)vkDestroyFence(c->device,c->fence,NULL);if(c->command_pool)vkDestroyCommandPool(c->device,c->command_pool,NULL);if(c->device)vkDestroyDevice(c->device,NULL);if(c->instance)vkDestroyInstance(c->instance,NULL);free(c);}
 const char *fg_vk_device_name(const fg_vk_context *c){return c?c->device_name:"";}
 
 fg_status fg_vk_tensor_create(fg_vk_context *c,uint64_t bytes,fg_vk_tensor **out,fg_error *err){
@@ -493,6 +495,90 @@ fg_status fg_vk_bench_decompose(fg_vk_context *c,fg_error *err){
         fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);
     }
     #undef DEC_N
+    vkDestroyQueryPool(c->device,qpool,NULL);
+    vkDestroyDescriptorPool(c->device,c->descriptor_pool,NULL);
+    c->descriptor_pool=saved;
+    return status;
+}
+
+/* -------- Layout vs access experiment: A (current) / B (wide) / C (vec4) -------- */
+
+fg_status fg_vk_bench_stream_abc(fg_vk_context *c,fg_error *err){
+    if(!c){fg_error_set(err,FG_ERR_ARGUMENT,"null context");return FG_ERR_ARGUMENT;}
+    VkPhysicalDeviceProperties props;vkGetPhysicalDeviceProperties(c->physical,&props);
+    float ts_period=props.limits.timestampPeriod;
+    VkDescriptorPoolSize bps={.type=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.descriptorCount=2048};
+    VkDescriptorPoolCreateInfo bdp={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags=VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,.maxSets=512,.poolSizeCount=1,.pPoolSizes=&bps};
+    VkDescriptorPool saved=c->descriptor_pool;
+    VkResult vr=vkCreateDescriptorPool(c->device,&bdp,NULL,&c->descriptor_pool);
+    if(vr!=VK_SUCCESS){c->descriptor_pool=saved;return vk_error(err,"stream_abc pool",vr);}
+    VkQueryPoolCreateInfo qpc={.sType=VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,.queryType=VK_QUERY_TYPE_TIMESTAMP,.queryCount=512};
+    VkQueryPool qpool=VK_NULL_HANDLE;
+    vr=vkCreateQueryPool(c->device,&qpc,NULL,&qpool);
+    if(vr!=VK_SUCCESS){vkDestroyDescriptorPool(c->device,c->descriptor_pool,NULL);c->descriptor_pool=saved;return vk_error(err,"stream_abc qpool",vr);}
+
+    #define ABC_N 10
+    struct {uint32_t in,out;const char *name;} shapes[]={
+        {10240,320,"hc_down 10240→320"},{320,10240,"hc_up 320→10240"},
+        {2560,640,"shexp_gate 2560→640"},{640,2560,"shexp_down 640→2560"},
+        {2560,512,"qsa_attn_q 2560→512"},{2560,10240,"ple_key 2560→10240"},
+    };
+    fprintf(stderr,"\n=== Layout vs Access experiment (GPU timestamps, %u dispatches) ===\n",ABC_N);
+    fprintf(stderr,"%-20s %7s │ %8s %8s │ %8s %8s │ %8s %8s │ %8s\n",
+        "shape","wt MB","A:cur","A:GB/s","B:wide","B:GB/s","C:vec4","C:GB/s","theor");
+    fprintf(stderr,"────────────────────────────────────────────────────────────────────────────────\n");
+
+    fg_vk_kernel *kernels[]={&c->bench_stream,&c->bench_stream_wide,&c->bench_stream_vec};
+
+    fg_status status=FG_OK;
+    for(uint32_t s=0;s<sizeof(shapes)/sizeof(shapes[0])&&status==FG_OK;s++){
+        uint32_t in_dim=shapes[s].in,out_dim=shapes[s].out;
+        uint32_t blocks=in_dim/32u;uint64_t row_bytes=(uint64_t)blocks*34u;
+        uint64_t weight_bytes=row_bytes*out_dim;
+        struct{uint32_t od,nt,bl,rb;float sc;}push={out_dim,1,blocks,(uint32_t)row_bytes,1.0f};
+
+        /* Ensure weight buffer is 16-byte aligned for vec4 access.
+           Pad weight_bytes up to multiple of 16. */
+        uint64_t padded_weight=(weight_bytes+15u)&~15ULL;
+        fg_vk_tensor *w=NULL,*x=NULL;
+        fg_vk_tensor *ys[ABC_N]={0};
+        status=fg_vk_tensor_create(c,padded_weight,&w,err);
+        if(status==FG_OK)status=fg_vk_tensor_create(c,(uint64_t)in_dim*4u,&x,err);
+        for(uint32_t i=0;status==FG_OK&&i<ABC_N;i++)
+            status=fg_vk_tensor_create(c,(uint64_t)out_dim*4u,&ys[i],err);
+        if(status!=FG_OK)break;
+        memset(fg_vk_tensor_map(w),0x42,padded_weight);
+
+        /* Warmup all 3 kernels */
+        for(uint32_t k=0;k<3&&status==FG_OK;k++){
+            for(uint32_t i=0;status==FG_OK&&i<5;i++){
+                const fg_vk_tensor *bindings[]={w,x,ys[0]};
+                status=dispatch(c,kernels[k],bindings,&push,out_dim,1,1,err);
+            }
+        }
+
+        double times[3]={0};
+        uint32_t ts_off=0;
+        for(uint32_t k=0;k<3&&status==FG_OK;k++){
+            times[k]=bench_run_timestamped(c,kernels[k],w,x,ys,ABC_N,&push,out_dim,1,qpool,ts_off,ts_period,err);
+            ts_off+=ABC_N*2+2;
+            if(times[k]<0){fprintf(stderr,"  kernel %u failed for %s\n",k,shapes[s].name);status=FG_ERR_IO;break;}
+        }
+
+        if(status==FG_OK){
+            double theor=(double)weight_bytes/(357.0*1e3);
+            fprintf(stderr,"%-20s %6.2f │ %7.1f %7.1f │ %7.1f %7.1f │ %7.1f %7.1f │ %7.1f\n",
+                shapes[s].name,(double)weight_bytes/1e6,
+                times[0],(double)weight_bytes/(times[0]*1e-6)/1e9,
+                times[1],(double)weight_bytes/(times[1]*1e-6)/1e9,
+                times[2],(double)weight_bytes/(times[2]*1e-6)/1e9,
+                theor);
+        }
+        for(uint32_t i=0;i<ABC_N;i++)fg_vk_tensor_destroy(ys[i]);
+        fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);
+    }
+    #undef ABC_N
     vkDestroyQueryPool(c->device,qpool,NULL);
     vkDestroyDescriptorPool(c->device,c->descriptor_pool,NULL);
     c->descriptor_pool=saved;
