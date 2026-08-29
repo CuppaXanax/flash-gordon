@@ -22,4 +22,10 @@ fg_status fg_uring_pwrite(fg_uring *ring, uint32_t file_slot, const void *aligne
 fg_status fg_uring_send_all(fg_uring *ring, uint32_t file_slot, const void *buffer, uint32_t bytes, fg_error *err);
 fg_status fg_uring_recv_all(fg_uring *ring, uint32_t file_slot, void *buffer, uint32_t bytes, fg_error *err);
 
+/* Async I/O: prep SQEs without submitting, flush to kernel, reap CQEs. */
+typedef struct fg_uring_cqe {uint64_t tag;int32_t result;} fg_uring_cqe;
+fg_status fg_uring_prep_recv(fg_uring *ring,uint32_t file_slot,void *buffer,uint32_t bytes,uint64_t tag,fg_error *err);
+fg_status fg_uring_flush(fg_uring *ring,uint32_t pending_count,fg_error *err);
+fg_status fg_uring_reap(fg_uring *ring,uint32_t min_count,fg_uring_cqe *out,uint32_t capacity,uint32_t *completed,fg_error *err);
+
 #endif

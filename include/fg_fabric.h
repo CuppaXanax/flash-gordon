@@ -3,6 +3,7 @@
 
 #include "fg_manifest.h"
 #include "fg_protocol.h"
+#include "fg_uring.h"
 
 typedef enum fg_fabric_class { FG_FABRIC_CONTROL=0, FG_FABRIC_BULK=1 } fg_fabric_class;
 typedef struct fg_fabric fg_fabric;
@@ -15,5 +16,13 @@ fg_status fg_fabric_recv_any(fg_fabric *fabric,fg_fabric_class cls,uint32_t *pee
                              void *payload,uint32_t capacity,uint32_t *bytes,fg_error *err);
 fg_status fg_fabric_wait_ready(fg_fabric *fabric,uint32_t class_mask,uint32_t *peer,
                                fg_fabric_class *ready_class,fg_error *err);
+/* Async recv: prep header recv SQEs, flush, reap, then prep payload recvs. */
+fg_status fg_fabric_prep_header_recv(fg_fabric *fabric,uint32_t peer,fg_fabric_class cls,
+                                     fg_frame_header *header,uint64_t tag,fg_error *err);
+fg_status fg_fabric_prep_payload_recv(fg_fabric *fabric,uint32_t peer,fg_fabric_class cls,
+                                      void *payload,uint32_t bytes,uint64_t tag,fg_error *err);
+fg_status fg_fabric_io_flush(fg_fabric *fabric,uint32_t count,fg_error *err);
+fg_status fg_fabric_io_reap(fg_fabric *fabric,uint32_t min_count,fg_uring_cqe *out,
+                            uint32_t capacity,uint32_t *completed,fg_error *err);
 
 #endif
