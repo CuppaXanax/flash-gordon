@@ -5,6 +5,95 @@ layout(set=0,binding=1)readonly buffer Input{float x[];};
 layout(set=0,binding=2)writeonly buffer Output{float y[];};
 layout(push_constant)uniform Push{uint out_dim;uint n_tok;uint blocks;uint row_bytes;float scale;}pc;
 shared float sum[64];
-uint load_u8(uint off){return(wb[off>>2u]>>((off&3u)*8u))&255u;}
-uint load_u16(uint off){return load_u8(off)|(load_u8(off+1u)<<8u);}
-void main(){uint tid=gl_LocalInvocationID.x,row=gl_WorkGroupID.x,tok=gl_WorkGroupID.y;if(row>=pc.out_dim||tok>=pc.n_tok)return;uint in_dim=pc.blocks*32u,row_base=row*pc.row_bytes;float acc=0.0;for(uint i=tid;i<in_dim;i+=64u){uint block=i>>5u,within=i&31u,base=row_base+block*34u;float d=unpackHalf2x16(load_u16(base)).x;uint q=load_u8(base+2u+within);int qi=q>=128u?int(q)-256:int(q);acc=fma(d*float(qi),x[tok*in_dim+i],acc);}sum[tid]=acc;barrier();for(uint stride=32u;stride>0u;stride>>=1u){if(tid<stride)sum[tid]+=sum[tid+stride];barrier();}if(tid==0u)y[tok*pc.out_dim+row]=sum[0]*pc.scale;}
+
+/* Production Q8_0 matvec — sequential-word consumption.
+   Reads weight buffer as consecutive uint32 words (matching the proven
+   ~350 GB/s streaming pattern), then decodes Q8_0 block structure inline.
+   
+   Q8_0 block = 34 bytes: 2-byte fp16 scale + 32 int8 quants.
+   Two consecutive blocks = 68 bytes = 17 uint32 words.
+   Pattern repeats every 2 blocks (17 words). */
+
+float block_scale(uint row_word,uint block){
+    uint sb=block*34u;uint sw=wb[row_word+(sb>>2u)];
+    return unpackHalf2x16(((sb&2u)==0u)?(sw&0xFFFFu):(sw>>16u)).x;
+}
+
+void main(){
+    uint tid=gl_LocalInvocationID.x,row=gl_WorkGroupID.x,tok=gl_WorkGroupID.y;
+    if(row>=pc.out_dim||tok>=pc.n_tok)return;
+    uint total_words=pc.row_bytes>>2u;
+    uint row_word=row*(pc.row_bytes>>2u);
+    uint x_base=tok*pc.blocks*32u;
+    float acc0=0.0,acc1=0.0;
+
+    for(uint wi=tid*2u;wi+1u<total_words;wi+=128u){
+        /* Load 2 consecutive uint32 words — sequential access */
+        uint w0=wb[row_word+wi];
+        uint w1=wb[row_word+wi+1u];
+
+        /* Map word index → Q8_0 block and position within block.
+           block = (wi*4) / 34.  Use fixed-point reciprocal: 
+           (x * 61681) >> 21 = floor(x / 34) for x < 2^21 */
+        uint b0_byte=wi*4u;
+        uint b0=(b0_byte*61681u)>>21u;
+        uint p0=b0_byte-b0*34u;
+
+        uint b1_byte=b0_byte+4u;
+        uint b1=(b1_byte*61681u)>>21u;
+        uint p1=b1_byte-b1*34u;
+
+        /* Fetch scales — these are tiny (2B) reads from known positions,
+           almost always L1 hits since waves read consecutive words. */
+        float d0=block_scale(row_word,b0);
+        float d1=(b1!=b0)?block_scale(row_word,b1):d0;
+
+        /* Process word w0 based on position p0 */
+        if(p0==0u){
+            /* [scale_lo, scale_hi, q[0], q[1]] — extract 2 quants from high 16 bits */
+            d0=unpackHalf2x16(w0&0xFFFFu).x; /* inline scale, skip extra load */
+            int q0=int((w0>>16u)&0xFFu);q0-=(q0>=128)?256:0;
+            int q1=int(w0>>24u);q1-=(q1>=128)?256:0;
+            uint e=b0*32u;
+            acc0+=d0*(float(q0)*x[x_base+e]+float(q1)*x[x_base+e+1u]);
+        }else if(p0>=32u){
+            /* [q[30], q[31], next_scale_lo, next_scale_hi] */
+            int q0=int(w0&0xFFu);q0-=(q0>=128)?256:0;
+            int q1=int((w0>>8u)&0xFFu);q1-=(q1>=128)?256:0;
+            uint e=b0*32u+30u;
+            acc0+=d0*(float(q0)*x[x_base+e]+float(q1)*x[x_base+e+1u]);
+        }else{
+            /* Pure quant word: 4 quants at block*32 + (pos-2) */
+            int q0=int(w0&0xFFu);q0-=(q0>=128)?256:0;
+            int q1=int((w0>>8u)&0xFFu);q1-=(q1>=128)?256:0;
+            int q2=int((w0>>16u)&0xFFu);q2-=(q2>=128)?256:0;
+            int q3=int(w0>>24u);q3-=(q3>=128)?256:0;
+            uint e=b0*32u+(p0-2u);
+            acc0+=d0*(float(q0)*x[x_base+e]+float(q1)*x[x_base+e+1u]+float(q2)*x[x_base+e+2u]+float(q3)*x[x_base+e+3u]);
+        }
+
+        /* Process word w1 based on position p1 */
+        if(p1==0u){
+            d1=unpackHalf2x16(w1&0xFFFFu).x;
+            int q0=int((w1>>16u)&0xFFu);q0-=(q0>=128)?256:0;
+            int q1=int(w1>>24u);q1-=(q1>=128)?256:0;
+            uint e=b1*32u;
+            acc1+=d1*(float(q0)*x[x_base+e]+float(q1)*x[x_base+e+1u]);
+        }else if(p1>=32u){
+            int q0=int(w1&0xFFu);q0-=(q0>=128)?256:0;
+            int q1=int((w1>>8u)&0xFFu);q1-=(q1>=128)?256:0;
+            uint e=b1*32u+30u;
+            acc1+=d1*(float(q0)*x[x_base+e]+float(q1)*x[x_base+e+1u]);
+        }else{
+            int q0=int(w1&0xFFu);q0-=(q0>=128)?256:0;
+            int q1=int((w1>>8u)&0xFFu);q1-=(q1>=128)?256:0;
+            int q2=int((w1>>16u)&0xFFu);q2-=(q2>=128)?256:0;
+            int q3=int(w1>>24u);q3-=(q3>=128)?256:0;
+            uint e=b1*32u+(p1-2u);
+            acc1+=d1*(float(q0)*x[x_base+e]+float(q1)*x[x_base+e+1u]+float(q2)*x[x_base+e+2u]+float(q3)*x[x_base+e+3u]);
+        }
+    }
+    sum[tid]=acc0+acc1;barrier();
+    for(uint s=32u;s>0u;s>>=1u){if(tid<s)sum[tid]+=sum[tid+s];barrier();}
+    if(tid==0u)y[tok*pc.out_dim+row]=sum[0]*pc.scale;
+}
