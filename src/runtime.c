@@ -52,9 +52,11 @@ typedef struct expert_dispatch_context {fg_fabric *fabric;fg_expert_executor *ex
 typedef struct async_expert_context {
     fg_fabric *fabric;fg_expert_executor *expert;const fg_manifest *manifest;uint32_t self;
     uint64_t request_id;uint32_t sequence;
+    /* Saved routes for deferred local expert compute */
+    fg_expert_route routes[FG_GROUP_SIZE];uint32_t route_count;
+    uint8_t activation_copy[FG_Q8K_ACTIVATION_BYTES];
     /* Per-peer recv state */
-    uint32_t remote_count;uint32_t local_count;
-    fg_expert_result local_results[FG_GROUP_SIZE];
+    uint32_t remote_count;
     uint32_t recv_peers[FG_GROUP_SIZE];
     fg_frame_header recv_headers[FG_GROUP_SIZE];
     uint8_t *recv_payloads[FG_GROUP_SIZE]; /* each malloc'd FG_EXPERT_RESULT_MAX_BYTES */
@@ -73,22 +75,19 @@ static fg_status dispatch_experts(void *opaque,uint32_t layer,uint32_t token,con
     return status;
 }
 
-/* Async fire: send expert work + submit header recv SQEs, return immediately */
+/* Async fire: send remote expert work + submit header recv SQEs, return immediately.
+   Local experts are computed in collect to overlap with network wait. */
 static fg_status fire_experts(void *opaque,uint32_t layer,uint32_t token,const uint16_t expert_ids[FG_TOP_K],const float gates[FG_TOP_K],const uint8_t *activation,fg_error *err){
     async_expert_context *ctx=opaque;fg_expert_route routes[FG_GROUP_SIZE];uint32_t route_count=0;
     fg_status status=fg_partition_route(ctx->manifest,layer,expert_ids,gates,routes,&route_count,err);
     uint8_t work_wire[FG_DECODE_WORK_BYTES];ctx->remote_count=0;ctx->local_count=0;
+    /* Save local routes for deferred compute in collect */
+    ctx->route_count=route_count;
+    memcpy(ctx->routes,routes,sizeof(routes));
+    memcpy(ctx->activation_copy,activation,FG_Q8K_ACTIVATION_BYTES);
     /* Send to all remote peers (sync — sends are fast ~0.17ms total) */
     for(uint32_t r=0;status==FG_OK&&r<route_count;r++){
-        if(routes[r].destination_rank==ctx->self){
-            /* Compute local experts immediately */
-            fg_decode_work work={.layer=(uint8_t)layer,.source_rank=(uint8_t)ctx->self,.destination_rank=(uint8_t)ctx->self,.selected_count=routes[r].selected_count,.position=token};
-            for(uint32_t i=0;i<routes[r].selected_count;i++){work.expert_ids[i]=routes[r].global_expert_ids[i];work.routing_slots[i]=routes[r].routing_slots[i];work.gates[i]=routes[r].gates[i];}
-            memcpy(work.activation_q8k,activation,FG_Q8K_ACTIVATION_BYTES);
-            status=fg_expert_decode(ctx->expert,&work,&ctx->local_results[ctx->local_count],err);
-            if(status==FG_OK)ctx->local_count++;
-            continue;
-        }
+        if(routes[r].destination_rank==ctx->self)continue;
         fg_decode_work work={.layer=(uint8_t)layer,.source_rank=(uint8_t)ctx->self,.destination_rank=routes[r].destination_rank,.selected_count=routes[r].selected_count,.position=token};
         for(uint32_t i=0;i<routes[r].selected_count;i++){work.expert_ids[i]=routes[r].global_expert_ids[i];work.routing_slots[i]=routes[r].routing_slots[i];work.gates[i]=routes[r].gates[i];}
         memcpy(work.activation_q8k,activation,FG_Q8K_ACTIVATION_BYTES);
@@ -98,19 +97,25 @@ static fg_status fire_experts(void *opaque,uint32_t layer,uint32_t token,const u
     }
     /* Submit async header recv SQEs for all expected responses */
     for(uint32_t i=0;status==FG_OK&&i<ctx->remote_count;i++){
-        uint64_t tag=(uint64_t)i+1u; /* 1-based tag: header phase */
+        uint64_t tag=(uint64_t)i+1u;
         status=fg_fabric_prep_header_recv(ctx->fabric,ctx->recv_peers[i],FG_FABRIC_BULK,&ctx->recv_headers[i],tag,err);
     }
     if(status==FG_OK&&ctx->remote_count)status=fg_fabric_io_flush(ctx->fabric,ctx->remote_count,err);
     return status;
 }
 
-/* Async collect: reap header CQEs, submit payload recvs, reap payloads, decode results */
+/* Async collect: compute local experts (overlaps with network), then reap remote results */
 static fg_status collect_experts(void *opaque,uint32_t layer,uint32_t token,fg_expert_result results[FG_GROUP_SIZE],uint32_t *result_count,fg_error *err){
-    (void)layer;(void)token;
     async_expert_context *ctx=opaque;*result_count=0;fg_status status=FG_OK;
-    /* Copy local results first */
-    for(uint32_t i=0;i<ctx->local_count;i++){results[(*result_count)++]=ctx->local_results[i];}
+    /* Compute local experts while remote results are in flight */
+    for(uint32_t r=0;status==FG_OK&&r<ctx->route_count;r++){
+        if(ctx->routes[r].destination_rank!=ctx->self)continue;
+        fg_decode_work work={.layer=(uint8_t)layer,.source_rank=(uint8_t)ctx->self,.destination_rank=(uint8_t)ctx->self,.selected_count=ctx->routes[r].selected_count,.position=token};
+        for(uint32_t i=0;i<ctx->routes[r].selected_count;i++){work.expert_ids[i]=ctx->routes[r].global_expert_ids[i];work.routing_slots[i]=ctx->routes[r].routing_slots[i];work.gates[i]=ctx->routes[r].gates[i];}
+        memcpy(work.activation_q8k,ctx->activation_copy,FG_Q8K_ACTIVATION_BYTES);
+        status=fg_expert_decode(ctx->expert,&work,&results[*result_count],err);
+        if(status==FG_OK)(*result_count)++;
+    }
     if(!ctx->remote_count)return FG_OK;
     /* Reap header CQEs */
     fg_uring_cqe cqes[FG_GROUP_SIZE];uint32_t completed=0;
