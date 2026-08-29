@@ -48,7 +48,8 @@ void fg_output_executor_destroy(fg_output_executor *executor){
 fg_status fg_output_logits(fg_output_executor *executor,const fg_vk_tensor *hyper,fg_vk_tensor **logits,fg_error *err){
     if(!executor||!hyper||!logits||fg_vk_tensor_bytes(hyper)<FG_Q38_HYPER_WIDTH*sizeof(float)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Qwen output arguments");return FG_ERR_ARGUMENT;}
     fg_vk_context *vk=fg_model_vk(executor->model);
-    fg_status status=fg_vk_group_rms_norm(vk,executor->normalized,hyper,fg_model_tensor(executor->model,"output_hc_norm.weight"),FG_HIDDEN_SIZE,FG_Q38_HYPER_COUNT,1u,1e-6f,err);
+    fg_status status=fg_vk_profile_active(vk)?fg_vk_profile_set_scope(vk,"output",err):FG_OK;
+    if(status==FG_OK)status=fg_vk_group_rms_norm(vk,executor->normalized,hyper,fg_model_tensor(executor->model,"output_hc_norm.weight"),FG_HIDDEN_SIZE,FG_Q38_HYPER_COUNT,1u,1e-6f,err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,executor->down,fg_model_tensor(executor->model,"output_hc_down.weight"),executor->normalized,FG_Q38_HYPER_WIDTH,FG_Q38_HYPER_RANK,1u,1.0f,err);
     if(status==FG_OK)status=fg_vk_silu_scaled(vk,executor->activated,executor->down,FG_Q38_HYPER_RANK,1.0f/(float)FG_Q38_HYPER_COUNT,err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,executor->up,fg_model_tensor(executor->model,"output_hc_up.weight"),executor->activated,FG_Q38_HYPER_RANK,FG_Q38_HYPER_WIDTH,1u,1.0f,err);

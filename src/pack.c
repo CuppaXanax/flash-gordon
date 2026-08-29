@@ -222,15 +222,15 @@ fg_status fg_pack_verify(const fg_verify_options *o,fg_error *err){
         /* Read first 64 bytes from GGUF source */
         FILE *src=fopen(g.paths[gt->shard],"rb");if(!src)continue;
         uint8_t gguf_head[64]={0};
-        fseeko(src,(off_t)(gt->offset+first_global*expert_bytes),SEEK_SET);
-        fread(gguf_head,1,64,src);fclose(src);
+        if(fseeko(src,(off_t)(gt->offset+first_global*expert_bytes),SEEK_SET)!=0||fread(gguf_head,1,64,src)!=64u){fclose(src);printf("  SKIP rank %u: cannot read GGUF expert bytes\n",rank);continue;}
+        fclose(src);
 
         /* Read first 64 bytes from .fgw */
         char fgw_path[1024];snprintf(fgw_path,sizeof(fgw_path),"%s/rank-%02u.fgw",o->pack_dir,rank);
         FILE *fgw=fopen(fgw_path,"rb");if(!fgw){printf("  SKIP rank %u: cannot open %s\n",rank,fgw_path);continue;}
         uint8_t fgw_head[64]={0};
-        fseeko(fgw,(off_t)t->offset,SEEK_SET);
-        fread(fgw_head,1,64,fgw);fclose(fgw);
+        if(fseeko(fgw,(off_t)t->offset,SEEK_SET)!=0||fread(fgw_head,1,64,fgw)!=64u){fclose(fgw);printf("  SKIP rank %u: cannot read %s\n",rank,fgw_path);continue;}
+        fclose(fgw);
 
         bool match=memcmp(gguf_head,fgw_head,64)==0;
         printf("  rank %u (global expert %u): %s  [gguf: %02x%02x%02x%02x fgw: %02x%02x%02x%02x]\n",

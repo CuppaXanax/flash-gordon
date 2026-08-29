@@ -6,9 +6,32 @@
 typedef struct fg_vk_context fg_vk_context;
 typedef struct fg_vk_tensor fg_vk_tensor;
 
+#define FG_VK_PROFILE_MAX_KERNELS 64u
+
+typedef struct fg_vk_profile_kernel {
+    const char *scope;
+    const char *name;
+    uint64_t invocations;
+    double gpu_ms;
+} fg_vk_profile_kernel;
+
+typedef struct fg_vk_profile {
+    uint32_t kernel_count;
+    uint64_t submissions;
+    uint64_t dispatches;
+    double gpu_ms;
+    double kernel_ms;
+    fg_vk_profile_kernel kernels[FG_VK_PROFILE_MAX_KERNELS];
+} fg_vk_profile;
+
 fg_status fg_vk_open(fg_vk_context **out,fg_error *err);
 void fg_vk_close(fg_vk_context *context);
 const char *fg_vk_device_name(const fg_vk_context *context);
+
+fg_status fg_vk_profile_begin(fg_vk_context *context,fg_error *err);
+fg_status fg_vk_profile_set_scope(fg_vk_context *context,const char *scope,fg_error *err);
+fg_status fg_vk_profile_end(fg_vk_context *context,fg_vk_profile *profile,fg_error *err);
+bool fg_vk_profile_active(const fg_vk_context *context);
 
 fg_status fg_vk_begin(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_end(fg_vk_context *context,fg_error *err);
@@ -136,9 +159,9 @@ fg_status fg_vk_moe_kquant(fg_vk_context *context,fg_vk_tensor *output,const fg_
                            uint32_t routed_pairs,bool packed_weights,uint32_t tile_count,fg_error *err);
 
 /* GPU timestamp-profiled kernel benchmark. Reports per-shape:
-   A. raw GPU kernel GB/s (no inter-dispatch barriers)
-   B. kernel with current barrier policy
-   C. complete standalone dispatch (full Vulkan overhead) */
+    A. raw GPU kernel GB/s (no inter-dispatch barriers)
+    B. kernel with current barrier policy
+    C. complete standalone dispatch (full Vulkan overhead) */
 fg_status fg_vk_bench_dense_q8(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_bench_decompose(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_bench_stream_abc(fg_vk_context *context,fg_error *err);
