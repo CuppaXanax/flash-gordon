@@ -282,14 +282,12 @@ static fg_status coordinator_decode_token_local(fg_coordinator *coordinator,cons
     fg_vk_tensor *ngram=NULL;if(status==FG_OK)status=fg_ngram_store_lookup(coordinator->ngram,history,history_count,&ngram,err);
     uint32_t position[3]={token_index,token_index,token_index};
     fg_vk_tensor *current=coordinator->hyper;
-    /* Process all 48 layers locally with async expert dispatch */
-    async_expert_context async_ctx={.fabric=coordinator->fabric,.expert=coordinator->expert,.manifest=coordinator->manifest,.self=0u,.request_id=coordinator->session_id};
-    for(uint32_t i=0;i<FG_GROUP_SIZE;i++){async_ctx.recv_payloads[i]=coordinator->async_recv_payloads[i];}
+    /* Process all 48 layers locally — sync dispatch (poll-based recv is faster than async for serial decode) */
     for(uint32_t layer=0;status==FG_OK&&layer<FG_LAYER_COUNT;layer++){
         const fg_vk_tensor *layer_ngram=(layer==1u)?ngram:NULL;
-        async_ctx.sequence=token_index*FG_LAYER_COUNT+layer;
+        expert_dispatch_context dispatch={coordinator->fabric,coordinator->expert,coordinator->manifest,0u,coordinator->session_id,token_index*FG_LAYER_COUNT+layer,coordinator->expert_recv};
         fg_vk_tensor *layer_out=NULL;
-        status=fg_owner_decode_layer_async(coordinator->owner,layer,token_index,position,current,layer_ngram,fire_experts,collect_experts,&async_ctx,&layer_out,err);
+        status=fg_owner_decode_layer(coordinator->owner,layer,token_index,position,current,layer_ngram,dispatch_experts,&dispatch,&layer_out,err);
         if(status==FG_OK)current=layer_out;
     }
     if(status==FG_OK)status=coordinator_output(coordinator,token_index,current,next_token,logit,err);
