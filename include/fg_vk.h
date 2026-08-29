@@ -10,6 +10,9 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err);
 void fg_vk_close(fg_vk_context *context);
 const char *fg_vk_device_name(const fg_vk_context *context);
 
+fg_status fg_vk_begin(fg_vk_context *context,fg_error *err);
+fg_status fg_vk_end(fg_vk_context *context,fg_error *err);
+
 fg_status fg_vk_tensor_create(fg_vk_context *context,uint64_t bytes,fg_vk_tensor **out,fg_error *err);
 fg_status fg_vk_tensor_view(fg_vk_tensor *base,uint64_t offset,uint64_t bytes,fg_vk_tensor **out,fg_error *err);
 void fg_vk_tensor_destroy(fg_vk_tensor *tensor);
