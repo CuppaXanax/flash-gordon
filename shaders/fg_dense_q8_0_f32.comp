@@ -1,41 +1,34 @@
 #version 460
 #extension GL_KHR_shader_subgroup_arithmetic : require
-layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(local_size_x=64,local_size_y=1,local_size_z=1)in;
 layout(set=0,binding=0)readonly buffer Weights{uint wb[];};
 layout(set=0,binding=1)readonly buffer Input{float x[];};
 layout(set=0,binding=2)writeonly buffer Output{float y[];};
 layout(push_constant)uniform Push{uint out_dim;uint n_tok;uint blocks;uint row_bytes;float scale;}pc;
 
-/* 256 threads = 8 waves of 32.  Each thread accumulates a partial dot product,
-   subgroupAdd reduces within each wave (no barrier), then 8 partial sums are
-   reduced via shared memory with a single barrier. */
-shared float wave_sums[8];
+/* 64 threads = 2 waves of 32.  subgroupAdd reduces within each wave
+   (no barrier), then 2 partial sums are combined via shared memory
+   with a single barrier.  Scale is hoisted: loaded once per Q8 block. */
+shared float wave_sums[2];
 
 void main(){
-    uint tid=gl_LocalInvocationID.x; /* 0..255 */
-    uint wave_id=tid>>5u;            /* 0..7 */
-    uint lane=tid&31u;               /* 0..31 within wave */
+    uint tid=gl_LocalInvocationID.x; /* 0..63 */
+    uint wave_id=tid>>5u;
+    uint lane=tid&31u;
     uint row=gl_WorkGroupID.x,tok=gl_WorkGroupID.y;
     if(row>=pc.out_dim||tok>=pc.n_tok)return;
 
     uint in_dim=pc.blocks*32u;
     uint row_base=row*pc.row_bytes;
     float acc=0.0;
-
-    /* Each thread processes elements with stride 256.
-       All 32 lanes in a wave hit the same Q8 block when i is in the same
-       block-of-32, giving coalesced quant loads.  Scale is hoisted: loaded
-       once per block, shared across all 32 lanes via the first iteration
-       that enters a new block. */
     float cached_scale=0.0;
     uint prev_block=0xFFFFFFFFu;
 
-    for(uint i=tid;i<in_dim;i+=256u){
+    for(uint i=tid;i<in_dim;i+=64u){
         uint block=i>>5u;
         uint within=i&31u;
         uint base=row_base+block*34u;
 
-        /* Hoist scale decode: only re-read when we enter a new block */
         if(block!=prev_block){
             uint soff=base;
             uint sw=wb[soff>>2u];
@@ -46,7 +39,6 @@ void main(){
             prev_block=block;
         }
 
-        /* Load quant byte */
         uint qoff=base+2u+within;
         uint qw=wb[qoff>>2u];
         uint q=(qw>>((qoff&3u)*8u))&255u;
@@ -55,17 +47,8 @@ void main(){
         acc=fma(cached_scale*float(qi),x[tok*in_dim+i],acc);
     }
 
-    /* Per-wave reduction: subgroupAdd (no barrier, hardware shuffle) */
     float wave_sum=subgroupAdd(acc);
-
-    /* Write per-wave result to shared memory */
     if(lane==0u)wave_sums[wave_id]=wave_sum;
     barrier();
-
-    /* Final reduction: wave 0 lane 0 sums the 8 partial results */
-    if(tid==0u){
-        float total=0.0;
-        for(uint w=0u;w<8u;w++)total+=wave_sums[w];
-        y[tok*pc.out_dim+row]=total*pc.scale;
-    }
+    if(tid==0u)y[tok*pc.out_dim+row]=(wave_sums[0]+wave_sums[1])*pc.scale;
 }
