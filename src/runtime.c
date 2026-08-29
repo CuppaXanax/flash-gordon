@@ -94,11 +94,7 @@ static fg_status dispatch_experts(void *opaque,uint32_t layer,uint32_t token,con
     return status;
 }
 
-/* Async dispatch functions — reserved for future multi-token batching.
-   Single-token decode uses sync dispatch (poll-based recv is faster). */
-#if 0
-/* Async fire: send remote expert work + submit header recv SQEs, return immediately.
-   Local experts are computed in collect to overlap with network wait. */
+/* Fire all remote work and return; collection stays on the fast poll/recv_any path. */
 static fg_status fire_experts(void *opaque,uint32_t layer,uint32_t token,const uint16_t expert_ids[FG_TOP_K],const float gates[FG_TOP_K],const uint8_t *activation,fg_error *err){
     async_expert_context *ctx=opaque;fg_expert_route routes[FG_GROUP_SIZE];uint32_t route_count=0;
     fg_status status=fg_partition_route(ctx->manifest,layer,expert_ids,gates,routes,&route_count,err);
@@ -107,7 +103,6 @@ static fg_status fire_experts(void *opaque,uint32_t layer,uint32_t token,const u
     ctx->route_count=route_count;
     memcpy(ctx->routes,routes,sizeof(routes));
     memcpy(ctx->activation_copy,activation,FG_Q8K_ACTIVATION_BYTES);
-    /* Send to all remote peers (sync — sends are fast ~0.17ms total) */
     for(uint32_t r=0;status==FG_OK&&r<route_count;r++){
         if(routes[r].destination_rank==ctx->self)continue;
         fg_decode_work work={.layer=(uint8_t)layer,.source_rank=(uint8_t)ctx->self,.destination_rank=routes[r].destination_rank,.selected_count=routes[r].selected_count,.position=token};
@@ -115,18 +110,12 @@ static fg_status fire_experts(void *opaque,uint32_t layer,uint32_t token,const u
         memcpy(work.activation_q8k,activation,FG_Q8K_ACTIVATION_BYTES);
         status=fg_decode_work_encode(work_wire,&work,err);
         if(status==FG_OK)status=fg_fabric_send(ctx->fabric,work.destination_rank,FG_FABRIC_CONTROL,FG_MSG_DECODE_WORK,ctx->request_id,ctx->sequence,0,work_wire,sizeof(work_wire),err);
-        if(status==FG_OK){ctx->recv_peers[ctx->remote_count]=(uint32_t)work.destination_rank;ctx->remote_count++;}
+        if(status==FG_OK)ctx->remote_count++;
     }
-    /* Submit async header recv SQEs for all expected responses */
-    for(uint32_t i=0;status==FG_OK&&i<ctx->remote_count;i++){
-        uint64_t tag=(uint64_t)i+1u;
-        status=fg_fabric_prep_header_recv(ctx->fabric,ctx->recv_peers[i],FG_FABRIC_BULK,&ctx->recv_headers[i],tag,err);
-    }
-    if(status==FG_OK&&ctx->remote_count)status=fg_fabric_io_flush(ctx->fabric,ctx->remote_count,err);
     return status;
 }
 
-/* Async collect: compute local experts (overlaps with network), then reap remote results */
+/* Compute local experts, then collect remote results in arrival order. */
 static fg_status collect_experts(void *opaque,uint32_t layer,uint32_t token,fg_expert_result results[FG_GROUP_SIZE],uint32_t *result_count,fg_error *err){
     async_expert_context *ctx=opaque;*result_count=0;fg_status status=FG_OK;
     /* Compute local experts while remote results are in flight */
@@ -138,40 +127,15 @@ static fg_status collect_experts(void *opaque,uint32_t layer,uint32_t token,fg_e
         status=fg_expert_decode(ctx->expert,&work,&results[*result_count],err);
         if(status==FG_OK)(*result_count)++;
     }
-    if(!ctx->remote_count)return FG_OK;
-    /* Reap header CQEs */
-    fg_uring_cqe cqes[FG_GROUP_SIZE];uint32_t completed=0;
-    status=fg_fabric_io_reap(ctx->fabric,ctx->remote_count,cqes,FG_GROUP_SIZE,&completed,err);
-    /* Validate headers and submit payload recvs */
-    for(uint32_t i=0;status==FG_OK&&i<completed;i++){
-        uint32_t idx=(uint32_t)(cqes[i].tag-1u);
-        if(idx>=ctx->remote_count){fg_error_set(err,FG_ERR_MISMATCH,"invalid async recv tag");return FG_ERR_MISMATCH;}
-        if(cqes[i].result<0){fg_error_set(err,FG_ERR_IO,"async header recv: %s",strerror(-cqes[i].result));return FG_ERR_IO;}
-        if((uint32_t)cqes[i].result!=sizeof(fg_frame_header)){fg_error_set(err,FG_ERR_IO,"short async header recv: %d",cqes[i].result);return FG_ERR_IO;}
-        fg_frame_header *h=&ctx->recv_headers[idx];
-        if(fg_frame_type(h)!=FG_MSG_EXPERT_RESULT||fg_frame_request_id(h)!=ctx->request_id||fg_frame_sequence(h)!=ctx->sequence){
-            fg_error_set(err,FG_ERR_MISMATCH,"stale async expert result from peer %u",ctx->recv_peers[idx]);return FG_ERR_MISMATCH;}
-        uint32_t payload_bytes=ntohl(h->bytes_be);
-        if(payload_bytes>FG_EXPERT_RESULT_MAX_BYTES){fg_error_set(err,FG_ERR_LIMIT,"async expert payload too large");return FG_ERR_LIMIT;}
-        uint64_t ptag=((uint64_t)idx+1u)|0x80000000u; /* payload tag */
-        status=fg_fabric_prep_payload_recv(ctx->fabric,ctx->recv_peers[idx],FG_FABRIC_BULK,ctx->recv_payloads[idx],payload_bytes,ptag,err);
-    }
-    if(status==FG_OK)status=fg_fabric_io_flush(ctx->fabric,ctx->remote_count,err);
-    /* Reap payload CQEs */
-    completed=0;
-    if(status==FG_OK)status=fg_fabric_io_reap(ctx->fabric,ctx->remote_count,cqes,FG_GROUP_SIZE,&completed,err);
-    for(uint32_t i=0;status==FG_OK&&i<completed;i++){
-        uint32_t idx=(uint32_t)((cqes[i].tag&0x7FFFFFFFu)-1u);
-        if(idx>=ctx->remote_count){fg_error_set(err,FG_ERR_MISMATCH,"invalid async payload tag");return FG_ERR_MISMATCH;}
-        if(cqes[i].result<0){fg_error_set(err,FG_ERR_IO,"async payload recv: %s",strerror(-cqes[i].result));return FG_ERR_IO;}
-        fg_frame_header *h=&ctx->recv_headers[idx];uint32_t pbytes=0;
-        status=fg_frame_validate(h,ctx->recv_payloads[idx],&pbytes,err);
-        if(status==FG_OK)status=fg_expert_result_decode(&results[*result_count],ctx->recv_payloads[idx],pbytes,err);
+    for(uint32_t received=0;status==FG_OK&&received<ctx->remote_count;received++){
+        uint32_t peer=0,bytes=0;fg_frame_header header;
+        status=fg_fabric_recv_any(ctx->fabric,FG_FABRIC_BULK,&peer,&header,ctx->recv_payloads[0],FG_EXPERT_RESULT_MAX_BYTES,&bytes,err);
+        if(status==FG_OK&&(fg_frame_type(&header)!=FG_MSG_EXPERT_RESULT||fg_frame_request_id(&header)!=ctx->request_id||fg_frame_sequence(&header)!=ctx->sequence)){fg_error_set(err,FG_ERR_MISMATCH,"stale split expert result from peer %u",peer);status=FG_ERR_MISMATCH;}
+        if(status==FG_OK)status=fg_expert_result_decode(&results[*result_count],ctx->recv_payloads[0],bytes,err);
         if(status==FG_OK)(*result_count)++;
     }
     return status;
 }
-#endif /* async dispatch — reserved for multi-token batching */
 
 static fg_status handle_expert_work(fg_fabric *fabric,fg_expert_executor *expert,fg_vk_context *vk,uint32_t self,uint32_t peer,const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,fg_expert_result *result,uint8_t *wire,fg_error *err){
     double tw0=dispatch_ts();
@@ -337,12 +301,14 @@ static fg_status coordinator_decode_token_local(fg_coordinator *coordinator,cons
     fg_vk_tensor *ngram=NULL;if(status==FG_OK)status=fg_ngram_store_lookup(coordinator->ngram,history,history_count,&ngram,err);
     uint32_t position[3]={token_index,token_index,token_index};
     fg_vk_tensor *current=coordinator->hyper;
-    /* Process all 48 layers locally — sync dispatch (poll-based recv is faster than async for serial decode) */
+    async_expert_context async_ctx={.fabric=coordinator->fabric,.expert=coordinator->expert,.manifest=coordinator->manifest,.self=0u,.request_id=coordinator->session_id};
+    for(uint32_t i=0;i<FG_GROUP_SIZE;i++)async_ctx.recv_payloads[i]=coordinator->async_recv_payloads[i];
+    /* Process all 48 layers locally while overlapping shared and routed experts. */
     for(uint32_t layer=0;status==FG_OK&&layer<FG_LAYER_COUNT;layer++){
         const fg_vk_tensor *layer_ngram=(layer==1u)?ngram:NULL;
-        expert_dispatch_context dispatch={coordinator->fabric,coordinator->expert,coordinator->manifest,0u,coordinator->session_id,token_index*FG_LAYER_COUNT+layer,coordinator->expert_recv};
+        async_ctx.sequence=token_index*FG_LAYER_COUNT+layer;
         fg_vk_tensor *layer_out=NULL;
-        status=fg_owner_decode_layer(coordinator->owner,layer,token_index,position,current,layer_ngram,dispatch_experts,&dispatch,&layer_out,err);
+        status=fg_owner_decode_layer_async(coordinator->owner,layer,token_index,position,current,layer_ngram,fire_experts,collect_experts,&async_ctx,&layer_out,err);
         if(status==FG_OK)current=layer_out;
     }
     if(status==FG_OK)status=coordinator_output(coordinator,token_index,current,next_token,logit,err);
