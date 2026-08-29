@@ -41,8 +41,8 @@ fg_status fg_expert_decode(fg_expert_executor *executor,const fg_decode_work *wo
     /* Fused GPU batch: gate + up + swiglu + down in ONE submission instead of 4 */
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"routed_expert",err);
     if(status==FG_OK)status=fg_vk_begin(vk,err);
-    if(status==FG_OK)status=fg_vk_moe_kquant_vec(vk,executor->gate,gate_weight,executor->activation,executor->tiles,gate_record->ggml_type,640u,FG_HIDDEN_SIZE,(uint32_t)(gate_record->bytes/FG_EXPERTS_PER_RANK),FG_TOP_K,FG_TOP_K,false,tiles,err);
-    if(status==FG_OK)status=fg_vk_moe_kquant_vec(vk,executor->up,up_weight,executor->activation,executor->tiles,up_record->ggml_type,640u,FG_HIDDEN_SIZE,(uint32_t)(up_record->bytes/FG_EXPERTS_PER_RANK),FG_TOP_K,FG_TOP_K,false,tiles,err);
+    if(status==FG_OK)status=fg_vk_moe_kquant(vk,executor->gate,gate_weight,executor->activation,executor->tiles,gate_record->ggml_type,640u,FG_HIDDEN_SIZE,(uint32_t)(gate_record->bytes/FG_EXPERTS_PER_RANK),FG_TOP_K,FG_TOP_K,false,tiles,err);
+    if(status==FG_OK)status=fg_vk_moe_kquant(vk,executor->up,up_weight,executor->activation,executor->tiles,up_record->ggml_type,640u,FG_HIDDEN_SIZE,(uint32_t)(up_record->bytes/FG_EXPERTS_PER_RANK),FG_TOP_K,FG_TOP_K,false,tiles,err);
     if(status==FG_OK){status=fg_vk_swiglu(vk,executor->mid,executor->gate,executor->up,FG_EXPERT_MID_VALUES,err);}
     uint32_t down_stride=(uint32_t)(down_record->bytes/FG_EXPERTS_PER_RANK);
     if(status==FG_OK&&down_record->ggml_type==7u)status=fg_vk_moe_q5_1_down(vk,executor->down,down_weight,executor->tiles,executor->mid,FG_HIDDEN_SIZE,640u,down_stride,FG_TOP_K,false,tiles,err);else if(status==FG_OK&&down_record->ggml_type==8u)status=fg_vk_moe_q8_0_down(vk,executor->down,down_weight,executor->tiles,executor->mid,FG_HIDDEN_SIZE,640u,down_stride,FG_TOP_K,false,tiles,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"unsupported expert down quant %u",down_record->ggml_type);status=FG_ERR_FORMAT;}
