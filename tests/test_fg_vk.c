@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 static fg_vk_context *context;
@@ -135,6 +136,14 @@ static int test_gr_mix(void){
     for(uint32_t i=0;ok&&i<HIDDEN;i++){float ref=0.0f;for(uint32_t g=0;g<GROUPS;g++){uint32_t j=g*HIDDEN+i;ref+=norm[j]/(1.0f+expf(-up[j]));}ref/=GROUPS;if(fabsf(mixed[i]-ref)>2e-6f)ok=0;}for(uint32_t g=0;ok&&g<GROUPS;g++){float ref=2.0f/(1.0f+expf(-inject_logits[g]/GROUPS));if(fabsf(injection[g]-ref)>1e-6f)ok=0;}
     for(uint32_t g=0;ok&&g<GROUPS;g++)for(uint32_t i=0;ok&&i<HIDDEN;i++)if(fabsf(written[g*HIDDEN+i]-(norm[g*HIDDEN+i]+mixed[i]*injection[g]))>2e-6f)ok=0;
     fg_vk_tensor_destroy(gw);fg_vk_tensor_destroy(go);fg_vk_tensor_destroy(gm);fg_vk_tensor_destroy(gi);fg_vk_tensor_destroy(gu);fg_vk_tensor_destroy(gn);free(written);free(mixed);free(up);free(norm);return ok;
+}
+
+static int test_hc_inject_partial(void){
+    enum{HIDDEN=2560,GROUPS=4,HYPER=HIDDEN*GROUPS,PIECES=24,ITERATIONS=50};float *normalized=malloc(HYPER*4u),*up=malloc(HYPER*4u),*weights=malloc((size_t)GROUPS*HYPER*4u),mixed_expected[HIDDEN],mixed_got[HIDDEN],inject_logits[GROUPS],injection_expected[GROUPS],injection_got[GROUPS];if(!normalized||!up||!weights){free(weights);free(up);free(normalized);return 0;}
+    for(uint32_t i=0;i<HYPER;i++){normalized[i]=sinf((float)i*0.0031f);up[i]=cosf((float)i*0.0027f);}for(uint32_t i=0;i<GROUPS*HYPER;i++)weights[i]=sinf((float)i*0.00017f)*0.125f;for(uint32_t group=0;group<GROUPS;group++){float dot=0.0f;for(uint32_t i=0;i<HYPER;i++)dot=fmaf(weights[(uint64_t)group*HYPER+i],normalized[i],dot);inject_logits[group]=dot;injection_expected[group]=2.0f/(1.0f+expf(-dot/(float)GROUPS));}for(uint32_t i=0;i<HIDDEN;i++){float value=0.0f;for(uint32_t group=0;group<GROUPS;group++){uint32_t index=group*HIDDEN+i;value=fmaf(1.0f/(1.0f+expf(-up[index])),normalized[index],value);}mixed_expected[i]=value/(float)GROUPS;}
+    fg_vk_tensor *gn=tensor(normalized,HYPER*4u),*gu=tensor(up,HYPER*4u),*gw=tensor(weights,(uint64_t)GROUPS*HYPER*4u),*gp=tensor(NULL,PIECES*GROUPS*4u),*gm=tensor(NULL,HIDDEN*4u),*gi=tensor(NULL,GROUPS*4u),*gl=tensor(inject_logits,sizeof(inject_logits)),*gom=tensor(NULL,HIDDEN*4u),*goi=tensor(NULL,GROUPS*4u);int ok=gn&&gu&&gw&&gp&&gm&&gi&&gl&&gom&&goi&&fg_vk_begin(context,&error)==FG_OK&&fg_vk_hc_inject_partial(context,gp,gn,gw,HIDDEN,GROUPS,1u,PIECES,&error)==FG_OK&&fg_vk_gr_mix_partial(context,gm,gi,gn,gu,gp,HIDDEN,GROUPS,1u,PIECES,&error)==FG_OK&&fg_vk_end(context,&error)==FG_OK&&fg_vk_tensor_read(gm,0,mixed_got,sizeof(mixed_got),&error)==FG_OK&&fg_vk_tensor_read(gi,0,injection_got,sizeof(injection_got),&error)==FG_OK;for(uint32_t i=0;ok&&i<HIDDEN;i++)if(fabsf(mixed_got[i]-mixed_expected[i])>2e-6f)ok=0;for(uint32_t group=0;ok&&group<GROUPS;group++)if(fabsf(injection_got[group]-injection_expected[group])>2e-5f*fmaxf(1.0f,fabsf(injection_expected[group])))ok=0;
+    if(ok&&getenv("FG_BENCH_HC_INJECT")){fg_vk_profile old_profile={0},new_profile={0};struct timespec start,end;clock_gettime(CLOCK_MONOTONIC,&start);ok=fg_vk_profile_begin(context,&error)==FG_OK&&fg_vk_begin(context,&error)==FG_OK;for(uint32_t i=0;ok&&i<ITERATIONS;i++)ok=fg_vk_dense_f32(context,gl,gw,gn,HYPER,GROUPS,1u,&error)==FG_OK&&fg_vk_gr_mix(context,gom,goi,gn,gu,gl,HIDDEN,GROUPS,1u,&error)==FG_OK;if(ok)ok=fg_vk_end(context,&error)==FG_OK&&fg_vk_profile_end(context,&old_profile,&error)==FG_OK;clock_gettime(CLOCK_MONOTONIC,&end);double old_wall=((double)(end.tv_sec-start.tv_sec)*1e3+(double)(end.tv_nsec-start.tv_nsec)*1e-6)/(double)ITERATIONS;clock_gettime(CLOCK_MONOTONIC,&start);ok=ok&&fg_vk_profile_begin(context,&error)==FG_OK&&fg_vk_begin(context,&error)==FG_OK;for(uint32_t i=0;ok&&i<ITERATIONS;i++)ok=fg_vk_hc_inject_partial(context,gp,gn,gw,HIDDEN,GROUPS,1u,PIECES,&error)==FG_OK&&fg_vk_gr_mix_partial(context,gm,gi,gn,gu,gp,HIDDEN,GROUPS,1u,PIECES,&error)==FG_OK;if(ok)ok=fg_vk_end(context,&error)==FG_OK&&fg_vk_profile_end(context,&new_profile,&error)==FG_OK;clock_gettime(CLOCK_MONOTONIC,&end);double new_wall=((double)(end.tv_sec-start.tv_sec)*1e3+(double)(end.tv_nsec-start.tv_nsec)*1e-6)/(double)ITERATIONS;if(ok)fprintf(stderr,"HC_INJECT_BENCH iterations=%u old_gpu_us=%.3f new_gpu_us=%.3f old_wall_us=%.3f new_wall_us=%.3f\n",ITERATIONS,old_profile.gpu_ms*1000.0/(double)ITERATIONS,new_profile.gpu_ms*1000.0/(double)ITERATIONS,old_wall*1000.0,new_wall*1000.0);}
+    fg_vk_tensor_destroy(goi);fg_vk_tensor_destroy(gom);fg_vk_tensor_destroy(gl);fg_vk_tensor_destroy(gi);fg_vk_tensor_destroy(gm);fg_vk_tensor_destroy(gp);fg_vk_tensor_destroy(gw);fg_vk_tensor_destroy(gu);fg_vk_tensor_destroy(gn);free(weights);free(up);free(normalized);return ok;
 }
 
 static int test_gr_batch(void){
@@ -270,6 +279,7 @@ ok=run_test("swiglu",test_swiglu)&&ok;
 ok=run_test("dense_f32_and_silu",test_dense_f32_and_silu)&&ok;
 ok=run_test("group_norm",test_group_norm)&&ok;
 ok=run_test("gr_mix",test_gr_mix)&&ok;
+ok=run_test("hc_inject_partial",test_hc_inject_partial)&&ok;
 ok=run_test("gr_batch",test_gr_batch)&&ok;
 ok=run_test("q5_1_down",test_q5_1_down)&&ok;
 ok=run_test("q8_0_down",test_q8_0_down)&&ok;
