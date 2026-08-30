@@ -108,9 +108,19 @@ static fg_status load_missing_blocks(fg_ngram_store *s,const uint64_t *addresses
     return status;
 }
 
+static fg_status get_or_reload_block(fg_ngram_store *s,uint64_t block,const void **data,fg_error *err){
+    if(fg_ngram_cache_get(s->cache,block,data))return FG_OK;
+    double io_start=ngram_ts();
+    fg_status status=fg_uring_pread(s->ring,s->slot,s->io_buffer,FG_NGRAM_BLOCK_BYTES,block,err);
+    s->last_io_ms+=ngram_ts()-io_start;
+    if(status==FG_OK){s->last_read_count++;s->last_read_bytes+=FG_NGRAM_BLOCK_BYTES;status=fg_ngram_cache_put(s->cache,block,s->io_buffer,err);}
+    if(status==FG_OK&&!fg_ngram_cache_get(s->cache,block,data)){fg_error_set(err,FG_ERR_MISMATCH,"n-gram cache rejected a reloaded block");status=FG_ERR_MISMATCH;}
+    return status;
+}
+
 static fg_status pack_rows(fg_ngram_store *s,const uint64_t *addresses,uint32_t row_count,fg_error *err){
     uint8_t *packed=fg_vk_tensor_map(s->packed);if(!packed){fg_error_set(err,FG_ERR_OOM,"map n-gram packed prefill tensor");return FG_ERR_OOM;}
-    for(uint32_t i=0;i<row_count;i++){uint64_t block=addresses[i]&~(uint64_t)(FG_NGRAM_BLOCK_BYTES-1u);uint32_t within=(uint32_t)(addresses[i]-block),first=FG_NGRAM_ROW_BYTES;if(first>FG_NGRAM_BLOCK_BYTES-within)first=FG_NGRAM_BLOCK_BYTES-within;const void *data=NULL;if(!fg_ngram_cache_get(s->cache,block,&data)){fg_error_set(err,FG_ERR_MISMATCH,"n-gram cache missed a planned block");return FG_ERR_MISMATCH;}memcpy(packed+(uint64_t)i*FG_NGRAM_ROW_BYTES,(const uint8_t *)data+within,first);if(first<FG_NGRAM_ROW_BYTES){if(!fg_ngram_cache_get(s->cache,block+FG_NGRAM_BLOCK_BYTES,&data)){fg_error_set(err,FG_ERR_MISMATCH,"n-gram cache missed a row continuation");return FG_ERR_MISMATCH;}memcpy(packed+(uint64_t)i*FG_NGRAM_ROW_BYTES+first,data,FG_NGRAM_ROW_BYTES-first);}}
+    for(uint32_t i=0;i<row_count;i++){uint64_t block=addresses[i]&~(uint64_t)(FG_NGRAM_BLOCK_BYTES-1u);uint32_t within=(uint32_t)(addresses[i]-block),first=FG_NGRAM_ROW_BYTES;if(first>FG_NGRAM_BLOCK_BYTES-within)first=FG_NGRAM_BLOCK_BYTES-within;const void *data=NULL;fg_status status=get_or_reload_block(s,block,&data,err);if(status!=FG_OK)return status;memcpy(packed+(uint64_t)i*FG_NGRAM_ROW_BYTES,(const uint8_t *)data+within,first);if(first<FG_NGRAM_ROW_BYTES){status=get_or_reload_block(s,block+FG_NGRAM_BLOCK_BYTES,&data,err);if(status!=FG_OK)return status;memcpy(packed+(uint64_t)i*FG_NGRAM_ROW_BYTES+first,data,FG_NGRAM_ROW_BYTES-first);}}
     return FG_OK;
 }
 

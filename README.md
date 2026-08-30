@@ -6,7 +6,9 @@ Its distributed execution model is expert parallelism only. The coordinator exec
 
 The current eight-blade LKG qualifies at 99.647 ms/token, or 10.035 tok/s, over the final 20 unprofiled greedy frames with exact response parity and a complete 48-layer route trace. See [PERFORMANCE_TRACE_10_035TPS.md](PERFORMANCE_TRACE_10_035TPS.md) for the qualification record.
 
-The implementation owns its complete runtime boundary: artifact format, rotating expert topology, memory ledger, GGUF parser and repacker, raw io_uring storage, fail-closed wire protocol, quantization primitives, Vulkan allocation/dispatch, and Qwen3.8-specific shaders. There is no linked or vendored inference runtime. Code adapted from another project is copied into Flash Gordon, renamed and maintained here, and admitted to a production path only after model-specific reference and Vulkan parity tests pass. Qwen's published architecture and processor behavior are the semantic authority; behavior inherited from another model runtime is not. Rank and text evaluation refuse a pack until text weights, the n-gram tensor, and tokenizer are sealed into the manifest. Vision and MTP are separately flagged overlays and are not prerequisites for the sealed text profile. HTTP serving is not enabled until its full request path is owned and qualified; the command fails closed rather than simulating inference.
+The implementation owns its complete runtime boundary: artifact format, rotating expert topology, memory ledger, GGUF parser and repacker, raw io_uring storage, fail-closed wire protocol, quantization primitives, Vulkan allocation/dispatch, and Qwen3.8-specific shaders. There is no linked or vendored inference runtime. Code adapted from another project is copied into Flash Gordon, renamed and maintained here, and admitted to a production path only after model-specific reference and Vulkan parity tests pass. Qwen's published architecture and processor behavior are the semantic authority; behavior inherited from another model runtime is not. Rank and text evaluation refuse a pack until text weights, the n-gram tensor, and tokenizer are sealed into the manifest. Vision and MTP are separately flagged overlays and are not prerequisites for the sealed text profile. The runtime also exposes a resident interactive chat frontend and a deliberately
+single-threaded OpenAI-compatible HTTP frontend. Both use the exact Qwen ChatML
+template and the same greedy distributed generation path as evaluation.
 
 ## Build and test
 
@@ -17,6 +19,44 @@ make test-vulkan
 ```
 
 The build requires Linux headers with io_uring support, Vulkan headers and loader, and `glslangValidator`. It does not require liburing. The Vulkan suite executes production-dimension Qwen grouped-RMS, gated-residual, dense Q8_0, and routed-expert Q5_1 parity oracles. The core suite also validates the machine-readable 48-layer expert-parallel fleet-trace contract and proves corrupted expert coverage fails closed.
+
+## Interactive chat
+
+```sh
+./flash-gordon chat --manifest /srv/flash-gordon/manifest.fgm --max-tokens 512
+```
+
+The model runtime stays resident. Each turn resets its single inference session
+and prefills the full in-memory transcript, which favors correctness over prompt
+cache reuse. The current boot-safe serving profile uses an 8,192-token working
+context so QSA records stay on the qualified resident hot path; this is a
+temporary qualified profile, not the model's context target. Tokens stream directly to
+the terminal. `/clear` clears the
+transcript and runtime session; `/quit` exits. `SIGINT` or `SIGTERM` requests a
+stop at the next boundary between completed distributed tokens. Each turn ends
+with compact prefill, generation, and context-usage metrics.
+
+## OpenAI-compatible API
+
+```sh
+./flash-gordon api --manifest /srv/flash-gordon/manifest.fgm \
+  --host 127.0.0.1 --port 8000
+```
+
+The server implements `GET /v1/models` and `POST /v1/chat/completions`.
+Completions accept string-content system/developer, user, assistant, tool, and
+function messages; `max_tokens` or `max_completion_tokens`; and `stream`.
+Non-streaming responses are JSON and streaming responses use SSE. The runtime
+stays loaded, while its one session is reset before every request. The server
+handles one connection at a time and closes it after one request.
+
+Flash Gordon currently performs greedy decoding only. Requests that select
+non-greedy sampling, custom stop sequences, or log probabilities receive a
+clear `400` response. The API accepts OpenAI function `tools`, `tool_choice`,
+historical assistant `tool_calls`, and tool results linked by `tool_call_id`.
+Generated native Qwen tool tags are translated into OpenAI `tool_calls` for
+both JSON and SSE responses, with `finish_reason` set to `tool_calls`; native
+tool syntax is not exposed as assistant content.
 
 ## Inspect a prospective pack
 

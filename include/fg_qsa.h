@@ -10,6 +10,7 @@ fg_status fg_qsa_session_open(fg_qsa_session **out,fg_model *model,const char *s
 fg_status fg_qsa_session_open_decode(fg_qsa_session **out,fg_model *model,const char *state_path,
                                      uint32_t resident_tokens,uint32_t batch_size,fg_error *err);
 void fg_qsa_session_close(fg_qsa_session *session);
+fg_status fg_qsa_session_reset(fg_qsa_session *session,fg_error *err);
 fg_status fg_qsa_session_checkpoint(fg_qsa_session *session,fg_error *err);
 uint32_t fg_qsa_session_tokens(const fg_qsa_session *session,uint32_t layer);
 void fg_qsa_session_set_tokens(fg_qsa_session *session,uint32_t tokens);

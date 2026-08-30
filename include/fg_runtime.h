@@ -3,6 +3,29 @@
 
 #include "fg_manifest.h"
 
+typedef struct fg_runtime fg_runtime;
+typedef struct fg_generation_stats {
+    uint32_t prompt_tokens;
+    uint32_t generated_tokens;
+    uint32_t context_tokens;
+    double prefill_seconds;
+    double decode_seconds;
+} fg_generation_stats;
+typedef fg_status (*fg_token_callback)(void *context,uint32_t token,const char *text,
+                                      size_t bytes,fg_error *err);
+typedef bool (*fg_interrupt_fn)(void *context);
+
+fg_status fg_runtime_open(fg_runtime **out,const char *manifest_path,fg_error *err);
+void fg_runtime_close(fg_runtime *runtime);
+fg_status fg_runtime_reset(fg_runtime *runtime,fg_error *err);
+fg_status fg_runtime_generate(fg_runtime *runtime,const char *rendered_suffix,uint32_t max_tokens,
+                              fg_token_callback callback,void *callback_context,
+                              fg_interrupt_fn interrupted,void *interrupt_context,
+                              fg_generation_stats *stats,fg_error *err);
+uint32_t fg_runtime_context_tokens(const fg_runtime *runtime);
+uint32_t fg_runtime_context_limit(const fg_runtime *runtime);
+const char *fg_runtime_model_name(const fg_runtime *runtime);
+
 fg_status fg_rank_main(const char *manifest_path, uint32_t rank, fg_error *err);
 fg_status fg_serve_main(const char *manifest_path, fg_error *err);
 fg_status fg_bench_main(const char *manifest_path, fg_error *err);
