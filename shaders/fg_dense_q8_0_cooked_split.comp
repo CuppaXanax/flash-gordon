@@ -1,0 +1,42 @@
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+
+layout(local_size_x=64,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Weights{uint wb[];};
+layout(set=0,binding=1)readonly buffer Input{vec4 x4[];};
+layout(set=0,binding=2)writeonly buffer Partials{float partials[];};
+layout(push_constant)uniform Push{uint out_dim;uint n_tok;uint blocks;uint tile_bytes;uint splits;float scale;}pc;
+shared vec4 subgroup_sum[64];
+
+void main(){
+    uint local_id=gl_LocalInvocationID.x,subgroup_lane=gl_SubgroupInvocationID;
+    uint cohort=local_id>>3u,cohort_lane=local_id&7u,first_row=gl_WorkGroupID.x*4u;
+    uint split=gl_WorkGroupID.y%pc.splits,token=gl_WorkGroupID.y/pc.splits;
+    if(first_row>=pc.out_dim||token>=pc.n_tok)return;
+    uint tile_base=(first_row>>4u)*pc.tile_bytes,tile_row=first_row&15u;
+    uint quant_offset=(16u*pc.blocks*2u+63u)&~63u;
+    uvec4 quant_base=tile_base+quant_offset+uvec4(tile_row,tile_row+1u,tile_row+2u,tile_row+3u)*pc.blocks*32u;
+    uint input_base=token*pc.blocks*8u,cohorts=(pc.blocks+7u)/8u;
+    vec4 accumulator=vec4(0.0);
+    for(uint group=split;group<cohorts;group+=pc.splits){
+        uint block=group*8u+cohort;bool live=block<pc.blocks;vec4 delta=vec4(0.0);
+        if((subgroup_lane&7u)==0u&&live){uint scale_word=(tile_base>>2u)+block*8u+(tile_row>>1u);delta=vec4(unpackHalf2x16(wb[scale_word]),unpackHalf2x16(wb[scale_word+1u]));}
+        uint source_lane=(subgroup_lane>>3u)<<3u;delta=vec4(subgroupShuffle(delta.x,source_lane),subgroupShuffle(delta.y,source_lane),subgroupShuffle(delta.z,source_lane),subgroupShuffle(delta.w,source_lane));
+        uint word_offset=block*32u+cohort_lane*4u;
+        uint packed0=live&&first_row<pc.out_dim?wb[(quant_base.x+word_offset)>>2u]:0u;
+        uint packed1=live&&first_row+1u<pc.out_dim?wb[(quant_base.y+word_offset)>>2u]:0u;
+        uint packed2=live&&first_row+2u<pc.out_dim?wb[(quant_base.z+word_offset)>>2u]:0u;
+        uint packed3=live&&first_row+3u<pc.out_dim?wb[(quant_base.w+word_offset)>>2u]:0u;
+        vec4 input_value=live?x4[input_base+block*8u+cohort_lane]:vec4(0.0);
+        vec4 products=vec4(dot(vec4(unpack8(int32_t(packed0))),input_value),dot(vec4(unpack8(int32_t(packed1))),input_value),dot(vec4(unpack8(int32_t(packed2))),input_value),dot(vec4(unpack8(int32_t(packed3))),input_value));
+        accumulator=fma(delta,products,accumulator);
+    }
+    vec4 reduced=vec4(subgroupAdd(accumulator.x),subgroupAdd(accumulator.y),subgroupAdd(accumulator.z),subgroupAdd(accumulator.w));
+    if(subgroupElect())subgroup_sum[gl_SubgroupID]=reduced;
+    barrier();
+    if(local_id==0u){vec4 total=vec4(0.0);for(uint subgroup=0u;subgroup<gl_NumSubgroups;subgroup++)total+=subgroup_sum[subgroup];if(first_row<pc.out_dim)partials[(token*pc.out_dim+first_row)*pc.splits+split]=total.x*pc.scale;if(first_row+1u<pc.out_dim)partials[(token*pc.out_dim+first_row+1u)*pc.splits+split]=total.y*pc.scale;if(first_row+2u<pc.out_dim)partials[(token*pc.out_dim+first_row+2u)*pc.splits+split]=total.z*pc.scale;if(first_row+3u<pc.out_dim)partials[(token*pc.out_dim+first_row+3u)*pc.splits+split]=total.w*pc.scale;}
+}

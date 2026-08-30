@@ -9,7 +9,9 @@ typedef struct fg_vk_expert_graph fg_vk_expert_graph;
 
 typedef enum fg_vk_tensor_format {
     FG_VK_TENSOR_FORMAT_DEFAULT = 0,
-    FG_VK_TENSOR_FORMAT_Q8_0_COOKED = 1
+    FG_VK_TENSOR_FORMAT_Q8_0_COOKED = 1,
+    FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED = 2,
+    FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED = 3
 } fg_vk_tensor_format;
 
 #define FG_VK_PROFILE_MAX_KERNELS 64u
@@ -93,6 +95,11 @@ fg_status fg_vk_dense_q8_0_cooked(fg_vk_context *context,fg_vk_tensor *output,
                                   const fg_vk_tensor *weights,const fg_vk_tensor *input,
                                   uint32_t input_width,uint32_t output_width,
                                   uint32_t tokens,float scale,fg_error *err);
+fg_status fg_vk_dense_q8_0_cooked_split(fg_vk_context *context,fg_vk_tensor *output,
+                                        fg_vk_tensor *partials,const fg_vk_tensor *weights,
+                                        const fg_vk_tensor *input,uint32_t input_width,
+                                        uint32_t output_width,uint32_t tokens,uint32_t splits,
+                                        float scale,fg_error *err);
 fg_status fg_vk_embedding_q8_0(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *weights,
                                uint32_t token,uint32_t width,uint32_t rows,uint32_t copies,fg_error *err);
 fg_status fg_vk_embedding_q8_0_batch(fg_vk_context *context,fg_vk_tensor *output,
@@ -216,6 +223,17 @@ fg_status fg_vk_moe_q5_1_down(fg_vk_context *context,fg_vk_tensor *output,const 
                               const fg_vk_tensor *tiles,const fg_vk_tensor *input,uint32_t output_width,
                               uint32_t input_width,uint32_t expert_stride,uint32_t used_experts,
                               bool packed_weights,uint32_t tile_count,fg_error *err);
+fg_status fg_vk_moe_q5_1_down_cooked(fg_vk_context *context,fg_vk_tensor *output,
+                                     const fg_vk_tensor *weights,const fg_vk_tensor *tiles,
+                                     const fg_vk_tensor *input,uint32_t output_width,
+                                     uint32_t input_width,uint32_t expert_stride,
+                                     bool packed_weights,uint32_t tile_count,fg_error *err);
+            fg_status fg_vk_moe_q5_1_down_cooked_pairs(fg_vk_context *context,fg_vk_tensor *output,
+                                         const fg_vk_tensor *weights,const fg_vk_tensor *tiles,
+                                         const fg_vk_tensor *input,uint32_t output_width,
+                                         uint32_t input_width,uint32_t expert_stride,
+                                         uint32_t routed_pairs,bool packed_weights,
+                                         uint32_t tile_count,fg_error *err);
 fg_status fg_vk_moe_q8_0_down(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *weights,
                               const fg_vk_tensor *tiles,const fg_vk_tensor *input,uint32_t output_width,
                               uint32_t input_width,uint32_t expert_stride,uint32_t used_experts,
@@ -227,6 +245,20 @@ fg_status fg_vk_moe_kquant(fg_vk_context *context,fg_vk_tensor *output,const fg_
                            const fg_vk_tensor *activation_q8k,const fg_vk_tensor *tiles,uint32_t ggml_type,
                            uint32_t output_width,uint32_t input_width,uint32_t expert_stride,uint32_t used_experts,
                            uint32_t routed_pairs,bool packed_weights,uint32_t tile_count,fg_error *err);
+fg_status fg_vk_moe_kquant_cooked(fg_vk_context *context,fg_vk_tensor *output,
+                                  const fg_vk_tensor *weights,const fg_vk_tensor *activation_q8k,
+                                  const fg_vk_tensor *tiles,uint32_t ggml_type,
+                                  uint32_t output_width,uint32_t input_width,
+                                    uint32_t expert_stride,bool packed_weights,
+                                  uint32_t tile_count,fg_error *err);
+            fg_status fg_vk_moe_kquant_cooked_pairs(fg_vk_context *context,fg_vk_tensor *output,
+                                        const fg_vk_tensor *weights,
+                                        const fg_vk_tensor *activation_q8k,
+                                        const fg_vk_tensor *tiles,uint32_t ggml_type,
+                                        uint32_t output_width,uint32_t input_width,
+                                        uint32_t expert_stride,uint32_t used_experts,
+                                        uint32_t routed_pairs,bool packed_weights,
+                                        uint32_t tile_count,fg_error *err);
 
 /* GPU timestamp-profiled kernel benchmark. Reports per-shape:
     A. raw GPU kernel GB/s (no inter-dispatch barriers)
