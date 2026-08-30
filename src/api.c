@@ -218,16 +218,19 @@ static const char *http_reason(unsigned status) {
     }
 }
 
-static fg_status send_response(int fd, unsigned status, const char *content_type,
-                               const char *body, size_t body_length, fg_error *err) {
-    char header[512];
+static fg_status send_response_with_headers(int fd, unsigned status, const char *content_type,
+                                            const char *extra_headers, const char *body,
+                                            size_t body_length, fg_error *err) {
+    char header[1024];
     int length = snprintf(header, sizeof(header),
                           "HTTP/1.1 %u %s\r\n"
                           "Content-Type: %s\r\n"
                           "Content-Length: %zu\r\n"
                           "Connection: close\r\n"
-                          "Cache-Control: no-store\r\n\r\n",
-                          status, http_reason(status), content_type, body_length);
+                          "Cache-Control: no-store\r\n"
+                          "%s\r\n",
+                          status, http_reason(status), content_type, body_length,
+                          extra_headers ? extra_headers : "");
     if (length < 0 || (size_t)length >= sizeof(header)) {
         fg_error_set(err, FG_ERR_LIMIT, "HTTP response header overflow");
         return FG_ERR_LIMIT;
@@ -235,6 +238,11 @@ static fg_status send_response(int fd, unsigned status, const char *content_type
     fg_status result = send_all(fd, header, (size_t)length, err);
     if (result == FG_OK) result = send_all(fd, body, body_length, err);
     return result;
+}
+
+static fg_status send_response(int fd, unsigned status, const char *content_type,
+                               const char *body, size_t body_length, fg_error *err) {
+    return send_response_with_headers(fd, status, content_type, NULL, body, body_length, err);
 }
 
 static fg_status send_error_response(int fd, unsigned status, const char *message,
@@ -1811,9 +1819,31 @@ static fg_status send_completion(const api_generation *generation,
                  stats->prompt_tokens + stats->generated_tokens);
         status = buffer_append(&body, usage, err);
     }
-    if (status == FG_OK)
-        status = send_response(generation->fd, 200u, "application/json", body.data,
-                               body.length, err);
+    if (status == FG_OK) {
+        double prefill_tps =
+            stats->prefill_seconds > 0.0 ? stats->prompt_tokens / stats->prefill_seconds : 0.0;
+        double decode_tps =
+            stats->decode_seconds > 0.0 ? stats->generated_tokens / stats->decode_seconds : 0.0;
+        char metrics[512];
+        int metrics_length = snprintf(
+            metrics, sizeof(metrics),
+            "X-Flash-Gordon-Prompt-Tokens: %u\r\n"
+            "X-Flash-Gordon-Completion-Tokens: %u\r\n"
+            "X-Flash-Gordon-Context-Tokens: %u\r\n"
+            "X-Flash-Gordon-Prefill-Seconds: %.9f\r\n"
+            "X-Flash-Gordon-Prefill-TPS: %.6f\r\n"
+            "X-Flash-Gordon-Decode-Seconds: %.9f\r\n"
+            "X-Flash-Gordon-Decode-TPS: %.6f\r\n",
+            stats->prompt_tokens, stats->generated_tokens, stats->context_tokens,
+            stats->prefill_seconds, prefill_tps, stats->decode_seconds, decode_tps);
+        if (metrics_length < 0 || (size_t)metrics_length >= sizeof(metrics)) {
+            fg_error_set(err, FG_ERR_LIMIT, "API metrics headers exceed buffer");
+            status = FG_ERR_LIMIT;
+        } else {
+            status = send_response_with_headers(generation->fd, 200u, "application/json",
+                                                metrics, body.data, body.length, err);
+        }
+    }
     free(body.data);
     return status;
 }
