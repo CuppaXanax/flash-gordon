@@ -48,6 +48,10 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
                                      const fg_manifest *manifest,
                                      const fg_runtime_options *requested,
                                      fg_error *err);
+fg_status fg_runtime_eval_capacity(uint32_t *qsa_capacity,
+                                   const fg_runtime_options *options,
+                                   size_t prompt_tokens,uint32_t generation_tokens,
+                                   fg_error *err);
 fg_status fg_runtime_open(fg_runtime **out,const char *manifest_path,fg_error *err);
 fg_status fg_runtime_open_with_options(fg_runtime **out,const char *manifest_path,
                                        const fg_runtime_options *options,fg_error *err);

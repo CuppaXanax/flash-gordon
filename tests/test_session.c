@@ -162,6 +162,18 @@ static void test_runtime_option_contract(void){
         CHECK(fg_runtime_options_resolve(&resolved,current,NULL,&error)==FG_OK);
         CHECK(resolved.logical_context_tokens==8192u&&resolved.gpu_index_tokens==8192u&&
               resolved.qsa_hot_tokens==8192u&&resolved.qsa_page_cache_bytes==0u);
+        uint32_t qsa_capacity=0u;
+        CHECK(fg_runtime_eval_capacity(&qsa_capacity,&resolved,4096u,4096u,
+                                       &error)==FG_OK);
+        CHECK(qsa_capacity==8192u);
+        CHECK(fg_runtime_eval_capacity(&qsa_capacity,&resolved,8192u,0u,
+                                       &error)==FG_OK);
+        CHECK(qsa_capacity==8192u);
+        CHECK(fg_runtime_eval_capacity(&qsa_capacity,&resolved,8192u,1u,
+                                       &error)==FG_ERR_LIMIT);
+        CHECK(qsa_capacity==0u);
+        CHECK(fg_runtime_eval_capacity(&qsa_capacity,&resolved,8193u,0u,
+                                       &error)==FG_ERR_LIMIT);
         fg_runtime_options_init(&requested);
         requested.logical_context_tokens=8192u;requested.gpu_index_tokens=8192u;
         requested.qsa_hot_tokens=8192u;requested.qsa_page_cache_bytes=0u;
@@ -195,6 +207,12 @@ static void test_runtime_option_contract(void){
         CHECK(fg_runtime_options_resolve(&resolved,decoded,NULL,&error)==FG_OK);
         CHECK(resolved.logical_context_tokens==8192u&&resolved.gpu_index_tokens==8192u&&
               resolved.qsa_hot_tokens==8192u&&resolved.qsa_page_cache_bytes==0u);
+        uint32_t qsa_capacity=0u;
+        CHECK(fg_runtime_eval_capacity(&qsa_capacity,&resolved,8192u,0u,
+                                       &error)==FG_OK);
+        CHECK(qsa_capacity==8192u);
+        CHECK(fg_runtime_eval_capacity(&qsa_capacity,&resolved,8192u,1u,
+                                       &error)==FG_ERR_LIMIT);
         fg_runtime_options_init(&requested);
         requested.logical_context_tokens=4096u;requested.gpu_index_tokens=4096u;
         requested.qsa_hot_tokens=4096u;

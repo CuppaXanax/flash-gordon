@@ -45,7 +45,9 @@ implementation deliberately accepts only the 8,192-token resident profile with
 no page cache or experimental component; unsupported profiles fail before
 model/fleet startup instead of silently ignoring the request. Manifest v5 seals
 logical/index/hot/page defaults as 8,192/8,192/8,192/0; omitted runtime options
-derive from those values and explicit options must agree. Later tiered-QSA,
+derive from those values and explicit options must agree. One-shot `eval` uses
+the same resolved profile, rejects prompt plus generation beyond the logical
+limit, and bounds its QSA allocation to that limit. Later tiered-QSA,
 MTP, and vision milestones will enable these same explicit options.
 
 ## OpenAI-compatible API
