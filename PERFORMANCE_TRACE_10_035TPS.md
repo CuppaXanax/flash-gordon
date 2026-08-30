@@ -1,5 +1,18 @@
 # Flash Gordon 10.035 TPS Trace
 
+## Management Readout
+
+| Question | Exact evidence | Decision |
+|---|---|---|
+| Did the run qualify? | Final-20 mean `99.64675 ms`, or `10.03545 TPS`; exact response and token parity; all 48 layers and routes validated | Preserve commit `340e7eb` and tag `lkg-10.035tps-cooked-experts` as the LKG |
+| Is there operating margin? | Mean headroom is only `0.353 ms`; 17/20 frames are at or below 100 ms, P95 is `100.400 ms`, and max is `100.623 ms` | Treat 10 TPS as qualified, but not yet comfortably provisioned |
+| Where is steady wall time? | Layers are `95.329 ms` (`95.67%`); output is `3.872 ms` (`3.89%`) | Work on repeated layer cost first; output is the only material non-layer slice |
+| Is one layer pathological? | Profiled layer mean is `2.078 ms`, standard deviation `0.088 ms`; reducing the three largest layers to the mean saves only `0.815 ms` | Do not start an isolated-layer cleanup campaign |
+| Is placement the next lever? | Collect/remote-count correlation is `0.161`; all seven worker ranks appear on the slow-worker path | Do not derive a map from this prompt; retain round-robin ownership |
+| What is the next general avenue? | Worker gate, up, and down kernels are balanced; coordinator cooked dense kernels own `18.863 ms` of token-30 GPU time | First test a general expert-kernel improvement, then the common cooked-dense path |
+
+The France prompt is a validation oracle only, never placement training data. Twenty TPS is not one narrow optimization away: its 50 ms frame budget requires `49.647 ms`, or `49.82%`, off this LKG.
+
 ## Qualification
 
 This is the complete qualified trace for `lkg-10.035tps-cooked-experts` on eight 24-CU BC250 blades. It is raw greedy single-stream decode with one token per frame, expert parallelism only, resident distributed n-gram, hierarchical argmax, round-robin expert ownership, and no expert-placement map.
@@ -17,15 +30,15 @@ This is the complete qualified trace for `lkg-10.035tps-cooked-experts` on eight
 
 Final 20 unprofiled frames, tokens 42-61:
 
-| Stage | Mean ms | Median ms | Min ms | Max ms | Frame share |
-|---|---:|---:|---:|---:|---:|
-| Embedding | 0.093 | 0.092 | 0.088 | 0.112 | 0.09% |
-| N-gram | 0.353 | 0.349 | 0.338 | 0.416 | 0.35% |
-| 48 layers | 95.329 | 95.261 | 94.658 | 96.310 | 95.67% |
-| Output | 3.872 | 3.869 | 3.845 | 3.943 | 3.89% |
-| **Total** | **99.647** | **99.603** | **99.040** | **100.623** | **100.00%** |
+| Stage | Mean | Median | P95 | Min | Max | Std. dev. | Share |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Embedding | 0.093 | 0.092 | 0.095 | 0.088 | 0.112 | 0.005 | 0.09% |
+| N-gram | 0.353 | 0.349 | 0.369 | 0.338 | 0.416 | 0.017 | 0.35% |
+| 48 layers | 95.329 | 95.261 | 96.086 | 94.658 | 96.310 | 0.409 | 95.67% |
+| Output | 3.872 | 3.869 | 3.882 | 3.845 | 3.943 | 0.019 | 3.89% |
+| **Total** | **99.647** | **99.603** | **100.400** | **99.040** | **100.623** | **0.403** | **100.00%** |
 
-The qualification TPS is the reciprocal of the unrounded final-20 mean, not the cumulative `decode complete` display and not the instrumented token-30 result.
+The standard deviation is the population standard deviation of these 20 frames. Layer variation explains essentially all frame variation; the other stages are stable at this scale. The qualification TPS is the reciprocal of the unrounded final-20 mean, not the cumulative `decode complete` display and not the instrumented token-30 result.
 
 ## Qualified Changes
 
@@ -41,28 +54,175 @@ Batched request fan-out is not enabled: its unprofiled final-20 result regressed
 
 Token 30 enables Vulkan timestamps, detailed routes, and worker records. It is validation evidence, not a steady-frame estimate.
 
-| Layer phase | 7.924 TPS LKG ms | Current ms | Delta ms | Current mean/layer |
-|---|---:|---:|---:|---:|
-| `sync1` | 45.298 | 43.602 | -1.696 | 0.908 |
-| Fire | 10.604 | 15.314 | +4.710 | 0.319 |
-| Shared expert | 9.190 | 9.366 | +0.176 | 0.195 |
-| Collect | 59.726 | 28.345 | -31.381 | 0.590 |
-| Finish | 3.108 | 3.139 | +0.031 | 0.065 |
-| **Layer total** | **127.932** | **99.760** | **-28.172** | **2.078** |
+### Measurement Domains
 
-Detailed send and route clocks inflate the profiled fire phase. The behavior gate uses the unprofiled 95.329 ms layer mean.
+The trace contains deliberately different measurement domains. They must not be added together as if they came from one uninstrumented frame.
 
-| Family | Layers | Total mean ms | `sync1` mean ms | Collect mean ms |
+| Domain | Population | Result | Proper use |
+|---|---|---:|---|
+| Qualification wall | Unprofiled tokens 42-61 | `99.64675 ms` total, `95.32905 ms` layers | Throughput and latency authority |
+| Profiled outer frame | Token 30 | `105.993 ms` total, `101.535 ms` layers | Scope and trace container only |
+| Profiled per-layer timers | Token 30, 48 layers | `99.760 ms` summed | Relative phase ownership |
+| Coordinator Vulkan profile | Token 30, rank 0 | `43.926 ms` GPU, `42.457 ms` kernels | Coordinator shader ownership |
+| Production expert wall | Unprofiled tokens 26-27, 322 worker requests | Fixed-graph timings below | Worker elapsed-time authority |
+| Profiled expert kernels | Token 30, 156 worker requests | `35.676 ms` aggregate remote GPU | Per-kernel ownership and selected-count scaling |
+
+The profiled outer layer loop is `6.206 ms` above the unprofiled layer mean. Of that, `1.775 ms` is outside the individual layer timers, including per-layer trace output. More importantly, profiling intentionally bypasses the production pre-recorded expert command graph so that individual kernels can receive timestamps. Token-30 worker wall and local-expert wall therefore describe the instrumented five-dispatch path; tokens 26-27 describe the production fixed graph.
+
+Cross-host request and response path estimates below use four timestamps and assume symmetric one-way delay. They are useful for scale and ordering, not additive accounting.
+
+### Layer Phases
+
+| Layer phase | 7.924 TPS LKG ms | Current ms | Delta ms | Current mean/layer | Profiled share |
+|---|---:|---:|---:|---:|---:|
+| `sync1` | 45.298 | 43.602 | -1.696 | 0.908 | 43.71% |
+| Fire | 10.604 | 15.314 | +4.710 | 0.319 | 15.35% |
+| Shared expert | 9.190 | 9.366 | +0.176 | 0.195 | 9.39% |
+| Collect | 59.726 | 28.345 | -31.381 | 0.590 | 28.41% |
+| Finish | 3.108 | 3.139 | +0.031 | 0.065 | 3.15% |
+| **Layer total** | **127.932** | **99.760** | **-28.172** | **2.078** | **100.00%** |
+
+The independently rounded phase columns sum to `99.766 ms`; the independently rounded per-layer Total column sums to `99.760 ms`. The `0.006 ms` difference is decimal formatting, not unassigned execution.
+
+Detailed send and route clocks inflate the profiled Fire phase. The behavior gate uses the unprofiled 95.329 ms layer mean.
+
+- `sync1`: deferred prior-layer residual write, optional layer-1 PLE, GR attention read, GDN or QSA, attention write, GR FFN read, router, activation quantization, and the router-visible Vulkan synchronization.
+- Fire: CPU top-k handling, round-robin partitioning, request encoding and sends, plus token-30 route logging.
+- Shared expert: the coordinator shared-expert GPU batch while remote requests are in flight.
+- Collect: coordinator-local routed experts first, then remote arrivals in readiness order.
+- Finish: routed-expert reduction and deferred residual write, except for the final layer's immediate write.
+
+### Layer Shape
+
+| Layer family | Layers | Profiled total | Mean/layer | Share |
 |---|---:|---:|---:|---:|
-| GDN | 35 | 2.072 | 0.898 | 0.592 |
-| QSA | 12 | 2.064 | 0.914 | 0.582 |
-| GDN + PLE | 1 | 2.469 | 1.215 | 0.642 |
+| GDN | 35 | 72.520 ms | 2.072 ms | 72.69% |
+| QSA | 12 | 24.768 ms | 2.064 ms | 24.83% |
+| GDN + PLE | 1 | 2.469 ms | 2.469 ms | 2.47% |
+
+GDN and QSA layer means are effectively equal. GDN owns more frame time because there are 35 GDN-only layers, not because an individual GDN layer is slower.
+
+| Rank | Layer | Type | Total | Primary excess |
+|---:|---:|---|---:|---|
+| 1 | 1 | GDN + PLE | 2.469 ms | `sync1=1.215 ms`; the only PLE layer |
+| 2 | 47 | QSA | 2.316 ms | `collect=0.776 ms`, `finish=0.163 ms`; final write is not deferred |
+| 3 | 2 | GDN | 2.265 ms | `collect=0.734 ms`, `fire=0.374 ms` |
+| 4 | 46 | GDN | 2.181 ms | `collect=0.675 ms` |
+| 5 | 0 | GDN | 2.166 ms | `collect=0.671 ms` |
+
+Across the 48 rows, total time correlates most strongly with Collect (`r=0.786`) and `sync1` (`r=0.672`). Fire is weaker (`r=0.375`). Collect has little correlation with the recorded slow-worker elapsed time (`r=0.112`) or remote fan-out (`r=0.161`), because local work, network arrival, and serial coordinator receive work also participate.
+
+| Remote ranks in layer | Layers | Mean total | Mean Fire | Mean Collect |
+|---:|---:|---:|---:|---:|
+| 2 | 6 | 2.075 ms | 0.280 ms | 0.609 ms |
+| 3 | 24 | 2.042 ms | 0.309 ms | 0.570 ms |
+| 4 | 18 | 2.128 ms | 0.345 ms | 0.612 ms |
+
+Reducing the three largest layers to the 48-layer mean saves only `0.815 ms`. This is a route-coverage observation for the validation token, not a placement training signal.
+
+### Coordinator GPU Ownership
+
+Rank 0 records `43.926 ms` of Vulkan GPU time: `42.457 ms` in named kernels and `1.469 ms` of Vulkan timestamped overhead. Its `62.086 ms` wall residual includes CPU work, distributed waits, rank-4 output, and profiling overhead.
+
+| Semantic family | GPU time | Kernel share |
+|---|---:|---:|
+| GDN projection + recurrent + output | 16.564 ms | 39.01% |
+| GR attention and FFN reads | 9.548 ms | 22.49% |
+| QSA projection + state attention + output | 5.439 ms | 12.81% |
+| Coordinator-local routed expert | 4.880 ms | 11.49% |
+| Shared expert | 3.467 ms | 8.17% |
+| Router + activation quantization | 2.191 ms | 5.16% |
+| PLE | 0.207 ms | 0.49% |
+| GR writes | 0.154 ms | 0.36% |
+
+| Shader | Calls | GPU time | Kernel share |
+|---|---:|---:|---:|
+| `fg_dense_q8_0_cooked.spv` | 398 | 18.863 ms | 44.43% |
+| `fg_gdn_recurrent_algebraic.spv` | 36 | 5.848 ms | 13.77% |
+| `fg_dense_f32.spv` | 168 | 3.312 ms | 7.80% |
+| `fg_moe_kquant_cooked.spv` | 44 | 3.239 ms | 7.63% |
+| `fg_gr_mix_partial.spv` | 96 | 2.532 ms | 5.96% |
+| `fg_dense_q8_0_cooked_split.spv` | 96 | 1.947 ms | 4.59% |
+| `fg_group_rms_norm.spv` | 99 | 1.431 ms | 3.37% |
+| `fg_moe_q5_1_down_cooked.spv` | 21 | 1.297 ms | 3.06% |
+
+The cooked dense shader is the largest single coordinator target and spans GDN, GR, shared-expert, QSA, and PLE scopes. A general improvement there is preferable to another special-case layer rewrite.
+
+### Expert Execution
+
+Token 30 contains 156 remote requests and all 480 routed slots: 419 remote selections and 61 coordinator-local selections. Twenty-two layers have a local route. All seven worker ranks become the recorded slow rank on at least four layers; no blade is a universal straggler.
+
+Production fixed-graph worker timings come from the unprofiled token-26 and token-27 records in the same exact capture. `Expert elapsed` brackets the pre-recorded graph execution on the host. `Worker service` runs from completed request payload receipt through response send completion.
+
+| Selected experts | Requests | Expert elapsed mean | Expert elapsed P95 | Worker service mean |
+|---:|---:|---:|---:|---:|
+| 1 | 74 | 0.292 ms | 0.307 ms | 0.326 ms |
+| 2 | 88 | 0.356 ms | 0.392 ms | 0.390 ms |
+| 3 | 76 | 0.412 ms | 0.470 ms | 0.446 ms |
+| 4 | 55 | 0.457 ms | 0.520 ms | 0.491 ms |
+| 5 | 23 | 0.519 ms | 0.666 ms | 0.554 ms |
+| 6 | 5 | 0.558 ms | 0.567 ms | 0.594 ms |
+| 7 | 1 | 0.622 ms | 0.622 ms | 0.658 ms |
+
+Across all 322 fixed-graph requests, expert elapsed averages `0.387 ms` and worker service averages `0.421 ms`. Taking the slowest worker service in each of 96 token/layer groups gives P50 `0.490 ms`, P90 `0.554 ms`, P95 `0.597 ms`, and max `0.715 ms`.
+
+Token 30 supplies the shader split that the fixed graph cannot expose. Across its 48 slowest profiled workers, GPU time is `14.873 ms`; named kernels account for `14.575 ms`:
+
+| Critical-worker kernel scope | GPU time | Named-kernel share |
+|---|---:|---:|
+| Gate projection | 4.831 ms | 33.15% |
+| Up projection | 4.822 ms | 33.08% |
+| Down projection | 4.671 ms | 32.05% |
+| Reduce | 0.196 ms | 1.34% |
+| Activation | 0.055 ms | 0.38% |
+
+Gate, up, and down are balanced; there is no single expert leg to remove. Relative to the prior paired-Q8 LKG under the same profiling method, cooked experts reduce critical-worker wall total from `54.174` to `26.778 ms`, critical-worker P95 from `1.419` to `0.654 ms`, and all-worker GPU total from `92.143` to `35.676 ms`. That is why Collect fell by `31.381 ms` in the profiled comparison.
+
+### Collect Critical Path
+
+Collect begins by executing the coordinator-local routed expert, if any, and only then polls remote responses. The local-before-poll total is concentrated entirely in the 22 local-route layers: `427.27 us/layer` there versus `0.48 us/layer` in the other 26 layers. This is instrumented-path wall, so it is an ordering fact rather than a production fixed-graph estimate.
+
+| Collect component | Mean/layer | Sum across 48 | Collect share |
+|---|---:|---:|---:|
+| Local routed expert before first poll | 196.09 us | 9.412 ms | 33.21% |
+| Aggregate poll wait | 231.22 us | 11.098 ms | 39.15% |
+| Frame headers | 15.35 us | 0.737 ms | 2.60% |
+| Payload reads | 92.37 us | 4.434 ms | 15.64% |
+| Frame validation | 9.36 us | 0.449 ms | 1.58% |
+| Result decode | 45.56 us | 2.187 ms | 7.71% |
+| Tail after final decode | 0.27 us | 0.013 ms | 0.05% |
+
+Rounding in the per-layer phase records accounts for the approximately `0.015 ms` difference from the `28.345 ms` Collect total.
+
+For the response that makes each layer complete, token-30 medians are `181.44 us` inferred request path, `7.14 us` worker receive, `2.66 us` bookkeeping, `295 us` GPU timestamps inside a `503.26 us` expert-call wall, `9.68 us` reduction/encode, `22.85 us` send call, and `181.44 us` inferred response path. These terms overlap with the coordinator shared-expert window and must not be summed into a synthetic layer time.
+
+Once the final required peer is socket-ready, only `52.03 us/layer` remains on average before Collect ends, about `2.50 ms` across the token. This bounds the direct opportunity in receive ordering and decode cleanup. Fire's 156 send calls total only `2.354 ms` of its instrumented `15.314 ms`; the remaining token-30 Fire wall includes routing, encoding, and synchronous trace logging.
+
+### Next-Avenue Ranking
+
+| Priority | Avenue | Evidence and falsifiable gate |
+|---:|---|---|
+| 1 | General cooked expert kernels | Gate/up/down own `98.28%` of critical-worker named kernel time. Test an all-route optimization such as a combined cooked gate/up pass, not an exact-route graph. Require exact parity, at least `0.10 ms` improvement in fixed-graph slowest-worker P50, and at least `4 ms` final-20 layer-wall improvement before adoption. |
+| 2 | Common cooked-dense path | `fg_dense_q8_0_cooked.spv` owns `18.863 ms` (`44.43%`) of coordinator kernel time; GDN plus GR reads own `61.50%`. Require a reproducible kernel win and at least `1.5 ms` final-20 frame improvement. |
+| 3 | Rank-4 output | Output is a stable `3.872 ms` and currently has only wall attribution in the retained capture. First retain rank-4 output kernel records, then require at least `0.75 ms` wall improvement. |
+| 4 | New receive architecture | Only about `2.50 ms` remains after final socket readiness. Revisit transport only with a mechanism materially different from the rejected preposting, direct-receive, busy-poll, batched-send, and scatter/gather variants. |
+
+The fixed expert graph is already pre-recorded as one five-dispatch command buffer and waits on one fence. Exact-N graph variants and fence spinning have already failed fleet qualification. A future graph experiment must remove a real dependency or fuse general computation; re-recording the same work is not a new avenue.
+
+| Target | Frame budget | Required saving from LKG |
+|---:|---:|---:|
+| 10.0 TPS | 100.000 ms | Already clears by 0.353 ms on mean |
+| 10.5 TPS | 95.238 ms | 4.409 ms |
+| 11.0 TPS | 90.909 ms | 8.738 ms |
+| 12.0 TPS | 83.333 ms | 16.314 ms |
+| 15.0 TPS | 66.667 ms | 32.980 ms |
+| 20.0 TPS | 50.000 ms | 49.647 ms |
 
 ## Route And Blade Coverage
 
 The validator reports 22 local routes and 156 remote routes. Rank 0 executes 61 selected experts locally; workers execute the remaining 419 selections.
 
-| Rank | Requests | Selections | GPU ms | Send ms | Total ms |
+| Rank | Requests | Selections | Expert-call wall ms | Send ms | Total ms |
 |---:|---:|---:|---:|---:|---:|
 | 1 | 22 | 53 | 9.210 | 0.520 | 9.960 |
 | 2 | 22 | 58 | 9.610 | 0.530 | 10.350 |
@@ -72,9 +232,11 @@ The validator reports 22 local routes and 156 remote routes. Rank 0 executes 61 
 | 6 | 23 | 63 | 10.130 | 0.530 | 10.900 |
 | 7 | 20 | 56 | 9.220 | 0.480 | 9.880 |
 
+These rank totals are token-30 worker host intervals. They are not Vulkan GPU timestamps and are not additive across blades.
+
 ## Layer Table
 
-`Delta` is current total minus the qualified 7.924 TPS token-30 layer total. `Slow` identifies the longest observed remote worker request for that layer.
+`Delta` is current total minus the qualified 7.924 TPS token-30 layer total. `Slow` identifies the longest observed instrumented remote worker request for that layer.
 
 | L | Type | Total | Delta | Sync1 | Fire | Shared | Collect | Finish | Remote | Local sel | Slow rank | Slow sel | Slow ms | Sub | Disp |
 |---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -127,4 +289,19 @@ The validator reports 22 local routes and 156 remote routes. Rank 0 executes 61 
 | 46 | GDN | 2.181 | -0.317 | 0.912 | 0.336 | 0.194 | 0.675 | 0.064 | 4 | 0 | 7 | 3 | 0.560 | 2 | 30 |
 | 47 | QSA | 2.316 | -0.320 | 0.916 | 0.269 | 0.191 | 0.776 | 0.163 | 2 | 6 | 2 | 3 | 0.540 | 4 | 42 |
 
-All times are milliseconds. Raw unprofiled, coordinator, worker, layer-analysis, and fleet-fingerprint captures are retained in the fleet diagnostics workspace with the `ee5a0bb` prefix.
+## Evidence Artifacts
+
+The exact captures are retained in the fleet diagnostics workspace:
+
+- `expert-cooked-ee5a0bb-final20.txt`: unprofiled final-20 qualification frames.
+- `ep-trace-ee5a0bb-coordinator.txt`: token-30 layer, route, coordinator GPU, send, and receive records.
+- `ep-trace-ee5a0bb-workers.txt`: unprofiled token-26/27 fixed-graph records and token-30 profiled worker records.
+- `expert-cooked-ee5a0bb-layer-analysis.txt`: validated 48-row layer reduction.
+- `expert-cooked-ee5a0bb-fleet-fingerprints.txt`: all-rank model, binary, and shader identity.
+- `expert-cooked-ee5a0bb-critical-path.txt`: recomputed coordinator/worker transport decomposition.
+- `expert-cooked-ee5a0bb-worker-distribution.txt`: recomputed prior-LKG/current worker comparison.
+- `expert-cooked-ee5a0bb-management-analysis.txt`: recomputed percentiles, correlations, outliers, and kernel ownership.
+
+The exact qualification identities are recorded above. Artifact names use the accepted patch prefix `ee5a0bb`; that prefix is not the runtime binary digest.
+
+All times in the full layer table are milliseconds.
