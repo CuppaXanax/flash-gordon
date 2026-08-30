@@ -80,14 +80,19 @@ static fg_status process_cooked_q8_0(FILE *source,const fg_gguf_tensor *tensor,F
     free(cooked);free(packed);return status;
 }
 
+static fg_tensor_layout expert_layout(const fg_gguf_tensor *tensor){if(tensor->dims!=3u||tensor->shape[0]>UINT32_MAX||tensor->shape[1]>UINT32_MAX)return FG_TENSOR_LAYOUT_GGML;uint32_t input=(uint32_t)tensor->shape[0],output=(uint32_t)tensor->shape[1];if((tensor->type==12u||tensor->type==13u)&&fg_k_quant_cooked_matrix_bytes(input,output,tensor->type))return FG_TENSOR_LAYOUT_K_QUANT_EXPERT_COOKED;if(tensor->type==7u&&fg_q5_1_cooked_matrix_bytes(input,output))return FG_TENSOR_LAYOUT_Q5_1_EXPERT_COOKED;return FG_TENSOR_LAYOUT_GGML;}
+static bool cook_expert_data(const fg_gguf_tensor *tensor,fg_tensor_layout layout,const void *packed,void *cooked,uint64_t bytes){if(layout==FG_TENSOR_LAYOUT_K_QUANT_EXPERT_COOKED)return fg_cook_k_quant_rows(packed,cooked,bytes,(uint32_t)tensor->shape[0],(uint32_t)tensor->shape[1],tensor->type);if(layout==FG_TENSOR_LAYOUT_Q5_1_EXPERT_COOKED)return fg_cook_q5_1_rows(packed,cooked,bytes,(uint32_t)tensor->shape[0],(uint32_t)tensor->shape[1]);return false;}
+
+static fg_status process_cooked_expert(FILE *source,const fg_gguf_tensor *tensor,uint64_t offset,uint64_t bytes,fg_tensor_layout layout,pack_output *output,fg_sha256 *hash,fg_error *err){if(!output->file){uint64_t descriptor[3]={offset,bytes,layout};fg_sha256_update(hash,descriptor,sizeof(descriptor));output->offset+=bytes;return FG_OK;}uint8_t *packed=malloc((size_t)bytes),*cooked=malloc((size_t)bytes);if(!packed||!cooked){free(cooked);free(packed);fg_error_set(err,FG_ERR_OOM,"allocate cooked expert buffers");return FG_ERR_OOM;}if(fseeko(source,(off_t)offset,SEEK_SET)!=0||fread(packed,1,(size_t)bytes,source)!=(size_t)bytes){free(cooked);free(packed);fg_error_set(err,FG_ERR_IO,"read expert tensor %s: %s",tensor->name,ferror(source)?"unexpected end of source":strerror(errno));return FG_ERR_IO;}bool converted=layout==FG_TENSOR_LAYOUT_K_QUANT_EXPERT_COOKED?fg_cook_k_quant_rows(packed,cooked,bytes,(uint32_t)tensor->shape[0],(uint32_t)tensor->shape[1],tensor->type):layout==FG_TENSOR_LAYOUT_Q5_1_EXPERT_COOKED?fg_cook_q5_1_rows(packed,cooked,bytes,(uint32_t)tensor->shape[0],(uint32_t)tensor->shape[1]):false;if(!converted||fwrite(cooked,1,(size_t)bytes,output->file)!=(size_t)bytes){free(cooked);free(packed);fg_error_set(err,FG_ERR_IO,"cook expert tensor %s: %s",tensor->name,converted?strerror(errno):"invalid layout");return FG_ERR_IO;}fg_sha256_update(hash,cooked,(size_t)bytes);output->offset+=bytes;free(cooked);free(packed);return FG_OK;}
+
 static uint32_t common_owner(const fg_gguf_tensor *tensor,int layer){if(layer>=0)return (uint32_t)layer%FG_RANK_COUNT;if(strcmp(tensor->name,"token_embd.weight")==0)return 0u;if(strcmp(tensor->name,"output.weight")==0||strncmp(tensor->name,"output_hc_",10u)==0)return 4u;return 0u;}
 static fg_status pack_common(const fg_gguf_tensor *t,FILE *src,fg_manifest *m,pack_output rank[FG_RANK_COUNT],pack_output *ngram,fg_error *err){fg_tensor_kind kind=fg_gguf_tensor_kind(t->name);int layer=fg_gguf_tensor_layer(t->name);uint32_t owner=common_owner(t,layer);pack_output *out=kind==FG_TENSOR_NGRAM?ngram:&rank[owner];uint64_t start=fg_align_up_u64(out->offset,FG_ALIGNMENT);fg_status rc=pad_to(out,start,err);if(rc!=FG_OK)return rc;fg_sha256 hash;fg_sha256_init(&hash);fg_tensor_layout layout=use_cooked_q8_0(t)?FG_TENSOR_LAYOUT_Q8_0_COOKED:FG_TENSOR_LAYOUT_GGML;uint64_t bytes=t->bytes;if(layout==FG_TENSOR_LAYOUT_Q8_0_COOKED){bytes=fg_q8_0_cooked_matrix_bytes((uint32_t)t->shape[0],(uint32_t)t->shape[1]);if(!bytes){fg_error_set(err,FG_ERR_LIMIT,"cooked Q8_0 tensor %s is too large",t->name);return FG_ERR_LIMIT;}if(out->file)rc=process_cooked_q8_0(src,t,out->file,&hash,err);else{uint64_t descriptor[3]={t->offset,t->bytes,bytes};fg_sha256_update(&hash,descriptor,sizeof(descriptor));}if(rc==FG_OK)out->offset+=bytes;}else rc=copy_range(src,t->offset,t->bytes,out,&hash,err);if(rc!=FG_OK)return rc;return record_segment(m,t,t->name,start,bytes,kind==FG_TENSOR_NGRAM?UINT16_MAX:owner,layer<0?UINT32_MAX:(uint32_t)layer,UINT32_MAX,kind,layout,0,&hash,err);}
 
 static fg_status pack_expert_tensor(const fg_gguf *g,const fg_gguf_tensor *t,FILE *src,fg_manifest *m,pack_output rank[FG_RANK_COUNT],fg_error *err){
-    (void)g;int layer=fg_gguf_tensor_layer(t->name);if(layer<0||t->shape[t->dims-1]!=FG_EXPERT_COUNT||t->bytes%FG_EXPERT_COUNT){fg_error_set(err,FG_ERR_FORMAT,"routed tensor %s is not a 512-expert layer tensor",t->name);return FG_ERR_FORMAT;}uint64_t expert_bytes=t->bytes/FG_EXPERT_COUNT;
+    (void)g;int layer=fg_gguf_tensor_layer(t->name);if(layer<0||t->shape[t->dims-1]!=FG_EXPERT_COUNT||t->bytes%FG_EXPERT_COUNT){fg_error_set(err,FG_ERR_FORMAT,"routed tensor %s is not a 512-expert layer tensor",t->name);return FG_ERR_FORMAT;}uint64_t expert_bytes=t->bytes/FG_EXPERT_COUNT;fg_tensor_layout layout=expert_layout(t);
     for(uint32_t gi=0;gi<FG_GROUP_SIZE;gi++){uint32_t r=m->layer_groups[layer][gi];pack_output *out=&rank[r];uint64_t start=fg_align_up_u64(out->offset,FG_ALIGNMENT);fg_status rc=pad_to(out,start,err);if(rc!=FG_OK)return rc;fg_sha256 hash;fg_sha256_init(&hash);uint32_t copied=0;
-        for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)if(m->expert_rank[layer][e]==r){rc=copy_range(src,t->offset+(uint64_t)e*expert_bytes,expert_bytes,out,&hash,err);if(rc!=FG_OK)return rc;copied++;}
-        if(copied!=FG_EXPERTS_PER_RANK){fg_error_set(err,FG_ERR_FORMAT,"layer %d rank %u selected %u experts",layer,r,copied);return FG_ERR_FORMAT;}char name[FG_TENSOR_NAME_MAX];snprintf(name,sizeof(name),"%.80s.rank%u",t->name,r);rc=record_segment(m,t,name,start,expert_bytes*copied,r,(uint32_t)layer,UINT32_MAX,FG_TENSOR_ROUTED_EXPERT,FG_TENSOR_LAYOUT_GGML,FG_EXPERTS_PER_RANK,&hash,err);if(rc!=FG_OK)return rc;
+        for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)if(m->expert_rank[layer][e]==r){uint64_t offset=t->offset+(uint64_t)e*expert_bytes;rc=layout==FG_TENSOR_LAYOUT_GGML?copy_range(src,offset,expert_bytes,out,&hash,err):process_cooked_expert(src,t,offset,expert_bytes,layout,out,&hash,err);if(rc!=FG_OK)return rc;copied++;}
+        if(copied!=FG_EXPERTS_PER_RANK){fg_error_set(err,FG_ERR_FORMAT,"layer %d rank %u selected %u experts",layer,r,copied);return FG_ERR_FORMAT;}char name[FG_TENSOR_NAME_MAX];snprintf(name,sizeof(name),"%.80s.rank%u",t->name,r);rc=record_segment(m,t,name,start,expert_bytes*copied,r,(uint32_t)layer,UINT32_MAX,FG_TENSOR_ROUTED_EXPERT,layout,FG_EXPERTS_PER_RANK,&hash,err);if(rc!=FG_OK)return rc;
     }return FG_OK;
 }
 
@@ -186,17 +191,18 @@ fg_status fg_pack_verify(const fg_verify_options *o,fg_error *err){
 
         /* Replay the pack hashing: iterate global experts in ascending order, hash those belonging to this rank */
         FILE *src=fopen(g.paths[gt->shard],"rb");if(!src){printf("  FAIL expert %.80s: cannot open shard\n",t->name);efail++;continue;}
-        fg_sha256 ctx;fg_sha256_init(&ctx);uint8_t *buf=malloc((size_t)expert_bytes);
-        if(!buf){fclose(src);printf("  FAIL expert %.80s: OOM\n",t->name);efail++;continue;}
+        fg_sha256 ctx;fg_sha256_init(&ctx);uint8_t *buf=malloc((size_t)expert_bytes),*cooked=t->layout==FG_TENSOR_LAYOUT_GGML?NULL:malloc((size_t)expert_bytes);
+        if(!buf||(t->layout!=FG_TENSOR_LAYOUT_GGML&&!cooked)){free(cooked);free(buf);fclose(src);printf("  FAIL expert %.80s: OOM\n",t->name);efail++;continue;}
         uint32_t copied=0;bool ok=true;
         for(uint32_t e=0;e<FG_EXPERT_COUNT&&ok;e++){
             if(m->expert_rank[layer][e]!=rank)continue;
             if(fseeko(src,(off_t)(gt->offset+e*expert_bytes),SEEK_SET)!=0){ok=false;break;}
             if(fread(buf,1,(size_t)expert_bytes,src)!=(size_t)expert_bytes){ok=false;break;}
-            fg_sha256_update(&ctx,buf,(size_t)expert_bytes);
+            const uint8_t *payload=buf;if(t->layout!=FG_TENSOR_LAYOUT_GGML){if(!cook_expert_data(gt,(fg_tensor_layout)t->layout,buf,cooked,expert_bytes)){ok=false;break;}payload=cooked;}
+            fg_sha256_update(&ctx,payload,(size_t)expert_bytes);
             copied++;
         }
-        free(buf);fclose(src);
+        free(cooked);free(buf);fclose(src);
         if(!ok||copied!=FG_EXPERTS_PER_RANK){printf("  FAIL expert %.80s: read error or count mismatch (copied=%u)\n",t->name,copied);efail++;continue;}
         uint8_t digest[32];fg_sha256_final(&ctx,digest);
         if(memcmp(digest,t->sha256,32)==0){epass++;}else{
@@ -233,11 +239,9 @@ fg_status fg_pack_verify(const fg_verify_options *o,fg_error *err){
         for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)if(m->expert_rank[0][e]==rank){first_global=e;break;}
         if(first_global==UINT32_MAX)continue;
 
-        /* Read first 64 bytes from GGUF source */
+        /* Read and transform the first expert exactly as the packer did. */
         FILE *src=fopen(g.paths[gt->shard],"rb");if(!src)continue;
-        uint8_t gguf_head[64]={0};
-        if(fseeko(src,(off_t)(gt->offset+first_global*expert_bytes),SEEK_SET)!=0||fread(gguf_head,1,64,src)!=64u){fclose(src);printf("  SKIP rank %u: cannot read GGUF expert bytes\n",rank);continue;}
-        fclose(src);
+        uint8_t gguf_head[64]={0},*packed=malloc((size_t)expert_bytes),*cooked=t->layout==FG_TENSOR_LAYOUT_GGML?NULL:malloc((size_t)expert_bytes);bool expected_ok=packed&&fseeko(src,(off_t)(gt->offset+first_global*expert_bytes),SEEK_SET)==0&&fread(packed,1,(size_t)expert_bytes,src)==(size_t)expert_bytes;if(expected_ok&&t->layout!=FG_TENSOR_LAYOUT_GGML)expected_ok=cooked&&cook_expert_data(gt,(fg_tensor_layout)t->layout,packed,cooked,expert_bytes);if(expected_ok)memcpy(gguf_head,t->layout==FG_TENSOR_LAYOUT_GGML?packed:cooked,sizeof(gguf_head));free(cooked);free(packed);fclose(src);if(!expected_ok){printf("  SKIP rank %u: cannot prepare expected expert bytes\n",rank);continue;}
 
         /* Read first 64 bytes from .fgw */
         char fgw_path[1024];snprintf(fgw_path,sizeof(fgw_path),"%s/rank-%02u.fgw",o->pack_dir,rank);
