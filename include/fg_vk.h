@@ -190,14 +190,6 @@ fg_status fg_vk_moe_q8_0_down(fg_vk_context *context,fg_vk_tensor *output,const 
 fg_status fg_vk_moe_reduce(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *down,
                            const fg_vk_tensor *gates,const fg_vk_tensor *tiles,uint32_t output_width,
                            uint32_t selected_count,uint32_t slot_count,fg_error *err);
-fg_status fg_vk_moe_gate_up_swiglu(fg_vk_context *context,fg_vk_tensor *output,
-                                   const fg_vk_tensor *gate_weights,const fg_vk_tensor *up_weights,
-                                   const fg_vk_tensor *activation_q8k,const fg_vk_tensor *tiles,
-                                   uint32_t gate_type,uint32_t up_type,uint32_t output_width,
-                                   uint32_t input_width,uint32_t gate_expert_stride,
-                                   uint32_t up_expert_stride,uint32_t used_experts,
-                                   uint32_t routed_pairs,bool packed_weights,uint32_t tile_count,
-                                   fg_error *err);
 fg_status fg_vk_moe_kquant(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *weights,
                            const fg_vk_tensor *activation_q8k,const fg_vk_tensor *tiles,uint32_t ggml_type,
                            uint32_t output_width,uint32_t input_width,uint32_t expert_stride,uint32_t used_experts,
