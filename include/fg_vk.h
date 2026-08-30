@@ -145,6 +145,15 @@ fg_status fg_vk_qsa_index_prepare_prefill(fg_vk_context *context,fg_vk_tensor *q
                                           const fg_vk_tensor *query_norm,
                                           const fg_vk_tensor *positions,uint32_t tokens,
                                           fg_error *err);
+fg_status fg_vk_qsa_record_commit(fg_vk_context *context,fg_vk_tensor *records,
+                                  fg_vk_tensor *index_history,const fg_vk_tensor *key_q8,
+                                  const fg_vk_tensor *value_q8,const fg_vk_tensor *index_key_q8,
+                                  const fg_vk_tensor *position,uint32_t layer_slot,
+                                  uint32_t token,uint32_t capacity,fg_error *err);
+fg_status fg_vk_qsa_record_gather(fg_vk_context *context,fg_vk_tensor *output,
+                                  const fg_vk_tensor *records,const fg_vk_tensor *block_ids,
+                                  uint32_t layer_slot,uint32_t capacity,uint32_t block_count,
+                                  uint32_t tail_start,uint32_t tail_count,fg_error *err);
 fg_status fg_vk_qsa_attention(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *records,
                               const fg_vk_tensor *query,const fg_vk_tensor *gate,
                               uint32_t selected_count,fg_error *err);

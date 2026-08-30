@@ -1,0 +1,24 @@
+#version 460
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Records{uint records[];};
+layout(set=0,binding=1)readonly buffer BlockIds{uint block_ids[];};
+layout(set=0,binding=2)writeonly buffer Output{uint output_records[];};
+layout(push_constant)uniform Push{uint layer_slot;uint capacity;uint block_count;uint tail_start;uint tail_count;}pc;
+const uint RECORD_WORDS=309u;
+void main(){
+    uint word=gl_GlobalInvocationID.x;
+    uint selected=pc.block_count*4u+pc.tail_count;
+    if(word>=selected*RECORD_WORDS)return;
+    uint output_token=word/RECORD_WORDS;
+    uint record_word=word-output_token*RECORD_WORDS;
+    uint source_token;
+    if(output_token<pc.block_count*4u){
+        uint selected_block=output_token/4u;
+        source_token=block_ids[selected_block]*4u+(output_token&3u);
+    }else{
+        source_token=pc.tail_start+output_token-pc.block_count*4u;
+    }
+    if(source_token>=pc.capacity)return;
+    uint source=(pc.layer_slot*pc.capacity+source_token)*RECORD_WORDS+record_word;
+    output_records[word]=records[source];
+}
