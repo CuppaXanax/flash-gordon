@@ -179,7 +179,7 @@ fg_status fg_tokenizer_validate_qwen38(const fg_tokenizer *tokenizer,fg_error *e
         {"Qwen 火箭 🚀\nsecond line",false,unicode_ids,sizeof(unicode_ids)/sizeof(unicode_ids[0])},
         {"<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n",true,chat_ids,sizeof(chat_ids)/sizeof(chat_ids[0])}
     };
-    if(!tokenizer||tokenizer->vocab_count!=FG_Q38_VOCAB_SIZE||tokenizer->add_bos){fg_error_set(err,FG_ERR_MISMATCH,"Qwen3.8 tokenizer header mismatch");return FG_ERR_MISMATCH;}
+    if(!tokenizer||tokenizer->vocab_count!=FG_Q38_VOCAB_SIZE||tokenizer->bos!=248044u||tokenizer->eos!=248046u||tokenizer->add_bos){fg_error_set(err,FG_ERR_MISMATCH,"Qwen3.8 tokenizer header mismatch");return FG_ERR_MISMATCH;}
     for(size_t vector=0;vector<sizeof(vectors)/sizeof(vectors[0]);vector++){fg_tokens tokens={0};fg_status status=fg_tokenizer_encode(tokenizer,vectors[vector].text,vectors[vector].special,&tokens,err);if(status==FG_OK&&(tokens.count!=vectors[vector].count||memcmp(tokens.data,vectors[vector].ids,vectors[vector].count*sizeof(*tokens.data))!=0)){fg_error_set(err,FG_ERR_MISMATCH,"Qwen3.8 tokenizer parity vector %zu failed",vector);status=FG_ERR_MISMATCH;}fg_tokens_free(&tokens);if(status!=FG_OK)return status;}
     return FG_OK;
 }

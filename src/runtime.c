@@ -10,6 +10,7 @@
 #include "fg_uring.h"
 
 #include <arpa/inet.h>
+#include <errno.h>
 #include <math.h>
 
 #include <stdio.h>
@@ -18,12 +19,16 @@
 #include <time.h>
 #include <unistd.h>
 
+#define FG_RUNTIME_CONTEXT_TOKENS 8192u
+
 static fg_status load_checked(const char *path,fg_manifest **out,fg_error *err){fg_manifest *m=malloc(sizeof(*m));if(!m){fg_error_set(err,FG_ERR_OOM,"allocate manifest");return FG_ERR_OOM;}fg_status rc=fg_manifest_read(path,m,err);if(rc==FG_OK)rc=fg_manifest_validate_deployment(m,err);if(rc!=FG_OK){free(m);return rc;}*out=m;return FG_OK;}
 static fg_status manifest_directory(const char *path,char output[1024],fg_error *err){size_t length=strlen(path);if(!length||length>=1024u){fg_error_set(err,FG_ERR_ARGUMENT,"manifest path is invalid");return FG_ERR_ARGUMENT;}memcpy(output,path,length+1u);char *slash=strrchr(output,'/');if(!slash){snprintf(output,1024,".");return FG_OK;}if(slash==output)slash[1]=0;else *slash=0;return FG_OK;}
 
 typedef struct token_profile_capture {fg_vk_context *vk;struct timespec start;bool owned;} token_profile_capture;
+static double elapsed_seconds(const struct timespec *start,const struct timespec *end);
 
 static bool token_profile_requested(uint32_t token){const char *requested=getenv("FG_PROFILE_TOKEN");char value[16];if(!requested||!*requested)return false;snprintf(value,sizeof(value),"%u",token);return strcmp(requested,value)==0;}
+static bool prefill_profile_requested(void){const char *enabled=getenv("FG_PREFILL_PROFILE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool frame_trace_enabled(void){const char *enabled=getenv("FG_FRAME_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool route_trace_enabled(void){const char *enabled=getenv("FG_TRACE_ROUTES");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool expert_batch_send_enabled(void){const char *enabled=getenv("FG_EXPERT_BATCH_SEND");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
@@ -242,6 +247,17 @@ fg_status fg_rank_main(const char *path,uint32_t rank,fg_error *err){if(rank>=FG
 
 typedef struct fg_coordinator {const fg_manifest *manifest;fg_model *model;fg_expert_executor *expert;fg_owner_executor *owner;fg_fabric *fabric;fg_ngram_store *ngram;fg_tokenizer *tokenizer;fg_vk_tensor *hyper;prefill_worker_buffers prefill_expert;prefill_layer_buffers prefill_layer;uint64_t session_id;uint8_t *expert_recv;uint8_t *async_recv_payloads[FG_GROUP_SIZE];const char *directory;} fg_coordinator;
 
+struct fg_runtime {
+    fg_manifest *manifest;
+    fg_coordinator coordinator;
+    int32_t *history;
+    size_t history_count,history_capacity;
+    bool qsa_open;
+    bool prefill_profiled;
+    uint32_t context_limit;
+    char directory[1024],qsa_path[1200];
+};
+
 static fg_status coordinator_begin_session(fg_coordinator *coordinator,fg_error *err){struct timespec now;if(clock_gettime(CLOCK_REALTIME,&now)!=0){fg_error_set(err,FG_ERR_IO,"read session clock");return FG_ERR_IO;}uint64_t request=((uint64_t)(uint32_t)now.tv_sec<<32u)^(uint32_t)now.tv_nsec^(uint64_t)(uint32_t)getpid();if(!request)request=1u;for(uint32_t peer=1;peer<FG_RANK_COUNT;peer++){fg_status status=fg_fabric_send(coordinator->fabric,peer,FG_FABRIC_CONTROL,FG_MSG_SESSION_BEGIN,request,0,0,NULL,0,err);if(status!=FG_OK)return status;}bool ready[FG_RANK_COUNT]={0};for(uint32_t received=1;received<FG_RANK_COUNT;received++){uint32_t peer=0,bytes=0;fg_frame_header header;fg_status status=fg_fabric_recv_any(coordinator->fabric,FG_FABRIC_CONTROL,&peer,&header,NULL,0,&bytes,err);if(status!=FG_OK)return status;if(fg_frame_type(&header)!=FG_MSG_SESSION_READY||fg_frame_request_id(&header)!=request||fg_frame_sequence(&header)!=0u||bytes||peer==0u||ready[peer]){fg_error_set(err,FG_ERR_MISMATCH,"invalid session readiness from rank %u",peer);return FG_ERR_MISMATCH;}ready[peer]=true;}coordinator->session_id=request;return FG_OK;}
 
 
@@ -257,11 +273,13 @@ static fg_status coordinator_prefill_microbatch(fg_coordinator *coordinator,cons
     if(status==FG_OK){status=fg_vk_embedding_q8_0_batch(fg_model_vk(coordinator->model),buffers->hyper_tensor,embedding,buffers->token_tensor,token_count,FG_HIDDEN_SIZE,FG_Q38_VOCAB_SIZE,FG_Q38_HYPER_COUNT,err);}
     fg_vk_tensor *current=buffers->hyper_tensor;
     for(uint32_t layer=0;status==FG_OK&&layer<FG_LAYER_COUNT;layer++){
+        struct timespec layer_start,layer_end;bool profiling=fg_vk_profile_active(fg_model_vk(coordinator->model));if(profiling)clock_gettime(CLOCK_MONOTONIC,&layer_start);
         const fg_vk_tensor *layer_ngram=(layer==1u)?ngram_embeddings:NULL;
         prefill_dispatch_context dispatch={coordinator->fabric,coordinator->expert,coordinator->manifest,0u,coordinator->session_id,first_token*FG_LAYER_COUNT+layer,&coordinator->prefill_expert};
         fg_vk_tensor *layer_out=NULL;
         status=fg_owner_prefill_layer(coordinator->owner,layer,first_token,buffers->positions,token_count,current,layer_ngram,dispatch_prefill_experts,&dispatch,&layer_out,err);
         if(status==FG_OK){current=layer_out;}
+        if(profiling){clock_gettime(CLOCK_MONOTONIC,&layer_end);fprintf(stderr,"PREFILL_PROFILE_LAYER first=%u tokens=%u layer=%u wall_ms=%.3f\n",first_token,token_count,layer,elapsed_seconds(&layer_start,&layer_end)*1000.0);}
     }
     if(status==FG_OK){*output=current;}
     return status;
@@ -310,6 +328,99 @@ static void coordinator_close(fg_coordinator *coordinator){if(!coordinator)retur
 static fg_status coordinator_open(fg_coordinator *coordinator,const fg_manifest *manifest,const char *directory,fg_error *err){memset(coordinator,0,sizeof(*coordinator));coordinator->manifest=manifest;fg_status status=fg_model_open_replicated(&coordinator->model,manifest,directory,0u,err);if(status==FG_OK)status=fg_expert_executor_create(&coordinator->expert,coordinator->model,err);if(status==FG_OK)status=fg_owner_executor_create(&coordinator->owner,coordinator->model,err);if(status==FG_OK)status=fg_tokenizer_open(&coordinator->tokenizer,directory,manifest,err);if(status==FG_OK)status=fg_tokenizer_validate_qwen38(coordinator->tokenizer,err);const fg_tensor_record *ngram_record=NULL;for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++)if(manifest->tensors[i].kind==FG_TENSOR_NGRAM){if(ngram_record){fg_error_set(err,FG_ERR_MISMATCH,"multiple n-gram tensors in deployment manifest");status=FG_ERR_MISMATCH;}else ngram_record=&manifest->tensors[i];}char ngram_path[1200];if(status==FG_OK&&!ngram_record){fg_error_set(err,FG_ERR_MISMATCH,"deployment manifest has no n-gram tensor");status=FG_ERR_MISMATCH;}if(status==FG_OK&&snprintf(ngram_path,sizeof(ngram_path),"%s/ngram.iq4nl",directory)>=(int)sizeof(ngram_path)){fg_error_set(err,FG_ERR_LIMIT,"n-gram path is too long");status=FG_ERR_LIMIT;}if(status==FG_OK)status=fg_ngram_store_open(&coordinator->ngram,fg_model_vk(coordinator->model),ngram_path,ngram_record->bytes,err);if(status==FG_OK)status=fg_vk_tensor_create(fg_model_vk(coordinator->model),FG_HYPER_WIDTH*sizeof(float),&coordinator->hyper,err);if(status==FG_OK){coordinator->expert_recv=malloc(FG_EXPERT_RESULT_MAX_BYTES);if(!coordinator->expert_recv){fg_error_set(err,FG_ERR_OOM,"allocate coordinator expert recv buffer");status=FG_ERR_OOM;}}
     /* Allocate per-group async recv payload buffers */
     for(uint32_t i=0;status==FG_OK&&i<FG_GROUP_SIZE;i++){coordinator->async_recv_payloads[i]=malloc(FG_EXPERT_RESULT_MAX_BYTES);if(!coordinator->async_recv_payloads[i]){fg_error_set(err,FG_ERR_OOM,"allocate async expert recv buffer %u",i);status=FG_ERR_OOM;}}if(status==FG_OK)status=prefill_worker_buffers_create(&coordinator->prefill_expert,manifest->prefill_microbatch,err);if(status==FG_OK)status=prefill_layer_buffers_create(&coordinator->prefill_layer,coordinator->model,manifest->prefill_microbatch,err);if(status==FG_OK)status=fg_fabric_open(&coordinator->fabric,manifest,0u,err);if(status==FG_OK)status=rank_ready(coordinator->fabric,0u,err);if(status==FG_OK)status=token_profile_prepare(fg_model_vk(coordinator->model),err);if(status==FG_OK)status=coordinator_begin_session(coordinator,err);if(status!=FG_OK)coordinator_close(coordinator);coordinator->directory=directory;return status;}
+
+static double elapsed_seconds(const struct timespec *start,const struct timespec *end){return (double)(end->tv_sec-start->tv_sec)+(double)(end->tv_nsec-start->tv_nsec)*1e-9;}
+
+static fg_status runtime_reserve_history(fg_runtime *runtime,size_t count,fg_error *err){
+    if(count<=runtime->history_capacity)return FG_OK;
+    size_t capacity=runtime->history_capacity?runtime->history_capacity:1024u;
+    while(capacity<count){if(capacity>SIZE_MAX/2u){fg_error_set(err,FG_ERR_LIMIT,"session token history exceeds address space");return FG_ERR_LIMIT;}capacity*=2u;}
+    int32_t *history=realloc(runtime->history,capacity*sizeof(*history));
+    if(!history){fg_error_set(err,FG_ERR_OOM,"grow session token history");return FG_ERR_OOM;}
+    runtime->history=history;runtime->history_capacity=capacity;return FG_OK;
+}
+
+fg_status fg_runtime_open(fg_runtime **out,const char *path,fg_error *err){
+    if(!out||!path){fg_error_set(err,FG_ERR_ARGUMENT,"invalid runtime open arguments");return FG_ERR_ARGUMENT;}*out=NULL;
+    fg_runtime *runtime=calloc(1,sizeof(*runtime));if(!runtime){fg_error_set(err,FG_ERR_OOM,"allocate resident runtime");return FG_ERR_OOM;}
+    fg_status status=load_checked(path,&runtime->manifest,err);
+    if(status==FG_OK)runtime->context_limit=runtime->manifest->native_context<FG_RUNTIME_CONTEXT_TOKENS?runtime->manifest->native_context:FG_RUNTIME_CONTEXT_TOKENS;
+    if(status==FG_OK)status=manifest_directory(path,runtime->directory,err);
+    if(status==FG_OK)status=coordinator_open(&runtime->coordinator,runtime->manifest,runtime->directory,err);
+    if(status==FG_OK){int n=snprintf(runtime->qsa_path,sizeof(runtime->qsa_path),"%s/session-%016llx-rank-00.qsa",runtime->directory,(unsigned long long)runtime->coordinator.session_id);if(n<0||(size_t)n>=sizeof(runtime->qsa_path)){fg_error_set(err,FG_ERR_LIMIT,"coordinator QSA path overflow");status=FG_ERR_LIMIT;}}
+    if(status==FG_OK)status=fg_runtime_reset(runtime,err);
+    if(status!=FG_OK){fg_runtime_close(runtime);return status;}*out=runtime;return FG_OK;
+}
+
+void fg_runtime_close(fg_runtime *runtime){
+    if(!runtime)return;
+    coordinator_close(&runtime->coordinator);
+    if(runtime->qsa_path[0])unlink(runtime->qsa_path);
+    free(runtime->history);free(runtime->manifest);free(runtime);
+}
+
+fg_status fg_runtime_reset(fg_runtime *runtime,fg_error *err){
+    if(!runtime||!runtime->coordinator.owner||!runtime->qsa_path[0]){fg_error_set(err,FG_ERR_ARGUMENT,"resident runtime is not open");return FG_ERR_ARGUMENT;}
+    fg_status status=fg_owner_reset_state(runtime->coordinator.owner,err);if(status!=FG_OK)return status;
+    runtime->history_count=0;
+    if(runtime->qsa_open)return FG_OK;
+    if(unlink(runtime->qsa_path)!=0&&errno!=ENOENT){fg_error_set(err,FG_ERR_IO,"remove stale QSA session: %s",strerror(errno));return FG_ERR_IO;}
+    status=fg_owner_qsa_open_decode(runtime->coordinator.owner,runtime->qsa_path,
+                                    runtime->context_limit,
+                                    runtime->manifest->prefill_microbatch,err);
+    if(status==FG_OK)runtime->qsa_open=true;
+    return status;
+}
+
+fg_status fg_runtime_generate(fg_runtime *runtime,const char *suffix,uint32_t max_tokens,
+                              fg_token_callback callback,void *callback_context,
+                              fg_interrupt_fn interrupted,void *interrupt_context,
+                              fg_generation_stats *stats,fg_error *err){
+    if(!runtime||!suffix||!callback||!max_tokens||max_tokens>4096u){fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident generation arguments");return FG_ERR_ARGUMENT;}
+    if(stats)memset(stats,0,sizeof(*stats));
+    fg_tokens prompt={0};fg_status status=fg_tokenizer_encode(runtime->coordinator.tokenizer,suffix,true,&prompt,err);
+    size_t old_count=runtime->history_count,total=old_count+prompt.count;
+    if(status==FG_OK&&(!prompt.count||total+(size_t)max_tokens>runtime->context_limit)){fg_error_set(err,FG_ERR_LIMIT,"prompt plus generation would use %zu of %u context tokens",total+(size_t)max_tokens,runtime->context_limit);status=FG_ERR_LIMIT;}
+    if(status==FG_OK)status=runtime_reserve_history(runtime,total+(size_t)max_tokens,err);
+    for(size_t i=0;status==FG_OK&&i<prompt.count;i++)runtime->history[old_count+i]=(int32_t)prompt.data[i];
+    runtime->history_count=status==FG_OK?total:old_count;
+    struct timespec prefill_start,prefill_end,decode_start,decode_end;
+    uint32_t next=0;float logit=0.0f;fg_vk_tensor *prefill_output=NULL;
+    if(status==FG_OK)clock_gettime(CLOCK_MONOTONIC,&prefill_start);
+    for(size_t offset=0;status==FG_OK&&offset<prompt.count;){
+        uint32_t count=(uint32_t)(prompt.count-offset);if(count>runtime->manifest->prefill_microbatch)count=runtime->manifest->prefill_microbatch;
+        uint32_t first=(uint32_t)(old_count+offset);fg_vk_tensor *ngram_batch=NULL;
+        fg_vk_context *vk=fg_model_vk(runtime->coordinator.model);bool capture=!runtime->prefill_profiled&&prefill_profile_requested(),capture_active=false;struct timespec capture_start,capture_end;
+        if(capture){status=fg_vk_profile_begin(vk,err);if(status==FG_OK)status=fg_vk_profile_set_scope(vk,"ngram_prefill",err);if(status==FG_OK){clock_gettime(CLOCK_MONOTONIC,&capture_start);capture_active=true;}}
+        if(status==FG_OK)status=fg_ngram_store_lookup_prefill(runtime->coordinator.ngram,runtime->history,runtime->history_count,first,count,&ngram_batch,err);
+        if(status==FG_OK)status=coordinator_prefill_microbatch(&runtime->coordinator,prompt.data+offset,first,(uint16_t)count,ngram_batch,&prefill_output,err);
+        if(capture_active){fg_vk_profile profile={0};fg_error profile_error={0};clock_gettime(CLOCK_MONOTONIC,&capture_end);fg_status profile_status=fg_vk_profile_end(vk,&profile,status==FG_OK?err:&profile_error);runtime->prefill_profiled=true;if(status==FG_OK&&profile_status!=FG_OK)status=profile_status;fprintf(stderr,"PREFILL_PROFILE first=%u tokens=%u wall_ms=%.3f gpu_ms=%.3f kernel_ms=%.3f submissions=%llu dispatches=%llu\n",first,count,elapsed_seconds(&capture_start,&capture_end)*1000.0,profile.gpu_ms,profile.kernel_ms,(unsigned long long)profile.submissions,(unsigned long long)profile.dispatches);for(uint32_t i=0;i<profile.kernel_count;i++){const fg_vk_profile_kernel *kernel=&profile.kernels[i];fprintf(stderr,"PREFILL_PROFILE_KERNEL scope=%s kernel=%s calls=%llu gpu_ms=%.3f\n",kernel->scope,kernel->name,(unsigned long long)kernel->invocations,kernel->gpu_ms);}}
+        offset+=count;
+    }
+    fg_vk_tensor *last_hyper=NULL;
+    if(status==FG_OK){uint32_t final_count=(uint32_t)(prompt.count%runtime->manifest->prefill_microbatch);if(!final_count)final_count=runtime->manifest->prefill_microbatch;status=fg_vk_tensor_view(prefill_output,(uint64_t)(final_count-1u)*FG_HYPER_WIDTH*4u,FG_HYPER_WIDTH*4u,&last_hyper,err);}
+    if(status==FG_OK)status=coordinator_output(&runtime->coordinator,(uint32_t)runtime->history_count-1u,last_hyper,&next,&logit,err);
+    fg_vk_tensor_destroy(last_hyper);
+    if(status==FG_OK){fg_owner_qsa_set_tokens(runtime->coordinator.owner,(uint32_t)runtime->history_count);clock_gettime(CLOCK_MONOTONIC,&prefill_end);clock_gettime(CLOCK_MONOTONIC,&decode_start);}
+    uint32_t generated=0;
+    while(status==FG_OK&&generated<max_tokens){
+        if(interrupted&&interrupted(interrupt_context))break;
+        if(next==fg_tokenizer_eos(runtime->coordinator.tokenizer))break;
+        char decoded[4096];size_t bytes=0;status=fg_tokenizer_decode_token(runtime->coordinator.tokenizer,next,decoded,sizeof(decoded),&bytes,err);
+        if(status==FG_OK)status=callback(callback_context,next,decoded,bytes,err);
+        if(status!=FG_OK)break;
+        runtime->history[runtime->history_count++]=(int32_t)next;generated++;
+        status=coordinator_decode_token_local(&runtime->coordinator,runtime->history,runtime->history_count,(uint32_t)runtime->history_count-1u,&next,&logit,err);
+    }
+    if(status==FG_OK){clock_gettime(CLOCK_MONOTONIC,&decode_end);if(stats){stats->prompt_tokens=(uint32_t)prompt.count;stats->generated_tokens=generated;stats->context_tokens=(uint32_t)runtime->history_count;stats->prefill_seconds=elapsed_seconds(&prefill_start,&prefill_end);stats->decode_seconds=elapsed_seconds(&decode_start,&decode_end);}}
+    if(status!=FG_OK&&runtime->history_count==total)runtime->history_count=old_count;
+    fg_tokens_free(&prompt);return status;
+}
+
+uint32_t fg_runtime_context_tokens(const fg_runtime *runtime){return runtime?(uint32_t)runtime->history_count:0u;}
+uint32_t fg_runtime_context_limit(const fg_runtime *runtime){return runtime?runtime->context_limit:0u;}
+const char *fg_runtime_model_name(const fg_runtime *runtime){return runtime?"Qwen3.8-Flash-Next":NULL;}
+
 fg_status fg_serve_main(const char *path,fg_error *err){fg_manifest *m=NULL;fg_status rc=load_checked(path,&m,err);if(rc==FG_OK){fg_manifest_print(m);fg_error_set(err,FG_ERR_UNAVAILABLE,"HTTP serving is not enabled until the owned request path is qualified");rc=FG_ERR_UNAVAILABLE;}free(m);return rc;}
 fg_status fg_bench_main(const char *path,fg_error *err){
     (void)path;

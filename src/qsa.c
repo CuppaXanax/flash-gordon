@@ -89,6 +89,8 @@ fg_status fg_qsa_session_open_decode(fg_qsa_session **out,fg_model *model,const 
 
 void fg_qsa_session_close(fg_qsa_session *s){if(!s)return;free(s->read_records);fg_vk_tensor_destroy(s->output);fg_vk_tensor_destroy(s->attention);fg_vk_tensor_destroy(s->selected_records);for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(s->ids[i]);fg_vk_tensor_destroy(s->scores[i]);}fg_vk_tensor_destroy(s->index_key_q8);fg_vk_tensor_destroy(s->value_q4);fg_vk_tensor_destroy(s->key_q8);fg_vk_tensor_destroy(s->index_query);fg_vk_tensor_destroy(s->raw_index_key);fg_vk_tensor_destroy(s->raw_index_query);fg_vk_tensor_destroy(s->key);fg_vk_tensor_destroy(s->gate);fg_vk_tensor_destroy(s->query);fg_vk_tensor_destroy(s->raw_value);fg_vk_tensor_destroy(s->raw_key);fg_vk_tensor_destroy(s->raw_query_gate);for(uint32_t i=0;i<FG_QSA_MAX_LAYERS;i++)fg_vk_tensor_destroy(s->index_keys[i]);fg_vk_tensor_destroy(s->hot_records);fg_vk_tensor_destroy(s->index_history);fg_vk_tensor_destroy(s->positions);fg_qsa_state_close(s->state);free(s);}
 
+fg_status fg_qsa_session_reset(fg_qsa_session *s,fg_error *err){if(!s){fg_error_set(err,FG_ERR_ARGUMENT,"QSA session reset is null");return FG_ERR_ARGUMENT;}memset(s->committed,0,sizeof(s->committed));memset(s->partial,0,sizeof(s->partial));return fg_qsa_state_reset(s->state,err);}
+
 fg_status fg_qsa_session_checkpoint(fg_qsa_session *s,fg_error *err){
     if(!s){fg_error_set(err,FG_ERR_ARGUMENT,"QSA checkpoint session is null");return FG_ERR_ARGUMENT;}if(!s->hot_capacity)return FG_OK;if(fg_vk_batch_active(fg_model_vk(s->model))){fg_error_set(err,FG_ERR_ARGUMENT,"QSA checkpoint cannot run inside a Vulkan batch");return FG_ERR_ARGUMENT;}
     const uint8_t *records=fg_vk_tensor_map(s->hot_records);fg_status status=FG_OK;
