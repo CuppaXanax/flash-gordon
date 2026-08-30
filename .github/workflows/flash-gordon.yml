@@ -2,9 +2,9 @@ name: flash-gordon
 
 on:
   push:
-    paths: ["src/**", "include/**", "shaders/**", "tests/**", "Makefile", "glslc", ".github/workflows/flash-gordon.yml"]
+    paths: ["src/**", "include/**", "profiles/**", "shaders/**", "tests/**", "Makefile", "glslc", ".github/workflows/flash-gordon.yml"]
   pull_request:
-    paths: ["src/**", "include/**", "shaders/**", "tests/**", "Makefile", "glslc", ".github/workflows/flash-gordon.yml"]
+    paths: ["src/**", "include/**", "profiles/**", "shaders/**", "tests/**", "Makefile", "glslc", ".github/workflows/flash-gordon.yml"]
 
 jobs:
   c17:

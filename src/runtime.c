@@ -25,6 +25,7 @@ typedef struct token_profile_capture {fg_vk_context *vk;struct timespec start;bo
 
 static bool token_profile_requested(uint32_t token){const char *requested=getenv("FG_PROFILE_TOKEN");char value[16];if(!requested||!*requested)return false;snprintf(value,sizeof(value),"%u",token);return strcmp(requested,value)==0;}
 static bool frame_trace_enabled(void){const char *enabled=getenv("FG_FRAME_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
+static bool route_trace_enabled(void){const char *enabled=getenv("FG_TRACE_ROUTES");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static uint64_t critical_ns(void){struct timespec value;clock_gettime(CLOCK_REALTIME,&value);return (uint64_t)value.tv_sec*UINT64_C(1000000000)+(uint64_t)value.tv_nsec;}
 _Static_assert(FG_NGRAM_ROW_BYTES==FG_NGRAM_WIRE_ROW_BYTES,"n-gram row wire size mismatch");
 
@@ -115,7 +116,7 @@ static fg_status fire_experts(void *opaque,uint32_t layer,uint32_t token,const u
         if(ctx->critical_trace&&trace_index<FG_GROUP_SIZE){ctx->send_trace[layer][trace_index].end_ns=critical_ns();ctx->send_trace_count[layer]++;}
         if(status==FG_OK)ctx->remote_count++;
     }
-    if(status==FG_OK&&token_profile_requested(token)){uint32_t local=0,local_selected=0,selected=0,rank_mask=0;for(uint32_t r=0;r<route_count;r++){bool is_local=routes[r].destination_rank==ctx->self;local+=is_local;local_selected+=is_local?routes[r].selected_count:0u;selected+=routes[r].selected_count;rank_mask|=1u<<routes[r].destination_rank;}fprintf(stderr,"EP_ROUTE_TRACE token=%u layer=%u routes=%u remotes=%u local=%u local_selected=%u selected=%u rank_mask=%u\n",token,layer,route_count,ctx->remote_count,local,local_selected,selected,rank_mask);}
+    if(status==FG_OK&&(token_profile_requested(token)||route_trace_enabled())){uint32_t local=0,local_selected=0,selected=0,rank_mask=0;for(uint32_t r=0;r<route_count;r++){bool is_local=routes[r].destination_rank==ctx->self;local+=is_local;local_selected+=is_local?routes[r].selected_count:0u;selected+=routes[r].selected_count;rank_mask|=1u<<routes[r].destination_rank;}fprintf(stderr,"EP_ROUTE_TRACE token=%u layer=%u routes=%u remotes=%u local=%u local_selected=%u selected=%u rank_mask=%u expert_ids=",token,layer,route_count,ctx->remote_count,local,local_selected,selected,rank_mask);for(uint32_t slot=0;slot<FG_TOP_K;slot++)fprintf(stderr,"%s%u",slot?",":"",expert_ids[slot]);fprintf(stderr," expert_ranks=");for(uint32_t slot=0;slot<FG_TOP_K;slot++)fprintf(stderr,"%s%u",slot?",":"",ctx->manifest->expert_rank[layer][expert_ids[slot]]);fputc('\n',stderr);}
     return status;
 }
 

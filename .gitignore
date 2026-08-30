@@ -19,5 +19,9 @@ tests/test_fabric
 # Compiled SPIR-V shaders
 vulkan/*.spv
 
+# Qualification-prompt-derived expert maps are diagnostic-only artifacts.
+/profiles/*france*.expert-map
+/profiles/*oracle*.expert-map
+
 # macOS
 .DS_Store

@@ -4,6 +4,7 @@ glslc text eol=lf
 
 # Shaders
 *.comp text eol=lf
+*.expert-map text eol=lf
 
 # SPIR-V binaries
 *.spv binary
