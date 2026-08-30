@@ -1,0 +1,23 @@
+#version 460
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Normalized{float normalized[];};
+layout(set=0,binding=1)readonly buffer Weights{float weights[];};
+layout(set=0,binding=2)writeonly buffer Partials{float partials[];};
+layout(push_constant)uniform Push{uint hidden;uint groups;uint tokens;uint pieces;}pc;
+shared float sums[1024];
+void main(){
+    uint lane=gl_LocalInvocationID.x,piece=gl_WorkGroupID.x,token=gl_WorkGroupID.y;
+    if(piece>=pc.pieces||token>=pc.tokens||pc.groups>4u)return;
+    uint width=pc.hidden*pc.groups,first=piece*256u+lane,stride=pc.pieces*256u;
+    for(uint group=0u;group<pc.groups;group++){
+        float sum=0.0;
+        for(uint index=first;index<width;index+=stride)sum=fma(weights[group*width+index],normalized[token*width+index],sum);
+        sums[group*256u+lane]=sum;
+    }
+    barrier();
+    for(uint reduce=128u;reduce>0u;reduce>>=1u){
+        if(lane<reduce)for(uint group=0u;group<pc.groups;group++)sums[group*256u+lane]+=sums[group*256u+lane+reduce];
+        barrier();
+    }
+    if(lane==0u)for(uint group=0u;group<pc.groups;group++)partials[(token*pc.pieces+piece)*pc.groups+group]=sums[group*256u];
+}

@@ -85,6 +85,14 @@ fg_status fg_vk_gr_mix(fg_vk_context *context,fg_vk_tensor *mixed,fg_vk_tensor *
                        const fg_vk_tensor *normalized,const fg_vk_tensor *up_logits,
                        const fg_vk_tensor *injection_logits,uint32_t hidden,uint32_t groups,
                        uint32_t tokens,fg_error *err);
+fg_status fg_vk_hc_inject_partial(fg_vk_context *context,fg_vk_tensor *partials,
+                                  const fg_vk_tensor *normalized,const fg_vk_tensor *weights,
+                                  uint32_t hidden,uint32_t groups,uint32_t tokens,
+                                  uint32_t pieces,fg_error *err);
+fg_status fg_vk_gr_mix_partial(fg_vk_context *context,fg_vk_tensor *mixed,fg_vk_tensor *injection,
+                               const fg_vk_tensor *normalized,const fg_vk_tensor *up_logits,
+                               const fg_vk_tensor *partials,uint32_t hidden,uint32_t groups,
+                               uint32_t tokens,uint32_t pieces,fg_error *err);
 fg_status fg_vk_hc_finalize(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *normalized,
                             const fg_vk_tensor *up,uint32_t hidden,uint32_t groups,uint32_t tokens,
                             fg_error *err);

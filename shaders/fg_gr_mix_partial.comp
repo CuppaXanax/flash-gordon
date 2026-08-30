@@ -1,0 +1,19 @@
+#version 460
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Normed{float normed[];};
+layout(set=0,binding=1)readonly buffer UpLogits{float up[];};
+layout(set=0,binding=2)readonly buffer Partials{float partials[];};
+layout(set=0,binding=3)writeonly buffer Mixed{float mixed[];};
+layout(set=0,binding=4)writeonly buffer Injection{float injection[];};
+layout(push_constant)uniform Push{uint hidden;uint groups;uint tokens;uint pieces;}pc;
+float sigmoid(float value){return 1.0/(1.0+exp(-value));}
+void main(){
+    uint lane=gl_LocalInvocationID.x,token=gl_WorkGroupID.x;
+    if(token>=pc.tokens)return;
+    for(uint index=lane;index<pc.hidden;index+=256u){
+        float value=0.0;
+        for(uint group=0u;group<pc.groups;group++){uint offset=(token*pc.groups+group)*pc.hidden+index;value=fma(sigmoid(up[offset]),normed[offset],value);}
+        mixed[token*pc.hidden+index]=value/float(pc.groups);
+    }
+    if(lane<pc.groups){float dot=0.0;for(uint piece=0u;piece<pc.pieces;piece++)dot+=partials[(token*pc.pieces+piece)*pc.groups+lane];injection[token*pc.groups+lane]=2.0*sigmoid(dot/float(pc.groups));}
+}
