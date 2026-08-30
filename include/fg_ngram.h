@@ -47,6 +47,9 @@ fg_status fg_ngram_store_lookup(fg_ngram_store *store,const int32_t *token_histo
 fg_status fg_ngram_store_decode_packed(fg_ngram_store *store,const uint8_t *packed,
                                        uint32_t row_count,fg_vk_tensor **embedding,
                                        fg_error *err);
+fg_status fg_ngram_store_verify_packed(fg_ngram_store *store,const uint64_t *addresses,
+                                       uint32_t row_count,const uint8_t *packed,
+                                       uint32_t *mismatch_row,fg_error *err);
 /* Computes the n-gram rows for each sequential prompt position and returns one
    borrowed, exact-sized token-major [token_count, 2560] FP32 tensor view.  The
    input is bounded so all direct-I/O planning and Vulkan arenas are provisioned
