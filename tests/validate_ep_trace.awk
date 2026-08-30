@@ -1,7 +1,10 @@
 function value(name,    i,parts) {
     for (i = 1; i <= NF; i++) {
         split($i, parts, "=")
-        if (parts[1] == name) return parts[2]
+        if (parts[1] == name) {
+            sub(/\r$/, "", parts[2])
+            return parts[2]
+        }
     }
     return ""
 }

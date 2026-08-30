@@ -26,6 +26,7 @@ typedef struct token_profile_capture {fg_vk_context *vk;struct timespec start;bo
 static bool token_profile_requested(uint32_t token){const char *requested=getenv("FG_PROFILE_TOKEN");char value[16];if(!requested||!*requested)return false;snprintf(value,sizeof(value),"%u",token);return strcmp(requested,value)==0;}
 static bool frame_trace_enabled(void){const char *enabled=getenv("FG_FRAME_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool route_trace_enabled(void){const char *enabled=getenv("FG_TRACE_ROUTES");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
+static bool expert_batch_send_enabled(void){const char *enabled=getenv("FG_EXPERT_BATCH_SEND");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static uint64_t critical_ns(void){struct timespec value;clock_gettime(CLOCK_REALTIME,&value);return (uint64_t)value.tv_sec*UINT64_C(1000000000)+(uint64_t)value.tv_nsec;}
 _Static_assert(FG_NGRAM_ROW_BYTES==FG_NGRAM_WIRE_ROW_BYTES,"n-gram row wire size mismatch");
 
@@ -100,7 +101,7 @@ static double dispatch_ts(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,
 static fg_status fire_experts(void *opaque,uint32_t layer,uint32_t token,const uint16_t expert_ids[FG_TOP_K],const float gates[FG_TOP_K],const uint8_t *activation,fg_error *err){
     async_expert_context *ctx=opaque;fg_expert_route routes[FG_GROUP_SIZE];uint32_t route_count=0;
     fg_status status=fg_partition_route(ctx->manifest,layer,expert_ids,gates,routes,&route_count,err);
-    uint8_t work_wire[FG_DECODE_WORK_BYTES];ctx->remote_count=0;
+    uint8_t work_wire[FG_GROUP_SIZE][FG_DECODE_WORK_BYTES];fg_fabric_send_item send_items[FG_GROUP_SIZE];ctx->remote_count=0;bool batch_send=expert_batch_send_enabled()&&!ctx->critical_trace;
     /* Save local routes for deferred compute in collect */
     ctx->route_count=route_count;
     memcpy(ctx->routes,routes,sizeof(routes));
@@ -110,13 +111,14 @@ static fg_status fire_experts(void *opaque,uint32_t layer,uint32_t token,const u
         fg_decode_work work={.layer=(uint8_t)layer,.source_rank=(uint8_t)ctx->self,.destination_rank=routes[r].destination_rank,.selected_count=routes[r].selected_count,.position=token};
         for(uint32_t i=0;i<routes[r].selected_count;i++){work.expert_ids[i]=routes[r].global_expert_ids[i];work.routing_slots[i]=routes[r].routing_slots[i];work.gates[i]=routes[r].gates[i];}
         memcpy(work.activation_q8k,activation,FG_Q8K_ACTIVATION_BYTES);
-        status=fg_decode_work_encode(work_wire,&work,err);
+        uint32_t send_index=ctx->remote_count;status=fg_decode_work_encode(work_wire[send_index],&work,err);
         uint32_t trace_index=ctx->send_trace_count[layer];if(ctx->critical_trace&&trace_index<FG_GROUP_SIZE){ctx->send_trace[layer][trace_index].peer=work.destination_rank;ctx->send_trace[layer][trace_index].start_ns=critical_ns();}
-        if(status==FG_OK)status=fg_fabric_send(ctx->fabric,work.destination_rank,FG_FABRIC_CONTROL,FG_MSG_DECODE_WORK,ctx->request_id,ctx->sequence,0,work_wire,sizeof(work_wire),err);
+        if(status==FG_OK&&batch_send){send_items[send_index]=(fg_fabric_send_item){.peer=work.destination_rank,.cls=FG_FABRIC_CONTROL,.type=FG_MSG_DECODE_WORK,.request_id=ctx->request_id,.sequence=ctx->sequence,.payload=work_wire[send_index],.bytes=FG_DECODE_WORK_BYTES};ctx->remote_count++;}
+        else if(status==FG_OK){status=fg_fabric_send(ctx->fabric,work.destination_rank,FG_FABRIC_CONTROL,FG_MSG_DECODE_WORK,ctx->request_id,ctx->sequence,0,work_wire[send_index],FG_DECODE_WORK_BYTES,err);if(status==FG_OK)ctx->remote_count++;}
         if(ctx->critical_trace&&trace_index<FG_GROUP_SIZE){ctx->send_trace[layer][trace_index].end_ns=critical_ns();ctx->send_trace_count[layer]++;}
-        if(status==FG_OK)ctx->remote_count++;
     }
-    if(status==FG_OK&&(token_profile_requested(token)||route_trace_enabled())){uint32_t local=0,local_selected=0,selected=0,rank_mask=0;for(uint32_t r=0;r<route_count;r++){bool is_local=routes[r].destination_rank==ctx->self;local+=is_local;local_selected+=is_local?routes[r].selected_count:0u;selected+=routes[r].selected_count;rank_mask|=1u<<routes[r].destination_rank;}fprintf(stderr,"EP_ROUTE_TRACE token=%u layer=%u routes=%u remotes=%u local=%u local_selected=%u selected=%u rank_mask=%u expert_ids=",token,layer,route_count,ctx->remote_count,local,local_selected,selected,rank_mask);for(uint32_t slot=0;slot<FG_TOP_K;slot++)fprintf(stderr,"%s%u",slot?",":"",expert_ids[slot]);fprintf(stderr," expert_ranks=");for(uint32_t slot=0;slot<FG_TOP_K;slot++)fprintf(stderr,"%s%u",slot?",":"",ctx->manifest->expert_rank[layer][expert_ids[slot]]);fputc('\n',stderr);}
+    if(status==FG_OK&&batch_send&&ctx->remote_count)status=fg_fabric_send_batch(ctx->fabric,send_items,ctx->remote_count,err);
+    if(status==FG_OK&&(token_profile_requested(token)||route_trace_enabled())){uint32_t local=0,local_selected=0,selected=0,rank_mask=0;for(uint32_t r=0;r<route_count;r++){bool is_local=routes[r].destination_rank==ctx->self;local+=is_local;local_selected+=is_local?routes[r].selected_count:0u;selected+=routes[r].selected_count;rank_mask|=1u<<routes[r].destination_rank;}fprintf(stderr,"EP_ROUTE_TRACE token=%u layer=%u routes=%u remotes=%u local=%u local_selected=%u selected=%u rank_mask=%u",token,layer,route_count,ctx->remote_count,local,local_selected,selected,rank_mask);if(route_trace_enabled()){fprintf(stderr," expert_ids=");for(uint32_t slot=0;slot<FG_TOP_K;slot++)fprintf(stderr,"%s%u",slot?",":"",expert_ids[slot]);fprintf(stderr," expert_ranks=");for(uint32_t slot=0;slot<FG_TOP_K;slot++)fprintf(stderr,"%s%u",slot?",":"",ctx->manifest->expert_rank[layer][expert_ids[slot]]);}fputc('\n',stderr);}
     return status;
 }
 
