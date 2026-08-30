@@ -264,6 +264,9 @@ fg_status fg_frame_encode_version(fg_frame_header *header, uint16_t version,
                                   uint32_t bytes, fg_error *err);
 fg_status fg_frame_encode(fg_frame_header *header, fg_message_type type, uint64_t request_id, uint32_t sequence, uint32_t flags, const void *payload, uint32_t bytes, fg_error *err);
 fg_status fg_frame_validate(const fg_frame_header *header, const void *payload, uint32_t *payload_bytes, fg_error *err);
+fg_status fg_frame_validate_version(const fg_frame_header *header,uint16_t protocol_version,
+                                    const void *payload,uint32_t *payload_bytes,
+                                    fg_error *err);
 uint16_t fg_frame_version(const fg_frame_header *header);
 fg_message_type fg_frame_type(const fg_frame_header *header);
 uint64_t fg_frame_request_id(const fg_frame_header *header);
@@ -285,8 +288,10 @@ fg_status fg_prefill_result_decode(fg_prefill_result *result,fg_prefill_result_p
                                    uint64_t output_capacity_values,const uint8_t *payload,
                                    uint32_t bytes,fg_error *err);
 fg_status fg_prefill_layer_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                       uint16_t protocol_version,
                                        const fg_prefill_layer_work *work,fg_error *err);
-fg_status fg_prefill_layer_work_decode(fg_prefill_layer_work *work,uint32_t *position_storage,
+fg_status fg_prefill_layer_work_decode(fg_prefill_layer_work *work,uint16_t protocol_version,
+                                       uint32_t *position_storage,
                                        uint32_t position_capacity,float *hyper_storage,
                                        uint64_t hyper_capacity_values,float *ngram_storage,
                                        uint64_t ngram_capacity_values,const uint8_t *payload,
@@ -314,8 +319,10 @@ fg_status fg_partition_route(const fg_manifest *manifest,uint32_t layer,const ui
                              const float gates[FG_TOP_K],fg_expert_route routes[FG_GROUP_SIZE],
                              uint32_t *route_count,fg_error *err);
 fg_status fg_layer_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
-                               const fg_layer_work *work,fg_error *err);
-fg_status fg_layer_work_decode(fg_layer_work *work,const uint8_t *payload,uint32_t bytes,fg_error *err);
+                               uint16_t protocol_version,const fg_layer_work *work,
+                               fg_error *err);
+fg_status fg_layer_work_decode(fg_layer_work *work,uint16_t protocol_version,
+                               const uint8_t *payload,uint32_t bytes,fg_error *err);
 fg_status fg_layer_result_encode(uint8_t output[FG_LAYER_RESULT_BYTES],const fg_layer_result *result,
                                  fg_error *err);
 fg_status fg_layer_result_decode(fg_layer_result *result,const uint8_t *payload,uint32_t bytes,

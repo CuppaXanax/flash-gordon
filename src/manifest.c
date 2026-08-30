@@ -426,6 +426,9 @@ fg_status fg_manifest_write(const char *path,fg_manifest *manifest,fg_error *err
     }else if(manifest->format_version==FG_MANIFEST_LEGACY_FORMAT_VERSION){
         manifest->protocol_version=FG_PROTOCOL_MIN_VERSION;
         manifest->header_bytes=(uint32_t)FG_MANIFEST_V4_BYTES;
+        memset(&manifest->session,0,sizeof(manifest->session));
+        manifest->session.position_mode=FG_POSITION_TEXT;
+        build_contract(manifest,&manifest->session);
     }else{
         fg_error_set(err,FG_ERR_MISMATCH,"cannot write unsupported manifest version %u",
                      manifest->format_version);return FG_ERR_MISMATCH;
