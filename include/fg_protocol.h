@@ -31,10 +31,10 @@
 #define FG_PREFILL_LAYER_HEADER_BYTES 16u
 #define FG_PREFILL_LAYER_WORK_MAX_BYTES (FG_PREFILL_LAYER_HEADER_BYTES+FG_PREFILL_MAX_TOKENS*3u*4u+FG_PREFILL_MAX_TOKENS*FG_HYPER_WIDTH*4u+FG_PREFILL_MAX_TOKENS*FG_NGRAM_EMBED_VALUES*4u)
 #define FG_PREFILL_LAYER_RESULT_MAX_BYTES (FG_PREFILL_LAYER_HEADER_BYTES+FG_PREFILL_MAX_TOKENS*FG_HYPER_WIDTH*4u)
-#define FG_NGRAM_SHARD_MAX_HEADS 3u
+#define FG_NGRAM_SHARD_MAX_ITEMS FG_NGRAM_HEAD_COUNT
 #define FG_NGRAM_WIRE_ROW_BYTES 90u
-#define FG_NGRAM_WORK_MAX_BYTES (8u+FG_NGRAM_SHARD_MAX_HEADS*8u)
-#define FG_NGRAM_RESULT_MAX_BYTES (8u+FG_NGRAM_SHARD_MAX_HEADS*FG_NGRAM_WIRE_ROW_BYTES)
+#define FG_NGRAM_WORK_MAX_BYTES (8u+FG_NGRAM_SHARD_MAX_ITEMS*9u)
+#define FG_NGRAM_RESULT_MAX_BYTES (8u+FG_NGRAM_SHARD_MAX_ITEMS*(1u+FG_NGRAM_WIRE_ROW_BYTES))
 
 typedef enum fg_message_type {
     FG_MSG_HELLO = 1,
@@ -198,19 +198,19 @@ typedef struct fg_output_result {
 typedef struct fg_ngram_work {
     uint8_t source_rank;
     uint8_t destination_rank;
-    uint8_t head_begin;
-    uint8_t head_count;
+    uint8_t item_count;
     uint32_t token_index;
-    uint64_t rows[FG_NGRAM_SHARD_MAX_HEADS];
+    uint8_t heads[FG_NGRAM_SHARD_MAX_ITEMS];
+    uint64_t rows[FG_NGRAM_SHARD_MAX_ITEMS];
 } fg_ngram_work;
 
 typedef struct fg_ngram_result {
     uint8_t source_rank;
     uint8_t destination_rank;
-    uint8_t head_begin;
-    uint8_t head_count;
+    uint8_t item_count;
     uint32_t token_index;
-    uint8_t packed[FG_NGRAM_SHARD_MAX_HEADS*FG_NGRAM_WIRE_ROW_BYTES];
+    uint8_t heads[FG_NGRAM_SHARD_MAX_ITEMS];
+    uint8_t packed[FG_NGRAM_SHARD_MAX_ITEMS*FG_NGRAM_WIRE_ROW_BYTES];
 } fg_ngram_result;
 
 uint64_t fg_token_hash_update(uint64_t hash, const int32_t *tokens, size_t count);
