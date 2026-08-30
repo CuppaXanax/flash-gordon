@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -16,6 +17,7 @@
 typedef struct cache_entry{uint64_t offset;uint64_t stamp;bool valid;}cache_entry;
 struct fg_ngram_cache{uint8_t *data;cache_entry *entry;uint64_t stamp;};
 struct fg_ngram_store{int fd;fg_uring *ring;uint32_t slot;uint64_t table_bytes;uint8_t *io_buffer;fg_ngram_cache *cache;fg_vk_context *vk;fg_vk_tensor *packed,*embedding,*embedding_view;uint32_t last_read_count;uint64_t last_read_bytes;double last_io_ms;};
+struct fg_ngram_resident{uint8_t *data;uint64_t row_begin,row_count,bytes;};
 static int u64_cmp(const void *a,const void *b){uint64_t x=*(const uint64_t *)a,y=*(const uint64_t *)b;return x<y?-1:x>y;}
 static double ngram_ts(void){struct timespec value;clock_gettime(CLOCK_MONOTONIC,&value);return (double)value.tv_sec*1e3+(double)value.tv_nsec*1e-6;}
 static bool ngram_trace_enabled(void){const char *enabled=getenv("FG_FRAME_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
@@ -46,6 +48,16 @@ static uint64_t signed_remainder_u64(uint64_t bits,uint64_t divisor){
 
 static const uint32_t q38_ngram_vocab[FG_NGRAM_HEAD_COUNT]={20000003,20000023,20000033,20000047,20000059,20000063,20000069,20000077,20000081,20000093,20000107,20000147,20000153,20000159,20000161,20000171};
 static const uint64_t q38_ngram_offset[FG_NGRAM_HEAD_COUNT]={0,20000003,40000026,60000059,80000106,100000165,120000228,140000297,160000374,180000455,200000548,220000655,240000802,260000955,280001114,300001275};
+
+fg_status fg_q38_ngram_head_range(uint32_t head_begin,uint32_t head_count,uint64_t *row_begin,uint64_t *row_count,fg_error *err){if(!row_begin||!row_count||head_begin>=FG_NGRAM_HEAD_COUNT||!head_count||head_count>FG_NGRAM_HEAD_COUNT-head_begin){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Qwen3.8 n-gram head range");return FG_ERR_ARGUMENT;}uint32_t head_end=head_begin+head_count;uint64_t begin=q38_ngram_offset[head_begin],end=head_end<FG_NGRAM_HEAD_COUNT?q38_ngram_offset[head_end]:q38_ngram_offset[FG_NGRAM_HEAD_COUNT-1u]+q38_ngram_vocab[FG_NGRAM_HEAD_COUNT-1u];*row_begin=begin;*row_count=end-begin;return FG_OK;}
+
+fg_status fg_q38_ngram_rank_heads(uint32_t rank,uint32_t *head_begin,uint32_t *head_count,fg_error *err){static const uint8_t begin[FG_RANK_COUNT]={0u,0u,2u,5u,7u,9u,11u,14u},count[FG_RANK_COUNT]={0u,2u,3u,2u,2u,2u,3u,2u};if(!head_begin||!head_count||rank==0u||rank>=FG_RANK_COUNT){fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident n-gram rank");return FG_ERR_ARGUMENT;}*head_begin=begin[rank];*head_count=count[rank];return FG_OK;}
+
+void fg_ngram_resident_close(fg_ngram_resident *resident){if(!resident)return;if(resident->data){munlock(resident->data,(size_t)resident->bytes);free(resident->data);}free(resident);}
+
+fg_status fg_ngram_resident_open(fg_ngram_resident **out,const char *path,uint64_t row_begin,uint64_t row_count,fg_error *err){if(!out||!path||!row_count||row_count>SIZE_MAX/FG_NGRAM_ROW_BYTES){fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident n-gram shard");return FG_ERR_ARGUMENT;}*out=NULL;uint64_t bytes=row_count*FG_NGRAM_ROW_BYTES;int fd=open(path,O_RDONLY|O_CLOEXEC);if(fd<0){fg_error_set(err,FG_ERR_IO,"open resident n-gram shard: %s",strerror(errno));return FG_ERR_IO;}struct stat stat_value;if(fstat(fd,&stat_value)!=0||(uint64_t)stat_value.st_size!=bytes){close(fd);fg_error_set(err,FG_ERR_MISMATCH,"resident n-gram shard size mismatch");return FG_ERR_MISMATCH;}fg_ngram_resident *resident=calloc(1,sizeof(*resident));if(!resident){close(fd);fg_error_set(err,FG_ERR_OOM,"allocate resident n-gram metadata");return FG_ERR_OOM;}resident->row_begin=row_begin;resident->row_count=row_count;resident->bytes=bytes;if(posix_memalign((void **)&resident->data,FG_ALIGNMENT,(size_t)bytes)!=0){close(fd);fg_ngram_resident_close(resident);fg_error_set(err,FG_ERR_OOM,"allocate resident n-gram shard");return FG_ERR_OOM;}if(mlock(resident->data,(size_t)bytes)!=0){close(fd);fg_ngram_resident_close(resident);fg_error_set(err,FG_ERR_UNAVAILABLE,"lock resident n-gram shard: %s",strerror(errno));return FG_ERR_UNAVAILABLE;}uint64_t offset=0;while(offset<bytes){size_t request=(size_t)((bytes-offset)>(8u*1024u*1024u)?8u*1024u*1024u:bytes-offset);ssize_t got=pread(fd,resident->data+offset,request,(off_t)offset);if(got<0&&errno==EINTR)continue;if(got<=0){close(fd);fg_ngram_resident_close(resident);fg_error_set(err,FG_ERR_IO,"load resident n-gram shard: %s",got<0?strerror(errno):"short read");return FG_ERR_IO;}offset+=(uint64_t)got;}close(fd);*out=resident;return FG_OK;}
+
+fg_status fg_ngram_resident_read(const fg_ngram_resident *resident,const uint64_t *rows,uint32_t row_count,uint8_t *packed,uint64_t packed_capacity,fg_error *err){if(!resident||!rows||!row_count||!packed||packed_capacity<(uint64_t)row_count*FG_NGRAM_ROW_BYTES){fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident n-gram read");return FG_ERR_ARGUMENT;}for(uint32_t i=0;i<row_count;i++){if(rows[i]<resident->row_begin||rows[i]-resident->row_begin>=resident->row_count){fg_error_set(err,FG_ERR_MISMATCH,"n-gram row %llu is outside resident shard",(unsigned long long)rows[i]);return FG_ERR_MISMATCH;}memcpy(packed+(uint64_t)i*FG_NGRAM_ROW_BYTES,resident->data+(rows[i]-resident->row_begin)*FG_NGRAM_ROW_BYTES,FG_NGRAM_ROW_BYTES);}return FG_OK;}
 
 static void q38_ngram_fill(const int32_t *tokens,size_t end,size_t segment_start,
                            uint64_t rows[FG_NGRAM_HEAD_COUNT],uint64_t addresses[FG_NGRAM_HEAD_COUNT]){
@@ -114,3 +126,5 @@ fg_status fg_ngram_store_lookup_prefill(fg_ngram_store *s,const int32_t *tokens,
 fg_status fg_ngram_store_lookup(fg_ngram_store *s,const int32_t *tokens,size_t count,fg_vk_tensor **embedding,fg_error *err){
     if(!count||count-1u>UINT32_MAX){fg_error_set(err,FG_ERR_LIMIT,"n-gram lookup history exceeds supported context index");return FG_ERR_LIMIT;}return fg_ngram_store_lookup_prefill(s,tokens,count,(uint32_t)(count-1u),1u,embedding,err);
 }
+
+fg_status fg_ngram_store_decode_packed(fg_ngram_store *s,const uint8_t *packed,uint32_t row_count,fg_vk_tensor **embedding,fg_error *err){if(!s||!packed||!row_count||row_count>FG_NGRAM_PREFILL_MAX_ROWS||!embedding){fg_error_set(err,FG_ERR_ARGUMENT,"invalid packed n-gram decode");return FG_ERR_ARGUMENT;}uint64_t packed_bytes=(uint64_t)row_count*FG_NGRAM_ROW_BYTES;fg_status status=fg_vk_tensor_write(s->packed,0,packed,packed_bytes,err);if(status==FG_OK)status=fg_vk_dequantize_iq4_nl(s->vk,s->embedding,s->packed,row_count,FG_NGRAM_EMBED_WIDTH,err);if(status==FG_OK){fg_vk_tensor_destroy(s->embedding_view);s->embedding_view=NULL;uint64_t bytes=(uint64_t)row_count*FG_NGRAM_EMBED_WIDTH*4u;if(bytes==fg_vk_tensor_bytes(s->embedding))*embedding=s->embedding;else{status=fg_vk_tensor_view(s->embedding,0,bytes,&s->embedding_view,err);if(status==FG_OK)*embedding=s->embedding_view;}}return status;}

@@ -31,6 +31,10 @@
 #define FG_PREFILL_LAYER_HEADER_BYTES 16u
 #define FG_PREFILL_LAYER_WORK_MAX_BYTES (FG_PREFILL_LAYER_HEADER_BYTES+FG_PREFILL_MAX_TOKENS*3u*4u+FG_PREFILL_MAX_TOKENS*FG_HYPER_WIDTH*4u+FG_PREFILL_MAX_TOKENS*FG_NGRAM_EMBED_VALUES*4u)
 #define FG_PREFILL_LAYER_RESULT_MAX_BYTES (FG_PREFILL_LAYER_HEADER_BYTES+FG_PREFILL_MAX_TOKENS*FG_HYPER_WIDTH*4u)
+#define FG_NGRAM_SHARD_MAX_HEADS 3u
+#define FG_NGRAM_WIRE_ROW_BYTES 90u
+#define FG_NGRAM_WORK_MAX_BYTES (8u+FG_NGRAM_SHARD_MAX_HEADS*8u)
+#define FG_NGRAM_RESULT_MAX_BYTES (8u+FG_NGRAM_SHARD_MAX_HEADS*FG_NGRAM_WIRE_ROW_BYTES)
 
 typedef enum fg_message_type {
     FG_MSG_HELLO = 1,
@@ -48,7 +52,9 @@ typedef enum fg_message_type {
     FG_MSG_OUTPUT_RESULT = 13,
     FG_MSG_PREFILL_RESULT = 14,
     FG_MSG_PREFILL_LAYER_WORK = 15,
-    FG_MSG_PREFILL_LAYER_RESULT = 16
+    FG_MSG_PREFILL_LAYER_RESULT = 16,
+    FG_MSG_NGRAM_WORK = 17,
+    FG_MSG_NGRAM_RESULT = 18
 } fg_message_type;
 
 typedef struct fg_frame_header {
@@ -189,6 +195,24 @@ typedef struct fg_output_result {
     float logit;
 } fg_output_result;
 
+typedef struct fg_ngram_work {
+    uint8_t source_rank;
+    uint8_t destination_rank;
+    uint8_t head_begin;
+    uint8_t head_count;
+    uint32_t token_index;
+    uint64_t rows[FG_NGRAM_SHARD_MAX_HEADS];
+} fg_ngram_work;
+
+typedef struct fg_ngram_result {
+    uint8_t source_rank;
+    uint8_t destination_rank;
+    uint8_t head_begin;
+    uint8_t head_count;
+    uint32_t token_index;
+    uint8_t packed[FG_NGRAM_SHARD_MAX_HEADS*FG_NGRAM_WIRE_ROW_BYTES];
+} fg_ngram_result;
+
 uint64_t fg_token_hash_update(uint64_t hash, const int32_t *tokens, size_t count);
 uint32_t fg_crc32c(const void *data, size_t bytes);
 fg_status fg_frame_encode(fg_frame_header *header, fg_message_type type, uint64_t request_id, uint32_t sequence, uint32_t flags, const void *payload, uint32_t bytes, fg_error *err);
@@ -256,5 +280,13 @@ fg_status fg_output_result_encode(uint8_t output[FG_OUTPUT_RESULT_BYTES],const f
                                   fg_error *err);
 fg_status fg_output_result_decode(fg_output_result *result,const uint8_t *payload,uint32_t bytes,
                                   fg_error *err);
+fg_status fg_ngram_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                               const fg_ngram_work *work,fg_error *err);
+fg_status fg_ngram_work_decode(fg_ngram_work *work,const uint8_t *payload,uint32_t bytes,
+                               fg_error *err);
+fg_status fg_ngram_result_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                 const fg_ngram_result *result,fg_error *err);
+fg_status fg_ngram_result_decode(fg_ngram_result *result,const uint8_t *payload,uint32_t bytes,
+                                 fg_error *err);
 
 #endif

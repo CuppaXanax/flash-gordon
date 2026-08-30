@@ -17,6 +17,7 @@
 typedef struct fg_ngram_read {uint64_t offset;uint32_t bytes;} fg_ngram_read;
 typedef struct fg_ngram_cache fg_ngram_cache;
 typedef struct fg_ngram_store fg_ngram_store;
+typedef struct fg_ngram_resident fg_ngram_resident;
 
 /* Converts arbitrary tensor byte addresses to sorted, deduplicated 4-8 KiB
    O_DIRECT reads. Adjacent blocks are paired, never widened beyond 8 KiB. */
@@ -28,11 +29,24 @@ fg_status fg_ngram_cache_put(fg_ngram_cache *cache,uint64_t block_offset,const v
 fg_status fg_q38_ngram_lookup(const int32_t *token_history,size_t token_count,
                               uint64_t row_ids[FG_NGRAM_HEAD_COUNT],
                               uint64_t byte_addresses[FG_NGRAM_HEAD_COUNT],fg_error *err);
+fg_status fg_q38_ngram_head_range(uint32_t head_begin,uint32_t head_count,
+                                  uint64_t *row_begin,uint64_t *row_count,fg_error *err);
+fg_status fg_q38_ngram_rank_heads(uint32_t rank,uint32_t *head_begin,
+                                  uint32_t *head_count,fg_error *err);
+fg_status fg_ngram_resident_open(fg_ngram_resident **out,const char *path,
+                                 uint64_t row_begin,uint64_t row_count,fg_error *err);
+void fg_ngram_resident_close(fg_ngram_resident *resident);
+fg_status fg_ngram_resident_read(const fg_ngram_resident *resident,const uint64_t *rows,
+                                 uint32_t row_count,uint8_t *packed,uint64_t packed_capacity,
+                                 fg_error *err);
 fg_status fg_ngram_store_open(fg_ngram_store **out,fg_vk_context *vk,const char *path,
                               uint64_t table_bytes,fg_error *err);
 void fg_ngram_store_close(fg_ngram_store *store);
 fg_status fg_ngram_store_lookup(fg_ngram_store *store,const int32_t *token_history,
                                 size_t token_count,fg_vk_tensor **embedding,fg_error *err);
+fg_status fg_ngram_store_decode_packed(fg_ngram_store *store,const uint8_t *packed,
+                                       uint32_t row_count,fg_vk_tensor **embedding,
+                                       fg_error *err);
 /* Computes the n-gram rows for each sequential prompt position and returns one
    borrowed, exact-sized token-major [token_count, 2560] FP32 tensor view.  The
    input is bounded so all direct-I/O planning and Vulkan arenas are provisioned
