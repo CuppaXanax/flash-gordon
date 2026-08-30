@@ -5,6 +5,7 @@
 
 typedef struct fg_vk_context fg_vk_context;
 typedef struct fg_vk_tensor fg_vk_tensor;
+typedef struct fg_vk_expert_graph fg_vk_expert_graph;
 
 #define FG_VK_PROFILE_MAX_KERNELS 64u
 
@@ -42,6 +43,19 @@ void fg_vk_get_counters(const fg_vk_context *context,fg_vk_counters *counters);
 fg_status fg_vk_begin(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_end(fg_vk_context *context,fg_error *err);
 bool fg_vk_batch_active(const fg_vk_context *context);
+
+fg_status fg_vk_expert_graph_create(fg_vk_context *context,fg_vk_expert_graph **out,
+                                     fg_vk_tensor *activation,fg_vk_tensor *tiles,
+                                     fg_vk_tensor *gates,fg_vk_tensor *gate,fg_vk_tensor *up,
+                                     fg_vk_tensor *mid,fg_vk_tensor *down,fg_vk_tensor *reduced,
+                                     const fg_vk_tensor *gate_weights,const fg_vk_tensor *up_weights,
+                                     const fg_vk_tensor *down_weights,uint32_t gate_type,
+                                     uint32_t up_type,uint32_t down_type,uint32_t hidden_width,
+                                     uint32_t mid_width,uint32_t gate_expert_stride,
+                                     uint32_t up_expert_stride,uint32_t down_expert_stride,
+                                     uint32_t weight_experts,uint32_t slots,fg_error *err);
+void fg_vk_expert_graph_destroy(fg_vk_expert_graph *graph);
+fg_status fg_vk_expert_graph_execute(fg_vk_expert_graph *graph,fg_error *err);
 
 fg_status fg_vk_tensor_create(fg_vk_context *context,uint64_t bytes,fg_vk_tensor **out,fg_error *err);
 fg_status fg_vk_tensor_view(fg_vk_tensor *base,uint64_t offset,uint64_t bytes,fg_vk_tensor **out,fg_error *err);
