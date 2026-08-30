@@ -100,13 +100,10 @@ fg_status fg_owner_gdn_decode(fg_owner_executor *executor,uint32_t layer,const f
     if(!gdn_diag_done){gdn_diag_done=1;const float *a_vals=fg_vk_tensor_map(a_decay),*dt_vals=fg_vk_tensor_map(dt_bias);fprintf(stderr,"GDN_DIAG layer=%u ssm_a[0..7]=%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f dt_bias[0..3]=%.4f,%.4f,%.4f,%.4f\n",layer,a_vals[0],a_vals[1],a_vals[2],a_vals[3],a_vals[4],a_vals[5],a_vals[6],a_vals[7],dt_vals[0],dt_vals[1],dt_vals[2],dt_vals[3]);}
     fg_status status=fg_vk_profile_active(vk)?fg_vk_profile_set_scope(vk,"gdn_projection",err):FG_OK;
     if(status==FG_OK)status=fg_vk_begin(vk,err);
-    if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,executor->gdn_qkv,qkv_weight,hidden,2560u,10240u,1u,1.0f,err);
-    if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,executor->gdn_z,z_weight,hidden,2560u,6144u,1u,1.0f,err);
-    if(status==FG_OK)status=fg_vk_dense_f32(vk,executor->gdn_alpha,alpha_weight,hidden,2560u,48u,1u,err);
-    if(status==FG_OK)status=fg_vk_dense_f32(vk,executor->gdn_beta,beta_weight,hidden,2560u,48u,1u,err);
+    if(status==FG_OK)status=fg_vk_gdn_project_decode(vk,executor->gdn_qkv,executor->gdn_z,executor->gdn_alpha,executor->gdn_beta,qkv_weight,z_weight,alpha_weight,beta_weight,hidden,err);
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gdn_recurrent",err);
     if(status==FG_OK)status=fg_vk_gdn_conv_decode(vk,executor->gdn_conv_output,executor->gdn_state[layer].conv_state,executor->gdn_qkv,conv_weight,10240u,err);
-    if(status==FG_OK)status=fg_vk_gdn_recurrent_decode(vk,executor->gdn_core,executor->gdn_state[layer].recurrent_state,executor->gdn_conv_output,executor->gdn_z,executor->gdn_alpha,executor->gdn_beta,a_decay,dt_bias,norm_weight,48u,16u,128u,1e-6f,err);
+    if(status==FG_OK)status=fg_vk_gdn_recurrent_algebraic(vk,executor->gdn_core,executor->gdn_state[layer].recurrent_state,executor->gdn_conv_output,executor->gdn_z,executor->gdn_alpha,executor->gdn_beta,a_decay,dt_bias,norm_weight,48u,16u,128u,1e-6f,err);
     if(status==FG_OK){fg_status end_status=fg_vk_end(vk,err);if(end_status!=FG_OK)status=end_status;}
     if(status==FG_OK&&layer==0u){const float *alpha_vals=fg_vk_tensor_map(executor->gdn_alpha),*a_vals2=fg_vk_tensor_map(a_decay),*dt_vals2=fg_vk_tensor_map(dt_bias);float sp0=alpha_vals[0]+dt_vals2[0];sp0=sp0>0.0f?sp0+logf(1.0f+expf(-sp0)):logf(1.0f+expf(sp0));float example_decay=expf(a_vals2[0]*sp0);fprintf(stderr,"GDN_DECAY layer=0 alpha[0]=%.4f softplus=%.4f a[0]=%.4f decay[0]=%.6f\n",alpha_vals[0],sp0,a_vals2[0],example_decay);}
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gdn_output",err);

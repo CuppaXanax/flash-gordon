@@ -118,6 +118,11 @@ fg_status fg_vk_gdn_conv_decode(fg_vk_context *context,fg_vk_tensor *output,fg_v
 fg_status fg_vk_gdn_conv_prefill(fg_vk_context *context,fg_vk_tensor *output,fg_vk_tensor *state,
                                  const fg_vk_tensor *projection,const fg_vk_tensor *weight,
                                  uint32_t channels,uint32_t tokens,fg_error *err);
+fg_status fg_vk_gdn_project_decode(fg_vk_context *context,fg_vk_tensor *qkv,
+                                   fg_vk_tensor *z,fg_vk_tensor *alpha,fg_vk_tensor *beta,
+                                   const fg_vk_tensor *qkv_weight,const fg_vk_tensor *z_weight,
+                                   const fg_vk_tensor *alpha_weight,const fg_vk_tensor *beta_weight,
+                                   const fg_vk_tensor *hidden,fg_error *err);
 fg_status fg_vk_gdn_recurrent_decode(fg_vk_context *context,fg_vk_tensor *output,fg_vk_tensor *state,
                                      const fg_vk_tensor *qkv,const fg_vk_tensor *z,const fg_vk_tensor *alpha,
                                      const fg_vk_tensor *beta,const fg_vk_tensor *a_log,const fg_vk_tensor *dt_bias,
