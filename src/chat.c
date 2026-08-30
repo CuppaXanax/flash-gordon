@@ -1233,13 +1233,16 @@ static fg_status chat_token(void *context, uint32_t token, const char *text, siz
     return status;
 }
 
-fg_status fg_chat_main(const char *manifest_path, uint32_t max_tokens, fg_error *err) {
+fg_status fg_chat_main_with_options(const char *manifest_path, uint32_t max_tokens,
+                                    const fg_runtime_options *runtime_options,
+                                    fg_error *err) {
     if (!manifest_path || !max_tokens) {
         fg_error_set(err, FG_ERR_ARGUMENT, "chat requires a manifest and positive max tokens");
         return FG_ERR_ARGUMENT;
     }
     fg_runtime *runtime = NULL;
-    fg_status status = fg_runtime_open(&runtime, manifest_path, err);
+    fg_status status = fg_runtime_open_with_options(&runtime, manifest_path,
+                                                    runtime_options, err);
     if (status != FG_OK) return status;
 
     struct sigaction action = {0}, old_int = {0}, old_term = {0};
@@ -1331,5 +1334,9 @@ fg_status fg_chat_main(const char *manifest_path, uint32_t max_tokens, fg_error 
     sigaction(SIGTERM, &old_term, NULL);
     fg_runtime_close(runtime);
     return status;
+}
+
+fg_status fg_chat_main(const char *manifest_path, uint32_t max_tokens, fg_error *err) {
+    return fg_chat_main_with_options(manifest_path, max_tokens, NULL, err);
 }
 #endif

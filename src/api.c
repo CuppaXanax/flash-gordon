@@ -2015,15 +2015,18 @@ static fg_status configure_client_socket(int fd, fg_error *err) {
     return FG_OK;
 }
 
-fg_status fg_api_main(const char *manifest_path, const char *host, uint16_t port,
-                      fg_error *err) {
+fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
+                                   uint16_t port,
+                                   const fg_runtime_options *runtime_options,
+                                   fg_error *err) {
     if (!manifest_path || !host || !host[0] || !port) {
         fg_error_set(err, FG_ERR_ARGUMENT,
                      "api requires manifest, non-empty host, and non-zero port");
         return FG_ERR_ARGUMENT;
     }
     fg_runtime *runtime = NULL;
-    fg_status status = fg_runtime_open(&runtime, manifest_path, err);
+    fg_status status =
+        fg_runtime_open_with_options(&runtime, manifest_path, runtime_options, err);
     if (status != FG_OK) return status;
     int listener = -1;
     status = open_listener(host, port, &listener, err);
@@ -2112,4 +2115,9 @@ fg_status fg_api_main(const char *manifest_path, const char *host, uint16_t port
     sigaction(SIGPIPE, &old_pipe, NULL);
     fg_runtime_close(runtime);
     return status;
+}
+
+fg_status fg_api_main(const char *manifest_path, const char *host, uint16_t port,
+                      fg_error *err) {
+    return fg_api_main_with_options(manifest_path, host, port, NULL, err);
 }
