@@ -194,6 +194,12 @@ static int test_kquant_expert_major_batch(int type){
     fg_vk_tensor_destroy(output);fg_vk_tensor_destroy(schedule);fg_vk_tensor_destroy(a);fg_vk_tensor_destroy(w);free(weights);return ok;
 }
 
+static int test_moe_gate_up_swiglu(void){
+    enum{INPUT=256,OUTPUT=8,SLOTS=4};uint32_t gate_block_bytes=144u,up_block_bytes=176u,gate_stride=OUTPUT*gate_block_bytes,up_stride=OUTPUT*up_block_bytes;uint8_t *gate_weights=calloc(OUTPUT,gate_block_bytes),*up_weights=calloc(OUTPUT,up_block_bytes),activation[FG_Q8_K_BLOCK_BYTES];float input[INPUT],got[SLOTS*OUTPUT];uint32_t tiles[9];if(!gate_weights||!up_weights){free(up_weights);free(gate_weights);return 0;}for(uint32_t i=0;i<9u;i++)tiles[i]=UINT32_MAX;tiles[0]=0u;tiles[1]=3u;for(uint32_t row=0;row<OUTPUT;row++){make_k_row(gate_weights+row*gate_block_bytes,0,row+5u);make_k_row(up_weights+row*up_block_bytes,1,row+19u);}for(uint32_t i=0;i<INPUT;i++)input[i]=sinf((float)(i+3u)*0.017f);fg_quantize_q8_k(input,activation,INPUT);
+    fg_vk_tensor *gw=tensor(gate_weights,gate_stride),*uw=tensor(up_weights,up_stride),*ga=tensor(activation,sizeof(activation)),*gt=tensor(tiles,sizeof(tiles)),*go=tensor(NULL,sizeof(got));int ok=gw&&uw&&ga&&gt&&go&&fg_vk_moe_gate_up_swiglu(context,go,gw,uw,ga,gt,12u,13u,OUTPUT,INPUT,gate_stride,up_stride,SLOTS,SLOTS,false,1u,&error)==FG_OK&&fg_vk_tensor_read(go,0,got,sizeof(got),&error)==FG_OK;for(uint32_t row=0;ok&&row<OUTPUT;row++){float gate=fg_dot_q4_k_q8_k(gate_weights+row*gate_block_bytes,activation,INPUT),up=fg_dot_q5_k_q8_k(up_weights+row*up_block_bytes,activation,INPUT),expected=(gate/(1.0f+expf(-gate)))*up,value=got[3u*OUTPUT+row];if(fabsf(value-expected)>3e-4f*fmaxf(1.0f,fabsf(expected))){fprintf(stderr,"fused gate/up row %u GPU=%g CPU=%g diff=%g\n",row,value,expected,value-expected);ok=0;}}
+    fg_vk_tensor_destroy(go);fg_vk_tensor_destroy(gt);fg_vk_tensor_destroy(ga);fg_vk_tensor_destroy(uw);fg_vk_tensor_destroy(gw);free(up_weights);free(gate_weights);return ok;
+}
+
 static float softplus_ref(float value){return fmaxf(value,0.0f)+log1pf(expf(-fabsf(value)));}
 static int test_gdn_decode(void){
     enum{VALUE_HEADS=48,KEY_HEADS=16,DIM=128,KEY_WIDTH=KEY_HEADS*DIM,VALUE_WIDTH=VALUE_HEADS*DIM,QKV_WIDTH=2*KEY_WIDTH+VALUE_WIDTH,STATE_VALUES=VALUE_HEADS*DIM*DIM};
@@ -300,6 +306,7 @@ ok=run_test_i("kquant",test_kquant,12)&&ok;
 ok=run_test_i("kquant",test_kquant,13)&&ok;
 ok=run_test_i("kquant_expert_major_batch",test_kquant_expert_major_batch,12)&&ok;
 ok=run_test_i("kquant_expert_major_batch",test_kquant_expert_major_batch,13)&&ok;
+ok=run_test("moe_gate_up_swiglu",test_moe_gate_up_swiglu)&&ok;
 ok=run_test("gdn_decode",test_gdn_decode)&&ok;
 ok=run_test("gdn_algebraic",test_gdn_algebraic)&&ok;
 ok=run_test("gdn_prefill_scan",test_gdn_prefill_scan)&&ok;
