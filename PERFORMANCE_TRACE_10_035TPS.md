@@ -202,12 +202,12 @@ Once the final required peer is socket-ready, only `52.03 us/layer` remains on a
 
 | Priority | Avenue | Evidence and falsifiable gate |
 |---:|---|---|
-| 1 | General cooked expert kernels | Gate/up/down own `98.28%` of critical-worker named kernel time. Test an all-route optimization such as a combined cooked gate/up pass, not an exact-route graph. Require exact parity, at least `0.10 ms` improvement in fixed-graph slowest-worker P50, and at least `4 ms` final-20 layer-wall improvement before adoption. |
+| 1 | General cooked expert kernels | Gate/up/down own `98.28%` of critical-worker named kernel time, and the shared `fg_moe_kquant_cooked` gate/up shader owns `66.23%`. Improve its general cooked weight-streaming path without repeating the rejected monolithic gate/up/SwiGLU fusion. Require exact parity, at least `0.10 ms` improvement in fixed-graph slowest-worker P50, and at least `4 ms` final-20 layer-wall improvement before adoption. |
 | 2 | Common cooked-dense path | `fg_dense_q8_0_cooked.spv` owns `18.863 ms` (`44.43%`) of coordinator kernel time; GDN plus GR reads own `61.50%`. Require a reproducible kernel win and at least `1.5 ms` final-20 frame improvement. |
 | 3 | Rank-4 output | Output is a stable `3.872 ms` and currently has only wall attribution in the retained capture. First retain rank-4 output kernel records, then require at least `0.75 ms` wall improvement. |
 | 4 | New receive architecture | Only about `2.50 ms` remains after final socket readiness. Revisit transport only with a mechanism materially different from the rejected preposting, direct-receive, busy-poll, batched-send, and scatter/gather variants. |
 
-The fixed expert graph is already pre-recorded as one five-dispatch command buffer and waits on one fence. Exact-N graph variants and fence spinning have already failed fleet qualification. A future graph experiment must remove a real dependency or fuse general computation; re-recording the same work is not a new avenue.
+The fixed expert graph is already pre-recorded as one five-dispatch command buffer and waits on one fence. Exact-N graph variants, fence spinning, and monolithic gate/up/SwiGLU fusion have already failed fleet qualification. A future graph experiment must remove a real dependency or materially reduce general kernel work; re-recording the same work is not a new avenue.
 
 | Target | Frame budget | Required saving from LKG |
 |---:|---:|---:|
