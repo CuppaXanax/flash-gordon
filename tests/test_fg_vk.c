@@ -35,6 +35,10 @@ static int test_q8_dense(void){
     fg_vk_tensor_destroy(output);fg_vk_tensor_destroy(input);fg_vk_tensor_destroy(w);return ok;
 }
 
+static int test_q8_dense_subgroup(void){
+    enum{INPUT=256,OUTPUT=17,TOKENS=2};float *source=malloc((size_t)INPUT*OUTPUT*4u),input[TOKENS*INPUT],got[TOKENS*OUTPUT];uint32_t row_bytes=(INPUT/32u)*FG_Q8_0_BLOCK_BYTES;uint8_t *quantized=malloc((size_t)OUTPUT*row_bytes);if(!source||!quantized){free(quantized);free(source);return 0;}for(uint32_t token=0;token<TOKENS;token++)for(uint32_t i=0;i<INPUT;i++)input[token*INPUT+i]=cosf((float)(token+1u)*(float)(i+3u)*0.013f);for(uint32_t row=0;row<OUTPUT;row++){for(uint32_t i=0;i<INPUT;i++)source[row*INPUT+i]=sinf((float)(row*INPUT+i)*0.009f);fg_quantize_q8_0(source+row*INPUT,quantized+(uint64_t)row*row_bytes,INPUT);}fg_vk_tensor *w=tensor(quantized,(uint64_t)OUTPUT*row_bytes),*x=tensor(input,sizeof(input)),*y=tensor(NULL,sizeof(got));int ok=w&&x&&y&&fg_vk_dense_q8_0_subgroup(context,y,w,x,INPUT,OUTPUT,TOKENS,0.75f,&error)==FG_OK&&fg_vk_tensor_read(y,0,got,sizeof(got),&error)==FG_OK;for(uint32_t token=0;ok&&token<TOKENS;token++)for(uint32_t row=0;row<OUTPUT;row++){float ref=0.0f;const uint8_t *blocks=quantized+(uint64_t)row*row_bytes;for(uint32_t block=0;block<INPUT/32u;block++){const uint8_t *p=blocks+block*FG_Q8_0_BLOCK_BYTES;float delta=fg_f16_to_f32((uint16_t)p[0]|(uint16_t)((uint16_t)p[1]<<8u));for(uint32_t i=0;i<32u;i++)ref=fmaf(delta*(float)(int8_t)p[2u+i],input[token*INPUT+block*32u+i],ref);}ref*=0.75f;if(fabsf(got[token*OUTPUT+row]-ref)>2e-4f*fmaxf(1.0f,fabsf(ref))){fprintf(stderr,"subgroup Q8 token %u row %u GPU=%g CPU=%g\n",token,row,got[token*OUTPUT+row],ref);ok=0;break;}}fg_vk_tensor_destroy(y);fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);free(quantized);free(source);return ok;
+}
+
 static int test_q8_embedding(void){
     enum{ROWS=3,WIDTH=2560,COPIES=4};
     const uint64_t row_bytes=(uint64_t)(WIDTH/32u)*FG_Q8_0_BLOCK_BYTES;
@@ -291,6 +295,7 @@ static int run_test_i(const char *name,int (*fn)(int),int arg){fprintf(stderr," 
 int main(void){if(fg_vk_open(&context,&error)!=FG_OK){fprintf(stderr,"Vulkan unavailable: %s\n",error.message);return 77;}fprintf(stderr,"Flash Gordon Vulkan device: %s\n",fg_vk_device_name(context));int ok=1;
 ok=run_test("gpu_profile",test_gpu_profile)&&ok;
 ok=run_test("q8_dense",test_q8_dense)&&ok;
+ok=run_test("q8_dense_subgroup",test_q8_dense_subgroup)&&ok;
 ok=run_test("q8_embedding",test_q8_embedding)&&ok;
 ok=run_test("hc_finalize",test_hc_finalize)&&ok;
 ok=run_test("q8_k_quant",test_q8_k_quant)&&ok;

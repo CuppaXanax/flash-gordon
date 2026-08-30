@@ -1,0 +1,70 @@
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Weights { uint wb[]; };
+layout(set = 0, binding = 1) readonly buffer Input { vec4 x4[]; };
+layout(set = 0, binding = 2) writeonly buffer Output { float y[]; };
+layout(push_constant) uniform Push {
+    uint out_dim;
+    uint n_tok;
+    uint blocks;
+    uint row_bytes;
+    float scale;
+} pc;
+
+shared float subgroup_sum[64];
+
+float load_scale(uint byte_offset) {
+    uint word = wb[byte_offset >> 2u];
+    uint shift = (byte_offset & 3u) * 8u;
+    uint bits = (word >> shift) & 0xffffu;
+    if ((byte_offset & 3u) == 3u) {
+        bits = (word >> 24u) | ((wb[(byte_offset >> 2u) + 1u] & 0xffu) << 8u);
+    }
+    return unpackHalf2x16(bits).x;
+}
+
+void main() {
+    uint local_id = gl_LocalInvocationID.x;
+    uint row = gl_WorkGroupID.x;
+    uint token = gl_WorkGroupID.y;
+    if (row >= pc.out_dim || token >= pc.n_tok) return;
+
+    uint input_width = pc.blocks * 32u;
+    uint row_base = row * pc.row_bytes;
+    uint input_base = token * (input_width / 4u);
+    float accumulator = 0.0;
+
+    for (uint index = local_id * 4u; index + 3u < input_width; index += 256u) {
+        uint block = index >> 5u;
+        uint block_base = row_base + block * 34u;
+        float delta = load_scale(block_base);
+
+        uint quant_offset = block_base + 2u + (index & 31u);
+        uint quant_word = quant_offset >> 2u;
+        uint quant_shift = (quant_offset & 3u) * 8u;
+        uint packed = quant_shift == 0u ? wb[quant_word] :
+            (wb[quant_word] >> quant_shift) | (wb[quant_word + 1u] << (32u - quant_shift));
+        int q0 = int(packed & 0xffu); q0 -= q0 >= 128 ? 256 : 0;
+        int q1 = int((packed >> 8u) & 0xffu); q1 -= q1 >= 128 ? 256 : 0;
+        int q2 = int((packed >> 16u) & 0xffu); q2 -= q2 >= 128 ? 256 : 0;
+        int q3 = int(packed >> 24u); q3 -= q3 >= 128 ? 256 : 0;
+        vec4 input_value = x4[input_base + (index >> 2u)];
+        accumulator = fma(delta, dot(vec4(float(q0), float(q1), float(q2), float(q3)),
+                                     input_value), accumulator);
+    }
+
+    float reduced = subgroupAdd(accumulator);
+    if (subgroupElect()) subgroup_sum[gl_SubgroupID] = reduced;
+    barrier();
+    if (local_id == 0u) {
+        float total = 0.0;
+        for (uint subgroup = 0u; subgroup < gl_NumSubgroups; subgroup++) {
+            total += subgroup_sum[subgroup];
+        }
+        y[token * pc.out_dim + row] = total * pc.scale;
+    }
+}

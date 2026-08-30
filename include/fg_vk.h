@@ -78,6 +78,10 @@ fg_status fg_vk_swiglu(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_t
 fg_status fg_vk_dense_q8_0_f32(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *weights,
                                const fg_vk_tensor *input,uint32_t input_width,uint32_t output_width,
                                uint32_t tokens,float scale,fg_error *err);
+fg_status fg_vk_dense_q8_0_subgroup(fg_vk_context *context,fg_vk_tensor *output,
+                                    const fg_vk_tensor *weights,const fg_vk_tensor *input,
+                                    uint32_t input_width,uint32_t output_width,
+                                    uint32_t tokens,float scale,fg_error *err);
 fg_status fg_vk_embedding_q8_0(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *weights,
                                uint32_t token,uint32_t width,uint32_t rows,uint32_t copies,fg_error *err);
 fg_status fg_vk_embedding_q8_0_batch(fg_vk_context *context,fg_vk_tensor *output,
