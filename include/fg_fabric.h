@@ -8,7 +8,7 @@
 typedef enum fg_fabric_class { FG_FABRIC_CONTROL=0, FG_FABRIC_BULK=1 } fg_fabric_class;
 typedef struct fg_fabric fg_fabric;
 typedef struct fg_fabric_recv_timing {
-    uint64_t poll_start_ns,ready_ns,header_end_ns,payload_end_ns;
+    uint64_t poll_start_ns,ready_ns,header_end_ns,payload_end_ns,validate_end_ns;
     uint32_t ready_mask;
 } fg_fabric_recv_timing;
 
