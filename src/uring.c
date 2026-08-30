@@ -26,7 +26,7 @@ static int uring_register(int fd,unsigned op,const void *arg,unsigned nr){return
 
 fg_status fg_uring_create(fg_uring **out,fg_ring_class cls,uint32_t entries,fg_error *err){
     if(!out||entries<8){fg_error_set(err,FG_ERR_ARGUMENT,"io_uring requires at least 8 entries");return FG_ERR_ARGUMENT;}*out=NULL;fg_uring *r=calloc(1,sizeof(*r));if(!r){fg_error_set(err,FG_ERR_OOM,"allocate io_uring");return FG_ERR_OOM;}r->fd=-1;r->ring_class=cls;
-    struct io_uring_params p={0};p.flags=IORING_SETUP_CLAMP;if(cls==FG_RING_FABRIC)p.flags|=IORING_SETUP_COOP_TASKRUN;const char *poll=getenv("FG_NGRAM_IOPOLL");if(cls==FG_RING_NGRAM&&poll&&*poll&&strcmp(poll,"0")!=0)p.flags|=IORING_SETUP_IOPOLL;
+    struct io_uring_params p={0};p.flags=IORING_SETUP_CLAMP;if(cls==FG_RING_FABRIC)p.flags|=IORING_SETUP_COOP_TASKRUN;
     r->fd=uring_setup(entries,&p);if(r->fd<0){fg_error_set(err,FG_ERR_UNAVAILABLE,"io_uring_setup: %s",strerror(errno));free(r);return FG_ERR_UNAVAILABLE;}r->entries=p.sq_entries;
     r->sq_map_bytes=p.sq_off.array+p.sq_entries*sizeof(unsigned);r->cq_map_bytes=p.cq_off.cqes+p.cq_entries*sizeof(struct io_uring_cqe);
     if(p.features&IORING_FEAT_SINGLE_MMAP){size_t n=r->sq_map_bytes>r->cq_map_bytes?r->sq_map_bytes:r->cq_map_bytes;r->sq_map=mmap(NULL,n,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_POPULATE,r->fd,IORING_OFF_SQ_RING);r->cq_map=r->sq_map;r->sq_map_bytes=r->cq_map_bytes=n;}else{r->sq_map=mmap(NULL,r->sq_map_bytes,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_POPULATE,r->fd,IORING_OFF_SQ_RING);r->cq_map=mmap(NULL,r->cq_map_bytes,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_POPULATE,r->fd,IORING_OFF_CQ_RING);}
