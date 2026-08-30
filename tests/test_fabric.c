@@ -6,7 +6,32 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#define fg_prefill_layer_work_encode(output,capacity,bytes,work,error) \
+    fg_prefill_layer_work_encode(output,capacity,bytes,fg_fabric_protocol_version(fabric),work,error)
+#define fg_prefill_layer_work_decode(work,positions,position_capacity,hyper,hyper_capacity,ngram,ngram_capacity,payload,bytes,error) \
+    fg_prefill_layer_work_decode(work,fg_fabric_protocol_version(fabric),positions,position_capacity,hyper,hyper_capacity,ngram,ngram_capacity,payload,bytes,error)
+#define fg_layer_work_encode(output,capacity,bytes,work,error) \
+    fg_layer_work_encode(output,capacity,bytes,fg_fabric_protocol_version(fabric),work,error)
+#define fg_layer_work_decode(work,payload,bytes,error) \
+    fg_layer_work_decode(work,fg_fabric_protocol_version(fabric),payload,bytes,error)
+
 static fg_status batch_send_roundtrip(fg_fabric *fabric,uint32_t rank,uint64_t request,fg_error *error){
+    uint16_t protocol=fg_fabric_protocol_version(fabric);
+    uint16_t other=protocol==FG_PROTOCOL_MIN_VERSION?FG_PROTOCOL_VERSION:FG_PROTOCOL_MIN_VERSION;
+    fg_frame_header probe;
+    fg_status probe_status=fg_frame_encode_version(&probe,protocol,FG_MSG_CONTROL,request,
+                                                   199u,0u,NULL,0u,error);
+    if(probe_status==FG_OK)
+        probe_status=fg_fabric_validate_frame(fabric,&probe,NULL,NULL,error);
+    if(probe_status!=FG_OK)return probe_status;
+    probe_status=fg_frame_encode_version(&probe,other,FG_MSG_CONTROL,request,199u,0u,
+                                         NULL,0u,error);
+    if(probe_status!=FG_OK)return probe_status;
+    if(fg_fabric_validate_frame(fabric,&probe,NULL,NULL,error)!=FG_ERR_MISMATCH){
+        fg_error_set(error,FG_ERR_MISMATCH,"fabric accepted a cross-version frame");
+        return FG_ERR_MISMATCH;
+    }
+    memset(error,0,sizeof(*error));
     enum{PAYLOAD_BYTES=16};uint8_t payloads[FG_RANK_COUNT-1u][PAYLOAD_BYTES];for(uint32_t peer=1u;peer<FG_RANK_COUNT;peer++)for(uint32_t i=0;i<PAYLOAD_BYTES;i++)payloads[peer-1u][i]=(uint8_t)(peer*29u+i*7u);if(rank==0u){fg_fabric_send_item items[FG_RANK_COUNT-1u];for(uint32_t peer=1u;peer<FG_RANK_COUNT;peer++)items[peer-1u]=(fg_fabric_send_item){.peer=peer,.cls=FG_FABRIC_BULK,.type=FG_MSG_CONTROL,.request_id=request,.sequence=200u+peer,.payload=payloads[peer-1u],.bytes=PAYLOAD_BYTES};return fg_fabric_send_batch(fabric,items,FG_RANK_COUNT-1u,error);}fg_frame_header header;uint8_t payload[PAYLOAD_BYTES];uint32_t bytes=0;fg_status status=fg_fabric_recv(fabric,0u,FG_FABRIC_BULK,&header,payload,sizeof(payload),&bytes,error);if(status==FG_OK&&(bytes!=PAYLOAD_BYTES||fg_frame_type(&header)!=FG_MSG_CONTROL||fg_frame_request_id(&header)!=request||fg_frame_sequence(&header)!=200u+rank||memcmp(payload,payloads[rank-1u],PAYLOAD_BYTES)!=0)){fg_error_set(error,FG_ERR_MISMATCH,"batch send payload mismatch on rank %u",rank);status=FG_ERR_MISMATCH;}return status;
 }
 

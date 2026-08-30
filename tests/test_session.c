@@ -105,6 +105,30 @@ static void test_deployment_admission(void){
     free(sealed);free(manifest);unlink(path);
 }
 
+static void test_legacy_identity_roundtrip(void){
+    char path[96];snprintf(path,sizeof(path),"test-session-v4-identity-%ld.fgm",(long)getpid());
+    unlink(path);fg_manifest *manifest=malloc(sizeof(*manifest)),*sealed=malloc(sizeof(*sealed));
+    CHECK(manifest&&sealed);fg_error error={0};
+    if(manifest&&sealed){
+        fg_manifest_init(manifest);manifest->format_version=FG_MANIFEST_LEGACY_FORMAT_VERSION;
+        manifest->flags=FG_MANIFEST_COMPONENTS_TEXT_REQUIRED;
+        fill_digest(manifest->source_sha256,31u);
+        CHECK(fg_manifest_write(path,manifest,&error)==FG_OK);
+        CHECK(manifest->session.minimum_protocol_version==FG_PROTOCOL_MIN_VERSION);
+        fg_session_identity before={0},after={0};
+        uint8_t before_wire[FG_SESSION_IDENTITY_WIRE_BYTES];
+        uint8_t after_wire[FG_SESSION_IDENTITY_WIRE_BYTES];
+        CHECK(fg_session_identity_from_manifest(manifest,&before,&error)==FG_OK);
+        CHECK(fg_session_identity_encode(before_wire,&before,&error)==FG_OK);
+        CHECK(fg_manifest_read(path,sealed,&error)==FG_OK);
+        CHECK(memcmp(&manifest->session,&sealed->session,sizeof(manifest->session))==0);
+        CHECK(fg_session_identity_from_manifest(sealed,&after,&error)==FG_OK);
+        CHECK(fg_session_identity_encode(after_wire,&after,&error)==FG_OK);
+        CHECK(memcmp(before_wire,after_wire,sizeof(before_wire))==0);
+    }
+    free(sealed);free(manifest);unlink(path);
+}
+
 static fg_manifest *write_read_budget_manifest(const char *path,uint32_t logical,
                                                uint32_t gpu,uint32_t hot,uint64_t page){
     fg_manifest *manifest=malloc(sizeof(*manifest)),*sealed=malloc(sizeof(*sealed));
@@ -280,65 +304,145 @@ static void test_protocol_evolution(void){
                                   payload,sizeof(payload),&error)==FG_OK);
     CHECK(fg_frame_version(&header)==FG_PROTOCOL_MIN_VERSION);
     CHECK(fg_frame_validate(&header,payload,NULL,&error)==FG_OK);
+    CHECK(fg_frame_validate_version(&header,FG_PROTOCOL_MIN_VERSION,payload,NULL,
+                                    &error)==FG_OK);
+    CHECK(fg_frame_validate_version(&header,FG_PROTOCOL_VERSION,payload,NULL,
+                                    &error)==FG_ERR_MISMATCH);
     CHECK(fg_frame_encode_version(&header,FG_PROTOCOL_MIN_VERSION,FG_MSG_SESSION_PREPARE,
                                   9u,1u,0u,payload,sizeof(payload),&error)==FG_ERR_ARGUMENT);
     CHECK(fg_frame_encode_version(&header,FG_PROTOCOL_VERSION,FG_MSG_SESSION_PREPARE,
                                   9u,1u,0u,payload,sizeof(payload),&error)==FG_OK);
     CHECK(fg_frame_validate(&header,payload,NULL,&error)==FG_OK);
+    CHECK(fg_frame_validate_version(&header,FG_PROTOCOL_VERSION,payload,NULL,
+                                    &error)==FG_OK);
+    CHECK(fg_frame_validate_version(&header,FG_PROTOCOL_MIN_VERSION,payload,NULL,
+                                    &error)==FG_ERR_MISMATCH);
 
     fg_layer_work *work=calloc(1,sizeof(*work)),*decoded=calloc(1,sizeof(*decoded));
-    uint8_t *wire=malloc(FG_LAYER_WORK_MAX_BYTES);
-    CHECK(work&&decoded&&wire);
-    if(work&&decoded&&wire){
+    uint8_t *wire=malloc(FG_LAYER_WORK_MAX_BYTES),*again=malloc(FG_LAYER_WORK_MAX_BYTES);
+    CHECK(work&&decoded&&wire&&again);
+    if(work&&decoded&&wire&&again){
         work->layer=2u;work->source_rank=0u;work->destination_rank=2u;
         work->position_mode=FG_POSITION_FOUR_AXIS;work->token_index=81u;
         work->position[0]=5u;work->position[1]=7u;work->position[2]=11u;work->position[3]=13u;
-        uint32_t bytes=0;
-        CHECK(fg_layer_work_encode(wire,FG_LAYER_WORK_MAX_BYTES,&bytes,work,&error)==FG_OK);
-        CHECK(bytes==FG_LAYER_WORK_FOUR_AXIS_BASE_BYTES);
-        CHECK(fg_layer_work_decode(decoded,wire,bytes,&error)==FG_OK);
-        CHECK(decoded->position_mode==FG_POSITION_FOUR_AXIS&&decoded->position[3]==13u);
+        uint32_t bytes=0,again_bytes=0;
+        CHECK(fg_layer_work_encode(wire,FG_LAYER_WORK_MAX_BYTES,&bytes,
+                                   FG_PROTOCOL_MIN_VERSION,work,&error)==FG_ERR_MISMATCH);
 
-        uint32_t legacy_bytes=FG_LAYER_WORK_LEGACY_HEADER_BYTES+FG_HYPER_WIDTH*4u;
-        memset(wire,0,legacy_bytes);wire[0]=2u;wire[1]=0u;wire[2]=2u;
-        put_u32_be(wire+4u,82u);put_u32_be(wire+8u,17u);
-        put_u32_be(wire+12u,19u);put_u32_be(wire+16u,23u);
-        CHECK(fg_layer_work_decode(decoded,wire,legacy_bytes,&error)==FG_OK);
-        CHECK(decoded->position_mode==FG_POSITION_TEXT&&decoded->position[0]==17u&&
-              decoded->position[2]==23u&&decoded->position[3]==0u);
+        work->position_mode=FG_POSITION_TEXT;work->position[3]=0u;
+        CHECK(fg_layer_work_encode(wire,FG_LAYER_WORK_MAX_BYTES,&bytes,
+                                   FG_PROTOCOL_MIN_VERSION,work,&error)==FG_OK);
+        CHECK(bytes==FG_LAYER_WORK_LEGACY_HEADER_BYTES+FG_HYPER_WIDTH*4u);
+        uint8_t legacy_header[FG_LAYER_WORK_LEGACY_HEADER_BYTES]={0};
+        legacy_header[0]=2u;legacy_header[2]=2u;
+        put_u32_be(legacy_header+4u,81u);put_u32_be(legacy_header+8u,5u);
+        put_u32_be(legacy_header+12u,7u);put_u32_be(legacy_header+16u,11u);
+        CHECK(memcmp(wire,legacy_header,sizeof(legacy_header))==0);
+        CHECK(fg_layer_work_encode(again,FG_LAYER_WORK_MAX_BYTES,&again_bytes,
+                                   FG_PROTOCOL_MIN_VERSION,work,&error)==FG_OK);
+        CHECK(again_bytes==bytes&&memcmp(wire,again,bytes)==0);
+        CHECK(fg_layer_work_decode(decoded,FG_PROTOCOL_MIN_VERSION,wire,bytes,&error)==FG_OK);
+        CHECK(decoded->position_mode==FG_POSITION_TEXT&&decoded->position[2]==11u);
+        CHECK(fg_layer_work_decode(decoded,FG_PROTOCOL_VERSION,wire,bytes,
+                                   &error)==FG_ERR_FORMAT);
+
+        CHECK(fg_layer_work_encode(wire,FG_LAYER_WORK_MAX_BYTES,&bytes,FG_PROTOCOL_VERSION,
+                                   work,&error)==FG_OK);
+        CHECK(bytes==FG_LAYER_WORK_BASE_BYTES);
+        CHECK(wire[8]==FG_POSITION_TEXT&&wire[9]==3u&&!wire[10]&&!wire[11]);
+        CHECK(fg_layer_work_encode(again,FG_LAYER_WORK_MAX_BYTES,&again_bytes,
+                                   FG_PROTOCOL_VERSION,work,&error)==FG_OK);
+        CHECK(again_bytes==bytes&&memcmp(wire,again,bytes)==0);
+        CHECK(fg_layer_work_decode(decoded,FG_PROTOCOL_VERSION,wire,bytes,&error)==FG_OK);
+        CHECK(fg_layer_work_decode(decoded,FG_PROTOCOL_MIN_VERSION,wire,bytes,
+                                   &error)==FG_ERR_FORMAT);
+
+        work->position_mode=FG_POSITION_FOUR_AXIS;work->position[3]=13u;
+        CHECK(fg_layer_work_encode(wire,FG_LAYER_WORK_MAX_BYTES,&bytes,FG_PROTOCOL_VERSION,
+                                   work,&error)==FG_OK);
+        CHECK(bytes==FG_LAYER_WORK_FOUR_AXIS_BASE_BYTES);
+        CHECK(fg_layer_work_decode(decoded,FG_PROTOCOL_VERSION,wire,bytes,&error)==FG_OK);
+        CHECK(decoded->position_mode==FG_POSITION_FOUR_AXIS&&decoded->position[3]==13u);
     }
-    free(wire);free(decoded);free(work);
+    free(again);free(wire);free(decoded);free(work);
 
     enum{TOKENS=2};uint32_t positions[TOKENS*4u],decoded_positions[TOKENS*4u];
     float *hyper=calloc((size_t)TOKENS*FG_HYPER_WIDTH,sizeof(*hyper));
     float *decoded_hyper=calloc((size_t)TOKENS*FG_HYPER_WIDTH,sizeof(*decoded_hyper));
     uint8_t *prefill_wire=malloc(FG_PREFILL_LAYER_WORK_MAX_BYTES);
-    CHECK(hyper&&decoded_hyper&&prefill_wire);
-    if(hyper&&decoded_hyper&&prefill_wire){
+    uint8_t *prefill_again=malloc(FG_PREFILL_LAYER_WORK_MAX_BYTES);
+    CHECK(hyper&&decoded_hyper&&prefill_wire&&prefill_again);
+    if(hyper&&decoded_hyper&&prefill_wire&&prefill_again){
         for(uint32_t i=0;i<TOKENS*4u;i++)positions[i]=100u+i;
         fg_prefill_layer_work work_batch={.layer=2u,.source_rank=0u,.destination_rank=2u,
             .position_mode=FG_POSITION_FOUR_AXIS,.first_token=100u,.token_count=TOKENS,
             .positions=positions,.hyper=hyper},decoded_batch={0};
-        uint32_t bytes=0;
+        uint32_t bytes=0,again_bytes=0;
         CHECK(fg_prefill_layer_work_encode(prefill_wire,FG_PREFILL_LAYER_WORK_MAX_BYTES,
-                                           &bytes,&work_batch,&error)==FG_OK);
+                                           &bytes,FG_PROTOCOL_MIN_VERSION,&work_batch,
+                                           &error)==FG_ERR_MISMATCH);
+
+        work_batch.position_mode=FG_POSITION_TEXT;
+        CHECK(fg_prefill_layer_work_encode(prefill_wire,FG_PREFILL_LAYER_WORK_MAX_BYTES,
+                                           &bytes,FG_PROTOCOL_MIN_VERSION,&work_batch,
+                                           &error)==FG_OK);
+        CHECK(bytes==FG_PREFILL_LAYER_HEADER_BYTES+TOKENS*3u*4u+
+                     TOKENS*FG_HYPER_WIDTH*4u);
+        uint8_t legacy_header[FG_PREFILL_LAYER_HEADER_BYTES]={0};
+        legacy_header[0]=2u;legacy_header[2]=2u;legacy_header[9]=TOKENS;
+        put_u32_be(legacy_header+4u,100u);
+        CHECK(memcmp(prefill_wire,legacy_header,sizeof(legacy_header))==0);
+        CHECK(fg_prefill_layer_work_encode(prefill_again,FG_PREFILL_LAYER_WORK_MAX_BYTES,
+                                           &again_bytes,FG_PROTOCOL_MIN_VERSION,&work_batch,
+                                           &error)==FG_OK);
+        CHECK(again_bytes==bytes&&memcmp(prefill_wire,prefill_again,bytes)==0);
+        CHECK(fg_prefill_layer_work_decode(&decoded_batch,FG_PROTOCOL_MIN_VERSION,
+                                           decoded_positions,TOKENS*4u,
+                                           decoded_hyper,(uint64_t)TOKENS*FG_HYPER_WIDTH,
+                                           NULL,0u,prefill_wire,bytes,&error)==FG_OK);
+        CHECK(decoded_batch.position_mode==FG_POSITION_TEXT&&decoded_positions[5]==105u);
+        CHECK(fg_prefill_layer_work_decode(&decoded_batch,FG_PROTOCOL_VERSION,
+                                           decoded_positions,TOKENS*4u,
+                                           decoded_hyper,(uint64_t)TOKENS*FG_HYPER_WIDTH,
+                                           NULL,0u,prefill_wire,bytes,&error)==FG_ERR_FORMAT);
+
+        CHECK(fg_prefill_layer_work_encode(prefill_wire,FG_PREFILL_LAYER_WORK_MAX_BYTES,
+                                           &bytes,FG_PROTOCOL_VERSION,&work_batch,
+                                           &error)==FG_OK);
+        CHECK(prefill_wire[10]==FG_POSITION_TEXT&&prefill_wire[11]==3u);
+        CHECK(fg_prefill_layer_work_encode(prefill_again,FG_PREFILL_LAYER_WORK_MAX_BYTES,
+                                           &again_bytes,FG_PROTOCOL_VERSION,&work_batch,
+                                           &error)==FG_OK);
+        CHECK(again_bytes==bytes&&memcmp(prefill_wire,prefill_again,bytes)==0);
+        CHECK(fg_prefill_layer_work_decode(&decoded_batch,FG_PROTOCOL_MIN_VERSION,
+                                           decoded_positions,TOKENS*4u,
+                                           decoded_hyper,(uint64_t)TOKENS*FG_HYPER_WIDTH,
+                                           NULL,0u,prefill_wire,bytes,&error)==FG_ERR_FORMAT);
+
+        work_batch.position_mode=FG_POSITION_FOUR_AXIS;
+        CHECK(fg_prefill_layer_work_encode(prefill_wire,FG_PREFILL_LAYER_WORK_MAX_BYTES,
+                                           &bytes,FG_PROTOCOL_VERSION,&work_batch,
+                                           &error)==FG_OK);
         CHECK(bytes==FG_PREFILL_LAYER_HEADER_BYTES+TOKENS*4u*4u+
                      TOKENS*FG_HYPER_WIDTH*4u);
-        CHECK(fg_prefill_layer_work_decode(&decoded_batch,decoded_positions,TOKENS*4u,
+        CHECK(fg_prefill_layer_work_decode(&decoded_batch,FG_PROTOCOL_VERSION,
+                                           decoded_positions,TOKENS*4u,
                                            decoded_hyper,(uint64_t)TOKENS*FG_HYPER_WIDTH,
                                            NULL,0u,prefill_wire,bytes,&error)==FG_OK);
         CHECK(decoded_batch.position_mode==FG_POSITION_FOUR_AXIS&&
               decoded_positions[TOKENS*4u-1u]==positions[TOKENS*4u-1u]);
         prefill_wire[11]=3u;
-        CHECK(fg_prefill_layer_work_decode(&decoded_batch,decoded_positions,TOKENS*4u,
+        CHECK(fg_prefill_layer_work_decode(&decoded_batch,FG_PROTOCOL_VERSION,
+                                           decoded_positions,TOKENS*4u,
                                            decoded_hyper,(uint64_t)TOKENS*FG_HYPER_WIDTH,
                                            NULL,0u,prefill_wire,bytes,&error)==FG_ERR_FORMAT);
     }
-    free(prefill_wire);free(decoded_hyper);free(hyper);
+    free(prefill_again);free(prefill_wire);free(decoded_hyper);free(hyper);
 }
 
 int main(void){
-    test_manifest_evolution();test_deployment_admission();test_runtime_option_contract();
+    test_manifest_evolution();test_deployment_admission();test_legacy_identity_roundtrip();
+    test_runtime_option_contract();
     test_identity_and_frontier();test_owner_controls();
     test_protocol_evolution();
     if(failures){fprintf(stderr,"%d session contract test(s) failed\n",failures);return 1;}

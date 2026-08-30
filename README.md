@@ -106,7 +106,10 @@ boundaries.
 
 Protocol v6 adds deterministic session identity/frontier encodings and owner
 begin/prepare/commit/restore controls. Protocol-v5 execution remains available
-only to legacy v4 manifests, which keep the empty session-begin exchange. The
+only to legacy v4 manifests, which keep the empty session-begin exchange and
+exact legacy layer and prefill-layer payload layouts. Protocol v6 payloads carry
+the explicit position-axis contract. Fabric receive paths reject frames whose
+version differs from the version negotiated by the manifest handshake. The
 default runtime remains the qualified 8,192-token text profile; tiered QSA,
 persistence, MTP, and multimodal execution are not activated, and four-axis
 manifests are rejected before model or fleet startup.
