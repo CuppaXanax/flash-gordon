@@ -40,7 +40,11 @@ Target frame allocation:
 | Output and other tail work | 17.2 ms | 5-6 ms |
 | Total | 255.4 ms | 47-52 ms |
 
-## Current LKG
+## Verified Burn-Down
+
+This ledger contains only fleet-qualified behavior that landed. It is experiment accounting, not a forecast of the endpoint.
+
+### Tagged LKG
 
 Behavior commit/tag: `96fd0a2` / `lkg-4.91tps-crc32c`. Later critical-path and benchmark commits are behavior-neutral unless explicitly enabled.
 
@@ -63,7 +67,9 @@ Behavior commit/tag: `96fd0a2` / `lkg-4.91tps-crc32c`. Later critical-path and b
 
 Neighboring unprofiled tokens have a 174.1 ms median layer graph, so token-30 worker profiling does not change the priority order.
 
-Fastest verified mainline: `773319c` (one clean fleet-qualified run; no LKG tag below 7.5 tok/s).
+### Current qualified frame
+
+Fastest verified behavior: `773319c`, retained on mainline at `318b593` (one clean fleet-qualified run; no LKG tag below 7.5 tok/s).
 
 | Measurement | GPU worker reduction |
 |---|---:|
@@ -82,7 +88,70 @@ Fastest verified mainline: `773319c` (one clean fleet-qualified run; no LKG tag 
 
 The final `decode complete` summary is not a valid rate when EOS stops generation early because it divides the requested cap by elapsed time. The per-token cumulative rates above use the actual 64 completed decode frames.
 
-## Critical-Path Audit
+Verified landed burn-down from the 255.369 ms historical baseline:
+
+| Landed architecture | Qualified frame delta | Resulting token-30 wall |
+|---|---:|---:|
+| Resident causal QSA | correctness fix; no retained wall-time claim | 258.191 ms candidate median |
+| Hardware CRC32C | -46.359 ms versus resident-QSA median | 211.832 ms |
+| HC/GDN specialization | -10.485 ms versus CRC LKG | 201.347 ms |
+| Residual successor folding | -4.001 ms | 197.346 ms |
+| GPU expert reduction | -14.833 ms | 182.513 ms |
+
+These deltas describe what happened. They are not summed forward as a performance ceiling.
+
+## Victory Gap
+
+```text
+CURRENT FRAME:       182.5 ms / 5.75 TPS
+NEXT GATE:           133.3 ms / 7.5 TPS
+NEXT-GATE GAP:        49.2 ms
+
+TARGET FRAME:         50.0 ms / 20 TPS
+TOTAL FRAME GAP:     132.5 ms
+```
+
+The subsystem budget debt is approximately 135.5 ms because the 47.0 ms subtotal must also create the unspent 3.0 ms frame reserve. This is deadline ownership, not a forecast derived from currently measured candidates.
+
+| Frame subsystem | Current | 20 TPS budget | State | Architecture that owns the debt |
+|---|---:|---:|---|---|
+| 48-layer graph | 145.545 ms | 37.5 ms | **RED** | Compiled rank-0 and worker graphs; BC250/Qwen3.8 kernels; GPU job transport |
+| Average layer | 3,032 us | 781 us | **RED** | Fixed deterministic layer program |
+| `sync1` | 1,270 us/layer | 350 us/layer | **RED** | Pre-recorded rank-0 resource graph and native packed/subgroup Q8 |
+| Expert collect proxy | 1,207 us/layer | 300 us/layer | **RED** | Fixed worker jobs, <=180 us expert unit, doorbell fabric, hidden shared expert |
+| Join/handoff | 69 us/layer | 50 us/layer | **RED** | GPU contribution consumption and successor handoff |
+| N-gram exposed | about 24.8 ms cold | 3.0 ms | **RED** | Resident distributed heads with useful-row responses |
+| Output | about 9.8 ms | 4.0 ms | **RED** | Production Q8 projection and hierarchical greedy argmax |
+| Embedding/setup | about 0.15 ms | 0.5 ms | **GREEN** | Preserve |
+
+### Gate 7.5: remove 49.2 ms
+
+The next gate is not limited to the optimizations already measured. It assigns required frame reduction to architectural work that can cross 133.3 ms:
+
+| Workstream being implemented | Required contribution to this gate |
+|---|---:|
+| Compiled worker job plus lower-pressure BC250 expert unit | 18-22 ms |
+| Resident distributed n-gram service after worker scratch slimming | 21-22 ms |
+| Production output projection plus hierarchical argmax | 5-6 ms |
+| First compiled rank-0 common-graph tranche | 2-5 ms |
+
+The ranges are gate assignments, not predicted savings. If one workstream misses its assignment, its architecture changes or another new workstream is added; the 133.3 ms deadline does not move. Crossing 7.5 TPS creates the next LKG, after which the ledger resets to `CURRENT`, `NEXT GATE: 100.0 ms / 10 TPS`, and the newly measured gap.
+
+### Full 20 TPS implementation
+
+Closing the complete frame requires all of the following architectural surfaces, including work beyond the 7.5 TPS gate:
+
+1. A fixed worker GPU job system: pre-recorded commands/descriptors, fixed scratch, fixed ten-tile schedules, native packed/subgroup quant kernels, GPU weighting, and one minimal contribution.
+2. A compiled rank-0 layer program: resource barriers, fixed pre-route/post-route commands, GPU route publication, shared/local expert overlap, and direct successor handoff.
+3. A <=3 ms resident n-gram service with no filesystem block amplification in the token frame.
+4. A <=4 ms output pass using the production Q8 primitive and hierarchical greedy argmax.
+5. A <=100 us shared expert hidden under the remote job, plus <=50 us request and <=45 us response paths driven as queue operations rather than RPC construction.
+
+These workstreams own the 50.0 ms deadline. No finite endpoint above 50 ms is asserted unless a physical hardware bound is demonstrated.
+
+## Frozen Critical-Path Evidence
+
+The audit is accepted and frozen. The measurements below remain implementation evidence; they are not the active work product.
 
 Four endpoint timestamps per remote request were aligned with an NTP-style offset estimate. Local durations and coordinator readiness are exact; one-way request/response estimates assume path symmetry. Timestamp query pools are primed before capture, removing the false first-use spikes previously charged to embedding and layer 2.
 
@@ -149,17 +218,15 @@ Exact addresses depend on the newly emitted token, so history-only prefetch cann
 
 Full resident sharding costs 28.8 GB total, 3.6 GB for two heads per blade. Sealed worker residency is already 10.73-11.78 GiB, rank 0's replicated runtime reports 13.978 GiB, and distributing 16 heads over seven workers requires at least one three-head/5.4 GB assignment. It is not safe without first shrinking worker scratch/model residency. Storage-only sharding does not help because one NVMe already issues all head reads concurrently and the network adds about 157 us each way.
 
-## Ranked Experiments
+## Victory Workstreams
 
-Ranked by predicted whole-frame savings, not API novelty:
+Ordered by the next RED stage being implemented, not by a sum-of-candidates endpoint:
 
 1. Complete the dependency-aware expert frame graph after retained GPU weighted reduction. Remaining work is fixed per-layer descriptors and command buffers; the monolithic gate/up/SwiGLU fusion shape regressed and generic preposted receives remain out of scope.
 2. Complete the rank-0 resource graph after the retained HC/GDN integrations. The two production kernels reduced token-30 wall by 10.485 ms and rank-0 GPU by 11.238 ms versus the CRC LKG.
 3. Complete residual graph compilation after retained successor folding. Folding removed 47 submissions and reduced token-30 wall by 4.001 ms, but 4.110 ms of measured finish remains.
-4. Output hierarchical argmax and corrected Q8 projection: predicted about 4.8 ms/token to the existing <5 ms gate.
-5. Start n-gram reads before layer 0: bounded to 3.571 ms/token with the current storage layout.
-
-Even these near-term changes leave the frame around 145-160 ms. Reaching 10 TPS also requires the typed/subgroup Q8 work and lower expert GPU time. Reaching 20 TPS requires those changes plus removal of the remaining n-gram storage floor and deeper rank-0/expert graph compilation.
+4. Replace the output pass with production Q8 plus hierarchical argmax and enforce the 4.0 ms budget.
+5. Replace the current n-gram storage path with resident distributed execution and enforce the 3.0 ms exposed budget.
 
 ## 1. Resident Causal QSA
 
@@ -242,7 +309,7 @@ The retired QSA path recorded projection/quantization into an outer Vulkan batch
 
 ## Burn-Down Log
 
-Update this section after every fleet-qualified experiment with hypothesis, predicted ceiling, commit, correctness result, before/after frame time, useful aggregate GB/s, and keep/revert decision.
+Update this section after every fleet-qualified experiment with hypothesis, milestone budget assignment, commit, correctness result, before/after frame time, useful aggregate GB/s, and keep/revert decision.
 
 ### Resident causal QSA candidate
 
