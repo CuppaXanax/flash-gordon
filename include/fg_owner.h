@@ -26,6 +26,7 @@ typedef fg_status (*fg_owner_prefill_dispatch_fn)(void *context,uint32_t layer,
 
 fg_status fg_owner_executor_create(fg_owner_executor **out,fg_model *model,fg_error *err);
 void fg_owner_executor_destroy(fg_owner_executor *executor);
+fg_status fg_owner_qsa_checkpoint(fg_owner_executor *executor,fg_error *err);
 fg_status fg_owner_gr_read(fg_owner_executor *executor,uint32_t layer,bool ffn,const fg_vk_tensor *hyper_input,
                            fg_vk_tensor **mixed,const fg_vk_tensor **residual,fg_vk_tensor **injection,fg_error *err);
 fg_status fg_owner_gr_read_batch(fg_owner_executor *executor,uint32_t layer,bool ffn,
