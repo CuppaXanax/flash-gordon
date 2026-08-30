@@ -63,6 +63,25 @@ Behavior commit/tag: `96fd0a2` / `lkg-4.91tps-crc32c`. Later critical-path and b
 
 Neighboring unprofiled tokens have a 174.1 ms median layer graph, so token-30 worker profiling does not change the priority order.
 
+Fastest verified mainline: `773319c` (one clean fleet-qualified run; no LKG tag below 7.5 tok/s).
+
+| Measurement | GPU worker reduction |
+|---|---:|
+| Correct response | Exact baseline text, including Paris |
+| Steady tail decode | 5.73-5.77 tok/s |
+| Token 30 wall | 182.513 ms |
+| Layer graph | 145.545 ms |
+| Rank-0 GPU / kernels | 71.229 / 69.765 ms |
+| Vulkan submissions / dispatches | 123 / 1,541 |
+| Pre-route `sync1` | 60.957 ms |
+| Expert fire | 12.903 ms |
+| Shared expert | 10.420 ms |
+| Expert collect/join | 57.955 ms |
+| Finish | 3.306 ms |
+| Non-layer work | 36.968 ms |
+
+The final `decode complete` summary is not a valid rate when EOS stops generation early because it divides the requested cap by elapsed time. The per-token cumulative rates above use the actual 64 completed decode frames.
+
 ## Critical-Path Audit
 
 Four endpoint timestamps per remote request were aligned with an NTP-style offset estimate. Local durations and coordinator readiness are exact; one-way request/response estimates assume path symmetry. Timestamp query pools are primed before capture, removing the false first-use spikes previously charged to embedding and layer 2.
@@ -134,7 +153,7 @@ Full resident sharding costs 28.8 GB total, 3.6 GB for two heads per blade. Seal
 
 Ranked by predicted whole-frame savings, not API novelty:
 
-1. Dependency-aware expert frame graph: target the remaining slowest-worker GPU/command path, not generic preposted receives. Predicted 19-26 ms/token from collect plus 6-8 ms from route/fire preparation.
+1. Complete the dependency-aware expert frame graph after retained GPU weighted reduction. Remaining work is fused gate/up/SwiGLU plus fixed per-layer descriptors and command buffers; generic preposted receives remain out of scope.
 2. Complete the rank-0 resource graph after the retained HC/GDN integrations. The two production kernels reduced token-30 wall by 10.485 ms and rank-0 GPU by 11.238 ms versus the CRC LKG.
 3. Complete residual graph compilation after retained successor folding. Folding removed 47 submissions and reduced token-30 wall by 4.001 ms, but 4.110 ms of measured finish remains.
 4. Output hierarchical argmax and corrected Q8 projection: predicted about 4.8 ms/token to the existing <5 ms gate.
@@ -181,7 +200,7 @@ The retired QSA path recorded projection/quantization into an outer Vulkan batch
 
 ## 4. Compile the Expert Frame Graph
 
-**Status:** PENDING
+**Status:** GPU WEIGHTED REDUCTION INTEGRATED; COMMAND REUSE AND GATE/UP FUSION PENDING
 
 - Pre-record worker command buffers per owned layer using fixed activation, schedule, scratch, and weight addresses.
 - Dispatch a fixed maximum tile count with invalid unused entries.
@@ -259,3 +278,11 @@ Update this section after every fleet-qualified experiment with hypothesis, pred
 - Qualification: `ef03e6d` passed Paris, all 48 expert layers, all local and fleet suites, and homogeneous eight-blade fingerprints. Dispatches remained 1,518 while submissions fell from 170 to 123 exactly.
 - Result: versus `7ca7519`, token-30 wall fell from 201.347 to 197.346 ms, layer wall from 164.581 to 160.562 ms, and finish from 8.881 to 4.110 ms. GPU time remained 71.060 ms, confirming a host/submission-path gain.
 - Decision: keep. The 4.110 ms finish still misses the <=0.5 ms generation-2 budget, but the 4.001 ms whole-frame improvement is material; terminal/frame-tail work remains open.
+
+### GPU expert reduction
+
+- Hypothesis: worker-side CPU weighting still reads every selected 2,560-float down vector through write-combined UMA. Reducing by routing weight in the existing GPU batch should leave one vector to read and encode per participating rank.
+- Change: `773319c` adds a compact-order GPU FMA reduction after expert down projection, returns the existing pre-reduced sentinel for both local and remote routes, and removes the remote CPU reduction loop. The worker submission count is unchanged.
+- Qualification: all eight blades passed core/Vulkan/model/tokenizer/fabric tests with homogeneous fingerprints. Paris, all 48 expert layers, and exact generated-response comparison against `ef03e6d` passed.
+- Result: steady decode rose from 5.24-5.26 to 5.73-5.77 tok/s. Token-30 wall fell from 197.346 to 182.513 ms, layer wall from 160.562 to 145.545 ms, and collect from 74.323 to 57.955 ms. Worker CPU reduction fell to zero; per-rank worker totals fell by 2.97-5.35 ms. Rank-0 GPU rose only 0.169 ms for 23 local reduction dispatches.
+- Decision: keep as the fastest verified mainline. Do not tag before the 7.5 tok/s threshold.
