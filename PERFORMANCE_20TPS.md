@@ -69,24 +69,24 @@ Neighboring unprofiled tokens have a 174.1 ms median layer graph, so token-30 wo
 
 ### Current qualified frame
 
-Fastest verified behavior: `773319c`, retained on mainline at `318b593` (one clean fleet-qualified run; no LKG tag below 7.5 tok/s).
+Fastest verified behavior: `b02fb2f` (one clean fleet-qualified run; no LKG tag below 7.5 tok/s).
 
 | Measurement | GPU worker reduction |
 |---|---:|
 | Correct response | Exact baseline text, including Paris |
-| Steady tail decode | 5.73-5.77 tok/s |
-| Token 30 wall | 182.513 ms |
-| Layer graph | 145.545 ms |
-| Rank-0 GPU / kernels | 71.229 / 69.765 ms |
+| Steady tail decode | 5.76-5.78 tok/s |
+| Token 30 wall | 182.375 ms |
+| Layer graph | 145.043 ms |
+| Rank-0 GPU / kernels | 70.977 / 69.574 ms |
 | Vulkan submissions / dispatches | 123 / 1,541 |
-| Pre-route `sync1` | 60.957 ms |
-| Expert fire | 12.903 ms |
-| Shared expert | 10.420 ms |
-| Expert collect/join | 57.955 ms |
-| Finish | 3.306 ms |
-| Non-layer work | 36.968 ms |
+| Pre-route `sync1` | 60.554 ms |
+| Expert fire | 12.990 ms |
+| Shared expert | 10.020 ms |
+| Expert collect/join | 58.176 ms |
+| Finish | 3.309 ms |
+| Non-layer work | 37.332 ms |
 
-The final `decode complete` summary is not a valid rate when EOS stops generation early because it divides the requested cap by elapsed time. The per-token cumulative rates above use the actual 64 completed decode frames.
+Token 30 deliberately uses dynamic recording so Vulkan timestamps remain available. Ordinary fixed-graph tokens 26-29 and 31 measured 135.3-144.4 ms across the 48 layers and 51.0-55.4 ms in collect. The final `decode complete` summary is not a valid rate when EOS stops generation early because it divides the requested cap by elapsed time. The per-token cumulative rates above use the actual 64 completed decode frames.
 
 Verified landed burn-down from the 255.369 ms historical baseline:
 
@@ -97,28 +97,29 @@ Verified landed burn-down from the 255.369 ms historical baseline:
 | HC/GDN specialization | -10.485 ms versus CRC LKG | 201.347 ms |
 | Residual successor folding | -4.001 ms | 197.346 ms |
 | GPU expert reduction | -14.833 ms | 182.513 ms |
+| Fixed worker graph replay | 30-150 us per matched worker request; no material whole-frame claim | 182.375 ms profiled fallback |
 
 These deltas describe what happened. They are not summed forward as a performance ceiling.
 
 ## Victory Gap
 
 ```text
-CURRENT FRAME:       182.5 ms / 5.75 TPS
+CURRENT FRAME:       182.4 ms / 5.77 TPS
 NEXT GATE:           133.3 ms / 7.5 TPS
-NEXT-GATE GAP:        49.2 ms
+NEXT-GATE GAP:        49.0 ms
 
 TARGET FRAME:         50.0 ms / 20 TPS
-TOTAL FRAME GAP:     132.5 ms
+TOTAL FRAME GAP:     132.4 ms
 ```
 
 The subsystem budget debt is approximately 135.5 ms because the 47.0 ms subtotal must also create the unspent 3.0 ms frame reserve. This is deadline ownership, not a forecast derived from currently measured candidates.
 
 | Frame subsystem | Current | 20 TPS budget | State | Architecture that owns the debt |
 |---|---:|---:|---|---|
-| 48-layer graph | 145.545 ms | 37.5 ms | **RED** | Compiled rank-0 and worker graphs; BC250/Qwen3.8 kernels; GPU job transport |
-| Average layer | 3,032 us | 781 us | **RED** | Fixed deterministic layer program |
-| `sync1` | 1,270 us/layer | 350 us/layer | **RED** | Pre-recorded rank-0 resource graph and native packed/subgroup Q8 |
-| Expert collect proxy | 1,207 us/layer | 300 us/layer | **RED** | Fixed worker jobs, <=180 us expert unit, doorbell fabric, hidden shared expert |
+| 48-layer graph | 145.043 ms | 37.5 ms | **RED** | Compiled rank-0 and worker graphs; BC250/Qwen3.8 kernels; GPU job transport |
+| Average layer | 3,022 us | 781 us | **RED** | Fixed deterministic layer program |
+| `sync1` | 1,262 us/layer | 350 us/layer | **RED** | Pre-recorded rank-0 resource graph and native packed/subgroup Q8 |
+| Expert collect proxy | 1,212 us/layer | 300 us/layer | **RED** | Fixed worker jobs, <=180 us expert unit, doorbell fabric, hidden shared expert |
 | Join/handoff | 69 us/layer | 50 us/layer | **RED** | GPU contribution consumption and successor handoff |
 | N-gram exposed | about 24.8 ms cold | 3.0 ms | **RED** | Resident distributed heads with useful-row responses |
 | Output | about 9.8 ms | 4.0 ms | **RED** | Production Q8 projection and hierarchical greedy argmax |
@@ -130,7 +131,7 @@ The next gate is not limited to the optimizations already measured. It assigns r
 
 | Workstream being implemented | Required contribution to this gate |
 |---|---:|
-| Compiled worker job plus lower-pressure BC250 expert unit | 18-22 ms |
+| Lower-pressure BC250 expert unit after compiled worker replay | 18-22 ms |
 | Resident distributed n-gram service after worker scratch slimming | 21-22 ms |
 | Production output projection plus hierarchical argmax | 5-6 ms |
 | First compiled rank-0 common-graph tranche | 2-5 ms |
@@ -267,7 +268,7 @@ The retired QSA path recorded projection/quantization into an outer Vulkan batch
 
 ## 4. Compile the Expert Frame Graph
 
-**Status:** GPU WEIGHTED REDUCTION INTEGRATED; PAIRED FUSION REJECTED; COMMAND REUSE PENDING
+**Status:** GPU WEIGHTED REDUCTION AND COMMAND REPLAY INTEGRATED; PAIRED FUSION REJECTED; EXPERT KERNEL SPECIALIZATION PENDING
 
 - Pre-record worker command buffers per owned layer using fixed activation, schedule, scratch, and weight addresses.
 - Dispatch a fixed maximum tile count with invalid unused entries.
@@ -354,6 +355,15 @@ Update this section after every fleet-qualified experiment with hypothesis, mile
 - Qualification: all eight blades passed core/Vulkan/model/tokenizer/fabric tests with homogeneous fingerprints. Paris, all 48 expert layers, and exact generated-response comparison against `ef03e6d` passed.
 - Result: steady decode rose from 5.24-5.26 to 5.73-5.77 tok/s. Token-30 wall fell from 197.346 to 182.513 ms, layer wall from 160.562 to 145.545 ms, and collect from 74.323 to 57.955 ms. Worker CPU reduction fell to zero; per-rank worker totals fell by 2.97-5.35 ms. Rank-0 GPU rose only 0.169 ms for 23 local reduction dispatches.
 - Decision: keep as the fastest verified mainline. Do not tag before the 7.5 tok/s threshold.
+
+### Fixed worker graph replay
+
+- Hypothesis: fixed per-layer commands and descriptors can remove worker tensor lookup, descriptor allocation/update/free, and command recording while preserving live activation, schedule, and gate state.
+- Milestone assignment: contribute to the 49.2 ms gap to the 7.5 tok/s gate; the assignment remains open until the complete worker unit supplies its required 18-22 ms.
+- Change: `b02fb2f` pre-records one five-dispatch, ten-tile command buffer per locally owned layer with persistent descriptors and scratch addresses. Invalid tiles exit uniformly; profiled tokens retain the dynamic path.
+- Qualification: sparse one/two-tile replay with poisoned intermediates is bit-exact against the dynamic graph. All eight blades passed the full suite with homogeneous fingerprints; Paris, the retained tail token sequence, and all 48 expert layers passed.
+- Result: matched worker requests save about 30-150 us. Ordinary tokens measured 135.3-144.4 ms layer graphs and 51.0-55.4 ms collect; steady decode was 5.76-5.78 tok/s. Token 30's dynamic-profile fallback measured 182.375 ms.
+- Decision: keep as job-system infrastructure. This slice did not materially reduce the 49.0 ms next-gate gap; expert kernel specialization and resident n-gram work remain required.
 
 ### Fused expert gate/up/SwiGLU
 
