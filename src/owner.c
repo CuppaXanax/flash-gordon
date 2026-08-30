@@ -11,6 +11,7 @@
 #include <time.h>
 
 static double ts_ms(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (double)t.tv_sec*1e3+(double)t.tv_nsec*1e-6;}
+static uint64_t wall_ns(void){struct timespec value;clock_gettime(CLOCK_REALTIME,&value);return (uint64_t)value.tv_sec*UINT64_C(1000000000)+(uint64_t)value.tv_nsec;}
 
 struct fg_owner_executor {
     fg_model *model;
@@ -194,7 +195,7 @@ fg_status fg_owner_decode_layer(fg_owner_executor *e,uint32_t layer,uint32_t tok
 }
 
 fg_status fg_owner_decode_layer_async(fg_owner_executor *e,uint32_t layer,uint32_t token,const uint32_t position[3],const fg_vk_tensor *hyper_input,const fg_vk_tensor *ngram_embedding,fg_owner_expert_fire_fn fire,fg_owner_expert_collect_fn collect,void *dispatch_context,fg_vk_tensor **output,fg_error *err){
-    if(!e||!position||!hyper_input||!fire||!collect||!output||!owns_layer(e,layer)){fg_error_set(err,FG_ERR_MISMATCH,"async decode layer precondition");return FG_ERR_MISMATCH;}if((layer==1u)!=(ngram_embedding!=NULL)){fg_error_set(err,FG_ERR_MISMATCH,"layer-1 PLE embedding presence mismatch");return FG_ERR_MISMATCH;}double t0=ts_ms();fg_vk_context *vk=fg_model_vk(e->model);bool ep_trace=fg_vk_profile_active(vk);fg_vk_counters counters_before={0};if(ep_trace)fg_vk_get_counters(vk,&counters_before);const fg_vk_tensor *layer_input=hyper_input;if(layer==1u){fg_vk_tensor *ple_input=NULL;fg_status status=fg_vk_profile_active(vk)?fg_vk_profile_set_scope(vk,"ple",err):FG_OK;if(status==FG_OK)status=fg_owner_ple_decode(e,hyper_input,ngram_embedding,&ple_input,err);if(status!=FG_OK)return status;layer_input=ple_input;}
+    if(!e||!position||!hyper_input||!fire||!collect||!output||!owns_layer(e,layer)){fg_error_set(err,FG_ERR_MISMATCH,"async decode layer precondition");return FG_ERR_MISMATCH;}if((layer==1u)!=(ngram_embedding!=NULL)){fg_error_set(err,FG_ERR_MISMATCH,"layer-1 PLE embedding presence mismatch");return FG_ERR_MISMATCH;}double t0=ts_ms();fg_vk_context *vk=fg_model_vk(e->model);bool ep_trace=fg_vk_profile_active(vk);uint64_t trace_start=ep_trace?wall_ns():0;fg_vk_counters counters_before={0};if(ep_trace)fg_vk_get_counters(vk,&counters_before);const fg_vk_tensor *layer_input=hyper_input;if(layer==1u){fg_vk_tensor *ple_input=NULL;fg_status status=fg_vk_profile_active(vk)?fg_vk_profile_set_scope(vk,"ple",err):FG_OK;if(status==FG_OK)status=fg_owner_ple_decode(e,hyper_input,ngram_embedding,&ple_input,err);if(status!=FG_OK)return status;layer_input=ple_input;}
     fg_vk_tensor *mixed=NULL,*injection=NULL,*block=NULL,*after_attention=NULL;const fg_vk_tensor *residual=NULL;
     /* Quantization joins Batch 1 so routed work can fire before shared expert compute. */
     fg_status status=fg_vk_profile_active(vk)?fg_vk_profile_set_scope(vk,"gr_attn_read",err):FG_OK;
@@ -213,14 +214,14 @@ fg_status fg_owner_decode_layer_async(fg_owner_executor *e,uint32_t layer,uint32
     if(status==FG_OK)status=fg_vk_quantize_q8_k(vk,e->activation_q8k,mixed,FG_HIDDEN_SIZE,1u,err);
     if(status==FG_OK){fg_status es=fg_vk_end(vk,err);if(es!=FG_OK)status=es;} /* SYNC 1: router + activation */
     else if(fg_vk_batch_active(vk))fg_vk_end(vk,err);
-    double t_sync1=ts_ms();
+    double t_sync1=ts_ms();uint64_t trace_sync1=ep_trace?wall_ns():0;
     uint16_t expert_ids[FG_TOP_K];float gates[FG_TOP_K];
     if(status==FG_OK){float router_local[FG_EXPERT_COUNT];memcpy(router_local,fg_vk_tensor_map(e->router_logits),sizeof(router_local));uint32_t ids[FG_TOP_K];status=fg_q38_router_topk(router_local,FG_EXPERT_COUNT,FG_TOP_K,ids,gates,err);for(uint32_t s=0;status==FG_OK&&s<FG_TOP_K;s++)expert_ids[s]=(uint16_t)ids[s];}
     const uint8_t *activation=status==FG_OK?fg_vk_tensor_map(e->activation_q8k):NULL;
     fg_vk_tensor *shared_gate_w=NULL,*gate_w=NULL,*up_w=NULL,*down_w=NULL;
     if(status==FG_OK){shared_gate_w=weight(e,layer,"ffn_gate_inp_shexp.weight",err);gate_w=weight(e,layer,"ffn_gate_shexp.weight",err);up_w=weight(e,layer,"ffn_up_shexp.weight",err);down_w=weight(e,layer,"ffn_down_shexp.weight",err);if(!shared_gate_w||!gate_w||!up_w||!down_w)status=FG_ERR_MISMATCH;}
     if(status==FG_OK)status=fire(dispatch_context,layer,token,expert_ids,gates,activation,err);
-    double t_fire=ts_ms();
+    double t_fire=ts_ms();uint64_t trace_fire=ep_trace?wall_ns():0;
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"shared_expert",err);
     if(status==FG_OK)status=fg_vk_begin(vk,err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->shared_gate,gate_w,mixed,FG_HIDDEN_SIZE,640u,1u,1.0f,err);
@@ -230,15 +231,15 @@ fg_status fg_owner_decode_layer_async(fg_owner_executor *e,uint32_t layer,uint32
     if(status==FG_OK)status=fg_vk_dense_f32(vk,e->shared_scalar,shared_gate_w,mixed,FG_HIDDEN_SIZE,1u,1u,err);
     if(status==FG_OK){fg_status es=fg_vk_end(vk,err);if(es!=FG_OK)status=es;}
     else if(fg_vk_batch_active(vk))fg_vk_end(vk,err);
-    double t_sync2=ts_ms();
+    double t_sync2=ts_ms();uint64_t trace_sync2=ep_trace?wall_ns():0;
     fg_expert_result results[FG_GROUP_SIZE];uint32_t result_count=0;
     if(status==FG_OK)status=collect(dispatch_context,layer,token,results,&result_count,err);
-    double t_collect=ts_ms();
+    double t_collect=ts_ms();uint64_t trace_collect=ep_trace?wall_ns():0;
     if(status==FG_OK)status=fg_owner_moe_reduce(e,layer,token,expert_ids,gates,results,result_count,&block,err);
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_ffn_write",err);
     if(status==FG_OK)status=fg_owner_gr_write(e,residual,block,injection,output,err);
-    double t_end=ts_ms();
-    if(ep_trace){fg_vk_counters counters_after={0};fg_vk_get_counters(vk,&counters_after);fprintf(stderr,"EP_LAYER_TRACE token=%u layer=%u status=%d total_ms=%.3f sync1_ms=%.3f fire_ms=%.3f shared_ms=%.3f collect_ms=%.3f finish_ms=%.3f submissions=%llu dispatches=%llu\n",token,layer,(int)status,t_end-t0,t_sync1-t0,t_fire-t_sync1,t_sync2-t_fire,t_collect-t_sync2,t_end-t_collect,(unsigned long long)(counters_after.submissions-counters_before.submissions),(unsigned long long)(counters_after.dispatches-counters_before.dispatches));}
+    double t_end=ts_ms();uint64_t trace_end=ep_trace?wall_ns():0;
+    if(ep_trace){fg_vk_counters counters_after={0};fg_vk_get_counters(vk,&counters_after);fprintf(stderr,"EP_LAYER_TRACE token=%u layer=%u status=%d total_ms=%.3f sync1_ms=%.3f fire_ms=%.3f shared_ms=%.3f collect_ms=%.3f finish_ms=%.3f submissions=%llu dispatches=%llu start_ns=%llu router_ready_ns=%llu fire_end_ns=%llu shared_end_ns=%llu collect_end_ns=%llu finish_end_ns=%llu\n",token,layer,(int)status,t_end-t0,t_sync1-t0,t_fire-t_sync1,t_sync2-t_fire,t_collect-t_sync2,t_end-t_collect,(unsigned long long)(counters_after.submissions-counters_before.submissions),(unsigned long long)(counters_after.dispatches-counters_before.dispatches),(unsigned long long)trace_start,(unsigned long long)trace_sync1,(unsigned long long)trace_fire,(unsigned long long)trace_sync2,(unsigned long long)trace_collect,(unsigned long long)trace_end);}
     if(token>=26u&&token<32u){fprintf(stderr,"OVERLAP_TIMING layer[%u] t=%u total=%.1f sync1=%.1f fire=%.1f shared=%.1f collect=%.1f reduce+grw=%.1f\n",layer,token,t_end-t0,t_sync1-t0,t_fire-t_sync1,t_sync2-t_fire,t_collect-t_sync2,t_end-t_collect);}
     return status;
 }
