@@ -153,7 +153,7 @@ Full resident sharding costs 28.8 GB total, 3.6 GB for two heads per blade. Seal
 
 Ranked by predicted whole-frame savings, not API novelty:
 
-1. Complete the dependency-aware expert frame graph after retained GPU weighted reduction. Remaining work is fused gate/up/SwiGLU plus fixed per-layer descriptors and command buffers; generic preposted receives remain out of scope.
+1. Complete the dependency-aware expert frame graph after retained GPU weighted reduction. Remaining work is fixed per-layer descriptors and command buffers; the monolithic gate/up/SwiGLU fusion shape regressed and generic preposted receives remain out of scope.
 2. Complete the rank-0 resource graph after the retained HC/GDN integrations. The two production kernels reduced token-30 wall by 10.485 ms and rank-0 GPU by 11.238 ms versus the CRC LKG.
 3. Complete residual graph compilation after retained successor folding. Folding removed 47 submissions and reduced token-30 wall by 4.001 ms, but 4.110 ms of measured finish remains.
 4. Output hierarchical argmax and corrected Q8 projection: predicted about 4.8 ms/token to the existing <5 ms gate.
@@ -200,7 +200,7 @@ The retired QSA path recorded projection/quantization into an outer Vulkan batch
 
 ## 4. Compile the Expert Frame Graph
 
-**Status:** GPU WEIGHTED REDUCTION INTEGRATED; COMMAND REUSE AND GATE/UP FUSION PENDING
+**Status:** GPU WEIGHTED REDUCTION INTEGRATED; PAIRED FUSION REJECTED; COMMAND REUSE PENDING
 
 - Pre-record worker command buffers per owned layer using fixed activation, schedule, scratch, and weight addresses.
 - Dispatch a fixed maximum tile count with invalid unused entries.
@@ -233,6 +233,7 @@ The retired QSA path recorded projection/quantization into an outer Vulkan batch
 
 ## Rejected Approaches
 
+- `8410b16`: one kernel streamed gate then up weights through shared memory and applied SwiGLU after both reductions. It reduced rank-0 dispatches from 1,541 to 1,492 but regressed token-30 wall from 182.513 to 188.719 ms, layer wall from 145.545 to 151.893 ms, and steady decode from 5.73-5.77 to 5.00-5.12 tok/s. Worker totals rose by 1.67-3.39 ms and the greedy continuation diverged. Reverted by `c282a1c`.
 - `910b02b`: batched io_uring sends plus preposted `MSG_WAITALL` receives regressed to 3.44 tok/s / 290.980 ms. Reverted.
 - `3c29be5`: direct blocking sockets produced 3.91 tok/s / 259.221 ms, an immaterial regression. Reverted.
 - `4978c48`: guessed 4-row/64-lane expert geometry regressed to 3.37-3.38 tok/s. Reverted.
@@ -286,3 +287,11 @@ Update this section after every fleet-qualified experiment with hypothesis, pred
 - Qualification: all eight blades passed core/Vulkan/model/tokenizer/fabric tests with homogeneous fingerprints. Paris, all 48 expert layers, and exact generated-response comparison against `ef03e6d` passed.
 - Result: steady decode rose from 5.24-5.26 to 5.73-5.77 tok/s. Token-30 wall fell from 197.346 to 182.513 ms, layer wall from 160.562 to 145.545 ms, and collect from 74.323 to 57.955 ms. Worker CPU reduction fell to zero; per-rank worker totals fell by 2.97-5.35 ms. Rank-0 GPU rose only 0.169 ms for 23 local reduction dispatches.
 - Decision: keep as the fastest verified mainline. Do not tag before the 7.5 tok/s threshold.
+
+### Fused expert gate/up/SwiGLU
+
+- Hypothesis: loading routed activation tiles once and replacing gate, up, and SwiGLU with one mixed-Q4/Q5 kernel would save two dispatches and two intermediate rows per worker request.
+- Change: `8410b16` streamed gate and up blocks sequentially through one shared buffer, preserved each quant type and stride independently, and wrote `mid` directly.
+- Qualification: local mixed-Q4/Q5 CPU parity and all eight fleet suites passed; the 48-layer France trace passed, but the greedy continuation diverged from the retained result.
+- Result: versus `773319c`, rank-0 dispatches fell from 1,541 to 1,492, but token-30 wall rose from 182.513 to 188.719 ms, layer wall rose from 145.545 to 151.893 ms, collect rose from 57.955 to 65.864 ms, and steady decode fell from 5.73-5.77 to 5.00-5.12 tok/s. The larger fused execution cost outweighed launch savings on GFX1013.
+- Decision: revert in `c282a1c`. Do not retry this sequential two-weight-stream shader; pursue fixed command/descriptors or a lower-pressure fusion geometry instead.
