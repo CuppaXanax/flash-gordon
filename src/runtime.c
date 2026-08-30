@@ -294,12 +294,14 @@ static fg_status coordinator_output(fg_coordinator *coordinator,uint32_t token_i
 /* Expert-parallel decode: all 48 layers on the coordinator, MoE dispatched to workers */
 static fg_status coordinator_decode_token_local(fg_coordinator *coordinator,const int32_t *history,size_t history_count,uint32_t token_index,uint32_t *next_token,float *logit,fg_error *err){
     if(!history||!history_count||(uint32_t)history[history_count-1u]>=FG_Q38_VOCAB_SIZE){fg_error_set(err,FG_ERR_ARGUMENT,"invalid local decode token history");return FG_ERR_ARGUMENT;}
-    fg_vk_context *vk=fg_model_vk(coordinator->model);token_profile_capture capture={0};fg_status status=token_profile_begin(&capture,vk,token_index,err);
+    fg_vk_context *vk=fg_model_vk(coordinator->model);token_profile_capture capture={0};fg_status status=token_profile_begin(&capture,vk,token_index,err);double frame_start=dispatch_ts();
     fg_vk_tensor *embedding=fg_model_tensor(coordinator->model,"token_embd.weight");
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"embedding",err);
     if(status==FG_OK)status=fg_vk_embedding_q8_0(vk,coordinator->hyper,embedding,(uint32_t)history[history_count-1u],FG_HIDDEN_SIZE,FG_Q38_VOCAB_SIZE,FG_Q38_HYPER_COUNT,err);
+    double frame_embedding=dispatch_ts();
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"ngram",err);
     fg_vk_tensor *ngram=NULL;if(status==FG_OK)status=fg_ngram_store_lookup(coordinator->ngram,history,history_count,&ngram,err);
+    double frame_ngram=dispatch_ts();
     uint32_t position[3]={token_index,token_index,token_index};
     fg_vk_tensor *current=coordinator->hyper;
     async_expert_context async_ctx={.fabric=coordinator->fabric,.expert=coordinator->expert,.manifest=coordinator->manifest,.self=0u,.request_id=coordinator->session_id};
@@ -312,7 +314,10 @@ static fg_status coordinator_decode_token_local(fg_coordinator *coordinator,cons
         status=fg_owner_decode_layer_async(coordinator->owner,layer,token_index,position,current,layer_ngram,fire_experts,collect_experts,&async_ctx,&layer_out,err);
         if(status==FG_OK)current=layer_out;
     }
+    double frame_layers=dispatch_ts();
     if(status==FG_OK)status=coordinator_output(coordinator,token_index,current,next_token,logit,err);
+    double frame_output=dispatch_ts();
+    if(token_profile_requested(token_index))fprintf(stderr,"TOKEN_FRAME_TRACE token=%u status=%d embedding_ms=%.3f ngram_ms=%.3f layers_ms=%.3f output_ms=%.3f total_ms=%.3f\n",token_index,(int)status,frame_embedding-frame_start,frame_ngram-frame_embedding,frame_layers-frame_ngram,frame_output-frame_layers,frame_output-frame_start);
     return token_profile_end(&capture,0u,"token",token_index,UINT32_MAX,status,err);
 }
 
