@@ -42,7 +42,7 @@ Target frame allocation:
 
 ## 1. Resident Causal QSA
 
-**Status:** IN PROGRESS
+**Status:** CAUSAL PATH KEPT; WHOLE-FRAME GATE OPEN
 
 The current decode path records QSA projection/quantization into an outer Vulkan batch and then maps those outputs before submission. It also performs synchronous NVMe page/header writes and selected-page reads inside every QSA layer, and sorts a 4,096-entry tile even when fewer than 512 blocks exist.
 
@@ -127,4 +127,9 @@ Update this section after every fleet-qualified experiment with hypothesis, pred
 - Hypothesis: QSA's premature host reads, synchronous page/header writes, selected-page reads, and unnecessary short-context top-k account for at least 15 ms of the token frame and violate causal state ownership.
 - Change: bounded resident record/index history, GPU causal commit, GPU top-k/gather above 512 blocks, direct contiguous attention below that threshold, and post-generation checkpointing.
 - Predicted result: zero `fg_topk_reduce` calls in QSA at token 30, QSA layer total reduced by at least 15 ms/token, correct Paris response, and a complete 48-layer EP trace.
-- Status: local Vulkan/core/fabric suites pass; fleet qualification pending.
+- Qualification: all eight RADV blades passed core, Vulkan, model-load, tokenizer, and fabric suites with homogeneous binary, SPIR-V, and manifest fingerprints. Paris and the 48-layer EP validator passed on every retained sample.
+- Three-run qualified median (`6f7f4d2` / `73f2dde`): 4.08 tok/s steady, 258.191 ms token wall, 218.566 ms layer wall, 82.253 ms rank-0 GPU, 0.760 ms QSA state/attention, 170 submissions, and 1,518 dispatches. Useful aggregate traffic is 24.48-26.11 GB/s.
+- Versus baseline: layer wall improved by 19.587 ms and pre-route `sync1` improved by 22.135 ms, but median token wall regressed by 2.822 ms. The QSA mechanism passed; the required whole-frame reduction did not.
+- Frame-trace correction: the apparent 27-28 ms embedding stage is profiler query-pool first-use cost. Neighboring unprofiled embedding calls are 0.09-0.11 ms. Cold n-gram lookups are the recurring tail: 8-16 useful direct reads (32-72 KiB) spend 24.5-24.75 ms inside io_uring; hashing, packing, and dequantization stay below 0.15 ms.
+- Decision: keep the causal resident-QSA path because the prior path consumed stale GPU data and performed state I/O in-frame. Item 1 remains open until the newly isolated n-gram tail is removed or hidden and the whole-frame gate passes.
+- Rejected follow-ups: disabling NVMe APST did not move n-gram latency; polled I/O is unsupported through the NVMe/LVM/XFS stack; padding useful reads to QD64 did not reduce ordinary misses and was reverted in `c106573`.
