@@ -1853,11 +1853,21 @@ static fg_status handle_models(int fd, fg_runtime *runtime, fg_error *err) {
     api_buffer body = {0};
     fg_status status = buffer_append(&body, "{\"object\":\"list\",\"data\":[{\"id\":", err);
     if (status == FG_OK) status = buffer_append_json_string(&body, model, strlen(model), err);
-    if (status == FG_OK)
-        status = buffer_append(&body,
-                               ",\"object\":\"model\",\"created\":0,\"owned_by\":"
-                               "\"flash-gordon\"}]}",
-                               err);
+    if (status == FG_OK) {
+        char capabilities[256];
+        int length = snprintf(capabilities, sizeof(capabilities),
+                              ",\"object\":\"model\",\"created\":0,\"owned_by\":"
+                              "\"flash-gordon\",\"capabilities\":{\"native_context\":%u,"
+                              "\"experimental_context\":0,\"tools\":true,\"mtp\":false,"
+                              "\"image\":false,\"video\":false}}]}",
+                              fg_runtime_context_limit(runtime));
+        if (length < 0 || (size_t)length >= sizeof(capabilities)) {
+            fg_error_set(err, FG_ERR_LIMIT, "model capabilities exceed response buffer");
+            status = FG_ERR_LIMIT;
+        } else {
+            status = buffer_append_n(&body, capabilities, (size_t)length, err);
+        }
+    }
     if (status == FG_OK)
         status = send_response(fd, 200u, "application/json", body.data, body.length, err);
     free(body.data);

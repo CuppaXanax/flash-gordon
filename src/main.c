@@ -27,7 +27,8 @@ static void usage(FILE *file) {
             "  flash-gordon api --manifest FILE [--host HOST] [--port PORT] "
             "[RUNTIME OPTIONS]\n"
             "\nRuntime options:\n"
-            "  --context-tokens N --qsa-hot-tokens N --qsa-page-cache-mib N\n"
+            "  --context-tokens N --gpu-index-tokens N --qsa-hot-tokens N "
+            "--qsa-page-cache-mib N\n"
             "  --experimental-context N --experimental-mtp --experimental-vision\n"
             "  flash-gordon inspect --manifest FILE\n",
             FG_VERSION_MAJOR, FG_VERSION_MINOR);
@@ -65,6 +66,10 @@ static fg_status parse_runtime_option(int *index, int argc, char **argv,
     if (!strcmp(flag, "--context-tokens")) {
         return parse_u32(arg_value(index, argc, argv, flag, err), flag, 1u, FG_MAX_CONTEXT,
                          &options->logical_context_tokens, err);
+    }
+    if (!strcmp(flag, "--gpu-index-tokens")) {
+        return parse_u32(arg_value(index, argc, argv, flag, err), flag, 1u, FG_MAX_CONTEXT,
+                         &options->gpu_index_tokens, err);
     }
     if (!strcmp(flag, "--qsa-hot-tokens")) {
         return parse_u32(arg_value(index, argc, argv, flag, err), flag, 1u, FG_MAX_CONTEXT,

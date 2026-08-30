@@ -14,6 +14,7 @@ enum {
 
 typedef struct fg_runtime_options {
     uint32_t logical_context_tokens;
+    uint32_t gpu_index_tokens;
     uint32_t qsa_hot_tokens;
     uint64_t qsa_page_cache_bytes;
     uint32_t prefill_microbatch;

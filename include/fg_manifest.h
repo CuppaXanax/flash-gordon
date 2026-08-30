@@ -4,8 +4,9 @@
 #include "fg.h"
 
 #define FG_MANIFEST_MAGIC UINT64_C(0x314d47464e574f51) /* QOWNFGM1 */
-#define FG_MANIFEST_FORMAT_VERSION 4u
-#define FG_MANIFEST_SIZE 65536u
+#define FG_MANIFEST_LEGACY_FORMAT_VERSION 4u
+#define FG_MANIFEST_FORMAT_VERSION 5u
+#define FG_MANIFEST_CONTRACT_VERSION 1u
 #define FG_MAX_TENSORS 4096u
 #define FG_TENSOR_NAME_MAX 96u
 #define FG_MAX_ENDPOINT 64u
@@ -37,6 +38,15 @@ enum {
     FG_MANIFEST_COMPONENTS_MULTIMODAL = FG_MANIFEST_HAS_VISION | FG_MANIFEST_HAS_MTP
 };
 
+typedef enum fg_manifest_component {
+    FG_COMPONENT_TEXT = 0,
+    FG_COMPONENT_NGRAM = 1,
+    FG_COMPONENT_TOKENIZER = 2,
+    FG_COMPONENT_VISION = 3,
+    FG_COMPONENT_MTP = 4,
+    FG_COMPONENT_COUNT = 5
+} fg_manifest_component;
+
 typedef struct fg_tensor_record {
     char name[FG_TENSOR_NAME_MAX];
     uint64_t offset;
@@ -65,6 +75,22 @@ typedef struct fg_rank_record {
     uint32_t tensor_count;
 } fg_rank_record;
 
+typedef struct fg_manifest_contract {
+    uint32_t version;
+    uint32_t minimum_protocol_version;
+    uint32_t position_mode;
+    uint32_t flags;
+    uint32_t gpu_index_tokens;
+    uint32_t qsa_hot_record_tokens;
+    uint64_t host_page_cache_bytes;
+    uint8_t rope_policy_sha256[32];
+    uint8_t quantization_sha256[32];
+    uint8_t state_format_sha256[32];
+    uint8_t component_sha256[FG_COMPONENT_COUNT][32];
+    uint8_t rank_state_format_sha256[FG_RANK_COUNT][32];
+    uint8_t reserved[64];
+} fg_manifest_contract;
+
 typedef struct fg_manifest {
     uint64_t magic;
     uint32_t format_version;
@@ -92,7 +118,11 @@ typedef struct fg_manifest {
     uint8_t layer_groups[FG_LAYER_COUNT][FG_GROUP_SIZE];
     uint16_t expert_rank[FG_LAYER_COUNT][FG_EXPERT_COUNT];
     fg_tensor_record tensors[FG_MAX_TENSORS];
+    fg_manifest_contract session;
 } fg_manifest;
+
+#define FG_MANIFEST_V4_BYTES ((size_t)offsetof(fg_manifest, session))
+#define FG_MANIFEST_SIZE ((size_t)sizeof(fg_manifest))
 
 void fg_manifest_init(fg_manifest *manifest);
 fg_status fg_manifest_validate(const fg_manifest *manifest, fg_error *err);
@@ -100,6 +130,10 @@ fg_status fg_manifest_validate_deployment(const fg_manifest *manifest, fg_error 
 fg_status fg_manifest_read(const char *path, fg_manifest *manifest, fg_error *err);
 fg_status fg_manifest_write(const char *path, fg_manifest *manifest, fg_error *err);
 fg_status fg_manifest_add_tensor(fg_manifest *manifest, const fg_tensor_record *record, fg_error *err);
+fg_status fg_manifest_validate_compatibility(const fg_manifest *manifest,
+                                             uint32_t required_protocol_version,
+                                             fg_position_mode position_mode,
+                                             fg_error *err);
 void fg_manifest_print(const fg_manifest *manifest);
 
 #endif

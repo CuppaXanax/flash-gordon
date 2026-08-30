@@ -7,7 +7,8 @@
 
 #define FG_VERSION_MAJOR 0u
 #define FG_VERSION_MINOR 1u
-#define FG_PROTOCOL_VERSION 5u
+#define FG_PROTOCOL_MIN_VERSION 5u
+#define FG_PROTOCOL_VERSION 6u
 #define FG_RANK_COUNT 8u
 #define FG_LAYER_COUNT 48u
 #define FG_EXPERT_COUNT 512u
@@ -25,6 +26,11 @@
 #define FG_REQUIRED_CU 24u
 #define FG_PERSISTENT_CAP_BYTES UINT64_C(11166914969) /* 10.4 GiB */
 #define FG_RESIDENCY_CAP_BYTES UINT64_C(14495514624)  /* 13.5 GiB */
+
+typedef enum fg_position_mode {
+    FG_POSITION_TEXT = 0,
+    FG_POSITION_FOUR_AXIS = 1
+} fg_position_mode;
 
 typedef enum fg_status {
     FG_OK = 0,

@@ -13,6 +13,14 @@
 static uint16_t bswap16(uint16_t x){return (uint16_t)((x>>8)|(x<<8));}
 static uint64_t ntoh64_halves(uint32_t hi,uint32_t lo){return ((uint64_t)ntohl(hi)<<32)|ntohl(lo);}
 
+bool fg_protocol_version_supported(uint16_t version){
+    return version>=FG_PROTOCOL_MIN_VERSION&&version<=FG_PROTOCOL_VERSION;
+}
+
+static uint16_t max_message_type(uint16_t version){
+    return version>=6u?FG_MSG_SESSION_RESTORED:FG_MSG_NGRAM_RESULT;
+}
+
 uint64_t fg_token_hash_update(uint64_t h,const int32_t *tokens,size_t count){if(h==0)h=UINT64_C(1469598103934665603);for(size_t i=0;i<count;i++){uint32_t x=(uint32_t)tokens[i];for(unsigned b=0;b<4;b++){h^=(uint8_t)(x>>(b*8));h*=UINT64_C(1099511628211);}}return h;}
 
 static uint32_t crc32c_portable(const void *data,size_t bytes){const uint8_t *p=data;uint32_t crc=~0u;while(bytes--){crc^=*p++;for(unsigned k=0;k<8;k++)crc=(crc>>1)^(0x82f63b78u&-(int32_t)(crc&1u));}return ~crc;}
@@ -33,16 +41,25 @@ uint32_t fg_crc32c(const void *data,size_t bytes){
     return crc32c_portable(data,bytes);
 }
 
+fg_status fg_frame_encode_version(fg_frame_header *h,uint16_t version,fg_message_type type,uint64_t request_id,uint32_t sequence,uint32_t flags,const void *payload,uint32_t bytes,fg_error *err){
+    if(!h||!fg_protocol_version_supported(version)||(bytes&&!payload)||bytes>FG_MAX_FRAME_BYTES||
+       type<FG_MSG_HELLO||type>max_message_type(version)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid frame arguments for protocol %u",version);
+        return FG_ERR_ARGUMENT;
+    }
+    memset(h,0,sizeof(*h));h->magic_be=htonl(FG_FRAME_MAGIC);h->version_be=bswap16(version);h->type_be=bswap16((uint16_t)type);h->bytes_be=htonl(bytes);h->request_hi_be=htonl((uint32_t)(request_id>>32));h->request_lo_be=htonl((uint32_t)request_id);h->sequence_be=htonl(sequence);h->flags_be=htonl(flags);h->crc32c_be=htonl(fg_crc32c(payload,bytes));return FG_OK;
+}
 fg_status fg_frame_encode(fg_frame_header *h,fg_message_type type,uint64_t request_id,uint32_t sequence,uint32_t flags,const void *payload,uint32_t bytes,fg_error *err){
-    if(!h||(bytes&&!payload)||bytes>FG_MAX_FRAME_BYTES||type<FG_MSG_HELLO||type>FG_MSG_NGRAM_RESULT){fg_error_set(err,FG_ERR_ARGUMENT,"invalid frame arguments");return FG_ERR_ARGUMENT;}
-    memset(h,0,sizeof(*h));h->magic_be=htonl(FG_FRAME_MAGIC);h->version_be=bswap16((uint16_t)FG_PROTOCOL_VERSION);h->type_be=bswap16((uint16_t)type);h->bytes_be=htonl(bytes);h->request_hi_be=htonl((uint32_t)(request_id>>32));h->request_lo_be=htonl((uint32_t)request_id);h->sequence_be=htonl(sequence);h->flags_be=htonl(flags);h->crc32c_be=htonl(fg_crc32c(payload,bytes));return FG_OK;
+    return fg_frame_encode_version(h,FG_PROTOCOL_VERSION,type,request_id,sequence,flags,payload,bytes,err);
 }
 fg_status fg_frame_validate(const fg_frame_header *h,const void *payload,uint32_t *payload_bytes,fg_error *err){
     if(!h){fg_error_set(err,FG_ERR_ARGUMENT,"frame header is null");return FG_ERR_ARGUMENT;}uint32_t bytes=ntohl(h->bytes_be);
-    if(ntohl(h->magic_be)!=FG_FRAME_MAGIC||bswap16(h->version_be)!=FG_PROTOCOL_VERSION){fg_error_set(err,FG_ERR_MISMATCH,"frame magic or protocol mismatch");return FG_ERR_MISMATCH;}
-    uint16_t type=bswap16(h->type_be);if(type<FG_MSG_HELLO||type>FG_MSG_NGRAM_RESULT||bytes>FG_MAX_FRAME_BYTES||(bytes&&!payload)){fg_error_set(err,FG_ERR_FORMAT,"invalid frame type or length");return FG_ERR_FORMAT;}
+    uint16_t version=bswap16(h->version_be);
+    if(ntohl(h->magic_be)!=FG_FRAME_MAGIC||!fg_protocol_version_supported(version)){fg_error_set(err,FG_ERR_MISMATCH,"frame magic or protocol %u mismatch",version);return FG_ERR_MISMATCH;}
+    uint16_t type=bswap16(h->type_be);if(type<FG_MSG_HELLO||type>max_message_type(version)||bytes>FG_MAX_FRAME_BYTES||(bytes&&!payload)){fg_error_set(err,FG_ERR_FORMAT,"invalid frame type or length for protocol %u",version);return FG_ERR_FORMAT;}
     if(fg_crc32c(payload,bytes)!=ntohl(h->crc32c_be)){fg_error_set(err,FG_ERR_MISMATCH,"frame CRC32C mismatch for request %llu",(unsigned long long)ntoh64_halves(h->request_hi_be,h->request_lo_be));return FG_ERR_MISMATCH;}if(payload_bytes)*payload_bytes=bytes;return FG_OK;
 }
+uint16_t fg_frame_version(const fg_frame_header *header){return header?bswap16(header->version_be):0;}
 fg_message_type fg_frame_type(const fg_frame_header *header){return header?(fg_message_type)bswap16(header->type_be):0;}
 uint64_t fg_frame_request_id(const fg_frame_header *header){return header?ntoh64_halves(header->request_hi_be,header->request_lo_be):0;}
 uint32_t fg_frame_sequence(const fg_frame_header *header){return header?ntohl(header->sequence_be):0;}
@@ -192,15 +209,15 @@ fg_status fg_prefill_result_decode(fg_prefill_result *result,fg_prefill_result_p
 }
 
 static fg_status validate_prefill_layer_work(const fg_prefill_layer_work *work,fg_error *err){
-    if(!work||work->layer>=FG_LAYER_COUNT||work->source_rank>=FG_RANK_COUNT||work->destination_rank>=FG_RANK_COUNT||(work->flags&~FG_LAYER_WORK_HAS_NGRAM)||((work->layer==1u)!=((work->flags&FG_LAYER_WORK_HAS_NGRAM)!=0))||!work->token_count||work->token_count>FG_PREFILL_MAX_TOKENS||!work->positions||!work->hyper||((work->flags&FG_LAYER_WORK_HAS_NGRAM)&&!work->ngram_embeddings)){fg_error_set(err,FG_ERR_FORMAT,"invalid prefill layer work header");return FG_ERR_FORMAT;}uint64_t hyper_values=(uint64_t)work->token_count*FG_HYPER_WIDTH;for(uint64_t i=0;i<hyper_values;i++)if(!isfinite(work->hyper[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite prefill layer input at %llu",(unsigned long long)i);return FG_ERR_FORMAT;}if(work->flags&FG_LAYER_WORK_HAS_NGRAM){uint64_t ngram_values=(uint64_t)work->token_count*FG_NGRAM_EMBED_VALUES;for(uint64_t i=0;i<ngram_values;i++)if(!isfinite(work->ngram_embeddings[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite batched n-gram embedding at %llu",(unsigned long long)i);return FG_ERR_FORMAT;}}return FG_OK;
+    if(!work||work->layer>=FG_LAYER_COUNT||work->source_rank>=FG_RANK_COUNT||work->destination_rank>=FG_RANK_COUNT||(work->flags&~FG_LAYER_WORK_HAS_NGRAM)||((work->layer==1u)!=((work->flags&FG_LAYER_WORK_HAS_NGRAM)!=0))||work->position_mode>FG_POSITION_FOUR_AXIS||!work->token_count||work->token_count>FG_PREFILL_MAX_TOKENS||!work->positions||!work->hyper||((work->flags&FG_LAYER_WORK_HAS_NGRAM)&&!work->ngram_embeddings)){fg_error_set(err,FG_ERR_FORMAT,"invalid prefill layer work header");return FG_ERR_FORMAT;}uint64_t hyper_values=(uint64_t)work->token_count*FG_HYPER_WIDTH;for(uint64_t i=0;i<hyper_values;i++)if(!isfinite(work->hyper[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite prefill layer input at %llu",(unsigned long long)i);return FG_ERR_FORMAT;}if(work->flags&FG_LAYER_WORK_HAS_NGRAM){uint64_t ngram_values=(uint64_t)work->token_count*FG_NGRAM_EMBED_VALUES;for(uint64_t i=0;i<ngram_values;i++)if(!isfinite(work->ngram_embeddings[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite batched n-gram embedding at %llu",(unsigned long long)i);return FG_ERR_FORMAT;}}return FG_OK;
 }
 
 fg_status fg_prefill_layer_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,const fg_prefill_layer_work *work,fg_error *err){
-    if(!output||!bytes){fg_error_set(err,FG_ERR_ARGUMENT,"prefill layer work output is null");return FG_ERR_ARGUMENT;}fg_status status=validate_prefill_layer_work(work,err);if(status!=FG_OK)return status;uint64_t position_bytes=(uint64_t)work->token_count*3u*4u,hyper_bytes=(uint64_t)work->token_count*FG_HYPER_WIDTH*4u,ngram_bytes=(work->flags&FG_LAYER_WORK_HAS_NGRAM)?(uint64_t)work->token_count*FG_NGRAM_EMBED_VALUES*4u:0u,required=FG_PREFILL_LAYER_HEADER_BYTES+position_bytes+hyper_bytes+ngram_bytes;if(required>FG_MAX_FRAME_BYTES||required>capacity){fg_error_set(err,FG_ERR_LIMIT,"prefill layer work buffer is too small");return FG_ERR_LIMIT;}memset(output,0,FG_PREFILL_LAYER_HEADER_BYTES);output[0]=work->layer;output[1]=work->source_rank;output[2]=work->destination_rank;output[3]=work->flags;put_u32_be(output+4u,work->first_token);put_u16_be(output+8u,work->token_count);uint32_t offset=FG_PREFILL_LAYER_HEADER_BYTES;for(uint32_t i=0;i<(uint32_t)work->token_count*3u;i++,offset+=4u)put_u32_be(output+offset,work->positions[i]);for(uint64_t i=0;i<(uint64_t)work->token_count*FG_HYPER_WIDTH;i++,offset+=4u)put_f32_be(output+offset,work->hyper[i]);if(work->flags&FG_LAYER_WORK_HAS_NGRAM)for(uint64_t i=0;i<(uint64_t)work->token_count*FG_NGRAM_EMBED_VALUES;i++,offset+=4u)put_f32_be(output+offset,work->ngram_embeddings[i]);*bytes=(uint32_t)required;return FG_OK;
+    if(!output||!bytes){fg_error_set(err,FG_ERR_ARGUMENT,"prefill layer work output is null");return FG_ERR_ARGUMENT;}fg_status status=validate_prefill_layer_work(work,err);if(status!=FG_OK)return status;uint32_t axes=work->position_mode==FG_POSITION_FOUR_AXIS?4u:3u;uint64_t position_bytes=(uint64_t)work->token_count*axes*4u,hyper_bytes=(uint64_t)work->token_count*FG_HYPER_WIDTH*4u,ngram_bytes=(work->flags&FG_LAYER_WORK_HAS_NGRAM)?(uint64_t)work->token_count*FG_NGRAM_EMBED_VALUES*4u:0u,required=FG_PREFILL_LAYER_HEADER_BYTES+position_bytes+hyper_bytes+ngram_bytes;if(required>FG_MAX_FRAME_BYTES||required>capacity){fg_error_set(err,FG_ERR_LIMIT,"prefill layer work buffer is too small");return FG_ERR_LIMIT;}memset(output,0,FG_PREFILL_LAYER_HEADER_BYTES);output[0]=work->layer;output[1]=work->source_rank;output[2]=work->destination_rank;output[3]=work->flags;put_u32_be(output+4u,work->first_token);put_u16_be(output+8u,work->token_count);output[10]=(uint8_t)work->position_mode;output[11]=(uint8_t)axes;uint32_t offset=FG_PREFILL_LAYER_HEADER_BYTES;for(uint32_t i=0;i<(uint32_t)work->token_count*axes;i++,offset+=4u)put_u32_be(output+offset,work->positions[i]);for(uint64_t i=0;i<(uint64_t)work->token_count*FG_HYPER_WIDTH;i++,offset+=4u)put_f32_be(output+offset,work->hyper[i]);if(work->flags&FG_LAYER_WORK_HAS_NGRAM)for(uint64_t i=0;i<(uint64_t)work->token_count*FG_NGRAM_EMBED_VALUES;i++,offset+=4u)put_f32_be(output+offset,work->ngram_embeddings[i]);*bytes=(uint32_t)required;return FG_OK;
 }
 
 fg_status fg_prefill_layer_work_decode(fg_prefill_layer_work *work,uint32_t *position_storage,uint32_t position_capacity,float *hyper_storage,uint64_t hyper_capacity_values,float *ngram_storage,uint64_t ngram_capacity_values,const uint8_t *payload,uint32_t bytes,fg_error *err){
-    if(!work||!position_storage||!hyper_storage||!payload||bytes<FG_PREFILL_LAYER_HEADER_BYTES){fg_error_set(err,FG_ERR_ARGUMENT,"invalid prefill layer work input");return FG_ERR_ARGUMENT;}uint8_t flags=payload[3];uint16_t tokens=get_u16_be(payload+8u);uint64_t position_values=(uint64_t)tokens*3u,hyper_values=(uint64_t)tokens*FG_HYPER_WIDTH,ngram_values=(flags&FG_LAYER_WORK_HAS_NGRAM)?(uint64_t)tokens*FG_NGRAM_EMBED_VALUES:0u,required=FG_PREFILL_LAYER_HEADER_BYTES+(position_values+hyper_values+ngram_values)*4u;if(payload[10]||payload[11]||get_u32_be(payload+12u)||!tokens||tokens>FG_PREFILL_MAX_TOKENS||required!=bytes||position_capacity<position_values||hyper_capacity_values<hyper_values||(ngram_values&&(!ngram_storage||ngram_capacity_values<ngram_values))){fg_error_set(err,FG_ERR_FORMAT,"invalid prefill layer work size, reserved bytes, or storage capacity");return FG_ERR_FORMAT;}memset(work,0,sizeof(*work));work->layer=payload[0];work->source_rank=payload[1];work->destination_rank=payload[2];work->flags=flags;work->first_token=get_u32_be(payload+4u);work->token_count=tokens;work->positions=position_storage;work->hyper=hyper_storage;work->ngram_embeddings=ngram_values?ngram_storage:NULL;uint32_t offset=FG_PREFILL_LAYER_HEADER_BYTES;for(uint32_t i=0;i<(uint32_t)position_values;i++,offset+=4u)position_storage[i]=get_u32_be(payload+offset);for(uint64_t i=0;i<hyper_values;i++,offset+=4u)hyper_storage[i]=get_f32_be(payload+offset);for(uint64_t i=0;i<ngram_values;i++,offset+=4u)ngram_storage[i]=get_f32_be(payload+offset);return validate_prefill_layer_work(work,err);
+    if(!work||!position_storage||!hyper_storage||!payload||bytes<FG_PREFILL_LAYER_HEADER_BYTES){fg_error_set(err,FG_ERR_ARGUMENT,"invalid prefill layer work input");return FG_ERR_ARGUMENT;}uint8_t flags=payload[3];uint16_t tokens=get_u16_be(payload+8u);fg_position_mode mode=FG_POSITION_TEXT;uint32_t axes=3u;if(payload[11]){mode=(fg_position_mode)payload[10];axes=payload[11];if(mode>FG_POSITION_FOUR_AXIS||axes!=(mode==FG_POSITION_FOUR_AXIS?4u:3u)){fg_error_set(err,FG_ERR_FORMAT,"invalid prefill position contract");return FG_ERR_FORMAT;}}else if(payload[10]){fg_error_set(err,FG_ERR_FORMAT,"invalid legacy prefill position header");return FG_ERR_FORMAT;}uint64_t position_values=(uint64_t)tokens*axes,hyper_values=(uint64_t)tokens*FG_HYPER_WIDTH,ngram_values=(flags&FG_LAYER_WORK_HAS_NGRAM)?(uint64_t)tokens*FG_NGRAM_EMBED_VALUES:0u,required=FG_PREFILL_LAYER_HEADER_BYTES+(position_values+hyper_values+ngram_values)*4u;if(get_u32_be(payload+12u)||!tokens||tokens>FG_PREFILL_MAX_TOKENS||required!=bytes||position_capacity<position_values||hyper_capacity_values<hyper_values||(ngram_values&&(!ngram_storage||ngram_capacity_values<ngram_values))){fg_error_set(err,FG_ERR_FORMAT,"invalid prefill layer work size, reserved bytes, or storage capacity");return FG_ERR_FORMAT;}memset(work,0,sizeof(*work));work->layer=payload[0];work->source_rank=payload[1];work->destination_rank=payload[2];work->flags=flags;work->position_mode=mode;work->first_token=get_u32_be(payload+4u);work->token_count=tokens;work->positions=position_storage;work->hyper=hyper_storage;work->ngram_embeddings=ngram_values?ngram_storage:NULL;uint32_t offset=FG_PREFILL_LAYER_HEADER_BYTES;for(uint32_t i=0;i<(uint32_t)position_values;i++,offset+=4u)position_storage[i]=get_u32_be(payload+offset);for(uint64_t i=0;i<hyper_values;i++,offset+=4u)hyper_storage[i]=get_f32_be(payload+offset);for(uint64_t i=0;i<ngram_values;i++,offset+=4u)ngram_storage[i]=get_f32_be(payload+offset);return validate_prefill_layer_work(work,err);
 }
 
 static fg_status validate_prefill_layer_result(const fg_prefill_layer_result *result,fg_error *err){if(!result||result->layer>=FG_LAYER_COUNT||result->source_rank>=FG_RANK_COUNT||result->destination_rank>=FG_RANK_COUNT||!result->token_count||result->token_count>FG_PREFILL_MAX_TOKENS||!result->hyper){fg_error_set(err,FG_ERR_FORMAT,"invalid prefill layer result header");return FG_ERR_FORMAT;}uint64_t values=(uint64_t)result->token_count*FG_HYPER_WIDTH;for(uint64_t i=0;i<values;i++)if(!isfinite(result->hyper[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite prefill layer result at %llu",(unsigned long long)i);return FG_ERR_FORMAT;}return FG_OK;}
@@ -210,15 +227,15 @@ fg_status fg_prefill_layer_result_encode(uint8_t *output,uint32_t capacity,uint3
 fg_status fg_prefill_layer_result_decode(fg_prefill_layer_result *result,float *hyper_storage,uint64_t hyper_capacity_values,const uint8_t *payload,uint32_t bytes,fg_error *err){if(!result||!hyper_storage||!payload||bytes<FG_PREFILL_LAYER_HEADER_BYTES){fg_error_set(err,FG_ERR_ARGUMENT,"invalid prefill layer result input");return FG_ERR_ARGUMENT;}uint16_t tokens=get_u16_be(payload+8u);uint64_t values=(uint64_t)tokens*FG_HYPER_WIDTH,required=FG_PREFILL_LAYER_HEADER_BYTES+values*4u;if(payload[3]||payload[10]||payload[11]||get_u32_be(payload+12u)||!tokens||tokens>FG_PREFILL_MAX_TOKENS||required!=bytes||hyper_capacity_values<values){fg_error_set(err,FG_ERR_FORMAT,"invalid prefill layer result size, reserved bytes, or storage capacity");return FG_ERR_FORMAT;}memset(result,0,sizeof(*result));result->layer=payload[0];result->source_rank=payload[1];result->destination_rank=payload[2];result->first_token=get_u32_be(payload+4u);result->token_count=tokens;result->hyper=hyper_storage;uint32_t offset=FG_PREFILL_LAYER_HEADER_BYTES;for(uint64_t i=0;i<values;i++,offset+=4u)hyper_storage[i]=get_f32_be(payload+offset);return validate_prefill_layer_result(result,err);}
 
 static fg_status validate_layer_work(const fg_layer_work *work,fg_error *err){
-    if(!work||work->layer>=FG_LAYER_COUNT||work->source_rank>=FG_RANK_COUNT||work->destination_rank>=FG_RANK_COUNT||(work->flags&~FG_LAYER_WORK_HAS_NGRAM)||((work->layer==1u)!=((work->flags&FG_LAYER_WORK_HAS_NGRAM)!=0))){fg_error_set(err,FG_ERR_FORMAT,"invalid layer work header");return FG_ERR_FORMAT;}for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(work->hyper[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite layer input at %u",i);return FG_ERR_FORMAT;}if(work->flags&FG_LAYER_WORK_HAS_NGRAM)for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++)if(!isfinite(work->ngram_embedding[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite n-gram embedding at %u",i);return FG_ERR_FORMAT;}return FG_OK;
+    if(!work||work->layer>=FG_LAYER_COUNT||work->source_rank>=FG_RANK_COUNT||work->destination_rank>=FG_RANK_COUNT||(work->flags&~FG_LAYER_WORK_HAS_NGRAM)||((work->layer==1u)!=((work->flags&FG_LAYER_WORK_HAS_NGRAM)!=0))||work->position_mode>FG_POSITION_FOUR_AXIS||(work->position_mode==FG_POSITION_TEXT&&work->position[3])){fg_error_set(err,FG_ERR_FORMAT,"invalid layer work header");return FG_ERR_FORMAT;}for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(work->hyper[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite layer input at %u",i);return FG_ERR_FORMAT;}if(work->flags&FG_LAYER_WORK_HAS_NGRAM)for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++)if(!isfinite(work->ngram_embedding[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite n-gram embedding at %u",i);return FG_ERR_FORMAT;}return FG_OK;
 }
 
 fg_status fg_layer_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,const fg_layer_work *work,fg_error *err){
-    if(!output||!bytes){fg_error_set(err,FG_ERR_ARGUMENT,"layer work output is null");return FG_ERR_ARGUMENT;}fg_status status=validate_layer_work(work,err);if(status!=FG_OK)return status;uint32_t required=FG_LAYER_WORK_BASE_BYTES+((work->flags&FG_LAYER_WORK_HAS_NGRAM)?FG_NGRAM_EMBED_VALUES*4u:0u);if(capacity<required){fg_error_set(err,FG_ERR_LIMIT,"layer work buffer is too small");return FG_ERR_LIMIT;}output[0]=work->layer;output[1]=work->source_rank;output[2]=work->destination_rank;output[3]=work->flags;put_u32_be(output+4u,work->token_index);for(uint32_t axis=0;axis<3u;axis++)put_u32_be(output+8u+axis*4u,work->position[axis]);uint32_t offset=FG_LAYER_WORK_HEADER_BYTES;for(uint32_t i=0;i<FG_HYPER_WIDTH;i++,offset+=4u)put_f32_be(output+offset,work->hyper[i]);if(work->flags&FG_LAYER_WORK_HAS_NGRAM)for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++,offset+=4u)put_f32_be(output+offset,work->ngram_embedding[i]);*bytes=required;return FG_OK;
+    if(!output||!bytes){fg_error_set(err,FG_ERR_ARGUMENT,"layer work output is null");return FG_ERR_ARGUMENT;}fg_status status=validate_layer_work(work,err);if(status!=FG_OK)return status;uint32_t axes=work->position_mode==FG_POSITION_FOUR_AXIS?4u:3u,header=12u+axes*4u,required=header+FG_HYPER_WIDTH*4u+((work->flags&FG_LAYER_WORK_HAS_NGRAM)?FG_NGRAM_EMBED_VALUES*4u:0u);if(capacity<required){fg_error_set(err,FG_ERR_LIMIT,"layer work buffer is too small");return FG_ERR_LIMIT;}output[0]=work->layer;output[1]=work->source_rank;output[2]=work->destination_rank;output[3]=work->flags;put_u32_be(output+4u,work->token_index);output[8]=(uint8_t)work->position_mode;output[9]=(uint8_t)axes;output[10]=0u;output[11]=0u;for(uint32_t axis=0;axis<axes;axis++)put_u32_be(output+12u+axis*4u,work->position[axis]);uint32_t offset=header;for(uint32_t i=0;i<FG_HYPER_WIDTH;i++,offset+=4u)put_f32_be(output+offset,work->hyper[i]);if(work->flags&FG_LAYER_WORK_HAS_NGRAM)for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++,offset+=4u)put_f32_be(output+offset,work->ngram_embedding[i]);*bytes=required;return FG_OK;
 }
 
 fg_status fg_layer_work_decode(fg_layer_work *work,const uint8_t *payload,uint32_t bytes,fg_error *err){
-    if(!work||!payload||bytes<FG_LAYER_WORK_BASE_BYTES){fg_error_set(err,FG_ERR_ARGUMENT,"invalid layer work input");return FG_ERR_ARGUMENT;}uint8_t flags=payload[3];uint32_t required=FG_LAYER_WORK_BASE_BYTES+((flags&FG_LAYER_WORK_HAS_NGRAM)?FG_NGRAM_EMBED_VALUES*4u:0u);if(bytes!=required){fg_error_set(err,FG_ERR_FORMAT,"invalid layer work payload size");return FG_ERR_FORMAT;}memset(work,0,sizeof(*work));work->layer=payload[0];work->source_rank=payload[1];work->destination_rank=payload[2];work->flags=flags;work->token_index=get_u32_be(payload+4u);for(uint32_t axis=0;axis<3u;axis++)work->position[axis]=get_u32_be(payload+8u+axis*4u);uint32_t offset=FG_LAYER_WORK_HEADER_BYTES;for(uint32_t i=0;i<FG_HYPER_WIDTH;i++,offset+=4u)work->hyper[i]=get_f32_be(payload+offset);if(flags&FG_LAYER_WORK_HAS_NGRAM)for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++,offset+=4u)work->ngram_embedding[i]=get_f32_be(payload+offset);return validate_layer_work(work,err);
+    if(!work||!payload||bytes<FG_LAYER_WORK_LEGACY_HEADER_BYTES+FG_HYPER_WIDTH*4u){fg_error_set(err,FG_ERR_ARGUMENT,"invalid layer work input");return FG_ERR_ARGUMENT;}uint8_t flags=payload[3];uint32_t body=FG_HYPER_WIDTH*4u+((flags&FG_LAYER_WORK_HAS_NGRAM)?FG_NGRAM_EMBED_VALUES*4u:0u);if(bytes<body){fg_error_set(err,FG_ERR_FORMAT,"invalid layer work payload size");return FG_ERR_FORMAT;}uint32_t header=bytes-body,axes=0u,position_offset=0u;fg_position_mode mode=FG_POSITION_TEXT;if(header==FG_LAYER_WORK_LEGACY_HEADER_BYTES){axes=3u;position_offset=8u;}else if(header==FG_LAYER_WORK_TEXT_HEADER_BYTES||header==FG_LAYER_WORK_FOUR_AXIS_HEADER_BYTES){mode=(fg_position_mode)payload[8];axes=payload[9];position_offset=12u;if(payload[10]||payload[11]||mode>FG_POSITION_FOUR_AXIS||axes!=(mode==FG_POSITION_FOUR_AXIS?4u:3u)||header!=12u+axes*4u){fg_error_set(err,FG_ERR_FORMAT,"invalid layer position contract");return FG_ERR_FORMAT;}}else{fg_error_set(err,FG_ERR_FORMAT,"invalid layer work payload size");return FG_ERR_FORMAT;}memset(work,0,sizeof(*work));work->layer=payload[0];work->source_rank=payload[1];work->destination_rank=payload[2];work->flags=flags;work->position_mode=mode;work->token_index=get_u32_be(payload+4u);for(uint32_t axis=0;axis<axes;axis++)work->position[axis]=get_u32_be(payload+position_offset+axis*4u);uint32_t offset=header;for(uint32_t i=0;i<FG_HYPER_WIDTH;i++,offset+=4u)work->hyper[i]=get_f32_be(payload+offset);if(flags&FG_LAYER_WORK_HAS_NGRAM)for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++,offset+=4u)work->ngram_embedding[i]=get_f32_be(payload+offset);return validate_layer_work(work,err);
 }
 
 static fg_status validate_layer_result(const fg_layer_result *result,fg_error *err){if(!result||result->layer>=FG_LAYER_COUNT||result->source_rank>=FG_RANK_COUNT||result->destination_rank>=FG_RANK_COUNT){fg_error_set(err,FG_ERR_FORMAT,"invalid layer result header");return FG_ERR_FORMAT;}for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(result->hyper[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite layer result at %u",i);return FG_ERR_FORMAT;}return FG_OK;}
@@ -248,6 +265,79 @@ fg_status fg_ngram_work_decode(fg_ngram_work *work,const uint8_t *payload,uint32
 fg_status fg_ngram_result_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,const fg_ngram_result *result,fg_error *err){if(!output||!bytes||!result){fg_error_set(err,FG_ERR_ARGUMENT,"invalid n-gram result output");return FG_ERR_ARGUMENT;}fg_status status=validate_ngram_items(result->source_rank,result->destination_rank,result->item_count,result->heads,err);uint32_t required=8u+(uint32_t)result->item_count*(1u+FG_NGRAM_WIRE_ROW_BYTES);if(status!=FG_OK)return status;if(capacity<required){fg_error_set(err,FG_ERR_LIMIT,"n-gram result buffer is too small");return FG_ERR_LIMIT;}output[0]=result->source_rank;output[1]=result->destination_rank;output[2]=result->item_count;output[3]=0u;put_u32_be(output+4u,result->token_index);for(uint32_t i=0;i<result->item_count;i++){uint32_t offset=8u+i*(1u+FG_NGRAM_WIRE_ROW_BYTES);output[offset]=result->heads[i];memcpy(output+offset+1u,result->packed+(uint64_t)i*FG_NGRAM_WIRE_ROW_BYTES,FG_NGRAM_WIRE_ROW_BYTES);}*bytes=required;return FG_OK;}
 
 fg_status fg_ngram_result_decode(fg_ngram_result *result,const uint8_t *payload,uint32_t bytes,fg_error *err){if(!result||!payload||bytes<8u){fg_error_set(err,FG_ERR_ARGUMENT,"invalid n-gram result input");return FG_ERR_ARGUMENT;}uint8_t item_count=payload[2];uint32_t required=8u+(uint32_t)item_count*(1u+FG_NGRAM_WIRE_ROW_BYTES);if(payload[3]||!item_count||item_count>FG_NGRAM_SHARD_MAX_ITEMS||bytes!=required){fg_error_set(err,FG_ERR_FORMAT,"invalid n-gram result size");return FG_ERR_FORMAT;}memset(result,0,sizeof(*result));result->source_rank=payload[0];result->destination_rank=payload[1];result->item_count=item_count;result->token_index=get_u32_be(payload+4u);for(uint32_t i=0;i<item_count;i++){uint32_t offset=8u+i*(1u+FG_NGRAM_WIRE_ROW_BYTES);result->heads[i]=payload[offset];memcpy(result->packed+(uint64_t)i*FG_NGRAM_WIRE_ROW_BYTES,payload+offset+1u,FG_NGRAM_WIRE_ROW_BYTES);}return validate_ngram_items(result->source_rank,result->destination_rank,result->item_count,result->heads,err);}
+
+static bool digest_zero(const uint8_t digest[32]){uint8_t value=0;for(uint32_t i=0;i<32u;i++)value|=digest[i];return value==0;}
+
+static fg_status validate_owner_session_control(const fg_owner_session_control *control,fg_error *err){
+    if(!control||control->version!=FG_OWNER_SESSION_CONTROL_VERSION||
+       control->operation<FG_OWNER_SESSION_BEGIN||
+       control->operation>FG_OWNER_SESSION_RESTORED||
+       control->rank>=FG_RANK_COUNT||control->position_mode>FG_POSITION_FOUR_AXIS||
+       control->flags||!control->session_nonce||digest_zero(control->identity_sha256)||
+       digest_zero(control->state_format_sha256)){
+        fg_error_set(err,FG_ERR_MISMATCH,"invalid owner session control header");
+        return FG_ERR_MISMATCH;
+    }
+    bool initial=control->operation==FG_OWNER_SESSION_BEGIN||
+                 control->operation==FG_OWNER_SESSION_READY;
+    bool transactional=control->operation>=FG_OWNER_SESSION_PREPARE;
+    bool state_reply=control->operation==FG_OWNER_SESSION_PREPARED||
+                     control->operation==FG_OWNER_SESSION_RESTORED;
+    if(initial&&(control->generation||control->committed_tokens||
+                 !digest_zero(control->frontier_sha256)||
+                 !digest_zero(control->state_sha256))){
+        fg_error_set(err,FG_ERR_MISMATCH,"initial owner session control has checkpoint state");
+        return FG_ERR_MISMATCH;
+    }
+    if(transactional&&(!control->generation||digest_zero(control->frontier_sha256))){
+        fg_error_set(err,FG_ERR_MISMATCH,"transactional owner session control lacks a frontier");
+        return FG_ERR_MISMATCH;
+    }
+    if(state_reply!=!digest_zero(control->state_sha256)){
+        fg_error_set(err,FG_ERR_MISMATCH,"owner session state fingerprint is invalid for operation");
+        return FG_ERR_MISMATCH;
+    }
+    return FG_OK;
+}
+
+fg_status fg_owner_session_control_encode(uint8_t output[FG_OWNER_SESSION_CONTROL_BYTES],
+                                          const fg_owner_session_control *control,
+                                          fg_error *err){
+    if(!output){fg_error_set(err,FG_ERR_ARGUMENT,"owner session control output is null");return FG_ERR_ARGUMENT;}
+    fg_status status=validate_owner_session_control(control,err);if(status!=FG_OK)return status;
+    memset(output,0,FG_OWNER_SESSION_CONTROL_BYTES);put_u16_be(output,control->version);
+    output[2]=control->operation;output[3]=control->rank;
+    output[4]=(uint8_t)control->position_mode;output[5]=control->flags;
+    put_u64_be(output+8u,control->session_nonce);
+    put_u64_be(output+16u,control->generation);
+    put_u64_be(output+24u,control->committed_tokens);
+    memcpy(output+32u,control->identity_sha256,32u);
+    memcpy(output+64u,control->frontier_sha256,32u);
+    memcpy(output+96u,control->state_format_sha256,32u);
+    memcpy(output+128u,control->state_sha256,32u);
+    return FG_OK;
+}
+
+fg_status fg_owner_session_control_decode(fg_owner_session_control *control,
+                                          const uint8_t *payload,uint32_t bytes,
+                                          fg_error *err){
+    if(!control||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner session control input");return FG_ERR_ARGUMENT;}
+    if(bytes!=FG_OWNER_SESSION_CONTROL_BYTES||payload[6]||payload[7]){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid owner session control size or reserved bytes");
+        return FG_ERR_FORMAT;
+    }
+    memset(control,0,sizeof(*control));control->version=get_u16_be(payload);
+    control->operation=payload[2];control->rank=payload[3];
+    control->position_mode=(fg_position_mode)payload[4];control->flags=payload[5];
+    control->session_nonce=get_u64_be(payload+8u);
+    control->generation=get_u64_be(payload+16u);
+    control->committed_tokens=get_u64_be(payload+24u);
+    memcpy(control->identity_sha256,payload+32u,32u);
+    memcpy(control->frontier_sha256,payload+64u,32u);
+    memcpy(control->state_format_sha256,payload+96u,32u);
+    memcpy(control->state_sha256,payload+128u,32u);
+    return validate_owner_session_control(control,err);
+}
 
 fg_status fg_expert_results_validate_route(const fg_manifest *manifest,uint32_t layer,uint32_t position,uint32_t owner_rank,const uint16_t expert_ids[FG_TOP_K],const fg_expert_result *results,uint32_t result_count,fg_error *err){
     if(!manifest||!expert_ids||!results||layer>=FG_LAYER_COUNT||owner_rank>=FG_RANK_COUNT||result_count==0||result_count>FG_GROUP_SIZE){fg_error_set(err,FG_ERR_ARGUMENT,"invalid expert result route validation arguments");return FG_ERR_ARGUMENT;}

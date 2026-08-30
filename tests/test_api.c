@@ -65,7 +65,7 @@ uint32_t fg_runtime_context_tokens(const fg_runtime *runtime) {
 
 uint32_t fg_runtime_context_limit(const fg_runtime *runtime) {
     (void)runtime;
-    return 0;
+    return 8192u;
 }
 
 const char *fg_runtime_model_name(const fg_runtime *runtime) {
@@ -450,6 +450,27 @@ static void test_client_socket_timeouts(void) {
     close(sockets[1]);
 }
 
+static void test_model_capabilities(void) {
+    int sockets[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    fg_error err = {0};
+    CHECK(handle_models(sockets[0], NULL, &err) == FG_OK);
+    CHECK(shutdown(sockets[0], SHUT_WR) == 0);
+    char *response = read_socket_response(sockets[1]);
+    CHECK(response != NULL);
+    if (response) {
+        CHECK(strstr(response, "\"native_context\":8192") != NULL);
+        CHECK(strstr(response, "\"experimental_context\":0") != NULL);
+        CHECK(strstr(response, "\"tools\":true") != NULL);
+        CHECK(strstr(response, "\"mtp\":false") != NULL);
+        CHECK(strstr(response, "\"image\":false") != NULL);
+        CHECK(strstr(response, "\"video\":false") != NULL);
+    }
+    free(response);
+    close(sockets[0]);
+    close(sockets[1]);
+}
+
 int main(void) {
     test_openai_tools_request();
     test_unknown_tool_result_rejected();
@@ -462,6 +483,7 @@ int main(void) {
     test_streamed_utf8_and_sentinel_filtering();
     test_json_nul_and_member_limit();
     test_client_socket_timeouts();
+    test_model_capabilities();
     if (failures) fprintf(stderr, "%d API test(s) failed\n", failures);
     return failures ? 1 : 0;
 }
