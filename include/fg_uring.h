@@ -5,8 +5,7 @@
 
 typedef enum fg_ring_class {
     FG_RING_FABRIC = 1,
-    FG_RING_STORAGE = 2,
-    FG_RING_NGRAM = 3
+    FG_RING_STORAGE = 2
 } fg_ring_class;
 
 typedef struct fg_uring fg_uring;
