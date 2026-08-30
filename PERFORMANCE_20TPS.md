@@ -10,6 +10,7 @@ Flash Gordon is an eight-BC250 Qwen3.8 appliance. Raw greedy single-session deco
 - Hardware-side stretch: approximately 35 tok/s.
 - Active bytes: 6.0-6.4 GB/token. At 20 tok/s the fleet must sustain 120-129 GB/s of useful aggregate model traffic.
 - Every promotion requires the real eight-rank France evaluation, the 48-layer expert-parallel trace validator, Vulkan timestamps, and homogeneous fleet fingerprints.
+- Qualification prompts are tests, never placement training data. A map derived from a qualification trace is an oracle-only diagnostic and cannot update `CURRENT`, enter verified burn-down, or qualify an LKG.
 - Isolated benchmarks may reject an idea cheaply; they cannot promote it.
 
 ## Historical Baseline
@@ -134,11 +135,13 @@ The current frame is the measured steady tail, while subsystem rows may use the 
 
 The next gate is not limited to optimizations already measured. Cooked-Q8 microbenchmarks are not converted into a projected frame endpoint; only a homogeneous eight-rank France qualification can move `CURRENT`.
 
+The France-derived placement oracle is recorded separately in [PERFORMANCE_ORACLE_FRANCE_PLACEMENT.md](PERFORMANCE_ORACLE_FRANCE_PLACEMENT.md). Its 119.750 ms frame and 47.973 ms collect result are diagnostic bounds, not qualified behavior. Even clairvoyant placement leaves about 48 ms of collect, so the active workstream is the general N-selected-expert worker primitive rather than another placement map.
+
 | Workstream being implemented | Gate responsibility |
 |---|---|
-| Lower-pressure BC250 expert unit after compiled worker replay | Reduce the remaining layer critical path |
-| First compiled rank-0 common-graph tranche | Remove remaining host submission and synchronization debt |
-| GPU route publication and shared/local expert overlap | Reduce the 59.726 ms profiled collect phase |
+| BC250-native routed gate/up/down layouts | Reduce weight traffic and decode cost for every selected expert |
+| One scheduled multi-expert GPU workload | Amortize setup and dispatch while reusing the common activation |
+| Resident expert graph through reduction/return | Remove avoidable CPU-visible and submission boundaries |
 
 If one workstream misses its assignment, its architecture changes or another workstream is added; the 100.0 ms deadline does not move. Crossing 10 TPS creates the next LKG, after which the ledger resets to `CURRENT`, `NEXT GATE: 66.7 ms / 15 TPS`, and the newly measured gap.
 

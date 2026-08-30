@@ -73,6 +73,30 @@ $0 ~ /EP_ROUTE_TRACE / {
     local_selected[layer] = value("local_selected") + 0
     selected_count[layer] = value("selected") + 0
     rank_mask[layer] = value("rank_mask") + 0
+    expert_id_count = split(value("expert_ids"), expert_ids, ",")
+    expert_rank_count = split(value("expert_ranks"), expert_ranks, ",")
+    if (expert_id_count != 10 || expert_rank_count != 10) {
+        fail("layer " layer " route trace does not contain ten expert IDs and ranks")
+    } else {
+        for (i = 1; i <= 10; i++) {
+            expert_id = expert_ids[i]
+            expert_rank = expert_ranks[i]
+            if (expert_id !~ /^[0-9]+$/ || expert_id + 0 >= 512)
+                fail("layer " layer " invalid expert ID " expert_id)
+            else if (route_expert_seen[layer,expert_id]++)
+                fail("layer " layer " duplicate expert ID " expert_id)
+            if (expert_rank !~ /^[0-9]+$/ || expert_rank + 0 >= 8)
+                fail("layer " layer " invalid expert rank " expert_rank)
+            else {
+                expert_rank += 0
+                if (!group_has(layer, expert_rank))
+                    fail("layer " layer " expert assigned outside group to rank " expert_rank)
+                if (!has_bit(rank_mask[layer], expert_rank))
+                    fail("layer " layer " expert rank missing from route mask " expert_rank)
+                traced_rank_selected[layer,expert_rank]++
+            }
+        }
+    }
     remote_routes += remote_count[layer]
     local_routes += local_count[layer]
     local_selections += local_selected[layer]
@@ -126,6 +150,8 @@ END {
             fail("layer " layer " local route/mask mismatch")
         if (selected_count[layer] != 10)
             fail("layer " layer " selected " selected_count[layer])
+        if (traced_rank_selected[layer,0] != local_selected[layer])
+            fail("layer " layer " traced/local selection mismatch")
 
         covered = local_selected[layer]
         for (rank = 0; rank < 8; rank++) {
@@ -136,7 +162,11 @@ END {
             observed = worker_seen[layer,rank] ? 1 : 0
             if (expected != observed)
                 fail("layer " layer " worker presence mismatch rank " rank)
-            if (observed) covered += worker_selected[layer,rank]
+            if (observed) {
+                covered += worker_selected[layer,rank]
+                if (traced_rank_selected[layer,rank] != worker_selected[layer,rank])
+                    fail("layer " layer " traced/worker selection mismatch rank " rank)
+            }
         }
         if (covered != 10) fail("layer " layer " worker/local coverage " covered)
     }

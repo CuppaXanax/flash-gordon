@@ -28,7 +28,7 @@ The build requires Linux headers with io_uring support, Vulkan headers and loade
 
 The production pack path is bound to the four official Unsloth `UD-Q4_K_XL` shard sizes and SHA-256 identities. A dry run verifies the complete real GGUF metadata and canonical sizes without reading 111 GB of tensor payload; the full pack hashes every shard and fails before writing a deployment manifest if any payload differs.
 
-`--router-profile FILE` accepts whitespace-separated `layer expert frequency` rows. Without it, expert residency is round-robin. Both modes enforce exactly 128 experts on each of the four ranks participating in a layer.
+`--router-profile FILE` accepts whitespace-separated `layer expert frequency` rows. Optional `--expert-map FILE` accepts one `layer=N ranks=R0,...,R511` row per layer for an explicit placement; the two options are mutually exclusive. Without either option, expert residency is round-robin. Every mode enforces exactly 128 experts on each of the four ranks participating in a layer. The map is a pack-time input only: ownership is sealed into the manifest, and rank/eval runtime never reads or requires the source map file. Maps derived from qualification prompts are oracle-only diagnostics and cannot qualify a release.
 
 The sealed memory ledger is architecture-derived. GDN recurrent state and the Q8 indexer history are Vulkan-resident. The much larger QSA Q8-key/Q4-value history is retained by its layer owner in an aligned local-NVMe state file and only selected tokens are staged to Vulkan; its required capacity is recorded separately as `state-file` and is never counted as free GPU memory.
 
