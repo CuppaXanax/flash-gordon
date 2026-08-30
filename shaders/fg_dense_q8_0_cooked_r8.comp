@@ -1,0 +1,45 @@
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+
+layout(local_size_x=64,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Weights{uint wb[];};
+layout(set=0,binding=1)readonly buffer Input{vec4 x4[];};
+layout(set=0,binding=2)writeonly buffer Output{float y[];};
+layout(push_constant)uniform Push{uint out_dim;uint n_tok;uint blocks;uint tile_bytes;float scale;}pc;
+shared vec4 subgroup_sum0[64],subgroup_sum1[64];
+
+void main(){
+    uint local_id=gl_LocalInvocationID.x,subgroup_lane=gl_SubgroupInvocationID;
+    uint cohort=local_id>>3u,cohort_lane=local_id&7u,first_row=gl_WorkGroupID.x*8u,token=gl_WorkGroupID.y;
+    if(first_row>=pc.out_dim||token>=pc.n_tok)return;
+    uint tile_base=(first_row>>4u)*pc.tile_bytes,tile_row=first_row&15u;
+    uint quant_offset=(16u*pc.blocks*2u+63u)&~63u;
+    uvec4 rows0=uvec4(tile_row,tile_row+1u,tile_row+2u,tile_row+3u),rows1=rows0+4u;
+    uvec4 quant_base0=tile_base+quant_offset+rows0*pc.blocks*32u,quant_base1=tile_base+quant_offset+rows1*pc.blocks*32u;
+    uint input_base=token*pc.blocks*8u,cohorts=(pc.blocks+7u)/8u;
+    vec4 accumulator0=vec4(0.0),accumulator1=vec4(0.0);
+    for(uint group=0u;group<cohorts;group++){
+        uint block=group*8u+cohort;bool live=block<pc.blocks;vec4 delta0=vec4(0.0),delta1=vec4(0.0);
+        if((subgroup_lane&7u)==0u&&live){uint scale_word=(tile_base>>2u)+block*8u+(tile_row>>1u);delta0=vec4(unpackHalf2x16(wb[scale_word]),unpackHalf2x16(wb[scale_word+1u]));delta1=vec4(unpackHalf2x16(wb[scale_word+2u]),unpackHalf2x16(wb[scale_word+3u]));}
+        uint source_lane=(subgroup_lane>>3u)<<3u;
+        delta0=vec4(subgroupShuffle(delta0.x,source_lane),subgroupShuffle(delta0.y,source_lane),subgroupShuffle(delta0.z,source_lane),subgroupShuffle(delta0.w,source_lane));
+        delta1=vec4(subgroupShuffle(delta1.x,source_lane),subgroupShuffle(delta1.y,source_lane),subgroupShuffle(delta1.z,source_lane),subgroupShuffle(delta1.w,source_lane));
+        uint word_offset=block*32u+cohort_lane*4u;
+        uvec4 packed0=uvec4(wb[(quant_base0.x+word_offset)>>2u],wb[(quant_base0.y+word_offset)>>2u],wb[(quant_base0.z+word_offset)>>2u],wb[(quant_base0.w+word_offset)>>2u]);
+        uvec4 packed1=uvec4(wb[(quant_base1.x+word_offset)>>2u],wb[(quant_base1.y+word_offset)>>2u],wb[(quant_base1.z+word_offset)>>2u],wb[(quant_base1.w+word_offset)>>2u]);
+        vec4 input_value=live?x4[input_base+block*8u+cohort_lane]:vec4(0.0);
+        if(!live){packed0=uvec4(0u);packed1=uvec4(0u);}
+        vec4 products0=vec4(dot(vec4(unpack8(int32_t(packed0.x))),input_value),dot(vec4(unpack8(int32_t(packed0.y))),input_value),dot(vec4(unpack8(int32_t(packed0.z))),input_value),dot(vec4(unpack8(int32_t(packed0.w))),input_value));
+        vec4 products1=vec4(dot(vec4(unpack8(int32_t(packed1.x))),input_value),dot(vec4(unpack8(int32_t(packed1.y))),input_value),dot(vec4(unpack8(int32_t(packed1.z))),input_value),dot(vec4(unpack8(int32_t(packed1.w))),input_value));
+        accumulator0=fma(delta0,products0,accumulator0);accumulator1=fma(delta1,products1,accumulator1);
+    }
+    vec4 reduced0=vec4(subgroupAdd(accumulator0.x),subgroupAdd(accumulator0.y),subgroupAdd(accumulator0.z),subgroupAdd(accumulator0.w));
+    vec4 reduced1=vec4(subgroupAdd(accumulator1.x),subgroupAdd(accumulator1.y),subgroupAdd(accumulator1.z),subgroupAdd(accumulator1.w));
+    if(subgroupElect()){subgroup_sum0[gl_SubgroupID]=reduced0;subgroup_sum1[gl_SubgroupID]=reduced1;}
+    barrier();
+    if(local_id==0u){vec4 total0=vec4(0.0),total1=vec4(0.0);for(uint subgroup=0u;subgroup<gl_NumSubgroups;subgroup++){total0+=subgroup_sum0[subgroup];total1+=subgroup_sum1[subgroup];}for(uint row=0u;row<4u;row++){y[token*pc.out_dim+first_row+row]=total0[row]*pc.scale;y[token*pc.out_dim+first_row+4u+row]=total1[row]*pc.scale;}}
+}

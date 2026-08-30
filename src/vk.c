@@ -33,7 +33,7 @@ struct fg_vk_context {
     fg_vk_counters counters;
     fg_vk_profile_dispatch profile_dispatches[FG_VK_PROFILE_MAX_DISPATCHES];fg_vk_profile profile;
     fg_vk_kernel quant_q8k,quant_q8,quant_q4,dequant_iq4nl,embedding,embedding_batch,swiglu,silu_scaled,dense,dense_f32,dense_bf16,rms,gr,hc_inject_partial,gr_partial,hc_finalize,gr_write,ple_gate,ple_gate_prefill,ple_conv,ple_conv_prefill,add,gdn_conv,gdn_conv_prefill,gdn_recurrent,gdn_recurrent_algebraic,gdn_recurrent_prefill,qsa_prepare,qsa_prepare_prefill,qsa_index_prepare,qsa_index_prepare_prefill,qsa_record_commit,qsa_record_gather,qsa_score,qsa_attention,topk,moe_q5_1,moe_q5_1_cooked,moe_q8_0,moe_reduce,kquant,kquant_cooked;
-    fg_vk_kernel argmax,dense_subgroup,dense_cooked;
+    fg_vk_kernel argmax,dense_subgroup,dense_cooked,dense_cooked_r8;
     /* Decomposition benchmark kernels */
     fg_vk_kernel bench_stream,bench_dequant,bench_dot_nored;
     fg_vk_kernel dense_cooked_split,dense_cooked_split_reduce;
@@ -98,6 +98,7 @@ static fg_status read_shader(const char *file,uint32_t **words,size_t *bytes,fg_
 static void destroy_kernel(fg_vk_context *context,fg_vk_kernel *kernel){
     if(kernel==&context->moe_q5_1)destroy_kernel(context,&context->moe_q5_1_cooked);
     if(kernel==&context->kquant)destroy_kernel(context,&context->kquant_cooked);
+    if(kernel==&context->dense_cooked)destroy_kernel(context,&context->dense_cooked_r8);
     if(kernel->pipeline)vkDestroyPipeline(context->device,kernel->pipeline,NULL);
     if(kernel->layout)vkDestroyPipelineLayout(context->device,kernel->layout,NULL);
     if(kernel->set_layout)vkDestroyDescriptorSetLayout(context->device,kernel->set_layout,NULL);
@@ -134,6 +135,7 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
     c->argmax=(fg_vk_kernel){.file="fg_argmax_reduce.spv",.bindings=4,.push_bytes=4};
     c->dense_subgroup=(fg_vk_kernel){.file="fg_dense_q8_0_subgroup.spv",.bindings=3,.push_bytes=20};
     c->dense_cooked=(fg_vk_kernel){.file="fg_dense_q8_0_cooked.spv",.bindings=3,.push_bytes=20};
+    c->dense_cooked_r8=(fg_vk_kernel){.file="fg_dense_q8_0_cooked_r8.spv",.bindings=3,.push_bytes=20};
     c->dense_cooked_split=(fg_vk_kernel){.file="fg_dense_q8_0_cooked_split.spv",.bindings=3,.push_bytes=24};
     c->dense_cooked_split_reduce=(fg_vk_kernel){.file="fg_dense_q8_0_cooked_split_reduce.spv",.bindings=2,.push_bytes=8};
     c->moe_q5_1=(fg_vk_kernel){.file="fg_moe_q5_1_down.spv",.bindings=4,.push_bytes=28};c->moe_q5_1_cooked=(fg_vk_kernel){.file="fg_moe_q5_1_down_cooked.spv",.bindings=4,.push_bytes=28};c->moe_q8_0=(fg_vk_kernel){.file="fg_moe_q8_0_down.spv",.bindings=4,.push_bytes=28};c->moe_reduce=(fg_vk_kernel){.file="fg_moe_reduce.spv",.bindings=4,.push_bytes=12};c->kquant=(fg_vk_kernel){.file="fg_moe_kquant.spv",.bindings=4,.push_bytes=36};c->kquant_cooked=(fg_vk_kernel){.file="fg_moe_kquant_cooked.spv",.bindings=4,.push_bytes=32};
@@ -168,7 +170,8 @@ static fg_status dispatch_impl(fg_vk_context *c,fg_vk_kernel *kernel,const fg_vk
     vkResetFences(c->device,1,&c->fence);vkResetCommandBuffer(c->command,0);VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};if((vr=vkBeginCommandBuffer(c->command,&begin))!=VK_SUCCESS)return vk_error(err,"begin compute command",vr);profile_command_begin(c);VkMemoryBarrier before={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT,.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT};vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&before,0,NULL,0,NULL);vkCmdBindPipeline(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->pipeline);vkCmdBindDescriptorSets(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->layout,0,1,&set,0,NULL);if(kernel->push_bytes)vkCmdPushConstants(c->command,kernel->layout,VK_SHADER_STAGE_COMPUTE_BIT,0,kernel->push_bytes,push);bool profiled=profile_dispatch_begin(c,kernel);vkCmdDispatch(c->command,gx,gy,gz);c->counters.dispatches++;profile_dispatch_end(c,profiled);VkMemoryBarrier after={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&after,0,NULL,0,NULL);profile_command_end(c);if((vr=vkEndCommandBuffer(c->command))!=VK_SUCCESS)return vk_error(err,"end compute command",vr);VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&c->command};if((vr=vkQueueSubmit(c->queue,1,&submit,c->fence))!=VK_SUCCESS)return vk_error(err,"submit compute command",vr);c->counters.submissions++;if((vr=vkWaitForFences(c->device,1,&c->fence,VK_TRUE,UINT64_MAX))!=VK_SUCCESS)return vk_error(err,"wait for compute command",vr);status=profile_resolve(c,err);vkFreeDescriptorSets(c->device,c->descriptor_pool,1,&set);return status;
 }
 
-static fg_status dispatch(fg_vk_context *c,fg_vk_kernel *kernel,const fg_vk_tensor *const *tensors,const void *push,uint32_t gx,uint32_t gy,uint32_t gz,fg_error *err){return dispatch_impl(c,kernel,tensors,push,gx,gy,gz,true,err);}
+static bool dense_cooked_rows8_shape(uint32_t input_width,uint32_t output_width,uint32_t tokens){return tokens==1u&&((input_width==320u&&output_width==10240u)||(input_width==2560u&&(output_width==10240u||output_width==640u||output_width==2560u||output_width==12288u||output_width==512u))||(input_width==640u&&output_width==2560u)||(input_width==6144u&&output_width==2560u));}
+static fg_status dispatch(fg_vk_context *c,fg_vk_kernel *kernel,const fg_vk_tensor *const *tensors,const void *push,uint32_t gx,uint32_t gy,uint32_t gz,fg_error *err){if(kernel==&c->dense_cooked&&push){const uint32_t *parameters=push;uint32_t output_width=parameters[0],tokens=parameters[1],input_width=parameters[2]*FG_QK8_0;if(dense_cooked_rows8_shape(input_width,output_width,tokens)){kernel=&c->dense_cooked_r8;gx=(output_width+7u)/8u;}}return dispatch_impl(c,kernel,tensors,push,gx,gy,gz,true,err);}
 
 fg_status fg_vk_begin(fg_vk_context *c,fg_error *err){
     if(!c){fg_error_set(err,FG_ERR_ARGUMENT,"null context");return FG_ERR_ARGUMENT;}
