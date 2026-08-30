@@ -69,22 +69,22 @@ Neighboring unprofiled tokens have a 174.1 ms median layer graph, so token-30 wo
 
 ### Current qualified frame
 
-Fastest verified behavior: `b02fb2f` (one clean fleet-qualified run; no LKG tag below 7.5 tok/s).
+Fastest verified behavior: `7f70b88` (two clean deterministic fleet-qualified runs; no LKG tag below 7.5 tok/s).
 
 | Measurement | GPU worker reduction |
 |---|---:|
 | Correct response | Exact baseline text, including Paris |
-| Steady tail decode | 5.76-5.78 tok/s |
-| Token 30 wall | 182.375 ms |
-| Layer graph | 145.043 ms |
-| Rank-0 GPU / kernels | 70.977 / 69.574 ms |
-| Vulkan submissions / dispatches | 123 / 1,541 |
-| Pre-route `sync1` | 60.554 ms |
-| Expert fire | 12.990 ms |
-| Shared expert | 10.020 ms |
-| Expert collect/join | 58.176 ms |
-| Finish | 3.309 ms |
-| Non-layer work | 37.332 ms |
+| Steady tail decode | 5.78-5.81 tok/s |
+| Token 30 wall | 181.533 ms |
+| Layer graph | 143.190 ms |
+| Rank-0 GPU / kernels | 70.887 / 69.433 ms |
+| Vulkan submissions / dispatches | 122 / 1,536 |
+| Pre-route `sync1` | 60.585 ms |
+| Expert fire | 11.053 ms |
+| Shared expert | 9.971 ms |
+| Expert collect/join | 58.328 ms |
+| Finish | 3.245 ms |
+| Non-layer work | 38.343 ms |
 
 Token 30 deliberately uses dynamic recording so Vulkan timestamps remain available. Ordinary fixed-graph tokens 26-29 and 31 measured 135.3-144.4 ms across the 48 layers and 51.0-55.4 ms in collect. The final `decode complete` summary is not a valid rate when EOS stops generation early because it divides the requested cap by elapsed time. The per-token cumulative rates above use the actual 64 completed decode frames.
 
@@ -98,26 +98,27 @@ Verified landed burn-down from the 255.369 ms historical baseline:
 | Residual successor folding | -4.001 ms | 197.346 ms |
 | GPU expert reduction | -14.833 ms | 182.513 ms |
 | Fixed worker graph replay | 30-150 us per matched worker request; no material whole-frame claim | 182.375 ms profiled fallback |
+| Remove legacy worker common graph | capacity prerequisite; no material whole-frame claim | 181.533 ms |
 
 These deltas describe what happened. They are not summed forward as a performance ceiling.
 
 ## Victory Gap
 
 ```text
-CURRENT FRAME:       182.4 ms / 5.77 TPS
+CURRENT FRAME:       181.5 ms / 5.80 TPS
 NEXT GATE:           133.3 ms / 7.5 TPS
-NEXT-GATE GAP:        49.0 ms
+NEXT-GATE GAP:        48.2 ms
 
 TARGET FRAME:         50.0 ms / 20 TPS
-TOTAL FRAME GAP:     132.4 ms
+TOTAL FRAME GAP:     131.5 ms
 ```
 
 The subsystem budget debt is approximately 135.5 ms because the 47.0 ms subtotal must also create the unspent 3.0 ms frame reserve. This is deadline ownership, not a forecast derived from currently measured candidates.
 
 | Frame subsystem | Current | 20 TPS budget | State | Architecture that owns the debt |
 |---|---:|---:|---|---|
-| 48-layer graph | 145.043 ms | 37.5 ms | **RED** | Compiled rank-0 and worker graphs; BC250/Qwen3.8 kernels; GPU job transport |
-| Average layer | 3,022 us | 781 us | **RED** | Fixed deterministic layer program |
+| 48-layer graph | 143.190 ms | 37.5 ms | **RED** | Compiled rank-0 and worker graphs; BC250/Qwen3.8 kernels; GPU job transport |
+| Average layer | 2,983 us | 781 us | **RED** | Fixed deterministic layer program |
 | `sync1` | 1,262 us/layer | 350 us/layer | **RED** | Pre-recorded rank-0 resource graph and native packed/subgroup Q8 |
 | Expert collect proxy | 1,212 us/layer | 300 us/layer | **RED** | Fixed worker jobs, <=180 us expert unit, doorbell fabric, hidden shared expert |
 | Join/handoff | 69 us/layer | 50 us/layer | **RED** | GPU contribution consumption and successor handoff |
@@ -217,7 +218,7 @@ The canonical trace contains 64 decode positions after prompt warming:
 
 Exact addresses depend on the newly emitted token, so history-only prefetch cannot begin during the preceding layer graph. Starting lookup at token availability and joining before layer 1 can overlap only layer 0: 3.571 ms median, leaving about 21.1 ms exposed.
 
-Full resident sharding costs 28.8 GB total, 3.6 GB for two heads per blade. Sealed worker residency is already 10.73-11.78 GiB, rank 0's replicated runtime reports 13.978 GiB, and distributing 16 heads over seven workers requires at least one three-head/5.4 GB assignment. It is not safe without first shrinking worker scratch/model residency. Storage-only sharding does not help because one NVMe already issues all head reads concurrently and the network adds about 157 us each way.
+Full resident sharding costs 28.8 GB total, 3.6 GB for two heads per blade. `323f37d` removed dead worker owner/QSA and distributed-layer arenas; live workers now use 9.64-10.29 GiB GTT with 8.47-9.31 GiB system memory available. Six two-head shards plus one three-head shard now fit across ranks 1-7; rank 6 is the lowest-GTT placement for the three-head shard. Storage-only sharding still does not help because one NVMe already issues all head reads concurrently and the network adds about 157 us each way.
 
 ## Victory Workstreams
 
@@ -364,6 +365,15 @@ Update this section after every fleet-qualified experiment with hypothesis, mile
 - Qualification: sparse one/two-tile replay with poisoned intermediates is bit-exact against the dynamic graph. All eight blades passed the full suite with homogeneous fingerprints; Paris, the retained tail token sequence, and all 48 expert layers passed.
 - Result: matched worker requests save about 30-150 us. Ordinary tokens measured 135.3-144.4 ms layer graphs and 51.0-55.4 ms collect; steady decode was 5.76-5.78 tok/s. Token 30's dynamic-profile fallback measured 182.375 ms.
 - Decision: keep as job-system infrastructure. This slice did not materially reduce the 49.0 ms next-gate gap; expert kernel specialization and resident n-gram work remain required.
+
+### Worker residency reclamation and deterministic join
+
+- Hypothesis: the accepted expert-parallel runtime does not need worker owner/QSA state or distributed common-layer prefill/decode arenas; removing them should create enough residency for the required three-head n-gram shard without changing the frame graph.
+- Milestone assignment: make resident distributed n-gram execution physically deployable for the 7.5 tok/s gate.
+- Change: `323f37d` restricts workers to session, expert decode/prefill, and rank-4 output messages. `7f70b88` orders pre-reduced contributions by source rank so changed worker timing cannot change accumulation order.
+- Qualification: all local and eight-blade suites passed. Two clean France runs produced identical tail token sequences, Paris, and complete 48-layer traces at 5.78-5.81 tok/s.
+- Result: worker GTT is 9.64-10.29 GiB with 8.47-9.31 GiB system memory available. Token-30 wall is 181.533 ms. This is a capacity prerequisite, not a claimed frame-time win.
+- Decision: keep. The resident 16-head service is now the active implementation, with two heads on six ranks and three heads on rank 6.
 
 ### Fused expert gate/up/SwiGLU
 
