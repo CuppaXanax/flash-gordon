@@ -31,8 +31,8 @@ fg_status fg_q38_ngram_lookup(const int32_t *token_history,size_t token_count,
                               uint64_t byte_addresses[FG_NGRAM_HEAD_COUNT],fg_error *err);
 fg_status fg_q38_ngram_head_range(uint32_t head_begin,uint32_t head_count,
                                   uint64_t *row_begin,uint64_t *row_count,fg_error *err);
-fg_status fg_q38_ngram_rank_heads(uint32_t rank,uint32_t *head_begin,
-                                  uint32_t *head_count,fg_error *err);
+fg_status fg_q38_ngram_rank_range(uint32_t rank,uint64_t *row_begin,
+                                  uint64_t *row_count,fg_error *err);
 fg_status fg_ngram_resident_open(fg_ngram_resident **out,const char *path,
                                  uint64_t row_begin,uint64_t row_count,fg_error *err);
 void fg_ngram_resident_close(fg_ngram_resident *resident);
