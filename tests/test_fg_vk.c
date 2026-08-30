@@ -166,6 +166,11 @@ static int test_q8_0_down(void){
     fg_vk_tensor_destroy(output);fg_vk_tensor_destroy(input);fg_vk_tensor_destroy(schedule);fg_vk_tensor_destroy(w);free(weights);free(source);return ok;
 }
 
+static int test_moe_reduce(void){
+    enum{WIDTH=513,SLOTS=4,SELECTED=3};float down[SLOTS*WIDTH],gates[SELECTED]={0.25f,-0.75f,1.5f},got[WIDTH],expected[WIDTH];uint32_t tiles[SELECTED*9u];for(uint32_t i=0;i<SELECTED*9u;i++)tiles[i]=UINT32_MAX;tiles[1]=3u;tiles[10]=0u;tiles[19]=2u;for(uint32_t slot=0;slot<SLOTS;slot++)for(uint32_t i=0;i<WIDTH;i++)down[slot*WIDTH+i]=sinf((float)(slot*WIDTH+i)*0.013f);for(uint32_t i=0;i<WIDTH;i++){expected[i]=0.0f;for(uint32_t selected=0;selected<SELECTED;selected++)expected[i]=fmaf(gates[selected],down[tiles[selected*9u+1u]*WIDTH+i],expected[i]);}
+    fg_vk_tensor *gd=tensor(down,sizeof(down)),*gg=tensor(gates,sizeof(gates)),*gt=tensor(tiles,sizeof(tiles)),*go=tensor(NULL,sizeof(got));int ok=gd&&gg&&gt&&go&&fg_vk_moe_reduce(context,go,gd,gg,gt,WIDTH,SELECTED,SLOTS,&error)==FG_OK&&fg_vk_tensor_read(go,0,got,sizeof(got),&error)==FG_OK;for(uint32_t i=0;ok&&i<WIDTH;i++)if(fabsf(got[i]-expected[i])>2e-6f*fmaxf(1.0f,fabsf(expected[i]))){fprintf(stderr,"MoE reduce %u GPU=%g CPU=%g diff=%g\n",i,got[i],expected[i],got[i]-expected[i]);ok=0;}fg_vk_tensor_destroy(go);fg_vk_tensor_destroy(gt);fg_vk_tensor_destroy(gg);fg_vk_tensor_destroy(gd);return ok;
+}
+
 static void make_k_row(uint8_t *block,int q5,uint32_t phase){
     uint16_t d=fg_f32_to_f16(0.25f),dmin=fg_f32_to_f16(0.03125f);memcpy(block,&d,2);memcpy(block+2,&dmin,2);
     for(uint32_t group=0;group<8u;group++){uint32_t scale=group+1u,minimum=8u-group;if(group<4u){block[4u+group]=(uint8_t)scale;block[8u+group]=(uint8_t)minimum;}else block[8u+group]=(uint8_t)(scale|(minimum<<4u));}
@@ -290,6 +295,7 @@ ok=run_test("hc_inject_partial",test_hc_inject_partial)&&ok;
 ok=run_test("gr_batch",test_gr_batch)&&ok;
 ok=run_test("q5_1_down",test_q5_1_down)&&ok;
 ok=run_test("q8_0_down",test_q8_0_down)&&ok;
+ok=run_test("moe_reduce",test_moe_reduce)&&ok;
 ok=run_test_i("kquant",test_kquant,12)&&ok;
 ok=run_test_i("kquant",test_kquant,13)&&ok;
 ok=run_test_i("kquant_expert_major_batch",test_kquant_expert_major_batch,12)&&ok;
