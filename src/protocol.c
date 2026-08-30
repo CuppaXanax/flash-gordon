@@ -6,12 +6,32 @@
 #include <math.h>
 #include <string.h>
 
+#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
+#include <nmmintrin.h>
+#endif
+
 static uint16_t bswap16(uint16_t x){return (uint16_t)((x>>8)|(x<<8));}
 static uint64_t ntoh64_halves(uint32_t hi,uint32_t lo){return ((uint64_t)ntohl(hi)<<32)|ntohl(lo);}
 
 uint64_t fg_token_hash_update(uint64_t h,const int32_t *tokens,size_t count){if(h==0)h=UINT64_C(1469598103934665603);for(size_t i=0;i<count;i++){uint32_t x=(uint32_t)tokens[i];for(unsigned b=0;b<4;b++){h^=(uint8_t)(x>>(b*8));h*=UINT64_C(1099511628211);}}return h;}
 
-uint32_t fg_crc32c(const void *data,size_t bytes){const uint8_t *p=data;uint32_t crc=~0u;while(bytes--){crc^=*p++;for(unsigned k=0;k<8;k++)crc=(crc>>1)^(0x82f63b78u&-(int32_t)(crc&1u));}return ~crc;}
+static uint32_t crc32c_portable(const void *data,size_t bytes){const uint8_t *p=data;uint32_t crc=~0u;while(bytes--){crc^=*p++;for(unsigned k=0;k<8;k++)crc=(crc>>1)^(0x82f63b78u&-(int32_t)(crc&1u));}return ~crc;}
+
+#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
+__attribute__((target("sse4.2")))
+static uint32_t crc32c_sse42(const void *data,size_t bytes){
+    const uint8_t *p=data;uint64_t crc=UINT32_MAX;
+    while(bytes>=8u){uint64_t word;memcpy(&word,p,sizeof(word));crc=_mm_crc32_u64(crc,word);p+=8u;bytes-=8u;}
+    uint32_t tail=(uint32_t)crc;while(bytes--){tail=_mm_crc32_u8(tail,*p++);}return ~tail;
+}
+#endif
+
+uint32_t fg_crc32c(const void *data,size_t bytes){
+#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
+    if(__builtin_cpu_supports("sse4.2"))return crc32c_sse42(data,bytes);
+#endif
+    return crc32c_portable(data,bytes);
+}
 
 fg_status fg_frame_encode(fg_frame_header *h,fg_message_type type,uint64_t request_id,uint32_t sequence,uint32_t flags,const void *payload,uint32_t bytes,fg_error *err){
     if(!h||(bytes&&!payload)||bytes>FG_MAX_FRAME_BYTES||type<FG_MSG_HELLO||type>FG_MSG_PREFILL_LAYER_RESULT){fg_error_set(err,FG_ERR_ARGUMENT,"invalid frame arguments");return FG_ERR_ARGUMENT;}
