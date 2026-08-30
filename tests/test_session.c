@@ -1,5 +1,6 @@
 #include "fg_manifest.h"
 #include "fg_protocol.h"
+#include "fg_runtime.h"
 #include "fg_session.h"
 #include "fg_sha256.h"
 
@@ -47,6 +48,8 @@ static void test_manifest_evolution(void){
         CHECK(current->format_version==FG_MANIFEST_FORMAT_VERSION);
         CHECK(current->protocol_version==FG_PROTOCOL_VERSION);
         CHECK(current->session.version==FG_MANIFEST_CONTRACT_VERSION);
+        CHECK(current->session.minimum_protocol_version==FG_PROTOCOL_VERSION);
+        CHECK(current->session.logical_context_tokens==8192u);
         CHECK(current->session.gpu_index_tokens==8192u);
         CHECK(current->session.qsa_hot_record_tokens==8192u);
         CHECK(current->session.host_page_cache_bytes==0u);
@@ -57,6 +60,8 @@ static void test_manifest_evolution(void){
                      current->session.rank_state_format_sha256[3],32u)!=0);
         CHECK(fg_manifest_validate_compatibility(current,FG_PROTOCOL_VERSION,
                                                  FG_POSITION_TEXT,&error)==FG_OK);
+        CHECK(fg_manifest_validate_compatibility(current,FG_PROTOCOL_MIN_VERSION,
+                                                 FG_POSITION_TEXT,&error)==FG_ERR_MISMATCH);
         CHECK(fg_manifest_validate_compatibility(current,FG_PROTOCOL_VERSION,
                                                  FG_POSITION_FOUR_AXIS,&error)==FG_ERR_MISMATCH);
         current->session.reserved[0]=1u;
@@ -72,6 +77,8 @@ static void test_manifest_evolution(void){
         CHECK(decoded->format_version==FG_MANIFEST_LEGACY_FORMAT_VERSION);
         CHECK(decoded->protocol_version==FG_PROTOCOL_MIN_VERSION);
         CHECK(decoded->session.version==FG_MANIFEST_CONTRACT_VERSION);
+        CHECK(decoded->session.minimum_protocol_version==FG_PROTOCOL_MIN_VERSION);
+        CHECK(decoded->session.logical_context_tokens==8192u);
         CHECK(decoded->session.position_mode==FG_POSITION_TEXT);
         CHECK(fg_manifest_validate_compatibility(decoded,FG_PROTOCOL_MIN_VERSION,
                                                  FG_POSITION_TEXT,&error)==FG_OK);
@@ -79,6 +86,98 @@ static void test_manifest_evolution(void){
                                                  FG_POSITION_TEXT,&error)==FG_ERR_MISMATCH);
     }
     free(decoded);free(legacy);free(current);unlink(current_path);unlink(legacy_path);
+}
+
+static void test_deployment_admission(void){
+    char path[96];snprintf(path,sizeof(path),"test-session-four-axis-%ld.fgm",(long)getpid());
+    unlink(path);fg_manifest *manifest=malloc(sizeof(*manifest)),*sealed=malloc(sizeof(*sealed));
+    CHECK(manifest&&sealed);fg_error error={0};
+    if(manifest&&sealed){
+        fg_manifest_init(manifest);manifest->flags=FG_MANIFEST_COMPONENTS_TEXT_REQUIRED;
+        manifest->session.position_mode=FG_POSITION_FOUR_AXIS;
+        fill_digest(manifest->source_sha256,29u);
+        CHECK(fg_manifest_write(path,manifest,&error)==FG_OK);
+        CHECK(fg_manifest_read(path,sealed,&error)==FG_OK);
+        CHECK(sealed->session.position_mode==FG_POSITION_FOUR_AXIS);
+        CHECK(fg_manifest_validate(sealed,&error)==FG_OK);
+        CHECK(fg_manifest_validate_deployment(sealed,&error)==FG_ERR_UNAVAILABLE);
+    }
+    free(sealed);free(manifest);unlink(path);
+}
+
+static fg_manifest *write_read_budget_manifest(const char *path,uint32_t logical,
+                                               uint32_t gpu,uint32_t hot,uint64_t page){
+    fg_manifest *manifest=malloc(sizeof(*manifest)),*sealed=malloc(sizeof(*sealed));
+    CHECK(manifest&&sealed);if(!manifest||!sealed){free(sealed);free(manifest);return NULL;}
+    fg_manifest_init(manifest);manifest->flags=FG_MANIFEST_COMPONENTS_TEXT_REQUIRED;
+    manifest->session.logical_context_tokens=logical;
+    manifest->session.gpu_index_tokens=gpu;
+    manifest->session.qsa_hot_record_tokens=hot;
+    manifest->session.host_page_cache_bytes=page;
+    fill_digest(manifest->source_sha256,37u);
+    fg_error error={0};CHECK(fg_manifest_write(path,manifest,&error)==FG_OK);
+    CHECK(fg_manifest_read(path,sealed,&error)==FG_OK);free(manifest);
+    if(error.code!=FG_OK){free(sealed);return NULL;}return sealed;
+}
+
+static void test_runtime_option_contract(void){
+    char current_path[96],large_path[96],tiered_path[96],legacy_path[96];
+    long pid=(long)getpid();
+    snprintf(current_path,sizeof(current_path),"test-session-budget-current-%ld.fgm",pid);
+    snprintf(large_path,sizeof(large_path),"test-session-budget-large-%ld.fgm",pid);
+    snprintf(tiered_path,sizeof(tiered_path),"test-session-budget-tiered-%ld.fgm",pid);
+    snprintf(legacy_path,sizeof(legacy_path),"test-session-budget-legacy-%ld.fgm",pid);
+    unlink(current_path);unlink(large_path);unlink(tiered_path);unlink(legacy_path);
+    fg_manifest *current=write_read_budget_manifest(current_path,8192u,8192u,8192u,0u);
+    fg_manifest *large=write_read_budget_manifest(large_path,16384u,16384u,16384u,0u);
+    fg_manifest *tiered=write_read_budget_manifest(tiered_path,8192u,8192u,4096u,
+                                                   UINT64_C(64)<<20u);
+    fg_manifest *legacy=malloc(sizeof(*legacy)),*decoded=malloc(sizeof(*decoded));
+    CHECK(legacy&&decoded);fg_error error={0};fg_runtime_options resolved={0},requested={0};
+    if(current){
+        CHECK(fg_runtime_options_resolve(&resolved,current,NULL,&error)==FG_OK);
+        CHECK(resolved.logical_context_tokens==8192u&&resolved.gpu_index_tokens==8192u&&
+              resolved.qsa_hot_tokens==8192u&&resolved.qsa_page_cache_bytes==0u);
+        fg_runtime_options_init(&requested);
+        requested.logical_context_tokens=8192u;requested.gpu_index_tokens=8192u;
+        requested.qsa_hot_tokens=8192u;requested.qsa_page_cache_bytes=0u;
+        requested.specified=FG_RUNTIME_OPTION_LOGICAL_CONTEXT|FG_RUNTIME_OPTION_GPU_INDEX|
+            FG_RUNTIME_OPTION_QSA_HOT|FG_RUNTIME_OPTION_PAGE_CACHE;
+        CHECK(fg_runtime_options_resolve(&resolved,current,&requested,&error)==FG_OK);
+        requested.qsa_page_cache_bytes=1u;
+        CHECK(fg_runtime_options_resolve(&resolved,current,&requested,&error)==FG_ERR_MISMATCH);
+        fg_runtime_options_init(&requested);requested.logical_context_tokens=4096u;
+        CHECK(fg_runtime_options_resolve(&resolved,current,&requested,&error)==FG_ERR_MISMATCH);
+    }
+    if(large){
+        CHECK(fg_manifest_validate_deployment(large,&error)==FG_ERR_UNAVAILABLE);
+        CHECK(fg_runtime_options_resolve(&resolved,large,NULL,&error)==FG_ERR_UNAVAILABLE);
+        CHECK(resolved.logical_context_tokens==16384u&&resolved.gpu_index_tokens==16384u&&
+              resolved.qsa_hot_tokens==16384u);
+    }
+    if(tiered){
+        CHECK(fg_manifest_validate_deployment(tiered,&error)==FG_ERR_UNAVAILABLE);
+        CHECK(fg_runtime_options_resolve(&resolved,tiered,NULL,&error)==FG_ERR_UNAVAILABLE);
+        CHECK(resolved.qsa_hot_tokens==4096u&&
+              resolved.qsa_page_cache_bytes==(UINT64_C(64)<<20u));
+        fg_runtime_options_init(&requested);
+        requested.specified=FG_RUNTIME_OPTION_PAGE_CACHE;
+        CHECK(fg_runtime_options_resolve(&resolved,tiered,&requested,&error)==FG_ERR_MISMATCH);
+    }
+    if(legacy&&decoded){
+        fg_manifest_init(legacy);legacy->flags=FG_MANIFEST_COMPONENTS_TEXT_REQUIRED;
+        fill_digest(legacy->source_sha256,41u);write_legacy_manifest(legacy_path,legacy);
+        CHECK(fg_manifest_read(legacy_path,decoded,&error)==FG_OK);
+        CHECK(fg_runtime_options_resolve(&resolved,decoded,NULL,&error)==FG_OK);
+        CHECK(resolved.logical_context_tokens==8192u&&resolved.gpu_index_tokens==8192u&&
+              resolved.qsa_hot_tokens==8192u&&resolved.qsa_page_cache_bytes==0u);
+        fg_runtime_options_init(&requested);
+        requested.logical_context_tokens=4096u;requested.gpu_index_tokens=4096u;
+        requested.qsa_hot_tokens=4096u;
+        CHECK(fg_runtime_options_resolve(&resolved,decoded,&requested,&error)==FG_ERR_UNAVAILABLE);
+    }
+    free(decoded);free(legacy);free(tiered);free(large);free(current);
+    unlink(legacy_path);unlink(tiered_path);unlink(large_path);unlink(current_path);
 }
 
 static void test_identity_and_frontier(void){
@@ -239,7 +338,8 @@ static void test_protocol_evolution(void){
 }
 
 int main(void){
-    test_manifest_evolution();test_identity_and_frontier();test_owner_controls();
+    test_manifest_evolution();test_deployment_admission();test_runtime_option_contract();
+    test_identity_and_frontier();test_owner_controls();
     test_protocol_evolution();
     if(failures){fprintf(stderr,"%d session contract test(s) failed\n",failures);return 1;}
     puts("session contracts: PASS");return 0;

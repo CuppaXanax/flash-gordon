@@ -64,29 +64,41 @@ static fg_status parse_runtime_option(int *index, int argc, char **argv,
     const char *flag = argv[*index];
     *handled = true;
     if (!strcmp(flag, "--context-tokens")) {
-        return parse_u32(arg_value(index, argc, argv, flag, err), flag, 1u, FG_MAX_CONTEXT,
-                         &options->logical_context_tokens, err);
+        fg_status status=parse_u32(arg_value(index, argc, argv, flag, err), flag, 1u,
+                                   FG_MAX_CONTEXT,&options->logical_context_tokens,err);
+        if(status==FG_OK)options->specified|=FG_RUNTIME_OPTION_LOGICAL_CONTEXT;
+        return status;
     }
     if (!strcmp(flag, "--gpu-index-tokens")) {
-        return parse_u32(arg_value(index, argc, argv, flag, err), flag, 1u, FG_MAX_CONTEXT,
-                         &options->gpu_index_tokens, err);
+        fg_status status=parse_u32(arg_value(index, argc, argv, flag, err), flag, 1u,
+                                   FG_MAX_CONTEXT,&options->gpu_index_tokens,err);
+        if(status==FG_OK)options->specified|=FG_RUNTIME_OPTION_GPU_INDEX;
+        return status;
     }
     if (!strcmp(flag, "--qsa-hot-tokens")) {
-        return parse_u32(arg_value(index, argc, argv, flag, err), flag, 1u, FG_MAX_CONTEXT,
-                         &options->qsa_hot_tokens, err);
+        fg_status status=parse_u32(arg_value(index, argc, argv, flag, err), flag, 1u,
+                                   FG_MAX_CONTEXT,&options->qsa_hot_tokens,err);
+        if(status==FG_OK)options->specified|=FG_RUNTIME_OPTION_QSA_HOT;
+        return status;
     }
     if (!strcmp(flag, "--qsa-page-cache-mib")) {
         uint32_t mib = 0;
         fg_status status =
             parse_u32(arg_value(index, argc, argv, flag, err), flag, 0u, 4096u, &mib, err);
-        if (status == FG_OK) options->qsa_page_cache_bytes = (uint64_t)mib << 20u;
+        if (status == FG_OK) {
+            options->qsa_page_cache_bytes = (uint64_t)mib << 20u;
+            options->specified|=FG_RUNTIME_OPTION_PAGE_CACHE;
+        }
         return status;
     }
     if (!strcmp(flag, "--experimental-context")) {
         fg_status status =
             parse_u32(arg_value(index, argc, argv, flag, err), flag, 1u, FG_MAX_CONTEXT,
                       &options->logical_context_tokens, err);
-        if (status == FG_OK) options->experimental_flags |= FG_RUNTIME_EXPERIMENTAL_CONTEXT;
+        if (status == FG_OK) {
+            options->specified|=FG_RUNTIME_OPTION_LOGICAL_CONTEXT;
+            options->experimental_flags |= FG_RUNTIME_EXPERIMENTAL_CONTEXT;
+        }
         return status;
     }
     if (!strcmp(flag, "--experimental-mtp")) {

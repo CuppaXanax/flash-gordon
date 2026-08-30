@@ -6,10 +6,10 @@ GLSLC ?= sh ./glslc
 FG_SHADER_SRC := $(wildcard shaders/*.comp)
 FG_SHADER_OUT := $(patsubst shaders/%.comp,vulkan/%.spv,$(FG_SHADER_SRC))
 
-SRC := src/main.c src/util.c src/manifest.c src/session.c src/topology.c src/sha256.c src/gguf.c src/q38_schema.c src/q38_math.c src/quant.c src/vk.c src/model.c src/expert.c src/owner.c src/output.c src/tokenizer.c src/pack.c src/uring.c src/loader.c src/ngram.c src/qsa_state.c src/qsa.c src/protocol.c src/fabric.c src/runtime.c src/chat.c src/api.c
+SRC := src/main.c src/util.c src/manifest.c src/session.c src/topology.c src/sha256.c src/gguf.c src/q38_schema.c src/q38_math.c src/quant.c src/vk.c src/model.c src/expert.c src/owner.c src/output.c src/tokenizer.c src/pack.c src/uring.c src/loader.c src/ngram.c src/qsa_state.c src/qsa.c src/protocol.c src/fabric.c src/runtime_options.c src/runtime.c src/chat.c src/api.c
 OBJ := $(SRC:.c=.o)
 DEP := $(OBJ:.o=.d) tests/test_core.d tests/test_session.d tests/test_chat.d tests/test_api.d tests/test_fg_vk.d tests/test_hc_down_split.d tests/test_model_load.d tests/test_tokenizer.d tests/test_fabric.d
-TEST_COMMON := src/util.o src/manifest.o src/session.o src/topology.o src/sha256.o src/gguf.o src/q38_schema.o src/q38_math.o src/quant.o src/vk.o src/tokenizer.o src/pack.o src/uring.o src/loader.o src/ngram.o src/qsa_state.o src/protocol.o
+TEST_COMMON := src/util.o src/manifest.o src/session.o src/topology.o src/sha256.o src/gguf.o src/q38_schema.o src/q38_math.o src/quant.o src/vk.o src/tokenizer.o src/pack.o src/uring.o src/loader.o src/ngram.o src/qsa_state.o src/protocol.o src/runtime_options.o
 
 .PHONY: all clean test test-vulkan shaders
 all: flash-gordon

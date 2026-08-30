@@ -101,8 +101,11 @@ static void rank_state_digest(const fg_manifest *manifest,const fg_manifest_cont
     static const char domain[]="flash-gordon-rank-state-format-v1";
     fg_sha256 hash;fg_sha256_init(&hash);fg_sha256_update(&hash,domain,sizeof(domain)-1u);
     hash_u32(&hash,rank);hash_u32(&hash,manifest->max_context);
-    hash_u32(&hash,contract->position_mode);hash_u32(&hash,contract->gpu_index_tokens);
+    hash_u32(&hash,contract->position_mode);
+    hash_u32(&hash,contract->logical_context_tokens);
+    hash_u32(&hash,contract->gpu_index_tokens);
     hash_u32(&hash,contract->qsa_hot_record_tokens);
+    hash_u64(&hash,contract->host_page_cache_bytes);
     fg_sha256_update(&hash,contract->state_format_sha256,32u);
     for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++)if(manifest->layer_owner[layer]==rank){
         hash_u32(&hash,layer);
@@ -111,11 +114,15 @@ static void rank_state_digest(const fg_manifest *manifest,const fg_manifest_cont
 }
 
 static void build_contract(const fg_manifest *manifest,fg_manifest_contract *contract){
-    uint32_t boot_context=manifest->native_context<8192u?manifest->native_context:8192u;
+    uint32_t boot_context=manifest->native_context<FG_MANIFEST_DEFAULT_CONTEXT_TOKENS?
+        manifest->native_context:FG_MANIFEST_DEFAULT_CONTEXT_TOKENS;
     *contract=manifest->session;
     contract->version=FG_MANIFEST_CONTRACT_VERSION;
-    contract->minimum_protocol_version=FG_PROTOCOL_MIN_VERSION;
+    contract->minimum_protocol_version=
+        manifest->format_version==FG_MANIFEST_LEGACY_FORMAT_VERSION?
+        FG_PROTOCOL_MIN_VERSION:FG_PROTOCOL_VERSION;
     contract->flags=0u;
+    if(!contract->logical_context_tokens)contract->logical_context_tokens=boot_context;
     if(!contract->gpu_index_tokens)contract->gpu_index_tokens=boot_context;
     if(!contract->qsa_hot_record_tokens)contract->qsa_hot_record_tokens=boot_context;
     policy_digest("flash-gordon-rope-policy-v1",(fg_position_mode)contract->position_mode,
@@ -169,14 +176,17 @@ void fg_manifest_init(fg_manifest *manifest){
 static fg_status validate_contract(const fg_manifest *manifest,fg_error *err){
     const fg_manifest_contract *contract=&manifest->session;
     if(contract->version!=FG_MANIFEST_CONTRACT_VERSION||
-       contract->minimum_protocol_version!=FG_PROTOCOL_MIN_VERSION||
+       contract->minimum_protocol_version!=FG_PROTOCOL_VERSION||
        contract->position_mode>FG_POSITION_FOUR_AXIS||contract->flags){
         fg_error_set(err,FG_ERR_MISMATCH,"unsupported manifest session contract");
         return FG_ERR_MISMATCH;
     }
-    if(!contract->gpu_index_tokens||contract->gpu_index_tokens>manifest->max_context||
+    if(!contract->logical_context_tokens||
+       contract->logical_context_tokens>manifest->native_context||
+       !contract->gpu_index_tokens||
+       contract->gpu_index_tokens>contract->logical_context_tokens||
        !contract->qsa_hot_record_tokens||
-       contract->qsa_hot_record_tokens>manifest->max_context){
+       contract->qsa_hot_record_tokens>contract->logical_context_tokens){
         fg_error_set(err,FG_ERR_FORMAT,"invalid manifest session memory budgets");
         return FG_ERR_FORMAT;
     }
@@ -349,6 +359,23 @@ fg_status fg_manifest_validate(const fg_manifest *manifest,fg_error *err){
 
 fg_status fg_manifest_validate_deployment(const fg_manifest *manifest,fg_error *err){
     fg_status status=fg_manifest_validate(manifest,err);if(status!=FG_OK)return status;
+    if(manifest->format_version==FG_MANIFEST_FORMAT_VERSION&&
+       manifest->session.position_mode==FG_POSITION_FOUR_AXIS){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "four-axis position execution is not enabled in this runtime");
+        return FG_ERR_UNAVAILABLE;
+    }
+    uint32_t boot_context=manifest->native_context<FG_MANIFEST_DEFAULT_CONTEXT_TOKENS?
+        manifest->native_context:FG_MANIFEST_DEFAULT_CONTEXT_TOKENS;
+    if(manifest->format_version==FG_MANIFEST_FORMAT_VERSION&&
+       (manifest->session.logical_context_tokens!=boot_context||
+        manifest->session.gpu_index_tokens!=boot_context||
+        manifest->session.qsa_hot_record_tokens!=boot_context||
+        manifest->session.host_page_cache_bytes)){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "tiered QSA is not enabled for deployment");
+        return FG_ERR_UNAVAILABLE;
+    }
     uint32_t missing=FG_MANIFEST_COMPONENTS_TEXT_REQUIRED&~manifest->flags;
     if(missing){
         fg_error_set(err,FG_ERR_MISMATCH,
@@ -370,9 +397,15 @@ fg_status fg_manifest_validate_compatibility(const fg_manifest *manifest,
     }
     fg_status status=fg_manifest_validate(manifest,err);
     if(status!=FG_OK)return status;
-    if(manifest->protocol_version<required_protocol_version){
-        fg_error_set(err,FG_ERR_MISMATCH,"manifest protocol %u does not provide required protocol %u",
-                     manifest->protocol_version,required_protocol_version);
+    uint32_t minimum_protocol_version=
+        manifest->format_version==FG_MANIFEST_LEGACY_FORMAT_VERSION?
+        FG_PROTOCOL_MIN_VERSION:manifest->session.minimum_protocol_version;
+    if(required_protocol_version<minimum_protocol_version||
+       required_protocol_version>manifest->protocol_version){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "protocol %u is outside manifest compatibility range [%u,%u]",
+                     required_protocol_version,minimum_protocol_version,
+                     manifest->protocol_version);
         return FG_ERR_MISMATCH;
     }
     fg_position_mode actual=manifest->format_version==FG_MANIFEST_LEGACY_FORMAT_VERSION?
