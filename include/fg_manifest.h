@@ -4,7 +4,7 @@
 #include "fg.h"
 
 #define FG_MANIFEST_MAGIC UINT64_C(0x314d47464e574f51) /* QOWNFGM1 */
-#define FG_MANIFEST_FORMAT_VERSION 3u
+#define FG_MANIFEST_FORMAT_VERSION 4u
 #define FG_MANIFEST_SIZE 65536u
 #define FG_MAX_TENSORS 4096u
 #define FG_TENSOR_NAME_MAX 96u
@@ -18,6 +18,11 @@ typedef enum fg_tensor_kind {
     FG_TENSOR_MTP = 5,
     FG_TENSOR_TOKENIZER = 6
 } fg_tensor_kind;
+
+typedef enum fg_tensor_layout {
+    FG_TENSOR_LAYOUT_GGML = 0,
+    FG_TENSOR_LAYOUT_Q8_0_COOKED = 1
+} fg_tensor_layout;
 
 enum {
     FG_MANIFEST_HAS_TEXT = 1u << 0,
@@ -41,7 +46,8 @@ typedef struct fg_tensor_record {
     uint16_t layer;
     uint16_t expert;
     uint8_t kind;
-    uint8_t reserved[5];
+    uint8_t layout;
+    uint8_t reserved[4];
     uint8_t sha256[32];
 } fg_tensor_record;
 

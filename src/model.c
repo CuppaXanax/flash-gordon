@@ -41,7 +41,7 @@ fg_status fg_model_open(fg_model **out,const fg_manifest *manifest,const char *p
     fg_model *model=calloc(1,sizeof(*model));if(!model){fg_error_set(err,FG_ERR_OOM,"allocate model binding");return FG_ERR_OOM;}model->manifest=manifest;model->rank=rank;model->weight_bytes=bytes;model->tensor=calloc(manifest->tensor_count,sizeof(*model->tensor));if(!model->tensor){fg_model_close(model);fg_error_set(err,FG_ERR_OOM,"allocate model tensor index");return FG_ERR_OOM;}
     fg_status status=fg_vk_open(&model->vk,err);if(status==FG_OK)status=fg_vk_tensor_create(model->vk,bytes,&model->arena,err);void *mapped=status==FG_OK?fg_vk_tensor_map(model->arena):NULL;if(status==FG_OK&&(!mapped||!fg_is_aligned_u64((uintptr_t)mapped,FG_ALIGNMENT))){fg_error_set(err,FG_ERR_UNAVAILABLE,"Vulkan weight arena is not 4 KiB aligned for O_DIRECT");status=FG_ERR_UNAVAILABLE;}
     if(status==FG_OK)status=fg_load_rank_weights(manifest,pack_dir,rank,mapped,bytes,err);
-    for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++)if(manifest->tensors[i].rank==rank)status=fg_vk_tensor_view(model->arena,manifest->tensors[i].offset,manifest->tensors[i].bytes,&model->tensor[i],err);
+    for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++)if(manifest->tensors[i].rank==rank){status=fg_vk_tensor_view(model->arena,manifest->tensors[i].offset,manifest->tensors[i].bytes,&model->tensor[i],err);if(status==FG_OK&&manifest->tensors[i].layout==FG_TENSOR_LAYOUT_Q8_0_COOKED)fg_vk_tensor_set_format(model->tensor[i],FG_VK_TENSOR_FORMAT_Q8_0_COOKED);}
     if(status==FG_OK)status=build_tensor_lookup(model,err);
     if(status!=FG_OK){fg_model_close(model);return status;}*out=model;return FG_OK;
 }
@@ -110,6 +110,7 @@ fg_status fg_model_open_replicated(fg_model **out,const fg_manifest *manifest,co
     for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++){
         if(!included[i])continue;
         status=fg_vk_tensor_view(model->arena,remap[i],manifest->tensors[i].bytes,&model->tensor[i],err);
+        if(status==FG_OK&&manifest->tensors[i].layout==FG_TENSOR_LAYOUT_Q8_0_COOKED)fg_vk_tensor_set_format(model->tensor[i],FG_VK_TENSOR_FORMAT_Q8_0_COOKED);
     }
     if(status==FG_OK)status=build_tensor_lookup(model,err);
     free(included);free(remap);

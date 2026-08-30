@@ -7,6 +7,11 @@ typedef struct fg_vk_context fg_vk_context;
 typedef struct fg_vk_tensor fg_vk_tensor;
 typedef struct fg_vk_expert_graph fg_vk_expert_graph;
 
+typedef enum fg_vk_tensor_format {
+    FG_VK_TENSOR_FORMAT_DEFAULT = 0,
+    FG_VK_TENSOR_FORMAT_Q8_0_COOKED = 1
+} fg_vk_tensor_format;
+
 #define FG_VK_PROFILE_MAX_KERNELS 64u
 
 typedef struct fg_vk_profile_kernel {
@@ -62,6 +67,8 @@ fg_status fg_vk_tensor_view(fg_vk_tensor *base,uint64_t offset,uint64_t bytes,fg
 void fg_vk_tensor_destroy(fg_vk_tensor *tensor);
 uint64_t fg_vk_tensor_bytes(const fg_vk_tensor *tensor);
 void *fg_vk_tensor_map(fg_vk_tensor *tensor);
+void fg_vk_tensor_set_format(fg_vk_tensor *tensor,fg_vk_tensor_format format);
+fg_vk_tensor_format fg_vk_tensor_get_format(const fg_vk_tensor *tensor);
 fg_status fg_vk_tensor_write(fg_vk_tensor *tensor,uint64_t offset,const void *data,uint64_t bytes,fg_error *err);
 fg_status fg_vk_tensor_read(const fg_vk_tensor *tensor,uint64_t offset,void *data,uint64_t bytes,fg_error *err);
 fg_status fg_vk_quantize_q8_k(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *input,
@@ -82,6 +89,10 @@ fg_status fg_vk_dense_q8_0_subgroup(fg_vk_context *context,fg_vk_tensor *output,
                                     const fg_vk_tensor *weights,const fg_vk_tensor *input,
                                     uint32_t input_width,uint32_t output_width,
                                     uint32_t tokens,float scale,fg_error *err);
+fg_status fg_vk_dense_q8_0_cooked(fg_vk_context *context,fg_vk_tensor *output,
+                                  const fg_vk_tensor *weights,const fg_vk_tensor *input,
+                                  uint32_t input_width,uint32_t output_width,
+                                  uint32_t tokens,float scale,fg_error *err);
 fg_status fg_vk_embedding_q8_0(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *weights,
                                uint32_t token,uint32_t width,uint32_t rows,uint32_t copies,fg_error *err);
 fg_status fg_vk_embedding_q8_0_batch(fg_vk_context *context,fg_vk_tensor *output,

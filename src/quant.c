@@ -65,6 +65,12 @@ void fg_quantize_q8_k(const float *input,void *output,uint64_t values){
     }
 }
 
+uint64_t fg_q8_0_cooked_tile_bytes(uint32_t input_width){if(!input_width||input_width%FG_QK8_0)return 0;uint64_t blocks=input_width/FG_QK8_0,mask=FG_Q8_0_COOK_ALIGNMENT-1u,quant_offset=(FG_Q8_0_COOK_ROWS*blocks*sizeof(uint16_t)+mask)&~mask;return(quant_offset+FG_Q8_0_COOK_ROWS*blocks*FG_QK8_0+mask)&~mask;}
+
+uint64_t fg_q8_0_cooked_matrix_bytes(uint32_t input_width,uint32_t rows){uint64_t tile_bytes=fg_q8_0_cooked_tile_bytes(input_width),tiles=((uint64_t)rows+FG_Q8_0_COOK_ROWS-1u)/FG_Q8_0_COOK_ROWS;if(!tile_bytes||!rows||tiles>UINT64_MAX/tile_bytes)return 0;return tiles*tile_bytes;}
+
+bool fg_cook_q8_0_rows(const void *input,void *output,uint64_t output_bytes,uint32_t input_width,uint32_t rows){uint64_t tile_bytes=fg_q8_0_cooked_tile_bytes(input_width),required=fg_q8_0_cooked_matrix_bytes(input_width,rows);if(!input||!output||!tile_bytes||!required||output_bytes<required)return false;uint32_t blocks=input_width/FG_QK8_0;uint64_t mask=FG_Q8_0_COOK_ALIGNMENT-1u,quant_offset=(FG_Q8_0_COOK_ROWS*(uint64_t)blocks*sizeof(uint16_t)+mask)&~mask;const uint8_t *source=input;uint8_t *destination=output;memset(destination,0,(size_t)required);for(uint32_t row=0;row<rows;row++)for(uint32_t block=0;block<blocks;block++){const uint8_t *src=source+((uint64_t)row*blocks+block)*FG_Q8_0_BLOCK_BYTES;uint8_t *dst=destination+(uint64_t)(row/FG_Q8_0_COOK_ROWS)*tile_bytes;uint32_t tile_row=row%FG_Q8_0_COOK_ROWS;memcpy(dst+((uint64_t)block*FG_Q8_0_COOK_ROWS+tile_row)*sizeof(uint16_t),src,sizeof(uint16_t));memcpy(dst+quant_offset+((uint64_t)tile_row*blocks+block)*FG_QK8_0,src+sizeof(uint16_t),FG_QK8_0);}return true;}
+
 float fg_dot_q8_0(const void *lhs,const void *rhs,uint64_t values){
     const fg_block_q8_0 *a=lhs,*b=rhs;float result=0.0f;
     for(uint64_t block=0;block<values/FG_QK8_0;block++){int32_t sum=0;for(uint32_t i=0;i<FG_QK8_0;i++)sum+=(int32_t)a[block].qs[i]*b[block].qs[i];result+=fg_f16_to_f32(a[block].d)*fg_f16_to_f32(b[block].d)*(float)sum;}

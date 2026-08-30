@@ -69,24 +69,25 @@ Neighboring unprofiled tokens have a 174.1 ms median layer graph, so token-30 wo
 
 ### Current qualified frame
 
-Fastest verified behavior: `7f70b88` (two clean deterministic fleet-qualified runs; no LKG tag below 7.5 tok/s).
+Fastest verified behavior: `lkg-7.924tps-paired-q8` (resident distributed n-gram, hierarchical greedy argmax, and selective size-neutral cooked Q8). The 7.5 tok/s gate is crossed.
 
-| Measurement | GPU worker reduction |
+The complete frame-stage, phase, layer, route, and critical-worker table is in [PERFORMANCE_TRACE_7_924TPS.md](PERFORMANCE_TRACE_7_924TPS.md).
+
+| Measurement | Current verified behavior |
 |---|---:|
 | Correct response | Exact baseline text, including Paris |
-| Steady tail decode | 5.78-5.81 tok/s |
-| Token 30 wall | 181.533 ms |
-| Layer graph | 143.190 ms |
-| Rank-0 GPU / kernels | 70.887 / 69.433 ms |
-| Vulkan submissions / dispatches | 122 / 1,536 |
-| Pre-route `sync1` | 60.585 ms |
-| Expert fire | 11.053 ms |
-| Shared expert | 9.971 ms |
-| Expert collect/join | 58.328 ms |
-| Finish | 3.245 ms |
-| Non-layer work | 38.343 ms |
+| Steady tail decode | 7.924 tok/s mean; 7.937 tok/s median equivalent |
+| Tail frame | 126.200 ms mean; 126.000 ms median over 20 frames |
+| 64-frame cumulative decode | 8.100 s, 7.90 tok/s reported |
+| Profiled token 30 wall | 134.201 ms frame trace / 134.218 ms profile |
+| Profiled token 30 layer graph | 129.766 ms |
+| Rank-0 GPU / kernels | 55.836 / 54.455 ms |
+| Exposed n-gram | 0.377 ms on token 30 |
+| Rank-4 output worker wall | 2.933 ms |
+| Output Q8 projections | 2.704 ms: 2.647 cooked + 0.057 generic |
+| Hierarchical argmax | 0.020 ms, down from 2.489 ms |
 
-Token 30 deliberately uses dynamic recording so Vulkan timestamps remain available. Ordinary fixed-graph tokens 26-29 and 31 measured 135.3-144.4 ms across the 48 layers and 51.0-55.4 ms in collect. The final `decode complete` summary is not a valid rate when EOS stops generation early because it divides the requested cap by elapsed time. The per-token cumulative rates above use the actual 64 completed decode frames.
+Token 30 deliberately enables instrumentation and is not the steady-frame estimate. The 7.924 tok/s result is calculated independently from the final 20 consecutive greedy frame deltas. The final `decode complete` summary is not valid when EOS stops generation early because it divides the requested cap by elapsed time.
 
 Verified landed burn-down from the 255.369 ms historical baseline:
 
@@ -99,45 +100,47 @@ Verified landed burn-down from the 255.369 ms historical baseline:
 | GPU expert reduction | -14.833 ms | 182.513 ms |
 | Fixed worker graph replay | 30-150 us per matched worker request; no material whole-frame claim | 182.375 ms profiled fallback |
 | Remove legacy worker common graph | capacity prerequisite; no material whole-frame claim | 181.533 ms |
+| Resident distributed n-gram | removes the 24-32 ms storage tail | 149.799 ms profiled token; 6.80-6.81 tok/s tail |
+| Hierarchical greedy argmax | removes 2.469 ms on rank 4 | 6.91-6.92 tok/s tail |
+| Size-neutral paired-scale cooked Q8 | -18.432 ms steady mean frame versus generic Q8 | 126.200 ms / 7.924 tok/s tail |
 
 These deltas describe what happened. They are not summed forward as a performance ceiling.
 
 ## Victory Gap
 
 ```text
-CURRENT FRAME:       181.5 ms / 5.80 TPS
-NEXT GATE:           133.3 ms / 7.5 TPS
-NEXT-GATE GAP:        48.2 ms
+CURRENT FRAME:       126.2 ms / 7.924 TPS
+NEXT GATE:           100.0 ms / 10 TPS
+NEXT-GATE GAP:        26.2 ms
 
 TARGET FRAME:         50.0 ms / 20 TPS
-TOTAL FRAME GAP:     131.5 ms
+TOTAL FRAME GAP:      76.2 ms
 ```
 
-The subsystem budget debt is approximately 135.5 ms because the 47.0 ms subtotal must also create the unspent 3.0 ms frame reserve. This is deadline ownership, not a forecast derived from currently measured candidates.
+The current frame is the measured steady tail, while subsystem rows may use the instrumented token-30 sample. They are deadline ownership, not a forecast derived from candidate savings.
 
 | Frame subsystem | Current | 20 TPS budget | State | Architecture that owns the debt |
 |---|---:|---:|---|---|
-| 48-layer graph | 143.190 ms | 37.5 ms | **RED** | Compiled rank-0 and worker graphs; BC250/Qwen3.8 kernels; GPU job transport |
-| Average layer | 2,983 us | 781 us | **RED** | Fixed deterministic layer program |
-| `sync1` | 1,262 us/layer | 350 us/layer | **RED** | Pre-recorded rank-0 resource graph and native packed/subgroup Q8 |
-| Expert collect proxy | 1,212 us/layer | 300 us/layer | **RED** | Fixed worker jobs, <=180 us expert unit, doorbell fabric, hidden shared expert |
+| 48-layer graph | 129.766 ms profiled | 37.5 ms | **RED** | Compiled rank-0 and worker graphs; BC250/Qwen3.8 kernels; GPU job transport |
+| Average layer | 2,704 us profiled | 781 us | **RED** | Fixed deterministic layer program |
+| `sync1` | 944 us/layer | 350 us/layer | **RED** | Pre-recorded rank-0 resource graph and remaining generic/narrow projections |
+| Expert collect proxy | 1,244 us/layer | 300 us/layer | **RED** | Fixed worker jobs, <=180 us expert unit, doorbell fabric, hidden shared expert |
 | Join/handoff | 69 us/layer | 50 us/layer | **RED** | GPU contribution consumption and successor handoff |
-| N-gram exposed | about 24.8 ms cold | 3.0 ms | **RED** | Resident distributed heads with useful-row responses |
-| Output | about 9.8 ms | 4.0 ms | **RED** | Production Q8 projection and hierarchical greedy argmax |
-| Embedding/setup | about 0.15 ms | 0.5 ms | **GREEN** | Preserve |
+| N-gram exposed | 0.377 ms profiled | 3.0 ms | **GREEN** | Preserve resident distributed heads and exact row oracle |
+| Output | 2.933 ms worker wall | 4.0 ms | **GREEN** | Preserve paired-scale output projection and hierarchical argmax |
+| Embedding/setup | 0.145 ms profiled | 0.5 ms | **GREEN** | Preserve |
 
-### Gate 7.5: remove 49.2 ms
+### Gate 10: remove 26.2 ms
 
-The next gate is not limited to the optimizations already measured. It assigns required frame reduction to architectural work that can cross 133.3 ms:
+The next gate is not limited to optimizations already measured. Cooked-Q8 microbenchmarks are not converted into a projected frame endpoint; only a homogeneous eight-rank France qualification can move `CURRENT`.
 
-| Workstream being implemented | Required contribution to this gate |
-|---|---:|
-| Lower-pressure BC250 expert unit after compiled worker replay | 18-22 ms |
-| Resident distributed n-gram service after worker scratch slimming | 21-22 ms |
-| Production output projection plus hierarchical argmax | 5-6 ms |
-| First compiled rank-0 common-graph tranche | 2-5 ms |
+| Workstream being implemented | Gate responsibility |
+|---|---|
+| Lower-pressure BC250 expert unit after compiled worker replay | Reduce the remaining layer critical path |
+| First compiled rank-0 common-graph tranche | Remove remaining host submission and synchronization debt |
+| GPU route publication and shared/local expert overlap | Reduce the 59.726 ms profiled collect phase |
 
-The ranges are gate assignments, not predicted savings. If one workstream misses its assignment, its architecture changes or another new workstream is added; the 133.3 ms deadline does not move. Crossing 7.5 TPS creates the next LKG, after which the ledger resets to `CURRENT`, `NEXT GATE: 100.0 ms / 10 TPS`, and the newly measured gap.
+If one workstream misses its assignment, its architecture changes or another workstream is added; the 100.0 ms deadline does not move. Crossing 10 TPS creates the next LKG, after which the ledger resets to `CURRENT`, `NEXT GATE: 66.7 ms / 15 TPS`, and the newly measured gap.
 
 ### Full 20 TPS implementation
 
@@ -258,12 +261,17 @@ The retired QSA path recorded projection/quantization into an outer Vulkan batch
 
 ## 3. Replace Generic Q8 Decode
 
-**Status:** PENDING
+**Status:** STAGE A REJECTED; STAGE B FULLY FLEET-QUALIFIED AND PROMOTED
 
-- Use typed 16-bit access to the native 34-byte Q8_0 blocks.
-- Remove repeated scale decode and avoid reconstructed unaligned dword loads.
-- Use native subgroup reduction instead of LDS reduction ladders.
-- Select multi-row geometry from production dimensions, not synthetic shapes.
+- Stage A retained the 34-byte GGML block layout and added subgroup reduction/vector reads. Exact parity passed, but production shapes measured only 61.98-115.67 GB/s and whole-frame output regressed from 6.92 to 6.85 tok/s. Do not tune this layout further.
+- Stage B stores 16-row supertiles with block-major FP16 scales followed by row-major quant planes. Both planes are 64-byte aligned and every production matrix retains its original Q8 byte count.
+- Eight 8-lane cohorts traverse Q8 blocks; one 64-lane workgroup computes four output rows and reuses each activation vector.
+- Keep generic Q8 for measured losing or neutral shapes: `10240->320`, `2560->640`, `2560->512`, and token embeddings.
+- Cook measured winning classes: `320->10240`, Q8 matrices with output width at least 2,560, and `output.weight`.
+
+The first FP32 scale-plane pack reached 187.2 GB/s for output and 207.9-230.8 GB/s for several large matrices, but increased the replicated rank-0 arena from 13.978 to 14.222 GiB and was killed by the kernel before inference. It is rejected.
+
+The size-neutral FP16 supertile retains exact parity and measures 257.7 GB/s for output, 247.9-259.1 GB/s for the major `2560->*` matrices, 197.7 GB/s for PLE value, 152.2 GB/s for attention output, 145.6 GB/s for shared down, and 133.7 GB/s for HC up. Isolated output projection falls from 5.796 to 2.625 ms. These are promotion evidence for asset integration, not a projected frame result.
 
 **Gate:** rank-0 Q8 scopes fall from about 39.6 ms to <=25 ms, CPU/Vulkan production parity passes, and aggregate useful bandwidth moves toward 120-129 GB/s without semantic drift.
 
@@ -292,10 +300,10 @@ The retired QSA path recorded projection/quantization into an outer Vulkan batch
 
 ## 6. Fix Output as the Frame Tail
 
-**Status:** PENDING
+**Status:** HIERARCHICAL ARGMAX AND PAIRED-SCALE COOKED Q8 INTEGRATED; BUDGET GREEN
 
-- Replace the 512-finalist bitonic sort with hierarchical argmax for greedy decode.
-- Reuse the corrected Q8 primitive for output projection.
+- Preserve the hierarchical argmax: 2.489 ms fell to 0.020 ms with exact token continuity.
+- Preserve the qualified paired-scale cooked Q8 output projection: rank-4 output wall is 2.933 ms.
 - Keep output execution on rank 4 unless the integration trace proves movement shortens the frame.
 
 **Gate:** rank-4 output latency <5 ms with identical token and logit.
@@ -307,6 +315,7 @@ The retired QSA path recorded projection/quantization into an outer Vulkan batch
 - `3c29be5`: direct blocking sockets produced 3.91 tok/s / 259.221 ms, an immaterial regression. Reverted.
 - `4978c48`: guessed 4-row/64-lane expert geometry regressed to 3.37-3.38 tok/s. Reverted.
 - Persistent descriptor caching alone had no material gain. Reverted.
+- Stage A subgroup Q8 over the 34-byte GGML layout was exact but flat/slower at 61.98-115.67 GB/s; output tail fell from 6.92 to 6.85 tok/s. Retained only as a benchmark reference.
 - Clock tuning and transport API selection are not current work items.
 
 ## Burn-Down Log
@@ -374,6 +383,33 @@ Update this section after every fleet-qualified experiment with hypothesis, mile
 - Qualification: all local and eight-blade suites passed. Two clean France runs produced identical tail token sequences, Paris, and complete 48-layer traces at 5.78-5.81 tok/s.
 - Result: worker GTT is 9.64-10.29 GiB with 8.47-9.31 GiB system memory available. Token-30 wall is 181.533 ms. This is a capacity prerequisite, not a claimed frame-time win.
 - Decision: keep. The resident 16-head service is now the active implementation, with two heads on six ranks and three heads on rank 6.
+
+### Resident distributed n-gram
+
+- Hypothesis: the 24-32 ms O_DIRECT tail is a storage architecture defect; all 16 useful packed rows fit in the reclaimed worker memory and can be returned directly from resident row-range shards.
+- Change: balanced row-range shards on ranks 1-7, compact head-tagged requests/results, locked resident mappings, and an exact packed-row oracle against the sealed table. Local O_DIRECT remains available for prefill.
+- Qualification: all 16 returned packed rows matched the sealed table byte-for-byte, the full generated token sequence matched the retained baseline, and the 48-layer trace passed.
+- Result: exposed n-gram fell to 0.336-0.678 ms. The profiled token-30 frame measured 149.799 ms and the steady tail reached 6.80-6.81 tok/s.
+- Decision: keep. N-gram is GREEN against its 3.0 ms frame budget.
+
+### Hierarchical greedy argmax
+
+- Hypothesis: greedy decode does not require sorting 512 finalists; a deterministic two-pass reduction can preserve score/id tie ordering while returning only one winner.
+- Change: replace the three-pass bitonic top-k loop on rank 4 with hierarchical argmax; leave all three Q8 projections unchanged.
+- Qualification: vocabulary-size CPU/GPU parity, non-finite rejection, tie ordering, all local/fleet suites, exact generated-token continuity, and the complete 48-layer trace passed at `23794a3`.
+- Result: selection fell from 2.489 to 0.020 ms, rank-4 output worker wall fell from 8.824 to 6.144 ms, and the steady tail reached 6.91-6.92 tok/s. Q8 projection time remained 5.918 ms.
+- Decision: keep. Output remains RED against 4.0 ms; only the selection component is closed.
+
+### Q8 layout stages
+
+- Stage A hypothesis: subgroup reduction, cohort scale broadcast, and `vec4` activation reads can fix production Q8 while retaining the 34-byte GGML blocks.
+- Stage A result: parity passed on every production shape, but bandwidth remained 61.98-115.67 GB/s. Output Q8 rose from 5.918 to 5.950 ms and the whole-frame tail fell from 6.92 to 6.85 tok/s.
+- Stage A decision: reject for production and restore generic Q8 at `6732507`; retain the kernel and harness only as reference evidence.
+- Stage B change: offline 16-row supertiles with block-major FP16 scales, row-major aligned quant planes, typed signed-byte unpack, eight 8-lane block cohorts, and four output rows per 64-lane wave.
+- Stage B first full-pack result: the FP32 scale-plane representation raised the replicated arena from 13.978 to 14.222 GiB and rank 0 was OOM-killed before inference. Reject that physical representation.
+- Stage B size-neutral RADV result: exact parity on every tested shape; output reached 257.7 GB/s, major `2560->*` matrices reached 247.9-259.1 GB/s, and isolated output projection fell from 5.796 to 2.625 ms. `10240->320` still regressed and remains generic; `2560->640` and `2560->512` remain generic by the selection policy.
+- Stage B qualification: the homogeneous eight-rank France run passed exact response and 20-token overlap parity, all 48 routed layers, 157 worker requests, and the 6.90 TPS floor. Tail decode measured 126.200 ms / 7.924 tok/s mean; rank-4 output fell to 2.933 ms and profiled token-30 wall fell to 134.201 ms.
+- Stage B decision: keep and promote. The 7.5 tok/s milestone is crossed. Preserve generic Q8 for measured losing narrow shapes and use the explicit manifest v4 cooked layout only for qualified tensor classes.
 
 ### Fused expert gate/up/SwiGLU
 
