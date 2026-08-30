@@ -70,25 +70,24 @@ Neighboring unprofiled tokens have a 174.1 ms median layer graph, so token-30 wo
 
 ### Current qualified frame
 
-Fastest verified behavior: `lkg-7.924tps-paired-q8` (resident distributed n-gram, hierarchical greedy argmax, and selective size-neutral cooked Q8). The 7.5 tok/s gate is crossed.
+Fastest verified behavior: `lkg-10.035tps-cooked-experts` (size-neutral cooked routed experts, eight-way HC down split-K, and immediate direct socket I/O). The 10 tok/s release floor is crossed without a placement map or rank-file rewrite.
 
-The complete frame-stage, phase, layer, route, and critical-worker table is in [PERFORMANCE_TRACE_7_924TPS.md](PERFORMANCE_TRACE_7_924TPS.md).
+The complete frame-stage, phase, layer, route, and worker record is in [PERFORMANCE_TRACE_10_035TPS.md](PERFORMANCE_TRACE_10_035TPS.md).
 
 | Measurement | Current verified behavior |
 |---|---:|
 | Correct response | Exact baseline text, including Paris |
-| Steady tail decode | 7.924 tok/s mean; 7.937 tok/s median equivalent |
-| Tail frame | 126.200 ms mean; 126.000 ms median over 20 frames |
-| 64-frame cumulative decode | 8.100 s, 7.90 tok/s reported |
-| Profiled token 30 wall | 134.201 ms frame trace / 134.218 ms profile |
-| Profiled token 30 layer graph | 129.766 ms |
-| Rank-0 GPU / kernels | 55.836 / 54.455 ms |
-| Exposed n-gram | 0.377 ms on token 30 |
-| Rank-4 output worker wall | 2.933 ms |
-| Output Q8 projections | 2.704 ms: 2.647 cooked + 0.057 generic |
-| Hierarchical argmax | 0.020 ms, down from 2.489 ms |
+| Steady tail decode | 10.035 tok/s mean; 10.040 tok/s median equivalent |
+| Tail frame | 99.647 ms mean; 99.603 ms median over 20 frames |
+| Steady layer graph | 95.329 ms mean over 20 frames |
+| Profiled token 30 wall | 106.012 ms profile |
+| Profiled token 30 layer graph | 99.760 ms |
+| Rank-0 GPU / kernels | 43.926 / 42.457 ms |
+| Exposed n-gram | 0.353 ms final-20 mean |
+| Output | 3.872 ms final-20 mean |
+| Routed worker requests | 156 across ranks 1-7 |
 
-Token 30 deliberately enables instrumentation and is not the steady-frame estimate. The 7.924 tok/s result is calculated independently from the final 20 consecutive greedy frame deltas. The final `decode complete` summary is not valid when EOS stops generation early because it divides the requested cap by elapsed time.
+Token 30 deliberately enables instrumentation and is not the steady-frame estimate. The 10.035 tok/s result is the reciprocal of the independently measured 99.64675 ms mean over the final 20 consecutive greedy frames. The final `decode complete` summary is not valid when EOS stops generation early because it divides the requested cap by elapsed time.
 
 Verified landed burn-down from the 255.369 ms historical baseline:
 
@@ -104,46 +103,48 @@ Verified landed burn-down from the 255.369 ms historical baseline:
 | Resident distributed n-gram | removes the 24-32 ms storage tail | 149.799 ms profiled token; 6.80-6.81 tok/s tail |
 | Hierarchical greedy argmax | removes 2.469 ms on rank 4 | 6.91-6.92 tok/s tail |
 | Size-neutral paired-scale cooked Q8 | -18.432 ms steady mean frame versus generic Q8 | 126.200 ms / 7.924 tok/s tail |
+| Size-neutral cooked routed experts | -22.950 ms steady mean frame versus paired-Q8 LKG | 103.250 ms / 9.685 tok/s tail |
+| HC down split-K and immediate direct socket I/O | -3.603 ms versus cooked-expert lead | 99.647 ms / 10.035 tok/s tail |
 
 These deltas describe what happened. They are not summed forward as a performance ceiling.
 
 ## Victory Gap
 
 ```text
-CURRENT FRAME:       126.2 ms / 7.924 TPS
-NEXT GATE:           100.0 ms / 10 TPS
-NEXT-GATE GAP:        26.2 ms
+CURRENT FRAME:       99.647 ms / 10.035 TPS
+NEXT GATE:           66.667 ms / 15 TPS
+NEXT-GATE GAP:       32.980 ms
 
 TARGET FRAME:         50.0 ms / 20 TPS
-TOTAL FRAME GAP:      76.2 ms
+TOTAL FRAME GAP:      49.647 ms
 ```
 
 The current frame is the measured steady tail, while subsystem rows may use the instrumented token-30 sample. They are deadline ownership, not a forecast derived from candidate savings.
 
 | Frame subsystem | Current | 20 TPS budget | State | Architecture that owns the debt |
 |---|---:|---:|---|---|
-| 48-layer graph | 129.766 ms profiled | 37.5 ms | **RED** | Compiled rank-0 and worker graphs; BC250/Qwen3.8 kernels; GPU job transport |
-| Average layer | 2,704 us profiled | 781 us | **RED** | Fixed deterministic layer program |
-| `sync1` | 944 us/layer | 350 us/layer | **RED** | Pre-recorded rank-0 resource graph and remaining generic/narrow projections |
-| Expert collect proxy | 1,244 us/layer | 300 us/layer | **RED** | Fixed worker jobs, <=180 us expert unit, doorbell fabric, hidden shared expert |
-| Join/handoff | 69 us/layer | 50 us/layer | **RED** | GPU contribution consumption and successor handoff |
-| N-gram exposed | 0.377 ms profiled | 3.0 ms | **GREEN** | Preserve resident distributed heads and exact row oracle |
-| Output | 2.933 ms worker wall | 4.0 ms | **GREEN** | Preserve paired-scale output projection and hierarchical argmax |
-| Embedding/setup | 0.145 ms profiled | 0.5 ms | **GREEN** | Preserve |
+| 48-layer graph | 99.760 ms profiled / 95.329 ms steady | 37.5 ms | **RED** | Compiled rank-0 and worker graphs; BC250/Qwen3.8 kernels; GPU job transport |
+| Average layer | 2,078 us profiled / 1,986 us steady | 781 us | **RED** | Fixed deterministic layer program |
+| `sync1` | 908 us/layer | 350 us/layer | **RED** | Pre-recorded rank-0 resource graph and remaining common projections |
+| Expert collect proxy | 590 us/layer | 300 us/layer | **RED** | Fixed worker jobs, lower expert-unit latency, and GPU-visible contribution return |
+| Join/handoff | 65 us/layer | 50 us/layer | **RED** | GPU contribution consumption and successor handoff |
+| N-gram exposed | 0.353 ms steady | 3.0 ms | **GREEN** | Preserve resident distributed heads and exact row oracle |
+| Output | 3.872 ms steady | 4.0 ms | **GREEN** | Preserve paired-scale output projection and hierarchical argmax |
+| Embedding/setup | 0.093 ms steady | 0.5 ms | **GREEN** | Preserve |
 
-### Gate 10: remove 26.2 ms
+### Gate 15: remove 32.980 ms
 
-The next gate is not limited to optimizations already measured. Cooked-Q8 microbenchmarks are not converted into a projected frame endpoint; only a homogeneous eight-rank France qualification can move `CURRENT`.
+The next gate is not limited to optimizations already measured. Microbenchmarks are not converted into a projected frame endpoint; only a homogeneous eight-rank qualification can move `CURRENT`.
 
 The France-derived placement oracle is recorded separately in [PERFORMANCE_ORACLE_FRANCE_PLACEMENT.md](PERFORMANCE_ORACLE_FRANCE_PLACEMENT.md). Its 119.750 ms frame and 47.973 ms collect result are diagnostic bounds, not qualified behavior. Even clairvoyant placement leaves about 48 ms of collect, so the active workstream is the general N-selected-expert worker primitive rather than another placement map.
 
 | Workstream being implemented | Gate responsibility |
 |---|---|
-| BC250-native routed gate/up/down layouts | Reduce weight traffic and decode cost for every selected expert |
-| One scheduled multi-expert GPU workload | Amortize setup and dispatch while reusing the common activation |
-| Resident expert graph through reduction/return | Remove avoidable CPU-visible and submission boundaries |
+| Remaining rank-0 common graph | Reduce the 43.602 ms profiled `sync1` total |
+| Lower-latency routed expert unit | Reduce the 28.345 ms profiled collect total without placement specialization |
+| GPU-visible expert completion | Remove CPU-visible response decode and contribution handoff |
 
-If one workstream misses its assignment, its architecture changes or another workstream is added; the 100.0 ms deadline does not move. Crossing 10 TPS creates the next LKG, after which the ledger resets to `CURRENT`, `NEXT GATE: 66.7 ms / 15 TPS`, and the newly measured gap.
+If one workstream misses its assignment, its architecture changes or another workstream is added; the 66.667 ms deadline does not move. Crossing 15 TPS creates the next LKG, after which the ledger resets from the newly measured frame.
 
 ### Full 20 TPS implementation
 
