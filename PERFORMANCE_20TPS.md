@@ -109,12 +109,12 @@ The router/activation CPU-visible fence is a real dependency and remains. The de
 
 A resource-aware graph removes 387 global barriers but no dispatches by itself. Production BC250 A/Bs show about 3-18 us per unnecessary barrier depending on shape, bounding barrier-only savings to a few milliseconds/token. Dispatch fusion remains a separate optimization.
 
-Measured benchmark-only production candidates:
+Fleet-qualified production integrations:
 
-- HC injection: 24 workgroups compute four partial dots and HC mix reduces them. Numerical parity passes. `dense_f32(10240->4)+gr_mix` falls from 106.9 to 38.2 us GPU per HC read, predicting 6.595 ms/token across 96 calls.
-- GDN recurrence: preserve the state update and compute `S' q = decay * (S q) + delta * (k^T q)` without rereading updated state. State remains exact and output passes the production tolerance. RADV falls from 217.4 to 161.9 us/GDN layer, predicting 1.999 ms/token.
+- HC injection (`43daa2b`): 24 workgroups compute four partial dots and HC mix reduces them. Numerical parity and the eight-rank France gate pass. Versus the CRC LKG, token-30 wall fell from 211.832 to 205.637 ms and rank-0 GPU fell from 82.298 to 74.821 ms.
+- GDN recurrence (`7ca7519`): preserve the state update and compute `S' q = decay * (S q) + delta * (k^T q)` without rereading updated state. State remains exact and the eight-rank France gate passes. Versus HC alone, token-30 wall fell from 205.637 to 201.347 ms and rank-0 GPU fell from 74.821 to 71.060 ms.
 
-Neither benchmark candidate is wired into inference yet.
+Both candidates are wired into inference and retained.
 
 ## N-Gram Locality Audit
 
@@ -135,8 +135,8 @@ Full resident sharding costs 28.8 GB total, 3.6 GB for two heads per blade. Seal
 Ranked by predicted whole-frame savings, not API novelty:
 
 1. Dependency-aware expert frame graph: target the remaining slowest-worker GPU/command path, not generic preposted receives. Predicted 19-26 ms/token from collect plus 6-8 ms from route/fire preparation.
-2. Rank-0 resource graph plus measured HC/GDN candidates: 8.6 ms measured kernel savings plus roughly 2-4 ms barrier savings; predicted 10-13 ms/token.
-3. Carry 47 final residual writes into the next layer graph: current finish is 9.050 ms while its kernels total 0.083 ms; predicted 8.7-9.0 ms/token.
+2. Complete the rank-0 resource graph after the retained HC/GDN integrations. The two production kernels reduced token-30 wall by 10.485 ms and rank-0 GPU by 11.238 ms versus the CRC LKG.
+3. Complete residual graph compilation after retained successor folding. Folding removed 47 submissions and reduced token-30 wall by 4.001 ms, but 4.110 ms of measured finish remains.
 4. Output hierarchical argmax and corrected Q8 projection: predicted about 4.8 ms/token to the existing <5 ms gate.
 5. Start n-gram reads before layer 0: bounded to 3.571 ms/token with the current storage layout.
 
@@ -158,7 +158,7 @@ The retired QSA path recorded projection/quantization into an outer Vulkan batch
 
 ## 2. Reshape Rank-0 Projections
 
-**Status:** BENCHMARKED; INTEGRATION PENDING
+**Status:** HC AND GDN INTEGRATED; GRAPH COMPILATION PENDING
 
 - Fuse HC Q8 low-rank projection and four-row F32 injection into one mixed projection launch.
 - Fuse GDN QKV, gate, alpha, and beta projections by shared input dependency.
@@ -192,7 +192,7 @@ The retired QSA path recorded projection/quantization into an outer Vulkan batch
 
 ## 5. Compile Rank 0's Frame Graph
 
-**Status:** PENDING
+**Status:** RESIDUAL SUCCESSOR FOLDING INTEGRATED; FULL GRAPH PENDING
 
 - Pre-record one pre-route graph and one post-route graph per layer.
 - Put shared and local expert work in the post-route graph.
@@ -243,3 +243,19 @@ Update this section after every fleet-qualified experiment with hypothesis, pred
 - Qualification: three clean eight-rank runs passed Paris, all 48 expert layers, core/Vulkan/model/tokenizer/fabric tests, and homogeneous fingerprints.
 - Result: 4.91 tok/s steady median, 211.832 ms token wall, 175.020 ms layer wall, and 28.32-30.21 GB/s useful aggregate traffic.
 - Decision: keep and tag `96fd0a2` as `lkg-4.91tps-crc32c`.
+
+### HC and algebraic GDN integration
+
+- Hypothesis: production-shaped HC injection and algebraic GDN recurrence remove low-width launch waste and one recurrent-state read without changing model state.
+- Change: integrate 24-piece HC partial injection in `43daa2b`, then the sibling-projection and algebraic recurrence graph in `7ca7519`.
+- Qualification: both revisions passed Paris, all 48 expert layers, core/Vulkan/model/tokenizer/fabric tests, and homogeneous eight-blade fingerprints.
+- Result: HC reduced token-30 wall from 211.832 to 205.637 ms and rank-0 GPU from 82.298 to 74.821 ms. GDN then reduced token-30 wall to 201.347 ms, layer wall to 164.581 ms, and rank-0 GPU to 71.060 ms. The integrated run reported 5.20 tok/s steady tail.
+- Decision: keep both integrations.
+
+### Residual-write successor folding
+
+- Hypothesis: carrying layers 0-46 final residual writes into their successors removes one host submission per layer while preserving the exact dependency graph.
+- Change: defer each nonterminal `fg_gr_write` and record it at the front of the successor's existing command batch; retain layer 47 as the terminal write. Layer 1 consumes layer 0 inside the PLE batch.
+- Qualification: `ef03e6d` passed Paris, all 48 expert layers, all local and fleet suites, and homogeneous eight-blade fingerprints. Dispatches remained 1,518 while submissions fell from 170 to 123 exactly.
+- Result: versus `7ca7519`, token-30 wall fell from 201.347 to 197.346 ms, layer wall from 164.581 to 160.562 ms, and finish from 8.881 to 4.110 ms. GPU time remained 71.060 ms, confirming a host/submission-path gain.
+- Decision: keep. The 4.110 ms finish still misses the <=0.5 ms generation-2 budget, but the 4.001 ms whole-frame improvement is material; terminal/frame-tail work remains open.
