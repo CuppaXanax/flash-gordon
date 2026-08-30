@@ -123,6 +123,12 @@ fg_status fg_vk_gdn_recurrent_decode(fg_vk_context *context,fg_vk_tensor *output
                                      const fg_vk_tensor *beta,const fg_vk_tensor *a_log,const fg_vk_tensor *dt_bias,
                                      const fg_vk_tensor *norm_weight,uint32_t value_heads,uint32_t key_heads,
                                      uint32_t head_dim,float epsilon,fg_error *err);
+fg_status fg_vk_gdn_recurrent_algebraic(fg_vk_context *context,fg_vk_tensor *output,fg_vk_tensor *state,
+                                        const fg_vk_tensor *qkv,const fg_vk_tensor *z,
+                                        const fg_vk_tensor *alpha,const fg_vk_tensor *beta,
+                                        const fg_vk_tensor *a_log,const fg_vk_tensor *dt_bias,
+                                        const fg_vk_tensor *norm_weight,uint32_t value_heads,
+                                        uint32_t key_heads,uint32_t head_dim,float epsilon,fg_error *err);
 fg_status fg_vk_gdn_recurrent_prefill(fg_vk_context *context,fg_vk_tensor *output,
                                       fg_vk_tensor *state,const fg_vk_tensor *qkv,
                                       const fg_vk_tensor *z,const fg_vk_tensor *alpha,
