@@ -1,0 +1,57 @@
+#version 460
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer InputScores { float input_scores[]; };
+layout(set = 0, binding = 1) readonly buffer InputIds { uint input_ids[]; };
+layout(set = 0, binding = 2) writeonly buffer OutputScores { float output_scores[]; };
+layout(set = 0, binding = 3) writeonly buffer OutputIds { uint output_ids[]; };
+layout(push_constant) uniform Push { uint count; } pc;
+
+shared float values[256];
+shared uint indices[256];
+
+bool before(float left, uint left_id, float right, uint right_id) {
+    bool left_padding = left_id == 0xffffffffu;
+    bool right_padding = right_id == 0xffffffffu;
+    if (left_padding || right_padding) return !left_padding && right_padding;
+    bool left_nonfinite = isnan(left) || isinf(left);
+    bool right_nonfinite = isnan(right) || isinf(right);
+    if (left_nonfinite || right_nonfinite) {
+        return left_nonfinite != right_nonfinite ? left_nonfinite : left_id < right_id;
+    }
+    return left > right || (left == right && left_id < right_id);
+}
+
+void main() {
+    uint lane = gl_LocalInvocationID.x;
+    uint base = gl_WorkGroupID.x * 4096u;
+    float best_value = -1.0 / 0.0;
+    uint best_id = 0xffffffffu;
+    for (uint item = lane; item < 4096u; item += 256u) {
+        uint source = base + item;
+        if (source < pc.count) {
+            float candidate_value = input_scores[source];
+            uint candidate_id = input_ids[source];
+            if (before(candidate_value, candidate_id, best_value, best_id)) {
+                best_value = candidate_value;
+                best_id = candidate_id;
+            }
+        }
+    }
+    values[lane] = best_value;
+    indices[lane] = best_id;
+    barrier();
+    for (uint stride = 128u; stride > 0u; stride >>= 1u) {
+        if (lane < stride && before(values[lane + stride], indices[lane + stride],
+                                    values[lane], indices[lane])) {
+            values[lane] = values[lane + stride];
+            indices[lane] = indices[lane + stride];
+        }
+        barrier();
+    }
+    if (lane == 0u) {
+        output_scores[gl_WorkGroupID.x] = values[0];
+        output_ids[gl_WorkGroupID.x] = indices[0];
+    }
+}

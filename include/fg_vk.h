@@ -193,6 +193,10 @@ fg_status fg_vk_qsa_attention(fg_vk_context *context,fg_vk_tensor *output,const 
 fg_status fg_vk_topk_reduce(fg_vk_context *context,fg_vk_tensor *output_scores,fg_vk_tensor *output_ids,
                             const fg_vk_tensor *input_scores,const fg_vk_tensor *input_ids,
                             uint32_t count,uint32_t *output_count,fg_error *err);
+fg_status fg_vk_argmax_reduce(fg_vk_context *context,fg_vk_tensor *output_scores,
+                                                            fg_vk_tensor *output_ids,const fg_vk_tensor *input_scores,
+                                                            const fg_vk_tensor *input_ids,uint32_t count,
+                                                            uint32_t *output_count,fg_error *err);
 fg_status fg_vk_moe_q5_1_down(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *weights,
                               const fg_vk_tensor *tiles,const fg_vk_tensor *input,uint32_t output_width,
                               uint32_t input_width,uint32_t expert_stride,uint32_t used_experts,

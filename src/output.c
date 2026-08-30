@@ -73,15 +73,13 @@ fg_status fg_output_greedy(fg_output_executor *executor,const fg_vk_tensor *hype
     if(!executor||!token){fg_error_set(err,FG_ERR_ARGUMENT,"invalid greedy output arguments");return FG_ERR_ARGUMENT;}
     fg_vk_context *vk=fg_model_vk(executor->model);if(fg_vk_batch_active(vk)){fg_error_set(err,FG_ERR_ARGUMENT,"greedy output cannot run inside a Vulkan batch");return FG_ERR_ARGUMENT;}
     fg_vk_tensor *logits=NULL;fg_status status=fg_vk_begin(vk,err);if(status==FG_OK)status=fg_output_logits(executor,hyper,&logits,err);const fg_vk_tensor *scores=logits,*ids=executor->vocabulary_ids;uint32_t count=FG_Q38_VOCAB_SIZE,slot=0;
-    if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"output_topk",err);
-    while(status==FG_OK&&count>512u){uint32_t next=0;status=fg_vk_topk_reduce(vk,executor->topk_scores[slot],executor->topk_ids[slot],scores,ids,count,&next,err);scores=executor->topk_scores[slot];ids=executor->topk_ids[slot];count=next;slot^=1u;}
+    if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"output_argmax",err);
+    while(status==FG_OK&&count>1u){uint32_t next=0;status=fg_vk_argmax_reduce(vk,executor->topk_scores[slot],executor->topk_ids[slot],scores,ids,count,&next,err);scores=executor->topk_scores[slot];ids=executor->topk_ids[slot];count=next;slot^=1u;}
     if(status==FG_OK){fg_status end_status=fg_vk_end(vk,err);if(end_status!=FG_OK)status=end_status;}else if(fg_vk_batch_active(vk))fg_vk_end(vk,err);
     if(status!=FG_OK)return status;
     const float *values=fg_vk_tensor_map((fg_vk_tensor *)scores);const uint32_t *indices=fg_vk_tensor_map((fg_vk_tensor *)ids);uint32_t best=indices[0];float best_value=values[0];
     if(best>=FG_Q38_VOCAB_SIZE||!isfinite(best_value)){fg_error_set(err,FG_ERR_MISMATCH,"invalid output finalist at token %u",best);return FG_ERR_MISMATCH;}
-    uint32_t second=0u,third=0u;float second_value=-1e30f,third_value=-1e30f;
-    for(uint32_t i=1;i<count;i++){uint32_t index=indices[i];if(index>=FG_Q38_VOCAB_SIZE||!isfinite(values[i])){fg_error_set(err,FG_ERR_MISMATCH,"invalid output finalist at token %u",index);return FG_ERR_MISMATCH;}if(values[i]>best_value){third=second;third_value=second_value;second=best;second_value=best_value;best=index;best_value=values[i];}else if(values[i]>second_value){third=second;third_value=second_value;second=index;second_value=values[i];}else if(values[i]>third_value){third=index;third_value=values[i];}}
     const float *hyper_raw=fg_vk_tensor_map((fg_vk_tensor *)hyper);const float *hidden_raw=fg_vk_tensor_map(executor->hidden);
-    fprintf(stderr,"greedy: top3 %u=%.4f %u=%.4f %u=%.4f hyper[0:4]=%.4f,%.4f,%.4f,%.4f hidden[0:4]=%.4f,%.4f,%.4f,%.4f\n",best,best_value,second,second_value,third,third_value,hyper_raw[0],hyper_raw[1],hyper_raw[2],hyper_raw[3],hidden_raw[0],hidden_raw[1],hidden_raw[2],hidden_raw[3]);
+    fprintf(stderr,"greedy: best %u=%.4f hyper[0:4]=%.4f,%.4f,%.4f,%.4f hidden[0:4]=%.4f,%.4f,%.4f,%.4f\n",best,best_value,hyper_raw[0],hyper_raw[1],hyper_raw[2],hyper_raw[3],hidden_raw[0],hidden_raw[1],hidden_raw[2],hidden_raw[3]);
     *token=best;if(logit)*logit=best_value;return FG_OK;
 }
