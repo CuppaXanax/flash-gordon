@@ -36,6 +36,15 @@ transcript and runtime session; `/quit` exits. `SIGINT` or `SIGTERM` requests a
 stop at the next boundary between completed distributed tokens. Each turn ends
 with compact prefill, generation, and context-usage metrics.
 
+Both `chat` and `api` accept the runtime-shape contract
+`--context-tokens`, `--qsa-hot-tokens`, and `--qsa-page-cache-mib`.
+Experimental component contracts use `--experimental-context`,
+`--experimental-mtp`, and `--experimental-vision`. The current qualified
+implementation deliberately accepts only the 8,192-token resident profile with
+no page cache or experimental component; unsupported profiles fail before
+model/fleet startup instead of silently ignoring the request. Later tiered-QSA,
+MTP, and vision milestones will enable these same explicit options.
+
 ## OpenAI-compatible API
 
 ```sh

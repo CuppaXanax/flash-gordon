@@ -1,7 +1,7 @@
 #ifndef FLASH_GORDON_CHAT_H
 #define FLASH_GORDON_CHAT_H
 
-#include "fg.h"
+#include "fg_runtime.h"
 
 typedef struct fg_chat_tool_call {
     const char *id;
@@ -52,5 +52,8 @@ fg_status fg_chat_parse_generated(const char *text, bool thinking,
                                   fg_chat_generated *generated, fg_error *err);
 void fg_chat_generated_free(fg_chat_generated *generated);
 fg_status fg_chat_main(const char *manifest_path, uint32_t max_tokens, fg_error *err);
+fg_status fg_chat_main_with_options(const char *manifest_path, uint32_t max_tokens,
+                                    const fg_runtime_options *runtime_options,
+                                    fg_error *err);
 
 #endif

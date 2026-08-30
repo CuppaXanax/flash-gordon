@@ -23,8 +23,12 @@ static void usage(FILE *file) {
             "  flash-gordon serve --manifest FILE\n"
             "  flash-gordon bench --manifest FILE\n"
             "  flash-gordon eval --manifest FILE --prompt TEXT [--generate N]\n"
-            "  flash-gordon chat --manifest FILE [--max-tokens N]\n"
-            "  flash-gordon api --manifest FILE [--host HOST] [--port PORT]\n"
+            "  flash-gordon chat --manifest FILE [--max-tokens N] [RUNTIME OPTIONS]\n"
+            "  flash-gordon api --manifest FILE [--host HOST] [--port PORT] "
+            "[RUNTIME OPTIONS]\n"
+            "\nRuntime options:\n"
+            "  --context-tokens N --qsa-hot-tokens N --qsa-page-cache-mib N\n"
+            "  --experimental-context N --experimental-mtp --experimental-vision\n"
             "  flash-gordon inspect --manifest FILE\n",
             FG_VERSION_MAJOR, FG_VERSION_MINOR);
 }
@@ -50,6 +54,45 @@ static fg_status parse_u32(const char *text, const char *flag, uint32_t minimum,
         return FG_ERR_ARGUMENT;
     }
     *value = (uint32_t)parsed;
+    return FG_OK;
+}
+
+static fg_status parse_runtime_option(int *index, int argc, char **argv,
+                                      fg_runtime_options *options, bool *handled,
+                                      fg_error *err) {
+    const char *flag = argv[*index];
+    *handled = true;
+    if (!strcmp(flag, "--context-tokens")) {
+        return parse_u32(arg_value(index, argc, argv, flag, err), flag, 1u, FG_MAX_CONTEXT,
+                         &options->logical_context_tokens, err);
+    }
+    if (!strcmp(flag, "--qsa-hot-tokens")) {
+        return parse_u32(arg_value(index, argc, argv, flag, err), flag, 1u, FG_MAX_CONTEXT,
+                         &options->qsa_hot_tokens, err);
+    }
+    if (!strcmp(flag, "--qsa-page-cache-mib")) {
+        uint32_t mib = 0;
+        fg_status status =
+            parse_u32(arg_value(index, argc, argv, flag, err), flag, 0u, 4096u, &mib, err);
+        if (status == FG_OK) options->qsa_page_cache_bytes = (uint64_t)mib << 20u;
+        return status;
+    }
+    if (!strcmp(flag, "--experimental-context")) {
+        fg_status status =
+            parse_u32(arg_value(index, argc, argv, flag, err), flag, 1u, FG_MAX_CONTEXT,
+                      &options->logical_context_tokens, err);
+        if (status == FG_OK) options->experimental_flags |= FG_RUNTIME_EXPERIMENTAL_CONTEXT;
+        return status;
+    }
+    if (!strcmp(flag, "--experimental-mtp")) {
+        options->experimental_flags |= FG_RUNTIME_EXPERIMENTAL_MTP;
+        return FG_OK;
+    }
+    if (!strcmp(flag, "--experimental-vision")) {
+        options->experimental_flags |= FG_RUNTIME_EXPERIMENTAL_VISION;
+        return FG_OK;
+    }
+    *handled = false;
     return FG_OK;
 }
 
@@ -147,6 +190,8 @@ static fg_status schema_cmd(int argc, char **argv, fg_error *err) {
 static fg_status chat_cmd(int argc, char **argv, fg_error *err) {
     const char *manifest = NULL;
     uint32_t max_tokens = 512u;
+    fg_runtime_options runtime_options;
+    fg_runtime_options_init(&runtime_options);
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--manifest")) {
             manifest = arg_value(&i, argc, argv, "--manifest", err);
@@ -156,6 +201,11 @@ static fg_status chat_cmd(int argc, char **argv, fg_error *err) {
                             FG_OK)
                 return err->code;
         } else {
+            bool handled = false;
+            fg_status status =
+                parse_runtime_option(&i, argc, argv, &runtime_options, &handled, err);
+            if (status != FG_OK) return status;
+            if (handled) continue;
             fg_error_set(err, FG_ERR_ARGUMENT, "unknown chat option: %s", argv[i]);
             return FG_ERR_ARGUMENT;
         }
@@ -164,13 +214,15 @@ static fg_status chat_cmd(int argc, char **argv, fg_error *err) {
         fg_error_set(err, FG_ERR_ARGUMENT, "chat requires --manifest");
         return FG_ERR_ARGUMENT;
     }
-    return fg_chat_main(manifest, max_tokens, err);
+    return fg_chat_main_with_options(manifest, max_tokens, &runtime_options, err);
 }
 
 static fg_status api_cmd(int argc, char **argv, fg_error *err) {
     const char *manifest = NULL;
     const char *host = "127.0.0.1";
     uint32_t port = 8000u;
+    fg_runtime_options runtime_options;
+    fg_runtime_options_init(&runtime_options);
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--manifest")) {
             manifest = arg_value(&i, argc, argv, "--manifest", err);
@@ -181,6 +233,11 @@ static fg_status api_cmd(int argc, char **argv, fg_error *err) {
             if (text && parse_u32(text, "--port", 1u, UINT16_MAX, &port, err) != FG_OK)
                 return err->code;
         } else {
+            bool handled = false;
+            fg_status status =
+                parse_runtime_option(&i, argc, argv, &runtime_options, &handled, err);
+            if (status != FG_OK) return status;
+            if (handled) continue;
             fg_error_set(err, FG_ERR_ARGUMENT, "unknown api option: %s", argv[i]);
             return FG_ERR_ARGUMENT;
         }
@@ -189,7 +246,7 @@ static fg_status api_cmd(int argc, char **argv, fg_error *err) {
         fg_error_set(err, FG_ERR_ARGUMENT, "api requires --manifest");
         return FG_ERR_ARGUMENT;
     }
-    return fg_api_main(manifest, host, (uint16_t)port, err);
+    return fg_api_main_with_options(manifest, host, (uint16_t)port, &runtime_options, err);
 }
 
 static fg_status manifest_cmd(const char *command, int argc, char **argv, fg_error *err) {

@@ -25,6 +25,12 @@ fg_status fg_runtime_open(fg_runtime **out, const char *manifest_path, fg_error 
     return FG_ERR_UNAVAILABLE;
 }
 
+fg_status fg_runtime_open_with_options(fg_runtime **out, const char *manifest_path,
+                                       const fg_runtime_options *options, fg_error *err) {
+    (void)options;
+    return fg_runtime_open(out, manifest_path, err);
+}
+
 void fg_runtime_close(fg_runtime *runtime) {
     (void)runtime;
 }

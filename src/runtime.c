@@ -19,8 +19,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#define FG_RUNTIME_CONTEXT_TOKENS 8192u
-
 static fg_status load_checked(const char *path,fg_manifest **out,fg_error *err){fg_manifest *m=malloc(sizeof(*m));if(!m){fg_error_set(err,FG_ERR_OOM,"allocate manifest");return FG_ERR_OOM;}fg_status rc=fg_manifest_read(path,m,err);if(rc==FG_OK)rc=fg_manifest_validate_deployment(m,err);if(rc!=FG_OK){free(m);return rc;}*out=m;return FG_OK;}
 static fg_status manifest_directory(const char *path,char output[1024],fg_error *err){size_t length=strlen(path);if(!length||length>=1024u){fg_error_set(err,FG_ERR_ARGUMENT,"manifest path is invalid");return FG_ERR_ARGUMENT;}memcpy(output,path,length+1u);char *slash=strrchr(output,'/');if(!slash){snprintf(output,1024,".");return FG_OK;}if(slash==output)slash[1]=0;else *slash=0;return FG_OK;}
 
@@ -254,6 +252,7 @@ struct fg_runtime {
     size_t history_count,history_capacity;
     bool qsa_open;
     bool prefill_profiled;
+    fg_runtime_options options;
     uint32_t context_limit;
     char directory[1024],qsa_path[1200];
 };
@@ -340,16 +339,70 @@ static fg_status runtime_reserve_history(fg_runtime *runtime,size_t count,fg_err
     runtime->history=history;runtime->history_capacity=capacity;return FG_OK;
 }
 
-fg_status fg_runtime_open(fg_runtime **out,const char *path,fg_error *err){
+void fg_runtime_options_init(fg_runtime_options *options){
+    if(!options)return;
+    memset(options,0,sizeof(*options));
+}
+
+static fg_status validate_runtime_options(fg_runtime_options *options,
+                                          const fg_manifest *manifest,fg_error *err){
+    uint32_t boot_context=manifest->native_context<FG_RUNTIME_BOOT_CONTEXT_TOKENS?
+        manifest->native_context:FG_RUNTIME_BOOT_CONTEXT_TOKENS;
+    if(!options->logical_context_tokens)options->logical_context_tokens=boot_context;
+    if(!options->qsa_hot_tokens)options->qsa_hot_tokens=options->logical_context_tokens;
+    if(!options->prefill_microbatch)options->prefill_microbatch=manifest->prefill_microbatch;
+    if(!options->prefill_window)options->prefill_window=manifest->prefill_window;
+    if(options->prefill_microbatch!=manifest->prefill_microbatch||
+       options->prefill_window!=manifest->prefill_window){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "runtime prefill %ux%u does not match sealed manifest %ux%u",
+                     options->prefill_microbatch,options->prefill_window,
+                     manifest->prefill_microbatch,manifest->prefill_window);
+        return FG_ERR_MISMATCH;
+    }
+    if(options->experimental_flags){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "experimental context, MTP, and vision are not enabled in this runtime");
+        return FG_ERR_UNAVAILABLE;
+    }
+    if(options->logical_context_tokens>manifest->native_context){
+        fg_error_set(err,FG_ERR_LIMIT,"logical context %u exceeds native context %u",
+                     options->logical_context_tokens,manifest->native_context);
+        return FG_ERR_LIMIT;
+    }
+    if(options->qsa_hot_tokens>options->logical_context_tokens){
+        fg_error_set(err,FG_ERR_ARGUMENT,"QSA hot tokens %u exceed logical context %u",
+                     options->qsa_hot_tokens,options->logical_context_tokens);
+        return FG_ERR_ARGUMENT;
+    }
+    if(options->logical_context_tokens!=boot_context||
+       options->qsa_hot_tokens!=boot_context||
+       options->qsa_page_cache_bytes){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "tiered QSA is not enabled; use logical/hot context 8192 and page cache 0");
+        return FG_ERR_UNAVAILABLE;
+    }
+    return FG_OK;
+}
+
+fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
+                                       const fg_runtime_options *requested,fg_error *err){
     if(!out||!path){fg_error_set(err,FG_ERR_ARGUMENT,"invalid runtime open arguments");return FG_ERR_ARGUMENT;}*out=NULL;
     fg_runtime *runtime=calloc(1,sizeof(*runtime));if(!runtime){fg_error_set(err,FG_ERR_OOM,"allocate resident runtime");return FG_ERR_OOM;}
+    fg_runtime_options_init(&runtime->options);
+    if(requested)runtime->options=*requested;
     fg_status status=load_checked(path,&runtime->manifest,err);
-    if(status==FG_OK)runtime->context_limit=runtime->manifest->native_context<FG_RUNTIME_CONTEXT_TOKENS?runtime->manifest->native_context:FG_RUNTIME_CONTEXT_TOKENS;
+    if(status==FG_OK)status=validate_runtime_options(&runtime->options,runtime->manifest,err);
+    if(status==FG_OK)runtime->context_limit=runtime->options.logical_context_tokens;
     if(status==FG_OK)status=manifest_directory(path,runtime->directory,err);
     if(status==FG_OK)status=coordinator_open(&runtime->coordinator,runtime->manifest,runtime->directory,err);
     if(status==FG_OK){int n=snprintf(runtime->qsa_path,sizeof(runtime->qsa_path),"%s/session-%016llx-rank-00.qsa",runtime->directory,(unsigned long long)runtime->coordinator.session_id);if(n<0||(size_t)n>=sizeof(runtime->qsa_path)){fg_error_set(err,FG_ERR_LIMIT,"coordinator QSA path overflow");status=FG_ERR_LIMIT;}}
     if(status==FG_OK)status=fg_runtime_reset(runtime,err);
     if(status!=FG_OK){fg_runtime_close(runtime);return status;}*out=runtime;return FG_OK;
+}
+
+fg_status fg_runtime_open(fg_runtime **out,const char *path,fg_error *err){
+    return fg_runtime_open_with_options(out,path,NULL,err);
 }
 
 void fg_runtime_close(fg_runtime *runtime){
