@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "model": "Qwen3.8-Flash-Next",
+  "fleet": {
+    "ranks": 8,
+    "required_cu_per_rank": 24,
+    "manifest_sha256": "9aecb1456a372a41c444b0d966b8801d2d00b9f2f9db254e6a2ebf651a433bbf",
+    "spirv_sha256": "9db9b0c88a431ce74b465c7f0d29b52a0c650f2b3eaf220d3c1e86e3b1aaa223"
+  },
+  "decode": {
+    "lkg_tag": "lkg-10.035tps-cooked-experts",
+    "minimum_median_tps": 10.03545,
+    "main_integration_commit": "4f83137e6f6cc1e1eae2138e997baa8898a0f80f",
+    "main_integration_observed_median_tps": 10.38
+  },
+  "prefill": {
+    "observed_256_token_microbatch_tps": 5.36,
+    "release_prompt_tokens": 32768,
+    "release_minimum_end_to_end_tps": 250.0,
+    "release_target_end_to_end_tps": 300.0
+  },
+  "openai_harness_acceptance": [
+    "non-streaming exact hello response",
+    "streaming structured tool call without native tag leakage",
+    "tool result continuation",
+    "decode median at or above minimum_median_tps"
+  ],
+  "fleet_acceptance": [
+    "make test on all eight blades",
+    "homogeneous source, manifest, binary, and shader fingerprints",
+    "openai_harness_acceptance"
+  ]
+}

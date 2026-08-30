@@ -80,4 +80,21 @@ Manifest v4 records each tensor's physical storage layout. Routed experts, token
 
 The manifest fixes the production prefill choice; runtime requests cannot change it. `bench` enumerates microbatches 128/256/512 and windows 1–4 against the 32,768-token, three-warm-run gate. Promotion defaults to 24 CUs. Rank startup rejects corrupted manifests, topology drift, protocol mismatches, and memory-cap violations.
 
+The checked-in [qualification baseline](qualification-baseline.json) freezes the
+current fleet, decode, and prefill gates. After deploying a candidate, run the
+OpenAI/tool/decode acceptance harness from PowerShell:
+
+```powershell
+.\tools\qualify-openai.ps1 -BaseUrl http://192.168.42.42:8080/v1
+```
+
+Non-streaming completion responses include `X-Flash-Gordon-*` timing headers so
+the harness compares engine-reported prefill and decode time rather than HTTP
+wall time. These headers are diagnostic extensions; the JSON body remains
+OpenAI-compatible. The harness reads the checked-in baseline itself; callers
+cannot lower the frozen LKG threshold. It parses and reconstructs SSE deltas
+before checking structured calls and native-tag leakage. A fleet candidate
+passes only when this harness succeeds after all eight blades also pass the
+build, test, and homogeneous fingerprint gates recorded in the baseline.
+
 No fleet command, deployment, CU unlock, or model download is performed by the local build.

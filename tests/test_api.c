@@ -262,7 +262,13 @@ static void test_nonstream_tool_response(void) {
         .tool_calls = &call,
         .tool_call_count = 1,
     };
-    fg_generation_stats stats = {.prompt_tokens = 10, .generated_tokens = 5};
+    fg_generation_stats stats = {
+        .prompt_tokens = 10,
+        .generated_tokens = 5,
+        .context_tokens = 15,
+        .prefill_seconds = 2.0,
+        .decode_seconds = 0.5,
+    };
     fg_error err = {0};
     CHECK(send_completion(&generation, &generated, &stats, "tool_calls", &err) == FG_OK);
     shutdown(sockets[0], SHUT_WR);
@@ -272,6 +278,10 @@ static void test_nonstream_tool_response(void) {
     CHECK(response && strstr(response, "\"id\":\"call_chatcmpl-test_0\""));
     CHECK(response && strstr(response, "\"name\":\"weather\""));
     CHECK(response && strstr(response, "\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\""));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prompt-Tokens: 10\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Context-Tokens: 15\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefill-TPS: 5.000000\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Decode-TPS: 10.000000\r\n"));
     CHECK(response && !strstr(response, "<tool_call>"));
     free(response);
     close(sockets[0]);
