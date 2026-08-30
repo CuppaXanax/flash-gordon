@@ -1,0 +1,224 @@
+#version 460
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer GateWeights { uint gate_words[]; };
+layout(set = 0, binding = 1) readonly buffer UpWeights { uint up_words[]; };
+layout(set = 0, binding = 2) readonly buffer Activation { uint q8[]; };
+layout(set = 0, binding = 3) readonly buffer Tiles { uint tiles[]; };
+layout(set = 0, binding = 4) writeonly buffer Output { float output_value[]; };
+
+layout(push_constant) uniform Push {
+    uint out_dim;
+    uint blocks;
+    uint gate_row_bytes;
+    uint gate_expert_stride;
+    uint gate_type;
+    uint up_row_bytes;
+    uint up_expert_stride;
+    uint up_type;
+    uint n_used;
+    uint routed_pairs;
+    uint packed_weights;
+    uint reserved;
+} pc;
+
+const uint Q4_K = 12u;
+const uint Q5_K = 13u;
+const uint PAIR_TILE = 8u;
+const uint TILE_WORDS = 9u;
+const uint INVALID_PAIR = 0xffffffffu;
+const uint Q8K_WORDS = 74u;
+const uint MAX_BLOCK_WORDS = 44u;
+
+shared float gate_lane_sum[512];
+shared float gate_min_sum[512];
+shared float up_lane_sum[512];
+shared float up_min_sum[512];
+shared uint shared_q8[592];
+shared uint shared_weight[352];
+
+uint load_u8(uint row_slot, uint offset) {
+    return (shared_weight[row_slot * MAX_BLOCK_WORDS + (offset >> 2u)] >>
+            ((offset & 3u) * 8u)) & 255u;
+}
+
+uint load_u16(uint row_slot, uint offset) {
+    return load_u8(row_slot, offset) | (load_u8(row_slot, offset + 1u) << 8u);
+}
+
+float load_f16(uint row_slot, uint offset) {
+    return unpackHalf2x16(load_u16(row_slot, offset)).x;
+}
+
+int q8_value(uint slot, uint index) {
+    uint value = (shared_q8[slot * Q8K_WORDS + 2u + (index >> 2u)] >>
+                  ((index & 3u) * 8u)) & 255u;
+    return value >= 128u ? int(value) - 256 : int(value);
+}
+
+float q8_delta(uint slot) {
+    return uintBitsToFloat(shared_q8[slot * Q8K_WORDS]);
+}
+
+int q8_sum(uint slot, uint index) {
+    uint word = shared_q8[slot * Q8K_WORDS + 66u + (index >> 1u)];
+    uint value = (index & 1u) == 0u ? word & 65535u : word >> 16u;
+    return value >= 32768u ? int(value) - 65536 : int(value);
+}
+
+void scale_min(uint row_slot, uint group, out uint scale, out uint minimum) {
+    uint scale_byte = load_u8(row_slot, 4u + group);
+    if (group < 4u) {
+        scale = scale_byte & 63u;
+        minimum = load_u8(row_slot, 8u + group) & 63u;
+    } else {
+        uint upper = load_u8(row_slot, 8u + group);
+        uint lower = load_u8(row_slot, group);
+        scale = (upper & 15u) | ((lower >> 6u) << 4u);
+        minimum = (upper >> 4u) | ((scale_byte >> 6u) << 4u);
+    }
+}
+
+uint q4_value(uint row_slot, uint index) {
+    uint group = index >> 5u;
+    uint packed = load_u8(row_slot, 16u + (group >> 1u) * 32u + (index & 31u));
+    return (group & 1u) == 0u ? packed & 15u : packed >> 4u;
+}
+
+uint q5_value(uint row_slot, uint index) {
+    uint group = index >> 5u;
+    uint element = index & 31u;
+    uint packed = load_u8(row_slot, 48u + (group >> 1u) * 32u + element);
+    uint low = (group & 1u) == 0u ? packed & 15u : packed >> 4u;
+    uint high = (load_u8(row_slot, 16u + element) >> group) & 1u;
+    return low | (high << 4u);
+}
+
+void accumulate_block(uint row_slot, uint lane, bool row_live, uint quant_type,
+                      uint pair[PAIR_TILE], inout float sums[PAIR_TILE],
+                      inout float minimum_sums[PAIR_TILE]) {
+    if (!row_live) return;
+    float delta = load_f16(row_slot, 0u);
+    float minimum_delta = load_f16(row_slot, 2u);
+    uint scales[8];
+    uint minimums[8];
+    for (uint group = 0u; group < 8u; group++) {
+        scale_min(row_slot, group, scales[group], minimums[group]);
+    }
+    for (uint slot = 0u; slot < PAIR_TILE; slot++) {
+        if (pair[slot] == INVALID_PAIR) continue;
+        int integer_dot = 0;
+        for (uint group = 0u; group < 8u; group++) {
+            uint index = group * 32u + lane * 4u;
+            integer_dot += int(scales[group]) *
+                (int(quant_type == Q4_K ? q4_value(row_slot, index) : q5_value(row_slot, index)) * q8_value(slot, index) +
+                 int(quant_type == Q4_K ? q4_value(row_slot, index + 1u) : q5_value(row_slot, index + 1u)) * q8_value(slot, index + 1u) +
+                 int(quant_type == Q4_K ? q4_value(row_slot, index + 2u) : q5_value(row_slot, index + 2u)) * q8_value(slot, index + 2u) +
+                 int(quant_type == Q4_K ? q4_value(row_slot, index + 3u) : q5_value(row_slot, index + 3u)) * q8_value(slot, index + 3u));
+        }
+        sums[slot] = fma(delta * q8_delta(slot), float(integer_dot), sums[slot]);
+        if ((quant_type == Q5_K && lane == 0u) || (quant_type == Q4_K && lane < 4u)) {
+            int minimum_dot = 0;
+            uint begin = quant_type == Q5_K ? 0u : lane * 2u;
+            uint end = quant_type == Q5_K ? 8u : begin + 2u;
+            for (uint group = begin; group < end; group++) {
+                minimum_dot += int(minimums[group]) *
+                    (q8_sum(slot, group * 2u) + q8_sum(slot, group * 2u + 1u));
+            }
+            minimum_sums[slot] = fma(-minimum_delta * q8_delta(slot),
+                                     float(minimum_dot), minimum_sums[slot]);
+        }
+    }
+}
+
+void main() {
+    uint local_id = gl_LocalInvocationID.x;
+    uint row_slot = local_id >> 3u;
+    uint row = gl_WorkGroupID.x * 8u + row_slot;
+    uint lane = local_id & 7u;
+    uint tile = gl_WorkGroupID.y;
+    uint tile_base = tile * TILE_WORDS;
+    uint expert = tiles[tile_base];
+    if (expert == INVALID_PAIR) return;
+
+    bool row_live = row < pc.out_dim;
+    uint weight_index = pc.packed_weights != 0u ? tile : expert;
+    uint gate_row_base = weight_index * pc.gate_expert_stride +
+                         (row_live ? row : 0u) * pc.gate_row_bytes;
+    uint up_row_base = weight_index * pc.up_expert_stride +
+                       (row_live ? row : 0u) * pc.up_row_bytes;
+    uint gate_block_bytes = pc.gate_row_bytes / pc.blocks;
+    uint up_block_bytes = pc.up_row_bytes / pc.blocks;
+    uint pair[PAIR_TILE];
+    float gate_sum[PAIR_TILE];
+    float gate_minimum[PAIR_TILE];
+    float up_sum[PAIR_TILE];
+    float up_minimum[PAIR_TILE];
+    for (uint slot = 0u; slot < PAIR_TILE; slot++) {
+        pair[slot] = tiles[tile_base + 1u + slot];
+        gate_sum[slot] = 0.0;
+        gate_minimum[slot] = 0.0;
+        up_sum[slot] = 0.0;
+        up_minimum[slot] = 0.0;
+    }
+
+    for (uint block = 0u; block < pc.blocks; block++) {
+        for (uint slot = 0u; slot < PAIR_TILE; slot++) {
+            uint routed = pair[slot];
+            uint qbase = (routed != INVALID_PAIR ? routed / pc.n_used : 0u) *
+                         pc.blocks * Q8K_WORDS + block * Q8K_WORDS;
+            for (uint word = local_id; word < Q8K_WORDS; word += 64u) {
+                shared_q8[slot * Q8K_WORDS + word] =
+                    routed != INVALID_PAIR ? q8[qbase + word] : 0u;
+            }
+        }
+        uint gate_base = gate_row_base + block * gate_block_bytes;
+        for (uint word = lane; word < gate_block_bytes / 4u; word += 8u) {
+            shared_weight[row_slot * MAX_BLOCK_WORDS + word] = gate_words[(gate_base >> 2u) + word];
+        }
+        barrier();
+        accumulate_block(row_slot, lane, row_live, pc.gate_type, pair, gate_sum, gate_minimum);
+        barrier();
+
+        uint up_base = up_row_base + block * up_block_bytes;
+        for (uint word = lane; word < up_block_bytes / 4u; word += 8u) {
+            shared_weight[row_slot * MAX_BLOCK_WORDS + word] = up_words[(up_base >> 2u) + word];
+        }
+        barrier();
+        accumulate_block(row_slot, lane, row_live, pc.up_type, pair, up_sum, up_minimum);
+        barrier();
+    }
+
+    for (uint slot = 0u; slot < PAIR_TILE; slot++) {
+        uint offset = slot * 64u + local_id;
+        gate_lane_sum[offset] = gate_sum[slot];
+        gate_min_sum[offset] = gate_minimum[slot];
+        up_lane_sum[offset] = up_sum[slot];
+        up_min_sum[offset] = up_minimum[slot];
+    }
+    barrier();
+    if (row_live && lane == 0u) {
+        for (uint slot = 0u; slot < PAIR_TILE; slot++) {
+            uint routed = pair[slot];
+            if (routed == INVALID_PAIR || routed >= pc.routed_pairs) continue;
+            uint offset = slot * 64u + local_id;
+            float gate = ((gate_lane_sum[offset] + gate_lane_sum[offset + 4u]) +
+                          (gate_lane_sum[offset + 2u] + gate_lane_sum[offset + 6u])) +
+                         ((gate_lane_sum[offset + 1u] + gate_lane_sum[offset + 5u]) +
+                          (gate_lane_sum[offset + 3u] + gate_lane_sum[offset + 7u]));
+            gate += pc.gate_type == Q5_K ? gate_min_sum[offset] :
+                    gate_min_sum[offset] + gate_min_sum[offset + 1u] +
+                    gate_min_sum[offset + 2u] + gate_min_sum[offset + 3u];
+            float up = ((up_lane_sum[offset] + up_lane_sum[offset + 4u]) +
+                        (up_lane_sum[offset + 2u] + up_lane_sum[offset + 6u])) +
+                       ((up_lane_sum[offset + 1u] + up_lane_sum[offset + 5u]) +
+                        (up_lane_sum[offset + 3u] + up_lane_sum[offset + 7u]));
+            up += pc.up_type == Q5_K ? up_min_sum[offset] :
+                  up_min_sum[offset] + up_min_sum[offset + 1u] +
+                  up_min_sum[offset + 2u] + up_min_sum[offset + 3u];
+            output_value[routed * pc.out_dim + row] = (gate / (1.0 + exp(-gate))) * up;
+        }
+    }
+}
+
