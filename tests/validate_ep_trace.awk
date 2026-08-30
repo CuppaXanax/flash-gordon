@@ -46,7 +46,7 @@ $0 ~ /EP_LAYER_TRACE / {
     if (difference > 0.02) fail("layer " layer " phase sum differs by " difference " ms")
     submissions = value("submissions") + 0
     dispatches = value("dispatches") + 0
-    if (submissions < 3 || submissions > 4) fail("layer " layer " submissions " submissions)
+    if (submissions < 2 || submissions > 4) fail("layer " layer " submissions " submissions)
     if (dispatches < submissions) fail("layer " layer " dispatches " dispatches)
     layer_submissions += submissions
     layer_dispatches += dispatches
@@ -150,7 +150,7 @@ END {
 
     if (errors) exit 1
     printf "EP_INTEGRATION_PASS token=%u layers=%u routes=%u worker_requests=%u layer_ms=%.3f max_layer=%u max_layer_ms=%.3f submissions=%u dispatches=%u\n", expected_token, layer_count, routes, worker_requests, layer_total, maximum_layer, maximum_layer_ms, profile_submissions, profile_dispatches
-    printf "EP_PHASE_SUM token=%u sync1_ms=%.3f fire_ms=%.3f shared_ms=%.3f collect_ms=%.3f finish_ms=%.3f nonlayer_ms=%.3f gpu_ms=%.3f kernel_ms=%.3f submit3_layers=%u submit4_layers=%u\n", expected_token, sync1_total, fire_total, shared_total, collect_total, finish_total, profile_wall_ms-layer_total, profile_gpu_ms, profile_kernel_ms, submission_layers[3], submission_layers[4]
+    printf "EP_PHASE_SUM token=%u sync1_ms=%.3f fire_ms=%.3f shared_ms=%.3f collect_ms=%.3f finish_ms=%.3f nonlayer_ms=%.3f gpu_ms=%.3f kernel_ms=%.3f submit2_layers=%u submit3_layers=%u submit4_layers=%u\n", expected_token, sync1_total, fire_total, shared_total, collect_total, finish_total, profile_wall_ms-layer_total, profile_gpu_ms, profile_kernel_ms, submission_layers[2], submission_layers[3], submission_layers[4]
     printf "EP_ROUTE_SUM token=%u remote_routes=%u local_routes=%u local_selections=%u remote_selections=%u\n", expected_token, remote_routes, local_routes, local_selections, 480-local_selections
     for (rank = 1; rank < 8; rank++) printf "EP_WORKER_SUM token=%u rank=%u requests=%u selections=%u gpu_ms=%.3f reduce_ms=%.3f send_ms=%.3f total_ms=%.3f\n", expected_token, rank, rank_requests[rank], rank_selections[rank], rank_gpu_ms[rank], rank_reduce_ms[rank], rank_send_ms[rank], rank_total_ms[rank]
 }

@@ -15,18 +15,21 @@ for layer in {0..47}; do
     local=0
     remotes=1
     local_selected=0
-    submissions=3
+    submissions=2
     dispatches=24
     if ((rank == 0)); then
         local=1
         remotes=0
         local_selected=10
-        submissions=4
+        submissions=3
         dispatches=28
     fi
     if ((layer == 1)); then
         submissions=$((submissions + 1))
         dispatches=$((dispatches + 8))
+    fi
+    if ((layer == 47)); then
+        submissions=$((submissions + 1))
     fi
     mask=$((1 << rank))
     printf 'EP_ROUTE_TRACE token=%u layer=%u routes=1 remotes=%u local=%u local_selected=%u selected=10 rank_mask=%u\n' "$token" "$layer" "$remotes" "$local" "$local_selected" "$mask" >> "$coordinator"
