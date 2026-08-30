@@ -11,9 +11,11 @@ tests/*.d
 
 # Test binaries
 tests/test_core
+tests/test_session
 tests/test_chat
 tests/test_api
 tests/test_fg_vk
+tests/test_hc_down_split
 tests/test_model_load
 tests/test_tokenizer
 tests/test_fabric
