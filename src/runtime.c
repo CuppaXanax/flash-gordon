@@ -163,18 +163,6 @@ static fg_status handle_expert_work(fg_fabric *fabric,fg_expert_executor *expert
     uint64_t trace_gpu_begin=critical_ns();
     uint32_t result_bytes=0;if(status==FG_OK)status=fg_expert_decode(expert,&work,result,err);
     double tw_gpu=dispatch_ts();uint64_t trace_gpu_end=critical_ns();
-    /* Worker-local weighted reduction: apply gates and sum to ONE vector */
-    if(status==FG_OK&&result->selected_count>0u){
-        float reduced[FG_HIDDEN_SIZE]={0};
-        for(uint32_t i=0;i<result->selected_count;i++){
-            float g=work.gates[i];
-            const float *out=result->outputs[i];
-            for(uint32_t j=0;j<FG_HIDDEN_SIZE;j++)reduced[j]=fmaf(g,out[j],reduced[j]);
-        }
-        memcpy(result->outputs[0],reduced,sizeof(reduced));
-        result->selected_count=1;
-        result->routing_slots[0]=0xFFu; /* pre-reduced sentinel */
-    }
     double tw_reduce=dispatch_ts();uint64_t trace_reduce=critical_ns();
     if(status==FG_OK)status=fg_expert_result_encode(wire,FG_EXPERT_RESULT_MAX_BYTES,&result_bytes,result,err);
     double tw_encode=dispatch_ts();uint64_t trace_encode=critical_ns(),trace_send_start=trace_encode;

@@ -1,0 +1,40 @@
+#version 460
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer DownBuffer {
+    float values[];
+} down_buffer;
+
+layout(set = 0, binding = 1, std430) readonly buffer GateBuffer {
+    float values[];
+} gate_buffer;
+
+layout(set = 0, binding = 2, std430) readonly buffer TileBuffer {
+    uint words[];
+} tile_buffer;
+
+layout(set = 0, binding = 3, std430) writeonly buffer OutputBuffer {
+    float values[];
+} output_buffer;
+
+layout(push_constant) uniform PushConstants {
+    uint width;
+    uint selected_count;
+    uint slot_count;
+} pc;
+
+void main() {
+    uint element = gl_GlobalInvocationID.x;
+    if (element >= pc.width) return;
+
+    float value = 0.0;
+    for (uint selected = 0; selected < pc.selected_count; selected++) {
+        uint slot = tile_buffer.words[selected * 9u + 1u];
+        if (slot < pc.slot_count) {
+            value = fma(gate_buffer.values[selected],
+                        down_buffer.values[slot * pc.width + element], value);
+        }
+    }
+    output_buffer.values[element] = value;
+}
