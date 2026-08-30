@@ -21,7 +21,9 @@ typedef enum fg_tensor_kind {
 
 typedef enum fg_tensor_layout {
     FG_TENSOR_LAYOUT_GGML = 0,
-    FG_TENSOR_LAYOUT_Q8_0_COOKED = 1
+    FG_TENSOR_LAYOUT_Q8_0_COOKED = 1,
+    FG_TENSOR_LAYOUT_K_QUANT_EXPERT_COOKED = 2,
+    FG_TENSOR_LAYOUT_Q5_1_EXPERT_COOKED = 3
 } fg_tensor_layout;
 
 enum {

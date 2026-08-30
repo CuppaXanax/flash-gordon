@@ -8,7 +8,7 @@ FG_SHADER_OUT := $(patsubst shaders/%.comp,vulkan/%.spv,$(FG_SHADER_SRC))
 
 SRC := src/main.c src/util.c src/manifest.c src/topology.c src/sha256.c src/gguf.c src/q38_schema.c src/q38_math.c src/quant.c src/vk.c src/model.c src/expert.c src/owner.c src/output.c src/tokenizer.c src/pack.c src/uring.c src/loader.c src/ngram.c src/qsa_state.c src/qsa.c src/protocol.c src/fabric.c src/runtime.c
 OBJ := $(SRC:.c=.o)
-DEP := $(OBJ:.o=.d) tests/test_core.d tests/test_fg_vk.d tests/test_model_load.d tests/test_tokenizer.d tests/test_fabric.d
+DEP := $(OBJ:.o=.d) tests/test_core.d tests/test_fg_vk.d tests/test_hc_down_split.d tests/test_model_load.d tests/test_tokenizer.d tests/test_fabric.d
 TEST_COMMON := src/util.o src/manifest.o src/topology.o src/sha256.o src/gguf.o src/q38_schema.o src/q38_math.o src/quant.o src/vk.o src/tokenizer.o src/pack.o src/uring.o src/loader.o src/ngram.o src/qsa_state.o src/protocol.o
 
 .PHONY: all clean test test-vulkan shaders
@@ -33,22 +33,26 @@ vulkan/%.spv: shaders/%.comp
 tests/test_fg_vk: tests/test_fg_vk.o src/vk.o src/quant.o src/q38_math.o src/ngram.o src/uring.o src/util.o | shaders
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS) -lvulkan
 
-tests/test_model_load: tests/test_model_load.o src/model.o src/vk.o src/loader.o src/uring.o src/sha256.o src/manifest.o src/topology.o src/q38_schema.o src/gguf.o src/util.o | shaders
+tests/test_hc_down_split: tests/test_hc_down_split.o src/vk.o src/quant.o src/q38_math.o src/ngram.o src/uring.o src/util.o | shaders
+	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS) -lvulkan
+
+tests/test_model_load: tests/test_model_load.o src/model.o src/vk.o src/quant.o src/q38_math.o src/ngram.o src/loader.o src/uring.o src/sha256.o src/manifest.o src/topology.o src/q38_schema.o src/gguf.o src/util.o | shaders
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
-tests/test_tokenizer: tests/test_tokenizer.o src/tokenizer.o src/uring.o src/sha256.o src/manifest.o src/topology.o src/q38_schema.o src/gguf.o src/util.o
+tests/test_tokenizer: tests/test_tokenizer.o src/tokenizer.o src/quant.o src/q38_math.o src/uring.o src/sha256.o src/manifest.o src/topology.o src/q38_schema.o src/gguf.o src/util.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
-tests/test_fabric: tests/test_fabric.o src/fabric.o src/uring.o src/protocol.o src/manifest.o src/sha256.o src/topology.o src/q38_schema.o src/util.o
+tests/test_fabric: tests/test_fabric.o src/fabric.o src/quant.o src/q38_math.o src/uring.o src/protocol.o src/manifest.o src/sha256.o src/topology.o src/q38_schema.o src/util.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
-test-vulkan: tests/test_fg_vk tests/test_model_load tests/test_tokenizer tests/test_fabric
+test-vulkan: tests/test_fg_vk tests/test_hc_down_split tests/test_model_load tests/test_tokenizer tests/test_fabric
 	./tests/test_fg_vk
+	./tests/test_hc_down_split || test $$? -eq 77
 	./tests/test_model_load || test $$? -eq 77
 	./tests/test_tokenizer || test $$? -eq 77
 	./tests/test_fabric || test $$? -eq 77
 
 clean:
-	rm -f flash-gordon $(OBJ) $(DEP) tests/*.o tests/test_core tests/test_fg_vk tests/test_model_load tests/test_tokenizer tests/test_fabric vulkan/*.spv
+	rm -f flash-gordon $(OBJ) $(DEP) tests/*.o tests/test_core tests/test_fg_vk tests/test_hc_down_split tests/test_model_load tests/test_tokenizer tests/test_fabric vulkan/*.spv
 
 -include $(DEP)

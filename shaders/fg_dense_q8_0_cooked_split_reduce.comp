@@ -1,0 +1,6 @@
+#version 460
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Partials{float partials[];};
+layout(set=0,binding=1)writeonly buffer Output{float output_value[];};
+layout(push_constant)uniform Push{uint values;uint splits;}pc;
+void main(){uint value=gl_GlobalInvocationID.x;if(value>=pc.values)return;float total=0.0;for(uint split=0u;split<pc.splits;split++)total+=partials[value*pc.splits+split];output_value[value]=total;}

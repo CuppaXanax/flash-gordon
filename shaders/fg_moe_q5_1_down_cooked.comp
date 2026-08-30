@@ -1,0 +1,93 @@
+#version 460
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Weights { uint wb[]; };
+layout(set = 0, binding = 1) readonly buffer Tiles { uint tiles[]; };
+layout(set = 0, binding = 2) readonly buffer Input { vec4 x4[]; };
+layout(set = 0, binding = 3) writeonly buffer Output { float y[]; };
+layout(push_constant) uniform Push {
+    uint out_dim;
+    uint in_dim;
+    uint blocks;
+    uint tile_bytes;
+    uint expert_stride;
+    uint routed_pairs;
+    uint packed_weights;
+} pc;
+
+const uint TILE_WORDS = 9u;
+const uint INVALID_PAIR = 0xffffffffu;
+const uint COOK_ROWS = 16u;
+const uint BLOCK_TILE_BYTES = COOK_ROWS * 24u;
+
+shared uint scale_words[8];
+shared uint high_words[8];
+shared uint quant_words[32];
+shared float partial[64];
+
+uint quant_value(uint packed, uint high, uint lane, uint item) {
+    uint byte_value = (packed >> (item * 8u)) & 255u;
+    uint low = lane < 4u ? byte_value & 15u : byte_value >> 4u;
+    uint bit = (high >> (lane * 4u + item)) & 1u;
+    return low | (bit << 4u);
+}
+
+void main() {
+    uint local_id = gl_LocalInvocationID.x;
+    uint row_slot = local_id >> 3u;
+    uint lane = local_id & 7u;
+    uint row = gl_WorkGroupID.x * 8u + row_slot;
+    uint tile_base = gl_WorkGroupID.y * TILE_WORDS;
+    uint expert = tiles[tile_base];
+    if (expert == INVALID_PAIR) return;
+
+    uint pair = tiles[tile_base + 1u];
+    if (pair >= pc.routed_pairs) return;
+    uint weight_index = pc.packed_weights != 0u ? gl_WorkGroupID.y : expert;
+    uint expert_base = weight_index * pc.expert_stride;
+    uint row_tile = row >> 4u;
+    uint tile_row = row & 15u;
+    bool row_live = row < pc.out_dim;
+    float accumulator = 0.0;
+
+    for (uint block = 0u; block < pc.blocks; block++) {
+        uint block_base = expert_base + row_tile * pc.tile_bytes + block * BLOCK_TILE_BYTES;
+        if (lane == 0u) {
+            scale_words[row_slot] = row_live ? wb[(block_base + tile_row * 4u) >> 2u] : 0u;
+            high_words[row_slot] = row_live ? wb[(block_base + 64u + tile_row * 4u) >> 2u] : 0u;
+        }
+        if (lane < 4u) {
+            quant_words[row_slot * 4u + lane] = row_live ?
+                wb[(block_base + 128u + tile_row * 16u + lane * 4u) >> 2u] : 0u;
+        }
+        barrier();
+
+        if (row_live) {
+            vec2 scale_min = unpackHalf2x16(scale_words[row_slot]);
+            uint packed = quant_words[row_slot * 4u + (lane & 3u)];
+            uint high = high_words[row_slot];
+            vec4 input_value = x4[pair * (pc.in_dim >> 2u) + block * 8u + lane];
+            float weight0 = fma(scale_min.x, float(quant_value(packed, high, lane, 0u)), scale_min.y);
+            float weight1 = fma(scale_min.x, float(quant_value(packed, high, lane, 1u)), scale_min.y);
+            float weight2 = fma(scale_min.x, float(quant_value(packed, high, lane, 2u)), scale_min.y);
+            float weight3 = fma(scale_min.x, float(quant_value(packed, high, lane, 3u)), scale_min.y);
+            accumulator = fma(weight0, input_value.x, accumulator);
+            accumulator = fma(weight1, input_value.y, accumulator);
+            accumulator = fma(weight2, input_value.z, accumulator);
+            accumulator = fma(weight3, input_value.w, accumulator);
+        }
+        barrier();
+    }
+
+    partial[local_id] = accumulator;
+    barrier();
+    if (row_live && lane == 0u) {
+        uint offset = row_slot * 8u;
+        y[pair * pc.out_dim + row] =
+            ((partial[offset] + partial[offset + 4u]) +
+             (partial[offset + 2u] + partial[offset + 6u])) +
+            ((partial[offset + 1u] + partial[offset + 5u]) +
+             (partial[offset + 3u] + partial[offset + 7u]));
+    }
+}
