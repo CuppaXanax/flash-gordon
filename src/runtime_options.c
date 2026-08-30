@@ -139,3 +139,27 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
     }
     return FG_OK;
 }
+
+fg_status fg_runtime_eval_capacity(uint32_t *qsa_capacity,
+                                   const fg_runtime_options *options,
+                                   size_t prompt_tokens,uint32_t generation_tokens,
+                                   fg_error *err){
+    if(!qsa_capacity||!options||!options->logical_context_tokens){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid eval capacity arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    *qsa_capacity=0u;
+    if(!prompt_tokens||prompt_tokens>SIZE_MAX-(size_t)generation_tokens){
+        fg_error_set(err,FG_ERR_LIMIT,"eval prompt plus generation exceeds context capacity");
+        return FG_ERR_LIMIT;
+    }
+    size_t total=prompt_tokens+(size_t)generation_tokens;
+    if(total>options->logical_context_tokens){
+        fg_error_set(err,FG_ERR_LIMIT,
+                     "eval prompt plus generation would use %zu of %u context tokens",
+                     total,options->logical_context_tokens);
+        return FG_ERR_LIMIT;
+    }
+    *qsa_capacity=options->logical_context_tokens;
+    return FG_OK;
+}
