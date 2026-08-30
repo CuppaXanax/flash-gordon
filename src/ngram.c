@@ -3,9 +3,11 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #define CACHE_BLOCKS (FG_NGRAM_CACHE_BYTES/FG_NGRAM_BLOCK_BYTES)
@@ -13,8 +15,10 @@
 #define CACHE_SETS (CACHE_BLOCKS/CACHE_WAYS)
 typedef struct cache_entry{uint64_t offset;uint64_t stamp;bool valid;}cache_entry;
 struct fg_ngram_cache{uint8_t *data;cache_entry *entry;uint64_t stamp;};
-struct fg_ngram_store{int fd;fg_uring *ring;uint32_t slot;uint64_t table_bytes;uint8_t *io_buffer;fg_ngram_cache *cache;fg_vk_context *vk;fg_vk_tensor *packed,*embedding,*embedding_view;};
+struct fg_ngram_store{int fd;fg_uring *ring;uint32_t slot;uint64_t table_bytes;uint8_t *io_buffer;fg_ngram_cache *cache;fg_vk_context *vk;fg_vk_tensor *packed,*embedding,*embedding_view;uint32_t last_read_count;uint64_t last_read_bytes;double last_io_ms;};
 static int u64_cmp(const void *a,const void *b){uint64_t x=*(const uint64_t *)a,y=*(const uint64_t *)b;return x<y?-1:x>y;}
+static double ngram_ts(void){struct timespec value;clock_gettime(CLOCK_MONOTONIC,&value);return (double)value.tv_sec*1e3+(double)value.tv_nsec*1e-6;}
+static bool ngram_trace_enabled(void){const char *enabled=getenv("FG_FRAME_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 fg_status fg_ngram_plan_reads(const uint64_t *addresses,uint32_t count,uint64_t table_bytes,fg_ngram_read *reads,uint32_t cap,uint32_t *out_count,fg_error *err){
     if((count&&!addresses)||!reads||!out_count||!table_bytes){fg_error_set(err,FG_ERR_ARGUMENT,"invalid n-gram read planner arguments");return FG_ERR_ARGUMENT;}if(count>FG_NGRAM_PREFILL_MAX_BLOCKS){fg_error_set(err,FG_ERR_LIMIT,"n-gram read planner input exceeds bounded prefill capacity");return FG_ERR_LIMIT;}
     uint64_t padded_bytes=fg_align_up_u64(table_bytes,FG_NGRAM_BLOCK_BYTES),*blocks=malloc((size_t)count*sizeof(*blocks));if(count&&!blocks){fg_error_set(err,FG_ERR_OOM,"allocate n-gram block planner");return FG_ERR_OOM;}
@@ -71,6 +75,7 @@ static bool cache_has(fg_ngram_cache *cache,uint64_t offset){const void *ignored
 
 static fg_status load_missing_blocks(fg_ngram_store *s,const uint64_t *addresses,uint32_t address_count,fg_error *err){
     if(!s||!addresses||!address_count||address_count>FG_NGRAM_PREFILL_MAX_ROWS){fg_error_set(err,FG_ERR_ARGUMENT,"invalid bounded n-gram block load");return FG_ERR_ARGUMENT;}
+    s->last_read_count=0;s->last_read_bytes=0;s->last_io_ms=0.0;
     uint64_t probes[FG_NGRAM_PREFILL_MAX_BLOCKS];uint32_t probe_count=0;
     for(uint32_t i=0;i<address_count;i++){if(addresses[i]>UINT64_MAX-(FG_NGRAM_ROW_BYTES-1u)){fg_error_set(err,FG_ERR_FORMAT,"n-gram row address overflows");return FG_ERR_FORMAT;}probes[probe_count++]=addresses[i];probes[probe_count++]=addresses[i]+FG_NGRAM_ROW_BYTES-1u;}
     fg_ngram_read plan[FG_NGRAM_PREFILL_MAX_BLOCKS];uint32_t plan_count=0;fg_status status=fg_ngram_plan_reads(probes,probe_count,s->table_bytes,plan,FG_NGRAM_PREFILL_MAX_BLOCKS,&plan_count,err);if(status!=FG_OK)return status;
@@ -83,7 +88,9 @@ static fg_status load_missing_blocks(fg_ngram_store *s,const uint64_t *addresses
         if(read_count>=FG_NGRAM_PREFILL_MAX_BLOCKS||cursor+(uint64_t)bytes>FG_NGRAM_PREFILL_IO_BYTES){fg_error_set(err,FG_ERR_LIMIT,"n-gram prefill I/O arena is exhausted");return FG_ERR_LIMIT;}
         reads[read_count++]=(fg_uring_read){.buffer=s->io_buffer+cursor,.bytes=bytes,.offset=offset};cursor+=bytes;
     }
+    s->last_read_count=read_count;s->last_read_bytes=cursor;double io_start=ngram_ts();
     if(read_count)status=fg_uring_pread_batch(s->ring,s->slot,reads,read_count,err);
+    s->last_io_ms=ngram_ts()-io_start;
     for(uint32_t i=0;status==FG_OK&&i<read_count;i++){status=fg_ngram_cache_put(s->cache,reads[i].offset,reads[i].buffer,err);if(status==FG_OK&&reads[i].bytes==FG_NGRAM_MAX_READ_BYTES)status=fg_ngram_cache_put(s->cache,reads[i].offset+FG_NGRAM_BLOCK_BYTES,(const uint8_t *)reads[i].buffer+FG_NGRAM_BLOCK_BYTES,err);}
     return status;
 }
@@ -96,10 +103,10 @@ static fg_status pack_rows(fg_ngram_store *s,const uint64_t *addresses,uint32_t 
 
 fg_status fg_ngram_store_lookup_prefill(fg_ngram_store *s,const int32_t *tokens,size_t history_count,uint32_t first_token,uint32_t token_count,fg_vk_tensor **embedding,fg_error *err){
     if(!s||!tokens||!history_count||token_count==0u||token_count>FG_NGRAM_PREFILL_MAX_TOKENS||!embedding||first_token>history_count||(size_t)token_count>history_count-(size_t)first_token){fg_error_set(err,FG_ERR_ARGUMENT,"invalid bounded n-gram prefill lookup range");return FG_ERR_ARGUMENT;}
-    uint64_t addresses[FG_NGRAM_PREFILL_MAX_ROWS],rows[FG_NGRAM_PREFILL_MAX_ROWS];size_t end=(size_t)first_token+token_count;fg_status status=FG_OK;
+    double trace_start=ngram_ts();uint64_t addresses[FG_NGRAM_PREFILL_MAX_ROWS],rows[FG_NGRAM_PREFILL_MAX_ROWS];size_t end=(size_t)first_token+token_count;fg_status status=FG_OK;
     for(size_t i=0;i<end;i++)if(tokens[i]<0||tokens[i]>=248320){fg_error_set(err,FG_ERR_FORMAT,"token %zu is outside Qwen3.8 vocabulary",i);return FG_ERR_FORMAT;}
     size_t segment_start=0;for(size_t i=0;i<(size_t)first_token;i++)if((uint32_t)tokens[i]==FG_Q38_EOS_TOKEN)segment_start=i+1u;for(uint32_t token=0;token<token_count;token++){size_t pos=(size_t)first_token+token;q38_ngram_fill(tokens,pos+1u,segment_start,rows+(uint64_t)token*FG_NGRAM_HEAD_COUNT,addresses+(uint64_t)token*FG_NGRAM_HEAD_COUNT);if((uint32_t)tokens[pos]==FG_Q38_EOS_TOKEN)segment_start=pos+1u;}
-    uint32_t row_count=token_count*FG_NGRAM_HEAD_COUNT;if(status==FG_OK)status=load_missing_blocks(s,addresses,row_count,err);if(status==FG_OK)status=pack_rows(s,addresses,row_count,err);if(status==FG_OK)status=fg_vk_dequantize_iq4_nl(s->vk,s->embedding,s->packed,row_count,FG_NGRAM_EMBED_WIDTH,err);if(status==FG_OK){fg_vk_tensor_destroy(s->embedding_view);s->embedding_view=NULL;uint64_t bytes=(uint64_t)token_count*FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH*4u;if(bytes==fg_vk_tensor_bytes(s->embedding))*embedding=s->embedding;else{status=fg_vk_tensor_view(s->embedding,0,bytes,&s->embedding_view,err);if(status==FG_OK)*embedding=s->embedding_view;}}return status;
+    uint32_t row_count=token_count*FG_NGRAM_HEAD_COUNT;double hash_end=ngram_ts();if(status==FG_OK)status=load_missing_blocks(s,addresses,row_count,err);double load_end=ngram_ts();if(status==FG_OK)status=pack_rows(s,addresses,row_count,err);double pack_end=ngram_ts();if(status==FG_OK)status=fg_vk_dequantize_iq4_nl(s->vk,s->embedding,s->packed,row_count,FG_NGRAM_EMBED_WIDTH,err);double dequant_end=ngram_ts();if(status==FG_OK){fg_vk_tensor_destroy(s->embedding_view);s->embedding_view=NULL;uint64_t bytes=(uint64_t)token_count*FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH*4u;if(bytes==fg_vk_tensor_bytes(s->embedding))*embedding=s->embedding;else{status=fg_vk_tensor_view(s->embedding,0,bytes,&s->embedding_view,err);if(status==FG_OK)*embedding=s->embedding_view;}}if(ngram_trace_enabled())fprintf(stderr,"NGRAM_TRACE first=%u tokens=%u rows=%u reads=%u bytes=%llu hash_ms=%.3f load_ms=%.3f io_ms=%.3f pack_ms=%.3f dequant_ms=%.3f total_ms=%.3f\n",first_token,token_count,row_count,s->last_read_count,(unsigned long long)s->last_read_bytes,hash_end-trace_start,load_end-hash_end,s->last_io_ms,pack_end-load_end,dequant_end-pack_end,ngram_ts()-trace_start);return status;
 }
 
 fg_status fg_ngram_store_lookup(fg_ngram_store *s,const int32_t *tokens,size_t count,fg_vk_tensor **embedding,fg_error *err){
