@@ -426,67 +426,13 @@ static fg_status runtime_reserve_history(fg_runtime *runtime,size_t count,fg_err
     runtime->history=history;runtime->history_capacity=capacity;return FG_OK;
 }
 
-void fg_runtime_options_init(fg_runtime_options *options){
-    if(!options)return;
-    memset(options,0,sizeof(*options));
-}
-
-static fg_status validate_runtime_options(fg_runtime_options *options,
-                                          const fg_manifest *manifest,fg_error *err){
-    uint32_t boot_context=manifest->native_context<FG_RUNTIME_BOOT_CONTEXT_TOKENS?
-        manifest->native_context:FG_RUNTIME_BOOT_CONTEXT_TOKENS;
-    if(!options->logical_context_tokens)options->logical_context_tokens=boot_context;
-    if(!options->gpu_index_tokens)options->gpu_index_tokens=manifest->session.gpu_index_tokens;
-    if(!options->qsa_hot_tokens)options->qsa_hot_tokens=options->logical_context_tokens;
-    if(!options->prefill_microbatch)options->prefill_microbatch=manifest->prefill_microbatch;
-    if(!options->prefill_window)options->prefill_window=manifest->prefill_window;
-    if(options->prefill_microbatch!=manifest->prefill_microbatch||
-       options->prefill_window!=manifest->prefill_window){
-        fg_error_set(err,FG_ERR_MISMATCH,
-                     "runtime prefill %ux%u does not match sealed manifest %ux%u",
-                     options->prefill_microbatch,options->prefill_window,
-                     manifest->prefill_microbatch,manifest->prefill_window);
-        return FG_ERR_MISMATCH;
-    }
-    if(options->experimental_flags){
-        fg_error_set(err,FG_ERR_UNAVAILABLE,
-                     "experimental context, MTP, and vision are not enabled in this runtime");
-        return FG_ERR_UNAVAILABLE;
-    }
-    if(options->logical_context_tokens>manifest->native_context){
-        fg_error_set(err,FG_ERR_LIMIT,"logical context %u exceeds native context %u",
-                     options->logical_context_tokens,manifest->native_context);
-        return FG_ERR_LIMIT;
-    }
-    if(options->qsa_hot_tokens>options->logical_context_tokens){
-        fg_error_set(err,FG_ERR_ARGUMENT,"QSA hot tokens %u exceed logical context %u",
-                     options->qsa_hot_tokens,options->logical_context_tokens);
-        return FG_ERR_ARGUMENT;
-    }
-    if(options->gpu_index_tokens>options->logical_context_tokens){
-        fg_error_set(err,FG_ERR_ARGUMENT,"GPU index tokens %u exceed logical context %u",
-                     options->gpu_index_tokens,options->logical_context_tokens);
-        return FG_ERR_ARGUMENT;
-    }
-    if(options->logical_context_tokens!=boot_context||
-       options->gpu_index_tokens!=boot_context||
-       options->qsa_hot_tokens!=boot_context||
-       options->qsa_page_cache_bytes){
-        fg_error_set(err,FG_ERR_UNAVAILABLE,
-                     "tiered QSA is not enabled; use logical/index/hot context 8192 and page cache 0");
-        return FG_ERR_UNAVAILABLE;
-    }
-    return FG_OK;
-}
-
 fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
                                        const fg_runtime_options *requested,fg_error *err){
     if(!out||!path){fg_error_set(err,FG_ERR_ARGUMENT,"invalid runtime open arguments");return FG_ERR_ARGUMENT;}*out=NULL;
     fg_runtime *runtime=calloc(1,sizeof(*runtime));if(!runtime){fg_error_set(err,FG_ERR_OOM,"allocate resident runtime");return FG_ERR_OOM;}
-    fg_runtime_options_init(&runtime->options);
-    if(requested)runtime->options=*requested;
     fg_status status=load_checked(path,&runtime->manifest,err);
-    if(status==FG_OK)status=validate_runtime_options(&runtime->options,runtime->manifest,err);
+    if(status==FG_OK)status=fg_runtime_options_resolve(&runtime->options,runtime->manifest,
+                                                       requested,err);
     if(status==FG_OK)runtime->context_limit=runtime->options.logical_context_tokens;
     if(status==FG_OK)status=manifest_directory(path,runtime->directory,err);
     if(status==FG_OK)status=coordinator_open(&runtime->coordinator,runtime->manifest,runtime->directory,err);

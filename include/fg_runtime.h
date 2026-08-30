@@ -4,12 +4,21 @@
 #include "fg_manifest.h"
 
 typedef struct fg_runtime fg_runtime;
-#define FG_RUNTIME_BOOT_CONTEXT_TOKENS 8192u
+#define FG_RUNTIME_BOOT_CONTEXT_TOKENS FG_MANIFEST_DEFAULT_CONTEXT_TOKENS
 
 enum {
     FG_RUNTIME_EXPERIMENTAL_CONTEXT = 1u << 0,
     FG_RUNTIME_EXPERIMENTAL_MTP = 1u << 1,
     FG_RUNTIME_EXPERIMENTAL_VISION = 1u << 2
+};
+
+enum {
+    FG_RUNTIME_OPTION_LOGICAL_CONTEXT = 1u << 0,
+    FG_RUNTIME_OPTION_GPU_INDEX = 1u << 1,
+    FG_RUNTIME_OPTION_QSA_HOT = 1u << 2,
+    FG_RUNTIME_OPTION_PAGE_CACHE = 1u << 3,
+    FG_RUNTIME_OPTION_PREFILL_MICROBATCH = 1u << 4,
+    FG_RUNTIME_OPTION_PREFILL_WINDOW = 1u << 5
 };
 
 typedef struct fg_runtime_options {
@@ -20,6 +29,7 @@ typedef struct fg_runtime_options {
     uint32_t prefill_microbatch;
     uint32_t prefill_window;
     uint32_t experimental_flags;
+    uint32_t specified;
 } fg_runtime_options;
 
 typedef struct fg_generation_stats {
@@ -34,6 +44,10 @@ typedef fg_status (*fg_token_callback)(void *context,uint32_t token,const char *
 typedef bool (*fg_interrupt_fn)(void *context);
 
 void fg_runtime_options_init(fg_runtime_options *options);
+fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
+                                     const fg_manifest *manifest,
+                                     const fg_runtime_options *requested,
+                                     fg_error *err);
 fg_status fg_runtime_open(fg_runtime **out,const char *manifest_path,fg_error *err);
 fg_status fg_runtime_open_with_options(fg_runtime **out,const char *manifest_path,
                                        const fg_runtime_options *options,fg_error *err);

@@ -7,6 +7,7 @@
 #define FG_MANIFEST_LEGACY_FORMAT_VERSION 4u
 #define FG_MANIFEST_FORMAT_VERSION 5u
 #define FG_MANIFEST_CONTRACT_VERSION 1u
+#define FG_MANIFEST_DEFAULT_CONTEXT_TOKENS 8192u
 #define FG_MAX_TENSORS 4096u
 #define FG_TENSOR_NAME_MAX 96u
 #define FG_MAX_ENDPOINT 64u
@@ -88,7 +89,8 @@ typedef struct fg_manifest_contract {
     uint8_t state_format_sha256[32];
     uint8_t component_sha256[FG_COMPONENT_COUNT][32];
     uint8_t rank_state_format_sha256[FG_RANK_COUNT][32];
-    uint8_t reserved[64];
+    uint32_t logical_context_tokens;
+    uint8_t reserved[60];
 } fg_manifest_contract;
 
 typedef struct fg_manifest {

@@ -43,7 +43,9 @@ Experimental component contracts use `--experimental-context`,
 `--experimental-mtp`, and `--experimental-vision`. The current qualified
 implementation deliberately accepts only the 8,192-token resident profile with
 no page cache or experimental component; unsupported profiles fail before
-model/fleet startup instead of silently ignoring the request. Later tiered-QSA,
+model/fleet startup instead of silently ignoring the request. Manifest v5 seals
+logical/index/hot/page defaults as 8,192/8,192/8,192/0; omitted runtime options
+derive from those values and explicit options must agree. Later tiered-QSA,
 MTP, and vision milestones will enable these same explicit options.
 
 ## OpenAI-compatible API
@@ -88,10 +90,11 @@ The production pack path is bound to the four official Unsloth `UD-Q4_K_XL` shar
 The sealed memory ledger is architecture-derived. GDN recurrent state and the Q8 indexer history are Vulkan-resident. The much larger QSA Q8-key/Q4-value history is retained by its layer owner in an aligned local-NVMe state file and only selected tokens are staged to Vulkan; its required capacity is recorded separately as `state-file` and is never counted as free GPU memory.
 
 Manifest v5 appends a versioned session contract to the v4 tensor layout:
-protocol compatibility, text/four-axis position mode, explicit index/hot/page
+protocol compatibility, text/four-axis position mode, explicit logical/index/hot/page
 budgets, and deterministic component and per-rank state-format fingerprints.
-The reader continues to accept sealed v4/protocol-v5 manifests with synthesized
-text defaults, while unknown combinations fail closed. Routed experts, token
+The v5 contract requires protocol v6. The reader continues to accept sealed
+v4/protocol-v5 manifests with synthesized text and 8K defaults, while unknown
+combinations fail closed. Routed experts, token
 embeddings, and narrow common projections preserve their GGML quantized bytes.
 Measured winning Q8_0 common matrices are cooked offline into 16-row supertiles
 with block-major FP16 scales and row-major quant planes. Both planes are 64-byte
@@ -102,10 +105,11 @@ order according to the manifest map. All output segments begin at 4 KiB
 boundaries.
 
 Protocol v6 adds deterministic session identity/frontier encodings and owner
-begin/prepare/commit/restore controls. Existing v5 execution frames remain
-readable, and a v4 manifest keeps the v5 handshake and empty session-begin
-exchange. The default runtime remains the qualified 8,192-token text profile;
-tiered QSA, persistence, MTP, and multimodal execution are not activated.
+begin/prepare/commit/restore controls. Protocol-v5 execution remains available
+only to legacy v4 manifests, which keep the empty session-begin exchange. The
+default runtime remains the qualified 8,192-token text profile; tiered QSA,
+persistence, MTP, and multimodal execution are not activated, and four-axis
+manifests are rejected before model or fleet startup.
 
 ## Qualification contract
 
