@@ -32,7 +32,7 @@ The production pack path is bound to the four official Unsloth `UD-Q4_K_XL` shar
 
 The sealed memory ledger is architecture-derived. GDN recurrent state and the Q8 indexer history are Vulkan-resident. The much larger QSA Q8-key/Q4-value history is retained by its layer owner in an aligned local-NVMe state file and only selected tokens are staged to Vulkan; its required capacity is recorded separately as `state-file` and is never counted as free GPU memory.
 
-The packer preserves quantized bytes. A 512-expert GGUF tensor is split into four rank-local segments in ascending global-expert order according to the manifest map. All output segments begin at 4 KiB boundaries.
+Manifest v4 records each tensor's physical storage layout. Routed experts, token embeddings, and narrow common projections preserve their GGML quantized bytes. Measured winning Q8_0 common matrices are cooked offline into 16-row supertiles with block-major FP16 scales and row-major quant planes. Both planes are 64-byte aligned and production matrices retain their original byte count. Runtime tensor metadata selects the matching kernel and rejects cross-layout use. A 512-expert GGUF tensor is split into four rank-local segments in ascending global-expert order according to the manifest map. All output segments begin at 4 KiB boundaries.
 
 ## Qualification contract
 

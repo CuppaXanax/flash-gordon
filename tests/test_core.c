@@ -3,6 +3,7 @@
 #include "fg_ngram.h"
 #include "fg_pack.h"
 #include "fg_protocol.h"
+#include "fg_quant.h"
 #include "fg_q38_math.h"
 #include "fg_q38_schema.h"
 #include "fg_qsa_state.h"
@@ -70,6 +71,44 @@ static void test_q38_math(void){
     enum{INDEX_TOKENS=13};float query[FG_Q38_INDEX_QUERY_WIDTH],raw[INDEX_TOKENS*FG_Q38_INDEX_WIDTH],qnorm[FG_Q38_INDEX_WIDTH],knorm[FG_Q38_INDEX_WIDTH];for(uint32_t i=0;i<FG_Q38_INDEX_QUERY_WIDTH;i++)query[i]=sinf((float)(i+3u)*0.019f)+0.2f*cosf((float)i*0.007f);for(uint32_t i=0;i<FG_Q38_INDEX_WIDTH;i++){qnorm[i]=0.03f*sinf((float)i*0.051f);knorm[i]=0.04f*cosf((float)i*0.037f);}for(uint32_t token=0;token<INDEX_TOKENS;token++)for(uint32_t i=0;i<FG_Q38_INDEX_WIDTH;i++)raw[token*FG_Q38_INDEX_WIDTH+i]=sinf((float)(token+1u)*(float)(i+1u)*0.0017f)+0.15f*cosf((float)(token+2u)*(float)(i+3u)*0.0009f);uint32_t selected[INDEX_TOKENS],selected_count=0;const uint32_t selected_golden[]={8,9,10,11,4,5,6,7,0,1,2,3,12};CHECK(fg_q38_qsa_index_select_reference(query,raw,INDEX_TOKENS,qnorm,knorm,selected,INDEX_TOKENS,&selected_count,&err)==FG_OK);CHECK(selected_count==INDEX_TOKENS&&memcmp(selected,selected_golden,sizeof(selected_golden))==0);
 }
 
+static void test_cooked_q8(void){enum{WIDTH=320,ROWS=2,BLOCKS=WIDTH/FG_QK8_0,TILE_BYTES=FG_Q8_0_COOK_ROWS*BLOCKS*FG_Q8_0_BLOCK_BYTES,QUANT_OFFSET=FG_Q8_0_COOK_ROWS*BLOCKS*2u};uint8_t packed[ROWS*BLOCKS*FG_Q8_0_BLOCK_BYTES],cooked[TILE_BYTES];memset(packed,0,sizeof(packed));for(uint32_t row=0;row<ROWS;row++)for(uint32_t block=0;block<BLOCKS;block++){uint8_t *source=packed+((uint64_t)row*BLOCKS+block)*FG_Q8_0_BLOCK_BYTES;uint16_t scale=fg_f32_to_f16(0.25f+(float)(row*BLOCKS+block)*0.03125f);memcpy(source,&scale,sizeof(scale));for(uint32_t i=0;i<FG_QK8_0;i++)source[2u+i]=(uint8_t)(row*73u+block*31u+i*7u);}CHECK(fg_q8_0_cooked_tile_bytes(WIDTH)==TILE_BYTES);CHECK(fg_q8_0_cooked_matrix_bytes(WIDTH,ROWS)==TILE_BYTES);CHECK(fg_cook_q8_0_rows(packed,cooked,sizeof(cooked),WIDTH,ROWS));for(uint32_t row=0;row<ROWS;row++)for(uint32_t block=0;block<BLOCKS;block++){const uint8_t *source=packed+((uint64_t)row*BLOCKS+block)*FG_Q8_0_BLOCK_BYTES;CHECK(memcmp(cooked+((uint64_t)block*FG_Q8_0_COOK_ROWS+row)*2u,source,2u)==0);CHECK(memcmp(cooked+QUANT_OFFSET+((uint64_t)row*BLOCKS+block)*FG_QK8_0,source+2u,FG_QK8_0)==0);}for(uint32_t block=0;block<BLOCKS;block++)for(uint32_t row=ROWS;row<FG_Q8_0_COOK_ROWS;row++)CHECK(cooked[((uint64_t)block*FG_Q8_0_COOK_ROWS+row)*2u]==0u);CHECK(!fg_cook_q8_0_rows(packed,cooked,sizeof(cooked)-1u,WIDTH,ROWS));}
+
+static void test_pack_cooked_q8(void){
+    enum{WIDTH=320,ROWS=2560,BLOCKS=WIDTH/FG_QK8_0,SOURCE_ROW=BLOCKS*FG_Q8_0_BLOCK_BYTES,COOKED_TILE=FG_Q8_0_COOK_ROWS*SOURCE_ROW};
+    char source[128],directory[128],manifest_path[160],rank_path[160],path[160];
+    snprintf(source,sizeof(source),"/tmp/fg-cooked-%ld.gguf",(long)getpid());
+    snprintf(directory,sizeof(directory),"/tmp/fg-cooked-%ld-pack",(long)getpid());
+    snprintf(manifest_path,sizeof(manifest_path),"%s/manifest.fgm",directory);
+    snprintf(rank_path,sizeof(rank_path),"%s/rank-00.fgw",directory);
+    FILE *file=fopen(source,"wb");CHECK(file!=NULL);if(!file)return;
+    put_u32(file,0x46554747u);put_u32(file,3u);put_u64(file,1u);put_u64(file,0u);
+    put_string(file,"probe_q8.weight");put_u32(file,2u);put_u64(file,WIDTH);put_u64(file,ROWS);put_u32(file,8u);put_u64(file,0u);
+    while((ftell(file)&31)!=0)fputc(0,file);
+    uint8_t packed[SOURCE_ROW],first_packed[FG_Q8_0_COOK_ROWS*SOURCE_ROW];
+    for(uint32_t row=0;row<ROWS;row++){
+        for(uint32_t block=0;block<BLOCKS;block++){uint8_t *value=packed+block*FG_Q8_0_BLOCK_BYTES;uint16_t scale=fg_f32_to_f16(0.001f*(float)(1u+(row+block)%31u));memcpy(value,&scale,sizeof(scale));for(uint32_t i=0;i<FG_QK8_0;i++)value[2u+i]=(uint8_t)(row*19u+block*23u+i*29u);}
+        if(row<FG_Q8_0_COOK_ROWS)memcpy(first_packed+(uint64_t)row*SOURCE_ROW,packed,sizeof(packed));
+        CHECK(fwrite(packed,1,sizeof(packed),file)==sizeof(packed));
+    }
+    fclose(file);
+    const char *sources[]={source};fg_pack_options options={.output_dir=directory,.source_paths=sources,.source_count=1u,.skip_model_validation=true};fg_error error={0};
+    CHECK(fg_pack_run(&options,&error)==FG_OK);
+    fg_manifest *manifest=malloc(sizeof(*manifest));CHECK(manifest!=NULL);
+    if(manifest){
+        CHECK(fg_manifest_read(manifest_path,manifest,&error)==FG_OK);
+        const fg_tensor_record *record=NULL;for(uint32_t i=0;i<manifest->tensor_count;i++)if(strcmp(manifest->tensors[i].name,"probe_q8.weight")==0)record=&manifest->tensors[i];
+        CHECK(record!=NULL);
+        if(record){
+            CHECK(record->layout==FG_TENSOR_LAYOUT_Q8_0_COOKED&&record->ggml_type==8u&&record->bytes==(uint64_t)ROWS*SOURCE_ROW);
+            uint8_t expected[COOKED_TILE],actual[COOKED_TILE];CHECK(fg_cook_q8_0_rows(first_packed,expected,sizeof(expected),WIDTH,FG_Q8_0_COOK_ROWS));
+            FILE *rank=fopen(rank_path,"rb");CHECK(rank!=NULL);if(rank){CHECK(fseeko(rank,(off_t)record->offset,SEEK_SET)==0);CHECK(fread(actual,1,sizeof(actual),rank)==sizeof(actual));CHECK(memcmp(actual,expected,sizeof(actual))==0);fclose(rank);}
+        }
+        fg_verify_options verify={.manifest_path=manifest_path,.pack_dir=directory,.source_paths=sources,.source_count=1u};CHECK(fg_pack_verify(&verify,&error)==FG_OK);
+        free(manifest);
+    }
+    unlink(manifest_path);for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){snprintf(path,sizeof(path),"%s/rank-%02u.fgw",directory,rank);unlink(path);}snprintf(path,sizeof(path),"%s/ngram.iq4nl",directory);unlink(path);rmdir(directory);unlink(source);
+}
+
 static void test_decode_protocol(void){
     fg_decode_work in={.layer=7,.source_rank=7,.destination_rank=0,.selected_count=2,.position=123456};
     in.expert_ids[0]=17;in.expert_ids[1]=511;in.routing_slots[0]=2;in.routing_slots[1]=9;in.gates[0]=0.25f;in.gates[1]=0.75f;
@@ -120,4 +159,4 @@ static void test_prefill_protocol(void){
     free(result_wire);free(decoded_outputs);free(outputs);free(wire);free(decoded_activations);free(activations);
 }
 
-int main(void){test_sha();test_topology();test_profile();test_deployment_profile();test_protocol();test_layer_protocol();test_output_protocol();test_ngram_protocol();test_ngram();test_ngram_planner_batch_capacity();test_qsa_state();test_qsa_state_batch();test_q38_math();test_decode_protocol();test_prefill_protocol();test_pack();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}
+int main(void){test_sha();test_topology();test_profile();test_deployment_profile();test_protocol();test_layer_protocol();test_output_protocol();test_ngram_protocol();test_ngram();test_ngram_planner_batch_capacity();test_qsa_state();test_qsa_state_batch();test_q38_math();test_cooked_q8();test_pack_cooked_q8();test_decode_protocol();test_prefill_protocol();test_pack();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}

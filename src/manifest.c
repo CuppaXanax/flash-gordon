@@ -1,4 +1,5 @@
 #include "fg_manifest.h"
+#include "fg_quant.h"
 #include "fg_q38_schema.h"
 #include "fg_sha256.h"
 #include "fg_topology.h"
@@ -29,6 +30,8 @@ fg_status fg_manifest_validate(const fg_manifest *m,fg_error *err){
         const fg_tensor_record *t=&m->tensors[i];
         if(t->dims==0||t->dims>4){fg_error_set(err,FG_ERR_FORMAT,"tensor %u has invalid dimension count",i);return FG_ERR_FORMAT;}
         for(uint32_t d=0;d<t->dims;d++)if(t->shape[d]==0){fg_error_set(err,FG_ERR_FORMAT,"tensor %u has an empty dimension",i);return FG_ERR_FORMAT;}
+        if(t->layout>FG_TENSOR_LAYOUT_Q8_0_COOKED){fg_error_set(err,FG_ERR_FORMAT,"tensor %u has unknown storage layout %u",i,t->layout);return FG_ERR_FORMAT;}
+        if(t->layout==FG_TENSOR_LAYOUT_Q8_0_COOKED){if(t->ggml_type!=8u||t->dims!=2u||t->shape[0]>UINT32_MAX||t->shape[1]>UINT32_MAX||t->shape[0]%FG_QK8_0){fg_error_set(err,FG_ERR_FORMAT,"tensor %u has an invalid cooked Q8_0 layout",i);return FG_ERR_FORMAT;}uint64_t blocks=t->shape[0]/FG_QK8_0,quant_offset=fg_align_up_u64(FG_Q8_0_COOK_ROWS*blocks*sizeof(uint16_t),FG_Q8_0_COOK_ALIGNMENT),tile_bytes=fg_align_up_u64(quant_offset+FG_Q8_0_COOK_ROWS*blocks*FG_QK8_0,FG_Q8_0_COOK_ALIGNMENT),tiles=(t->shape[1]+FG_Q8_0_COOK_ROWS-1u)/FG_Q8_0_COOK_ROWS;if(tile_bytes>UINT32_MAX||tiles>UINT64_MAX/tile_bytes||t->bytes!=tile_bytes*tiles||t->bytes>UINT32_MAX){fg_error_set(err,FG_ERR_FORMAT,"tensor %u has an invalid cooked Q8_0 layout",i);return FG_ERR_FORMAT;}}
     }
     for(uint32_t r=0;r<FG_RANK_COUNT;r++){
         const fg_rank_record *rank=&m->ranks[r];uint64_t resident=rank->persistent_bytes+rank->transient_bytes+rank->kv_bytes+rank->scratch_bytes+rank->driver_reserve_bytes;
@@ -55,4 +58,4 @@ fg_status fg_manifest_write(const char *path,fg_manifest *m,fg_error *err){
 }
 fg_status fg_manifest_read(const char *path,fg_manifest *m,fg_error *err){FILE *f=fopen(path,"rb");if(!f){fg_error_set(err,FG_ERR_IO,"open %s: %s",path,strerror(errno));return FG_ERR_IO;}size_t n=fread(m,1,sizeof(*m),f);int extra=fgetc(f);fclose(f);if(n!=sizeof(*m)||extra!=EOF){fg_error_set(err,FG_ERR_FORMAT,"manifest %s has wrong size",path);return FG_ERR_FORMAT;}return fg_manifest_validate(m,err);}
 fg_status fg_manifest_add_tensor(fg_manifest *m,const fg_tensor_record *r,fg_error *err){if(m->tensor_count>=FG_MAX_TENSORS){fg_error_set(err,FG_ERR_LIMIT,"manifest tensor limit exceeded");return FG_ERR_LIMIT;}m->tensors[m->tensor_count++]=*r;return FG_OK;}
-void fg_manifest_print(const fg_manifest *m){printf("Flash Gordon manifest v%u protocol=%u CU=%u tensors=%u prefill=%ux%u context=%u/%u\n",m->format_version,m->protocol_version,m->required_cu,m->tensor_count,m->prefill_microbatch,m->prefill_window,m->native_context,m->max_context);for(uint32_t r=0;r<FG_RANK_COUNT;r++){const fg_rank_record *x=&m->ranks[r];printf("rank %u %-21s persistent=%6.3f GiB residency=%6.3f GiB state-file=%6.3f GiB tensors=%u\n",r,x->endpoint,(double)x->persistent_bytes/(1ull<<30),(double)(x->persistent_bytes+x->transient_bytes+x->kv_bytes+x->scratch_bytes+x->driver_reserve_bytes)/(1ull<<30),(double)x->state_file_bytes/(1ull<<30),x->tensor_count);}}
+void fg_manifest_print(const fg_manifest *m){printf("Flash Gordon manifest v%u protocol=%u CU=%u tensors=%u prefill=%ux%u context=%u/%u\n",m->format_version,m->protocol_version,m->required_cu,m->tensor_count,m->prefill_microbatch,m->prefill_window,m->native_context,m->max_context);uint32_t cooked_count=0;uint64_t cooked_bytes=0;for(uint32_t i=0;i<m->tensor_count;i++)if(m->tensors[i].layout==FG_TENSOR_LAYOUT_Q8_0_COOKED){cooked_count++;cooked_bytes+=m->tensors[i].bytes;}printf("layouts ggml=%u cooked-q8=%u cooked-bytes=%.3f GiB\n",m->tensor_count-cooked_count,cooked_count,(double)cooked_bytes/(1ull<<30));for(uint32_t r=0;r<FG_RANK_COUNT;r++){const fg_rank_record *x=&m->ranks[r];printf("rank %u %-21s persistent=%6.3f GiB residency=%6.3f GiB state-file=%6.3f GiB tensors=%u\n",r,x->endpoint,(double)x->persistent_bytes/(1ull<<30),(double)(x->persistent_bytes+x->transient_bytes+x->kv_bytes+x->scratch_bytes+x->driver_reserve_bytes)/(1ull<<30),(double)x->state_file_bytes/(1ull<<30),x->tensor_count);}}
