@@ -44,6 +44,21 @@ static fg_status build_tensor_lookup(fg_model *model,fg_error *err){
 }
 
 static uint32_t find_tensor(const fg_model *model,const char *name){if(!model||!name||!model->tensor_lookup_capacity)return UINT32_MAX;uint32_t slot=(uint32_t)tensor_name_hash(name)&(model->tensor_lookup_capacity-1u);for(uint32_t probes=0;probes<model->tensor_lookup_capacity;probes++){uint32_t entry=model->tensor_lookup[slot];if(!entry)return UINT32_MAX;uint32_t index=entry-1u;if(strcmp(model->manifest->tensors[index].name,name)==0)return index;slot=(slot+1u)&(model->tensor_lookup_capacity-1u);}return UINT32_MAX;}
+static bool qsa_service_weight(const fg_tensor_record *record){
+    static const char *suffixes[]={
+        "attn_k.weight","attn_k_norm.weight","attn_output.weight","attn_q.weight",
+        "attn_q_norm.weight","attn_v.weight","indexer.k_norm.weight",
+        "indexer.k_proj.weight","indexer.q_norm.weight","indexer.q_proj.weight"
+    };
+    if(!record||record->kind!=FG_TENSOR_COMMON||record->layer>=FG_LAYER_COUNT||
+       (record->layer&3u)!=3u)return false;
+    const char *first=strchr(record->name,'.'),*second=first?strchr(first+1,'.'):NULL;
+    if(!second)return false;
+    const char *suffix=second+1u;
+    for(uint32_t i=0;i<sizeof(suffixes)/sizeof(suffixes[0]);i++)
+        if(strcmp(suffix,suffixes[i])==0)return true;
+    return false;
+}
 
 fg_status fg_model_open(fg_model **out,const fg_manifest *manifest,const char *pack_dir,uint32_t rank,fg_error *err){
     if(!out||!manifest||!pack_dir||rank>=FG_RANK_COUNT){fg_error_set(err,FG_ERR_ARGUMENT,"invalid model open arguments");return FG_ERR_ARGUMENT;}*out=NULL;uint64_t bytes=rank_high_water(manifest,rank);if(bytes==0||bytes>manifest->persistent_cap_bytes){fg_error_set(err,FG_ERR_LIMIT,"rank %u weight arena is invalid or exceeds persistent cap",rank);return FG_ERR_LIMIT;}
@@ -60,7 +75,8 @@ void fg_model_close(fg_model *model){if(!model)return;if(model->tensor){for(uint
 /* Expert-parallel model loading: loads ALL shared weights from ALL rank files,
    plus this rank's expert weights, into a single combined arena.  Every rank
    can then process all 48 layers locally — only MoE dispatch goes to the network. */
-fg_status fg_model_open_replicated(fg_model **out,const fg_manifest *manifest,const char *pack_dir,uint32_t rank,fg_error *err){
+static fg_status model_open_replicated(fg_model **out,const fg_manifest *manifest,const char *pack_dir,
+                                       uint32_t rank,bool include_qsa,fg_error *err){
     if(!out||!manifest||!pack_dir||rank>=FG_RANK_COUNT){fg_error_set(err,FG_ERR_ARGUMENT,"invalid replicated model open arguments");return FG_ERR_ARGUMENT;}*out=NULL;
     /* Phase 1: compute combined arena layout.  Walk all tensors and assign new
        offsets in the combined arena, keeping shared tensors from every rank and
@@ -71,7 +87,7 @@ fg_status fg_model_open_replicated(fg_model **out,const fg_manifest *manifest,co
     if(!remap||!included){free(included);free(remap);fg_error_set(err,FG_ERR_OOM,"allocate replicated remap table");return FG_ERR_OOM;}
     for(uint32_t i=0;i<manifest->tensor_count;i++){
         const fg_tensor_record *t=&manifest->tensors[i];
-        bool is_shared=(t->kind==FG_TENSOR_COMMON);
+        bool is_shared=t->kind==FG_TENSOR_COMMON&&(include_qsa||!qsa_service_weight(t));
         bool is_my_expert=(t->kind==FG_TENSOR_ROUTED_EXPERT&&t->rank==rank);
         if(is_shared||is_my_expert){
             remap[i]=fg_align_up_u64(cursor,FG_ALIGNMENT);
@@ -130,8 +146,18 @@ fg_status fg_model_open_replicated(fg_model **out,const fg_manifest *manifest,co
     if(status==FG_OK)status=build_tensor_lookup(model,err);
     free(included);free(remap);
     if(status!=FG_OK){fg_model_close(model);return status;}
-    fprintf(stderr,"[rank %u] replicated model: %.3f GiB (%u tensors from %u ranks)\n",rank,(double)cursor/(1024.0*1024.0*1024.0),manifest->tensor_count,FG_RANK_COUNT);
+    fprintf(stderr,"[rank %u] %s model: %.3f GiB (%u manifest tensors from %u ranks)\n",
+            rank,include_qsa?"replicated":"coordinator",(double)cursor/(1024.0*1024.0*1024.0),
+            manifest->tensor_count,FG_RANK_COUNT);
     *out=model;return FG_OK;
+}
+fg_status fg_model_open_replicated(fg_model **out,const fg_manifest *manifest,const char *pack_dir,
+                                   uint32_t rank,fg_error *err){
+    return model_open_replicated(out,manifest,pack_dir,rank,true,err);
+}
+fg_status fg_model_open_coordinator(fg_model **out,const fg_manifest *manifest,const char *pack_dir,
+                                    uint32_t rank,fg_error *err){
+    return model_open_replicated(out,manifest,pack_dir,rank,true,err);
 }
 fg_vk_context *fg_model_vk(fg_model *model){return model?model->vk:NULL;}
 fg_vk_tensor *fg_model_tensor(fg_model *model,const char *name){uint32_t index=find_tensor(model,name);return index==UINT32_MAX?NULL:model->tensor[index];}

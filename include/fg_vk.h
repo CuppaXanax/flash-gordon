@@ -35,7 +35,17 @@ typedef struct fg_vk_profile {
 typedef struct fg_vk_counters {
     uint64_t submissions;
     uint64_t dispatches;
+    uint64_t residency_canary_calls;
 } fg_vk_counters;
+
+typedef struct fg_vk_memory_stats {
+    uint64_t requested_live_bytes;
+    uint64_t allocated_live_bytes;
+    uint64_t requested_peak_bytes;
+    uint64_t allocated_peak_bytes;
+    uint64_t allocation_count;
+    uint64_t live_allocations;
+} fg_vk_memory_stats;
 
 fg_status fg_vk_open(fg_vk_context **out,fg_error *err);
 void fg_vk_close(fg_vk_context *context);
@@ -46,9 +56,11 @@ fg_status fg_vk_profile_set_scope(fg_vk_context *context,const char *scope,fg_er
 fg_status fg_vk_profile_end(fg_vk_context *context,fg_vk_profile *profile,fg_error *err);
 bool fg_vk_profile_active(const fg_vk_context *context);
 void fg_vk_get_counters(const fg_vk_context *context,fg_vk_counters *counters);
+void fg_vk_get_memory_stats(const fg_vk_context *context,fg_vk_memory_stats *stats);
 
 fg_status fg_vk_begin(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_end(fg_vk_context *context,fg_error *err);
+fg_status fg_vk_abort(fg_vk_context *context,fg_error *err);
 bool fg_vk_batch_active(const fg_vk_context *context);
 
 fg_status fg_vk_expert_graph_create(fg_vk_context *context,fg_vk_expert_graph **out,
@@ -66,9 +78,16 @@ fg_status fg_vk_expert_graph_execute(fg_vk_expert_graph *graph,fg_error *err);
 
 fg_status fg_vk_tensor_create(fg_vk_context *context,uint64_t bytes,fg_vk_tensor **out,fg_error *err);
 fg_status fg_vk_tensor_view(fg_vk_tensor *base,uint64_t offset,uint64_t bytes,fg_vk_tensor **out,fg_error *err);
+/* Rebinds view metadata within its allocation; recorded descriptor offsets remain snapshots. */
+fg_status fg_vk_tensor_view_rebind(fg_vk_tensor *view,fg_vk_tensor *base,uint64_t offset,
+                                   uint64_t bytes,fg_error *err);
 void fg_vk_tensor_destroy(fg_vk_tensor *tensor);
 uint64_t fg_vk_tensor_bytes(const fg_vk_tensor *tensor);
+uint64_t fg_vk_tensor_allocation_bytes(const fg_vk_tensor *tensor);
+fg_status fg_vk_tensor_residency_canary(fg_vk_tensor *tensor,uint64_t *touched_bytes,
+                                        fg_error *err);
 void *fg_vk_tensor_map(fg_vk_tensor *tensor);
+const void *fg_vk_tensor_const_map(const fg_vk_tensor *tensor);
 void fg_vk_tensor_set_format(fg_vk_tensor *tensor,fg_vk_tensor_format format);
 fg_vk_tensor_format fg_vk_tensor_get_format(const fg_vk_tensor *tensor);
 fg_status fg_vk_tensor_write(fg_vk_tensor *tensor,uint64_t offset,const void *data,uint64_t bytes,fg_error *err);
@@ -177,10 +196,18 @@ fg_status fg_vk_gdn_recurrent_prefill(fg_vk_context *context,fg_vk_tensor *outpu
                                       const fg_vk_tensor *dt_bias,const fg_vk_tensor *norm_weight,
                                       uint32_t value_heads,uint32_t key_heads,uint32_t head_dim,
                                       uint32_t tokens,float epsilon,fg_error *err);
-fg_status fg_vk_qsa_index_score(fg_vk_context *context,fg_vk_tensor *scores,fg_vk_tensor *block_ids,
+fg_status fg_vk_qsa_index_score(fg_vk_context *context,fg_vk_tensor *scores,
+                                fg_vk_tensor *block_ids,
                                 const fg_vk_tensor *query,const fg_vk_tensor *index_keys_q8,
                                 const fg_vk_tensor *key_norm,const fg_vk_tensor *positions,
                                 uint32_t tokens,fg_error *err);
+fg_status fg_vk_qsa_index_score_segment(fg_vk_context *context,fg_vk_tensor *scores,
+                                        fg_vk_tensor *block_ids,
+                                        const fg_vk_tensor *query,
+                                        const fg_vk_tensor *index_keys_q8,
+                                        const fg_vk_tensor *key_norm,
+                                        const fg_vk_tensor *positions,uint32_t tokens,
+                                        uint32_t block_base,fg_error *err);
 fg_status fg_vk_qsa_prepare(fg_vk_context *context,fg_vk_tensor *query,fg_vk_tensor *gate,
                             fg_vk_tensor *key,const fg_vk_tensor *raw_query_gate,
                             const fg_vk_tensor *raw_key,const fg_vk_tensor *query_norm,
@@ -205,6 +232,22 @@ fg_status fg_vk_qsa_record_commit(fg_vk_context *context,fg_vk_tensor *records,
                                   const fg_vk_tensor *value_q8,const fg_vk_tensor *index_key_q8,
                                   const fg_vk_tensor *position,uint32_t layer_slot,
                                   uint32_t token,uint32_t capacity,fg_error *err);
+fg_status fg_vk_qsa_record_commit_segmented(
+    fg_vk_context *context,fg_vk_tensor *records,fg_vk_tensor *index_segment,
+    const fg_vk_tensor *key_q8,const fg_vk_tensor *value_q8,
+    const fg_vk_tensor *index_key_q8,const fg_vk_tensor *position,
+    uint32_t layer_slot,uint32_t token,uint32_t index_token,
+    uint32_t index_capacity,uint32_t hot_slot,uint32_t hot_capacity,
+    fg_error *err);
+fg_status fg_vk_qsa_record_commit_tiered(fg_vk_context *context,fg_vk_tensor *records,
+                                         fg_vk_tensor *index_history,
+                                         const fg_vk_tensor *key_q8,
+                                         const fg_vk_tensor *value_q8,
+                                         const fg_vk_tensor *index_key_q8,
+                                         const fg_vk_tensor *position,uint32_t layer_slot,
+                                         uint32_t token,uint32_t index_capacity,
+                                         uint32_t hot_slot,uint32_t hot_capacity,
+                                         fg_error *err);
 fg_status fg_vk_qsa_record_gather(fg_vk_context *context,fg_vk_tensor *output,
                                   const fg_vk_tensor *records,const fg_vk_tensor *block_ids,
                                   uint32_t layer_slot,uint32_t capacity,uint32_t block_count,

@@ -6,7 +6,14 @@ layout(set=0,binding=2)readonly buffer IndexKey{uint index_key_q8[];};
 layout(set=0,binding=3)readonly buffer Position{uint position[];};
 layout(set=0,binding=4)buffer Records{uint records[];};
 layout(set=0,binding=5)buffer IndexHistory{uint index_history[];};
-layout(push_constant)uniform Push{uint layer_slot;uint token;uint capacity;}pc;
+layout(push_constant)uniform Push{
+    uint record_layer_slot;
+    uint index_layer_slot;
+    uint index_capacity;
+    uint index_token;
+    uint hot_slot;
+    uint hot_capacity;
+}pc;
 const uint KEY_WORDS=136u;
 const uint VALUE_WORDS=136u;
 const uint INDEX_WORDS=34u;
@@ -15,7 +22,7 @@ const uint RECORD_WORDS=309u;
 void main(){
     uint word=gl_GlobalInvocationID.x;
     if(word>=RECORD_WORDS)return;
-    uint record_base=(pc.layer_slot*pc.capacity+pc.token)*RECORD_WORDS;
+    uint record_base=(pc.record_layer_slot*pc.hot_capacity+pc.hot_slot)*RECORD_WORDS;
     if(word<KEY_WORDS){records[record_base+word]=key_q8[word];return;}
     word-=KEY_WORDS;
     if(word<VALUE_WORDS){records[record_base+KEY_WORDS+word]=value_q8[word];return;}
@@ -23,7 +30,7 @@ void main(){
     if(word<INDEX_WORDS){
         uint value=index_key_q8[word];
         records[record_base+KEY_WORDS+VALUE_WORDS+word]=value;
-        uint history_base=(pc.layer_slot*pc.capacity+pc.token)*INDEX_WORDS;
+        uint history_base=(pc.index_layer_slot*pc.index_capacity+pc.index_token)*INDEX_WORDS;
         index_history[history_base+word]=value;
         return;
     }

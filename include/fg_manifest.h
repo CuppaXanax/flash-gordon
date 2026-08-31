@@ -131,6 +131,9 @@ fg_status fg_manifest_validate(const fg_manifest *manifest, fg_error *err);
 fg_status fg_manifest_validate_deployment(const fg_manifest *manifest, fg_error *err);
 fg_status fg_manifest_read(const char *path, fg_manifest *manifest, fg_error *err);
 fg_status fg_manifest_write(const char *path, fg_manifest *manifest, fg_error *err);
+fg_status fg_manifest_upgrade(const char *input_path, const char *output_path, fg_error *err);
+fg_status fg_manifest_upgrade_with_profile(const char *input_path, const char *output_path,
+                                           uint32_t runtime_profile, fg_error *err);
 fg_status fg_manifest_add_tensor(fg_manifest *manifest, const fg_tensor_record *record, fg_error *err);
 fg_status fg_manifest_validate_compatibility(const fg_manifest *manifest,
                                              uint32_t required_protocol_version,

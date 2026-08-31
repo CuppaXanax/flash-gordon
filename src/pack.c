@@ -1,6 +1,7 @@
 #include "fg_pack.h"
 #include "fg_quant.h"
 #include "fg_q38_schema.h"
+#include "fg_runtime.h"
 #include "fg_sha256.h"
 #include "fg_topology.h"
 #include "fg_tokenizer.h"
@@ -97,7 +98,7 @@ static fg_status pack_expert_tensor(const fg_gguf *g,const fg_gguf_tensor *t,FIL
 }
 
 fg_status fg_pack_run(const fg_pack_options *o,fg_error *err){
-    if(!o||!o->output_dir||!o->source_paths||!o->source_count){fg_error_set(err,FG_ERR_ARGUMENT,"pack requires --output and at least one --source");return FG_ERR_ARGUMENT;}if(o->router_profile_path&&o->expert_map_path){fg_error_set(err,FG_ERR_ARGUMENT,"pack accepts only one of --router-profile and --expert-map");return FG_ERR_ARGUMENT;}fg_gguf g;fg_status rc=fg_gguf_open(o->source_paths,o->source_count,&g,err);if(rc!=FG_OK)return rc;if(!o->skip_model_validation){rc=fg_q38_validate_gguf(&g,err);if(rc!=FG_OK){fg_gguf_close(&g);return rc;}}fg_manifest *m=malloc(sizeof(*m));if(!m){fg_gguf_close(&g);fg_error_set(err,FG_ERR_OOM,"allocate manifest");return FG_ERR_OOM;}fg_manifest_init(m);
+    if(!o||!o->output_dir||!o->source_paths||!o->source_count){fg_error_set(err,FG_ERR_ARGUMENT,"pack requires --output and at least one --source");return FG_ERR_ARGUMENT;}if(o->router_profile_path&&o->expert_map_path){fg_error_set(err,FG_ERR_ARGUMENT,"pack accepts only one of --router-profile and --expert-map");return FG_ERR_ARGUMENT;}if(o->runtime_profile!=FG_RUNTIME_PROFILE_NONE&&!fg_runtime_profile_definition_get(o->runtime_profile)){fg_error_set(err,FG_ERR_ARGUMENT,"unsupported runtime profile %u",o->runtime_profile);return FG_ERR_ARGUMENT;}fg_gguf g;fg_status rc=fg_gguf_open(o->source_paths,o->source_count,&g,err);if(rc!=FG_OK)return rc;if(!o->skip_model_validation){rc=fg_q38_validate_gguf(&g,err);if(rc!=FG_OK){fg_gguf_close(&g);return rc;}}fg_manifest *m=malloc(sizeof(*m));if(!m){fg_gguf_close(&g);fg_error_set(err,FG_ERR_OOM,"allocate manifest");return FG_ERR_OOM;}fg_manifest_init(m);if(o->runtime_profile!=FG_RUNTIME_PROFILE_NONE){rc=fg_runtime_profile_apply(m,o->runtime_profile,err);if(rc!=FG_OK)goto done;}
     if(o->router_profile_path){double (*profile)[FG_EXPERT_COUNT]=calloc(FG_LAYER_COUNT,sizeof(*profile));if(!profile){rc=FG_ERR_OOM;fg_error_set(err,rc,"allocate router profile");goto done;}rc=load_profile(o->router_profile_path,profile,err);if(rc==FG_OK)rc=fg_topology_assign_profile(m,(const double (*)[FG_EXPERT_COUNT])profile,err);free(profile);if(rc!=FG_OK)goto done;}
     if(o->expert_map_path){rc=fg_topology_assign_map_file(m,o->expert_map_path,err);if(rc!=FG_OK)goto done;}
     rc=hash_pack_sources(o,m->source_sha256,err);if(rc!=FG_OK)goto done;

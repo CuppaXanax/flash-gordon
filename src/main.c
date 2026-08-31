@@ -15,7 +15,7 @@ static void usage(FILE *file) {
             "Flash Gordon %u.%u - Qwen3.8-Flash-Next BC250 appliance\n\n"
             "Usage:\n"
             "  flash-gordon pack --output DIR --source FILE [--source FILE ...] "
-            "[--router-profile FILE | --expert-map FILE] [--dry-run]\n"
+            "[--router-profile FILE | --expert-map FILE] [--profile NAME] [--dry-run]\n"
             "  flash-gordon verify --manifest FILE --pack-dir DIR --source FILE "
             "[--source FILE ...]\n"
             "  flash-gordon schema --source FILE [--source FILE ...]\n"
@@ -26,10 +26,15 @@ static void usage(FILE *file) {
             "  flash-gordon chat --manifest FILE [--max-tokens N] [RUNTIME OPTIONS]\n"
             "  flash-gordon api --manifest FILE [--host HOST] [--port PORT] "
             "[RUNTIME OPTIONS]\n"
+            "  flash-gordon upgrade-manifest --input FILE --output FILE [--profile NAME]\n"
             "\nRuntime options:\n"
             "  --context-tokens N --gpu-index-tokens N --qsa-hot-tokens N "
             "--qsa-page-cache-mib N\n"
             "  --experimental-context N --experimental-mtp --experimental-vision\n"
+            "Deployment profiles:\n"
+            "  --profile " FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_128_NAME
+            " (seals 262144/262144/8192/16 MiB with microbatch 128; "
+            "valid for pack and upgrade-manifest)\n"
             "  flash-gordon inspect --manifest FILE\n",
             FG_VERSION_MAJOR, FG_VERSION_MINOR);
 }
@@ -76,7 +81,7 @@ static fg_status parse_runtime_option(int *index, int argc, char **argv,
         return status;
     }
     if (!strcmp(flag, "--qsa-hot-tokens")) {
-        fg_status status=parse_u32(arg_value(index, argc, argv, flag, err), flag, 1u,
+        fg_status status=parse_u32(arg_value(index, argc, argv, flag, err), flag, 0u,
                                    FG_MAX_CONTEXT,&options->qsa_hot_tokens,err);
         if(status==FG_OK)options->specified|=FG_RUNTIME_OPTION_QSA_HOT;
         return status;
@@ -130,6 +135,14 @@ static fg_status pack_cmd(int argc, char **argv, fg_error *err) {
                 arg_value(&i, argc, argv, "--router-profile", err);
         else if (!strcmp(argv[i], "--expert-map"))
             options.expert_map_path = arg_value(&i, argc, argv, "--expert-map", err);
+        else if (!strcmp(argv[i], "--profile")) {
+            const char *profile = arg_value(&i, argc, argv, "--profile", err);
+            if (profile &&
+                fg_runtime_profile_parse(profile, &options.runtime_profile, err)!=FG_OK) {
+                free(sources);
+                return err->code;
+            }
+        }
         else if (!strcmp(argv[i], "--dry-run"))
             options.dry_run = true;
         else {
@@ -176,6 +189,35 @@ static fg_status verify_cmd(int argc, char **argv, fg_error *err) {
     fg_status status = fg_pack_verify(&options, err);
     free(sources);
     return status;
+}
+
+static fg_status upgrade_manifest_cmd(int argc,char **argv,fg_error *err){
+    const char *input=NULL,*output=NULL;
+    uint32_t profile=FG_RUNTIME_PROFILE_NONE;
+    for(int i=2;i<argc;i++){
+        if(!strcmp(argv[i],"--input"))
+            input=arg_value(&i,argc,argv,"--input",err);
+        else if(!strcmp(argv[i],"--output"))
+            output=arg_value(&i,argc,argv,"--output",err);
+        else if(!strcmp(argv[i],"--profile")){
+            const char *name=arg_value(&i,argc,argv,"--profile",err);
+            if(name&&fg_runtime_profile_parse(name,&profile,err)!=FG_OK)
+                return err->code;
+        }
+        else{
+            fg_error_set(err,FG_ERR_ARGUMENT,"unknown upgrade-manifest option: %s",argv[i]);
+            return FG_ERR_ARGUMENT;
+        }
+        if(err->code!=FG_OK)return err->code;
+    }
+    if(!input||!output){
+        fg_error_set(err,FG_ERR_ARGUMENT,
+                     "upgrade-manifest requires --input and --output");
+        return FG_ERR_ARGUMENT;
+    }
+    return profile==FG_RUNTIME_PROFILE_NONE?
+        fg_manifest_upgrade(input,output,err):
+        fg_manifest_upgrade_with_profile(input,output,profile,err);
 }
 
 static fg_status schema_cmd(int argc, char **argv, fg_error *err) {
@@ -329,6 +371,8 @@ int main(int argc, char **argv) {
         status = pack_cmd(argc, argv, &err);
     else if (!strcmp(argv[1], "verify"))
         status = verify_cmd(argc, argv, &err);
+    else if (!strcmp(argv[1], "upgrade-manifest"))
+        status = upgrade_manifest_cmd(argc, argv, &err);
     else if (!strcmp(argv[1], "schema"))
         status = schema_cmd(argc, argv, &err);
     else if (!strcmp(argv[1], "chat"))

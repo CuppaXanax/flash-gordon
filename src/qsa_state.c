@@ -86,7 +86,12 @@ fg_status fg_qsa_state_open(fg_qsa_state **out,const char *path,const uint8_t *l
     if(status==FG_OK)status=fg_uring_register_file(state->ring,fd,&state->slot,err);
     if(status==FG_OK)status=fg_uring_register_buffer(state->ring,state->page_pool,pool_bytes,err);
     if(status==FG_OK)status=create?write_file_header(state,err):read_file_header(state,err);
-    if(status!=FG_OK){if(state){fg_uring_destroy(state->ring);free(state->page_pool);free(state);}close(fd);return status;}*out=state;return FG_OK;
+    if(status!=FG_OK){
+        fg_error original={.code=status};if(err)original=*err;
+        if(state){fg_uring_destroy(state->ring);free(state->page_pool);free(state);}
+        close(fd);if(create)unlink(path);if(err)*err=original;return status;
+    }
+    *out=state;return FG_OK;
 }
 
 void fg_qsa_state_close(fg_qsa_state *state){if(!state)return;fg_uring_destroy(state->ring);close(state->fd);free(state->page_pool);free(state);}
@@ -95,6 +100,44 @@ fg_status fg_qsa_state_write_block(fg_qsa_state *state,uint32_t layer_slot,uint3
     if(!state||!records||layer_slot>=state->layer_count||block>=state->blocks_per_layer||committed==0||committed>FG_Q38_QSA_COMPRESS_RATIO){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA state write");return FG_ERR_ARGUMENT;}
     uint32_t current=state->layer_tokens[layer_slot],end=block*FG_Q38_QSA_COMPRESS_RATIO+committed;if(block!=current/FG_Q38_QSA_COMPRESS_RATIO||end<current||end>state->max_context){fg_error_set(err,FG_ERR_MISMATCH,"non-contiguous QSA state write");return FG_ERR_MISMATCH;}
     uint8_t *page=state->page_pool;memset(page,0,FG_Q38_QSA_STATE_PAGE_BYTES);put_u32_le(page,FG_QSA_PAGE_MAGIC);put_u32_le(page+4u,FG_QSA_PAGE_VERSION);put_u32_le(page+8u,state->layers[layer_slot]);put_u32_le(page+12u,block);put_u32_le(page+16u,committed);uint32_t bytes=committed*FG_Q38_QSA_TOKEN_RECORD_BYTES;memcpy(page+FG_QSA_PAGE_HEADER_BYTES,records,bytes);put_u32_le(page+20u,fg_crc32c(page+FG_QSA_PAGE_HEADER_BYTES,bytes));fg_status status=fg_uring_pwrite(state->ring,state->slot,page,FG_Q38_QSA_STATE_PAGE_BYTES,page_offset(state,layer_slot,block),err);if(status!=FG_OK)return status;state->layer_tokens[layer_slot]=end;return write_file_header(state,err);
+}
+
+fg_status fg_qsa_state_write_blocks(fg_qsa_state *state,uint32_t layer_slot,
+                                    const uint32_t *blocks,uint32_t count,
+                                    const uint8_t *records,fg_error *err){
+    if(!state||!blocks||!count||count>FG_QSA_MAX_SELECTED_BLOCKS||!records||
+       layer_slot>=state->layer_count){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA state write batch");
+        return FG_ERR_ARGUMENT;
+    }
+    uint32_t first=state->layer_tokens[layer_slot]/FG_Q38_QSA_COMPRESS_RATIO;
+    if(state->layer_tokens[layer_slot]%FG_Q38_QSA_COMPRESS_RATIO||
+       first>state->blocks_per_layer||count>state->blocks_per_layer-first){
+        fg_error_set(err,FG_ERR_MISMATCH,"QSA state write batch frontier is not page aligned");
+        return FG_ERR_MISMATCH;
+    }
+    fg_uring_read writes[FG_QSA_MAX_SELECTED_BLOCKS];
+    for(uint32_t i=0;i<count;i++){
+        if(blocks[i]!=first+i){
+            fg_error_set(err,FG_ERR_MISMATCH,"non-contiguous QSA state write batch");
+            return FG_ERR_MISMATCH;
+        }
+        uint8_t *page=state->page_pool+(uint64_t)i*FG_Q38_QSA_STATE_PAGE_BYTES;
+        memset(page,0,FG_Q38_QSA_STATE_PAGE_BYTES);
+        put_u32_le(page,FG_QSA_PAGE_MAGIC);put_u32_le(page+4u,FG_QSA_PAGE_VERSION);
+        put_u32_le(page+8u,state->layers[layer_slot]);put_u32_le(page+12u,blocks[i]);
+        put_u32_le(page+16u,FG_Q38_QSA_COMPRESS_RATIO);
+        const uint8_t *source=records+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES;
+        memcpy(page+FG_QSA_PAGE_HEADER_BYTES,source,FG_QSA_PAGE_RECORD_BYTES);
+        put_u32_le(page+20u,fg_crc32c(source,FG_QSA_PAGE_RECORD_BYTES));
+        writes[i]=(fg_uring_read){page,FG_Q38_QSA_STATE_PAGE_BYTES,
+                                  page_offset(state,layer_slot,blocks[i])};
+    }
+    fg_status status=fg_uring_pwrite_batch(state->ring,state->slot,writes,count,err);
+    if(status!=FG_OK)return status;
+    state->layer_tokens[layer_slot]+=
+        count*FG_Q38_QSA_COMPRESS_RATIO;
+    return write_file_header(state,err);
 }
 
 uint32_t fg_qsa_state_layer_tokens(const fg_qsa_state *state,uint32_t layer_slot){return state&&layer_slot<state->layer_count?state->layer_tokens[layer_slot]:0;}

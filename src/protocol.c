@@ -17,8 +17,11 @@ bool fg_protocol_version_supported(uint16_t version){
     return version>=FG_PROTOCOL_MIN_VERSION&&version<=FG_PROTOCOL_VERSION;
 }
 
-static uint16_t max_message_type(uint16_t version){
-    return version>=6u?FG_MSG_SESSION_RESTORED:FG_MSG_NGRAM_RESULT;
+static bool message_type_supported(uint16_t version,fg_message_type type){
+    if(type>=FG_MSG_HELLO&&type<=FG_MSG_NGRAM_RESULT)return true;
+    if(type>=FG_MSG_QSA_BLOCK_WORK&&type<=FG_MSG_QSA_BLOCK_PREFILL_RESULT)return true;
+    if(version>=6u&&type>=FG_MSG_QSA_PAGE_APPEND&&type<=FG_MSG_QSA_PAGE_RESULT)return true;
+    return version>=6u&&type>=FG_MSG_SESSION_PREPARE&&type<=FG_MSG_SESSION_RESTORED;
 }
 
 uint64_t fg_token_hash_update(uint64_t h,const int32_t *tokens,size_t count){if(h==0)h=UINT64_C(1469598103934665603);for(size_t i=0;i<count;i++){uint32_t x=(uint32_t)tokens[i];for(unsigned b=0;b<4;b++){h^=(uint8_t)(x>>(b*8));h*=UINT64_C(1099511628211);}}return h;}
@@ -43,7 +46,7 @@ uint32_t fg_crc32c(const void *data,size_t bytes){
 
 fg_status fg_frame_encode_version(fg_frame_header *h,uint16_t version,fg_message_type type,uint64_t request_id,uint32_t sequence,uint32_t flags,const void *payload,uint32_t bytes,fg_error *err){
     if(!h||!fg_protocol_version_supported(version)||(bytes&&!payload)||bytes>FG_MAX_FRAME_BYTES||
-       type<FG_MSG_HELLO||type>max_message_type(version)){
+       !message_type_supported(version,type)){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid frame arguments for protocol %u",version);
         return FG_ERR_ARGUMENT;
     }
@@ -56,7 +59,7 @@ fg_status fg_frame_validate(const fg_frame_header *h,const void *payload,uint32_
     if(!h){fg_error_set(err,FG_ERR_ARGUMENT,"frame header is null");return FG_ERR_ARGUMENT;}uint32_t bytes=ntohl(h->bytes_be);
     uint16_t version=bswap16(h->version_be);
     if(ntohl(h->magic_be)!=FG_FRAME_MAGIC||!fg_protocol_version_supported(version)){fg_error_set(err,FG_ERR_MISMATCH,"frame magic or protocol %u mismatch",version);return FG_ERR_MISMATCH;}
-    uint16_t type=bswap16(h->type_be);if(type<FG_MSG_HELLO||type>max_message_type(version)||bytes>FG_MAX_FRAME_BYTES||(bytes&&!payload)){fg_error_set(err,FG_ERR_FORMAT,"invalid frame type or length for protocol %u",version);return FG_ERR_FORMAT;}
+    fg_message_type type=(fg_message_type)bswap16(h->type_be);if(!message_type_supported(version,type)||bytes>FG_MAX_FRAME_BYTES||(bytes&&!payload)){fg_error_set(err,FG_ERR_FORMAT,"invalid frame type or length for protocol %u",version);return FG_ERR_FORMAT;}
     if(fg_crc32c(payload,bytes)!=ntohl(h->crc32c_be)){fg_error_set(err,FG_ERR_MISMATCH,"frame CRC32C mismatch for request %llu",(unsigned long long)ntoh64_halves(h->request_hi_be,h->request_lo_be));return FG_ERR_MISMATCH;}if(payload_bytes)*payload_bytes=bytes;return FG_OK;
 }
 fg_status fg_frame_validate_version(const fg_frame_header *header,uint16_t protocol_version,
@@ -262,6 +265,455 @@ fg_status fg_layer_result_encode(uint8_t output[FG_LAYER_RESULT_BYTES],const fg_
 
 fg_status fg_layer_result_decode(fg_layer_result *result,const uint8_t *payload,uint32_t bytes,fg_error *err){if(!result||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid layer result input");return FG_ERR_ARGUMENT;}if(bytes!=FG_LAYER_RESULT_BYTES||payload[3]){fg_error_set(err,FG_ERR_FORMAT,"invalid layer result payload size or reserved byte");return FG_ERR_FORMAT;}memset(result,0,sizeof(*result));result->layer=payload[0];result->source_rank=payload[1];result->destination_rank=payload[2];result->token_index=get_u32_be(payload+4u);for(uint32_t i=0,offset=8u;i<FG_HYPER_WIDTH;i++,offset+=4u)result->hyper[i]=get_f32_be(payload+offset);return validate_layer_result(result,err);}
 
+static fg_status validate_qsa_block_route(uint8_t layer,uint8_t source_rank,
+                                          uint8_t destination_rank,
+                                          fg_position_mode position_mode,
+                                          const float *hidden,fg_error *err){
+    if(layer>=FG_LAYER_COUNT||(layer&3u)!=3u||source_rank>=FG_RANK_COUNT||
+       destination_rank>=FG_RANK_COUNT||source_rank==destination_rank||
+       position_mode>FG_POSITION_FOUR_AXIS||!hidden){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid QSA block route or storage");
+        return FG_ERR_FORMAT;
+    }
+    return FG_OK;
+}
+
+fg_status fg_qsa_block_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                   uint16_t protocol_version,const fg_qsa_block_work *work,
+                                   fg_error *err){
+    if(!output||!bytes||!work||!fg_protocol_version_supported(protocol_version)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA block work output or protocol");return FG_ERR_ARGUMENT;
+    }
+    fg_status status=validate_qsa_block_route(work->layer,work->source_rank,
+        work->destination_rank,work->position_mode,work->hidden,err);if(status!=FG_OK)return status;
+    if((work->position_mode==FG_POSITION_TEXT&&work->position[3])||
+       (protocol_version==FG_PROTOCOL_MIN_VERSION&&work->position_mode!=FG_POSITION_TEXT)){
+        fg_error_set(err,FG_ERR_MISMATCH,"QSA block work position contract mismatch");return FG_ERR_MISMATCH;
+    }
+    uint32_t axes=work->position_mode==FG_POSITION_FOUR_AXIS?4u:3u;
+    uint32_t header=protocol_version==FG_PROTOCOL_MIN_VERSION?
+        FG_QSA_BLOCK_WORK_LEGACY_HEADER_BYTES:12u+axes*4u;
+    uint32_t position_offset=protocol_version==FG_PROTOCOL_MIN_VERSION?8u:12u;
+    uint32_t required=header+FG_HIDDEN_SIZE*4u;if(capacity<required){
+        fg_error_set(err,FG_ERR_LIMIT,"QSA block work buffer is too small");return FG_ERR_LIMIT;
+    }
+    memset(output,0,header);output[0]=work->layer;output[1]=work->source_rank;
+    output[2]=work->destination_rank;put_u32_be(output+4u,work->token_index);
+    if(protocol_version>=FG_PROTOCOL_VERSION){output[8]=(uint8_t)work->position_mode;output[9]=(uint8_t)axes;}
+    for(uint32_t axis=0;axis<axes;axis++)put_u32_be(output+position_offset+axis*4u,work->position[axis]);
+    for(uint32_t i=0,offset=header;i<FG_HIDDEN_SIZE;i++,offset+=4u){
+        if(!isfinite(work->hidden[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite QSA block input at %u",i);return FG_ERR_FORMAT;}
+        put_f32_be(output+offset,work->hidden[i]);
+    }
+    *bytes=required;return FG_OK;
+}
+
+fg_status fg_qsa_block_work_decode(fg_qsa_block_work *work,uint16_t protocol_version,
+                                   float *hidden_storage,uint64_t hidden_capacity_values,
+                                   const uint8_t *payload,uint32_t bytes,fg_error *err){
+    if(!work||!hidden_storage||hidden_capacity_values<FG_HIDDEN_SIZE||!payload||
+       !fg_protocol_version_supported(protocol_version)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA block work input or protocol");return FG_ERR_ARGUMENT;
+    }
+    uint32_t header=0,axes=3u,position_offset=8u;fg_position_mode mode=FG_POSITION_TEXT;
+    if(protocol_version==FG_PROTOCOL_MIN_VERSION){
+        header=FG_QSA_BLOCK_WORK_LEGACY_HEADER_BYTES;
+    }else{
+        if(bytes!=FG_QSA_BLOCK_WORK_TEXT_BYTES&&bytes!=FG_QSA_BLOCK_WORK_MAX_BYTES){
+            fg_error_set(err,FG_ERR_FORMAT,"invalid protocol 6 QSA block work size");return FG_ERR_FORMAT;
+        }
+        mode=(fg_position_mode)payload[8];axes=payload[9];position_offset=12u;
+        if(payload[10]||payload[11]||mode>FG_POSITION_FOUR_AXIS||
+           axes!=(mode==FG_POSITION_FOUR_AXIS?4u:3u)){
+            fg_error_set(err,FG_ERR_FORMAT,"invalid protocol 6 QSA block position contract");return FG_ERR_FORMAT;
+        }
+        header=12u+axes*4u;
+    }
+    if(payload[3]||bytes!=header+FG_HIDDEN_SIZE*4u){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid QSA block work payload size");return FG_ERR_FORMAT;
+    }
+    memset(work,0,sizeof(*work));work->layer=payload[0];work->source_rank=payload[1];
+    work->destination_rank=payload[2];work->position_mode=mode;
+    work->token_index=get_u32_be(payload+4u);work->hidden=hidden_storage;
+    for(uint32_t axis=0;axis<axes;axis++)work->position[axis]=get_u32_be(payload+position_offset+axis*4u);
+    for(uint32_t i=0,offset=header;i<FG_HIDDEN_SIZE;i++,offset+=4u){
+        hidden_storage[i]=get_f32_be(payload+offset);
+        if(!isfinite(hidden_storage[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite QSA block input at %u",i);return FG_ERR_FORMAT;}
+    }
+    return validate_qsa_block_route(work->layer,work->source_rank,work->destination_rank,
+                                    work->position_mode,work->hidden,err);
+}
+
+fg_status fg_qsa_block_result_encode(uint8_t output[FG_QSA_BLOCK_RESULT_BYTES],
+                                     const fg_qsa_block_result *result,fg_error *err){
+    if(!output||!result){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA block result output");return FG_ERR_ARGUMENT;}
+    fg_status status=validate_qsa_block_route(result->layer,result->source_rank,
+        result->destination_rank,FG_POSITION_TEXT,result->hidden,err);if(status!=FG_OK)return status;
+    output[0]=result->layer;output[1]=result->source_rank;output[2]=result->destination_rank;
+    output[3]=0u;put_u32_be(output+4u,result->token_index);
+    for(uint32_t i=0,offset=8u;i<FG_HIDDEN_SIZE;i++,offset+=4u){
+        if(!isfinite(result->hidden[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite QSA block result at %u",i);return FG_ERR_FORMAT;}
+        put_f32_be(output+offset,result->hidden[i]);
+    }
+    return FG_OK;
+}
+
+fg_status fg_qsa_block_result_decode(fg_qsa_block_result *result,float *hidden_storage,
+                                     uint64_t hidden_capacity_values,const uint8_t *payload,
+                                     uint32_t bytes,fg_error *err){
+    if(!result||!hidden_storage||hidden_capacity_values<FG_HIDDEN_SIZE||!payload){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA block result input");return FG_ERR_ARGUMENT;
+    }
+    if(bytes!=FG_QSA_BLOCK_RESULT_BYTES||payload[3]){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid QSA block result payload size");return FG_ERR_FORMAT;
+    }
+    memset(result,0,sizeof(*result));result->layer=payload[0];result->source_rank=payload[1];
+    result->destination_rank=payload[2];result->token_index=get_u32_be(payload+4u);
+    result->hidden=hidden_storage;
+    for(uint32_t i=0,offset=8u;i<FG_HIDDEN_SIZE;i++,offset+=4u){
+        hidden_storage[i]=get_f32_be(payload+offset);
+        if(!isfinite(hidden_storage[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite QSA block result at %u",i);return FG_ERR_FORMAT;}
+    }
+    return validate_qsa_block_route(result->layer,result->source_rank,result->destination_rank,
+                                    FG_POSITION_TEXT,result->hidden,err);
+}
+
+fg_status fg_qsa_block_prefill_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                           uint16_t protocol_version,
+                                           const fg_qsa_block_prefill_work *work,fg_error *err){
+    if(!output||!bytes||!work||!work->positions||!work->token_count||
+       work->token_count>FG_PREFILL_MAX_TOKENS||!fg_protocol_version_supported(protocol_version)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA block prefill work output");return FG_ERR_ARGUMENT;
+    }
+    fg_status status=validate_qsa_block_route(work->layer,work->source_rank,
+        work->destination_rank,work->position_mode,work->hidden,err);if(status!=FG_OK)return status;
+    if(protocol_version==FG_PROTOCOL_MIN_VERSION&&work->position_mode!=FG_POSITION_TEXT){
+        fg_error_set(err,FG_ERR_MISMATCH,"legacy QSA block prefill requires text positions");return FG_ERR_MISMATCH;
+    }
+    uint32_t axes=work->position_mode==FG_POSITION_FOUR_AXIS?4u:3u;
+    uint64_t position_values=(uint64_t)work->token_count*axes;
+    uint64_t hidden_values=(uint64_t)work->token_count*FG_HIDDEN_SIZE;
+    uint64_t required=FG_QSA_BLOCK_PREFILL_HEADER_BYTES+(position_values+hidden_values)*4u;
+    if(required>capacity){fg_error_set(err,FG_ERR_LIMIT,"QSA block prefill work buffer is too small");return FG_ERR_LIMIT;}
+    memset(output,0,FG_QSA_BLOCK_PREFILL_HEADER_BYTES);output[0]=work->layer;
+    output[1]=work->source_rank;output[2]=work->destination_rank;
+    put_u32_be(output+4u,work->first_token);put_u16_be(output+8u,work->token_count);
+    if(protocol_version>=FG_PROTOCOL_VERSION){output[10]=(uint8_t)work->position_mode;output[11]=(uint8_t)axes;}
+    uint32_t offset=FG_QSA_BLOCK_PREFILL_HEADER_BYTES;
+    for(uint64_t i=0;i<position_values;i++,offset+=4u)put_u32_be(output+offset,work->positions[i]);
+    for(uint64_t i=0;i<hidden_values;i++,offset+=4u){
+        if(!isfinite(work->hidden[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite QSA block prefill input at %llu",(unsigned long long)i);return FG_ERR_FORMAT;}
+        put_f32_be(output+offset,work->hidden[i]);
+    }
+    *bytes=(uint32_t)required;return FG_OK;
+}
+
+fg_status fg_qsa_block_prefill_work_decode(fg_qsa_block_prefill_work *work,
+                                           uint16_t protocol_version,uint32_t *position_storage,
+                                           uint32_t position_capacity,float *hidden_storage,
+                                           uint64_t hidden_capacity_values,
+                                           const uint8_t *payload,uint32_t bytes,fg_error *err){
+    if(!work||!position_storage||!hidden_storage||!payload||
+       bytes<FG_QSA_BLOCK_PREFILL_HEADER_BYTES||!fg_protocol_version_supported(protocol_version)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA block prefill work input");return FG_ERR_ARGUMENT;
+    }
+    uint16_t tokens=get_u16_be(payload+8u);fg_position_mode mode=FG_POSITION_TEXT;uint32_t axes=3u;
+    if(protocol_version==FG_PROTOCOL_MIN_VERSION){
+        if(payload[10]||payload[11]){fg_error_set(err,FG_ERR_FORMAT,"legacy QSA block prefill position header is not zero");return FG_ERR_FORMAT;}
+    }else{
+        mode=(fg_position_mode)payload[10];axes=payload[11];
+        if(mode>FG_POSITION_FOUR_AXIS||axes!=(mode==FG_POSITION_FOUR_AXIS?4u:3u)){
+            fg_error_set(err,FG_ERR_FORMAT,"invalid QSA block prefill position contract");return FG_ERR_FORMAT;
+        }
+    }
+    uint64_t position_values=(uint64_t)tokens*axes,hidden_values=(uint64_t)tokens*FG_HIDDEN_SIZE;
+    uint64_t required=FG_QSA_BLOCK_PREFILL_HEADER_BYTES+(position_values+hidden_values)*4u;
+    if(payload[3]||get_u32_be(payload+12u)||!tokens||tokens>FG_PREFILL_MAX_TOKENS||
+       required!=bytes||position_capacity<position_values||hidden_capacity_values<hidden_values){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid QSA block prefill size or storage capacity");return FG_ERR_FORMAT;
+    }
+    memset(work,0,sizeof(*work));work->layer=payload[0];work->source_rank=payload[1];
+    work->destination_rank=payload[2];work->position_mode=mode;
+    work->first_token=get_u32_be(payload+4u);work->token_count=tokens;
+    work->positions=position_storage;work->hidden=hidden_storage;
+    uint32_t offset=FG_QSA_BLOCK_PREFILL_HEADER_BYTES;
+    for(uint64_t i=0;i<position_values;i++,offset+=4u)position_storage[i]=get_u32_be(payload+offset);
+    for(uint64_t i=0;i<hidden_values;i++,offset+=4u){
+        hidden_storage[i]=get_f32_be(payload+offset);
+        if(!isfinite(hidden_storage[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite QSA block prefill input at %llu",(unsigned long long)i);return FG_ERR_FORMAT;}
+    }
+    return validate_qsa_block_route(work->layer,work->source_rank,work->destination_rank,
+                                    work->position_mode,work->hidden,err);
+}
+
+fg_status fg_qsa_block_prefill_result_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                             const fg_qsa_block_prefill_result *result,
+                                             fg_error *err){
+    if(!output||!bytes||!result||!result->token_count||
+       result->token_count>FG_PREFILL_MAX_TOKENS){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA block prefill result output");return FG_ERR_ARGUMENT;
+    }
+    fg_status status=validate_qsa_block_route(result->layer,result->source_rank,
+        result->destination_rank,FG_POSITION_TEXT,result->hidden,err);if(status!=FG_OK)return status;
+    uint64_t values=(uint64_t)result->token_count*FG_HIDDEN_SIZE;
+    uint64_t required=FG_QSA_BLOCK_PREFILL_HEADER_BYTES+values*4u;
+    if(required>capacity){fg_error_set(err,FG_ERR_LIMIT,"QSA block prefill result buffer is too small");return FG_ERR_LIMIT;}
+    memset(output,0,FG_QSA_BLOCK_PREFILL_HEADER_BYTES);output[0]=result->layer;
+    output[1]=result->source_rank;output[2]=result->destination_rank;
+    put_u32_be(output+4u,result->first_token);put_u16_be(output+8u,result->token_count);
+    uint32_t offset=FG_QSA_BLOCK_PREFILL_HEADER_BYTES;
+    for(uint64_t i=0;i<values;i++,offset+=4u){
+        if(!isfinite(result->hidden[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite QSA block prefill result at %llu",(unsigned long long)i);return FG_ERR_FORMAT;}
+        put_f32_be(output+offset,result->hidden[i]);
+    }
+    *bytes=(uint32_t)required;return FG_OK;
+}
+
+fg_status fg_qsa_block_prefill_result_decode(fg_qsa_block_prefill_result *result,
+                                             float *hidden_storage,
+                                             uint64_t hidden_capacity_values,
+                                             const uint8_t *payload,uint32_t bytes,
+                                             fg_error *err){
+    if(!result||!hidden_storage||!payload||bytes<FG_QSA_BLOCK_PREFILL_HEADER_BYTES){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA block prefill result input");return FG_ERR_ARGUMENT;
+    }
+    uint16_t tokens=get_u16_be(payload+8u);uint64_t values=(uint64_t)tokens*FG_HIDDEN_SIZE;
+    uint64_t required=FG_QSA_BLOCK_PREFILL_HEADER_BYTES+values*4u;
+    if(payload[3]||payload[10]||payload[11]||get_u32_be(payload+12u)||!tokens||
+       tokens>FG_PREFILL_MAX_TOKENS||required!=bytes||hidden_capacity_values<values){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid QSA block prefill result size");return FG_ERR_FORMAT;
+    }
+    memset(result,0,sizeof(*result));result->layer=payload[0];result->source_rank=payload[1];
+    result->destination_rank=payload[2];result->first_token=get_u32_be(payload+4u);
+    result->token_count=tokens;result->hidden=hidden_storage;
+    uint32_t offset=FG_QSA_BLOCK_PREFILL_HEADER_BYTES;
+    for(uint64_t i=0;i<values;i++,offset+=4u){
+        hidden_storage[i]=get_f32_be(payload+offset);
+        if(!isfinite(hidden_storage[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite QSA block prefill result at %llu",(unsigned long long)i);return FG_ERR_FORMAT;}
+    }
+    return validate_qsa_block_route(result->layer,result->source_rank,result->destination_rank,
+                                    FG_POSITION_TEXT,result->hidden,err);
+}
+
+fg_status fg_qsa_completed_page_range(uint32_t first_token,uint32_t token_count,
+                                      uint32_t *first_block,uint32_t *block_count,
+                                      fg_error *err){
+    if(!first_block||!block_count||!token_count){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA completed-page range");
+        return FG_ERR_ARGUMENT;
+    }
+    if(first_token>=FG_MAX_CONTEXT||token_count>FG_MAX_CONTEXT-first_token){
+        fg_error_set(err,FG_ERR_LIMIT,"QSA completed-page range exceeds native context");
+        return FG_ERR_LIMIT;
+    }
+    uint32_t first=first_token/FG_Q38_QSA_COMPRESS_RATIO;
+    uint32_t end=(first_token+token_count)/FG_Q38_QSA_COMPRESS_RATIO;
+    *first_block=first;*block_count=end>first?end-first:0u;return FG_OK;
+}
+
+static fg_status validate_qsa_page_batch(const fg_qsa_page_batch *batch,uint32_t maximum,
+                                         bool records_required,fg_error *err){
+    if(!batch||batch->source_rank>=FG_RANK_COUNT||batch->destination_rank>=FG_RANK_COUNT||
+       batch->source_rank==batch->destination_rank||!batch->page_count||
+       batch->page_count>maximum||!batch->pages){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid QSA page batch header");return FG_ERR_FORMAT;
+    }
+    for(uint32_t i=0;i<batch->page_count;i++){
+        const fg_qsa_page *page=&batch->pages[i];
+        if(page->layer>=FG_LAYER_COUNT||(page->layer&3u)!=3u||
+           page->block>=(FG_MAX_CONTEXT+FG_Q38_QSA_COMPRESS_RATIO-1u)/
+                       FG_Q38_QSA_COMPRESS_RATIO||
+           (records_required&&!page->records)){
+            fg_error_set(err,FG_ERR_FORMAT,"invalid QSA page entry %u",i);return FG_ERR_FORMAT;
+        }
+        for(uint32_t prior=0;prior<i;prior++)if(batch->pages[prior].layer==page->layer&&
+           batch->pages[prior].block==page->block){
+            fg_error_set(err,FG_ERR_FORMAT,"duplicate QSA page entry %u",i);return FG_ERR_FORMAT;
+        }
+    }
+    return FG_OK;
+}
+
+static fg_status validate_qsa_append_distribution(const fg_qsa_page_batch *batch,
+                                                  fg_error *err){
+    uint16_t pages_per_layer[FG_LAYER_COUNT]={0};
+    for(uint32_t i=0;i<batch->page_count;i++){
+        uint32_t layer=batch->pages[i].layer;
+        if(++pages_per_layer[layer]>FG_QSA_PAGE_APPEND_LAYER_MAX_PAGES){
+            fg_error_set(err,FG_ERR_FORMAT,
+                         "QSA page append exceeds the per-layer batch limit");
+            return FG_ERR_FORMAT;
+        }
+    }
+    return FG_OK;
+}
+
+static void encode_qsa_page_batch_header(uint8_t *output,const fg_qsa_page_batch *batch){
+    memset(output,0,FG_QSA_PAGE_BATCH_HEADER_BYTES);output[0]=batch->source_rank;
+    output[1]=batch->destination_rank;output[2]=FG_QSA_PAGE_PROTOCOL_VERSION;
+    put_u32_be(output+4u,batch->batch_id);put_u16_be(output+8u,batch->page_count);
+}
+
+static fg_status decode_qsa_page_batch_header(fg_qsa_page_batch *batch,
+                                               const uint8_t *payload,uint32_t bytes,
+                                               uint32_t entry_bytes,uint32_t maximum,
+                                               fg_error *err){
+    if(!batch||!payload||bytes<FG_QSA_PAGE_BATCH_HEADER_BYTES){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA page batch input");return FG_ERR_ARGUMENT;
+    }
+    uint16_t count=get_u16_be(payload+8u);
+    uint64_t required=FG_QSA_PAGE_BATCH_HEADER_BYTES+(uint64_t)count*entry_bytes;
+    if(payload[2]!=FG_QSA_PAGE_PROTOCOL_VERSION||payload[3]||payload[10]||payload[11]||
+       !count||count>maximum||required!=bytes){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid QSA page batch size or header");return FG_ERR_FORMAT;
+    }
+    memset(batch,0,sizeof(*batch));batch->source_rank=payload[0];
+    batch->destination_rank=payload[1];batch->batch_id=get_u32_be(payload+4u);
+    batch->page_count=count;return FG_OK;
+}
+
+static void encode_qsa_page_entry_header(uint8_t *output,const fg_qsa_page *page){
+    memset(output,0,FG_QSA_PAGE_ENTRY_HEADER_BYTES);output[0]=page->layer;
+    put_u32_be(output+4u,page->block);
+}
+
+static fg_status decode_qsa_page_entries(fg_qsa_page_batch *batch,fg_qsa_page *page_storage,
+                                         uint32_t page_capacity,const uint8_t *payload,
+                                         uint32_t entry_bytes,bool records_present,
+                                         uint32_t maximum,fg_error *err){
+    if(!page_storage||page_capacity<batch->page_count){
+        fg_error_set(err,FG_ERR_LIMIT,"QSA page decode storage is too small");return FG_ERR_LIMIT;
+    }
+    for(uint32_t i=0;i<batch->page_count;i++){
+        uint32_t offset=FG_QSA_PAGE_BATCH_HEADER_BYTES+i*entry_bytes;
+        if(payload[offset+1u]||payload[offset+2u]||payload[offset+3u]){
+            fg_error_set(err,FG_ERR_FORMAT,"non-zero QSA page reserved bytes");return FG_ERR_FORMAT;
+        }
+        page_storage[i]=(fg_qsa_page){.layer=payload[offset],
+            .block=get_u32_be(payload+offset+4u),
+            .records=records_present?payload+offset+FG_QSA_PAGE_ENTRY_HEADER_BYTES:NULL};
+    }
+    batch->pages=page_storage;
+    return validate_qsa_page_batch(batch,maximum,records_present,err);
+}
+
+fg_status fg_qsa_page_append_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                    const fg_qsa_page_batch *batch,fg_error *err){
+    if(!output||!bytes){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA page append output");return FG_ERR_ARGUMENT;}
+    fg_status status=validate_qsa_page_batch(batch,FG_QSA_PAGE_APPEND_MAX_PAGES,true,err);
+    if(status==FG_OK)status=validate_qsa_append_distribution(batch,err);
+    uint64_t required=FG_QSA_PAGE_BATCH_HEADER_BYTES+
+        (uint64_t)(batch?batch->page_count:0u)*FG_QSA_PAGE_ENTRY_BYTES;
+    if(status==FG_OK&&(required>capacity||required>FG_MAX_FRAME_BYTES)){
+        fg_error_set(err,FG_ERR_LIMIT,"QSA page append buffer is too small");status=FG_ERR_LIMIT;
+    }
+    if(status!=FG_OK)return status;
+    encode_qsa_page_batch_header(output,batch);
+    for(uint32_t i=0;i<batch->page_count;i++){
+        uint32_t offset=FG_QSA_PAGE_BATCH_HEADER_BYTES+i*FG_QSA_PAGE_ENTRY_BYTES;
+        encode_qsa_page_entry_header(output+offset,&batch->pages[i]);
+        memcpy(output+offset+FG_QSA_PAGE_ENTRY_HEADER_BYTES,batch->pages[i].records,
+               FG_QSA_PAGE_RECORD_BYTES);
+    }
+    *bytes=(uint32_t)required;return FG_OK;
+}
+
+fg_status fg_qsa_page_append_decode(fg_qsa_page_batch *batch,fg_qsa_page *page_storage,
+                                    uint32_t page_capacity,const uint8_t *payload,
+                                    uint32_t bytes,fg_error *err){
+    fg_status status=decode_qsa_page_batch_header(batch,payload,bytes,FG_QSA_PAGE_ENTRY_BYTES,
+                                                  FG_QSA_PAGE_APPEND_MAX_PAGES,err);
+    if(status==FG_OK)status=decode_qsa_page_entries(batch,page_storage,page_capacity,payload,
+        FG_QSA_PAGE_ENTRY_BYTES,true,FG_QSA_PAGE_APPEND_MAX_PAGES,err);
+    if(status==FG_OK)status=validate_qsa_append_distribution(batch,err);
+    return status;
+}
+
+fg_status fg_qsa_page_fetch_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                   const fg_qsa_page_batch *batch,fg_error *err){
+    if(!output||!bytes){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA page fetch output");return FG_ERR_ARGUMENT;}
+    fg_status status=validate_qsa_page_batch(batch,FG_QSA_PAGE_FETCH_MAX_PAGES,false,err);
+    uint64_t required=FG_QSA_PAGE_BATCH_HEADER_BYTES+
+        (uint64_t)(batch?batch->page_count:0u)*FG_QSA_PAGE_ENTRY_HEADER_BYTES;
+    if(status==FG_OK&&required>capacity){
+        fg_error_set(err,FG_ERR_LIMIT,"QSA page fetch buffer is too small");status=FG_ERR_LIMIT;
+    }
+    if(status!=FG_OK)return status;
+    encode_qsa_page_batch_header(output,batch);
+    for(uint32_t i=0;i<batch->page_count;i++)
+        encode_qsa_page_entry_header(output+FG_QSA_PAGE_BATCH_HEADER_BYTES+
+                                     i*FG_QSA_PAGE_ENTRY_HEADER_BYTES,&batch->pages[i]);
+    *bytes=(uint32_t)required;return FG_OK;
+}
+
+fg_status fg_qsa_page_fetch_decode(fg_qsa_page_batch *batch,fg_qsa_page *page_storage,
+                                   uint32_t page_capacity,const uint8_t *payload,
+                                   uint32_t bytes,fg_error *err){
+    fg_status status=decode_qsa_page_batch_header(batch,payload,bytes,
+        FG_QSA_PAGE_ENTRY_HEADER_BYTES,FG_QSA_PAGE_FETCH_MAX_PAGES,err);
+    if(status==FG_OK)status=decode_qsa_page_entries(batch,page_storage,page_capacity,payload,
+        FG_QSA_PAGE_ENTRY_HEADER_BYTES,false,FG_QSA_PAGE_FETCH_MAX_PAGES,err);
+    return status;
+}
+
+fg_status fg_qsa_page_result_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                    const fg_qsa_page_batch *batch,fg_error *err){
+    if(!output||!bytes){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA page result output");return FG_ERR_ARGUMENT;}
+    fg_status status=validate_qsa_page_batch(batch,FG_QSA_PAGE_FETCH_MAX_PAGES,true,err);
+    uint64_t required=FG_QSA_PAGE_BATCH_HEADER_BYTES+
+        (uint64_t)(batch?batch->page_count:0u)*FG_QSA_PAGE_ENTRY_BYTES;
+    if(status==FG_OK&&(required>capacity||required>FG_MAX_FRAME_BYTES)){
+        fg_error_set(err,FG_ERR_LIMIT,"QSA page result buffer is too small");status=FG_ERR_LIMIT;
+    }
+    if(status!=FG_OK)return status;
+    encode_qsa_page_batch_header(output,batch);
+    for(uint32_t i=0;i<batch->page_count;i++){
+        uint32_t offset=FG_QSA_PAGE_BATCH_HEADER_BYTES+i*FG_QSA_PAGE_ENTRY_BYTES;
+        encode_qsa_page_entry_header(output+offset,&batch->pages[i]);
+        memcpy(output+offset+FG_QSA_PAGE_ENTRY_HEADER_BYTES,batch->pages[i].records,
+               FG_QSA_PAGE_RECORD_BYTES);
+    }
+    *bytes=(uint32_t)required;return FG_OK;
+}
+
+fg_status fg_qsa_page_result_decode(fg_qsa_page_batch *batch,fg_qsa_page *page_storage,
+                                    uint32_t page_capacity,const uint8_t *payload,
+                                    uint32_t bytes,fg_error *err){
+    fg_status status=decode_qsa_page_batch_header(batch,payload,bytes,FG_QSA_PAGE_ENTRY_BYTES,
+                                                  FG_QSA_PAGE_FETCH_MAX_PAGES,err);
+    if(status==FG_OK)status=decode_qsa_page_entries(batch,page_storage,page_capacity,payload,
+        FG_QSA_PAGE_ENTRY_BYTES,true,FG_QSA_PAGE_FETCH_MAX_PAGES,err);
+    return status;
+}
+
+fg_status fg_qsa_page_barrier_encode(uint8_t output[FG_QSA_PAGE_BARRIER_BYTES],
+                                     const fg_qsa_page_barrier *barrier,fg_error *err){
+    if(!output||!barrier||barrier->source_rank>=FG_RANK_COUNT||
+       barrier->destination_rank>=FG_RANK_COUNT||
+       barrier->source_rank==barrier->destination_rank){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid QSA page barrier");return FG_ERR_FORMAT;
+    }
+    memset(output,0,FG_QSA_PAGE_BARRIER_BYTES);output[0]=barrier->source_rank;
+    output[1]=barrier->destination_rank;output[2]=FG_QSA_PAGE_PROTOCOL_VERSION;
+    put_u32_be(output+4u,barrier->batch_id);return FG_OK;
+}
+
+fg_status fg_qsa_page_barrier_decode(fg_qsa_page_barrier *barrier,
+                                     const uint8_t *payload,uint32_t bytes,fg_error *err){
+    if(!barrier||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA page barrier input");return FG_ERR_ARGUMENT;}
+    if(bytes!=FG_QSA_PAGE_BARRIER_BYTES||payload[2]!=FG_QSA_PAGE_PROTOCOL_VERSION||
+       payload[3]){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid QSA page barrier size");return FG_ERR_FORMAT;
+    }
+    *barrier=(fg_qsa_page_barrier){.source_rank=payload[0],.destination_rank=payload[1],
+        .batch_id=get_u32_be(payload+4u)};
+    if(barrier->source_rank>=FG_RANK_COUNT||barrier->destination_rank>=FG_RANK_COUNT||
+       barrier->source_rank==barrier->destination_rank){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid QSA page barrier route");return FG_ERR_FORMAT;
+    }
+    return FG_OK;
+}
+
 static fg_status validate_output_work(const fg_output_work *work,fg_error *err){if(!work||work->source_rank>=FG_RANK_COUNT||work->destination_rank!=4u){fg_error_set(err,FG_ERR_FORMAT,"invalid output work route");return FG_ERR_FORMAT;}for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(work->hyper[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite output input at %u",i);return FG_ERR_FORMAT;}return FG_OK;}
 
 fg_status fg_output_work_encode(uint8_t output[FG_OUTPUT_WORK_BYTES],const fg_output_work *work,fg_error *err){if(!output){fg_error_set(err,FG_ERR_ARGUMENT,"output work buffer is null");return FG_ERR_ARGUMENT;}fg_status status=validate_output_work(work,err);if(status!=FG_OK)return status;output[0]=work->source_rank;output[1]=work->destination_rank;output[2]=0;output[3]=0;put_u32_be(output+4u,work->token_index);for(uint32_t i=0,offset=8u;i<FG_HYPER_WIDTH;i++,offset+=4u)put_f32_be(output+offset,work->hyper[i]);return FG_OK;}
@@ -292,7 +744,11 @@ static fg_status validate_owner_session_control(const fg_owner_session_control *
        control->operation>FG_OWNER_SESSION_RESTORED||
        control->rank>=FG_RANK_COUNT||control->position_mode>FG_POSITION_FOUR_AXIS||
        control->flags||!control->session_nonce||digest_zero(control->identity_sha256)||
-       digest_zero(control->state_format_sha256)){
+       digest_zero(control->state_format_sha256)||!control->logical_context_tokens||
+       !control->gpu_index_tokens||
+       control->gpu_index_tokens>control->logical_context_tokens||
+       control->qsa_hot_tokens>control->logical_context_tokens||
+       (!control->qsa_hot_tokens&&!control->qsa_page_cache_bytes)){
         fg_error_set(err,FG_ERR_MISMATCH,"invalid owner session control header");
         return FG_ERR_MISMATCH;
     }
@@ -333,6 +789,10 @@ fg_status fg_owner_session_control_encode(uint8_t output[FG_OWNER_SESSION_CONTRO
     memcpy(output+64u,control->frontier_sha256,32u);
     memcpy(output+96u,control->state_format_sha256,32u);
     memcpy(output+128u,control->state_sha256,32u);
+    put_u32_be(output+160u,control->logical_context_tokens);
+    put_u32_be(output+164u,control->gpu_index_tokens);
+    put_u32_be(output+168u,control->qsa_hot_tokens);
+    put_u64_be(output+176u,control->qsa_page_cache_bytes);
     return FG_OK;
 }
 
@@ -340,7 +800,8 @@ fg_status fg_owner_session_control_decode(fg_owner_session_control *control,
                                           const uint8_t *payload,uint32_t bytes,
                                           fg_error *err){
     if(!control||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner session control input");return FG_ERR_ARGUMENT;}
-    if(bytes!=FG_OWNER_SESSION_CONTROL_BYTES||payload[6]||payload[7]){
+    if(bytes!=FG_OWNER_SESSION_CONTROL_BYTES||payload[6]||payload[7]||
+       payload[172]||payload[173]||payload[174]||payload[175]){
         fg_error_set(err,FG_ERR_FORMAT,"invalid owner session control size or reserved bytes");
         return FG_ERR_FORMAT;
     }
@@ -354,6 +815,10 @@ fg_status fg_owner_session_control_decode(fg_owner_session_control *control,
     memcpy(control->frontier_sha256,payload+64u,32u);
     memcpy(control->state_format_sha256,payload+96u,32u);
     memcpy(control->state_sha256,payload+128u,32u);
+    control->logical_context_tokens=get_u32_be(payload+160u);
+    control->gpu_index_tokens=get_u32_be(payload+164u);
+    control->qsa_hot_tokens=get_u32_be(payload+168u);
+    control->qsa_page_cache_bytes=get_u64_be(payload+176u);
     return validate_owner_session_control(control,err);
 }
 

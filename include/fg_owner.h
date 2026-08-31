@@ -2,6 +2,7 @@
 #define FLASH_GORDON_OWNER_H
 
 #include "fg_expert.h"
+#include "fg_qsa.h"
 
 typedef struct fg_owner_executor fg_owner_executor;
 typedef fg_status (*fg_owner_expert_dispatch_fn)(void *context,uint32_t layer,uint32_t token_index,
@@ -23,9 +24,22 @@ typedef fg_status (*fg_owner_prefill_dispatch_fn)(void *context,uint32_t layer,
                                                    const uint8_t *activations_q8k,
                                                    fg_prefill_result results[FG_GROUP_SIZE],
                                                    uint32_t *result_count,fg_error *err);
+typedef fg_status (*fg_owner_qsa_decode_dispatch_fn)(void *context,uint32_t layer,
+                                                     uint32_t token_index,
+                                                     const uint32_t position[3],
+                                                     const fg_vk_tensor *hidden,
+                                                     fg_vk_tensor **output,fg_error *err);
+typedef fg_status (*fg_owner_qsa_prefill_dispatch_fn)(void *context,uint32_t layer,
+                                                      uint32_t first_token,
+                                                      const uint32_t *positions,
+                                                      uint16_t token_count,
+                                                      const fg_vk_tensor *hidden,
+                                                      fg_vk_tensor **output,fg_error *err);
 
 fg_status fg_owner_executor_create(fg_owner_executor **out,fg_model *model,fg_error *err);
 void fg_owner_executor_destroy(fg_owner_executor *executor);
+fg_vk_tensor *fg_owner_prefill_input(fg_owner_executor *executor);
+uint64_t fg_owner_qsa_host_bytes(const fg_owner_executor *executor);
 fg_status fg_owner_reset_state(fg_owner_executor *executor,fg_error *err);
 fg_status fg_owner_qsa_checkpoint(fg_owner_executor *executor,fg_error *err);
 fg_status fg_owner_gr_read(fg_owner_executor *executor,uint32_t layer,bool ffn,const fg_vk_tensor *hyper_input,
@@ -69,6 +83,10 @@ fg_status fg_owner_qsa_open(fg_owner_executor *executor,const char *state_path,b
                             fg_error *err);
 fg_status fg_owner_qsa_open_decode(fg_owner_executor *executor,const char *state_path,
                                    uint32_t resident_tokens,uint32_t batch_size,fg_error *err);
+fg_status fg_owner_qsa_open_mirror(fg_owner_executor *executor,uint32_t logical_context,
+                                   uint32_t hot_tokens,uint32_t cache_pages,uint32_t batch_size,
+                                   fg_qsa_page_fetch_fn fetch_pages,void *fetch_opaque,
+                                   fg_error *err);
 void fg_owner_qsa_set_tokens(fg_owner_executor *executor,uint32_t tokens);
 fg_status fg_owner_qsa_decode(fg_owner_executor *executor,uint32_t layer,uint32_t token_index,
                               const uint32_t position[3],const fg_vk_tensor *hidden,
@@ -76,6 +94,9 @@ fg_status fg_owner_qsa_decode(fg_owner_executor *executor,uint32_t layer,uint32_
 fg_status fg_owner_qsa_prefill(fg_owner_executor *executor,uint32_t layer,uint32_t first_token,
                                const uint32_t *positions,uint32_t token_count,
                                const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err);
+fg_status fg_owner_qsa_page_records(const fg_owner_executor *executor,uint32_t layer,
+                                    uint32_t block,const uint8_t **records,fg_error *err);
+void fg_owner_qsa_page_published(fg_owner_executor *executor,uint32_t layer,uint32_t block);
 fg_status fg_owner_decode_layer(fg_owner_executor *executor,uint32_t layer,uint32_t token_index,
                                 const uint32_t position[3],const fg_vk_tensor *hyper_input,
                                 const fg_vk_tensor *ngram_embedding,
@@ -85,12 +106,16 @@ fg_status fg_owner_decode_layer_async(fg_owner_executor *executor,uint32_t layer
                                       const uint32_t position[3],const fg_vk_tensor *hyper_input,
                                       const fg_vk_tensor *ngram_embedding,
                                       fg_owner_expert_fire_fn fire,fg_owner_expert_collect_fn collect,
-                                      void *dispatch_context,fg_vk_tensor **output,fg_error *err);
+                                      void *dispatch_context,
+                                      fg_owner_qsa_decode_dispatch_fn qsa_dispatch,
+                                      void *qsa_context,fg_vk_tensor **output,fg_error *err);
 fg_status fg_owner_prefill_layer(fg_owner_executor *executor,uint32_t layer,
                                  uint32_t first_token,const uint32_t *positions,
                                  uint16_t token_count,const fg_vk_tensor *hyper_input,
                                  const fg_vk_tensor *ngram_embeddings,
                                  fg_owner_prefill_dispatch_fn dispatch,void *dispatch_context,
+                                 fg_owner_qsa_prefill_dispatch_fn qsa_dispatch,
+                                 void *qsa_context,
                                  fg_vk_tensor **output,fg_error *err);
 
 #endif

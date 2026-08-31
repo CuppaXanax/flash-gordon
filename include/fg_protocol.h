@@ -2,6 +2,7 @@
 #define FLASH_GORDON_PROTOCOL_H
 
 #include "fg_manifest.h"
+#include "fg_q38_schema.h"
 #include "fg_session.h"
 
 #define FG_FRAME_MAGIC UINT32_C(0x31474646) /* FFG1 */
@@ -12,6 +13,7 @@
 #define FG_DECODE_WORK_BYTES (8u + FG_TOP_K * 2u + FG_TOP_K + FG_TOP_K * 4u + FG_Q8K_ACTIVATION_BYTES)
 #define FG_EXPERT_RESULT_ENTRY_BYTES (4u + FG_HIDDEN_SIZE * 4u)
 #define FG_EXPERT_RESULT_MAX_BYTES (8u + FG_TOP_K * FG_EXPERT_RESULT_ENTRY_BYTES)
+#define FG_EXPERT_RESULT_SINGLE_BYTES (8u + FG_EXPERT_RESULT_ENTRY_BYTES)
 #define FG_HYPER_WIDTH (FG_HIDDEN_SIZE*4u)
 #define FG_NGRAM_EMBED_VALUES (FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH)
 #define FG_LAYER_WORK_LEGACY_HEADER_BYTES 20u
@@ -37,12 +39,34 @@
 #define FG_PREFILL_LAYER_HEADER_BYTES 16u
 #define FG_PREFILL_LAYER_WORK_MAX_BYTES (FG_PREFILL_LAYER_HEADER_BYTES+FG_PREFILL_MAX_TOKENS*4u*4u+FG_PREFILL_MAX_TOKENS*FG_HYPER_WIDTH*4u+FG_PREFILL_MAX_TOKENS*FG_NGRAM_EMBED_VALUES*4u)
 #define FG_PREFILL_LAYER_RESULT_MAX_BYTES (FG_PREFILL_LAYER_HEADER_BYTES+FG_PREFILL_MAX_TOKENS*FG_HYPER_WIDTH*4u)
+#define FG_QSA_BLOCK_WORK_LEGACY_HEADER_BYTES 20u
+#define FG_QSA_BLOCK_WORK_TEXT_HEADER_BYTES 24u
+#define FG_QSA_BLOCK_WORK_FOUR_AXIS_HEADER_BYTES 28u
+#define FG_QSA_BLOCK_WORK_TEXT_BYTES (FG_QSA_BLOCK_WORK_TEXT_HEADER_BYTES+FG_HIDDEN_SIZE*4u)
+#define FG_QSA_BLOCK_WORK_MAX_BYTES (FG_QSA_BLOCK_WORK_FOUR_AXIS_HEADER_BYTES+FG_HIDDEN_SIZE*4u)
+#define FG_QSA_BLOCK_RESULT_BYTES (8u+FG_HIDDEN_SIZE*4u)
+#define FG_QSA_BLOCK_PREFILL_HEADER_BYTES 16u
+#define FG_QSA_BLOCK_PREFILL_WORK_MAX_BYTES (FG_QSA_BLOCK_PREFILL_HEADER_BYTES+FG_PREFILL_MAX_TOKENS*4u*4u+FG_PREFILL_MAX_TOKENS*FG_HIDDEN_SIZE*4u)
+#define FG_QSA_BLOCK_PREFILL_RESULT_MAX_BYTES (FG_QSA_BLOCK_PREFILL_HEADER_BYTES+FG_PREFILL_MAX_TOKENS*FG_HIDDEN_SIZE*4u)
+#define FG_QSA_PAGE_PROTOCOL_VERSION 1u
+#define FG_QSA_PAGE_RECORD_BYTES (FG_Q38_QSA_COMPRESS_RATIO*FG_Q38_QSA_TOKEN_RECORD_BYTES)
+#define FG_QSA_PAGE_ENTRY_HEADER_BYTES 8u
+#define FG_QSA_PAGE_ENTRY_BYTES (FG_QSA_PAGE_ENTRY_HEADER_BYTES+FG_QSA_PAGE_RECORD_BYTES)
+#define FG_QSA_PAGE_BATCH_HEADER_BYTES 12u
+#define FG_QSA_OWNER_LAYER_COUNT 6u
+#define FG_QSA_PAGE_APPEND_LAYER_MAX_PAGES (FG_PREFILL_MAX_TOKENS/FG_Q38_QSA_COMPRESS_RATIO)
+#define FG_QSA_PAGE_APPEND_MAX_PAGES (FG_QSA_OWNER_LAYER_COUNT*(FG_PREFILL_MAX_TOKENS/FG_Q38_QSA_COMPRESS_RATIO))
+#define FG_QSA_PAGE_APPEND_MAX_BYTES (FG_QSA_PAGE_BATCH_HEADER_BYTES+FG_QSA_PAGE_APPEND_MAX_PAGES*FG_QSA_PAGE_ENTRY_BYTES)
+#define FG_QSA_PAGE_FETCH_MAX_PAGES (FG_Q38_INDEX_BUDGET/FG_Q38_QSA_COMPRESS_RATIO)
+#define FG_QSA_PAGE_FETCH_MAX_BYTES (FG_QSA_PAGE_BATCH_HEADER_BYTES+FG_QSA_PAGE_FETCH_MAX_PAGES*FG_QSA_PAGE_ENTRY_HEADER_BYTES)
+#define FG_QSA_PAGE_RESULT_MAX_BYTES (FG_QSA_PAGE_BATCH_HEADER_BYTES+FG_QSA_PAGE_FETCH_MAX_PAGES*FG_QSA_PAGE_ENTRY_BYTES)
+#define FG_QSA_PAGE_BARRIER_BYTES 8u
 #define FG_NGRAM_SHARD_MAX_ITEMS FG_NGRAM_HEAD_COUNT
 #define FG_NGRAM_WIRE_ROW_BYTES 90u
 #define FG_NGRAM_WORK_MAX_BYTES (8u+FG_NGRAM_SHARD_MAX_ITEMS*9u)
 #define FG_NGRAM_RESULT_MAX_BYTES (8u+FG_NGRAM_SHARD_MAX_ITEMS*(1u+FG_NGRAM_WIRE_ROW_BYTES))
-#define FG_OWNER_SESSION_CONTROL_VERSION 1u
-#define FG_OWNER_SESSION_CONTROL_BYTES 160u
+#define FG_OWNER_SESSION_CONTROL_VERSION 2u
+#define FG_OWNER_SESSION_CONTROL_BYTES 184u
 
 typedef enum fg_message_type {
     FG_MSG_HELLO = 1,
@@ -68,7 +92,16 @@ typedef enum fg_message_type {
     FG_MSG_SESSION_COMMIT = 21,
     FG_MSG_SESSION_COMMITTED = 22,
     FG_MSG_SESSION_RESTORE = 23,
-    FG_MSG_SESSION_RESTORED = 24
+    FG_MSG_SESSION_RESTORED = 24,
+    FG_MSG_QSA_BLOCK_WORK = 25,
+    FG_MSG_QSA_BLOCK_RESULT = 26,
+    FG_MSG_QSA_BLOCK_PREFILL_WORK = 27,
+    FG_MSG_QSA_BLOCK_PREFILL_RESULT = 28,
+    FG_MSG_QSA_PAGE_APPEND = 29,
+    FG_MSG_QSA_PAGE_BARRIER = 30,
+    FG_MSG_QSA_PAGE_BARRIER_ACK = 31,
+    FG_MSG_QSA_PAGE_FETCH = 32,
+    FG_MSG_QSA_PAGE_RESULT = 33
 } fg_message_type;
 
 typedef enum fg_owner_session_operation {
@@ -95,6 +128,10 @@ typedef struct fg_owner_session_control {
     uint8_t frontier_sha256[32];
     uint8_t state_format_sha256[32];
     uint8_t state_sha256[32];
+    uint32_t logical_context_tokens;
+    uint32_t gpu_index_tokens;
+    uint32_t qsa_hot_tokens;
+    uint64_t qsa_page_cache_bytes;
 } fg_owner_session_control;
 
 typedef struct fg_frame_header {
@@ -222,6 +259,64 @@ typedef struct fg_layer_result {
     float hyper[FG_HYPER_WIDTH];
 } fg_layer_result;
 
+typedef struct fg_qsa_block_work {
+    uint8_t layer;
+    uint8_t source_rank;
+    uint8_t destination_rank;
+    fg_position_mode position_mode;
+    uint32_t token_index;
+    uint32_t position[4];
+    const float *hidden;
+} fg_qsa_block_work;
+
+typedef struct fg_qsa_block_result {
+    uint8_t layer;
+    uint8_t source_rank;
+    uint8_t destination_rank;
+    uint32_t token_index;
+    const float *hidden;
+} fg_qsa_block_result;
+
+typedef struct fg_qsa_block_prefill_work {
+    uint8_t layer;
+    uint8_t source_rank;
+    uint8_t destination_rank;
+    fg_position_mode position_mode;
+    uint32_t first_token;
+    uint16_t token_count;
+    const uint32_t *positions;
+    const float *hidden;
+} fg_qsa_block_prefill_work;
+
+typedef struct fg_qsa_block_prefill_result {
+    uint8_t layer;
+    uint8_t source_rank;
+    uint8_t destination_rank;
+    uint32_t first_token;
+    uint16_t token_count;
+    const float *hidden;
+} fg_qsa_block_prefill_result;
+
+typedef struct fg_qsa_page {
+    uint8_t layer;
+    uint32_t block;
+    const uint8_t *records;
+} fg_qsa_page;
+
+typedef struct fg_qsa_page_batch {
+    uint8_t source_rank;
+    uint8_t destination_rank;
+    uint32_t batch_id;
+    uint16_t page_count;
+    const fg_qsa_page *pages;
+} fg_qsa_page_batch;
+
+typedef struct fg_qsa_page_barrier {
+    uint8_t source_rank;
+    uint8_t destination_rank;
+    uint32_t batch_id;
+} fg_qsa_page_barrier;
+
 typedef struct fg_output_work {
     uint8_t source_rank;
     uint8_t destination_rank;
@@ -327,6 +422,55 @@ fg_status fg_layer_result_encode(uint8_t output[FG_LAYER_RESULT_BYTES],const fg_
                                  fg_error *err);
 fg_status fg_layer_result_decode(fg_layer_result *result,const uint8_t *payload,uint32_t bytes,
                                  fg_error *err);
+fg_status fg_qsa_block_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                   uint16_t protocol_version,const fg_qsa_block_work *work,
+                                   fg_error *err);
+fg_status fg_qsa_block_work_decode(fg_qsa_block_work *work,uint16_t protocol_version,
+                                   float *hidden_storage,uint64_t hidden_capacity_values,
+                                   const uint8_t *payload,uint32_t bytes,fg_error *err);
+fg_status fg_qsa_block_result_encode(uint8_t output[FG_QSA_BLOCK_RESULT_BYTES],
+                                     const fg_qsa_block_result *result,fg_error *err);
+fg_status fg_qsa_block_result_decode(fg_qsa_block_result *result,float *hidden_storage,
+                                     uint64_t hidden_capacity_values,const uint8_t *payload,
+                                     uint32_t bytes,fg_error *err);
+fg_status fg_qsa_block_prefill_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                           uint16_t protocol_version,
+                                           const fg_qsa_block_prefill_work *work,fg_error *err);
+fg_status fg_qsa_block_prefill_work_decode(fg_qsa_block_prefill_work *work,
+                                           uint16_t protocol_version,uint32_t *position_storage,
+                                           uint32_t position_capacity,float *hidden_storage,
+                                           uint64_t hidden_capacity_values,
+                                           const uint8_t *payload,uint32_t bytes,fg_error *err);
+fg_status fg_qsa_block_prefill_result_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                             const fg_qsa_block_prefill_result *result,
+                                             fg_error *err);
+fg_status fg_qsa_block_prefill_result_decode(fg_qsa_block_prefill_result *result,
+                                             float *hidden_storage,
+                                             uint64_t hidden_capacity_values,
+                                             const uint8_t *payload,uint32_t bytes,
+                                             fg_error *err);
+fg_status fg_qsa_completed_page_range(uint32_t first_token,uint32_t token_count,
+                                      uint32_t *first_block,uint32_t *block_count,
+                                      fg_error *err);
+fg_status fg_qsa_page_append_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                    const fg_qsa_page_batch *batch,fg_error *err);
+fg_status fg_qsa_page_append_decode(fg_qsa_page_batch *batch,fg_qsa_page *page_storage,
+                                    uint32_t page_capacity,const uint8_t *payload,
+                                    uint32_t bytes,fg_error *err);
+fg_status fg_qsa_page_fetch_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                   const fg_qsa_page_batch *batch,fg_error *err);
+fg_status fg_qsa_page_fetch_decode(fg_qsa_page_batch *batch,fg_qsa_page *page_storage,
+                                   uint32_t page_capacity,const uint8_t *payload,
+                                   uint32_t bytes,fg_error *err);
+fg_status fg_qsa_page_result_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                    const fg_qsa_page_batch *batch,fg_error *err);
+fg_status fg_qsa_page_result_decode(fg_qsa_page_batch *batch,fg_qsa_page *page_storage,
+                                    uint32_t page_capacity,const uint8_t *payload,
+                                    uint32_t bytes,fg_error *err);
+fg_status fg_qsa_page_barrier_encode(uint8_t output[FG_QSA_PAGE_BARRIER_BYTES],
+                                     const fg_qsa_page_barrier *barrier,fg_error *err);
+fg_status fg_qsa_page_barrier_decode(fg_qsa_page_barrier *barrier,
+                                     const uint8_t *payload,uint32_t bytes,fg_error *err);
 fg_status fg_output_work_encode(uint8_t output[FG_OUTPUT_WORK_BYTES],const fg_output_work *work,
                                 fg_error *err);
 fg_status fg_output_work_decode(fg_output_work *work,const uint8_t *payload,uint32_t bytes,

@@ -45,6 +45,48 @@ static fg_status create_decode_graphs(fg_expert_executor *executor,fg_error *err
     return FG_OK;
 }
 
+static uint32_t prefill_pair_id(const fg_prefill_pair *pair){
+    return pair->token_slot*FG_TOP_K+pair->routing_slot;
+}
+
+static void compact_prefill_outputs(const fg_prefill_work *work,float *storage){
+    bool done[FG_PREFILL_MAX_PAIRS]={0};
+    bool referenced[FG_PREFILL_MAX_PAIRS]={0};
+    uint32_t chain[FG_PREFILL_MAX_PAIRS];
+    float temporary[FG_HIDDEN_SIZE],swap[FG_HIDDEN_SIZE];
+    for(uint32_t i=0u;i<work->pair_count;i++){
+        uint32_t source=prefill_pair_id(&work->pairs[i]);
+        if(source<work->pair_count)referenced[source]=true;
+    }
+    for(uint32_t pass=0u;pass<2u;pass++)for(uint32_t start=0u;
+        start<work->pair_count;start++){
+        if(done[start]||(pass==0u&&referenced[start]))continue;
+        uint32_t length=0u,current=start;bool cycle=false;
+        for(;;){
+            chain[length++]=current;
+            uint32_t source=prefill_pair_id(&work->pairs[current]);
+            if(source>=work->pair_count)break;
+            bool repeated=false;
+            for(uint32_t i=0u;i<length;i++)
+                if(chain[i]==source){repeated=true;break;}
+            if(repeated){cycle=true;break;}
+            current=source;
+        }
+        uint32_t source=cycle?chain[0]:
+            prefill_pair_id(&work->pairs[chain[length-1u]]);
+        memcpy(temporary,storage+(uint64_t)source*FG_HIDDEN_SIZE,
+               FG_HIDDEN_SIZE*sizeof(float));
+        for(uint32_t i=length;i>0u;i--){
+            float *destination=storage+
+                (uint64_t)chain[i-1u]*FG_HIDDEN_SIZE;
+            memcpy(swap,destination,FG_HIDDEN_SIZE*sizeof(float));
+            memcpy(destination,temporary,FG_HIDDEN_SIZE*sizeof(float));
+            memcpy(temporary,swap,FG_HIDDEN_SIZE*sizeof(float));
+            done[chain[i-1u]]=true;
+        }
+    }
+}
+
 fg_status fg_expert_decode(fg_expert_executor *executor,const fg_decode_work *work,fg_expert_result *result,fg_error *err){
     if(!executor||!work||!result){fg_error_set(err,FG_ERR_ARGUMENT,"invalid expert decode arguments");return FG_ERR_ARGUMENT;}const fg_manifest *manifest=fg_model_manifest(executor->model);uint32_t rank=fg_model_rank(executor->model);if(work->layer>=FG_LAYER_COUNT||work->destination_rank!=rank||(work->source_rank!=0u&&work->source_rank!=manifest->layer_owner[work->layer])||work->selected_count==0||work->selected_count>FG_TOP_K){fg_error_set(err,FG_ERR_MISMATCH,"expert work does not match rank, owner, or layer");return FG_ERR_MISMATCH;}
     uint32_t schedule[FG_EXPERT_TILES_WORDS];for(uint32_t i=0;i<FG_EXPERT_TILES_WORDS;i++)schedule[i]=UINT32_MAX;bool slots[FG_TOP_K]={0},experts[FG_EXPERT_COUNT]={0};for(uint32_t i=0;i<work->selected_count;i++){uint32_t global=work->expert_ids[i],slot=work->routing_slots[i];if(global>=FG_EXPERT_COUNT||experts[global]||manifest->expert_rank[work->layer][global]!=rank||slot>=FG_TOP_K||slots[slot]){fg_error_set(err,FG_ERR_MISMATCH,"invalid expert work route %u",i);return FG_ERR_MISMATCH;}uint32_t local=local_expert(manifest,work->layer,rank,global);if(local>=FG_EXPERTS_PER_RANK){fg_error_set(err,FG_ERR_MISMATCH,"local expert mapping overflow");return FG_ERR_MISMATCH;}schedule[i*9u]=local;schedule[i*9u+1u]=slot;slots[slot]=true;experts[global]=true;}
@@ -73,6 +115,26 @@ fg_status fg_expert_prefill(fg_expert_executor *executor,const fg_prefill_work *
     if(status==FG_OK)status=fg_vk_moe_kquant(vk,executor->up,up_weight,executor->activation,executor->tiles,up_record->ggml_type,640u,FG_HIDDEN_SIZE,(uint32_t)(up_record->bytes/FG_EXPERTS_PER_RANK),FG_TOP_K,dense_pairs,false,tile_count,err);
     if(status==FG_OK){status=fg_vk_swiglu(vk,executor->mid,executor->gate,executor->up,(uint32_t)((uint64_t)dense_pairs*640u),err);}
     if(status==FG_OK)status=project_down(vk,executor->down,down_weight,executor->tiles,executor->mid,down_record,dense_pairs,tile_count,err);
-    if(status==FG_OK){const float *host=fg_vk_tensor_map(executor->down);memset(result,0,sizeof(*result));result->layer=work->layer;result->source_rank=(uint8_t)rank;result->destination_rank=work->source_rank;result->first_position=work->first_position;result->token_count=work->token_count;result->pair_count=work->pair_count;result->pairs=pair_storage;result->outputs=output_storage;for(uint32_t i=0;i<work->pair_count;i++){uint32_t pair_id=work->pairs[i].token_slot*FG_TOP_K+work->pairs[i].routing_slot;pair_storage[i].token_slot=work->pairs[i].token_slot;pair_storage[i].routing_slot=work->pairs[i].routing_slot;memcpy(output_storage+(uint64_t)i*FG_HIDDEN_SIZE,host+(uint64_t)pair_id*FG_HIDDEN_SIZE,FG_HIDDEN_SIZE*4u);}}
+    if(status==FG_OK){
+        const float *host=fg_vk_tensor_map(executor->down);
+        /* Coordinator aliases down to result storage; compact after submission. */
+        if(host==(const float *)output_storage)
+            compact_prefill_outputs(work,output_storage);
+        else for(uint32_t i=0u;i<work->pair_count;i++){
+            uint32_t pair_id=prefill_pair_id(&work->pairs[i]);
+            memcpy(output_storage+(uint64_t)i*FG_HIDDEN_SIZE,
+                   host+(uint64_t)pair_id*FG_HIDDEN_SIZE,
+                   FG_HIDDEN_SIZE*sizeof(float));
+        }
+        memset(result,0,sizeof(*result));result->layer=work->layer;
+        result->source_rank=(uint8_t)rank;result->destination_rank=work->source_rank;
+        result->first_position=work->first_position;result->token_count=work->token_count;
+        result->pair_count=work->pair_count;result->pairs=pair_storage;
+        result->outputs=output_storage;
+        for(uint32_t i=0u;i<work->pair_count;i++){
+            pair_storage[i].token_slot=work->pairs[i].token_slot;
+            pair_storage[i].routing_slot=work->pairs[i].routing_slot;
+        }
+    }
     free(schedule);free(locals);return status;
 }

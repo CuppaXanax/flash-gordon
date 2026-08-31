@@ -10,6 +10,7 @@ typedef struct fg_pack_options {
     uint32_t source_count;
     const char *router_profile_path;
     const char *expert_map_path;
+    uint32_t runtime_profile;
     bool dry_run;
     bool skip_model_validation; /* Unit-test fixtures only; not exposed by the CLI. */
 } fg_pack_options;

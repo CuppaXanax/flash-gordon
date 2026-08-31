@@ -12,25 +12,27 @@ typedef struct fg_vk_allocation {
     VkBuffer buffer;
     VkDeviceMemory memory;
     void *mapped;
-    uint64_t bytes;
+    uint64_t bytes,allocated_bytes;
     uint32_t references;
 } fg_vk_allocation;
 
-struct fg_vk_tensor {fg_vk_context *context;fg_vk_allocation *allocation;uint64_t offset,bytes;fg_vk_tensor_format format;};
+struct fg_vk_tensor {fg_vk_context *context;fg_vk_allocation *allocation;uint64_t offset,bytes;fg_vk_tensor_format format;bool is_view;};
 typedef struct fg_vk_kernel {const char *file;uint32_t bindings,push_bytes;VkDescriptorSetLayout set_layout;VkPipelineLayout layout;VkPipeline pipeline;} fg_vk_kernel;
 typedef struct fg_vk_profile_dispatch {const char *scope,*name;uint32_t begin_query,end_query;} fg_vk_profile_dispatch;
 
-#define FG_VK_PROFILE_MAX_DISPATCHES 256u
+#define FG_VK_BATCH_MAX_SETS 4096u
+#define FG_VK_PROFILE_MAX_DISPATCHES 4096u
 #define FG_VK_PROFILE_QUERY_COUNT (2u+2u*FG_VK_PROFILE_MAX_DISPATCHES)
 
 struct fg_vk_context {
     VkInstance instance;VkPhysicalDevice physical;VkDevice device;VkQueue queue;uint32_t queue_family;
     VkCommandPool command_pool;VkCommandBuffer command;VkFence fence;VkDescriptorPool descriptor_pool;VkPipelineCache pipeline_cache;
     VkPhysicalDeviceMemoryProperties memory;char device_name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
-    uint32_t batch_depth;uint32_t batch_set_count;VkDescriptorSet batch_sets[256];bool batch_has_dispatch;
+    uint32_t batch_depth;uint32_t batch_set_count;VkDescriptorSet batch_sets[FG_VK_BATCH_MAX_SETS];bool batch_has_dispatch;
     VkQueryPool profile_query_pool;float timestamp_period;uint32_t timestamp_valid_bits;
     bool profile_active,profile_overflow;const char *profile_scope;uint32_t profile_query_count,profile_dispatch_count;
     fg_vk_counters counters;
+    fg_vk_memory_stats memory_stats;
     fg_vk_profile_dispatch profile_dispatches[FG_VK_PROFILE_MAX_DISPATCHES];fg_vk_profile profile;
     fg_vk_kernel quant_q8k,quant_q8,quant_q4,dequant_iq4nl,embedding,embedding_batch,swiglu,silu_scaled,dense,dense_f32,dense_bf16,rms,gr,hc_inject_partial,gr_partial,hc_finalize,gr_write,ple_gate,ple_gate_prefill,ple_conv,ple_conv_prefill,add,gdn_conv,gdn_conv_prefill,gdn_recurrent,gdn_recurrent_algebraic,gdn_recurrent_prefill,qsa_prepare,qsa_prepare_prefill,qsa_index_prepare,qsa_index_prepare_prefill,qsa_record_commit,qsa_record_gather,qsa_score,qsa_attention,topk,moe_q5_1,moe_q5_1_cooked,moe_q8_0,moe_reduce,kquant,kquant_cooked;
     fg_vk_kernel argmax,dense_subgroup,dense_cooked,dense_cooked_r8;
@@ -127,11 +129,11 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
     if(best<0){fg_vk_close(c);fg_error_set(err,FG_ERR_UNAVAILABLE,"no Vulkan compute queue");return FG_ERR_UNAVAILABLE;}c->queue_family=family;VkPhysicalDeviceProperties properties;vkGetPhysicalDeviceProperties(c->physical,&properties);memcpy(c->device_name,properties.deviceName,sizeof(c->device_name));c->timestamp_period=properties.limits.timestampPeriod;vkGetPhysicalDeviceMemoryProperties(c->physical,&c->memory);
     float priority=1.0f;VkDeviceQueueCreateInfo qc={.sType=VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,.queueFamilyIndex=family,.queueCount=1,.pQueuePriorities=&priority};VkDeviceCreateInfo dc={.sType=VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,.queueCreateInfoCount=1,.pQueueCreateInfos=&qc};vr=vkCreateDevice(c->physical,&dc,NULL,&c->device);if(vr!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create Vulkan device",vr);}vkGetDeviceQueue(c->device,family,0,&c->queue);
     VkCommandPoolCreateInfo pc={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,.queueFamilyIndex=family};if((vr=vkCreateCommandPool(c->device,&pc,NULL,&c->command_pool))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create command pool",vr);}VkCommandBufferAllocateInfo ca={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,.commandPool=c->command_pool,.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY,.commandBufferCount=1};if((vr=vkAllocateCommandBuffers(c->device,&ca,&c->command))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"allocate command buffer",vr);}
-    VkFenceCreateInfo fc={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};if((vr=vkCreateFence(c->device,&fc,NULL,&c->fence))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create fence",vr);}VkDescriptorPoolSize ps={.type=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.descriptorCount=512};VkDescriptorPoolCreateInfo dp={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,.flags=VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,.maxSets=64,.poolSizeCount=1,.pPoolSizes=&ps};if((vr=vkCreateDescriptorPool(c->device,&dp,NULL,&c->descriptor_pool))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create descriptor pool",vr);}VkPipelineCacheCreateInfo pci={.sType=VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};if((vr=vkCreatePipelineCache(c->device,&pci,NULL,&c->pipeline_cache))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create pipeline cache",vr);}
+    VkFenceCreateInfo fc={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};if((vr=vkCreateFence(c->device,&fc,NULL,&c->fence))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create fence",vr);}VkDescriptorPoolSize ps={.type=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.descriptorCount=FG_VK_BATCH_MAX_SETS*16u};VkDescriptorPoolCreateInfo dp={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,.flags=VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,.maxSets=FG_VK_BATCH_MAX_SETS,.poolSizeCount=1,.pPoolSizes=&ps};if((vr=vkCreateDescriptorPool(c->device,&dp,NULL,&c->descriptor_pool))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create descriptor pool",vr);}VkPipelineCacheCreateInfo pci={.sType=VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};if((vr=vkCreatePipelineCache(c->device,&pci,NULL,&c->pipeline_cache))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create pipeline cache",vr);}
     c->quant_q8k=(fg_vk_kernel){.file="fg_quantize_q8_k.spv",.bindings=2,.push_bytes=12};c->quant_q8=(fg_vk_kernel){.file="fg_quantize_q8_0.spv",.bindings=2,.push_bytes=12};c->quant_q4=(fg_vk_kernel){.file="fg_quantize_q4_0.spv",.bindings=2,.push_bytes=12};
     c->dequant_iq4nl=(fg_vk_kernel){.file="fg_dequantize_iq4_nl.spv",.bindings=2,.push_bytes=8};c->embedding=(fg_vk_kernel){.file="fg_embedding_q8_0.spv",.bindings=2,.push_bytes=16};c->embedding_batch=(fg_vk_kernel){.file="fg_embedding_q8_0_batch.spv",.bindings=3,.push_bytes=16};c->swiglu=(fg_vk_kernel){.file="fg_swiglu.spv",.bindings=3,.push_bytes=4};c->silu_scaled=(fg_vk_kernel){.file="fg_silu_scaled.spv",.bindings=2,.push_bytes=8};c->dense=(fg_vk_kernel){.file="fg_dense_q8_0_f32.spv",.bindings=3,.push_bytes=20};c->dense_f32=(fg_vk_kernel){.file="fg_dense_f32.spv",.bindings=3,.push_bytes=12};c->dense_bf16=(fg_vk_kernel){.file="fg_dense_bf16_f32.spv",.bindings=3,.push_bytes=12};
     c->rms=(fg_vk_kernel){.file="fg_group_rms_norm.spv",.bindings=3,.push_bytes=16};c->gr=(fg_vk_kernel){.file="fg_gr_mix.spv",.bindings=5,.push_bytes=12};c->hc_inject_partial=(fg_vk_kernel){.file="fg_hc_inject_partial.spv",.bindings=3,.push_bytes=16};c->gr_partial=(fg_vk_kernel){.file="fg_gr_mix_partial.spv",.bindings=5,.push_bytes=16};c->hc_finalize=(fg_vk_kernel){.file="fg_hc_finalize.spv",.bindings=3,.push_bytes=12};c->gr_write=(fg_vk_kernel){.file="fg_gr_write.spv",.bindings=4,.push_bytes=12};c->ple_gate=(fg_vk_kernel){.file="fg_ple_gate.spv",.bindings=4,.push_bytes=0};c->ple_gate_prefill=(fg_vk_kernel){.file="fg_ple_gate_prefill.spv",.bindings=4,.push_bytes=4};c->ple_conv=(fg_vk_kernel){.file="fg_ple_conv_decode.spv",.bindings=5,.push_bytes=0};c->ple_conv_prefill=(fg_vk_kernel){.file="fg_ple_conv_prefill.spv",.bindings=5,.push_bytes=4};c->add=(fg_vk_kernel){.file="fg_add_f32.spv",.bindings=3,.push_bytes=4};c->gdn_conv=(fg_vk_kernel){.file="fg_gdn_conv_decode.spv",.bindings=4,.push_bytes=4};c->gdn_conv_prefill=(fg_vk_kernel){.file="fg_gdn_conv_prefill.spv",.bindings=4,.push_bytes=8};c->gdn_recurrent=(fg_vk_kernel){.file="fg_gdn_recurrent_decode.spv",.bindings=9,.push_bytes=16};c->gdn_recurrent_algebraic=(fg_vk_kernel){.file="fg_gdn_recurrent_algebraic.spv",.bindings=9,.push_bytes=16};c->gdn_recurrent_prefill=(fg_vk_kernel){.file="fg_gdn_recurrent_prefill.spv",.bindings=9,.push_bytes=20};
-    c->qsa_prepare=(fg_vk_kernel){.file="fg_qsa_prepare.spv",.bindings=8,.push_bytes=0};c->qsa_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_prepare_prefill.spv",.bindings=8,.push_bytes=4};c->qsa_index_prepare=(fg_vk_kernel){.file="fg_qsa_index_prepare.spv",.bindings=4,.push_bytes=0};c->qsa_index_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_index_prepare_prefill.spv",.bindings=4,.push_bytes=4};c->qsa_record_commit=(fg_vk_kernel){.file="fg_qsa_record_commit.spv",.bindings=6,.push_bytes=12};c->qsa_record_gather=(fg_vk_kernel){.file="fg_qsa_record_gather.spv",.bindings=3,.push_bytes=20};c->qsa_score=(fg_vk_kernel){.file="fg_qsa_index_score.spv",.bindings=6,.push_bytes=8};c->qsa_attention=(fg_vk_kernel){.file="fg_qsa_attention.spv",.bindings=4,.push_bytes=4};c->topk=(fg_vk_kernel){.file="fg_topk_reduce.spv",.bindings=4,.push_bytes=4};
+    c->qsa_prepare=(fg_vk_kernel){.file="fg_qsa_prepare.spv",.bindings=8,.push_bytes=0};c->qsa_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_prepare_prefill.spv",.bindings=8,.push_bytes=4};c->qsa_index_prepare=(fg_vk_kernel){.file="fg_qsa_index_prepare.spv",.bindings=4,.push_bytes=0};c->qsa_index_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_index_prepare_prefill.spv",.bindings=4,.push_bytes=4};c->qsa_record_commit=(fg_vk_kernel){.file="fg_qsa_record_commit.spv",.bindings=6,.push_bytes=24};c->qsa_record_gather=(fg_vk_kernel){.file="fg_qsa_record_gather.spv",.bindings=3,.push_bytes=20};c->qsa_score=(fg_vk_kernel){.file="fg_qsa_index_score.spv",.bindings=6,.push_bytes=12};c->qsa_attention=(fg_vk_kernel){.file="fg_qsa_attention.spv",.bindings=4,.push_bytes=4};c->topk=(fg_vk_kernel){.file="fg_topk_reduce.spv",.bindings=4,.push_bytes=4};
     c->argmax=(fg_vk_kernel){.file="fg_argmax_reduce.spv",.bindings=4,.push_bytes=4};
     c->dense_subgroup=(fg_vk_kernel){.file="fg_dense_q8_0_subgroup.spv",.bindings=3,.push_bytes=20};
     c->dense_cooked=(fg_vk_kernel){.file="fg_dense_q8_0_cooked.spv",.bindings=3,.push_bytes=20};
@@ -152,21 +154,46 @@ fg_status fg_vk_profile_set_scope(fg_vk_context *c,const char *scope,fg_error *e
 fg_status fg_vk_profile_end(fg_vk_context *c,fg_vk_profile *profile,fg_error *err){if(!c||!profile||c->batch_depth||!c->profile_active){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan profile end");return FG_ERR_ARGUMENT;}*profile=c->profile;c->profile_active=false;return FG_OK;}
 bool fg_vk_profile_active(const fg_vk_context *c){return c&&c->profile_active;}
 void fg_vk_get_counters(const fg_vk_context *c,fg_vk_counters *counters){if(!counters)return;if(c)*counters=c->counters;else memset(counters,0,sizeof(*counters));}
+void fg_vk_get_memory_stats(const fg_vk_context *c,fg_vk_memory_stats *stats){if(!stats)return;if(c)*stats=c->memory_stats;else memset(stats,0,sizeof(*stats));}
 
 fg_status fg_vk_tensor_create(fg_vk_context *c,uint64_t bytes,fg_vk_tensor **out,fg_error *err){
     if(!c||!out||bytes==0){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan tensor allocation");return FG_ERR_ARGUMENT;}*out=NULL;fg_vk_allocation *a=calloc(1,sizeof(*a));fg_vk_tensor *t=calloc(1,sizeof(*t));if(!a||!t){free(a);free(t);fg_error_set(err,FG_ERR_OOM,"allocate Vulkan tensor metadata");return FG_ERR_OOM;}
-    VkBufferCreateInfo bc={.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,.size=bytes,.usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT,.sharingMode=VK_SHARING_MODE_EXCLUSIVE};VkResult vr=vkCreateBuffer(c->device,&bc,NULL,&a->buffer);if(vr!=VK_SUCCESS){free(a);free(t);return vk_error(err,"create Vulkan tensor buffer",vr);}VkMemoryRequirements requirements;vkGetBufferMemoryRequirements(c->device,a->buffer,&requirements);uint32_t type=UINT32_MAX;VkMemoryPropertyFlags wanted=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;for(uint32_t i=0;i<c->memory.memoryTypeCount;i++)if((requirements.memoryTypeBits&(1u<<i))&&(c->memory.memoryTypes[i].propertyFlags&wanted)==wanted){if(type==UINT32_MAX||c->memory.memoryTypes[i].propertyFlags&VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)type=i;}if(type==UINT32_MAX){vkDestroyBuffer(c->device,a->buffer,NULL);free(a);free(t);fg_error_set(err,FG_ERR_UNAVAILABLE,"Vulkan device has no coherent host-visible memory");return FG_ERR_UNAVAILABLE;}VkMemoryAllocateInfo ma={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,.allocationSize=requirements.size,.memoryTypeIndex=type};if((vr=vkAllocateMemory(c->device,&ma,NULL,&a->memory))!=VK_SUCCESS){vkDestroyBuffer(c->device,a->buffer,NULL);free(a);free(t);return vk_error(err,"allocate Vulkan tensor memory",vr);}if((vr=vkBindBufferMemory(c->device,a->buffer,a->memory,0))!=VK_SUCCESS||(vr=vkMapMemory(c->device,a->memory,0,VK_WHOLE_SIZE,0,&a->mapped))!=VK_SUCCESS){if(a->mapped)vkUnmapMemory(c->device,a->memory);vkFreeMemory(c->device,a->memory,NULL);vkDestroyBuffer(c->device,a->buffer,NULL);free(a);free(t);return vk_error(err,"map Vulkan tensor memory",vr);}a->bytes=bytes;a->references=1;t->context=c;t->allocation=a;t->bytes=bytes;*out=t;return FG_OK;
+    VkBufferCreateInfo bc={.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,.size=bytes,.usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT,.sharingMode=VK_SHARING_MODE_EXCLUSIVE};VkResult vr=vkCreateBuffer(c->device,&bc,NULL,&a->buffer);if(vr!=VK_SUCCESS){free(a);free(t);return vk_error(err,"create Vulkan tensor buffer",vr);}VkMemoryRequirements requirements;vkGetBufferMemoryRequirements(c->device,a->buffer,&requirements);uint32_t type=UINT32_MAX;VkMemoryPropertyFlags wanted=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;for(uint32_t i=0;i<c->memory.memoryTypeCount;i++)if((requirements.memoryTypeBits&(1u<<i))&&(c->memory.memoryTypes[i].propertyFlags&wanted)==wanted){if(type==UINT32_MAX||c->memory.memoryTypes[i].propertyFlags&VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)type=i;}if(type==UINT32_MAX){vkDestroyBuffer(c->device,a->buffer,NULL);free(a);free(t);fg_error_set(err,FG_ERR_UNAVAILABLE,"Vulkan device has no coherent host-visible memory");return FG_ERR_UNAVAILABLE;}VkMemoryAllocateInfo ma={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,.allocationSize=requirements.size,.memoryTypeIndex=type};if((vr=vkAllocateMemory(c->device,&ma,NULL,&a->memory))!=VK_SUCCESS){vkDestroyBuffer(c->device,a->buffer,NULL);free(a);free(t);return vk_error(err,"allocate Vulkan tensor memory",vr);}if((vr=vkBindBufferMemory(c->device,a->buffer,a->memory,0))!=VK_SUCCESS||(vr=vkMapMemory(c->device,a->memory,0,VK_WHOLE_SIZE,0,&a->mapped))!=VK_SUCCESS){if(a->mapped)vkUnmapMemory(c->device,a->memory);vkFreeMemory(c->device,a->memory,NULL);vkDestroyBuffer(c->device,a->buffer,NULL);free(a);free(t);return vk_error(err,"map Vulkan tensor memory",vr);}a->bytes=bytes;a->allocated_bytes=requirements.size;a->references=1;t->context=c;t->allocation=a;t->bytes=bytes;c->memory_stats.requested_live_bytes+=bytes;c->memory_stats.allocated_live_bytes+=requirements.size;c->memory_stats.allocation_count++;c->memory_stats.live_allocations++;if(c->memory_stats.requested_live_bytes>c->memory_stats.requested_peak_bytes)c->memory_stats.requested_peak_bytes=c->memory_stats.requested_live_bytes;if(c->memory_stats.allocated_live_bytes>c->memory_stats.allocated_peak_bytes)c->memory_stats.allocated_peak_bytes=c->memory_stats.allocated_live_bytes;*out=t;return FG_OK;
 }
 
-fg_status fg_vk_tensor_view(fg_vk_tensor *base,uint64_t offset,uint64_t bytes,fg_vk_tensor **out,fg_error *err){if(!out||!tensor_range(base,offset,bytes)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan tensor view");return FG_ERR_ARGUMENT;}fg_vk_tensor *view=calloc(1,sizeof(*view));if(!view){fg_error_set(err,FG_ERR_OOM,"allocate Vulkan tensor view");return FG_ERR_OOM;}base->allocation->references++;view->context=base->context;view->allocation=base->allocation;view->offset=base->offset+offset;view->bytes=bytes;view->format=base->format;*out=view;return FG_OK;}
-void fg_vk_tensor_destroy(fg_vk_tensor *t){if(!t)return;fg_vk_allocation *a=t->allocation;if(--a->references==0){vkUnmapMemory(t->context->device,a->memory);vkFreeMemory(t->context->device,a->memory,NULL);vkDestroyBuffer(t->context->device,a->buffer,NULL);free(a);}free(t);}
-uint64_t fg_vk_tensor_bytes(const fg_vk_tensor *t){return t?t->bytes:0;}void *fg_vk_tensor_map(fg_vk_tensor *t){return t?(uint8_t *)t->allocation->mapped+t->offset:NULL;}void fg_vk_tensor_set_format(fg_vk_tensor *t,fg_vk_tensor_format format){if(t)t->format=format;}fg_vk_tensor_format fg_vk_tensor_get_format(const fg_vk_tensor *t){return t?t->format:FG_VK_TENSOR_FORMAT_DEFAULT;}
+fg_status fg_vk_tensor_view(fg_vk_tensor *base,uint64_t offset,uint64_t bytes,fg_vk_tensor **out,fg_error *err){if(!out||!tensor_range(base,offset,bytes)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan tensor view");return FG_ERR_ARGUMENT;}fg_vk_tensor *view=calloc(1,sizeof(*view));if(!view){fg_error_set(err,FG_ERR_OOM,"allocate Vulkan tensor view");return FG_ERR_OOM;}base->allocation->references++;view->context=base->context;view->allocation=base->allocation;view->offset=base->offset+offset;view->bytes=bytes;view->format=base->format;view->is_view=true;*out=view;return FG_OK;}
+fg_status fg_vk_tensor_view_rebind(fg_vk_tensor *view,fg_vk_tensor *base,uint64_t offset,uint64_t bytes,fg_error *err){
+    if(!view||!view->is_view||!tensor_range(base,offset,bytes)||view->context!=base->context||view->allocation!=base->allocation){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan tensor view rebind");return FG_ERR_ARGUMENT;
+    }
+    view->offset=base->offset+offset;view->bytes=bytes;view->format=base->format;return FG_OK;
+}
+void fg_vk_tensor_destroy(fg_vk_tensor *t){if(!t)return;fg_vk_allocation *a=t->allocation;if(--a->references==0){t->context->memory_stats.requested_live_bytes-=a->bytes;t->context->memory_stats.allocated_live_bytes-=a->allocated_bytes;t->context->memory_stats.live_allocations--;vkUnmapMemory(t->context->device,a->memory);vkFreeMemory(t->context->device,a->memory,NULL);vkDestroyBuffer(t->context->device,a->buffer,NULL);free(a);}free(t);}
+uint64_t fg_vk_tensor_bytes(const fg_vk_tensor *t){return t?t->bytes:0;}uint64_t fg_vk_tensor_allocation_bytes(const fg_vk_tensor *t){return t?t->allocation->allocated_bytes:0;}void *fg_vk_tensor_map(fg_vk_tensor *t){return t?(uint8_t *)t->allocation->mapped+t->offset:NULL;}const void *fg_vk_tensor_const_map(const fg_vk_tensor *t){return t?(const uint8_t *)t->allocation->mapped+t->offset:NULL;}void fg_vk_tensor_set_format(fg_vk_tensor *t,fg_vk_tensor_format format){if(t)t->format=format;}fg_vk_tensor_format fg_vk_tensor_get_format(const fg_vk_tensor *t){return t?t->format:FG_VK_TENSOR_FORMAT_DEFAULT;}
+fg_status fg_vk_tensor_residency_canary(fg_vk_tensor *t,uint64_t *touched_bytes,fg_error *err){
+    if(touched_bytes)*touched_bytes=0;
+    if(!t||t->is_view||t->context->batch_depth){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan residency canary tensor");
+        return FG_ERR_ARGUMENT;
+    }
+    t->context->counters.residency_canary_calls++;
+    const uint64_t stride=4096u,count=(t->bytes+stride-1u)/stride;
+    if(count>SIZE_MAX){fg_error_set(err,FG_ERR_LIMIT,"Vulkan canary exceeds address space");return FG_ERR_LIMIT;}
+    uint8_t *saved=malloc((size_t)count);
+    if(!saved){fg_error_set(err,FG_ERR_OOM,"allocate Vulkan residency canary");return FG_ERR_OOM;}
+    volatile uint8_t *mapped=t->allocation->mapped;
+    for(uint64_t i=0;i<count;i++){uint64_t offset=i*stride;saved[i]=mapped[offset];mapped[offset]=(uint8_t)(saved[i]^0xa5u);}
+    fg_status status=FG_OK;
+    for(uint64_t i=0;i<count;i++){uint64_t offset=i*stride;if(mapped[offset]!=(uint8_t)(saved[i]^0xa5u)){fg_error_set(err,FG_ERR_MISMATCH,"Vulkan residency canary verification failed at page %llu",(unsigned long long)i);status=FG_ERR_MISMATCH;break;}}
+    for(uint64_t i=0;i<count;i++)mapped[i*stride]=saved[i];
+    free(saved);if(status==FG_OK&&touched_bytes)*touched_bytes=t->bytes;return status;
+}
 fg_status fg_vk_tensor_write(fg_vk_tensor *t,uint64_t offset,const void *data,uint64_t bytes,fg_error *err){if(!data||!tensor_range(t,offset,bytes)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan tensor write");return FG_ERR_ARGUMENT;}memcpy((uint8_t *)t->allocation->mapped+t->offset+offset,data,(size_t)bytes);return FG_OK;}
 fg_status fg_vk_tensor_read(const fg_vk_tensor *t,uint64_t offset,void *data,uint64_t bytes,fg_error *err){if(!data||!tensor_range(t,offset,bytes)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan tensor read");return FG_ERR_ARGUMENT;}memcpy(data,(const uint8_t *)t->allocation->mapped+t->offset+offset,(size_t)bytes);return FG_OK;}
 
 static fg_status dispatch_impl(fg_vk_context *c,fg_vk_kernel *kernel,const fg_vk_tensor *const *tensors,const void *push,uint32_t gx,uint32_t gy,uint32_t gz,bool batch_barrier,fg_error *err){
-    fg_status status=create_kernel(c,kernel,err);if(status!=FG_OK)return status;VkDescriptorSetAllocateInfo da={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,.descriptorPool=c->descriptor_pool,.descriptorSetCount=1,.pSetLayouts=&kernel->set_layout};VkDescriptorSet set;VkResult vr=vkAllocateDescriptorSets(c->device,&da,&set);if(vr!=VK_SUCCESS)return vk_error(err,"allocate descriptor set",vr);VkDescriptorBufferInfo info[16];VkWriteDescriptorSet write[16];for(uint32_t i=0;i<kernel->bindings;i++){info[i]=(VkDescriptorBufferInfo){.buffer=tensors[i]->allocation->buffer,.offset=tensors[i]->offset,.range=tensors[i]->bytes};write[i]=(VkWriteDescriptorSet){.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=set,.dstBinding=i,.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.pBufferInfo=&info[i]};}vkUpdateDescriptorSets(c->device,kernel->bindings,write,0,NULL);
-    if(c->batch_depth){if(batch_barrier&&c->batch_has_dispatch){VkMemoryBarrier bar={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT};vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&bar,0,NULL,0,NULL);}vkCmdBindPipeline(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->pipeline);vkCmdBindDescriptorSets(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->layout,0,1,&set,0,NULL);if(kernel->push_bytes)vkCmdPushConstants(c->command,kernel->layout,VK_SHADER_STAGE_COMPUTE_BIT,0,kernel->push_bytes,push);bool profiled=profile_dispatch_begin(c,kernel);vkCmdDispatch(c->command,gx,gy,gz);c->counters.dispatches++;c->batch_has_dispatch=true;profile_dispatch_end(c,profiled);if(c->batch_set_count<256)c->batch_sets[c->batch_set_count++]=set;return FG_OK;}
+    fg_status status=create_kernel(c,kernel,err);if(status!=FG_OK)return status;if(c->batch_depth&&c->batch_set_count>=FG_VK_BATCH_MAX_SETS){fg_error_set(err,FG_ERR_LIMIT,"Vulkan batch exceeded %u descriptor sets",FG_VK_BATCH_MAX_SETS);return FG_ERR_LIMIT;}VkDescriptorSetAllocateInfo da={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,.descriptorPool=c->descriptor_pool,.descriptorSetCount=1,.pSetLayouts=&kernel->set_layout};VkDescriptorSet set;VkResult vr=vkAllocateDescriptorSets(c->device,&da,&set);if(vr!=VK_SUCCESS)return vk_error(err,"allocate descriptor set",vr);VkDescriptorBufferInfo info[16];VkWriteDescriptorSet write[16];for(uint32_t i=0;i<kernel->bindings;i++){info[i]=(VkDescriptorBufferInfo){.buffer=tensors[i]->allocation->buffer,.offset=tensors[i]->offset,.range=tensors[i]->bytes};write[i]=(VkWriteDescriptorSet){.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=set,.dstBinding=i,.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.pBufferInfo=&info[i]};}vkUpdateDescriptorSets(c->device,kernel->bindings,write,0,NULL);
+    if(c->batch_depth){if(batch_barrier&&c->batch_has_dispatch){VkMemoryBarrier bar={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT};vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&bar,0,NULL,0,NULL);}vkCmdBindPipeline(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->pipeline);vkCmdBindDescriptorSets(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->layout,0,1,&set,0,NULL);if(kernel->push_bytes)vkCmdPushConstants(c->command,kernel->layout,VK_SHADER_STAGE_COMPUTE_BIT,0,kernel->push_bytes,push);bool profiled=profile_dispatch_begin(c,kernel);vkCmdDispatch(c->command,gx,gy,gz);c->counters.dispatches++;c->batch_has_dispatch=true;profile_dispatch_end(c,profiled);c->batch_sets[c->batch_set_count++]=set;return FG_OK;}
     vkResetFences(c->device,1,&c->fence);vkResetCommandBuffer(c->command,0);VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};if((vr=vkBeginCommandBuffer(c->command,&begin))!=VK_SUCCESS)return vk_error(err,"begin compute command",vr);profile_command_begin(c);VkMemoryBarrier before={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT,.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT};vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&before,0,NULL,0,NULL);vkCmdBindPipeline(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->pipeline);vkCmdBindDescriptorSets(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->layout,0,1,&set,0,NULL);if(kernel->push_bytes)vkCmdPushConstants(c->command,kernel->layout,VK_SHADER_STAGE_COMPUTE_BIT,0,kernel->push_bytes,push);bool profiled=profile_dispatch_begin(c,kernel);vkCmdDispatch(c->command,gx,gy,gz);c->counters.dispatches++;profile_dispatch_end(c,profiled);VkMemoryBarrier after={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&after,0,NULL,0,NULL);profile_command_end(c);if((vr=vkEndCommandBuffer(c->command))!=VK_SUCCESS)return vk_error(err,"end compute command",vr);VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&c->command};if((vr=vkQueueSubmit(c->queue,1,&submit,c->fence))!=VK_SUCCESS)return vk_error(err,"submit compute command",vr);c->counters.submissions++;if((vr=vkWaitForFences(c->device,1,&c->fence,VK_TRUE,UINT64_MAX))!=VK_SUCCESS)return vk_error(err,"wait for compute command",vr);status=profile_resolve(c,err);vkFreeDescriptorSets(c->device,c->descriptor_pool,1,&set);return status;
 }
 
@@ -191,13 +218,20 @@ fg_status fg_vk_end(fg_vk_context *c,fg_error *err){
     VkMemoryBarrier after={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};
     vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&after,0,NULL,0,NULL);
     profile_command_end(c);
-    VkResult vr;if((vr=vkEndCommandBuffer(c->command))!=VK_SUCCESS){c->batch_depth=0;return vk_error(err,"end batch command",vr);}
+    VkResult vr;if((vr=vkEndCommandBuffer(c->command))!=VK_SUCCESS){fg_status status=vk_error(err,"end batch command",vr);fg_error ignored={0};fg_vk_abort(c,&ignored);return status;}
     VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&c->command};
-    if((vr=vkQueueSubmit(c->queue,1,&submit,c->fence))!=VK_SUCCESS){c->batch_depth=0;return vk_error(err,"submit batch command",vr);}c->counters.submissions++;
-    if((vr=vkWaitForFences(c->device,1,&c->fence,VK_TRUE,UINT64_MAX))!=VK_SUCCESS){c->batch_depth=0;return vk_error(err,"wait for batch command",vr);}
+    if((vr=vkQueueSubmit(c->queue,1,&submit,c->fence))!=VK_SUCCESS){fg_status status=vk_error(err,"submit batch command",vr);fg_error ignored={0};fg_vk_abort(c,&ignored);return status;}c->counters.submissions++;
+    if((vr=vkWaitForFences(c->device,1,&c->fence,VK_TRUE,UINT64_MAX))!=VK_SUCCESS){fg_status status=vk_error(err,"wait for batch command",vr);vkDeviceWaitIdle(c->device);for(uint32_t i=0;i<c->batch_set_count;i++)vkFreeDescriptorSets(c->device,c->descriptor_pool,1,&c->batch_sets[i]);c->batch_depth=0;c->batch_set_count=0;c->batch_has_dispatch=false;return status;}
     fg_status status=profile_resolve(c,err);
     for(uint32_t i=0;i<c->batch_set_count;i++)vkFreeDescriptorSets(c->device,c->descriptor_pool,1,&c->batch_sets[i]);
     c->batch_depth=0;c->batch_set_count=0;c->batch_has_dispatch=false;return status;
+}
+fg_status fg_vk_abort(fg_vk_context *c,fg_error *err){
+    if(!c||!c->batch_depth){fg_error_set(err,FG_ERR_ARGUMENT,"not in batch");return FG_ERR_ARGUMENT;}
+    VkResult vr=vkResetCommandBuffer(c->command,0);
+    for(uint32_t i=0;i<c->batch_set_count;i++)vkFreeDescriptorSets(c->device,c->descriptor_pool,1,&c->batch_sets[i]);
+    c->batch_depth=0;c->batch_set_count=0;c->batch_has_dispatch=false;
+    return vr==VK_SUCCESS?FG_OK:vk_error(err,"abort batch command",vr);
 }
 bool fg_vk_batch_active(const fg_vk_context *c){return c&&c->batch_depth>0;}
 
@@ -212,6 +246,22 @@ static fg_status expert_graph_dispatch(fg_vk_expert_graph *graph,fg_vk_kernel *k
     vkCmdBindPipeline(graph->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->pipeline);vkCmdBindDescriptorSets(graph->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->layout,0,1,&set,0,NULL);if(kernel->push_bytes)vkCmdPushConstants(graph->command,kernel->layout,VK_SHADER_STAGE_COMPUTE_BIT,0,kernel->push_bytes,push);vkCmdDispatch(graph->command,gx,gy,gz);graph->dispatches++;return FG_OK;
 }
 
+static bool tensor_ranges_overlap(const fg_vk_tensor *a,const fg_vk_tensor *b){
+    if(!a||!b||a->allocation!=b->allocation)return false;
+    return a->offset<b->offset+b->bytes&&b->offset<a->offset+a->bytes;
+}
+
+static fg_status validate_expert_graph_scratch(fg_vk_tensor *const scratch[8],
+                                                fg_error *err){
+    for(uint32_t i=0u;i<8u;i++)for(uint32_t j=i+1u;j<8u;j++)
+        if(tensor_ranges_overlap(scratch[i],scratch[j])){
+            fg_error_set(err,FG_ERR_MISMATCH,
+                         "expert graph scratch ranges %u and %u overlap",i,j);
+            return FG_ERR_MISMATCH;
+        }
+    return FG_OK;
+}
+
 void fg_vk_expert_graph_destroy(fg_vk_expert_graph *graph){if(!graph)return;fg_vk_context *c=graph->context;if(c&&graph->command)vkFreeCommandBuffers(c->device,c->command_pool,1,&graph->command);if(c&&graph->descriptor_pool)vkDestroyDescriptorPool(c->device,graph->descriptor_pool,NULL);free(graph);}
 
 fg_status fg_vk_expert_graph_create(fg_vk_context *c,fg_vk_expert_graph **out,fg_vk_tensor *activation,fg_vk_tensor *tiles,fg_vk_tensor *gates,fg_vk_tensor *gate,fg_vk_tensor *up,fg_vk_tensor *mid,fg_vk_tensor *down,fg_vk_tensor *reduced,const fg_vk_tensor *gate_weights,const fg_vk_tensor *up_weights,const fg_vk_tensor *down_weights,uint32_t gate_type,uint32_t up_type,uint32_t down_type,uint32_t hidden_width,uint32_t mid_width,uint32_t gate_expert_stride,uint32_t up_expert_stride,uint32_t down_expert_stride,uint32_t weight_experts,uint32_t slots,fg_error *err){
@@ -219,6 +269,9 @@ fg_status fg_vk_expert_graph_create(fg_vk_context *c,fg_vk_expert_graph **out,fg
     uint32_t gate_block=gate_type==12u?144u:gate_type==13u?176u:0u,up_block=up_type==12u?144u:up_type==13u?176u:0u,down_block=down_type==7u?24u:down_type==8u?34u:0u;uint64_t gate_row=(uint64_t)(hidden_width/256u)*gate_block,up_row=(uint64_t)(hidden_width/256u)*up_block,down_row=(uint64_t)(mid_width/32u)*down_block,q8_bytes=(uint64_t)(hidden_width/256u)*296u;
     bool gate_cooked=gate_weights&&gate_weights->format==FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED,up_cooked=up_weights&&up_weights->format==FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED,down_cooked=down_weights&&down_weights->format==FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED;
     if(!out||!c||c->batch_depth||!gate_block||!up_block||!down_block||!hidden_width||hidden_width%256u||!mid_width||mid_width%32u||!weight_experts||!slots||gate_row>UINT32_MAX||up_row>UINT32_MAX||down_row>UINT32_MAX||gate_expert_stride<gate_row*mid_width||up_expert_stride<up_row*mid_width||down_expert_stride<down_row*hidden_width||!tensor_on_context(c,activation)||!tensor_on_context(c,tiles)||!tensor_on_context(c,gates)||!tensor_on_context(c,gate)||!tensor_on_context(c,up)||!tensor_on_context(c,mid)||!tensor_on_context(c,down)||!tensor_on_context(c,reduced)||!tensor_on_context(c,gate_weights)||!tensor_on_context(c,up_weights)||!tensor_on_context(c,down_weights)||!tensor_range(activation,0,q8_bytes)||!tensor_range(tiles,0,(uint64_t)slots*9u*4u)||!tensor_range(gates,0,(uint64_t)slots*4u)||!tensor_range(gate,0,(uint64_t)slots*mid_width*4u)||!tensor_range(up,0,(uint64_t)slots*mid_width*4u)||!tensor_range(mid,0,(uint64_t)slots*mid_width*4u)||!tensor_range(down,0,(uint64_t)slots*hidden_width*4u)||!tensor_range(reduced,0,(uint64_t)hidden_width*4u)||!tensor_range(gate_weights,0,(uint64_t)weight_experts*gate_expert_stride)||!tensor_range(up_weights,0,(uint64_t)weight_experts*up_expert_stride)||!tensor_range(down_weights,0,(uint64_t)weight_experts*down_expert_stride)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid fixed expert graph");return FG_ERR_ARGUMENT;}
+    fg_vk_tensor *scratch[]={activation,tiles,gates,gate,up,mid,down,reduced};
+    fg_status scratch_status=validate_expert_graph_scratch(scratch,err);
+    if(scratch_status!=FG_OK)return scratch_status;
     fg_vk_expert_graph *graph=calloc(1,sizeof(*graph));if(!graph){fg_error_set(err,FG_ERR_OOM,"allocate fixed expert graph");return FG_ERR_OOM;}graph->context=c;
     VkDescriptorPoolSize pool_size={.type=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.descriptorCount=19u};VkDescriptorPoolCreateInfo pool_create={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,.maxSets=5u,.poolSizeCount=1u,.pPoolSizes=&pool_size};VkResult vr=vkCreateDescriptorPool(c->device,&pool_create,NULL,&graph->descriptor_pool);if(vr!=VK_SUCCESS){fg_vk_expert_graph_destroy(graph);return vk_error(err,"create expert graph descriptor pool",vr);}
     VkCommandBufferAllocateInfo command_allocate={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,.commandPool=c->command_pool,.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY,.commandBufferCount=1u};if((vr=vkAllocateCommandBuffers(c->device,&command_allocate,&graph->command))!=VK_SUCCESS){fg_vk_expert_graph_destroy(graph);return vk_error(err,"allocate expert graph command",vr);}VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};if((vr=vkBeginCommandBuffer(graph->command,&begin))!=VK_SUCCESS){fg_vk_expert_graph_destroy(graph);return vk_error(err,"begin expert graph command",vr);}
@@ -482,9 +535,100 @@ fg_status fg_vk_qsa_prepare(fg_vk_context *c,fg_vk_tensor *query,fg_vk_tensor *g
 fg_status fg_vk_qsa_prepare_prefill(fg_vk_context *c,fg_vk_tensor *query,fg_vk_tensor *gate,fg_vk_tensor *key,const fg_vk_tensor *raw_qg,const fg_vk_tensor *raw_key,const fg_vk_tensor *qnorm,const fg_vk_tensor *knorm,const fg_vk_tensor *positions,uint32_t tokens,fg_error *err){if(!c||!tokens||!tensor_range(raw_qg,0,(uint64_t)tokens*12288u*4u)||!tensor_range(raw_key,0,(uint64_t)tokens*512u*4u)||!tensor_range(qnorm,0,256u*4u)||!tensor_range(knorm,0,256u*4u)||!tensor_range(positions,0,(uint64_t)tokens*3u*4u)||!tensor_range(query,0,(uint64_t)tokens*6144u*4u)||!tensor_range(gate,0,(uint64_t)tokens*6144u*4u)||!tensor_range(key,0,(uint64_t)tokens*512u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA prepare prefill dispatch");return FG_ERR_ARGUMENT;}const fg_vk_tensor *bindings[]={raw_qg,raw_key,qnorm,knorm,positions,query,gate,key};return dispatch(c,&c->qsa_prepare_prefill,bindings,&tokens,tokens*24u,1,1,err);}
 fg_status fg_vk_qsa_index_prepare(fg_vk_context *c,fg_vk_tensor *query,const fg_vk_tensor *raw_query,const fg_vk_tensor *norm,const fg_vk_tensor *position,fg_error *err){if(!c||!tensor_range(raw_query,0,512u*4u)||!tensor_range(norm,0,128u*4u)||!tensor_range(position,0,3u*4u)||!tensor_range(query,0,512u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA index prepare dispatch");return FG_ERR_ARGUMENT;}const fg_vk_tensor *bindings[]={raw_query,norm,position,query};return dispatch(c,&c->qsa_index_prepare,bindings,NULL,4u,1,1,err);}
 fg_status fg_vk_qsa_index_prepare_prefill(fg_vk_context *c,fg_vk_tensor *query,const fg_vk_tensor *raw_query,const fg_vk_tensor *norm,const fg_vk_tensor *positions,uint32_t tokens,fg_error *err){if(!c||!tokens||!tensor_range(raw_query,0,(uint64_t)tokens*512u*4u)||!tensor_range(norm,0,128u*4u)||!tensor_range(positions,0,(uint64_t)tokens*3u*4u)||!tensor_range(query,0,(uint64_t)tokens*512u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA index prepare prefill dispatch");return FG_ERR_ARGUMENT;}const fg_vk_tensor *bindings[]={raw_query,norm,positions,query};return dispatch(c,&c->qsa_index_prepare_prefill,bindings,&tokens,tokens*4u,1,1,err);}
-fg_status fg_vk_qsa_record_commit(fg_vk_context *c,fg_vk_tensor *records,fg_vk_tensor *index_history,const fg_vk_tensor *key_q8,const fg_vk_tensor *value_q8,const fg_vk_tensor *index_key_q8,const fg_vk_tensor *position,uint32_t layer_slot,uint32_t token,uint32_t capacity,fg_error *err){uint64_t record_end=((uint64_t)layer_slot*capacity+token+1u)*FG_Q38_QSA_TOKEN_RECORD_BYTES,index_end=((uint64_t)layer_slot*capacity+token+1u)*FG_Q38_QSA_INDEX_KEY_BYTES;if(!c||!capacity||token>=capacity||!tensor_range(key_q8,0,FG_Q38_QSA_KEY_BYTES)||!tensor_range(value_q8,0,FG_Q38_QSA_VALUE_BYTES)||!tensor_range(index_key_q8,0,FG_Q38_QSA_INDEX_KEY_BYTES)||!tensor_range(position,0,FG_Q38_QSA_POSITION_BYTES)||!tensor_range(records,0,record_end)||!tensor_range(index_history,0,index_end)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA record commit");return FG_ERR_ARGUMENT;}struct{uint32_t layer_slot,token,capacity;}push={layer_slot,token,capacity};const fg_vk_tensor *bindings[]={key_q8,value_q8,index_key_q8,position,records,index_history};return dispatch(c,&c->qsa_record_commit,bindings,&push,(FG_Q38_QSA_TOKEN_RECORD_BYTES/4u+255u)/256u,1,1,err);}
-fg_status fg_vk_qsa_record_gather(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *records,const fg_vk_tensor *block_ids,uint32_t layer_slot,uint32_t capacity,uint32_t block_count,uint32_t tail_start,uint32_t tail_count,fg_error *err){uint32_t selected=block_count*FG_Q38_QSA_COMPRESS_RATIO+tail_count;uint64_t record_end=(uint64_t)(layer_slot+1u)*capacity*FG_Q38_QSA_TOKEN_RECORD_BYTES;if(!c||!capacity||!block_count||block_count>FG_Q38_INDEX_BUDGET/FG_Q38_QSA_COMPRESS_RATIO||tail_count>=FG_Q38_QSA_COMPRESS_RATIO||tail_start>capacity||tail_count>capacity-tail_start||selected>FG_Q38_INDEX_BUDGET+FG_Q38_QSA_COMPRESS_RATIO-1u||!tensor_range(records,0,record_end)||!tensor_range(block_ids,0,(uint64_t)block_count*4u)||!tensor_range(out,0,(uint64_t)selected*FG_Q38_QSA_TOKEN_RECORD_BYTES)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA record gather");return FG_ERR_ARGUMENT;}struct{uint32_t layer_slot,capacity,block_count,tail_start,tail_count;}push={layer_slot,capacity,block_count,tail_start,tail_count};const fg_vk_tensor *bindings[]={records,block_ids,out};uint64_t words=(uint64_t)selected*(FG_Q38_QSA_TOKEN_RECORD_BYTES/4u);return dispatch(c,&c->qsa_record_gather,bindings,&push,(uint32_t)((words+255u)/256u),1,1,err);}
-fg_status fg_vk_qsa_index_score(fg_vk_context *c,fg_vk_tensor *scores,fg_vk_tensor *ids,const fg_vk_tensor *query,const fg_vk_tensor *keys,const fg_vk_tensor *norm,const fg_vk_tensor *positions,uint32_t tokens,fg_error *err){uint32_t blocks=tokens/4u;if(!c||!blocks||!tensor_range(query,0,512u*4u)||!tensor_range(keys,0,(uint64_t)tokens*136u)||!tensor_range(norm,0,128u*4u)||!tensor_range(positions,0,(uint64_t)tokens*3u*4u)||!tensor_range(scores,0,(uint64_t)blocks*4u)||!tensor_range(ids,0,(uint64_t)blocks*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA index score dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t tokens,blocks;}push={tokens,blocks};const fg_vk_tensor *bindings[]={query,keys,norm,positions,scores,ids};return dispatch(c,&c->qsa_score,bindings,&push,blocks,1,1,err);}
+static fg_status qsa_record_commit_dispatch(
+    fg_vk_context *c,fg_vk_tensor *records,fg_vk_tensor *index_history,
+    const fg_vk_tensor *key_q8,const fg_vk_tensor *value_q8,
+    const fg_vk_tensor *index_key_q8,const fg_vk_tensor *position,
+    uint32_t record_layer_slot,uint32_t index_layer_slot,uint32_t index_token,
+    uint32_t index_capacity,uint32_t hot_slot,
+    uint32_t hot_capacity,fg_error *err){
+    uint64_t record_end=((uint64_t)record_layer_slot*hot_capacity+hot_slot+1u)*
+        FG_Q38_QSA_TOKEN_RECORD_BYTES;
+    uint64_t index_end=((uint64_t)index_layer_slot*index_capacity+index_token+1u)*
+        FG_Q38_QSA_INDEX_KEY_BYTES;
+    if(!c||!index_capacity||!hot_capacity||index_token>=index_capacity||
+       hot_slot>=hot_capacity||!tensor_range(key_q8,0,FG_Q38_QSA_KEY_BYTES)||
+       !tensor_range(value_q8,0,FG_Q38_QSA_VALUE_BYTES)||
+       !tensor_range(index_key_q8,0,FG_Q38_QSA_INDEX_KEY_BYTES)||
+       !tensor_range(position,0,FG_Q38_QSA_POSITION_BYTES)||
+       !tensor_range(records,0,record_end)||
+       !tensor_range(index_history,0,index_end)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid tiered QSA record commit");
+        return FG_ERR_ARGUMENT;
+    }
+    struct{
+        uint32_t record_layer_slot,index_layer_slot,index_capacity,index_token;
+        uint32_t hot_slot,hot_capacity;
+    } push={record_layer_slot,index_layer_slot,index_capacity,index_token,hot_slot,
+            hot_capacity};
+    const fg_vk_tensor *bindings[]={
+        key_q8,value_q8,index_key_q8,position,records,index_history
+    };
+    return dispatch(c,&c->qsa_record_commit,bindings,&push,
+                    (FG_Q38_QSA_TOKEN_RECORD_BYTES/4u+255u)/256u,1,1,err);
+}
+
+fg_status fg_vk_qsa_record_commit_tiered(
+    fg_vk_context *c,fg_vk_tensor *records,fg_vk_tensor *index_history,
+    const fg_vk_tensor *key_q8,const fg_vk_tensor *value_q8,
+    const fg_vk_tensor *index_key_q8,const fg_vk_tensor *position,
+    uint32_t layer_slot,uint32_t token,uint32_t index_capacity,
+    uint32_t hot_slot,uint32_t hot_capacity,fg_error *err){
+    return qsa_record_commit_dispatch(c,records,index_history,key_q8,value_q8,
+        index_key_q8,position,layer_slot,layer_slot,token,index_capacity,
+        hot_slot,hot_capacity,err);
+}
+
+fg_status fg_vk_qsa_record_commit_segmented(
+    fg_vk_context *c,fg_vk_tensor *records,fg_vk_tensor *index_segment,
+    const fg_vk_tensor *key_q8,const fg_vk_tensor *value_q8,
+    const fg_vk_tensor *index_key_q8,const fg_vk_tensor *position,
+    uint32_t layer_slot,uint32_t token,uint32_t index_token,
+    uint32_t index_capacity,uint32_t hot_slot,uint32_t hot_capacity,
+    fg_error *err){
+    (void)token;
+    return qsa_record_commit_dispatch(c,records,index_segment,key_q8,value_q8,
+        index_key_q8,position,layer_slot,0u,index_token,index_capacity,
+        hot_slot,hot_capacity,err);
+}
+
+fg_status fg_vk_qsa_record_commit(
+    fg_vk_context *c,fg_vk_tensor *records,fg_vk_tensor *index_history,
+    const fg_vk_tensor *key_q8,const fg_vk_tensor *value_q8,
+    const fg_vk_tensor *index_key_q8,const fg_vk_tensor *position,
+    uint32_t layer_slot,uint32_t token,uint32_t capacity,fg_error *err){
+    return fg_vk_qsa_record_commit_tiered(c,records,index_history,key_q8,value_q8,
+        index_key_q8,position,layer_slot,token,capacity,token,capacity,err);
+}
+fg_status fg_vk_qsa_record_gather(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *records,const fg_vk_tensor *block_ids,uint32_t layer_slot,uint32_t capacity,uint32_t block_count,uint32_t tail_start,uint32_t tail_count,fg_error *err){uint32_t selected=block_count*FG_Q38_QSA_COMPRESS_RATIO+tail_count;uint64_t record_end=(uint64_t)(layer_slot+1u)*capacity*FG_Q38_QSA_TOKEN_RECORD_BYTES;if(!c||!capacity||(!block_count&&!tail_count)||block_count>FG_Q38_INDEX_BUDGET/FG_Q38_QSA_COMPRESS_RATIO||tail_count>=FG_Q38_QSA_COMPRESS_RATIO||tail_start>capacity||tail_count>capacity-tail_start||selected>FG_Q38_INDEX_BUDGET+FG_Q38_QSA_COMPRESS_RATIO-1u||!tensor_range(records,0,record_end)||(block_count&&!tensor_range(block_ids,0,(uint64_t)block_count*4u))||!tensor_range(out,0,(uint64_t)selected*FG_Q38_QSA_TOKEN_RECORD_BYTES)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA record gather");return FG_ERR_ARGUMENT;}struct{uint32_t layer_slot,capacity,block_count,tail_start,tail_count;}push={layer_slot,capacity,block_count,tail_start,tail_count};const fg_vk_tensor *bindings[]={records,block_ids,out};uint64_t words=(uint64_t)selected*(FG_Q38_QSA_TOKEN_RECORD_BYTES/4u);return dispatch(c,&c->qsa_record_gather,bindings,&push,(uint32_t)((words+255u)/256u),1,1,err);}
+fg_status fg_vk_qsa_index_score_segment(
+    fg_vk_context *c,fg_vk_tensor *scores,fg_vk_tensor *ids,
+    const fg_vk_tensor *query,const fg_vk_tensor *keys,const fg_vk_tensor *norm,
+    const fg_vk_tensor *positions,uint32_t tokens,uint32_t block_base,
+    fg_error *err){
+    uint32_t blocks=tokens/4u;
+    if(!c||!blocks||block_base>UINT32_MAX-blocks||
+       !tensor_range(query,0,512u*4u)||
+       !tensor_range(keys,0,(uint64_t)tokens*FG_Q38_QSA_INDEX_KEY_BYTES)||
+       !tensor_range(norm,0,128u*4u)||
+       !tensor_range(positions,0,(uint64_t)tokens*3u*4u)||
+       !tensor_range(scores,0,(uint64_t)blocks*4u)||
+       !tensor_range(ids,0,(uint64_t)blocks*4u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid segmented QSA index score dispatch");
+        return FG_ERR_ARGUMENT;
+    }
+    struct{uint32_t tokens,blocks,block_base;} push={tokens,blocks,block_base};
+    const fg_vk_tensor *bindings[]={query,keys,norm,positions,scores,ids};
+    return dispatch(c,&c->qsa_score,bindings,&push,blocks,1,1,err);
+}
+
+fg_status fg_vk_qsa_index_score(
+    fg_vk_context *c,fg_vk_tensor *scores,fg_vk_tensor *ids,
+    const fg_vk_tensor *query,const fg_vk_tensor *keys,const fg_vk_tensor *norm,
+    const fg_vk_tensor *positions,uint32_t tokens,fg_error *err){
+    return fg_vk_qsa_index_score_segment(c,scores,ids,query,keys,norm,positions,
+                                         tokens,0u,err);
+}
 fg_status fg_vk_qsa_attention(fg_vk_context *c,fg_vk_tensor *output,const fg_vk_tensor *records,const fg_vk_tensor *query,const fg_vk_tensor *gate,uint32_t selected_count,fg_error *err){if(!c||!selected_count||selected_count>2051u||!tensor_range(records,0,(uint64_t)selected_count*FG_Q38_QSA_TOKEN_RECORD_BYTES)||!tensor_range(query,0,6144u*4u)||!tensor_range(gate,0,6144u*4u)||!tensor_range(output,0,6144u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA attention dispatch");return FG_ERR_ARGUMENT;}const fg_vk_tensor *bindings[]={records,query,gate,output};return dispatch(c,&c->qsa_attention,bindings,&selected_count,24u,1,1,err);}
 fg_status fg_vk_topk_reduce(fg_vk_context *c,fg_vk_tensor *out_scores,fg_vk_tensor *out_ids,const fg_vk_tensor *in_scores,const fg_vk_tensor *in_ids,uint32_t count,uint32_t *output_count,fg_error *err){uint32_t groups=(count+4095u)/4096u,produced=groups*512u;if(groups==1u&&count<512u)produced=count;if(!c||!count||!output_count||!tensor_range(in_scores,0,(uint64_t)count*4u)||!tensor_range(in_ids,0,(uint64_t)count*4u)||!tensor_range(out_scores,0,(uint64_t)produced*4u)||!tensor_range(out_ids,0,(uint64_t)produced*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid top-k reduction dispatch");return FG_ERR_ARGUMENT;}const fg_vk_tensor *bindings[]={in_scores,in_ids,out_scores,out_ids};fg_status status=dispatch(c,&c->topk,bindings,&count,groups,1,1,err);if(status==FG_OK)*output_count=produced;return status;}
 fg_status fg_vk_argmax_reduce(fg_vk_context *c,fg_vk_tensor *out_scores,fg_vk_tensor *out_ids,const fg_vk_tensor *in_scores,const fg_vk_tensor *in_ids,uint32_t count,uint32_t *output_count,fg_error *err){uint32_t groups=(count+4095u)/4096u;if(!c||!count||!output_count||!tensor_range(in_scores,0,(uint64_t)count*4u)||!tensor_range(in_ids,0,(uint64_t)count*4u)||!tensor_range(out_scores,0,(uint64_t)groups*4u)||!tensor_range(out_ids,0,(uint64_t)groups*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid argmax reduction dispatch");return FG_ERR_ARGUMENT;}const fg_vk_tensor *bindings[]={in_scores,in_ids,out_scores,out_ids};fg_status status=dispatch(c,&c->argmax,bindings,&count,groups,1,1,err);if(status==FG_OK)*output_count=groups;return status;}
