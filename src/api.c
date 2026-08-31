@@ -85,6 +85,11 @@ typedef struct api_chat_request {
     bool stream;
 } api_chat_request;
 
+typedef struct api_public_session {
+    api_chat_request transcript;
+    bool valid;
+} api_public_session;
+
 typedef struct api_generation {
     int fd;
     bool stream;
@@ -106,6 +111,7 @@ static volatile sig_atomic_t api_stop_requested;
 static unsigned long long api_request_sequence;
 
 static int utf8_unit(const unsigned char *text,size_t available,size_t *bytes);
+static void tool_call_id(const api_generation *generation,size_t index,char output[128]);
 
 static fg_status buffer_reserve(api_buffer *buffer, size_t extra, fg_error *err) {
     if (extra > SIZE_MAX - buffer->length - 1u) {
@@ -703,6 +709,133 @@ static void api_chat_request_free(api_chat_request *request) {
     free(request->tool_schemas);
     free(request->tool_choice_name);
     memset(request, 0, sizeof(*request));
+}
+
+static void api_public_session_free(api_public_session *session) {
+    if (!session) return;
+    api_chat_request_free(&session->transcript);
+    session->valid = false;
+}
+
+static bool api_text_equal(const char *left,const char *right) {
+    return !strcmp(left ? left : "",right ? right : "");
+}
+
+static bool api_message_equal(const fg_chat_message *left,const fg_chat_message *right) {
+    if(!api_text_equal(left->role,right->role)||
+       !api_text_equal(left->content,right->content)||
+       !api_text_equal(left->reasoning,right->reasoning)||
+       !api_text_equal(left->tool_call_id,right->tool_call_id)||
+       left->tool_call_count!=right->tool_call_count)return false;
+    for(size_t i=0;i<left->tool_call_count;i++){
+        const fg_chat_tool_call *a=&left->tool_calls[i],*b=&right->tool_calls[i];
+        if(!api_text_equal(a->id,b->id)||!api_text_equal(a->name,b->name)||
+           !api_text_equal(a->arguments_json,b->arguments_json))return false;
+    }
+    return true;
+}
+
+static bool api_public_session_prefix(const api_public_session *session,
+                                      const api_chat_request *request) {
+    if(!session||!session->valid||
+       session->transcript.tool_schema_count!=request->tool_schema_count||
+       session->transcript.tool_choice!=request->tool_choice||
+       !api_text_equal(session->transcript.tool_choice_name,request->tool_choice_name)||
+       request->message_count<session->transcript.message_count)return false;
+    for(size_t i=0;i<request->tool_schema_count;i++)
+        if(strcmp(session->transcript.tool_schemas[i],request->tool_schemas[i]))return false;
+    for(size_t i=0;i<session->transcript.message_count;i++)
+        if(!api_message_equal(&session->transcript.messages[i],
+                              &request->messages[i]))return false;
+    return true;
+}
+
+static fg_status api_copy_message(fg_chat_message *output,
+                                  const fg_chat_message *input,fg_error *err) {
+    output->role=strdup(input->role?input->role:"");
+    output->content=strdup(input->content?input->content:"");
+    if(input->reasoning)output->reasoning=strdup(input->reasoning);
+    if(input->tool_call_id)output->tool_call_id=strdup(input->tool_call_id);
+    if(!output->role||!output->content||
+       (input->reasoning&&!output->reasoning)||
+       (input->tool_call_id&&!output->tool_call_id)){
+        fg_error_set(err,FG_ERR_OOM,"copy public API transcript message");
+        return FG_ERR_OOM;
+    }
+    if(!input->tool_call_count)return FG_OK;
+    fg_chat_tool_call *calls=calloc(input->tool_call_count,sizeof(*calls));
+    if(!calls){fg_error_set(err,FG_ERR_OOM,"copy public API tool calls");return FG_ERR_OOM;}
+    output->tool_calls=calls;output->tool_call_count=input->tool_call_count;
+    for(size_t i=0;i<input->tool_call_count;i++){
+        calls[i].id=strdup(input->tool_calls[i].id?input->tool_calls[i].id:"");
+        calls[i].name=strdup(input->tool_calls[i].name?input->tool_calls[i].name:"");
+        calls[i].arguments_json=strdup(input->tool_calls[i].arguments_json?
+                                       input->tool_calls[i].arguments_json:"");
+        if(!calls[i].id||!calls[i].name||!calls[i].arguments_json){
+            fg_error_set(err,FG_ERR_OOM,"copy public API tool call");
+            return FG_ERR_OOM;
+        }
+    }
+    return FG_OK;
+}
+
+static fg_status api_public_session_build(api_public_session *output,
+                                          const api_chat_request *request,
+                                          const api_generation *generation,
+                                          const fg_chat_generated *generated,
+                                          fg_error *err) {
+    memset(output,0,sizeof(*output));
+    api_chat_request *copy=&output->transcript;
+    copy->message_count=request->message_count+1u;
+    copy->messages=calloc(copy->message_count,sizeof(*copy->messages));
+    if(!copy->messages){fg_error_set(err,FG_ERR_OOM,"allocate public API transcript");return FG_ERR_OOM;}
+    fg_status status=FG_OK;
+    for(size_t i=0;status==FG_OK&&i<request->message_count;i++)
+        status=api_copy_message(&copy->messages[i],&request->messages[i],err);
+    fg_chat_message *assistant=&copy->messages[request->message_count];
+    if(status==FG_OK){
+        assistant->role=strdup("assistant");
+        assistant->content=strdup(generated->content?generated->content:"");
+        if(!assistant->role||!assistant->content){
+            fg_error_set(err,FG_ERR_OOM,"copy public API assistant response");
+            status=FG_ERR_OOM;
+        }
+    }
+    if(status==FG_OK&&generated->tool_call_count){
+        fg_chat_tool_call *calls=calloc(generated->tool_call_count,sizeof(*calls));
+        if(!calls){fg_error_set(err,FG_ERR_OOM,"copy public API assistant tool calls");status=FG_ERR_OOM;}
+        else{
+            assistant->tool_calls=calls;
+            assistant->tool_call_count=generated->tool_call_count;
+            for(size_t i=0;status==FG_OK&&i<generated->tool_call_count;i++){
+                char id[128];tool_call_id(generation,i,id);
+                calls[i].id=strdup(id);
+                calls[i].name=strdup(generated->tool_calls[i].name);
+                calls[i].arguments_json=strdup(generated->tool_calls[i].arguments_json);
+                if(!calls[i].id||!calls[i].name||!calls[i].arguments_json){
+                    fg_error_set(err,FG_ERR_OOM,"copy public API assistant tool call");
+                    status=FG_ERR_OOM;
+                }
+            }
+        }
+    }
+    copy->tool_schema_count=request->tool_schema_count;
+    if(status==FG_OK&&copy->tool_schema_count){
+        copy->tool_schemas=calloc(copy->tool_schema_count,sizeof(*copy->tool_schemas));
+        if(!copy->tool_schemas){fg_error_set(err,FG_ERR_OOM,"copy public API tool schemas");status=FG_ERR_OOM;}
+        for(size_t i=0;status==FG_OK&&i<copy->tool_schema_count;i++){
+            copy->tool_schemas[i]=strdup(request->tool_schemas[i]);
+            if(!copy->tool_schemas[i]){fg_error_set(err,FG_ERR_OOM,"copy public API tool schema");status=FG_ERR_OOM;}
+        }
+    }
+    copy->tool_choice=request->tool_choice;
+    if(status==FG_OK&&request->tool_choice_name){
+        copy->tool_choice_name=strdup(request->tool_choice_name);
+        if(!copy->tool_choice_name){fg_error_set(err,FG_ERR_OOM,"copy public API tool choice");status=FG_ERR_OOM;}
+    }
+    if(status!=FG_OK){api_public_session_free(output);return status;}
+    output->valid=true;
+    return FG_OK;
 }
 
 static bool number_is_integer(double value) {
@@ -1885,6 +2018,7 @@ static fg_status handle_models(int fd, fg_runtime *runtime, fg_error *err) {
 }
 
 static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
+                                         api_public_session *public_session,
                                          const http_request *http, fg_error *err) {
     json_value *root = parse_json_body(http->body, http->body_length, err);
     if (!root) {
@@ -1916,6 +2050,19 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     };
     status = fg_chat_render(request.messages, request.message_count, &render_options,
                             &rendered, err);
+    bool public_continuation=status==FG_OK&&
+        api_public_session_prefix(public_session,&request);
+    char *rendered_continuation=NULL;
+    if(status==FG_OK&&public_session->valid&&!public_continuation){
+        status=fg_runtime_reset_public_history(runtime,err);
+        api_public_session_free(public_session);
+    }
+    if(public_continuation){
+        size_t previous=public_session->transcript.message_count;
+        status=fg_chat_render_continuation(request.messages+previous,
+                                           request.message_count-previous,
+                                           &render_options,&rendered_continuation,err);
+    }
     char id[96];
     snprintf(id, sizeof(id), "chatcmpl-fg-%lld-%llu", (long long)time(NULL),
              ++api_request_sequence);
@@ -1934,14 +2081,34 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
         if (status != FG_OK) generation.client_failed = true;
     }
     fg_generation_stats stats = {0};
-    if (status == FG_OK)
-        status = fg_runtime_generate(runtime, rendered, request.max_tokens, api_token,
-                                     &generation, api_interrupted, NULL, &stats, err);
+    bool generation_attempted=false;
+    if(status==FG_OK){
+        generation_attempted=true;
+        if(public_continuation){
+            bool prefix_miss=false;
+            status=fg_runtime_generate_continuation(
+                runtime,rendered_continuation,&prefix_miss,request.max_tokens,api_token,
+                &generation,api_interrupted,NULL,&stats,err);
+            if(status==FG_ERR_UNAVAILABLE&&prefix_miss){
+                memset(&stats,0,sizeof(stats));
+                memset(err,0,sizeof(*err));
+                status=fg_runtime_generate(runtime,rendered,request.max_tokens,api_token,
+                                           &generation,api_interrupted,NULL,&stats,err);
+            }
+        }else{
+            status=fg_runtime_generate(runtime,rendered,request.max_tokens,api_token,
+                                       &generation,api_interrupted,NULL,&stats,err);
+        }
+    }
+    bool generation_succeeded=status==FG_OK&&generation_attempted;
     fg_chat_generated generated={0};
     if(status==FG_OK)
         status=fg_chat_parse_generated(generation.content.data?generation.content.data:"",
                                        true,&generated,err);
     if(status==FG_OK)status=validate_generated_tools(&request,&generated,err);
+    api_public_session pending_session={0};
+    if(status==FG_OK)
+        status=api_public_session_build(&pending_session,&request,&generation,&generated,err);
     if(status==FG_OK){
         double prefill_tps=stats.prefill_seconds>0.0?
             (double)stats.prefilled_tokens/stats.prefill_seconds:0.0;
@@ -1957,11 +2124,18 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     }
     const char *finish_reason = generated.tool_call_count ? "tool_calls" :
         (stats.generated_tokens >= request.max_tokens ? "length" : "stop");
+    bool response_committed=false;
     if (status == FG_OK) {
         if (request.stream)
             status = send_stream_end(&generation, &generated, finish_reason, err);
         else
             status = send_completion(&generation, &generated, &stats, finish_reason, err);
+        if(status==FG_OK){
+            api_public_session_free(public_session);
+            *public_session=pending_session;
+            memset(&pending_session,0,sizeof(pending_session));
+            response_committed=true;
+        }
     } else {
         char message[sizeof(err->message)];
         snprintf(message, sizeof(message), "%s", err->message);
@@ -1977,18 +2151,22 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     free(generation.visible_pending.data);
     fg_chat_generated_free(&generated);
     free(rendered);
+    free(rendered_continuation);
     api_chat_request_free(&request);
+    api_public_session_free(&pending_session);
+    if(generation_succeeded&&!response_committed){
+        fg_error reset_error={0};
+        api_public_session_free(public_session);
+        if(fg_runtime_reset(runtime,&reset_error)!=FG_OK){
+            *err=reset_error;
+            return reset_error.code;
+        }
+    }
     if (generation.client_failed ||
         (status == FG_ERR_IO && stats.prompt_tokens + stats.generated_tokens > 0u))
         return FG_OK;
-    if (status == FG_ERR_ARGUMENT || status == FG_ERR_FORMAT || status == FG_ERR_LIMIT) {
-        fg_error reset_error = {0};
-        if (fg_runtime_reset(runtime, &reset_error) != FG_OK) {
-            *err = reset_error;
-            return reset_error.code;
-        }
+    if (status == FG_ERR_ARGUMENT || status == FG_ERR_FORMAT || status == FG_ERR_LIMIT)
         return FG_OK;
-    }
     return status;
 }
 
@@ -2068,6 +2246,7 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
     fprintf(stderr, "Flash Gordon API serving %s on http://%s:%u\n",
             fg_runtime_model_name(runtime), host, port);
 
+    api_public_session public_session={0};
     while (status == FG_OK && !api_stop_requested) {
         struct pollfd ready = {.fd = listener, .events = POLLIN};
         int polled = poll(&ready, 1u, 1000);
@@ -2118,7 +2297,7 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
             if (response_status != FG_ERR_IO) status = response_status;
         } else if (!strcmp(request.method, "POST") &&
                    !strcmp(request.path, "/v1/chat/completions")) {
-            status = handle_chat_completions(client, runtime, &request, err);
+            status = handle_chat_completions(client, runtime, &public_session,&request, err);
         } else if (!strcmp(request.path, "/v1/models") ||
                    !strcmp(request.path, "/v1/chat/completions")) {
             fg_error send_error = {0};
@@ -2134,6 +2313,7 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
     sigaction(SIGINT, &old_int, NULL);
     sigaction(SIGTERM, &old_term, NULL);
     sigaction(SIGPIPE, &old_pipe, NULL);
+    api_public_session_free(&public_session);
     fg_runtime_close(runtime);
     return status;
 }

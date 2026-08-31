@@ -48,6 +48,9 @@ typedef struct fg_chat_generated {
 fg_status fg_chat_render(const fg_chat_message *messages, size_t message_count,
                          const fg_chat_render_options *options, char **rendered,
                          fg_error *err);
+fg_status fg_chat_render_continuation(const fg_chat_message *messages, size_t message_count,
+                                      const fg_chat_render_options *options, char **rendered,
+                                      fg_error *err);
 fg_status fg_chat_parse_generated(const char *text, bool thinking,
                                   fg_chat_generated *generated, fg_error *err);
 void fg_chat_generated_free(fg_chat_generated *generated);

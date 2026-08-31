@@ -57,6 +57,12 @@ fg_status fg_runtime_reset(fg_runtime *runtime, fg_error *err) {
     return FG_OK;
 }
 
+fg_status fg_runtime_reset_public_history(fg_runtime *runtime,fg_error *err) {
+    fg_status status=fg_runtime_reset(runtime,err);
+    if(status==FG_OK&&runtime)runtime->empty_reason=FG_PREFIX_RESET_PUBLIC_MISMATCH;
+    return status;
+}
+
 fg_status fg_runtime_generate(fg_runtime *runtime, const char *rendered_transcript,
                               uint32_t max_tokens, fg_token_callback callback,
                               void *callback_context, fg_interrupt_fn interrupted,
@@ -136,6 +142,33 @@ fg_status fg_runtime_generate(fg_runtime *runtime, const char *rendered_transcri
         stats->decode_seconds = 0.5;
     }
     return FG_OK;
+}
+
+fg_status fg_runtime_generate_continuation(
+    fg_runtime *runtime,const char *rendered_continuation,bool *prefix_miss,
+    uint32_t max_tokens,
+    fg_token_callback callback,void *callback_context,
+    fg_interrupt_fn interrupted,void *interrupt_context,
+    fg_generation_stats *stats,fg_error *err) {
+    if(prefix_miss)*prefix_miss=false;
+    if(!runtime||!runtime->history){
+        if(prefix_miss)*prefix_miss=true;
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"fake runtime has no continuation");
+        return FG_ERR_UNAVAILABLE;
+    }
+    size_t continuation_length=strlen(rendered_continuation);
+    char *combined=malloc(runtime->history_length+continuation_length+1u);
+    if(!combined){
+        fg_error_set(err,FG_ERR_OOM,"build fake runtime continuation");
+        return FG_ERR_OOM;
+    }
+    memcpy(combined,runtime->history,runtime->history_length);
+    memcpy(combined+runtime->history_length,rendered_continuation,continuation_length+1u);
+    fg_status status=fg_runtime_generate(runtime,combined,max_tokens,callback,
+                                         callback_context,interrupted,
+                                         interrupt_context,stats,err);
+    free(combined);
+    return status;
 }
 
 uint32_t fg_runtime_context_tokens(const fg_runtime *runtime) {
@@ -556,7 +589,8 @@ static void test_model_capabilities(void) {
     close(sockets[1]);
 }
 
-static char *run_chat_request(fg_runtime *runtime, const char *body, fg_status *result) {
+static char *run_chat_request(fg_runtime *runtime, api_public_session *session,
+                              const char *body, fg_status *result) {
     int sockets[2];
     CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
     http_request request = {
@@ -564,7 +598,7 @@ static char *run_chat_request(fg_runtime *runtime, const char *body, fg_status *
         .body_length = strlen(body),
     };
     fg_error err = {0};
-    fg_status status = handle_chat_completions(sockets[0], runtime, &request, &err);
+    fg_status status = handle_chat_completions(sockets[0], runtime, session,&request, &err);
     if (result) *result = status;
     shutdown(sockets[0], SHUT_WR);
     char *response = read_socket_response(sockets[1]);
@@ -573,24 +607,50 @@ static char *run_chat_request(fg_runtime *runtime, const char *body, fg_status *
     return response;
 }
 
+static json_value *parse_response_json(const char *response,fg_error *err) {
+    const char *body=response?strstr(response,"\r\n\r\n"):NULL;
+    if(!body){
+        fg_error_set(err,FG_ERR_FORMAT,"test response has no HTTP body");
+        return NULL;
+    }
+    body+=4u;
+    return parse_json_body(body,strlen(body),err);
+}
+
 static void test_live_prefix_hit_divergence_and_reset(void) {
     fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session={0};
     fg_status status = FG_OK;
     char *response = run_chat_request(
-        &runtime, "{\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}",
+        &runtime, &session,
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}",
         &status);
     CHECK(status == FG_OK);
     CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: miss\r\n"));
     CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: cold-start\r\n"));
+    CHECK(response && !strstr(response,"reasoning_content"));
+    fg_error err={0};
+    json_value *root=parse_response_json(response,&err);
+    json_value *choices=json_object_get(root,"choices");
+    json_value *choice=choices&&choices->type==JSON_ARRAY&&choices->as.array.count?
+        choices->as.array.items[0]:NULL;
+    json_value *message=json_object_get(choice,"message");
+    json_value *content=json_object_get(message,"content");
+    CHECK(content&&content->type==JSON_STRING);
+    api_buffer turn_two={0};
+    CHECK(buffer_append(&turn_two,
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"hello\"},"
+        "{\"role\":\"assistant\",\"content\":",&err)==FG_OK);
+    if(content&&content->type==JSON_STRING)
+        CHECK(buffer_append_json_string(&turn_two,content->as.string,
+                                        strlen(content->as.string),&err)==FG_OK);
+    CHECK(buffer_append(&turn_two,
+        "},{\"role\":\"user\",\"content\":\"next\"}]}",&err)==FG_OK);
+    json_free(root);
     free(response);
 
-    response = run_chat_request(
-        &runtime,
-        "{\"messages\":["
-        "{\"role\":\"user\",\"content\":\"hello\"},"
-        "{\"role\":\"assistant\",\"reasoning_content\":\"hidden\",\"content\":\"answer\"},"
-        "{\"role\":\"user\",\"content\":\"next\"}]}",
-        &status);
+    response = run_chat_request(&runtime,&session,turn_two.data,&status);
+    free(turn_two.data);
     CHECK(status == FG_OK);
     CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: hit\r\n"));
     CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: none\r\n"));
@@ -598,21 +658,26 @@ static void test_live_prefix_hit_divergence_and_reset(void) {
     free(response);
 
     response = run_chat_request(
-        &runtime, "{\"messages\":[{\"role\":\"user\",\"content\":\"different\"}]}",
+        &runtime, &session,
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"different\"}]}",
         &status);
     CHECK(status == FG_OK);
     CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: miss\r\n"));
-    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: token-mismatch\r\n"));
+    CHECK(response &&
+          strstr(response, "X-Flash-Gordon-Reset-Reason: public-history-mismatch\r\n"));
     free(response);
 
-    fg_error err = {0};
+    memset(&err,0,sizeof(err));
     CHECK(fg_runtime_reset(&runtime, &err) == FG_OK);
+    api_public_session_free(&session);
     response = run_chat_request(
-        &runtime, "{\"messages\":[{\"role\":\"user\",\"content\":\"after clear\"}]}",
+        &runtime, &session,
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"after clear\"}]}",
         &status);
     CHECK(status == FG_OK);
     CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: explicit\r\n"));
     free(response);
+    api_public_session_free(&session);
     fg_runtime_close(&runtime);
 }
 
@@ -625,6 +690,7 @@ static void test_live_prefix_tool_loop(void) {
             "<parameter=city>\nParis\n</parameter>\n"
             "</function>\n</tool_call><|im_end|>\n",
     };
+    api_public_session session={0};
     const char *tools =
         "\"tools\":[{\"type\":\"function\",\"function\":{"
         "\"name\":\"weather\",\"parameters\":{\"type\":\"object\",\"properties\":{"
@@ -636,31 +702,65 @@ static void test_live_prefix_tool_loop(void) {
     CHECK(buffer_append(&first,
         "\"messages\":[{\"role\":\"user\",\"content\":\"weather?\"}]}", &err) == FG_OK);
     fg_status status = FG_OK;
-    char *response = run_chat_request(&runtime, first.data, &status);
+    char *response = run_chat_request(&runtime, &session,first.data, &status);
     CHECK(status == FG_OK);
     CHECK(response && strstr(response, "\"finish_reason\":\"tool_calls\""));
-    free(response);
+    CHECK(response && !strstr(response,"reasoning_content"));
     free(first.data);
+
+    fg_error response_error={0};
+    json_value *root=parse_response_json(response,&response_error);
+    json_value *choices=json_object_get(root,"choices");
+    json_value *choice=choices&&choices->type==JSON_ARRAY&&choices->as.array.count?
+        choices->as.array.items[0]:NULL;
+    json_value *message=json_object_get(choice,"message");
+    json_value *content=json_object_get(message,"content");
+    json_value *calls=json_object_get(message,"tool_calls");
+    json_value *call=calls&&calls->type==JSON_ARRAY&&calls->as.array.count?
+        calls->as.array.items[0]:NULL;
+    json_value *call_id=json_object_get(call,"id");
+    json_value *function=json_object_get(call,"function");
+    json_value *name=json_object_get(function,"name");
+    json_value *arguments=json_object_get(function,"arguments");
+    CHECK(content&&content->type==JSON_NULL);
+    CHECK(call_id&&call_id->type==JSON_STRING);
+    CHECK(name&&name->type==JSON_STRING);
+    CHECK(arguments&&arguments->type==JSON_STRING);
 
     runtime.generated = "done\n</think>\n\nIt is 20 C.<|im_end|>\n";
     api_buffer second = {0};
     CHECK(buffer_append(&second, "{", &err) == FG_OK);
     CHECK(buffer_append(&second, tools, &err) == FG_OK);
-    CHECK(buffer_append(
-        &second,
+    CHECK(buffer_append(&second,
         "\"messages\":["
         "{\"role\":\"user\",\"content\":\"weather?\"},"
-        "{\"role\":\"assistant\",\"reasoning_content\":\"hidden\",\"content\":null,"
-        "\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{"
-        "\"name\":\"weather\",\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\"}}]},"
-        "{\"role\":\"tool\",\"tool_call_id\":\"call_1\",\"content\":\"20 C\"}]}",
-        &err) == FG_OK);
-    response = run_chat_request(&runtime, second.data, &status);
+        "{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":",&err)==FG_OK);
+    if(call_id&&call_id->type==JSON_STRING)
+        CHECK(buffer_append_json_string(&second,call_id->as.string,
+                                        strlen(call_id->as.string),&err)==FG_OK);
+    CHECK(buffer_append(&second,",\"type\":\"function\",\"function\":{\"name\":",&err)==FG_OK);
+    if(name&&name->type==JSON_STRING)
+        CHECK(buffer_append_json_string(&second,name->as.string,strlen(name->as.string),
+                                        &err)==FG_OK);
+    CHECK(buffer_append(&second,",\"arguments\":",&err)==FG_OK);
+    if(arguments&&arguments->type==JSON_STRING)
+        CHECK(buffer_append_json_string(&second,arguments->as.string,
+                                        strlen(arguments->as.string),&err)==FG_OK);
+    CHECK(buffer_append(&second,"}}]},{\"role\":\"tool\",\"tool_call_id\":",&err)==FG_OK);
+    if(call_id&&call_id->type==JSON_STRING)
+        CHECK(buffer_append_json_string(&second,call_id->as.string,
+                                        strlen(call_id->as.string),&err)==FG_OK);
+    CHECK(buffer_append(&second,",\"content\":\"20 C\"}]}",&err)==FG_OK);
+    json_free(root);
+    free(response);
+    response = run_chat_request(&runtime, &session,second.data, &status);
     CHECK(status == FG_OK);
     CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: hit\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: none\r\n"));
     CHECK(response && !strstr(response, "X-Flash-Gordon-Reused-Tokens: 0\r\n"));
     free(response);
     free(second.data);
+    api_public_session_free(&session);
     fg_runtime_close(&runtime);
 }
 
@@ -668,19 +768,21 @@ static void test_failed_generation_fails_closed(void) {
     fg_runtime runtime = {
         .empty_reason = FG_PREFIX_RESET_COLD_START,
     };
+    api_public_session session={0};
     fg_status status = FG_OK;
     char *response = run_chat_request(
-        &runtime, "{\"messages\":[{\"role\":\"user\",\"content\":\"seed\"}]}",
+        &runtime, &session,
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"seed\"}]}",
         &status);
     CHECK(status == FG_OK);
     free(response);
 
     runtime.fail_after_prefill = true;
     response = run_chat_request(
-        &runtime,
+        &runtime, &session,
         "{\"messages\":["
         "{\"role\":\"user\",\"content\":\"seed\"},"
-        "{\"role\":\"assistant\",\"reasoning_content\":\"hidden\",\"content\":\"answer\"},"
+        "{\"role\":\"assistant\",\"content\":\"answer\"},"
         "{\"role\":\"user\",\"content\":\"fail\"}]}",
         &status);
     CHECK(status == FG_ERR_MISMATCH);
@@ -691,12 +793,17 @@ static void test_failed_generation_fails_closed(void) {
     free(response);
 
     response = run_chat_request(
-        &runtime, "{\"messages\":[{\"role\":\"user\",\"content\":\"retry\"}]}",
+        &runtime, &session,
+        "{\"messages\":["
+        "{\"role\":\"user\",\"content\":\"seed\"},"
+        "{\"role\":\"assistant\",\"content\":\"answer\"},"
+        "{\"role\":\"user\",\"content\":\"retry\"}]}",
         &status);
     CHECK(status == FG_OK);
     CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: miss\r\n"));
     CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: failure\r\n"));
     free(response);
+    api_public_session_free(&session);
     fg_runtime_close(&runtime);
 }
 

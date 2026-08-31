@@ -645,9 +645,9 @@ static fg_status append_message(fg_text_buffer *buffer, const fg_chat_message *m
     return status;
 }
 
-fg_status fg_chat_render(const fg_chat_message *messages, size_t message_count,
-                         const fg_chat_render_options *options, char **rendered,
-                         fg_error *err) {
+static fg_status chat_render(const fg_chat_message *messages, size_t message_count,
+                             const fg_chat_render_options *options, bool continuation,
+                             char **rendered, fg_error *err) {
     if (!rendered || (message_count && !messages) ||
         (options && options->tool_schema_count && !options->tool_schemas) ||
         (options && options->tool_choice == FG_CHAT_TOOL_NAMED &&
@@ -699,7 +699,7 @@ fg_status fg_chat_render(const fg_chat_message *messages, size_t message_count,
     bool tools = options && options->tool_schema_count;
     size_t first = 0;
     fg_status status = FG_OK;
-    if (tools) {
+    if (tools && !continuation) {
         status = buffer_append(&buffer, "<|im_start|>system\n", err);
         if (status == FG_OK) status = append_tools_prompt(&buffer, options, err);
         if (message_count && role_is_system(messages[0].role)) {
@@ -711,7 +711,7 @@ fg_status fg_chat_render(const fg_chat_message *messages, size_t message_count,
         }
         if (status == FG_OK) status = buffer_append(&buffer, "<|im_end|>\n", err);
     }
-    if (!tools && message_count && role_is_system(messages[0].role) &&
+    if (!continuation && !tools && message_count && role_is_system(messages[0].role) &&
         !has_trimmed_content(messages[0].content))
         first = 1u;
     for (size_t i = first; status == FG_OK && i < message_count;) {
@@ -749,6 +749,18 @@ fg_status fg_chat_render(const fg_chat_message *messages, size_t message_count,
     }
     *rendered = buffer.data;
     return FG_OK;
+}
+
+fg_status fg_chat_render(const fg_chat_message *messages, size_t message_count,
+                         const fg_chat_render_options *options, char **rendered,
+                         fg_error *err) {
+    return chat_render(messages, message_count, options, false, rendered, err);
+}
+
+fg_status fg_chat_render_continuation(const fg_chat_message *messages, size_t message_count,
+                                      const fg_chat_render_options *options, char **rendered,
+                                      fg_error *err) {
+    return chat_render(messages, message_count, options, true, rendered, err);
 }
 
 static fg_status append_json_escaped(fg_text_buffer *buffer, const char *text, size_t length,
