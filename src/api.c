@@ -2054,8 +2054,8 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
         api_public_session_prefix(public_session,&request);
     char *rendered_continuation=NULL;
     if(status==FG_OK&&public_session->valid&&!public_continuation){
-        status=fg_runtime_reset_public_history(runtime,err);
         api_public_session_free(public_session);
+        status=fg_runtime_reset_public_history(runtime,err);
     }
     if(public_continuation){
         size_t previous=public_session->transcript.message_count;
@@ -2087,20 +2087,22 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
         if(public_continuation){
             bool prefix_miss=false;
             status=fg_runtime_generate_continuation(
-                runtime,rendered_continuation,&prefix_miss,request.max_tokens,api_token,
-                &generation,api_interrupted,NULL,&stats,err);
+                runtime,rendered,rendered_continuation,&prefix_miss,request.max_tokens,
+                api_token,&generation,api_interrupted,NULL,&stats,err);
             if(status==FG_ERR_UNAVAILABLE&&prefix_miss){
                 memset(&stats,0,sizeof(stats));
                 memset(err,0,sizeof(*err));
-                status=fg_runtime_generate(runtime,rendered,request.max_tokens,api_token,
-                                           &generation,api_interrupted,NULL,&stats,err);
+                api_public_session_free(public_session);
+                status=fg_runtime_reset(runtime,err);
+                if(status==FG_OK)
+                    status=fg_runtime_generate(runtime,rendered,request.max_tokens,api_token,
+                                               &generation,api_interrupted,NULL,&stats,err);
             }
         }else{
             status=fg_runtime_generate(runtime,rendered,request.max_tokens,api_token,
                                        &generation,api_interrupted,NULL,&stats,err);
         }
     }
-    bool generation_succeeded=status==FG_OK&&generation_attempted;
     fg_chat_generated generated={0};
     if(status==FG_OK)
         status=fg_chat_parse_generated(generation.content.data?generation.content.data:"",
@@ -2154,10 +2156,10 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     free(rendered_continuation);
     api_chat_request_free(&request);
     api_public_session_free(&pending_session);
-    if(generation_succeeded&&!response_committed){
+    if(generation_attempted&&!response_committed){
         fg_error reset_error={0};
         api_public_session_free(public_session);
-        if(fg_runtime_reset(runtime,&reset_error)!=FG_OK){
+        if(fg_runtime_reset_failure(runtime,&reset_error)!=FG_OK){
             *err=reset_error;
             return reset_error.code;
         }

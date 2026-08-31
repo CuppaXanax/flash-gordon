@@ -28,6 +28,10 @@ fg_status fg_prefix_plan_tokens(const int32_t *history, size_t history_count,
                                 size_t transcript_count,
                                 fg_prefix_reset_reason empty_reason,
                                 fg_prefix_plan *plan, fg_error *err);
+fg_status fg_prefix_build_continuation_tokens(
+    const int32_t *history, size_t history_count, uint32_t pending_token,
+    const uint32_t *continuation, size_t continuation_count,
+    uint32_t **tokens, size_t *token_count, fg_error *err);
 const char *fg_prefix_reset_reason_name(fg_prefix_reset_reason reason);
 
 #endif

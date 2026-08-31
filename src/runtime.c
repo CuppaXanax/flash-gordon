@@ -285,7 +285,9 @@ struct fg_runtime {
     size_t history_count,history_capacity;
     char *rendered_history;
     size_t rendered_history_length;
-    bool rendered_turn_complete;
+    size_t pending_boundary_bytes;
+    uint32_t pending_eos_token;
+    bool pending_eos_valid;
     bool qsa_open;
     bool prefill_profiled;
     bool state_ready;
@@ -445,7 +447,9 @@ static fg_status runtime_reset_state(fg_runtime *runtime,fg_prefix_reset_reason 
     free(runtime->rendered_history);
     runtime->rendered_history=NULL;
     runtime->rendered_history_length=0;
-    runtime->rendered_turn_complete=false;
+    runtime->pending_boundary_bytes=0;
+    runtime->pending_eos_token=0;
+    runtime->pending_eos_valid=false;
     fg_status status=fg_owner_reset_state(runtime->coordinator.owner,err);
     if(status!=FG_OK)return status;
     if(!runtime->qsa_open){
@@ -499,6 +503,11 @@ fg_status fg_runtime_reset_public_history(fg_runtime *runtime,fg_error *err){
     return runtime_reset_state(runtime,FG_PREFIX_RESET_PUBLIC_MISMATCH,err);
 }
 
+fg_status fg_runtime_reset_failure(fg_runtime *runtime,fg_error *err){
+    if(!runtime||!runtime->coordinator.owner||!runtime->qsa_path[0]){fg_error_set(err,FG_ERR_ARGUMENT,"resident runtime is not open");return FG_ERR_ARGUMENT;}
+    return runtime_reset_state(runtime,FG_PREFIX_RESET_FAILURE,err);
+}
+
 static fg_status runtime_render_append(char **rendered,size_t *length,size_t *capacity,
                                        const char *text,size_t bytes,fg_error *err){
     if(bytes>SIZE_MAX-*length-1u){
@@ -521,55 +530,41 @@ static fg_status runtime_render_append(char **rendered,size_t *length,size_t *ca
     return FG_OK;
 }
 
-static bool runtime_rendered_turn_complete(const char *rendered,size_t length){
-    static const char marker[]="<|im_end|>";
-    const char *last=NULL,*cursor=rendered;
-    while(cursor&&(size_t)(cursor-rendered)<length){
-        const char *found=strstr(cursor,marker);
-        if(!found||(size_t)(found-rendered)>=length)break;
-        last=found;cursor=found+sizeof(marker)-1u;
-    }
-    if(!last)return false;
-    size_t offset=(size_t)(last-rendered)+sizeof(marker)-1u;
-    while(offset<length&&(rendered[offset]=='\r'||rendered[offset]=='\n'))offset++;
-    return offset==length;
-}
-
-static fg_status runtime_generate_transcript(
-    fg_runtime *runtime,const char *transcript,bool require_prefix_hit,bool *prefix_miss,
+static fg_status runtime_generate_tokens(
+    fg_runtime *runtime,const char *transcript,const fg_tokens *prompt,
+    bool require_prefix_hit,bool *prefix_miss,
     uint32_t max_tokens,
     fg_token_callback callback,void *callback_context,
     fg_interrupt_fn interrupted,void *interrupt_context,
     fg_generation_stats *stats,fg_error *err){
     if(prefix_miss)*prefix_miss=false;
-    if(!runtime||!transcript||!callback||!max_tokens||max_tokens>4096u){fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident generation arguments");return FG_ERR_ARGUMENT;}
+    if(!runtime||!transcript||!prompt||(!prompt->data&&prompt->count)||!callback||
+       !max_tokens||max_tokens>4096u){fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident generation arguments");return FG_ERR_ARGUMENT;}
     if(!runtime->state_ready){fg_error_set(err,FG_ERR_MISMATCH,"resident runtime requires a successful reset");return FG_ERR_MISMATCH;}
     if(stats)memset(stats,0,sizeof(*stats));
-    fg_tokens prompt={0};
-    fg_status status=fg_tokenizer_encode(runtime->coordinator.tokenizer,transcript,true,
-                                         &prompt,err);
+    fg_status status=FG_OK;
     fg_prefix_plan plan={0};
     if(status==FG_OK)status=fg_prefix_plan_tokens(
         runtime->history,runtime->history_count,runtime->next_token_valid,
-        prompt.data,prompt.count,runtime->empty_reason,&plan,err);
+        prompt->data,prompt->count,runtime->empty_reason,&plan,err);
     if(status==FG_OK&&require_prefix_hit&&!plan.hit){
         if(prefix_miss)*prefix_miss=true;
         fg_error_set(err,FG_ERR_UNAVAILABLE,
                      "runtime-owned continuation is not an exact token-prefix hit");
         status=FG_ERR_UNAVAILABLE;
     }
-    if(status==FG_OK&&(!prompt.count||prompt.count+(size_t)max_tokens>runtime->context_limit)){
+    if(status==FG_OK&&(!prompt->count||prompt->count+(size_t)max_tokens>runtime->context_limit)){
         fg_error_set(err,FG_ERR_LIMIT,"prompt plus generation would use %zu of %u context tokens",
-                     prompt.count+(size_t)max_tokens,runtime->context_limit);
+                     prompt->count+(size_t)max_tokens,runtime->context_limit);
         status=FG_ERR_LIMIT;
     }
     if(status==FG_OK)status=runtime_reserve_history(
-        runtime,prompt.count+(size_t)max_tokens,err);
-    if(status!=FG_OK){fg_tokens_free(&prompt);return status;}
+        runtime,prompt->count+(size_t)max_tokens,err);
+    if(status!=FG_OK)return status;
     size_t candidate_length=strlen(transcript);
     size_t candidate_capacity=candidate_length+1u;
     char *candidate=malloc(candidate_capacity);
-    if(!candidate){fg_tokens_free(&prompt);fg_error_set(err,FG_ERR_OOM,"copy rendered runtime transcript");return FG_ERR_OOM;}
+    if(!candidate){fg_error_set(err,FG_ERR_OOM,"copy rendered runtime transcript");return FG_ERR_OOM;}
     memcpy(candidate,transcript,candidate_capacity);
 
     size_t old_count=runtime->history_count;
@@ -579,16 +574,16 @@ static fg_status runtime_generate_transcript(
     bool state_mutated=false;
     if(!plan.hit&&old_count){
         status=runtime_reset_state(runtime,plan.reset_reason,err);
-        if(status!=FG_OK){free(candidate);fg_tokens_free(&prompt);return status;}
+        if(status!=FG_OK){free(candidate);return status;}
     }
     size_t prefill_offset=plan.hit?plan.prefill_offset:0u;
-    for(size_t i=prefill_offset;i<prompt.count;i++)
-        runtime->history[i]=(int32_t)prompt.data[i];
-    runtime->history_count=prompt.count;
+    for(size_t i=prefill_offset;i<prompt->count;i++)
+        runtime->history[i]=(int32_t)prompt->data[i];
+    runtime->history_count=prompt->count;
 
     if(stats){
-        stats->prompt_tokens=(uint32_t)prompt.count;
-        stats->prefilled_tokens=(uint32_t)(prompt.count-prefill_offset);
+        stats->prompt_tokens=(uint32_t)prompt->count;
+        stats->prefilled_tokens=(uint32_t)(prompt->count-prefill_offset);
         stats->reused_tokens=(uint32_t)plan.reused_tokens;
         stats->prefix_cache_hit=plan.hit;
         stats->exact_frontier=plan.exact_frontier;
@@ -599,24 +594,24 @@ static fg_status runtime_generate_transcript(
     uint32_t next=runtime->next_token;
     float logit=runtime->next_logit;
     fg_vk_tensor *prefill_output=NULL;
-    if(prefill_offset<prompt.count){
+    if(prefill_offset<prompt->count){
         state_mutated=true;
         clock_gettime(CLOCK_MONOTONIC,&prefill_start);
     }
-    for(size_t offset=prefill_offset;status==FG_OK&&offset<prompt.count;){
-        uint32_t count=(uint32_t)(prompt.count-offset);if(count>runtime->manifest->prefill_microbatch)count=runtime->manifest->prefill_microbatch;
+    for(size_t offset=prefill_offset;status==FG_OK&&offset<prompt->count;){
+        uint32_t count=(uint32_t)(prompt->count-offset);if(count>runtime->manifest->prefill_microbatch)count=runtime->manifest->prefill_microbatch;
         uint32_t first=(uint32_t)offset;fg_vk_tensor *ngram_batch=NULL;
         fg_vk_context *vk=fg_model_vk(runtime->coordinator.model);bool capture=!runtime->prefill_profiled&&prefill_profile_requested(),capture_active=false;struct timespec capture_start,capture_end;
         if(capture){status=fg_vk_profile_begin(vk,err);if(status==FG_OK)status=fg_vk_profile_set_scope(vk,"ngram_prefill",err);if(status==FG_OK){clock_gettime(CLOCK_MONOTONIC,&capture_start);capture_active=true;}}
         if(status==FG_OK)status=fg_ngram_store_lookup_prefill(runtime->coordinator.ngram,runtime->history,runtime->history_count,first,count,&ngram_batch,err);
         if(status==FG_OK)status=coordinator_prefill_microbatch(&runtime->coordinator,
-            prompt.data+offset,first,(uint16_t)count,ngram_batch,&prefill_output,err);
+            prompt->data+offset,first,(uint16_t)count,ngram_batch,&prefill_output,err);
         if(capture_active){fg_vk_profile profile={0};fg_error profile_error={0};clock_gettime(CLOCK_MONOTONIC,&capture_end);fg_status profile_status=fg_vk_profile_end(vk,&profile,status==FG_OK?err:&profile_error);runtime->prefill_profiled=true;if(status==FG_OK&&profile_status!=FG_OK)status=profile_status;fprintf(stderr,"PREFILL_PROFILE first=%u tokens=%u wall_ms=%.3f gpu_ms=%.3f kernel_ms=%.3f submissions=%llu dispatches=%llu\n",first,count,elapsed_seconds(&capture_start,&capture_end)*1000.0,profile.gpu_ms,profile.kernel_ms,(unsigned long long)profile.submissions,(unsigned long long)profile.dispatches);for(uint32_t i=0;i<profile.kernel_count;i++){const fg_vk_profile_kernel *kernel=&profile.kernels[i];fprintf(stderr,"PREFILL_PROFILE_KERNEL scope=%s kernel=%s calls=%llu gpu_ms=%.3f\n",kernel->scope,kernel->name,(unsigned long long)kernel->invocations,kernel->gpu_ms);}}
         offset+=count;
     }
     fg_vk_tensor *last_hyper=NULL;
-    if(status==FG_OK&&prefill_offset<prompt.count){
-        uint32_t prefilled=(uint32_t)(prompt.count-prefill_offset);
+    if(status==FG_OK&&prefill_offset<prompt->count){
+        uint32_t prefilled=(uint32_t)(prompt->count-prefill_offset);
         uint32_t final_count=prefilled%runtime->manifest->prefill_microbatch;
         if(!final_count)final_count=runtime->manifest->prefill_microbatch;
         status=fg_vk_tensor_view(prefill_output,(uint64_t)(final_count-1u)*FG_HYPER_WIDTH*4u,
@@ -626,7 +621,7 @@ static fg_status runtime_generate_transcript(
         status=coordinator_output(&runtime->coordinator,(uint32_t)runtime->history_count-1u,
                                   last_hyper,&next,&logit,err);
     fg_vk_tensor_destroy(last_hyper);
-    if(status==FG_OK&&prefill_offset<prompt.count){
+    if(status==FG_OK&&prefill_offset<prompt->count){
         fg_owner_qsa_set_tokens(runtime->coordinator.owner,(uint32_t)runtime->history_count);
         runtime->next_token=next;
         runtime->next_logit=logit;
@@ -636,6 +631,9 @@ static fg_status runtime_generate_transcript(
     }
     if(status==FG_OK)clock_gettime(CLOCK_MONOTONIC,&decode_start);
     uint32_t generated=0;
+    bool stopped_on_eos=false;
+    size_t pending_boundary_bytes=0;
+    uint32_t pending_eos=0;
     while(status==FG_OK&&generated<max_tokens){
         if(interrupted&&interrupted(interrupt_context))break;
         if(next==fg_tokenizer_eos(runtime->coordinator.tokenizer)){
@@ -647,6 +645,11 @@ static fg_status runtime_generate_transcript(
                                                           eos_bytes,err);
             if(status==FG_OK)status=runtime_render_append(&candidate,&candidate_length,
                                                           &candidate_capacity,"\n",1u,err);
+            if(status==FG_OK){
+                stopped_on_eos=true;
+                pending_boundary_bytes=eos_bytes+1u;
+                pending_eos=next;
+            }
             break;
         }
         char decoded[4096];size_t bytes=0;status=fg_tokenizer_decode_token(runtime->coordinator.tokenizer,next,decoded,sizeof(decoded),&bytes,err);
@@ -669,8 +672,9 @@ static fg_status runtime_generate_transcript(
         free(runtime->rendered_history);
         runtime->rendered_history=candidate;
         runtime->rendered_history_length=candidate_length;
-        runtime->rendered_turn_complete=
-            runtime_rendered_turn_complete(candidate,candidate_length);
+        runtime->pending_boundary_bytes=pending_boundary_bytes;
+        runtime->pending_eos_token=pending_eos;
+        runtime->pending_eos_valid=stopped_on_eos;
         candidate=NULL;
         if(stats){
             stats->generated_tokens=generated;
@@ -687,45 +691,149 @@ static fg_status runtime_generate_transcript(
         runtime->next_token=old_next;
         runtime->next_logit=old_logit;
     }
-    free(candidate);fg_tokens_free(&prompt);return status;
+    free(candidate);return status;
 }
 
 fg_status fg_runtime_generate(fg_runtime *runtime,const char *transcript,uint32_t max_tokens,
                               fg_token_callback callback,void *callback_context,
                               fg_interrupt_fn interrupted,void *interrupt_context,
                               fg_generation_stats *stats,fg_error *err){
-    return runtime_generate_transcript(runtime,transcript,false,NULL,max_tokens,callback,
-                                       callback_context,interrupted,interrupt_context,
-                                       stats,err);
+    fg_tokens prompt={0};
+    fg_status status=runtime&&transcript?
+        fg_tokenizer_encode(runtime->coordinator.tokenizer,transcript,true,&prompt,err):
+        FG_ERR_ARGUMENT;
+    if(status==FG_ERR_ARGUMENT)
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident generation arguments");
+    if(status==FG_OK)
+        status=runtime_generate_tokens(runtime,transcript,&prompt,false,NULL,max_tokens,
+                                       callback,callback_context,interrupted,
+                                       interrupt_context,stats,err);
+    fg_tokens_free(&prompt);
+    return status;
+}
+
+static size_t runtime_first_token_mismatch(const fg_tokens *left,const fg_tokens *right){
+    size_t common=left->count<right->count?left->count:right->count;
+    size_t index=0;
+    while(index<common&&left->data[index]==right->data[index])index++;
+    return index;
+}
+
+static uint32_t runtime_token_at(const fg_tokens *tokens,size_t index){
+    return index<tokens->count?tokens->data[index]:UINT32_MAX;
 }
 
 fg_status fg_runtime_generate_continuation(
-    fg_runtime *runtime,const char *continuation,bool *prefix_miss,uint32_t max_tokens,
+    fg_runtime *runtime,const char *public_transcript,const char *continuation,
+    bool *prefix_miss,uint32_t max_tokens,
     fg_token_callback callback,void *callback_context,
     fg_interrupt_fn interrupted,void *interrupt_context,
     fg_generation_stats *stats,fg_error *err){
     if(prefix_miss)*prefix_miss=false;
-    if(!runtime||!continuation||!runtime->rendered_history||
-       !runtime->rendered_turn_complete){
+    if(!runtime||!public_transcript||!continuation||!runtime->rendered_history||
+       !runtime->pending_eos_valid||!runtime->next_token_valid||
+       runtime->pending_eos_token!=runtime->next_token||
+       runtime->pending_eos_token!=fg_tokenizer_eos(runtime->coordinator.tokenizer)||
+       !runtime->pending_boundary_bytes||
+       runtime->pending_boundary_bytes>runtime->rendered_history_length){
         if(prefix_miss)*prefix_miss=true;
         fg_error_set(err,FG_ERR_UNAVAILABLE,
-                     "runtime has no reusable rendered transcript continuation");
+                     "runtime has no reusable pending EOS continuation frontier");
         return FG_ERR_UNAVAILABLE;
     }
-    size_t continuation_length=strlen(continuation);
-    if(continuation_length>SIZE_MAX-runtime->rendered_history_length-1u){
-        fg_error_set(err,FG_ERR_LIMIT,"runtime transcript continuation exceeds address space");
-        return FG_ERR_LIMIT;
+    const char *eos_text=NULL;
+    size_t eos_bytes=0;
+    fg_status status=fg_tokenizer_token(runtime->coordinator.tokenizer,
+                                        runtime->pending_eos_token,&eos_text,
+                                        &eos_bytes,NULL,err);
+    const char *boundary=runtime->rendered_history+
+        runtime->rendered_history_length-runtime->pending_boundary_bytes;
+    if(status==FG_OK&&
+       (runtime->pending_boundary_bytes!=eos_bytes+1u||
+        memcmp(boundary,eos_text,eos_bytes)||boundary[eos_bytes]!='\n')){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "runtime pending EOS transcript boundary is inconsistent");
+        status=FG_ERR_MISMATCH;
     }
-    size_t combined_length=runtime->rendered_history_length+continuation_length;
-    char *combined=malloc(combined_length+1u);
-    if(!combined){fg_error_set(err,FG_ERR_OOM,"build runtime transcript continuation");return FG_ERR_OOM;}
-    memcpy(combined,runtime->rendered_history,runtime->rendered_history_length);
-    memcpy(combined+runtime->rendered_history_length,continuation,continuation_length+1u);
-    fg_status status=runtime_generate_transcript(
-        runtime,combined,true,prefix_miss,max_tokens,callback,callback_context,
-        interrupted,interrupt_context,stats,err);
-    free(combined);return status;
+    size_t continuation_length=strlen(continuation);
+    if(status==FG_OK&&
+       continuation_length>SIZE_MAX-runtime->rendered_history_length-1u){
+        fg_error_set(err,FG_ERR_LIMIT,"runtime transcript continuation exceeds address space");
+        status=FG_ERR_LIMIT;
+    }
+    size_t combined_length=0;
+    if(status==FG_OK)
+        combined_length=runtime->rendered_history_length+continuation_length;
+    char *combined=status==FG_OK?malloc(combined_length+1u):NULL;
+    if(status==FG_OK&&!combined){
+        fg_error_set(err,FG_ERR_OOM,"build runtime transcript continuation");
+        status=FG_ERR_OOM;
+    }
+    if(status==FG_OK){
+        memcpy(combined,runtime->rendered_history,runtime->rendered_history_length);
+        memcpy(combined+runtime->rendered_history_length,continuation,
+               continuation_length+1u);
+    }
+
+    size_t suffix_length=0;
+    if(status==FG_OK)
+        suffix_length=runtime->pending_boundary_bytes+continuation_length;
+    char *suffix=status==FG_OK?malloc(suffix_length+1u):NULL;
+    if(status==FG_OK&&!suffix){
+        fg_error_set(err,FG_ERR_OOM,"build pending EOS continuation suffix");
+        status=FG_ERR_OOM;
+    }
+    if(status==FG_OK){
+        memcpy(suffix,boundary,runtime->pending_boundary_bytes);
+        memcpy(suffix+runtime->pending_boundary_bytes,continuation,
+               continuation_length+1u);
+    }
+
+    fg_tokens suffix_tokens={0},prompt={0},public_tokens={0},rendered_tokens={0};
+    if(status==FG_OK)
+        status=fg_tokenizer_encode(runtime->coordinator.tokenizer,suffix,true,
+                                   &suffix_tokens,err);
+    if(status==FG_OK)
+        status=fg_prefix_build_continuation_tokens(
+            runtime->history,runtime->history_count,runtime->pending_eos_token,
+            suffix_tokens.data,suffix_tokens.count,&prompt.data,&prompt.count,err);
+    prompt.capacity=prompt.count;
+    if(status==FG_OK)
+        status=fg_tokenizer_encode(runtime->coordinator.tokenizer,public_transcript,true,
+                                   &public_tokens,err);
+    if(status==FG_OK)
+        status=fg_tokenizer_encode(runtime->coordinator.tokenizer,combined,true,
+                                   &rendered_tokens,err);
+    if(status==FG_OK){
+        size_t public_mismatch=runtime_first_token_mismatch(&prompt,&public_tokens);
+        size_t rendered_mismatch=runtime_first_token_mismatch(&prompt,&rendered_tokens);
+        fprintf(stderr,
+                "PREFIX_TOKEN_TRACE raw_history_tokens=%zu public_transcript_tokens=%zu "
+                "private_rendered_tokens=%zu pending_unevaluated_eos=%u "
+                "continuation_tokens=%zu continuation_first=%u continuation_second=%u "
+                "constructed_tokens=%zu "
+                "public_first_mismatch=%zu authoritative_token=%u public_token=%u "
+                "private_first_mismatch=%zu authoritative_private_token=%u "
+                "retokenized_private_token=%u\n",
+                runtime->history_count,public_tokens.count,rendered_tokens.count,
+                runtime->pending_eos_token,suffix_tokens.count,
+                runtime_token_at(&suffix_tokens,0u),runtime_token_at(&suffix_tokens,1u),
+                prompt.count,
+                public_mismatch,runtime_token_at(&prompt,public_mismatch),
+                runtime_token_at(&public_tokens,public_mismatch),rendered_mismatch,
+                runtime_token_at(&prompt,rendered_mismatch),
+                runtime_token_at(&rendered_tokens,rendered_mismatch));
+        status=runtime_generate_tokens(
+            runtime,combined,&prompt,true,prefix_miss,max_tokens,callback,
+            callback_context,interrupted,interrupt_context,stats,err);
+    }
+    free(suffix);
+    free(combined);
+    fg_tokens_free(&rendered_tokens);
+    fg_tokens_free(&public_tokens);
+    fg_tokens_free(&prompt);
+    fg_tokens_free(&suffix_tokens);
+    return status;
 }
 
 uint32_t fg_runtime_context_tokens(const fg_runtime *runtime){return runtime?(uint32_t)runtime->history_count:0u;}

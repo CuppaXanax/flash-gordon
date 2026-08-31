@@ -1,6 +1,7 @@
 #include "fg_prefix.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int failures;
@@ -95,12 +96,38 @@ static void test_restart_reset_and_unavailable_frontier(void) {
     CHECK(result.reset_reason == FG_PREFIX_RESET_FRONTIER_UNAVAILABLE);
 }
 
+static void test_continuation_preserves_authoritative_model_tokens(void) {
+    const int32_t history[] = {10, 20, 30, 40};
+    const uint32_t pending_continuation[] = {248046, 198, 248045, 872};
+    uint32_t *tokens = NULL;
+    size_t count = 0;
+    fg_error err = {0};
+    CHECK(fg_prefix_build_continuation_tokens(
+              history, 4, 248046, pending_continuation, 4,
+              &tokens, &count, &err) == FG_OK);
+    CHECK(count == 8);
+    CHECK(tokens && !memcmp(tokens, history, sizeof(history)));
+    CHECK(tokens && !memcmp(tokens + 4, pending_continuation,
+                            sizeof(pending_continuation)));
+    free(tokens);
+
+    tokens = NULL;
+    count = 0;
+    memset(&err, 0, sizeof(err));
+    CHECK(fg_prefix_build_continuation_tokens(
+              history, 4, 248046, pending_continuation + 1, 3,
+              &tokens, &count, &err) == FG_ERR_ARGUMENT);
+    CHECK(tokens == NULL);
+    CHECK(count == 0);
+}
+
 int main(void) {
     test_prefix_hit_uses_authoritative_full_tokens();
     test_exact_frontier_needs_no_prefill();
     test_divergence_resets();
     test_tool_loop_and_reasoning_are_token_identity();
     test_restart_reset_and_unavailable_frontier();
+    test_continuation_preserves_authoritative_model_tokens();
     CHECK(!strcmp(fg_prefix_reset_reason_name(FG_PREFIX_RESET_TOKEN_MISMATCH),
                   "token-mismatch"));
     CHECK(!strcmp(fg_prefix_reset_reason_name(FG_PREFIX_RESET_PUBLIC_MISMATCH),

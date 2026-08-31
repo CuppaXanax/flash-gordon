@@ -55,7 +55,7 @@ tests/test_hc_down_split: tests/test_hc_down_split.o src/vk.o src/quant.o src/q3
 tests/test_model_load: tests/test_model_load.o src/model.o src/vk.o src/quant.o src/q38_math.o src/ngram.o src/loader.o src/uring.o src/sha256.o src/manifest.o src/topology.o src/q38_schema.o src/gguf.o src/util.o | shaders
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
-tests/test_tokenizer: tests/test_tokenizer.o src/tokenizer.o src/quant.o src/q38_math.o src/uring.o src/sha256.o src/manifest.o src/topology.o src/q38_schema.o src/gguf.o src/util.o
+tests/test_tokenizer: tests/test_tokenizer.o src/tokenizer.o src/prefix.o src/quant.o src/q38_math.o src/uring.o src/sha256.o src/manifest.o src/topology.o src/q38_schema.o src/gguf.o src/util.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
 tests/test_fabric: tests/test_fabric.o src/fabric.o src/quant.o src/q38_math.o src/uring.o src/protocol.o src/manifest.o src/sha256.o src/topology.o src/q38_schema.o src/util.o
