@@ -21,6 +21,7 @@ static int failures;
 struct fg_runtime {
     char *history;
     size_t history_length;
+    size_t evaluated_length;
     fg_prefix_reset_reason empty_reason;
     const char *generated;
     bool fail_after_prefill;
@@ -44,6 +45,7 @@ void fg_runtime_close(fg_runtime *runtime) {
     free(runtime->history);
     runtime->history = NULL;
     runtime->history_length = 0;
+    runtime->evaluated_length = 0;
 }
 
 fg_status fg_runtime_reset(fg_runtime *runtime, fg_error *err) {
@@ -52,6 +54,7 @@ fg_status fg_runtime_reset(fg_runtime *runtime, fg_error *err) {
         free(runtime->history);
         runtime->history = NULL;
         runtime->history_length = 0;
+        runtime->evaluated_length = 0;
         runtime->empty_reason = FG_PREFIX_RESET_EXPLICIT;
     }
     return FG_OK;
@@ -72,11 +75,11 @@ fg_status fg_runtime_generate(fg_runtime *runtime, const char *rendered_transcri
     (void)interrupted;
     (void)interrupt_context;
     size_t rendered_length = strlen(rendered_transcript);
-    bool hit = runtime && runtime->history_length &&
-               rendered_length >= runtime->history_length &&
-               !memcmp(rendered_transcript, runtime->history, runtime->history_length);
+    bool hit = runtime && runtime->evaluated_length &&
+               rendered_length >= runtime->evaluated_length &&
+               !memcmp(rendered_transcript, runtime->history, runtime->evaluated_length);
     fg_prefix_reset_reason reason = FG_PREFIX_RESET_NONE;
-    size_t reused = hit ? runtime->history_length : 0u;
+    size_t reused = hit ? runtime->evaluated_length : 0u;
     if (!hit) {
         reason = runtime && runtime->history_length ? FG_PREFIX_RESET_TOKEN_MISMATCH :
                  runtime ? runtime->empty_reason : FG_PREFIX_RESET_COLD_START;
@@ -108,37 +111,45 @@ fg_status fg_runtime_generate(fg_runtime *runtime, const char *rendered_transcri
         free(runtime->history);
         runtime->history = NULL;
         runtime->history_length = 0;
+        runtime->evaluated_length = 0;
         runtime->empty_reason = FG_PREFIX_RESET_FAILURE;
         fg_error_set(err, FG_ERR_MISMATCH, "injected generation failure");
         return FG_ERR_MISMATCH;
     }
     const char *generated = runtime->generated ? runtime->generated :
-        "hidden\n</think>\n\nanswer<|im_end|>\n";
+        "hidden\n</think>\n\nanswer";
     fg_status status = callback(callback_context, 42u, generated, strlen(generated), err);
     if (status != FG_OK) {
         free(runtime->history);
         runtime->history = NULL;
         runtime->history_length = 0;
+        runtime->evaluated_length = 0;
         runtime->empty_reason = FG_PREFIX_RESET_FAILURE;
         return status;
     }
     size_t generated_length = strlen(generated);
-    char *committed = realloc(runtime->history, rendered_length + generated_length + 1u);
+    static const char boundary[]="<|im_end|>\n";
+    size_t boundary_length=sizeof(boundary)-1u;
+    char *committed = realloc(runtime->history,
+                              rendered_length+generated_length+boundary_length+1u);
     if (!committed) {
         free(runtime->history);
         runtime->history = NULL;
         runtime->history_length = 0;
+        runtime->evaluated_length = 0;
         runtime->empty_reason = FG_PREFIX_RESET_FAILURE;
         fg_error_set(err, FG_ERR_OOM, "commit fake runtime history");
         return FG_ERR_OOM;
     }
-    memcpy(committed + rendered_length, generated, generated_length + 1u);
+    memcpy(committed+rendered_length,generated,generated_length);
+    memcpy(committed+rendered_length+generated_length,boundary,boundary_length+1u);
     runtime->history = committed;
-    runtime->history_length = rendered_length + generated_length;
+    runtime->history_length=rendered_length+generated_length+boundary_length;
+    runtime->evaluated_length=rendered_length+generated_length;
     runtime->empty_reason = FG_PREFIX_RESET_NONE;
     if (stats) {
         stats->generated_tokens = 1u;
-        stats->context_tokens = (uint32_t)runtime->history_length;
+        stats->context_tokens = (uint32_t)runtime->evaluated_length;
         stats->decode_seconds = 0.5;
     }
     return FG_OK;
@@ -172,7 +183,7 @@ fg_status fg_runtime_generate_continuation(
 }
 
 uint32_t fg_runtime_context_tokens(const fg_runtime *runtime) {
-    return runtime ? (uint32_t)runtime->history_length : 0;
+    return runtime ? (uint32_t)runtime->evaluated_length : 0;
 }
 
 uint32_t fg_runtime_context_limit(const fg_runtime *runtime) {
@@ -629,6 +640,15 @@ static void test_live_prefix_hit_divergence_and_reset(void) {
     CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: miss\r\n"));
     CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: cold-start\r\n"));
     CHECK(response && !strstr(response,"reasoning_content"));
+    CHECK(response && !strstr(response,"<|im_end|>"));
+    static const char text_boundary[]="answer<|im_end|>\n";
+    CHECK(runtime.history_length>=sizeof(text_boundary)-1u);
+    CHECK(runtime.history&&
+          !memcmp(runtime.history+runtime.history_length-(sizeof(text_boundary)-1u),
+                  text_boundary,sizeof(text_boundary)-1u));
+    size_t prior_evaluated=runtime.evaluated_length;
+    size_t prior_rendered=runtime.history_length;
+    CHECK(prior_rendered-prior_evaluated==strlen("<|im_end|>\n"));
     fg_error err={0};
     json_value *root=parse_response_json(response,&err);
     json_value *choices=json_object_get(root,"choices");
@@ -655,6 +675,19 @@ static void test_live_prefix_hit_divergence_and_reset(void) {
     CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: hit\r\n"));
     CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: none\r\n"));
     CHECK(response && !strstr(response, "X-Flash-Gordon-Reused-Tokens: 0\r\n"));
+    char reused_header[96],unevaluated_header[96];
+    snprintf(reused_header,sizeof(reused_header),
+             "X-Flash-Gordon-Reused-Tokens: %zu\r\n",prior_evaluated);
+    snprintf(unevaluated_header,sizeof(unevaluated_header),
+             "X-Flash-Gordon-Reused-Tokens: %zu\r\n",prior_rendered);
+    CHECK(response&&strstr(response,reused_header));
+    CHECK(response&&!strstr(response,unevaluated_header));
+    CHECK(runtime.history&&strstr(
+        runtime.history,
+        "answer<|im_end|>\n<|im_start|>user\nnext<|im_end|>\n"
+        "<|im_start|>assistant\n<think>\n"));
+    CHECK(runtime.history&&!strstr(runtime.history,
+                                  "answer<|im_end|>\n<|im_end|>"));
     free(response);
 
     response = run_chat_request(
@@ -688,7 +721,7 @@ static void test_live_prefix_tool_loop(void) {
             "hidden\n</think>\n\n"
             "<tool_call>\n<function=weather>\n"
             "<parameter=city>\nParis\n</parameter>\n"
-            "</function>\n</tool_call><|im_end|>\n",
+            "</function>\n</tool_call>",
     };
     api_public_session session={0};
     const char *tools =
@@ -706,6 +739,11 @@ static void test_live_prefix_tool_loop(void) {
     CHECK(status == FG_OK);
     CHECK(response && strstr(response, "\"finish_reason\":\"tool_calls\""));
     CHECK(response && !strstr(response,"reasoning_content"));
+    CHECK(response && !strstr(response,"<|im_end|>"));
+    CHECK(runtime.history&&strstr(runtime.history,
+                                  "</function>\n</tool_call><|im_end|>\n"));
+    CHECK(runtime.history&&!strstr(runtime.history,
+                                  "</tool_call><|im_end|>\n<|im_end|>"));
     free(first.data);
 
     fg_error response_error={0};
@@ -727,7 +765,7 @@ static void test_live_prefix_tool_loop(void) {
     CHECK(name&&name->type==JSON_STRING);
     CHECK(arguments&&arguments->type==JSON_STRING);
 
-    runtime.generated = "done\n</think>\n\nIt is 20 C.<|im_end|>\n";
+    runtime.generated = "done\n</think>\n\nIt is 20 C.";
     api_buffer second = {0};
     CHECK(buffer_append(&second, "{", &err) == FG_OK);
     CHECK(buffer_append(&second, tools, &err) == FG_OK);
@@ -758,6 +796,11 @@ static void test_live_prefix_tool_loop(void) {
     CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: hit\r\n"));
     CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: none\r\n"));
     CHECK(response && !strstr(response, "X-Flash-Gordon-Reused-Tokens: 0\r\n"));
+    CHECK(runtime.history&&strstr(
+        runtime.history,
+        "</tool_call><|im_end|>\n<|im_start|>user\n"
+        "<tool_response>\n20 C\n</tool_response><|im_end|>\n"
+        "<|im_start|>assistant\n<think>\n"));
     free(response);
     free(second.data);
     api_public_session_free(&session);

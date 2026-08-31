@@ -638,7 +638,17 @@ static fg_status runtime_generate_transcript(
     uint32_t generated=0;
     while(status==FG_OK&&generated<max_tokens){
         if(interrupted&&interrupted(interrupt_context))break;
-        if(next==fg_tokenizer_eos(runtime->coordinator.tokenizer))break;
+        if(next==fg_tokenizer_eos(runtime->coordinator.tokenizer)){
+            const char *eos_text=NULL;size_t eos_bytes=0;
+            status=fg_tokenizer_token(runtime->coordinator.tokenizer,next,&eos_text,
+                                      &eos_bytes,NULL,err);
+            if(status==FG_OK)status=runtime_render_append(&candidate,&candidate_length,
+                                                          &candidate_capacity,eos_text,
+                                                          eos_bytes,err);
+            if(status==FG_OK)status=runtime_render_append(&candidate,&candidate_length,
+                                                          &candidate_capacity,"\n",1u,err);
+            break;
+        }
         char decoded[4096];size_t bytes=0;status=fg_tokenizer_decode_token(runtime->coordinator.tokenizer,next,decoded,sizeof(decoded),&bytes,err);
         if(status==FG_OK)status=callback(callback_context,next,decoded,bytes,err);
         if(status==FG_OK)status=runtime_render_append(&candidate,&candidate_length,
