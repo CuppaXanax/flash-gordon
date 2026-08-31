@@ -26,12 +26,13 @@ The build requires Linux headers with io_uring support, Vulkan headers and loade
 ./flash-gordon chat --manifest /srv/flash-gordon/manifest.fgm --max-tokens 512
 ```
 
-The model runtime stays resident. Each turn canonically renders and tokenizes the
-full in-memory transcript, then reuses live runtime state only when its complete
-token history is an exact prefix. Hits prefill only the authoritative
-full-tokenization suffix; an exact cached frontier continues without prefill.
-Divergence resets and prefills the full prompt. The current boot-safe serving
-profile uses an 8,192-token working
+The model runtime stays resident. Initial and divergent turns canonically render
+and tokenize the full in-memory transcript. Exact public continuations preserve
+the authoritative tokens the model actually evaluated, then fully tokenize the
+new suffix beginning at the pending `<|im_end|>` boundary. This avoids assuming
+that decoded generated text re-tokenizes to the model's original token sequence.
+Hits prefill only that boundary and new turn; divergence resets and prefills the
+full prompt. The current boot-safe serving profile uses an 8,192-token working
 context so QSA records stay on the qualified resident hot path; this is a
 temporary qualified profile, not the model's context target. Tokens stream directly to
 the terminal. `/clear` clears the

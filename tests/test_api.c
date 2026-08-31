@@ -25,6 +25,9 @@ struct fg_runtime {
     fg_prefix_reset_reason empty_reason;
     const char *generated;
     bool fail_after_prefill;
+    bool force_continuation_miss;
+    bool require_clean_generation;
+    uint32_t reset_count;
 };
 
 fg_status fg_runtime_open(fg_runtime **out, const char *manifest_path, fg_error *err) {
@@ -56,6 +59,7 @@ fg_status fg_runtime_reset(fg_runtime *runtime, fg_error *err) {
         runtime->history_length = 0;
         runtime->evaluated_length = 0;
         runtime->empty_reason = FG_PREFIX_RESET_EXPLICIT;
+        runtime->reset_count++;
     }
     return FG_OK;
 }
@@ -63,6 +67,12 @@ fg_status fg_runtime_reset(fg_runtime *runtime, fg_error *err) {
 fg_status fg_runtime_reset_public_history(fg_runtime *runtime,fg_error *err) {
     fg_status status=fg_runtime_reset(runtime,err);
     if(status==FG_OK&&runtime)runtime->empty_reason=FG_PREFIX_RESET_PUBLIC_MISMATCH;
+    return status;
+}
+
+fg_status fg_runtime_reset_failure(fg_runtime *runtime,fg_error *err) {
+    fg_status status=fg_runtime_reset(runtime,err);
+    if(status==FG_OK&&runtime)runtime->empty_reason=FG_PREFIX_RESET_FAILURE;
     return status;
 }
 
@@ -98,6 +108,12 @@ fg_status fg_runtime_generate(fg_runtime *runtime, const char *rendered_transcri
         fg_error_set(err, FG_ERR_UNAVAILABLE, "test runtime");
         return FG_ERR_UNAVAILABLE;
     }
+    if (runtime->require_clean_generation && runtime->history_length) {
+        fg_error_set(err, FG_ERR_MISMATCH,
+                     "fake runtime generation began with stale prefix metadata");
+        return FG_ERR_MISMATCH;
+    }
+    runtime->require_clean_generation = false;
     char *history = strdup(rendered_transcript);
     if (!history) {
         fg_error_set(err, FG_ERR_OOM, "copy fake runtime history");
@@ -156,12 +172,21 @@ fg_status fg_runtime_generate(fg_runtime *runtime, const char *rendered_transcri
 }
 
 fg_status fg_runtime_generate_continuation(
-    fg_runtime *runtime,const char *rendered_continuation,bool *prefix_miss,
+    fg_runtime *runtime,const char *public_transcript,
+    const char *rendered_continuation,bool *prefix_miss,
     uint32_t max_tokens,
     fg_token_callback callback,void *callback_context,
     fg_interrupt_fn interrupted,void *interrupt_context,
     fg_generation_stats *stats,fg_error *err) {
+    (void)public_transcript;
     if(prefix_miss)*prefix_miss=false;
+    if(runtime&&runtime->force_continuation_miss){
+        runtime->force_continuation_miss=false;
+        if(prefix_miss)*prefix_miss=true;
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "injected authoritative continuation miss");
+        return FG_ERR_UNAVAILABLE;
+    }
     if(!runtime||!runtime->history){
         if(prefix_miss)*prefix_miss=true;
         fg_error_set(err,FG_ERR_UNAVAILABLE,"fake runtime has no continuation");
@@ -807,6 +832,64 @@ static void test_live_prefix_tool_loop(void) {
     fg_runtime_close(&runtime);
 }
 
+static void test_divergent_tool_request_clears_prefix_metadata(void) {
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    char *response = run_chat_request(
+        &runtime, &session,
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"ordinary\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(session.valid);
+    free(response);
+
+    uint32_t prior_resets = runtime.reset_count;
+    runtime.generated = "private\n</think>\n\nBeta.";
+    runtime.force_continuation_miss = true;
+    runtime.require_clean_generation = true;
+    response = run_chat_request(
+        &runtime, &session,
+        "{\"messages\":["
+        "{\"role\":\"user\",\"content\":\"ordinary\"},"
+        "{\"role\":\"assistant\",\"content\":\"answer\"},"
+        "{\"role\":\"user\",\"content\":\"second\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "\"content\":\"Beta.\""));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: miss\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: explicit\r\n"));
+    CHECK(runtime.reset_count == prior_resets + 1u);
+    CHECK(session.valid);
+    free(response);
+
+    prior_resets = runtime.reset_count;
+    runtime.generated =
+        "private\n</think>\n\n"
+        "<tool_call>\n<function=weather>\n"
+        "<parameter=city>\nParis\n</parameter>\n"
+        "</function>\n</tool_call>";
+    runtime.require_clean_generation = true;
+    response = run_chat_request(
+        &runtime, &session,
+        "{"
+        "\"tools\":[{\"type\":\"function\",\"function\":{"
+        "\"name\":\"weather\",\"parameters\":{\"type\":\"object\",\"properties\":{"
+        "\"city\":{\"type\":\"string\"}}}}}],"
+        "\"messages\":[{\"role\":\"user\",\"content\":\"weather?\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "HTTP/1.1 200 OK\r\n"));
+    CHECK(response && strstr(response, "\"finish_reason\":\"tool_calls\""));
+    CHECK(response &&
+          strstr(response, "X-Flash-Gordon-Reset-Reason: public-history-mismatch\r\n"));
+    CHECK(runtime.reset_count == prior_resets + 1u);
+    CHECK(session.valid);
+    free(response);
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
+}
+
 static void test_failed_generation_fails_closed(void) {
     fg_runtime runtime = {
         .empty_reason = FG_PREFIX_RESET_COLD_START,
@@ -865,6 +948,7 @@ int main(void) {
     test_model_capabilities();
     test_live_prefix_hit_divergence_and_reset();
     test_live_prefix_tool_loop();
+    test_divergent_tool_request_clears_prefix_metadata();
     test_failed_generation_fails_closed();
     if (failures) fprintf(stderr, "%d API test(s) failed\n", failures);
     return failures ? 1 : 0;

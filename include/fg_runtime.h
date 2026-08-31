@@ -64,13 +64,15 @@ fg_status fg_runtime_open_with_options(fg_runtime **out,const char *manifest_pat
 void fg_runtime_close(fg_runtime *runtime);
 fg_status fg_runtime_reset(fg_runtime *runtime,fg_error *err);
 fg_status fg_runtime_reset_public_history(fg_runtime *runtime,fg_error *err);
+fg_status fg_runtime_reset_failure(fg_runtime *runtime,fg_error *err);
 fg_status fg_runtime_generate(fg_runtime *runtime,const char *rendered_transcript,
                               uint32_t max_tokens,
                               fg_token_callback callback,void *callback_context,
                               fg_interrupt_fn interrupted,void *interrupt_context,
                               fg_generation_stats *stats,fg_error *err);
 fg_status fg_runtime_generate_continuation(
-    fg_runtime *runtime,const char *rendered_continuation,bool *prefix_miss,
+    fg_runtime *runtime,const char *public_transcript,
+    const char *rendered_continuation,bool *prefix_miss,
     uint32_t max_tokens,
     fg_token_callback callback,void *callback_context,
     fg_interrupt_fn interrupted,void *interrupt_context,
