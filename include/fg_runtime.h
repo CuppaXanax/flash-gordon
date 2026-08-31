@@ -2,6 +2,7 @@
 #define FLASH_GORDON_RUNTIME_H
 
 #include "fg_manifest.h"
+#include "fg_prefix.h"
 
 typedef struct fg_runtime fg_runtime;
 #define FG_RUNTIME_BOOT_CONTEXT_TOKENS FG_MANIFEST_DEFAULT_CONTEXT_TOKENS
@@ -34,8 +35,13 @@ typedef struct fg_runtime_options {
 
 typedef struct fg_generation_stats {
     uint32_t prompt_tokens;
+    uint32_t prefilled_tokens;
+    uint32_t reused_tokens;
     uint32_t generated_tokens;
     uint32_t context_tokens;
+    bool prefix_cache_hit;
+    bool exact_frontier;
+    fg_prefix_reset_reason reset_reason;
     double prefill_seconds;
     double decode_seconds;
 } fg_generation_stats;
@@ -57,7 +63,8 @@ fg_status fg_runtime_open_with_options(fg_runtime **out,const char *manifest_pat
                                        const fg_runtime_options *options,fg_error *err);
 void fg_runtime_close(fg_runtime *runtime);
 fg_status fg_runtime_reset(fg_runtime *runtime,fg_error *err);
-fg_status fg_runtime_generate(fg_runtime *runtime,const char *rendered_suffix,uint32_t max_tokens,
+fg_status fg_runtime_generate(fg_runtime *runtime,const char *rendered_transcript,
+                              uint32_t max_tokens,
                               fg_token_callback callback,void *callback_context,
                               fg_interrupt_fn interrupted,void *interrupt_context,
                               fg_generation_stats *stats,fg_error *err);

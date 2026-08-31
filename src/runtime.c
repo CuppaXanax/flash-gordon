@@ -285,6 +285,11 @@ struct fg_runtime {
     size_t history_count,history_capacity;
     bool qsa_open;
     bool prefill_profiled;
+    bool state_ready;
+    bool next_token_valid;
+    uint32_t next_token;
+    float next_logit;
+    fg_prefix_reset_reason empty_reason;
     fg_runtime_options options;
     uint32_t context_limit;
     char directory[1024],qsa_path[1200];
@@ -426,6 +431,31 @@ static fg_status runtime_reserve_history(fg_runtime *runtime,size_t count,fg_err
     runtime->history=history;runtime->history_capacity=capacity;return FG_OK;
 }
 
+static fg_status runtime_reset_state(fg_runtime *runtime,fg_prefix_reset_reason reason,
+                                     fg_error *err){
+    runtime->state_ready=false;
+    runtime->history_count=0;
+    runtime->next_token_valid=false;
+    runtime->next_token=0;
+    runtime->next_logit=0.0f;
+    runtime->empty_reason=reason;
+    fg_status status=fg_owner_reset_state(runtime->coordinator.owner,err);
+    if(status!=FG_OK)return status;
+    if(!runtime->qsa_open){
+        if(unlink(runtime->qsa_path)!=0&&errno!=ENOENT){
+            fg_error_set(err,FG_ERR_IO,"remove stale QSA session: %s",strerror(errno));
+            return FG_ERR_IO;
+        }
+        status=fg_owner_qsa_open_decode(runtime->coordinator.owner,runtime->qsa_path,
+                                        runtime->context_limit,
+                                        runtime->manifest->prefill_microbatch,err);
+        if(status!=FG_OK)return status;
+        runtime->qsa_open=true;
+    }
+    runtime->state_ready=true;
+    return FG_OK;
+}
+
 fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
                                        const fg_runtime_options *requested,fg_error *err){
     if(!out||!path){fg_error_set(err,FG_ERR_ARGUMENT,"invalid runtime open arguments");return FG_ERR_ARGUMENT;}*out=NULL;
@@ -437,7 +467,7 @@ fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
     if(status==FG_OK)status=manifest_directory(path,runtime->directory,err);
     if(status==FG_OK)status=coordinator_open(&runtime->coordinator,runtime->manifest,runtime->directory,err);
     if(status==FG_OK){int n=snprintf(runtime->qsa_path,sizeof(runtime->qsa_path),"%s/session-%016llx-rank-00.qsa",runtime->directory,(unsigned long long)runtime->coordinator.session_id);if(n<0||(size_t)n>=sizeof(runtime->qsa_path)){fg_error_set(err,FG_ERR_LIMIT,"coordinator QSA path overflow");status=FG_ERR_LIMIT;}}
-    if(status==FG_OK)status=fg_runtime_reset(runtime,err);
+    if(status==FG_OK)status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
     if(status!=FG_OK){fg_runtime_close(runtime);return status;}*out=runtime;return FG_OK;
 }
 
@@ -454,47 +484,95 @@ void fg_runtime_close(fg_runtime *runtime){
 
 fg_status fg_runtime_reset(fg_runtime *runtime,fg_error *err){
     if(!runtime||!runtime->coordinator.owner||!runtime->qsa_path[0]){fg_error_set(err,FG_ERR_ARGUMENT,"resident runtime is not open");return FG_ERR_ARGUMENT;}
-    fg_status status=fg_owner_reset_state(runtime->coordinator.owner,err);if(status!=FG_OK)return status;
-    runtime->history_count=0;
-    if(runtime->qsa_open)return FG_OK;
-    if(unlink(runtime->qsa_path)!=0&&errno!=ENOENT){fg_error_set(err,FG_ERR_IO,"remove stale QSA session: %s",strerror(errno));return FG_ERR_IO;}
-    status=fg_owner_qsa_open_decode(runtime->coordinator.owner,runtime->qsa_path,
-                                    runtime->context_limit,
-                                    runtime->manifest->prefill_microbatch,err);
-    if(status==FG_OK)runtime->qsa_open=true;
-    return status;
+    return runtime_reset_state(runtime,FG_PREFIX_RESET_EXPLICIT,err);
 }
 
-fg_status fg_runtime_generate(fg_runtime *runtime,const char *suffix,uint32_t max_tokens,
+fg_status fg_runtime_generate(fg_runtime *runtime,const char *transcript,uint32_t max_tokens,
                               fg_token_callback callback,void *callback_context,
                               fg_interrupt_fn interrupted,void *interrupt_context,
                               fg_generation_stats *stats,fg_error *err){
-    if(!runtime||!suffix||!callback||!max_tokens||max_tokens>4096u){fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident generation arguments");return FG_ERR_ARGUMENT;}
+    if(!runtime||!transcript||!callback||!max_tokens||max_tokens>4096u){fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident generation arguments");return FG_ERR_ARGUMENT;}
+    if(!runtime->state_ready){fg_error_set(err,FG_ERR_MISMATCH,"resident runtime requires a successful reset");return FG_ERR_MISMATCH;}
     if(stats)memset(stats,0,sizeof(*stats));
-    fg_tokens prompt={0};fg_status status=fg_tokenizer_encode(runtime->coordinator.tokenizer,suffix,true,&prompt,err);
-    size_t old_count=runtime->history_count,total=old_count+prompt.count;
-    if(status==FG_OK&&(!prompt.count||total+(size_t)max_tokens>runtime->context_limit)){fg_error_set(err,FG_ERR_LIMIT,"prompt plus generation would use %zu of %u context tokens",total+(size_t)max_tokens,runtime->context_limit);status=FG_ERR_LIMIT;}
-    if(status==FG_OK)status=runtime_reserve_history(runtime,total+(size_t)max_tokens,err);
-    for(size_t i=0;status==FG_OK&&i<prompt.count;i++)runtime->history[old_count+i]=(int32_t)prompt.data[i];
-    runtime->history_count=status==FG_OK?total:old_count;
-    struct timespec prefill_start,prefill_end,decode_start,decode_end;
-    uint32_t next=0;float logit=0.0f;fg_vk_tensor *prefill_output=NULL;
-    if(status==FG_OK)clock_gettime(CLOCK_MONOTONIC,&prefill_start);
-    for(size_t offset=0;status==FG_OK&&offset<prompt.count;){
+    fg_tokens prompt={0};
+    fg_status status=fg_tokenizer_encode(runtime->coordinator.tokenizer,transcript,true,
+                                         &prompt,err);
+    fg_prefix_plan plan={0};
+    if(status==FG_OK)status=fg_prefix_plan_tokens(
+        runtime->history,runtime->history_count,runtime->next_token_valid,
+        prompt.data,prompt.count,runtime->empty_reason,&plan,err);
+    if(status==FG_OK&&(!prompt.count||prompt.count+(size_t)max_tokens>runtime->context_limit)){
+        fg_error_set(err,FG_ERR_LIMIT,"prompt plus generation would use %zu of %u context tokens",
+                     prompt.count+(size_t)max_tokens,runtime->context_limit);
+        status=FG_ERR_LIMIT;
+    }
+    if(status==FG_OK)status=runtime_reserve_history(
+        runtime,prompt.count+(size_t)max_tokens,err);
+    if(status!=FG_OK){fg_tokens_free(&prompt);return status;}
+
+    size_t old_count=runtime->history_count;
+    bool old_next_valid=runtime->next_token_valid;
+    uint32_t old_next=runtime->next_token;
+    float old_logit=runtime->next_logit;
+    bool state_mutated=false;
+    if(!plan.hit&&old_count){
+        status=runtime_reset_state(runtime,plan.reset_reason,err);
+        if(status!=FG_OK){fg_tokens_free(&prompt);return status;}
+    }
+    size_t prefill_offset=plan.hit?plan.prefill_offset:0u;
+    for(size_t i=prefill_offset;i<prompt.count;i++)
+        runtime->history[i]=(int32_t)prompt.data[i];
+    runtime->history_count=prompt.count;
+
+    if(stats){
+        stats->prompt_tokens=(uint32_t)prompt.count;
+        stats->prefilled_tokens=(uint32_t)(prompt.count-prefill_offset);
+        stats->reused_tokens=(uint32_t)plan.reused_tokens;
+        stats->prefix_cache_hit=plan.hit;
+        stats->exact_frontier=plan.exact_frontier;
+        stats->reset_reason=plan.reset_reason;
+    }
+
+    struct timespec prefill_start={0},prefill_end={0},decode_start={0},decode_end={0};
+    uint32_t next=runtime->next_token;
+    float logit=runtime->next_logit;
+    fg_vk_tensor *prefill_output=NULL;
+    if(prefill_offset<prompt.count){
+        state_mutated=true;
+        clock_gettime(CLOCK_MONOTONIC,&prefill_start);
+    }
+    for(size_t offset=prefill_offset;status==FG_OK&&offset<prompt.count;){
         uint32_t count=(uint32_t)(prompt.count-offset);if(count>runtime->manifest->prefill_microbatch)count=runtime->manifest->prefill_microbatch;
-        uint32_t first=(uint32_t)(old_count+offset);fg_vk_tensor *ngram_batch=NULL;
+        uint32_t first=(uint32_t)offset;fg_vk_tensor *ngram_batch=NULL;
         fg_vk_context *vk=fg_model_vk(runtime->coordinator.model);bool capture=!runtime->prefill_profiled&&prefill_profile_requested(),capture_active=false;struct timespec capture_start,capture_end;
         if(capture){status=fg_vk_profile_begin(vk,err);if(status==FG_OK)status=fg_vk_profile_set_scope(vk,"ngram_prefill",err);if(status==FG_OK){clock_gettime(CLOCK_MONOTONIC,&capture_start);capture_active=true;}}
         if(status==FG_OK)status=fg_ngram_store_lookup_prefill(runtime->coordinator.ngram,runtime->history,runtime->history_count,first,count,&ngram_batch,err);
-        if(status==FG_OK)status=coordinator_prefill_microbatch(&runtime->coordinator,prompt.data+offset,first,(uint16_t)count,ngram_batch,&prefill_output,err);
+        if(status==FG_OK)status=coordinator_prefill_microbatch(&runtime->coordinator,
+            prompt.data+offset,first,(uint16_t)count,ngram_batch,&prefill_output,err);
         if(capture_active){fg_vk_profile profile={0};fg_error profile_error={0};clock_gettime(CLOCK_MONOTONIC,&capture_end);fg_status profile_status=fg_vk_profile_end(vk,&profile,status==FG_OK?err:&profile_error);runtime->prefill_profiled=true;if(status==FG_OK&&profile_status!=FG_OK)status=profile_status;fprintf(stderr,"PREFILL_PROFILE first=%u tokens=%u wall_ms=%.3f gpu_ms=%.3f kernel_ms=%.3f submissions=%llu dispatches=%llu\n",first,count,elapsed_seconds(&capture_start,&capture_end)*1000.0,profile.gpu_ms,profile.kernel_ms,(unsigned long long)profile.submissions,(unsigned long long)profile.dispatches);for(uint32_t i=0;i<profile.kernel_count;i++){const fg_vk_profile_kernel *kernel=&profile.kernels[i];fprintf(stderr,"PREFILL_PROFILE_KERNEL scope=%s kernel=%s calls=%llu gpu_ms=%.3f\n",kernel->scope,kernel->name,(unsigned long long)kernel->invocations,kernel->gpu_ms);}}
         offset+=count;
     }
     fg_vk_tensor *last_hyper=NULL;
-    if(status==FG_OK){uint32_t final_count=(uint32_t)(prompt.count%runtime->manifest->prefill_microbatch);if(!final_count)final_count=runtime->manifest->prefill_microbatch;status=fg_vk_tensor_view(prefill_output,(uint64_t)(final_count-1u)*FG_HYPER_WIDTH*4u,FG_HYPER_WIDTH*4u,&last_hyper,err);}
-    if(status==FG_OK)status=coordinator_output(&runtime->coordinator,(uint32_t)runtime->history_count-1u,last_hyper,&next,&logit,err);
+    if(status==FG_OK&&prefill_offset<prompt.count){
+        uint32_t prefilled=(uint32_t)(prompt.count-prefill_offset);
+        uint32_t final_count=prefilled%runtime->manifest->prefill_microbatch;
+        if(!final_count)final_count=runtime->manifest->prefill_microbatch;
+        status=fg_vk_tensor_view(prefill_output,(uint64_t)(final_count-1u)*FG_HYPER_WIDTH*4u,
+                                 FG_HYPER_WIDTH*4u,&last_hyper,err);
+    }
+    if(status==FG_OK&&last_hyper)
+        status=coordinator_output(&runtime->coordinator,(uint32_t)runtime->history_count-1u,
+                                  last_hyper,&next,&logit,err);
     fg_vk_tensor_destroy(last_hyper);
-    if(status==FG_OK){fg_owner_qsa_set_tokens(runtime->coordinator.owner,(uint32_t)runtime->history_count);clock_gettime(CLOCK_MONOTONIC,&prefill_end);clock_gettime(CLOCK_MONOTONIC,&decode_start);}
+    if(status==FG_OK&&prefill_offset<prompt.count){
+        fg_owner_qsa_set_tokens(runtime->coordinator.owner,(uint32_t)runtime->history_count);
+        runtime->next_token=next;
+        runtime->next_logit=logit;
+        runtime->next_token_valid=true;
+        clock_gettime(CLOCK_MONOTONIC,&prefill_end);
+        if(stats)stats->prefill_seconds=elapsed_seconds(&prefill_start,&prefill_end);
+    }
+    if(status==FG_OK)clock_gettime(CLOCK_MONOTONIC,&decode_start);
     uint32_t generated=0;
     while(status==FG_OK&&generated<max_tokens){
         if(interrupted&&interrupted(interrupt_context))break;
@@ -503,10 +581,32 @@ fg_status fg_runtime_generate(fg_runtime *runtime,const char *suffix,uint32_t ma
         if(status==FG_OK)status=callback(callback_context,next,decoded,bytes,err);
         if(status!=FG_OK)break;
         runtime->history[runtime->history_count++]=(int32_t)next;generated++;
+        state_mutated=true;
         status=coordinator_decode_token_local(&runtime->coordinator,runtime->history,runtime->history_count,(uint32_t)runtime->history_count-1u,&next,&logit,err);
+        if(status==FG_OK){
+            runtime->next_token=next;
+            runtime->next_logit=logit;
+            runtime->next_token_valid=true;
+        }
     }
-    if(status==FG_OK){clock_gettime(CLOCK_MONOTONIC,&decode_end);if(stats){stats->prompt_tokens=(uint32_t)prompt.count;stats->generated_tokens=generated;stats->context_tokens=(uint32_t)runtime->history_count;stats->prefill_seconds=elapsed_seconds(&prefill_start,&prefill_end);stats->decode_seconds=elapsed_seconds(&decode_start,&decode_end);}}
-    if(status!=FG_OK&&runtime->history_count==total)runtime->history_count=old_count;
+    if(status==FG_OK){
+        clock_gettime(CLOCK_MONOTONIC,&decode_end);
+        runtime->empty_reason=FG_PREFIX_RESET_NONE;
+        if(stats){
+            stats->generated_tokens=generated;
+            stats->context_tokens=(uint32_t)runtime->history_count;
+            stats->decode_seconds=elapsed_seconds(&decode_start,&decode_end);
+        }
+    }else if(state_mutated){
+        fg_error reset_error={0};
+        fg_status reset_status=runtime_reset_state(runtime,FG_PREFIX_RESET_FAILURE,&reset_error);
+        if(reset_status!=FG_OK){*err=reset_error;status=reset_status;}
+    }else{
+        runtime->history_count=old_count;
+        runtime->next_token_valid=old_next_valid;
+        runtime->next_token=old_next;
+        runtime->next_logit=old_logit;
+    }
     fg_tokens_free(&prompt);return status;
 }
 

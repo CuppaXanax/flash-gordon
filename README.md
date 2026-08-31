@@ -26,9 +26,12 @@ The build requires Linux headers with io_uring support, Vulkan headers and loade
 ./flash-gordon chat --manifest /srv/flash-gordon/manifest.fgm --max-tokens 512
 ```
 
-The model runtime stays resident. Each turn resets its single inference session
-and prefills the full in-memory transcript, which favors correctness over prompt
-cache reuse. The current boot-safe serving profile uses an 8,192-token working
+The model runtime stays resident. Each turn canonically renders and tokenizes the
+full in-memory transcript, then reuses live runtime state only when its complete
+token history is an exact prefix. Hits prefill only the authoritative
+full-tokenization suffix; an exact cached frontier continues without prefill.
+Divergence resets and prefills the full prompt. The current boot-safe serving
+profile uses an 8,192-token working
 context so QSA records stay on the qualified resident hot path; this is a
 temporary qualified profile, not the model's context target. Tokens stream directly to
 the terminal. `/clear` clears the
@@ -64,8 +67,10 @@ video remain reported as unavailable until their runtime paths are qualified.
 Completions accept string-content system/developer, user, assistant, tool, and
 function messages; `max_tokens` or `max_completion_tokens`; and `stream`.
 Non-streaming responses are JSON and streaming responses use SSE. The runtime
-stays loaded, while its one session is reset before every request. The server
-handles one connection at a time and closes it after one request.
+stays loaded, and its single authoritative session reuses only exact canonical
+token prefixes across sequential requests. Shorter or divergent transcripts
+reset before a full prefill. The server handles one connection at a time and
+closes it after one request.
 
 Flash Gordon currently performs greedy decoding only. Requests that select
 non-greedy sampling, custom stop sequences, or log probabilities receive a
@@ -128,9 +133,10 @@ OpenAI/tool/decode acceptance harness from PowerShell:
 .\tools\qualify-openai.ps1 -BaseUrl http://192.168.42.42:8080/v1
 ```
 
-Non-streaming completion responses include `X-Flash-Gordon-*` timing headers so
-the harness compares engine-reported prefill and decode time rather than HTTP
-wall time. These headers are diagnostic extensions; the JSON body remains
+Non-streaming completion responses include `X-Flash-Gordon-*` timing and
+live-prefix headers: cache hit/miss, reused and prefilled token counts,
+exact-frontier continuation, and reset reason. These diagnostic extensions let
+the harness compare engine-reported work rather than HTTP wall time; the JSON body remains
 OpenAI-compatible. The harness reads the checked-in baseline itself; callers
 cannot lower the frozen LKG threshold. It parses and reconstructs SSE deltas
 before checking structured calls and native-tag leakage. A fleet candidate

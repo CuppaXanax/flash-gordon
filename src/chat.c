@@ -1277,7 +1277,6 @@ fg_status fg_chat_main_with_options(const char *manifest_path, uint32_t max_toke
         char *prompt = NULL;
         if (status == FG_OK)
             status = fg_chat_render(transcript.messages, transcript.count, NULL, &prompt, err);
-        if (status == FG_OK) status = fg_runtime_reset(runtime, err);
         chat_stream stream = {0};
         fg_generation_stats stats = {0};
         if (status == FG_OK)
@@ -1300,14 +1299,16 @@ fg_status fg_chat_main_with_options(const char *manifest_path, uint32_t max_toke
         free(stream.pending.data);
         if (status == FG_OK) {
             double prefill_tps =
-                stats.prefill_seconds > 0.0 ? (double)stats.prompt_tokens / stats.prefill_seconds :
-                                              0.0;
+                stats.prefill_seconds > 0.0 ?
+                    (double)stats.prefilled_tokens / stats.prefill_seconds : 0.0;
             double decode_tps =
                 stats.decode_seconds > 0.0 ? (double)stats.generated_tokens / stats.decode_seconds :
                                              0.0;
             fprintf(stderr,
-                    "[prefill %u tokens, %.2f tok/s; generation %u tokens, %.2f tok/s; "
-                    "context %u/%u]\n",
+                    "[prefix %s, reused %u, reset %s; prefill %u/%u tokens, %.2f tok/s; "
+                    "generation %u tokens, %.2f tok/s; context %u/%u]\n",
+                    stats.prefix_cache_hit ? "hit" : "miss", stats.reused_tokens,
+                    fg_prefix_reset_reason_name(stats.reset_reason), stats.prefilled_tokens,
                     stats.prompt_tokens, prefill_tps, stats.generated_tokens, decode_tps,
                     stats.context_tokens, fg_runtime_context_limit(runtime));
         }
