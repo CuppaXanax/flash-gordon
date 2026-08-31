@@ -72,6 +72,12 @@ token prefixes across sequential requests. Shorter or divergent transcripts
 reset before a full prefill. The server handles one connection at a time and
 closes it after one request.
 
+The server also retains the exact public assistant content and structured tool
+calls it returned. A normal OpenAI round trip can therefore continue the raw
+runtime transcript, including server-private reasoning tokens, without sending
+`reasoning_content` or an opaque cache identifier. Any difference in the echoed
+public history fails closed to a reset and full canonical prefill.
+
 Flash Gordon currently performs greedy decoding only. Requests that select
 non-greedy sampling, custom stop sequences, or log probabilities receive a
 clear `400` response. The API accepts OpenAI function `tools`, `tool_choice`,

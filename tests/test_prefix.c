@@ -103,6 +103,8 @@ int main(void) {
     test_restart_reset_and_unavailable_frontier();
     CHECK(!strcmp(fg_prefix_reset_reason_name(FG_PREFIX_RESET_TOKEN_MISMATCH),
                   "token-mismatch"));
+    CHECK(!strcmp(fg_prefix_reset_reason_name(FG_PREFIX_RESET_PUBLIC_MISMATCH),
+                  "public-history-mismatch"));
     if (failures) fprintf(stderr, "%d prefix test(s) failed\n", failures);
     return failures ? 1 : 0;
 }

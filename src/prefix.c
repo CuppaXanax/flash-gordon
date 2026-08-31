@@ -9,6 +9,7 @@ const char *fg_prefix_reset_reason_name(fg_prefix_reset_reason reason) {
         case FG_PREFIX_RESET_EXPLICIT: return "explicit";
         case FG_PREFIX_RESET_REQUEST_SHORTER: return "request-shorter";
         case FG_PREFIX_RESET_TOKEN_MISMATCH: return "token-mismatch";
+        case FG_PREFIX_RESET_PUBLIC_MISMATCH: return "public-history-mismatch";
         case FG_PREFIX_RESET_FRONTIER_UNAVAILABLE: return "frontier-unavailable";
         case FG_PREFIX_RESET_FAILURE: return "failure";
         default: return "unknown";

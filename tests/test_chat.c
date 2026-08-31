@@ -173,6 +173,29 @@ static void test_tool_call_and_results(void) {
                 "<|im_start|>assistant\n<think>\n");
 }
 
+static void test_round_trip_continuation_render(void) {
+    const char *schemas[] = {
+        "{\"name\":\"weather\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}",
+    };
+    const fg_chat_message messages[] = {
+        {.role = "tool", .content = "20 C", .tool_call_id = "call_1"},
+    };
+    const fg_chat_render_options options = {
+        .tool_schemas = schemas,
+        .tool_schema_count = 1,
+    };
+    fg_error err = {0};
+    char *actual = NULL;
+    if (fg_chat_render_continuation(messages, 1, &options, &actual, &err) != FG_OK) {
+        fprintf(stderr, "continuation render failed: %s\n", err.message);
+        failures++;
+    }
+    CHECK_EQUAL(actual,
+                "<|im_start|>user\n"
+                "<tool_response>\n20 C\n</tool_response><|im_end|>\n"
+                "<|im_start|>assistant\n<think>\n");
+}
+
 static void test_end_markers_and_think_off(void) {
     const fg_chat_message messages[] = {
         {.role = "user", .content = "No thinking"},
@@ -397,6 +420,7 @@ int main(void) {
     test_multi_turn();
     test_tool_declaration();
     test_tool_call_and_results();
+    test_round_trip_continuation_render();
     test_end_markers_and_think_off();
     test_reserved_chatml_is_rejected();
     test_empty_tool_argument_name();
