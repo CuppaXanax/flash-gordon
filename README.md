@@ -27,10 +27,11 @@ The build requires Linux headers with io_uring support, Vulkan headers and loade
 ```
 
 The model runtime stays resident. Initial and divergent turns canonically render
-and tokenize the full in-memory transcript. Exact public continuations preserve
-the authoritative tokens the model actually evaluated, then fully tokenize the
-new suffix beginning at the pending `<|im_end|>` boundary. This avoids assuming
-that decoded generated text re-tokenizes to the model's original token sequence.
+and tokenize the full in-memory transcript. Exact API and interactive
+continuations preserve the authoritative tokens the model actually evaluated,
+then fully tokenize the new suffix beginning at the pending `<|im_end|>`
+boundary. This avoids assuming that decoded generated text re-tokenizes to the
+model's original token sequence.
 Hits prefill only that boundary and new turn; divergence resets and prefills the
 full prompt. The current boot-safe serving profile uses an 8,192-token working
 context so QSA records stay on the qualified resident hot path; this is a
@@ -149,5 +150,10 @@ cannot lower the frozen LKG threshold. It parses and reconstructs SSE deltas
 before checking structured calls and native-tag leakage. A fleet candidate
 passes only when this harness succeeds after all eight blades also pass the
 build, test, and homogeneous fingerprint gates recorded in the baseline.
+
+`FG_PREFIX_TRACE=1` enables best-effort prefix diagnostics that report only
+token counts, mismatch positions, and mismatch reasons. It is disabled by
+default so normal continuation hits tokenize only the pending boundary and new
+turn, and it never logs token IDs or transcript text.
 
 No fleet command, deployment, CU unlock, or model download is performed by the local build.

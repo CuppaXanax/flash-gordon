@@ -1245,6 +1245,30 @@ static fg_status chat_token(void *context, uint32_t token, const char *text, siz
     return status;
 }
 
+static fg_status chat_generate_turn(
+    fg_runtime *runtime,const char *full_prompt,const char *continuation,
+    bool try_continuation,uint32_t max_tokens,
+    fg_token_callback callback,void *callback_context,
+    fg_interrupt_fn interrupted,void *interrupt_context,
+    fg_generation_stats *stats,fg_error *err) {
+    if(!try_continuation)
+        return fg_runtime_generate(runtime,full_prompt,max_tokens,callback,callback_context,
+                                   interrupted,interrupt_context,stats,err);
+    bool prefix_miss=false;
+    fg_status status=fg_runtime_generate_continuation(
+        runtime,full_prompt,continuation,&prefix_miss,max_tokens,callback,
+        callback_context,interrupted,interrupt_context,stats,err);
+    if(status!=FG_ERR_UNAVAILABLE||!prefix_miss)return status;
+    memset(stats,0,sizeof(*stats));
+    memset(err,0,sizeof(*err));
+    status=fg_runtime_reset(runtime,err);
+    if(status==FG_OK)
+        status=fg_runtime_generate(runtime,full_prompt,max_tokens,callback,
+                                   callback_context,interrupted,interrupt_context,
+                                   stats,err);
+    return status;
+}
+
 fg_status fg_chat_main_with_options(const char *manifest_path, uint32_t max_tokens,
                                     const fg_runtime_options *runtime_options,
                                     fg_error *err) {
@@ -1264,6 +1288,7 @@ fg_status fg_chat_main_with_options(const char *manifest_path, uint32_t max_toke
     sigaction(SIGTERM, &action, &old_term);
 
     fg_chat_transcript transcript = {0};
+    bool continuation_ready=false;
     char *line = NULL;
     size_t line_capacity = 0;
     fprintf(stderr, "Flash Gordon chat (%s). /clear resets, /quit exits.\n",
@@ -1280,6 +1305,7 @@ fg_status fg_chat_main_with_options(const char *manifest_path, uint32_t max_toke
         if (!strcmp(line, "/clear")) {
             transcript_clear(&transcript);
             status = fg_runtime_reset(runtime, err);
+            continuation_ready=false;
             if (status == FG_OK) fputs("session cleared\n", stdout);
             continue;
         }
@@ -1289,23 +1315,31 @@ fg_status fg_chat_main_with_options(const char *manifest_path, uint32_t max_toke
         char *prompt = NULL;
         if (status == FG_OK)
             status = fg_chat_render(transcript.messages, transcript.count, NULL, &prompt, err);
+        char *continuation=NULL;
+        if(status==FG_OK&&continuation_ready)
+            status=fg_chat_render_continuation(
+                transcript.messages+turn_start,transcript.count-turn_start,
+                NULL,&continuation,err);
         chat_stream stream = {0};
         fg_generation_stats stats = {0};
         if (status == FG_OK)
-            status = fg_runtime_generate(runtime, prompt, max_tokens, chat_token, &stream,
-                                         chat_interrupted, NULL, &stats, err);
+            status = chat_generate_turn(
+                runtime,prompt,continuation,continuation_ready,max_tokens,
+                chat_token,&stream,chat_interrupted,NULL,&stats,err);
         if(status==FG_OK&&!stream.stopped&&stream.pending.length)
             status=chat_stream_write(&stream,stream.pending.data,stream.pending.length,err);
         free(prompt);
+        free(continuation);
         fputc('\n', stdout);
-        if (status == FG_OK && stream.captured.data) {
+        if (status == FG_OK) {
             fg_text_buffer replay = {0};
             status = buffer_append(&replay, "<think>\n", err);
-            if (status == FG_OK)
+            if (status == FG_OK && stream.captured.length)
                 status = buffer_append_n(&replay, stream.captured.data, stream.captured.length, err);
             if (status == FG_OK)
                 status = transcript_push(&transcript, "assistant", replay.data, err);
             free(replay.data);
+            continuation_ready=status==FG_OK;
         }
         free(stream.captured.data);
         free(stream.pending.data);
@@ -1338,6 +1372,7 @@ fg_status fg_chat_main_with_options(const char *manifest_path, uint32_t max_toke
             }
             fg_error reset_error = {0};
             status = fg_runtime_reset(runtime, &reset_error);
+            continuation_ready=false;
             if (status != FG_OK) *err = reset_error;
         }
     }

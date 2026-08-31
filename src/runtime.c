@@ -30,6 +30,7 @@ static bool prefill_profile_requested(void){const char *enabled=getenv("FG_PREFI
 static bool frame_trace_enabled(void){const char *enabled=getenv("FG_FRAME_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool route_trace_enabled(void){const char *enabled=getenv("FG_TRACE_ROUTES");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool expert_batch_send_enabled(void){const char *enabled=getenv("FG_EXPERT_BATCH_SEND");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
+static bool prefix_trace_enabled(void){const char *enabled=getenv("FG_PREFIX_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static uint64_t critical_ns(void){struct timespec value;clock_gettime(CLOCK_REALTIME,&value);return (uint64_t)value.tv_sec*UINT64_C(1000000000)+(uint64_t)value.tv_nsec;}
 _Static_assert(FG_NGRAM_ROW_BYTES==FG_NGRAM_WIRE_ROW_BYTES,"n-gram row wire size mismatch");
 
@@ -719,8 +720,49 @@ static size_t runtime_first_token_mismatch(const fg_tokens *left,const fg_tokens
     return index;
 }
 
-static uint32_t runtime_token_at(const fg_tokens *tokens,size_t index){
-    return index<tokens->count?tokens->data[index]:UINT32_MAX;
+static const char *runtime_token_relation(const fg_tokens *left,const fg_tokens *right,
+                                          size_t mismatch){
+    if(mismatch<left->count&&mismatch<right->count)return "token-mismatch";
+    if(left->count!=right->count)return "length-mismatch";
+    return "exact";
+}
+
+static void runtime_trace_continuation(const fg_runtime *runtime,
+                                       const char *public_transcript,
+                                       const char *private_transcript,
+                                       const fg_tokens *suffix_tokens,
+                                       const fg_tokens *constructed){
+    if(!prefix_trace_enabled())return;
+    fg_tokens public_tokens={0},private_tokens={0};
+    fg_error ignored={0};
+    fg_status public_status=fg_tokenizer_encode(runtime->coordinator.tokenizer,
+                                                public_transcript,true,
+                                                &public_tokens,&ignored);
+    memset(&ignored,0,sizeof(ignored));
+    fg_status private_status=fg_tokenizer_encode(runtime->coordinator.tokenizer,
+                                                 private_transcript,true,
+                                                 &private_tokens,&ignored);
+    if(public_status==FG_OK&&private_status==FG_OK){
+        size_t public_mismatch=runtime_first_token_mismatch(constructed,&public_tokens);
+        size_t private_mismatch=runtime_first_token_mismatch(constructed,&private_tokens);
+        fprintf(stderr,
+                "PREFIX_TOKEN_TRACE raw_history_tokens=%zu suffix_tokens=%zu "
+                "constructed_tokens=%zu pending_boundary=valid "
+                "public_relation=%s public_first_mismatch=%zu "
+                "private_relation=%s private_first_mismatch=%zu\n",
+                runtime->history_count,suffix_tokens->count,constructed->count,
+                runtime_token_relation(constructed,&public_tokens,public_mismatch),
+                public_mismatch,
+                runtime_token_relation(constructed,&private_tokens,private_mismatch),
+                private_mismatch);
+    }else{
+        fprintf(stderr,
+                "PREFIX_TOKEN_TRACE raw_history_tokens=%zu suffix_tokens=%zu "
+                "constructed_tokens=%zu pending_boundary=valid trace=unavailable\n",
+                runtime->history_count,suffix_tokens->count,constructed->count);
+    }
+    fg_tokens_free(&private_tokens);
+    fg_tokens_free(&public_tokens);
 }
 
 fg_status fg_runtime_generate_continuation(
@@ -789,7 +831,7 @@ fg_status fg_runtime_generate_continuation(
                continuation_length+1u);
     }
 
-    fg_tokens suffix_tokens={0},prompt={0},public_tokens={0},rendered_tokens={0};
+    fg_tokens suffix_tokens={0},prompt={0};
     if(status==FG_OK)
         status=fg_tokenizer_encode(runtime->coordinator.tokenizer,suffix,true,
                                    &suffix_tokens,err);
@@ -798,39 +840,15 @@ fg_status fg_runtime_generate_continuation(
             runtime->history,runtime->history_count,runtime->pending_eos_token,
             suffix_tokens.data,suffix_tokens.count,&prompt.data,&prompt.count,err);
     prompt.capacity=prompt.count;
-    if(status==FG_OK)
-        status=fg_tokenizer_encode(runtime->coordinator.tokenizer,public_transcript,true,
-                                   &public_tokens,err);
-    if(status==FG_OK)
-        status=fg_tokenizer_encode(runtime->coordinator.tokenizer,combined,true,
-                                   &rendered_tokens,err);
     if(status==FG_OK){
-        size_t public_mismatch=runtime_first_token_mismatch(&prompt,&public_tokens);
-        size_t rendered_mismatch=runtime_first_token_mismatch(&prompt,&rendered_tokens);
-        fprintf(stderr,
-                "PREFIX_TOKEN_TRACE raw_history_tokens=%zu public_transcript_tokens=%zu "
-                "private_rendered_tokens=%zu pending_unevaluated_eos=%u "
-                "continuation_tokens=%zu continuation_first=%u continuation_second=%u "
-                "constructed_tokens=%zu "
-                "public_first_mismatch=%zu authoritative_token=%u public_token=%u "
-                "private_first_mismatch=%zu authoritative_private_token=%u "
-                "retokenized_private_token=%u\n",
-                runtime->history_count,public_tokens.count,rendered_tokens.count,
-                runtime->pending_eos_token,suffix_tokens.count,
-                runtime_token_at(&suffix_tokens,0u),runtime_token_at(&suffix_tokens,1u),
-                prompt.count,
-                public_mismatch,runtime_token_at(&prompt,public_mismatch),
-                runtime_token_at(&public_tokens,public_mismatch),rendered_mismatch,
-                runtime_token_at(&prompt,rendered_mismatch),
-                runtime_token_at(&rendered_tokens,rendered_mismatch));
+        runtime_trace_continuation(runtime,public_transcript,combined,
+                                   &suffix_tokens,&prompt);
         status=runtime_generate_tokens(
             runtime,combined,&prompt,true,prefix_miss,max_tokens,callback,
             callback_context,interrupted,interrupt_context,stats,err);
     }
     free(suffix);
     free(combined);
-    fg_tokens_free(&rendered_tokens);
-    fg_tokens_free(&public_tokens);
     fg_tokens_free(&prompt);
     fg_tokens_free(&suffix_tokens);
     return status;
