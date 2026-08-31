@@ -18,6 +18,14 @@ static int failures;
         }                                                                                 \
     } while (0)
 
+struct fg_runtime {
+    char *history;
+    size_t history_length;
+    fg_prefix_reset_reason empty_reason;
+    const char *generated;
+    bool fail_after_prefill;
+};
+
 fg_status fg_runtime_open(fg_runtime **out, const char *manifest_path, fg_error *err) {
     (void)out;
     (void)manifest_path;
@@ -32,35 +40,106 @@ fg_status fg_runtime_open_with_options(fg_runtime **out, const char *manifest_pa
 }
 
 void fg_runtime_close(fg_runtime *runtime) {
-    (void)runtime;
+    if (!runtime) return;
+    free(runtime->history);
+    runtime->history = NULL;
+    runtime->history_length = 0;
 }
 
 fg_status fg_runtime_reset(fg_runtime *runtime, fg_error *err) {
-    (void)runtime;
     (void)err;
+    if (runtime) {
+        free(runtime->history);
+        runtime->history = NULL;
+        runtime->history_length = 0;
+        runtime->empty_reason = FG_PREFIX_RESET_EXPLICIT;
+    }
     return FG_OK;
 }
 
-fg_status fg_runtime_generate(fg_runtime *runtime, const char *rendered_suffix,
+fg_status fg_runtime_generate(fg_runtime *runtime, const char *rendered_transcript,
                               uint32_t max_tokens, fg_token_callback callback,
                               void *callback_context, fg_interrupt_fn interrupted,
                               void *interrupt_context, fg_generation_stats *stats,
                               fg_error *err) {
-    (void)runtime;
-    (void)rendered_suffix;
     (void)max_tokens;
-    (void)callback;
-    (void)callback_context;
     (void)interrupted;
     (void)interrupt_context;
-    (void)stats;
-    (void)err;
-    return FG_ERR_UNAVAILABLE;
+    size_t rendered_length = strlen(rendered_transcript);
+    bool hit = runtime && runtime->history_length &&
+               rendered_length >= runtime->history_length &&
+               !memcmp(rendered_transcript, runtime->history, runtime->history_length);
+    fg_prefix_reset_reason reason = FG_PREFIX_RESET_NONE;
+    size_t reused = hit ? runtime->history_length : 0u;
+    if (!hit) {
+        reason = runtime && runtime->history_length ? FG_PREFIX_RESET_TOKEN_MISMATCH :
+                 runtime ? runtime->empty_reason : FG_PREFIX_RESET_COLD_START;
+    }
+    if (stats) {
+        memset(stats, 0, sizeof(*stats));
+        stats->prompt_tokens = (uint32_t)rendered_length;
+        stats->prefilled_tokens = (uint32_t)(rendered_length - reused);
+        stats->reused_tokens = (uint32_t)reused;
+        stats->prefix_cache_hit = hit;
+        stats->exact_frontier = hit && reused == rendered_length;
+        stats->reset_reason = reason;
+        stats->prefill_seconds = reused == rendered_length ? 0.0 : 1.0;
+    }
+    if (!runtime) {
+        fg_error_set(err, FG_ERR_UNAVAILABLE, "test runtime");
+        return FG_ERR_UNAVAILABLE;
+    }
+    char *history = strdup(rendered_transcript);
+    if (!history) {
+        fg_error_set(err, FG_ERR_OOM, "copy fake runtime history");
+        return FG_ERR_OOM;
+    }
+    free(runtime->history);
+    runtime->history = history;
+    runtime->history_length = rendered_length;
+    if (runtime->fail_after_prefill) {
+        runtime->fail_after_prefill = false;
+        free(runtime->history);
+        runtime->history = NULL;
+        runtime->history_length = 0;
+        runtime->empty_reason = FG_PREFIX_RESET_FAILURE;
+        fg_error_set(err, FG_ERR_MISMATCH, "injected generation failure");
+        return FG_ERR_MISMATCH;
+    }
+    const char *generated = runtime->generated ? runtime->generated :
+        "hidden\n</think>\n\nanswer<|im_end|>\n";
+    fg_status status = callback(callback_context, 42u, generated, strlen(generated), err);
+    if (status != FG_OK) {
+        free(runtime->history);
+        runtime->history = NULL;
+        runtime->history_length = 0;
+        runtime->empty_reason = FG_PREFIX_RESET_FAILURE;
+        return status;
+    }
+    size_t generated_length = strlen(generated);
+    char *committed = realloc(runtime->history, rendered_length + generated_length + 1u);
+    if (!committed) {
+        free(runtime->history);
+        runtime->history = NULL;
+        runtime->history_length = 0;
+        runtime->empty_reason = FG_PREFIX_RESET_FAILURE;
+        fg_error_set(err, FG_ERR_OOM, "commit fake runtime history");
+        return FG_ERR_OOM;
+    }
+    memcpy(committed + rendered_length, generated, generated_length + 1u);
+    runtime->history = committed;
+    runtime->history_length = rendered_length + generated_length;
+    runtime->empty_reason = FG_PREFIX_RESET_NONE;
+    if (stats) {
+        stats->generated_tokens = 1u;
+        stats->context_tokens = (uint32_t)runtime->history_length;
+        stats->decode_seconds = 0.5;
+    }
+    return FG_OK;
 }
 
 uint32_t fg_runtime_context_tokens(const fg_runtime *runtime) {
-    (void)runtime;
-    return 0;
+    return runtime ? (uint32_t)runtime->history_length : 0;
 }
 
 uint32_t fg_runtime_context_limit(const fg_runtime *runtime) {
@@ -270,8 +349,10 @@ static void test_nonstream_tool_response(void) {
     };
     fg_generation_stats stats = {
         .prompt_tokens = 10,
+        .prefilled_tokens = 10,
         .generated_tokens = 5,
         .context_tokens = 15,
+        .reset_reason = FG_PREFIX_RESET_COLD_START,
         .prefill_seconds = 2.0,
         .decode_seconds = 0.5,
     };
@@ -285,6 +366,10 @@ static void test_nonstream_tool_response(void) {
     CHECK(response && strstr(response, "\"name\":\"weather\""));
     CHECK(response && strstr(response, "\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\""));
     CHECK(response && strstr(response, "X-Flash-Gordon-Prompt-Tokens: 10\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefilled-Tokens: 10\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reused-Tokens: 0\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: miss\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: cold-start\r\n"));
     CHECK(response && strstr(response, "X-Flash-Gordon-Context-Tokens: 15\r\n"));
     CHECK(response && strstr(response, "X-Flash-Gordon-Prefill-TPS: 5.000000\r\n"));
     CHECK(response && strstr(response, "X-Flash-Gordon-Decode-TPS: 10.000000\r\n"));
@@ -471,6 +556,150 @@ static void test_model_capabilities(void) {
     close(sockets[1]);
 }
 
+static char *run_chat_request(fg_runtime *runtime, const char *body, fg_status *result) {
+    int sockets[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    http_request request = {
+        .body = (char *)body,
+        .body_length = strlen(body),
+    };
+    fg_error err = {0};
+    fg_status status = handle_chat_completions(sockets[0], runtime, &request, &err);
+    if (result) *result = status;
+    shutdown(sockets[0], SHUT_WR);
+    char *response = read_socket_response(sockets[1]);
+    close(sockets[0]);
+    close(sockets[1]);
+    return response;
+}
+
+static void test_live_prefix_hit_divergence_and_reset(void) {
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    fg_status status = FG_OK;
+    char *response = run_chat_request(
+        &runtime, "{\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: miss\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: cold-start\r\n"));
+    free(response);
+
+    response = run_chat_request(
+        &runtime,
+        "{\"messages\":["
+        "{\"role\":\"user\",\"content\":\"hello\"},"
+        "{\"role\":\"assistant\",\"reasoning_content\":\"hidden\",\"content\":\"answer\"},"
+        "{\"role\":\"user\",\"content\":\"next\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: hit\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: none\r\n"));
+    CHECK(response && !strstr(response, "X-Flash-Gordon-Reused-Tokens: 0\r\n"));
+    free(response);
+
+    response = run_chat_request(
+        &runtime, "{\"messages\":[{\"role\":\"user\",\"content\":\"different\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: miss\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: token-mismatch\r\n"));
+    free(response);
+
+    fg_error err = {0};
+    CHECK(fg_runtime_reset(&runtime, &err) == FG_OK);
+    response = run_chat_request(
+        &runtime, "{\"messages\":[{\"role\":\"user\",\"content\":\"after clear\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: explicit\r\n"));
+    free(response);
+    fg_runtime_close(&runtime);
+}
+
+static void test_live_prefix_tool_loop(void) {
+    fg_runtime runtime = {
+        .empty_reason = FG_PREFIX_RESET_COLD_START,
+        .generated =
+            "hidden\n</think>\n\n"
+            "<tool_call>\n<function=weather>\n"
+            "<parameter=city>\nParis\n</parameter>\n"
+            "</function>\n</tool_call><|im_end|>\n",
+    };
+    const char *tools =
+        "\"tools\":[{\"type\":\"function\",\"function\":{"
+        "\"name\":\"weather\",\"parameters\":{\"type\":\"object\",\"properties\":{"
+        "\"city\":{\"type\":\"string\"}}}}}],";
+    api_buffer first = {0};
+    fg_error err = {0};
+    CHECK(buffer_append(&first, "{", &err) == FG_OK);
+    CHECK(buffer_append(&first, tools, &err) == FG_OK);
+    CHECK(buffer_append(&first,
+        "\"messages\":[{\"role\":\"user\",\"content\":\"weather?\"}]}", &err) == FG_OK);
+    fg_status status = FG_OK;
+    char *response = run_chat_request(&runtime, first.data, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "\"finish_reason\":\"tool_calls\""));
+    free(response);
+    free(first.data);
+
+    runtime.generated = "done\n</think>\n\nIt is 20 C.<|im_end|>\n";
+    api_buffer second = {0};
+    CHECK(buffer_append(&second, "{", &err) == FG_OK);
+    CHECK(buffer_append(&second, tools, &err) == FG_OK);
+    CHECK(buffer_append(
+        &second,
+        "\"messages\":["
+        "{\"role\":\"user\",\"content\":\"weather?\"},"
+        "{\"role\":\"assistant\",\"reasoning_content\":\"hidden\",\"content\":null,"
+        "\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{"
+        "\"name\":\"weather\",\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\"}}]},"
+        "{\"role\":\"tool\",\"tool_call_id\":\"call_1\",\"content\":\"20 C\"}]}",
+        &err) == FG_OK);
+    response = run_chat_request(&runtime, second.data, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: hit\r\n"));
+    CHECK(response && !strstr(response, "X-Flash-Gordon-Reused-Tokens: 0\r\n"));
+    free(response);
+    free(second.data);
+    fg_runtime_close(&runtime);
+}
+
+static void test_failed_generation_fails_closed(void) {
+    fg_runtime runtime = {
+        .empty_reason = FG_PREFIX_RESET_COLD_START,
+    };
+    fg_status status = FG_OK;
+    char *response = run_chat_request(
+        &runtime, "{\"messages\":[{\"role\":\"user\",\"content\":\"seed\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    free(response);
+
+    runtime.fail_after_prefill = true;
+    response = run_chat_request(
+        &runtime,
+        "{\"messages\":["
+        "{\"role\":\"user\",\"content\":\"seed\"},"
+        "{\"role\":\"assistant\",\"reasoning_content\":\"hidden\",\"content\":\"answer\"},"
+        "{\"role\":\"user\",\"content\":\"fail\"}]}",
+        &status);
+    CHECK(status == FG_ERR_MISMATCH);
+    CHECK(response && strstr(response, "injected generation failure"));
+    CHECK(runtime.history == NULL);
+    CHECK(runtime.history_length == 0);
+    CHECK(runtime.empty_reason == FG_PREFIX_RESET_FAILURE);
+    free(response);
+
+    response = run_chat_request(
+        &runtime, "{\"messages\":[{\"role\":\"user\",\"content\":\"retry\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: miss\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: failure\r\n"));
+    free(response);
+    fg_runtime_close(&runtime);
+}
+
 int main(void) {
     test_openai_tools_request();
     test_unknown_tool_result_rejected();
@@ -484,6 +713,9 @@ int main(void) {
     test_json_nul_and_member_limit();
     test_client_socket_timeouts();
     test_model_capabilities();
+    test_live_prefix_hit_divergence_and_reset();
+    test_live_prefix_tool_loop();
+    test_failed_generation_fails_closed();
     if (failures) fprintf(stderr, "%d API test(s) failed\n", failures);
     return failures ? 1 : 0;
 }

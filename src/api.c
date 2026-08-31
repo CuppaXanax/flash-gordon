@@ -1821,20 +1821,30 @@ static fg_status send_completion(const api_generation *generation,
     }
     if (status == FG_OK) {
         double prefill_tps =
-            stats->prefill_seconds > 0.0 ? stats->prompt_tokens / stats->prefill_seconds : 0.0;
+            stats->prefill_seconds > 0.0 ?
+                stats->prefilled_tokens / stats->prefill_seconds : 0.0;
         double decode_tps =
             stats->decode_seconds > 0.0 ? stats->generated_tokens / stats->decode_seconds : 0.0;
-        char metrics[512];
+        char metrics[768];
         int metrics_length = snprintf(
             metrics, sizeof(metrics),
             "X-Flash-Gordon-Prompt-Tokens: %u\r\n"
+            "X-Flash-Gordon-Prefilled-Tokens: %u\r\n"
+            "X-Flash-Gordon-Reused-Tokens: %u\r\n"
+            "X-Flash-Gordon-Prefix-Cache: %s\r\n"
+            "X-Flash-Gordon-Exact-Frontier: %s\r\n"
+            "X-Flash-Gordon-Reset-Reason: %s\r\n"
             "X-Flash-Gordon-Completion-Tokens: %u\r\n"
             "X-Flash-Gordon-Context-Tokens: %u\r\n"
             "X-Flash-Gordon-Prefill-Seconds: %.9f\r\n"
             "X-Flash-Gordon-Prefill-TPS: %.6f\r\n"
             "X-Flash-Gordon-Decode-Seconds: %.9f\r\n"
             "X-Flash-Gordon-Decode-TPS: %.6f\r\n",
-            stats->prompt_tokens, stats->generated_tokens, stats->context_tokens,
+            stats->prompt_tokens, stats->prefilled_tokens, stats->reused_tokens,
+            stats->prefix_cache_hit ? "hit" : "miss",
+            stats->exact_frontier ? "true" : "false",
+            fg_prefix_reset_reason_name(stats->reset_reason),
+            stats->generated_tokens, stats->context_tokens,
             stats->prefill_seconds, prefill_tps, stats->decode_seconds, decode_tps);
         if (metrics_length < 0 || (size_t)metrics_length >= sizeof(metrics)) {
             fg_error_set(err, FG_ERR_LIMIT, "API metrics headers exceed buffer");
@@ -1906,7 +1916,6 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     };
     status = fg_chat_render(request.messages, request.message_count, &render_options,
                             &rendered, err);
-    if (status == FG_OK) status = fg_runtime_reset(runtime, err);
     char id[96];
     snprintf(id, sizeof(id), "chatcmpl-fg-%lld-%llu", (long long)time(NULL),
              ++api_request_sequence);
@@ -1935,13 +1944,15 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     if(status==FG_OK)status=validate_generated_tools(&request,&generated,err);
     if(status==FG_OK){
         double prefill_tps=stats.prefill_seconds>0.0?
-            (double)stats.prompt_tokens/stats.prefill_seconds:0.0;
+            (double)stats.prefilled_tokens/stats.prefill_seconds:0.0;
         double decode_tps=stats.decode_seconds>0.0?
             (double)stats.generated_tokens/stats.decode_seconds:0.0;
         fprintf(stderr,
-                "request %s: prefill %u tokens %.2f tok/s, generation %u tokens "
-                "%.2f tok/s, context %u/%u\n",
-                id,stats.prompt_tokens,prefill_tps,stats.generated_tokens,decode_tps,
+                "request %s: prefix %s, reused %u, reset %s, prefill %u/%u tokens "
+                "%.2f tok/s, generation %u tokens %.2f tok/s, context %u/%u\n",
+                id,stats.prefix_cache_hit?"hit":"miss",stats.reused_tokens,
+                fg_prefix_reset_reason_name(stats.reset_reason),stats.prefilled_tokens,
+                stats.prompt_tokens,prefill_tps,stats.generated_tokens,decode_tps,
                 stats.context_tokens,fg_runtime_context_limit(runtime));
     }
     const char *finish_reason = generated.tool_call_count ? "tool_calls" :
