@@ -18,6 +18,8 @@ fg_status fg_uring_register_buffer(fg_uring *ring,void *aligned_buffer,uint64_t 
 fg_status fg_uring_pread(fg_uring *ring, uint32_t file_slot, void *aligned_buffer, uint32_t bytes, uint64_t offset, fg_error *err);
 fg_status fg_uring_pread_batch(fg_uring *ring,uint32_t file_slot,const fg_uring_read *reads,
                                uint32_t count,fg_error *err);
+fg_status fg_uring_pwrite_batch(fg_uring *ring,uint32_t file_slot,const fg_uring_read *writes,
+                                uint32_t count,fg_error *err);
 fg_status fg_uring_pwrite(fg_uring *ring, uint32_t file_slot, const void *aligned_buffer, uint32_t bytes, uint64_t offset, fg_error *err);
 fg_status fg_uring_send_all(fg_uring *ring, uint32_t file_slot, const void *buffer, uint32_t bytes, fg_error *err);
 fg_status fg_uring_recv_all(fg_uring *ring, uint32_t file_slot, void *buffer, uint32_t bytes, fg_error *err);
@@ -28,5 +30,6 @@ fg_status fg_uring_prep_recv(fg_uring *ring,uint32_t file_slot,void *buffer,uint
 fg_status fg_uring_prep_send(fg_uring *ring,uint32_t file_slot,const void *buffer,uint32_t bytes,uint64_t tag,fg_error *err);
 fg_status fg_uring_flush(fg_uring *ring,uint32_t pending_count,fg_error *err);
 fg_status fg_uring_reap(fg_uring *ring,uint32_t min_count,fg_uring_cqe *out,uint32_t capacity,uint32_t *completed,fg_error *err);
+uint64_t fg_uring_host_bytes(const fg_uring *ring);
 
 #endif

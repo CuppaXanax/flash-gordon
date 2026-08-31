@@ -2,7 +2,7 @@
 
 Flash Gordon is a Linux-only C17 inference appliance specialized for Qwen3.8-Flash-Next on eight BC250 blades. It deliberately has no generic-model compatibility layer.
 
-Its distributed execution model is expert parallelism only. The coordinator executes the sequential common graph for one autoregressive token while each layer's routed experts fan out across their owning blades; pipeline parallelism is not part of the design. The immediate raw single-stream decode contract is a 10 tok/s floor and a 20 tok/s engineering target before MTP or multiple sessions.
+Its distributed execution model keeps the sequential common graph, including QSA projection/search/attention, on the coordinator. Each layer's routed experts still fan out across their owning blades; ranks 3 and 7 are the authoritative long-record owners for six QSA layers each. Whole-layer and pipeline parallelism are not part of the design. The immediate raw single-stream decode contract is a 10 tok/s floor and a 20 tok/s engineering target before MTP or multiple sessions.
 
 The current eight-blade LKG qualifies at 99.647 ms/token, or 10.035 tok/s, over the final 20 unprofiled greedy frames with exact response parity and a complete 48-layer route trace. See [PERFORMANCE_TRACE_10_035TPS.md](PERFORMANCE_TRACE_10_035TPS.md) for the qualification record.
 
@@ -45,15 +45,15 @@ Both `chat` and `api` accept the runtime-shape contract
 `--context-tokens`, `--gpu-index-tokens`, `--qsa-hot-tokens`, and
 `--qsa-page-cache-mib`.
 Experimental component contracts use `--experimental-context`,
-`--experimental-mtp`, and `--experimental-vision`. The current qualified
-implementation deliberately accepts only the 8,192-token resident profile with
-no page cache or experimental component; unsupported profiles fail before
-model/fleet startup instead of silently ignoring the request. Manifest v5 seals
-logical/index/hot/page defaults as 8,192/8,192/8,192/0; omitted runtime options
-derive from those values and explicit options must agree. One-shot `eval` uses
-the same resolved profile, rejects prompt plus generation beyond the logical
-limit, and bounds its QSA allocation to that limit. Later tiered-QSA,
-MTP, and vision milestones will enable these same explicit options.
+`--experimental-mtp`, and `--experimental-vision`; those component flags remain
+disabled. Manifest v5 seals logical/index/compatibility-hint/cache defaults as
+8,192/8,192/8,192/0, and omitted runtime options preserve that qualified
+profile. A staged tiered-QSA request must specify all four budgets. It accepts
+32,768, 65,536, 131,072, or 262,144 logical tokens, requires equal logical and
+GPU-index coverage and requires a whole-MiB unified record cache from 16
+through 512 MiB. Other combinations fail before fleet
+startup. One-shot `eval` uses the same resolved profile, rejects prompt plus
+generation beyond the logical limit, and bounds owner state to that limit.
 
 ## OpenAI-compatible API
 
@@ -101,8 +101,128 @@ tool syntax is not exposed as assistant content.
 The production pack path is bound to the four official Unsloth `UD-Q4_K_XL` shard sizes and SHA-256 identities. A dry run verifies the complete real GGUF metadata and canonical sizes without reading 111 GB of tensor payload; the full pack hashes every shard and fails before writing a deployment manifest if any payload differs.
 
 `--router-profile FILE` accepts whitespace-separated `layer expert frequency` rows. Optional `--expert-map FILE` accepts one `layer=N ranks=R0,...,R511` row per layer for an explicit placement; the two options are mutually exclusive. Without either option, expert residency is round-robin. Every mode enforces exactly 128 experts on each of the four ranks participating in a layer. The map is a pack-time input only: ownership is sealed into the manifest, and rank/eval runtime never reads or requires the source map file. Maps derived from qualification prompts are oracle-only diagnostics and cannot qualify a release.
+The `--profile native-262k-microbatch-128` switch seals a separate native-262K
+deployment profile for `pack`, or upgrades a legacy manifest with
+`upgrade-manifest`; it never rewrites an existing pack.
+Without `--profile`, `upgrade-manifest` only performs the format/protocol
+upgrade and preserves the legacy 256-token prefill and default 8,192-token
+session budgets.
 
-The sealed memory ledger is architecture-derived. GDN recurrent state and the Q8 indexer history are Vulkan-resident. The much larger QSA Q8-key/Q4-value history is retained by its layer owner in an aligned local-NVMe state file and only selected tokens are staged to Vulkan; its required capacity is recorded separately as `state-file` and is never counted as free GPU memory.
+The sealed memory ledger is architecture-derived. GDN recurrent state and the
+complete searchable QSA index are Vulkan-resident on the coordinator. The
+coordinator holds one budgeted GPU record-page cache for newly committed and
+fetched historical pages, and performs Q/K/V/index projection, record commit,
+selection, attention, and output projection locally. Cache-hit decode therefore
+has zero QSA request/response traffic and no token-age boundary. Ranks 3 and 7 each
+own one bounded rank-specific session file containing six layer regions; their
+page service never executes QSA projections. Session rotation and shutdown
+remove only those two known paths, preventing nonce-named state-file leaks.
+
+The coordinator's transient PLE, GDN, and QSA projection/attention buffers share
+one phase-exclusive Vulkan scratch allocation. At the sealed 256-token
+microbatch this is 76,021,760 bytes (72.5 MiB), rather than 142.517578 MiB of
+simultaneously reserved family scratch; the 70.017578 MiB reclaim does not
+change any tensor shape, index capacity, cache policy, or persistent state.
+Coordinator routed-expert tensors remain dedicated allocations. Aliasing fixed
+expert graphs into owner scratch changed hardware placement and reduced hot
+decode consistency for only 22,993,960 bytes of savings in the native profile;
+that cross-executor alias is therefore not part of the production geometry.
+The coordinator's QSA selection arrays and expert-output scratch are views of
+the same family arena. Expert prefill results consumed by CPU reduction remain
+in a dedicated cacheable host arena; reading mapped write-combined Vulkan memory
+here reduced short-prompt prefill by roughly four times on BC250. Prefill result
+wires, cold-page staging/cache, and n-gram
+decode tensors are created only when their phase first needs them. Startup emits
+`COORDINATOR_*_LEDGER` records with final requested/allocated bytes and a
+physical-memory estimate that counts host-visible Vulkan UMA exactly once. The
+estimate reports startup usage separately from a conservative peak: lazy
+n-gram tensors/cache, QSA staging/cache, the prefill result wire, and QSA page
+transport are all allowed to coexist. The concrete deferred peak ledger is
+68,028,066 bytes at the sealed 256-token prefill size. It includes the
+788,496-byte concurrent prefill work wire and keeps the 524,288-byte persistent
+n-gram I/O buffer in startup host usage; the n-gram cache is a full deferred
+allocation. The telemetry also prints the 68,552,354-byte diagnostic sum when
+that persistent I/O buffer is shown alongside deferred allocations; it is not
+added twice to the projected peak. The 51,817,084-byte Vulkan reclaim and the
+separate 1,024-byte host
+position reclaim (4,096 to 3,072 bytes) are never combined. Readiness adds the
+manifest's rank-0 driver reserve to the larger requested or allocated peak and
+reports process RSS and available memory. Fabric, io_uring, thread-stack, and
+kernel socket costs that cannot be measured from the runtime are labeled
+`unknown_os_overhead=unmeasured`; a positive raw UMA margin alone never
+produces `ready`.
+
+`pack --profile native-262k-microbatch-128` creates a separate sealed profile.
+The same switch on `upgrade-manifest` converts a legacy manifest to that
+profile without changing tensor or rank weight metadata. It has a
+262,144-token logical/index context, a unified 16 MiB record cache, and a
+128-token microbatch. It does not alter the default 8,192 profile
+or an existing pack. The profile halves the prefill working chunk, so
+QSA, GDN, PLE, and owner append batches use the same 128-token boundary; decode
+shapes and record-cache policy are unchanged. Prefill has twice as many chunk
+boundaries for the same prompt and can lose fixed per-batch throughput, while
+decode is unaffected by the chunk size. Rank-0 sealed scratch falls from
+335,544,320 to 201,326,592 bytes (134,217,728 bytes reclaimed).
+
+Only complete four-record pages are replicated. One record is exactly 1,236
+bytes: 544-byte Q8 key, 544-byte Q8 value, 136-byte Q8 index key, and 12-byte
+text position. A wire page is therefore 4,944 record bytes plus an 8-byte
+layer/block header. Every fourth decoded token sends one one-way batch of six
+pages to each owner: `12 + 6*(8 + 4,944) = 29,724` payload bytes per owner.
+Including two 32-byte fabric headers, this is 59,512 bytes per four tokens, or
+14,878 bytes/token. There is no append acknowledgement. A 512-token prefill
+batch sends 768 pages per owner, exactly 3,803,148 payload bytes each. QSA
+transport buffers are allocated on first page service. A depth-two all-or-none sender
+queue moves socket writes off the token critical path, and each owner copies
+accepted batches into a bounded background-writer queue so record-file I/O does
+not block its expert dispatch loop. Queue saturation or an asynchronous send or
+write failure is sticky and fails the session explicitly; pages are never
+silently dropped.
+
+Protocol v6 binds append, barrier, fetch, and result frames to the distributed
+session nonce. Owners require exact append and fetch sequence numbers,
+manifest-owned layers, contiguous four-token page frontiers, and fetches no
+newer than the committed frontier. Duplicate, skipped, stale, future, or
+misrouted work fails closed. Before reset or session rotation, the coordinator
+sends a barrier on each owner bulk channel and waits until the background
+writer drains; only then does it replace owner files via the control channel.
+An exact live-prefix hit preserves both local QSA state and owner frontiers.
+
+Cold selection first checks the coordinator hot ring, then its bounded hashed
+LRU page cache. A miss batch includes unique next-page prefetches that remain
+cold and fit the fixed 512-page request. Only a true miss sends one batched page
+fetch to the authoritative owner; index selection is the only point where the
+Vulkan batch is submitted early. The staged profiles activate this path, while
+the default remains 8,192/8,192/8,192/0. Longer profiles are implemented but
+still require the serialized fleet qualification gate.
+
+Startup reports exact requested and Vulkan-required bytes for the QSA index and
+for all live Vulkan allocations. The exact index uses 131072-token segments per
+QSA layer, so the 262144-token profile has two independently allocated segments
+per layer. Score dispatches add the segment block base, while commit and restore
+use the segment-local token offset; this keeps global top-k IDs and record
+ordering unchanged. Before use, every 4 KiB page of every segment is write/read
+verified and restored, so a staged profile proves touched residency rather than
+relying on nominal allocation success or host `MemAvailable`.
+
+`FG_QSA_LOCALITY_TRACE=summary` enables a best-effort locality report at reset
+or close; `token` also emits one keyed selection digest per QSA layer/token.
+Reports contain no raw page IDs. They include selected and deduplicated pages,
+hot-tail and cold references, previous-token overlap, observed host-cache
+hits/misses, exact reuse distance, and projected LRU hit curves. Curve budgets
+default to 16,32,64,128,256,512,1024 MiB and may be replaced with a comma-list
+in `FG_QSA_LOCALITY_MIB`. The trace allocates no state when disabled. Because
+reading GPU-selected IDs makes the diagnostic submit the active Vulkan batch,
+trace runs are for locality sizing rather than throughput qualification.
+
+Both per-layer remote designs are rejected. Candidate `3673156` measured
+8.681585 tok/s with twelve serialized RTTs and 983,424 payload bytes/token.
+The compact block candidate reduced payload to 246,144 bytes/token but still
+measured only 8.787463 tok/s because the twelve dependency-ordered RTTs
+remained. Their QSA-block messages stay decodable only as dormant compatibility
+contracts; runtime decode and prefill never dispatch them. The hybrid page
+architecture still requires a parent fleet gate, and one-way socket
+backpressure/encoding cost remains the principal latency risk to measure.
 
 Manifest v5 appends a versioned session contract to the v4 tensor layout:
 protocol compatibility, text/four-axis position mode, explicit logical/index/hot/page
@@ -119,15 +239,16 @@ GGUF tensor is split into four rank-local segments in ascending global-expert
 order according to the manifest map. All output segments begin at 4 KiB
 boundaries.
 
-Protocol v6 adds deterministic session identity/frontier encodings and owner
-begin/prepare/commit/restore controls. Protocol-v5 execution remains available
+Protocol v6 adds deterministic session identity/frontier encodings, owner
+begin/prepare/commit/restore controls, and the QSA page append/barrier/fetch
+service. Protocol-v5 execution remains available
 only to legacy v4 manifests, which keep the empty session-begin exchange and
-exact legacy layer and prefill-layer payload layouts. Protocol v6 payloads carry
-the explicit position-axis contract. Fabric receive paths reject frames whose
-version differs from the version negotiated by the manifest handshake. The
-default runtime remains the qualified 8,192-token text profile; tiered QSA,
-persistence, MTP, and multimodal execution are not activated, and four-axis
-manifests are rejected before model or fleet startup.
+exact legacy layer, prefill-layer, and dormant QSA-block payload layouts. Protocol v6
+payloads carry the explicit position-axis contract. Fabric receive paths reject frames whose
+version differs from the version negotiated by the manifest handshake. The default runtime remains the qualified 8,192-token text profile. Explicit
+staged tiered-QSA profiles are admitted but not fleet-qualified; MTP and
+multimodal execution remain unavailable, and four-axis manifests are rejected
+before model or fleet startup.
 
 ## Qualification contract
 

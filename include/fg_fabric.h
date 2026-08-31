@@ -16,10 +16,15 @@ typedef struct fg_fabric_send_item {uint32_t peer;fg_fabric_class cls;fg_message
 fg_status fg_fabric_open(fg_fabric **out,const fg_manifest *manifest,uint32_t rank,fg_error *err);
 void fg_fabric_close(fg_fabric *fabric);
 uint16_t fg_fabric_protocol_version(const fg_fabric *fabric);
+uint64_t fg_fabric_host_bytes(const fg_fabric *fabric);
 fg_status fg_fabric_validate_frame(const fg_fabric *fabric,const fg_frame_header *header,
                                    const void *payload,uint32_t *payload_bytes,
                                    fg_error *err);
 fg_status fg_fabric_send(fg_fabric *fabric,uint32_t peer,fg_fabric_class cls,fg_message_type type,uint64_t request_id,uint32_t sequence,uint32_t flags,const void *payload,uint32_t bytes,fg_error *err);
+fg_status fg_fabric_send_direct(fg_fabric *fabric,uint32_t peer,fg_fabric_class cls,
+                                fg_message_type type,uint64_t request_id,uint32_t sequence,
+                                uint32_t flags,const void *payload,uint32_t bytes,
+                                fg_error *err);
 fg_status fg_fabric_send_batch(fg_fabric *fabric,const fg_fabric_send_item *items,uint32_t count,fg_error *err);
 fg_status fg_fabric_recv(fg_fabric *fabric,uint32_t peer,fg_fabric_class cls,fg_frame_header *header,void *payload,uint32_t capacity,uint32_t *bytes,fg_error *err);
 fg_status fg_fabric_recv_timed(fg_fabric *fabric,uint32_t peer,fg_fabric_class cls,fg_frame_header *header,

@@ -1,4 +1,5 @@
 #include "fg_manifest.h"
+#include "fg_runtime.h"
 #include "fg_quant.h"
 #include "fg_q38_schema.h"
 #include "fg_sha256.h"
@@ -9,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static bool digest_is_zero(const uint8_t digest[32]){
@@ -124,7 +126,8 @@ static void build_contract(const fg_manifest *manifest,fg_manifest_contract *con
     contract->flags=0u;
     if(!contract->logical_context_tokens)contract->logical_context_tokens=boot_context;
     if(!contract->gpu_index_tokens)contract->gpu_index_tokens=boot_context;
-    if(!contract->qsa_hot_record_tokens)contract->qsa_hot_record_tokens=boot_context;
+    if(!contract->qsa_hot_record_tokens&&!contract->host_page_cache_bytes)
+        contract->qsa_hot_record_tokens=boot_context;
     policy_digest("flash-gordon-rope-policy-v1",(fg_position_mode)contract->position_mode,
                   contract->rope_policy_sha256);
     quantization_digest(manifest,contract->quantization_sha256);
@@ -185,8 +188,8 @@ static fg_status validate_contract(const fg_manifest *manifest,fg_error *err){
        contract->logical_context_tokens>manifest->native_context||
        !contract->gpu_index_tokens||
        contract->gpu_index_tokens>contract->logical_context_tokens||
-       !contract->qsa_hot_record_tokens||
-       contract->qsa_hot_record_tokens>contract->logical_context_tokens){
+       contract->qsa_hot_record_tokens>contract->logical_context_tokens||
+       (!contract->qsa_hot_record_tokens&&!contract->host_page_cache_bytes)){
         fg_error_set(err,FG_ERR_FORMAT,"invalid manifest session memory budgets");
         return FG_ERR_FORMAT;
     }
@@ -365,16 +368,15 @@ fg_status fg_manifest_validate_deployment(const fg_manifest *manifest,fg_error *
                      "four-axis position execution is not enabled in this runtime");
         return FG_ERR_UNAVAILABLE;
     }
-    uint32_t boot_context=manifest->native_context<FG_MANIFEST_DEFAULT_CONTEXT_TOKENS?
-        manifest->native_context:FG_MANIFEST_DEFAULT_CONTEXT_TOKENS;
-    if(manifest->format_version==FG_MANIFEST_FORMAT_VERSION&&
-       (manifest->session.logical_context_tokens!=boot_context||
-        manifest->session.gpu_index_tokens!=boot_context||
-        manifest->session.qsa_hot_record_tokens!=boot_context||
-        manifest->session.host_page_cache_bytes)){
-        fg_error_set(err,FG_ERR_UNAVAILABLE,
-                     "tiered QSA is not enabled for deployment");
-        return FG_ERR_UNAVAILABLE;
+    if(manifest->format_version==FG_MANIFEST_FORMAT_VERSION){
+        fg_runtime_options profile={
+            .logical_context_tokens=manifest->session.logical_context_tokens,
+            .gpu_index_tokens=manifest->session.gpu_index_tokens,
+            .qsa_hot_tokens=manifest->session.qsa_hot_record_tokens,
+            .qsa_page_cache_bytes=manifest->session.host_page_cache_bytes
+        };
+        status=fg_runtime_profile_validate(&profile,manifest->native_context,err);
+        if(status!=FG_OK)return status;
     }
     uint32_t missing=FG_MANIFEST_COMPONENTS_TEXT_REQUIRED&~manifest->flags;
     if(missing){
@@ -457,6 +459,47 @@ fg_status fg_manifest_write(const char *path,fg_manifest *manifest,fg_error *err
     return FG_OK;
 }
 
+fg_status fg_manifest_upgrade_with_profile(const char *input_path,const char *output_path,
+                                           uint32_t runtime_profile,fg_error *err){
+    if(!input_path||!output_path){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid manifest upgrade path");
+        return FG_ERR_ARGUMENT;
+    }
+    if(!strcmp(input_path,output_path)){
+        fg_error_set(err,FG_ERR_ARGUMENT,
+                     "manifest upgrade requires distinct input and output paths");
+        return FG_ERR_ARGUMENT;
+    }
+    struct stat input_info,output_info;
+    if(stat(input_path,&input_info)==0&&stat(output_path,&output_info)==0&&
+       input_info.st_dev==output_info.st_dev&&input_info.st_ino==output_info.st_ino){
+        fg_error_set(err,FG_ERR_ARGUMENT,
+                     "manifest upgrade input and output refer to the same file");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_manifest *manifest=malloc(sizeof(*manifest));
+    if(!manifest){
+        fg_error_set(err,FG_ERR_OOM,"allocate manifest upgrade");
+        return FG_ERR_OOM;
+    }
+    fg_status status=fg_manifest_read(input_path,manifest,err);
+    if(status==FG_OK){
+        if(runtime_profile!=FG_RUNTIME_PROFILE_NONE)
+            status=fg_runtime_profile_apply(manifest,runtime_profile,err);
+    }
+    if(status==FG_OK){
+        manifest->format_version=FG_MANIFEST_FORMAT_VERSION;
+        status=fg_manifest_write(output_path,manifest,err);
+    }
+    free(manifest);
+    return status;
+}
+
+fg_status fg_manifest_upgrade(const char *input_path,const char *output_path,fg_error *err){
+    return fg_manifest_upgrade_with_profile(input_path,output_path,
+                                            FG_RUNTIME_PROFILE_NONE,err);
+}
+
 fg_status fg_manifest_read(const char *path,fg_manifest *manifest,fg_error *err){
     if(!path||!manifest){fg_error_set(err,FG_ERR_ARGUMENT,"invalid manifest read");return FG_ERR_ARGUMENT;}
     FILE *file=fopen(path,"rb");
@@ -499,9 +542,22 @@ fg_status fg_manifest_add_tensor(fg_manifest *manifest,const fg_tensor_record *r
 }
 
 void fg_manifest_print(const fg_manifest *manifest){
-    printf("Flash Gordon manifest v%u protocol=%u CU=%u tensors=%u prefill=%ux%u context=%u/%u position=%s\n",
+    const fg_runtime_profile_definition *native_profile=
+        fg_runtime_profile_definition_get(FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_128);
+    const char *profile="default/custom";
+    if(native_profile&&manifest->prefill_microbatch==native_profile->prefill_microbatch&&
+       manifest->prefill_window==native_profile->prefill_window&&
+       manifest->max_context==native_profile->max_context&&
+       manifest->session.logical_context_tokens==native_profile->logical_context_tokens&&
+       manifest->session.gpu_index_tokens==native_profile->gpu_index_tokens&&
+       manifest->session.qsa_hot_record_tokens==native_profile->qsa_hot_tokens&&
+       manifest->session.host_page_cache_bytes==native_profile->qsa_page_cache_bytes&&
+       manifest->session.position_mode==native_profile->position_mode)
+        profile=native_profile->name;
+    printf("Flash Gordon manifest v%u protocol=%u CU=%u tensors=%u profile=%s "
+           "prefill=%ux%u context=%u/%u position=%s\n",
            manifest->format_version,manifest->protocol_version,manifest->required_cu,
-           manifest->tensor_count,manifest->prefill_microbatch,manifest->prefill_window,
+           manifest->tensor_count,profile,manifest->prefill_microbatch,manifest->prefill_window,
            manifest->native_context,manifest->max_context,
            manifest->session.position_mode==FG_POSITION_FOUR_AXIS?"four-axis":"text");
     uint32_t cooked_q8=0,cooked_k=0,cooked_q5=0;uint64_t cooked_bytes=0;

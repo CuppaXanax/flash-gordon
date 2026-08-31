@@ -111,6 +111,106 @@ static int test_qsa_record_commit(void){
     fg_vk_tensor *gkey=tensor(key,sizeof(key)),*gvalue=tensor(value,sizeof(value)),*gindex=tensor(index_key,sizeof(index_key)),*gposition=tensor(position,sizeof(position)),*qkey=tensor(NULL,FG_Q38_QSA_KEY_BYTES),*qvalue=tensor(NULL,FG_Q38_QSA_VALUE_BYTES),*qindex=tensor(NULL,FG_Q38_QSA_INDEX_KEY_BYTES),*records=tensor(NULL,(uint64_t)SLOTS*TOKENS*FG_Q38_QSA_TOKEN_RECORD_BYTES),*index_history=tensor(NULL,(uint64_t)SLOTS*TOKENS*FG_Q38_QSA_INDEX_KEY_BYTES);int ok=gkey&&gvalue&&gindex&&gposition&&qkey&&qvalue&&qindex&&records&&index_history;if(ok){memset(fg_vk_tensor_map(records),0,(size_t)fg_vk_tensor_bytes(records));memset(fg_vk_tensor_map(index_history),0,(size_t)fg_vk_tensor_bytes(index_history));ok=fg_vk_begin(context,&error)==FG_OK&&fg_vk_quantize_q8_0(context,qkey,gkey,KEY,1u,&error)==FG_OK&&fg_vk_quantize_q8_0(context,qvalue,gvalue,KEY,1u,&error)==FG_OK&&fg_vk_quantize_q8_0(context,qindex,gindex,INDEX,1u,&error)==FG_OK&&fg_vk_qsa_record_commit(context,records,index_history,qkey,qvalue,qindex,gposition,1u,2u,TOKENS,&error)==FG_OK;}if(ok){const uint8_t *pending=(const uint8_t *)fg_vk_tensor_map(records)+(1u*TOKENS+2u)*FG_Q38_QSA_TOKEN_RECORD_BYTES;for(uint32_t i=0;i<FG_Q38_QSA_TOKEN_RECORD_BYTES;i++)if(pending[i]!=0u){ok=0;break;}}if(ok)ok=fg_vk_end(context,&error)==FG_OK;if(ok)ok=fg_vk_tensor_read(qkey,0,expected,FG_Q38_QSA_KEY_BYTES,&error)==FG_OK&&fg_vk_tensor_read(qvalue,0,expected+FG_Q38_QSA_KEY_BYTES,FG_Q38_QSA_VALUE_BYTES,&error)==FG_OK&&fg_vk_tensor_read(qindex,0,expected+FG_Q38_QSA_KEY_BYTES+FG_Q38_QSA_VALUE_BYTES,FG_Q38_QSA_INDEX_KEY_BYTES,&error)==FG_OK;if(ok){memcpy(expected+FG_Q38_QSA_KEY_BYTES+FG_Q38_QSA_VALUE_BYTES+FG_Q38_QSA_INDEX_KEY_BYTES,position,sizeof(position));ok=fg_vk_tensor_read(records,(uint64_t)(1u*TOKENS+2u)*FG_Q38_QSA_TOKEN_RECORD_BYTES,got,sizeof(got),&error)==FG_OK&&fg_vk_tensor_read(index_history,(uint64_t)(1u*TOKENS+2u)*FG_Q38_QSA_INDEX_KEY_BYTES,history,sizeof(history),&error)==FG_OK&&memcmp(got,expected,sizeof(got))==0&&memcmp(history,expected+FG_Q38_QSA_KEY_BYTES+FG_Q38_QSA_VALUE_BYTES,sizeof(history))==0;}else if(fg_vk_batch_active(context))fg_vk_end(context,&error);for(uint32_t slot=0;ok&&slot<SLOTS;slot++)for(uint32_t token_id=0;token_id<TOKENS;token_id++)if(slot!=1u||token_id!=2u){const uint8_t *record=(const uint8_t *)fg_vk_tensor_map(records)+(slot*TOKENS+token_id)*FG_Q38_QSA_TOKEN_RECORD_BYTES;for(uint32_t i=0;i<FG_Q38_QSA_TOKEN_RECORD_BYTES;i++)if(record[i]!=0u){ok=0;break;}}fg_vk_tensor_destroy(index_history);fg_vk_tensor_destroy(records);fg_vk_tensor_destroy(qindex);fg_vk_tensor_destroy(qvalue);fg_vk_tensor_destroy(qkey);fg_vk_tensor_destroy(gposition);fg_vk_tensor_destroy(gindex);fg_vk_tensor_destroy(gvalue);fg_vk_tensor_destroy(gkey);return ok;
 }
 
+static int test_qsa_tiered_record_commit(void){
+    enum{SLOTS=2,HOT=4,INDEX=12};uint8_t key[FG_Q38_QSA_KEY_BYTES],
+        value[FG_Q38_QSA_VALUE_BYTES],index_key[FG_Q38_QSA_INDEX_KEY_BYTES];
+    uint32_t position[3]={101u,103u,107u};
+    for(uint32_t i=0;i<sizeof(key);i++)key[i]=(uint8_t)(i*3u+1u);
+    for(uint32_t i=0;i<sizeof(value);i++)value[i]=(uint8_t)(i*5u+2u);
+    for(uint32_t i=0;i<sizeof(index_key);i++)index_key[i]=(uint8_t)(i*7u+4u);
+    fg_vk_tensor *gkey=tensor(key,sizeof(key)),*gvalue=tensor(value,sizeof(value)),
+        *gindex=tensor(index_key,sizeof(index_key)),*gposition=tensor(position,sizeof(position)),
+        *records=tensor(NULL,(uint64_t)SLOTS*HOT*FG_Q38_QSA_TOKEN_RECORD_BYTES),
+        *history=tensor(NULL,(uint64_t)SLOTS*INDEX*FG_Q38_QSA_INDEX_KEY_BYTES);
+    int ok=gkey&&gvalue&&gindex&&gposition&&records&&history;
+    if(ok){memset(fg_vk_tensor_map(records),0,(size_t)fg_vk_tensor_bytes(records));
+        memset(fg_vk_tensor_map(history),0,(size_t)fg_vk_tensor_bytes(history));
+        ok=fg_vk_begin(context,&error)==FG_OK&&
+           fg_vk_qsa_record_commit_tiered(context,records,history,gkey,gvalue,gindex,
+               gposition,1u,9u,INDEX,1u,HOT,&error)==FG_OK;}
+    const uint8_t *pending=ok?(const uint8_t *)fg_vk_tensor_map(records)+
+        (1u*HOT+1u)*FG_Q38_QSA_TOKEN_RECORD_BYTES:NULL;
+    for(uint32_t i=0;ok&&i<FG_Q38_QSA_TOKEN_RECORD_BYTES;i++)if(pending[i])ok=0;
+    if(ok)ok=fg_vk_end(context,&error)==FG_OK;
+    uint8_t expected[FG_Q38_QSA_TOKEN_RECORD_BYTES],got[sizeof(expected)],got_index[sizeof(index_key)];
+    memcpy(expected,key,sizeof(key));memcpy(expected+sizeof(key),value,sizeof(value));
+    memcpy(expected+sizeof(key)+sizeof(value),index_key,sizeof(index_key));
+    memcpy(expected+sizeof(key)+sizeof(value)+sizeof(index_key),position,sizeof(position));
+    if(ok)ok=fg_vk_tensor_read(records,(uint64_t)(1u*HOT+1u)*
+        FG_Q38_QSA_TOKEN_RECORD_BYTES,got,sizeof(got),&error)==FG_OK&&
+        fg_vk_tensor_read(history,(uint64_t)(1u*INDEX+9u)*FG_Q38_QSA_INDEX_KEY_BYTES,
+                          got_index,sizeof(got_index),&error)==FG_OK&&
+        memcmp(got,expected,sizeof(got))==0&&memcmp(got_index,index_key,sizeof(got_index))==0;
+    if(fg_vk_batch_active(context)){fg_error ignored={0};fg_vk_abort(context,&ignored);}
+    fg_vk_tensor_destroy(history);fg_vk_tensor_destroy(records);fg_vk_tensor_destroy(gposition);
+    fg_vk_tensor_destroy(gindex);fg_vk_tensor_destroy(gvalue);fg_vk_tensor_destroy(gkey);
+    return ok;
+}
+
+static int test_qsa_segmented_record_commit(void){
+    enum{SLOTS=2,HOT=4,INDEX=4};
+    uint8_t key[FG_Q38_QSA_KEY_BYTES],value[FG_Q38_QSA_VALUE_BYTES],
+        index_key[FG_Q38_QSA_INDEX_KEY_BYTES];
+    uint32_t position[3]={211u,223u,227u};
+    for(uint32_t i=0;i<sizeof(key);i++)key[i]=(uint8_t)(i*3u+1u);
+    for(uint32_t i=0;i<sizeof(value);i++)value[i]=(uint8_t)(i*5u+2u);
+    for(uint32_t i=0;i<sizeof(index_key);i++)index_key[i]=(uint8_t)(i*7u+4u);
+    fg_vk_tensor *gkey=tensor(key,sizeof(key)),*gvalue=tensor(value,sizeof(value)),
+        *gindex=tensor(index_key,sizeof(index_key)),*gposition=tensor(position,sizeof(position)),
+        *contiguous_records=tensor(NULL,(uint64_t)SLOTS*HOT*
+                                   FG_Q38_QSA_TOKEN_RECORD_BYTES),
+        *segmented_records=tensor(NULL,(uint64_t)SLOTS*HOT*
+                                  FG_Q38_QSA_TOKEN_RECORD_BYTES),
+        *contiguous_history=tensor(NULL,(uint64_t)SLOTS*12u*
+                                   FG_Q38_QSA_INDEX_KEY_BYTES),
+        *segmented_history=tensor(NULL,(uint64_t)INDEX*
+                                  FG_Q38_QSA_INDEX_KEY_BYTES);
+    int ok=gkey&&gvalue&&gindex&&gposition&&contiguous_records&&
+        segmented_records&&contiguous_history&&segmented_history;
+    if(ok){
+        memset(fg_vk_tensor_map(contiguous_records),0,
+               (size_t)fg_vk_tensor_bytes(contiguous_records));
+        memset(fg_vk_tensor_map(segmented_records),0,
+               (size_t)fg_vk_tensor_bytes(segmented_records));
+        memset(fg_vk_tensor_map(contiguous_history),0,
+               (size_t)fg_vk_tensor_bytes(contiguous_history));
+        memset(fg_vk_tensor_map(segmented_history),0,
+               (size_t)fg_vk_tensor_bytes(segmented_history));
+        ok=fg_vk_begin(context,&error)==FG_OK&&
+            fg_vk_qsa_record_commit_tiered(context,contiguous_records,
+                contiguous_history,gkey,gvalue,gindex,gposition,1u,9u,12u,
+                1u,HOT,&error)==FG_OK&&
+            fg_vk_qsa_record_commit_segmented(context,segmented_records,
+                segmented_history,gkey,gvalue,gindex,gposition,1u,9u,1u,
+                INDEX,1u,HOT,&error)==FG_OK;
+    }
+    if(ok)ok=fg_vk_end(context,&error)==FG_OK;
+    uint8_t contiguous_record[FG_Q38_QSA_TOKEN_RECORD_BYTES],
+        segmented_record[FG_Q38_QSA_TOKEN_RECORD_BYTES],
+        contiguous_index[FG_Q38_QSA_INDEX_KEY_BYTES],
+        segmented_index[FG_Q38_QSA_INDEX_KEY_BYTES];
+    if(ok)ok=fg_vk_tensor_read(contiguous_records,
+        (uint64_t)(HOT+1u)*FG_Q38_QSA_TOKEN_RECORD_BYTES,contiguous_record,
+        sizeof(contiguous_record),&error)==FG_OK&&
+        fg_vk_tensor_read(segmented_records,
+        (uint64_t)(HOT+1u)*FG_Q38_QSA_TOKEN_RECORD_BYTES,segmented_record,
+        sizeof(segmented_record),&error)==FG_OK&&
+        fg_vk_tensor_read(contiguous_history,
+        (uint64_t)(12u+9u)*FG_Q38_QSA_INDEX_KEY_BYTES,contiguous_index,
+        sizeof(contiguous_index),&error)==FG_OK&&
+        fg_vk_tensor_read(segmented_history,
+        (uint64_t)1u*FG_Q38_QSA_INDEX_KEY_BYTES,segmented_index,
+        sizeof(segmented_index),&error)==FG_OK&&
+        memcmp(contiguous_record,segmented_record,sizeof(contiguous_record))==0&&
+        memcmp(contiguous_index,segmented_index,sizeof(contiguous_index))==0;
+    if(fg_vk_batch_active(context)){fg_error ignored={0};fg_vk_abort(context,&ignored);}
+    fg_vk_tensor_destroy(segmented_history);fg_vk_tensor_destroy(contiguous_history);
+    fg_vk_tensor_destroy(segmented_records);fg_vk_tensor_destroy(contiguous_records);
+    fg_vk_tensor_destroy(gposition);fg_vk_tensor_destroy(gindex);
+    fg_vk_tensor_destroy(gvalue);fg_vk_tensor_destroy(gkey);
+    return ok;
+}
+
 static int test_qsa_record_gather(void){
     enum{CAPACITY=10,BLOCKS=2,TAIL=2,SELECTED=BLOCKS*4+TAIL};uint8_t *records=malloc((size_t)CAPACITY*FG_Q38_QSA_TOKEN_RECORD_BYTES),*got=malloc((size_t)SELECTED*FG_Q38_QSA_TOKEN_RECORD_BYTES);uint32_t ids[BLOCKS]={1u,0u};if(!records||!got){free(got);free(records);return 0;}for(uint32_t token=0;token<CAPACITY;token++)memset(records+(uint64_t)token*FG_Q38_QSA_TOKEN_RECORD_BYTES,(int)(token+1u),FG_Q38_QSA_TOKEN_RECORD_BYTES);fg_vk_tensor *source=tensor(records,(uint64_t)CAPACITY*FG_Q38_QSA_TOKEN_RECORD_BYTES),*block_ids=tensor(ids,sizeof(ids)),*output=tensor(NULL,(uint64_t)SELECTED*FG_Q38_QSA_TOKEN_RECORD_BYTES);int ok=source&&block_ids&&output&&fg_vk_qsa_record_gather(context,output,source,block_ids,0u,CAPACITY,BLOCKS,8u,TAIL,&error)==FG_OK&&fg_vk_tensor_read(output,0,got,(uint64_t)SELECTED*FG_Q38_QSA_TOKEN_RECORD_BYTES,&error)==FG_OK;const uint32_t expected[SELECTED]={4u,5u,6u,7u,0u,1u,2u,3u,8u,9u};for(uint32_t i=0;ok&&i<SELECTED;i++)for(uint32_t byte=0;byte<FG_Q38_QSA_TOKEN_RECORD_BYTES;byte++)if(got[(uint64_t)i*FG_Q38_QSA_TOKEN_RECORD_BYTES+byte]!=(uint8_t)(expected[i]+1u)){ok=0;break;}fg_vk_tensor_destroy(output);fg_vk_tensor_destroy(block_ids);fg_vk_tensor_destroy(source);free(got);free(records);return ok;
 }
@@ -121,6 +221,213 @@ static int test_qsa_indexer(void){
     uint32_t interleaved_positions[TOKENS*3];for(uint32_t token_id=0;token_id<TOKENS;token_id++)for(uint32_t axis=0;axis<3u;axis++)interleaved_positions[token_id*3u+axis]=positions[axis*TOKENS+token_id];
     fg_vk_tensor *gq=tensor(query,sizeof(query)),*gk=tensor(quant,sizeof(quant)),*gn=tensor(knorm,sizeof(knorm)),*gp=tensor(interleaved_positions,sizeof(interleaved_positions)),*gs=tensor(NULL,BLOCKS*4u),*gi=tensor(NULL,BLOCKS*4u),*gos=tensor(NULL,BLOCKS*4u),*goi=tensor(NULL,BLOCKS*4u);uint32_t produced=0,ids[BLOCKS];ok=ok&&gq&&gk&&gn&&gp&&gs&&gi&&gos&&goi&&fg_vk_qsa_index_score(context,gs,gi,gq,gk,gn,gp,TOKENS,&error)==FG_OK&&fg_vk_topk_reduce(context,gos,goi,gs,gi,BLOCKS,&produced,&error)==FG_OK&&produced==BLOCKS&&fg_vk_tensor_read(goi,0,ids,sizeof(ids),&error)==FG_OK;for(uint32_t i=0;ok&&i<BLOCKS;i++)if(ids[i]!=expected_tokens[i*4u]/4u)ok=0;fg_vk_tensor_destroy(goi);fg_vk_tensor_destroy(gos);fg_vk_tensor_destroy(gi);fg_vk_tensor_destroy(gs);fg_vk_tensor_destroy(gp);fg_vk_tensor_destroy(gn);fg_vk_tensor_destroy(gk);fg_vk_tensor_destroy(gq);
     enum{COUNT=5000};score_id *reference=malloc(COUNT*sizeof(*reference));float *scores=malloc(COUNT*4u);uint32_t *input_ids=malloc(COUNT*4u),top_ids[512];if(!reference||!scores||!input_ids)ok=0;for(uint32_t i=0;ok&&i<COUNT;i++){scores[i]=sinf((float)i*0.013f)+(float)i*1e-7f;input_ids[i]=i;reference[i]=(score_id){scores[i],i};}if(ok)qsort(reference,COUNT,sizeof(*reference),score_id_compare);fg_vk_tensor *a_s=ok?tensor(scores,COUNT*4u):NULL,*a_i=ok?tensor(input_ids,COUNT*4u):NULL,*b_s=ok?tensor(NULL,1024u*4u):NULL,*b_i=ok?tensor(NULL,1024u*4u):NULL,*c_s=ok?tensor(NULL,512u*4u):NULL,*c_i=ok?tensor(NULL,512u*4u):NULL;uint32_t mid=0,final=0;ok=ok&&a_s&&a_i&&b_s&&b_i&&c_s&&c_i&&fg_vk_topk_reduce(context,b_s,b_i,a_s,a_i,COUNT,&mid,&error)==FG_OK&&mid==1024u&&fg_vk_topk_reduce(context,c_s,c_i,b_s,b_i,mid,&final,&error)==FG_OK&&final==512u&&fg_vk_tensor_read(c_i,0,top_ids,sizeof(top_ids),&error)==FG_OK;for(uint32_t i=0;ok&&i<512u;i++)if(top_ids[i]!=reference[i].id){fprintf(stderr,"top-k mismatch %u GPU=%u CPU=%u\n",i,top_ids[i],reference[i].id);ok=0;}fg_vk_tensor_destroy(c_i);fg_vk_tensor_destroy(c_s);fg_vk_tensor_destroy(b_i);fg_vk_tensor_destroy(b_s);fg_vk_tensor_destroy(a_i);fg_vk_tensor_destroy(a_s);free(input_ids);free(scores);free(reference);return ok;
+}
+
+static int test_qsa_segmented_index_score(void){
+    enum{TOKENS=8,SEGMENT_TOKENS=4,BLOCKS=2};
+    float query[FG_Q38_INDEX_QUERY_WIDTH],raw_keys[TOKENS*FG_Q38_INDEX_WIDTH],
+        norm[FG_Q38_INDEX_WIDTH];
+    uint8_t keys[TOKENS*FG_Q38_QSA_INDEX_KEY_BYTES];
+    uint32_t positions[TOKENS*3u];
+    for(uint32_t i=0;i<FG_Q38_INDEX_QUERY_WIDTH;i++)
+        query[i]=sinf((float)(i+7u)*0.013f);
+    for(uint32_t i=0;i<FG_Q38_INDEX_WIDTH;i++)
+        norm[i]=cosf((float)(i+3u)*0.019f);
+    for(uint32_t token=0;token<TOKENS;token++){
+        positions[token*3u]=token+11u;
+        positions[token*3u+1u]=token*2u+5u;
+        positions[token*3u+2u]=token*3u+9u;
+        for(uint32_t i=0;i<FG_Q38_INDEX_WIDTH;i++)
+            raw_keys[token*FG_Q38_INDEX_WIDTH+i]=
+                cosf((float)(token+1u)*(float)(i+5u)*0.007f);
+        fg_quantize_q8_0(raw_keys+token*FG_Q38_INDEX_WIDTH,
+                         keys+(uint64_t)token*FG_Q38_QSA_INDEX_KEY_BYTES,
+                         FG_Q38_INDEX_WIDTH);
+    }
+    fg_vk_tensor *gq=tensor(query,sizeof(query)),*gkeys=tensor(keys,sizeof(keys)),
+        *gnorm=tensor(norm,sizeof(norm)),*gpositions=tensor(positions,sizeof(positions)),
+        *reference_scores=tensor(NULL,BLOCKS*4u),
+        *reference_ids=tensor(NULL,BLOCKS*4u),*segmented_scores=tensor(NULL,BLOCKS*4u),
+        *segmented_ids=tensor(NULL,BLOCKS*4u);
+    int ok=gq&&gkeys&&gnorm&&gpositions&&reference_scores&&reference_ids&&
+        segmented_scores&&segmented_ids;
+    if(ok)ok=fg_vk_begin(context,&error)==FG_OK&&
+        fg_vk_qsa_index_score(context,reference_scores,reference_ids,gq,gkeys,
+                              gnorm,gpositions,TOKENS,&error)==FG_OK&&
+        fg_vk_end(context,&error)==FG_OK;
+    for(uint32_t segment=0;ok&&segment<2u;segment++){
+        fg_vk_tensor *key_view=NULL,*position_view=NULL,*score_view=NULL,
+            *id_view=NULL;
+        ok=fg_vk_tensor_view(gkeys,(uint64_t)segment*SEGMENT_TOKENS*
+                             FG_Q38_QSA_INDEX_KEY_BYTES,
+                             SEGMENT_TOKENS*FG_Q38_QSA_INDEX_KEY_BYTES,
+                             &key_view,&error)==FG_OK&&
+            fg_vk_tensor_view(gpositions,(uint64_t)segment*SEGMENT_TOKENS*12u,
+                              SEGMENT_TOKENS*12u,&position_view,&error)==FG_OK&&
+            fg_vk_tensor_view(segmented_scores,(uint64_t)segment*4u,4u,
+                              &score_view,&error)==FG_OK&&
+            fg_vk_tensor_view(segmented_ids,(uint64_t)segment*4u,4u,
+                              &id_view,&error)==FG_OK;
+        if(ok)ok=fg_vk_begin(context,&error)==FG_OK&&
+            fg_vk_qsa_index_score_segment(context,score_view,id_view,gq,key_view,
+                gnorm,position_view,SEGMENT_TOKENS,segment,&error)==FG_OK&&
+            fg_vk_end(context,&error)==FG_OK;
+        fg_vk_tensor_destroy(id_view);fg_vk_tensor_destroy(score_view);
+        fg_vk_tensor_destroy(position_view);fg_vk_tensor_destroy(key_view);
+    }
+    float expected_scores[BLOCKS],got_scores[BLOCKS];
+    uint32_t expected_ids[BLOCKS],got_ids[BLOCKS];
+    if(ok)ok=fg_vk_tensor_read(reference_scores,0,expected_scores,
+                               sizeof(expected_scores),&error)==FG_OK&&
+        fg_vk_tensor_read(reference_ids,0,expected_ids,sizeof(expected_ids),
+                          &error)==FG_OK&&
+        fg_vk_tensor_read(segmented_scores,0,got_scores,sizeof(got_scores),
+                          &error)==FG_OK&&
+        fg_vk_tensor_read(segmented_ids,0,got_ids,sizeof(got_ids),&error)==FG_OK;
+    for(uint32_t i=0;ok&&i<BLOCKS;i++)
+        if(expected_scores[i]!=got_scores[i]||expected_ids[i]!=got_ids[i])ok=0;
+    fg_vk_tensor_destroy(segmented_ids);fg_vk_tensor_destroy(segmented_scores);
+    fg_vk_tensor_destroy(reference_ids);fg_vk_tensor_destroy(reference_scores);
+    fg_vk_tensor_destroy(gpositions);fg_vk_tensor_destroy(gnorm);
+    fg_vk_tensor_destroy(gkeys);fg_vk_tensor_destroy(gq);
+    return ok;
+}
+
+static uint64_t vk_test_monotonic_ns(void){
+    struct timespec value;
+    clock_gettime(CLOCK_MONOTONIC,&value);
+    return (uint64_t)value.tv_sec*UINT64_C(1000000000)+(uint64_t)value.tv_nsec;
+}
+
+static int test_qsa_prefill_chunk_liveness(void){
+    enum{MAX_TOKENS=416,Q=6144};
+    const uint32_t totals[]={127u,128u,129u,256u,416u};
+    const size_t key_bytes=(size_t)MAX_TOKENS*FG_Q38_QSA_KEY_BYTES;
+    const size_t value_bytes=(size_t)MAX_TOKENS*FG_Q38_QSA_VALUE_BYTES;
+    const size_t index_bytes=(size_t)MAX_TOKENS*FG_Q38_QSA_INDEX_KEY_BYTES;
+    const size_t position_bytes=(size_t)MAX_TOKENS*FG_Q38_QSA_POSITION_BYTES;
+    const size_t record_bytes=(size_t)MAX_TOKENS*FG_Q38_QSA_TOKEN_RECORD_BYTES;
+    uint8_t *keys=malloc(key_bytes),*values=malloc(value_bytes),
+        *index_keys=malloc(index_bytes);
+    uint32_t *positions=malloc(position_bytes);
+    float *query=malloc((size_t)Q*4u),*gate=malloc((size_t)Q*4u);
+    if(!keys||!values||!index_keys||!positions||!query||!gate){
+        free(gate);free(query);free(positions);free(index_keys);free(values);free(keys);
+        return 0;
+    }
+    for(uint32_t token=0u;token<MAX_TOKENS;token++){
+        for(uint32_t i=0u;i<FG_Q38_QSA_KEY_BYTES;i++)
+            keys[(size_t)token*FG_Q38_QSA_KEY_BYTES+i]=(uint8_t)(token*3u+i*7u);
+        for(uint32_t i=0u;i<FG_Q38_QSA_VALUE_BYTES;i++)
+            values[(size_t)token*FG_Q38_QSA_VALUE_BYTES+i]=(uint8_t)(token*5u+i*11u);
+        for(uint32_t i=0u;i<FG_Q38_QSA_INDEX_KEY_BYTES;i++)
+            index_keys[(size_t)token*FG_Q38_QSA_INDEX_KEY_BYTES+i]=(uint8_t)(token*13u+i*17u);
+        positions[(size_t)token*3u]=token;
+        positions[(size_t)token*3u+1u]=token;
+        positions[(size_t)token*3u+2u]=token;
+    }
+    for(uint32_t i=0u;i<Q;i++){
+        query[i]=sinf((float)(i+3u)*0.0017f);
+        gate[i]=cosf((float)(i+5u)*0.0023f);
+    }
+    fg_vk_tensor *key=tensor(keys,key_bytes),*value=tensor(values,value_bytes),
+        *index=tensor(index_keys,index_bytes),*position=tensor(positions,position_bytes),
+        *serial_records=tensor(NULL,record_bytes),*chunk_records=tensor(NULL,record_bytes),
+        *serial_index=tensor(NULL,index_bytes),*chunk_index=tensor(NULL,index_bytes),
+        *query_tensor=tensor(query,(size_t)Q*4u),*gate_tensor=tensor(gate,(size_t)Q*4u),
+        *serial_output=tensor(NULL,(size_t)Q*4u),*chunk_output=tensor(NULL,(size_t)Q*4u);
+    fg_vk_tensor *key_view=NULL,*value_view=NULL,*index_view=NULL,*position_view=NULL;
+    int ok=key&&value&&index&&position&&serial_records&&chunk_records&&serial_index&&
+        chunk_index&&query_tensor&&gate_tensor&&serial_output&&chunk_output;
+    if(ok)ok=fg_vk_tensor_view(key,0,FG_Q38_QSA_KEY_BYTES,&key_view,&error)==FG_OK&&
+        fg_vk_tensor_view(value,0,FG_Q38_QSA_VALUE_BYTES,&value_view,&error)==FG_OK&&
+        fg_vk_tensor_view(index,0,FG_Q38_QSA_INDEX_KEY_BYTES,&index_view,&error)==FG_OK&&
+        fg_vk_tensor_view(position,0,FG_Q38_QSA_POSITION_BYTES,&position_view,&error)==FG_OK;
+    uint64_t deadline=vk_test_monotonic_ns()+UINT64_C(30000000000);
+    for(uint32_t shape=0u;ok&&shape<sizeof(totals)/sizeof(totals[0]);shape++){
+        uint32_t total=totals[shape];
+        memset(fg_vk_tensor_map(serial_records),0,(size_t)total*
+               FG_Q38_QSA_TOKEN_RECORD_BYTES);
+        memset(fg_vk_tensor_map(chunk_records),0,(size_t)total*
+               FG_Q38_QSA_TOKEN_RECORD_BYTES);
+        memset(fg_vk_tensor_map(serial_index),0,(size_t)total*
+               FG_Q38_QSA_INDEX_KEY_BYTES);
+        memset(fg_vk_tensor_map(chunk_index),0,(size_t)total*
+               FG_Q38_QSA_INDEX_KEY_BYTES);
+        ok=fg_vk_begin(context,&error)==FG_OK;
+        for(uint32_t token=0u;ok&&token<total;token++){
+            ok=fg_vk_tensor_view_rebind(key_view,key,(uint64_t)token*
+                                        FG_Q38_QSA_KEY_BYTES,
+                                        FG_Q38_QSA_KEY_BYTES,&error)==FG_OK&&
+               fg_vk_tensor_view_rebind(value_view,value,(uint64_t)token*
+                                        FG_Q38_QSA_VALUE_BYTES,
+                                        FG_Q38_QSA_VALUE_BYTES,&error)==FG_OK&&
+               fg_vk_tensor_view_rebind(index_view,index,(uint64_t)token*
+                                        FG_Q38_QSA_INDEX_KEY_BYTES,
+                                        FG_Q38_QSA_INDEX_KEY_BYTES,&error)==FG_OK&&
+               fg_vk_tensor_view_rebind(position_view,position,(uint64_t)token*
+                                        FG_Q38_QSA_POSITION_BYTES,
+                                        FG_Q38_QSA_POSITION_BYTES,&error)==FG_OK&&
+               fg_vk_qsa_record_commit(context,serial_records,serial_index,key_view,
+                                       value_view,index_view,position_view,0u,token,
+                                       total,&error)==FG_OK;
+        }
+        if(ok)ok=fg_vk_end(context,&error)==FG_OK;
+        else if(fg_vk_batch_active(context)){
+            fg_error ignored={0};
+            fg_vk_abort(context,&ignored);
+        }
+        for(uint32_t first=0u;ok&&first<total;first+=128u){
+            uint32_t count=total-first;
+            if(count>128u)count=128u;
+            ok=fg_vk_begin(context,&error)==FG_OK;
+            for(uint32_t token=first;ok&&token<first+count;token++){
+                ok=fg_vk_tensor_view_rebind(key_view,key,(uint64_t)token*
+                                            FG_Q38_QSA_KEY_BYTES,
+                                            FG_Q38_QSA_KEY_BYTES,&error)==FG_OK&&
+                   fg_vk_tensor_view_rebind(value_view,value,(uint64_t)token*
+                                            FG_Q38_QSA_VALUE_BYTES,
+                                            FG_Q38_QSA_VALUE_BYTES,&error)==FG_OK&&
+                   fg_vk_tensor_view_rebind(index_view,index,(uint64_t)token*
+                                            FG_Q38_QSA_INDEX_KEY_BYTES,
+                                            FG_Q38_QSA_INDEX_KEY_BYTES,&error)==FG_OK&&
+                   fg_vk_tensor_view_rebind(position_view,position,(uint64_t)token*
+                                            FG_Q38_QSA_POSITION_BYTES,
+                                            FG_Q38_QSA_POSITION_BYTES,&error)==FG_OK&&
+                   fg_vk_qsa_record_commit(context,chunk_records,chunk_index,key_view,
+                                           value_view,index_view,position_view,0u,token,
+                                           total,&error)==FG_OK;
+            }
+            if(ok)ok=fg_vk_end(context,&error)==FG_OK;
+            else if(fg_vk_batch_active(context)){
+                fg_error ignored={0};
+                fg_vk_abort(context,&ignored);
+            }
+        }
+        if(ok)ok=memcmp(fg_vk_tensor_const_map(serial_records),
+                       fg_vk_tensor_const_map(chunk_records),(size_t)total*
+                       FG_Q38_QSA_TOKEN_RECORD_BYTES)==0&&
+               memcmp(fg_vk_tensor_const_map(serial_index),
+                      fg_vk_tensor_const_map(chunk_index),(size_t)total*
+                      FG_Q38_QSA_INDEX_KEY_BYTES)==0;
+        if(ok)ok=fg_vk_qsa_attention(context,serial_output,serial_records,
+                                     query_tensor,gate_tensor,total,&error)==FG_OK&&
+               fg_vk_qsa_attention(context,chunk_output,chunk_records,
+                                   query_tensor,gate_tensor,total,&error)==FG_OK&&
+               memcmp(fg_vk_tensor_const_map(serial_output),
+                      fg_vk_tensor_const_map(chunk_output),(size_t)Q*4u)==0;
+        if(ok)ok=vk_test_monotonic_ns()<=deadline;
+    }
+    fg_vk_tensor_destroy(position_view);fg_vk_tensor_destroy(index_view);
+    fg_vk_tensor_destroy(value_view);fg_vk_tensor_destroy(key_view);
+    fg_vk_tensor_destroy(chunk_output);fg_vk_tensor_destroy(serial_output);
+    fg_vk_tensor_destroy(gate_tensor);fg_vk_tensor_destroy(query_tensor);
+    fg_vk_tensor_destroy(chunk_index);fg_vk_tensor_destroy(serial_index);
+    fg_vk_tensor_destroy(chunk_records);fg_vk_tensor_destroy(serial_records);
+    fg_vk_tensor_destroy(position);fg_vk_tensor_destroy(index);
+    fg_vk_tensor_destroy(value);fg_vk_tensor_destroy(key);
+    free(gate);free(query);free(positions);free(index_keys);free(values);free(keys);
+    return ok;
 }
 
 static int test_output_topk(void){
@@ -179,6 +486,87 @@ static int test_gr_batch(void){
     fg_vk_tensor *n=tensor(normalized,sizeof(normalized)),*u=tensor(up,sizeof(up)),*il=tensor(inject_logits,sizeof(inject_logits)),*m=tensor(NULL,sizeof(mixed)),*in=tensor(NULL,sizeof(injection)),*w=tensor(NULL,sizeof(written));int ok=n&&u&&il&&m&&in&&w&&fg_vk_gr_mix(context,m,in,n,u,il,HIDDEN,GROUPS,TOKENS,&error)==FG_OK&&fg_vk_gr_write(context,w,n,m,in,HIDDEN,GROUPS,TOKENS,&error)==FG_OK&&fg_vk_tensor_read(m,0,mixed,sizeof(mixed),&error)==FG_OK&&fg_vk_tensor_read(in,0,injection,sizeof(injection),&error)==FG_OK&&fg_vk_tensor_read(w,0,written,sizeof(written),&error)==FG_OK;
     for(uint32_t token=0;ok&&token<TOKENS;token++){for(uint32_t i=0;i<HIDDEN;i++){float expected=0.0f;for(uint32_t group=0;group<GROUPS;group++){uint32_t index=token*HYPER+group*HIDDEN+i;expected+=normalized[index]/(1.0f+expf(-up[index]));}expected/=GROUPS;if(fabsf(mixed[token*HIDDEN+i]-expected)>2e-6f)ok=0;}for(uint32_t group=0;ok&&group<GROUPS;group++){float scale=2.0f/(1.0f+expf(-inject_logits[token*GROUPS+group]/GROUPS));if(fabsf(injection[token*GROUPS+group]-scale)>1e-6f)ok=0;for(uint32_t i=0;ok&&i<HIDDEN;i++){uint32_t index=token*HYPER+group*HIDDEN+i;float expected=normalized[index]+mixed[token*HIDDEN+i]*scale;if(fabsf(written[index]-expected)>2e-6f)ok=0;}}}
     fg_vk_tensor_destroy(w);fg_vk_tensor_destroy(in);fg_vk_tensor_destroy(m);fg_vk_tensor_destroy(il);fg_vk_tensor_destroy(u);fg_vk_tensor_destroy(n);return ok;
+}
+
+static int test_gr_partial_boundaries(void){
+    enum{HIDDEN=32,GROUPS=4,HYPER=HIDDEN*GROUPS,PIECES=24};
+    const uint32_t counts[]={1u,127u,128u};
+    float weights[GROUPS*HYPER];
+    for(uint32_t i=0;i<GROUPS*HYPER;i++)
+        weights[i]=sinf((float)(i+5u)*0.017f)*0.125f;
+    fg_vk_tensor *weight_tensor=tensor(weights,sizeof(weights));
+    int ok=weight_tensor!=NULL;
+    for(uint32_t shape=0;ok&&shape<sizeof(counts)/sizeof(counts[0]);shape++){
+        uint32_t tokens=counts[shape];
+        uint64_t hyper_values=(uint64_t)tokens*HYPER;
+        float *normalized=malloc((size_t)hyper_values*4u);
+        float *up=malloc((size_t)hyper_values*4u);
+        float *mixed=malloc((size_t)tokens*HIDDEN*4u);
+        float *injection=malloc((size_t)tokens*GROUPS*4u);
+        float *written=malloc((size_t)hyper_values*4u);
+        if(!normalized||!up||!mixed||!injection||!written){
+            free(written);free(injection);free(mixed);free(up);free(normalized);
+            ok=0;break;
+        }
+        for(uint64_t i=0;i<hyper_values;i++){
+            normalized[i]=sinf((float)(i+tokens)*0.011f);
+            up[i]=cosf((float)(i+3u)*0.013f);
+        }
+        fg_vk_tensor *n=tensor(normalized,hyper_values*4u);
+        fg_vk_tensor *u=tensor(up,hyper_values*4u);
+        fg_vk_tensor *p=tensor(NULL,(uint64_t)tokens*PIECES*GROUPS*4u);
+        fg_vk_tensor *m=tensor(NULL,(uint64_t)tokens*HIDDEN*4u);
+        fg_vk_tensor *i=tensor(NULL,(uint64_t)tokens*GROUPS*4u);
+        fg_vk_tensor *w=tensor(NULL,hyper_values*4u);
+        ok=n&&u&&p&&m&&i&&w&&fg_vk_begin(context,&error)==FG_OK&&
+            fg_vk_hc_inject_partial(context,p,n,weight_tensor,HIDDEN,GROUPS,
+                                    tokens,PIECES,&error)==FG_OK&&
+            fg_vk_gr_mix_partial(context,m,i,n,u,p,HIDDEN,GROUPS,tokens,
+                                 PIECES,&error)==FG_OK&&
+            fg_vk_end(context,&error)==FG_OK&&
+            fg_vk_tensor_read(m,0,mixed,(uint64_t)tokens*HIDDEN*4u,&error)==FG_OK&&
+            fg_vk_tensor_read(i,0,injection,(uint64_t)tokens*GROUPS*4u,&error)==FG_OK&&
+            fg_vk_gr_write(context,w,n,m,i,HIDDEN,GROUPS,tokens,&error)==FG_OK&&
+            fg_vk_tensor_read(w,0,written,hyper_values*4u,&error)==FG_OK;
+        if(!ok&&fg_vk_batch_active(context)){
+            fg_error ignored={0};fg_vk_abort(context,&ignored);
+        }
+        for(uint32_t token=0;ok&&token<tokens;token++){
+            for(uint32_t element=0;element<HIDDEN;element++){
+                float mixed_expected=0.0f;
+                for(uint32_t group=0;group<GROUPS;group++){
+                    uint32_t index=token*HYPER+group*HIDDEN+element;
+                    mixed_expected+=normalized[index]/
+                        (1.0f+expf(-up[index]));
+                }
+                mixed_expected/=(float)GROUPS;
+                if(fabsf(mixed[token*HIDDEN+element]-mixed_expected)>2e-5f){
+                    ok=0;break;
+                }
+            }
+            for(uint32_t group=0;ok&&group<GROUPS;group++){
+                float dot=0.0f;
+                for(uint32_t index=0;index<HYPER;index++)
+                    dot=fmaf(weights[group*HYPER+index],
+                             normalized[token*HYPER+index],dot);
+                float expected=2.0f/(1.0f+expf(-dot/(float)GROUPS));
+                if(fabsf(injection[token*GROUPS+group]-expected)>2e-5f){
+                    ok=0;break;
+                }
+                for(uint32_t element=0;ok&&element<HIDDEN;element++){
+                    uint32_t index=token*HYPER+group*HIDDEN+element;
+                    float value=normalized[index]+
+                        mixed[token*HIDDEN+element]*expected;
+                    if(fabsf(written[index]-value)>2e-5f)ok=0;
+                }
+            }
+        }
+        fg_vk_tensor_destroy(w);fg_vk_tensor_destroy(i);fg_vk_tensor_destroy(m);
+        fg_vk_tensor_destroy(p);fg_vk_tensor_destroy(u);fg_vk_tensor_destroy(n);
+        free(written);free(injection);free(mixed);free(up);free(normalized);
+    }
+    fg_vk_tensor_destroy(weight_tensor);
+    return ok;
 }
 
 static int test_q5_1_down(void){
@@ -254,6 +642,38 @@ static int test_expert_graph_replay(void){
     fg_vk_expert_graph_destroy(graph);fg_vk_tensor_destroy(reduced);fg_vk_tensor_destroy(down);fg_vk_tensor_destroy(mid);fg_vk_tensor_destroy(up);fg_vk_tensor_destroy(gate);fg_vk_tensor_destroy(gates);fg_vk_tensor_destroy(tiles);fg_vk_tensor_destroy(activation);fg_vk_tensor_destroy(dw);fg_vk_tensor_destroy(uw);fg_vk_tensor_destroy(gw);free(down_source);free(down_weights);free(up_weights);free(gate_weights);return ok;
 }
 
+static int test_expert_graph_rejects_overlap(void){
+    enum{HIDDEN=256,MID=32,SLOTS=4,EXPERTS=2};
+    uint32_t gate_stride=MID*144u,up_stride=MID*176u;
+    uint32_t down_stride=HIDDEN*(MID/32u)*FG_Q8_0_BLOCK_BYTES;
+    uint64_t phase=(uint64_t)SLOTS*MID*4u;
+    fg_vk_tensor *gw=tensor(NULL,(uint64_t)EXPERTS*gate_stride);
+    fg_vk_tensor *uw=tensor(NULL,(uint64_t)EXPERTS*up_stride);
+    fg_vk_tensor *dw=tensor(NULL,(uint64_t)EXPERTS*down_stride);
+    fg_vk_tensor *activation=tensor(NULL,FG_Q8_K_BLOCK_BYTES);
+    fg_vk_tensor *tiles=tensor(NULL,(uint64_t)SLOTS*9u*4u);
+    fg_vk_tensor *gates=tensor(NULL,(uint64_t)SLOTS*4u);
+    fg_vk_tensor *arena=tensor(NULL,phase*2u);
+    fg_vk_tensor *gate=NULL,*up=NULL,*mid=NULL;
+    fg_vk_tensor *down=tensor(NULL,(uint64_t)SLOTS*HIDDEN*4u);
+    fg_vk_tensor *reduced=tensor(NULL,(uint64_t)HIDDEN*4u);
+    fg_vk_expert_graph *graph=NULL;
+    int ok=gw&&uw&&dw&&activation&&tiles&&gates&&arena&&down&&reduced;
+    if(ok)ok=fg_vk_tensor_view(arena,0u,phase,&gate,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_view(arena,phase,phase,&up,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_view(arena,0u,phase,&mid,&error)==FG_OK;
+    if(ok)ok=fg_vk_expert_graph_create(context,&graph,activation,tiles,gates,
+        gate,up,mid,down,reduced,gw,uw,dw,12u,13u,8u,HIDDEN,MID,
+        gate_stride,up_stride,down_stride,EXPERTS,SLOTS,&error)==FG_ERR_MISMATCH&&
+        graph==NULL;
+    fg_vk_tensor_destroy(reduced);fg_vk_tensor_destroy(down);
+    fg_vk_tensor_destroy(mid);fg_vk_tensor_destroy(up);fg_vk_tensor_destroy(gate);
+    fg_vk_tensor_destroy(arena);fg_vk_tensor_destroy(gates);fg_vk_tensor_destroy(tiles);
+    fg_vk_tensor_destroy(activation);fg_vk_tensor_destroy(dw);fg_vk_tensor_destroy(uw);
+    fg_vk_tensor_destroy(gw);
+    return ok;
+}
+
 static float softplus_ref(float value){return fmaxf(value,0.0f)+log1pf(expf(-fabsf(value)));}
 static int test_gdn_project_cooked(void){
     enum{INPUT=2560,QKV=10240,Z=6144,CONTROL=48,BLOCKS=INPUT/FG_QK8_0};uint32_t source_row=BLOCKS*FG_Q8_0_BLOCK_BYTES;uint64_t qkv_source_bytes=(uint64_t)QKV*source_row,z_source_bytes=(uint64_t)Z*source_row,qkv_cooked_bytes=fg_q8_0_cooked_matrix_bytes(INPUT,QKV),z_cooked_bytes=fg_q8_0_cooked_matrix_bytes(INPUT,Z);uint8_t *qkv_source=malloc((size_t)qkv_source_bytes),*z_source=malloc((size_t)z_source_bytes),*qkv_cooked=malloc((size_t)qkv_cooked_bytes),*z_cooked=malloc((size_t)z_cooked_bytes);float hidden[INPUT],*alpha_weight=malloc((size_t)INPUT*CONTROL*4u),*beta_weight=malloc((size_t)INPUT*CONTROL*4u),*qkv_reference=malloc((size_t)QKV*4u),*qkv_candidate=malloc((size_t)QKV*4u),*z_reference=malloc((size_t)Z*4u),*z_candidate=malloc((size_t)Z*4u),alpha_reference[CONTROL],alpha_candidate[CONTROL],beta_reference[CONTROL],beta_candidate[CONTROL];if(!qkv_source||!z_source||!qkv_cooked||!z_cooked||!alpha_weight||!beta_weight||!qkv_reference||!qkv_candidate||!z_reference||!z_candidate){free(z_candidate);free(z_reference);free(qkv_candidate);free(qkv_reference);free(beta_weight);free(alpha_weight);free(z_cooked);free(qkv_cooked);free(z_source);free(qkv_source);return 0;}for(uint32_t i=0;i<INPUT;i++)hidden[i]=sinf((float)(i+3u)*0.013f)+0.1f*cosf((float)i*0.007f);for(uint32_t i=0;i<INPUT*CONTROL;i++){alpha_weight[i]=sinf((float)i*0.0009f)*0.01f;beta_weight[i]=cosf((float)i*0.0011f)*0.01f;}uint8_t *sources[]={qkv_source,z_source};uint32_t rows[]={QKV,Z};for(uint32_t matrix=0;matrix<2u;matrix++)for(uint32_t row=0;row<rows[matrix];row++)for(uint32_t block=0;block<BLOCKS;block++){uint8_t *value=sources[matrix]+((uint64_t)row*BLOCKS+block)*FG_Q8_0_BLOCK_BYTES;uint16_t scale=fg_f32_to_f16(0.0005f+(float)((row+block+matrix)%13u)*0.00005f);memcpy(value,&scale,sizeof(scale));for(uint32_t i=0;i<FG_QK8_0;i++)value[2u+i]=(uint8_t)(row*17u+block*29u+i*11u+matrix*7u);}int ok=fg_cook_q8_0_rows(qkv_source,qkv_cooked,qkv_cooked_bytes,INPUT,QKV)&&fg_cook_q8_0_rows(z_source,z_cooked,z_cooked_bytes,INPUT,Z);fg_vk_tensor *gq_ref=ok?tensor(qkv_source,qkv_source_bytes):NULL,*gz_ref=ok?tensor(z_source,z_source_bytes):NULL,*gq_new=ok?tensor(qkv_cooked,qkv_cooked_bytes):NULL,*gz_new=ok?tensor(z_cooked,z_cooked_bytes):NULL,*gah=ok?tensor(alpha_weight,(uint64_t)INPUT*CONTROL*4u):NULL,*gbh=ok?tensor(beta_weight,(uint64_t)INPUT*CONTROL*4u):NULL,*gh=ok?tensor(hidden,sizeof(hidden)):NULL,*q_ref=ok?tensor(NULL,(uint64_t)QKV*4u):NULL,*z_ref=ok?tensor(NULL,(uint64_t)Z*4u):NULL,*a_ref=ok?tensor(NULL,sizeof(alpha_reference)):NULL,*b_ref=ok?tensor(NULL,sizeof(beta_reference)):NULL,*q_new=ok?tensor(NULL,(uint64_t)QKV*4u):NULL,*z_new=ok?tensor(NULL,(uint64_t)Z*4u):NULL,*a_new=ok?tensor(NULL,sizeof(alpha_candidate)):NULL,*b_new=ok?tensor(NULL,sizeof(beta_candidate)):NULL;if(gq_new)fg_vk_tensor_set_format(gq_new,FG_VK_TENSOR_FORMAT_Q8_0_COOKED);if(gz_new)fg_vk_tensor_set_format(gz_new,FG_VK_TENSOR_FORMAT_Q8_0_COOKED);ok=ok&&gq_ref&&gz_ref&&gq_new&&gz_new&&gah&&gbh&&gh&&q_ref&&z_ref&&a_ref&&b_ref&&q_new&&z_new&&a_new&&b_new&&fg_vk_begin(context,&error)==FG_OK&&fg_vk_gdn_project_decode(context,q_ref,z_ref,a_ref,b_ref,gq_ref,gz_ref,gah,gbh,gh,&error)==FG_OK&&fg_vk_end(context,&error)==FG_OK&&fg_vk_begin(context,&error)==FG_OK&&fg_vk_gdn_project_decode(context,q_new,z_new,a_new,b_new,gq_new,gz_new,gah,gbh,gh,&error)==FG_OK&&fg_vk_end(context,&error)==FG_OK&&fg_vk_tensor_read(q_ref,0,qkv_reference,(uint64_t)QKV*4u,&error)==FG_OK&&fg_vk_tensor_read(q_new,0,qkv_candidate,(uint64_t)QKV*4u,&error)==FG_OK&&fg_vk_tensor_read(z_ref,0,z_reference,(uint64_t)Z*4u,&error)==FG_OK&&fg_vk_tensor_read(z_new,0,z_candidate,(uint64_t)Z*4u,&error)==FG_OK&&fg_vk_tensor_read(a_ref,0,alpha_reference,sizeof(alpha_reference),&error)==FG_OK&&fg_vk_tensor_read(a_new,0,alpha_candidate,sizeof(alpha_candidate),&error)==FG_OK&&fg_vk_tensor_read(b_ref,0,beta_reference,sizeof(beta_reference),&error)==FG_OK&&fg_vk_tensor_read(b_new,0,beta_candidate,sizeof(beta_candidate),&error)==FG_OK;for(uint32_t i=0;ok&&i<QKV;i++)if(fabsf(qkv_candidate[i]-qkv_reference[i])>2e-4f*fmaxf(1.0f,fabsf(qkv_reference[i])))ok=0;for(uint32_t i=0;ok&&i<Z;i++)if(fabsf(z_candidate[i]-z_reference[i])>2e-4f*fmaxf(1.0f,fabsf(z_reference[i])))ok=0;for(uint32_t i=0;ok&&i<CONTROL;i++)if(alpha_candidate[i]!=alpha_reference[i]||beta_candidate[i]!=beta_reference[i])ok=0;fg_vk_tensor_destroy(b_new);fg_vk_tensor_destroy(a_new);fg_vk_tensor_destroy(z_new);fg_vk_tensor_destroy(q_new);fg_vk_tensor_destroy(b_ref);fg_vk_tensor_destroy(a_ref);fg_vk_tensor_destroy(z_ref);fg_vk_tensor_destroy(q_ref);fg_vk_tensor_destroy(gh);fg_vk_tensor_destroy(gbh);fg_vk_tensor_destroy(gah);fg_vk_tensor_destroy(gz_new);fg_vk_tensor_destroy(gq_new);fg_vk_tensor_destroy(gz_ref);fg_vk_tensor_destroy(gq_ref);free(z_candidate);free(z_reference);free(qkv_candidate);free(qkv_reference);free(beta_weight);free(alpha_weight);free(z_cooked);free(qkv_cooked);free(z_source);free(qkv_source);return ok;
@@ -303,7 +723,7 @@ static int test_iq4_nl_dequant(void){
 }
 
 static int test_ngram_direct_lookup(void){
-    const uint64_t table_bytes=UINT64_C(320001536)*FG_NGRAM_ROW_BYTES;char path[128];snprintf(path,sizeof(path),"/tmp/fg-ngram-%ld.iq4nl",(long)getpid());unlink(path);int fd=open(path,O_CREAT|O_EXCL|O_RDWR|O_CLOEXEC,0600);if(fd<0)return 0;int ok=ftruncate(fd,(off_t)fg_align_up_u64(table_bytes,FG_ALIGNMENT))==0;const int32_t history[]={10,20,30};uint64_t rows[FG_NGRAM_HEAD_COUNT],addresses[FG_NGRAM_HEAD_COUNT];uint8_t packed[FG_NGRAM_HEAD_COUNT*FG_NGRAM_ROW_BYTES];float expected[FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH],got[FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH];if(ok)ok=fg_q38_ngram_lookup(history,3,rows,addresses,&error)==FG_OK;for(uint32_t row=0;ok&&row<FG_NGRAM_HEAD_COUNT;row++){uint8_t *p=packed+row*FG_NGRAM_ROW_BYTES;for(uint32_t block=0;block<FG_NGRAM_EMBED_WIDTH/32u;block++){uint8_t *b=p+block*18u;uint16_t d=fg_f32_to_f16((float)(row+1u)*0.001953125f);memcpy(b,&d,2u);for(uint32_t i=0;i<16u;i++)b[2u+i]=(uint8_t)(((i+row)&15u)|(((i+block+3u)&15u)<<4u));}ok=pwrite(fd,p,FG_NGRAM_ROW_BYTES,(off_t)addresses[row])==FG_NGRAM_ROW_BYTES;}close(fd);fg_dequantize_iq4_nl(packed,expected,FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH);fg_ngram_store *store=NULL;fg_vk_tensor *embedding=NULL;if(ok)ok=fg_ngram_store_open(&store,context,path,table_bytes,&error)==FG_OK;if(ok)ok=fg_ngram_store_lookup(store,history,3,&embedding,&error)==FG_OK;if(ok)ok=fg_vk_tensor_read(embedding,0,got,sizeof(got),&error)==FG_OK;for(uint32_t i=0;ok&&i<FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH;i++)if(got[i]!=expected[i]){fprintf(stderr,"n-gram lookup %u GPU=%g CPU=%g\n",i,got[i],expected[i]);ok=0;}fg_ngram_store_close(store);unlink(path);return ok;
+    const uint64_t table_bytes=UINT64_C(320001536)*FG_NGRAM_ROW_BYTES;char path[128];snprintf(path,sizeof(path),"/tmp/fg-ngram-%ld.iq4nl",(long)getpid());unlink(path);int fd=open(path,O_CREAT|O_EXCL|O_RDWR|O_CLOEXEC,0600);if(fd<0)return 0;int ok=ftruncate(fd,(off_t)fg_align_up_u64(table_bytes,FG_ALIGNMENT))==0;const int32_t history[]={10,20,30};uint64_t rows[FG_NGRAM_HEAD_COUNT],addresses[FG_NGRAM_HEAD_COUNT];uint8_t packed[FG_NGRAM_HEAD_COUNT*FG_NGRAM_ROW_BYTES];float expected[FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH],got[FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH];if(ok)ok=fg_q38_ngram_lookup(history,3,rows,addresses,&error)==FG_OK;for(uint32_t row=0;ok&&row<FG_NGRAM_HEAD_COUNT;row++){uint8_t *p=packed+row*FG_NGRAM_ROW_BYTES;for(uint32_t block=0;block<FG_NGRAM_EMBED_WIDTH/32u;block++){uint8_t *b=p+block*18u;uint16_t d=fg_f32_to_f16((float)(row+1u)*0.001953125f);memcpy(b,&d,2u);for(uint32_t i=0;i<16u;i++)b[2u+i]=(uint8_t)(((i+row)&15u)|(((i+block+3u)&15u)<<4u));}ok=pwrite(fd,p,FG_NGRAM_ROW_BYTES,(off_t)addresses[row])==FG_NGRAM_ROW_BYTES;}close(fd);fg_dequantize_iq4_nl(packed,expected,FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH);fg_ngram_store *store=NULL;fg_vk_tensor *embedding=NULL;if(ok)ok=fg_ngram_store_open(&store,context,path,table_bytes,1u,&error)==FG_OK;if(ok)ok=fg_ngram_store_lookup(store,history,3,&embedding,&error)==FG_OK;if(ok)ok=fg_vk_tensor_read(embedding,0,got,sizeof(got),&error)==FG_OK;for(uint32_t i=0;ok&&i<FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH;i++)if(got[i]!=expected[i]){fprintf(stderr,"n-gram lookup %u GPU=%g CPU=%g\n",i,got[i],expected[i]);ok=0;}fg_ngram_store_close(store);unlink(path);return ok;
 }
 
 static int test_ngram_resident(void){
@@ -314,7 +734,7 @@ static int test_ngram_prefill_lookup(void){
     const uint64_t table_bytes=UINT64_C(320001536)*FG_NGRAM_ROW_BYTES;char path[128];snprintf(path,sizeof(path),"/tmp/fg-ngram-prefill-%ld.iq4nl",(long)getpid());unlink(path);int fd=open(path,O_CREAT|O_EXCL|O_RDWR|O_CLOEXEC,0600);if(fd<0)return 0;int ok=ftruncate(fd,(off_t)fg_align_up_u64(table_bytes,FG_ALIGNMENT))==0;const int32_t history[]={100,200,300,400,500};enum{FIRST=1,TOKENS=3};uint64_t addresses[TOKENS*FG_NGRAM_HEAD_COUNT],rows[TOKENS*FG_NGRAM_HEAD_COUNT];uint8_t packed[sizeof(addresses)/sizeof(addresses[0])*FG_NGRAM_ROW_BYTES];float expected[sizeof(addresses)/sizeof(addresses[0])*FG_NGRAM_EMBED_WIDTH],got[sizeof(expected)/sizeof(expected[0])];
     for(uint32_t token=0;ok&&token<TOKENS;token++)ok=fg_q38_ngram_lookup(history,FIRST+token+1u,rows+(uint64_t)token*FG_NGRAM_HEAD_COUNT,addresses+(uint64_t)token*FG_NGRAM_HEAD_COUNT,&error)==FG_OK;
     for(uint32_t i=0;ok&&i<TOKENS*FG_NGRAM_HEAD_COUNT;i++){uint8_t row[FG_NGRAM_ROW_BYTES];uint64_t row_id=addresses[i]/FG_NGRAM_ROW_BYTES;for(uint32_t block=0;block<FG_NGRAM_EMBED_WIDTH/32u;block++){uint8_t *b=row+block*18u;uint16_t d=fg_f32_to_f16(0.001f+(float)(row_id%17u)*0.0001f);memcpy(b,&d,2u);for(uint32_t x=0;x<16u;x++)b[2u+x]=(uint8_t)(((row_id+block+x)&15u)|(((row_id+block*3u+x)&15u)<<4u));}memcpy(packed+(uint64_t)i*FG_NGRAM_ROW_BYTES,row,sizeof(row));ok=pwrite(fd,row,FG_NGRAM_ROW_BYTES,(off_t)addresses[i])==FG_NGRAM_ROW_BYTES;}
-    close(fd);fg_dequantize_iq4_nl(packed,expected,TOKENS*FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH);fg_ngram_store *store=NULL;fg_vk_tensor *embedding=NULL;if(ok)ok=fg_ngram_store_open(&store,context,path,table_bytes,&error)==FG_OK;if(ok)ok=fg_ngram_store_lookup_prefill(store,history,sizeof(history)/sizeof(history[0]),FIRST,TOKENS,&embedding,&error)==FG_OK&&fg_vk_tensor_bytes(embedding)==(uint64_t)TOKENS*FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH*4u;if(ok)ok=fg_vk_tensor_read(embedding,0,got,sizeof(got),&error)==FG_OK;for(uint32_t i=0;ok&&i<TOKENS*FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH;i++)if(got[i]!=expected[i]){fprintf(stderr,"n-gram prefill lookup %u GPU=%g CPU=%g\n",i,got[i],expected[i]);ok=0;}
+    close(fd);fg_dequantize_iq4_nl(packed,expected,TOKENS*FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH);fg_ngram_store *store=NULL;fg_vk_tensor *embedding=NULL;if(ok)ok=fg_ngram_store_open(&store,context,path,table_bytes,TOKENS,&error)==FG_OK;if(ok)ok=fg_ngram_store_lookup_prefill(store,history,sizeof(history)/sizeof(history[0]),FIRST,TOKENS,&embedding,&error)==FG_OK&&fg_vk_tensor_bytes(embedding)==(uint64_t)TOKENS*FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH*4u;if(ok)ok=fg_vk_tensor_read(embedding,0,got,sizeof(got),&error)==FG_OK;for(uint32_t i=0;ok&&i<TOKENS*FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH;i++)if(got[i]!=expected[i]){fprintf(stderr,"n-gram prefill lookup %u GPU=%g CPU=%g\n",i,got[i],expected[i]);ok=0;}
     if(ok){fg_vk_tensor *single=NULL;ok=fg_ngram_store_lookup(store,history,4u,&single,&error)==FG_OK;float one[FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH];if(ok)ok=fg_vk_tensor_read(single,0,one,sizeof(one),&error)==FG_OK;for(uint32_t i=0;ok&&i<FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH;i++)if(one[i]!=got[2u*FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH+i])ok=0;}
     fg_ngram_store_close(store);unlink(path);return ok;
 }
@@ -333,6 +753,83 @@ static int test_ple_prefill_scan(void){
     fg_vk_tensor_destroy(gob);fg_vk_tensor_destroy(gos);fg_vk_tensor_destroy(ggb);fg_vk_tensor_destroy(ggs);fg_vk_tensor_destroy(gsb);fg_vk_tensor_destroy(gss);fg_vk_tensor_destroy(gw);fg_vk_tensor_destroy(gn);fg_vk_tensor_destroy(gv);fg_vk_tensor_destroy(gq);fg_vk_tensor_destroy(gk);free(state_batched);free(state_sequential);free(conv_batched);free(conv_sequential);free(gate_batched);free(gate_sequential);free(state_initial);free(weight);free(normalized);free(value);free(query);free(key);return ok;
 }
 
+static int test_tensor_view_rebind(void){
+    float values[8]={0,1,2,3,4,5,6,7},other_values[8]={8,9,10,11,12,13,14,15},got[2]={0},replacement[2]={20,21};
+    fg_vk_tensor *base=tensor(values,sizeof(values)),*other=tensor(other_values,sizeof(other_values)),*view=NULL;int ok=base&&other;
+    if(ok){fg_vk_tensor_set_format(base,FG_VK_TENSOR_FORMAT_Q8_0_COOKED);ok=fg_vk_tensor_view(base,sizeof(float),2u*sizeof(float),&view,&error)==FG_OK&&fg_vk_tensor_get_format(view)==FG_VK_TENSOR_FORMAT_Q8_0_COOKED&&fg_vk_tensor_read(view,0,got,sizeof(got),&error)==FG_OK&&got[0]==1.0f&&got[1]==2.0f;}
+    if(ok)ok=fg_vk_tensor_write(view,0,replacement,sizeof(replacement),&error)==FG_OK&&((float *)fg_vk_tensor_map(base))[1]==20.0f&&((float *)fg_vk_tensor_map(base))[2]==21.0f;
+    if(ok){fg_vk_tensor_set_format(base,FG_VK_TENSOR_FORMAT_DEFAULT);ok=fg_vk_tensor_view_rebind(view,base,4u*sizeof(float),2u*sizeof(float),&error)==FG_OK&&fg_vk_tensor_get_format(view)==FG_VK_TENSOR_FORMAT_DEFAULT&&fg_vk_tensor_read(view,0,got,sizeof(got),&error)==FG_OK&&got[0]==4.0f&&got[1]==5.0f;}
+    void *binding=fg_vk_tensor_map(view);uint64_t binding_bytes=fg_vk_tensor_bytes(view);
+    if(ok)ok=fg_vk_tensor_view_rebind(view,base,7u*sizeof(float),2u*sizeof(float),&error)==FG_ERR_ARGUMENT&&fg_vk_tensor_map(view)==binding&&fg_vk_tensor_bytes(view)==binding_bytes;
+    if(ok)ok=fg_vk_tensor_view_rebind(view,other,0,2u*sizeof(float),&error)==FG_ERR_ARGUMENT&&fg_vk_tensor_map(view)==binding&&fg_vk_tensor_bytes(view)==binding_bytes;
+    if(ok)ok=fg_vk_tensor_view_rebind(base,base,0,2u*sizeof(float),&error)==FG_ERR_ARGUMENT;
+    float zeros[2]={0,0},output_initial[8]={-1,-1,-1,-1,-1,-1,-1,-1},output_got[8]={0};fg_vk_tensor *zero=tensor(zeros,sizeof(zeros)),*output_base=tensor(output_initial,sizeof(output_initial)),*output_view=NULL;
+    if(ok)ok=zero&&output_base&&fg_vk_tensor_view(output_base,0,2u*sizeof(float),&output_view,&error)==FG_OK&&fg_vk_begin(context,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_view_rebind(view,base,0,2u*sizeof(float),&error)==FG_OK&&fg_vk_tensor_view_rebind(output_view,output_base,0,2u*sizeof(float),&error)==FG_OK&&fg_vk_add_f32(context,output_view,view,zero,2u,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_view_rebind(view,base,4u*sizeof(float),2u*sizeof(float),&error)==FG_OK&&fg_vk_tensor_view_rebind(output_view,output_base,4u*sizeof(float),2u*sizeof(float),&error)==FG_OK&&fg_vk_add_f32(context,output_view,view,zero,2u,&error)==FG_OK&&fg_vk_end(context,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_read(output_base,0,output_got,sizeof(output_got),&error)==FG_OK&&output_got[0]==0.0f&&output_got[1]==20.0f&&output_got[4]==4.0f&&output_got[5]==5.0f;
+    if(fg_vk_batch_active(context)){fg_error ignored={0};fg_vk_abort(context,&ignored);}
+    fg_vk_tensor_destroy(output_view);fg_vk_tensor_destroy(output_base);fg_vk_tensor_destroy(zero);
+    fg_vk_tensor_destroy(base);base=NULL;
+    if(ok)ok=fg_vk_tensor_read(view,0,got,sizeof(got),&error)==FG_OK&&got[0]==4.0f&&got[1]==5.0f;
+    fg_vk_tensor_destroy(view);fg_vk_tensor_destroy(other);return ok;
+}
+
+static int test_memory_telemetry_and_canary(void){
+    enum{BYTES=8193};fg_vk_memory_stats before={0},during={0},after={0};
+    fg_vk_get_memory_stats(context,&before);
+    fg_vk_tensor *value=NULL;
+    int ok=fg_vk_tensor_create(context,BYTES,&value,&error)==FG_OK&&value;
+    uint8_t expected[BYTES];for(uint32_t i=0;i<BYTES;i++)expected[i]=(uint8_t)(i*37u);
+    if(ok)memcpy(fg_vk_tensor_map(value),expected,BYTES);
+    uint64_t touched=0;
+    if(ok)ok=fg_vk_tensor_residency_canary(value,&touched,&error)==FG_OK&&
+             touched==BYTES&&memcmp(fg_vk_tensor_const_map(value),expected,BYTES)==0&&
+             fg_vk_tensor_allocation_bytes(value)>=BYTES;
+    fg_vk_get_memory_stats(context,&during);
+    if(ok)ok=during.requested_live_bytes==before.requested_live_bytes+BYTES&&
+             during.allocated_live_bytes==before.allocated_live_bytes+
+                                             fg_vk_tensor_allocation_bytes(value)&&
+             during.live_allocations==before.live_allocations+1u&&
+             during.allocation_count==before.allocation_count+1u;
+    fg_vk_tensor_destroy(value);fg_vk_get_memory_stats(context,&after);
+    return ok&&after.requested_live_bytes==before.requested_live_bytes&&
+           after.allocated_live_bytes==before.allocated_live_bytes&&
+           after.live_allocations==before.live_allocations&&
+           after.allocation_count==before.allocation_count+1u;
+}
+
+static int test_batch_submission_parity(void){
+    enum{VALUES=64,STEPS=13,QSA_PREFILL_MAX_DISPATCHES=2571};float input[VALUES],bias[VALUES],standalone_got[VALUES],batched_got[VALUES],sentinel[VALUES],abort_got[VALUES];
+    for(uint32_t i=0;i<VALUES;i++){input[i]=(float)i*0.25f;bias[i]=(float)(i%7u)-3.0f;sentinel[i]=1000.0f+(float)i;}
+    fg_vk_tensor *si=tensor(input,sizeof(input)),*sb=tensor(bias,sizeof(bias)),*sa=tensor(NULL,sizeof(input)),*sc=tensor(NULL,sizeof(input));
+    fg_vk_tensor *bi=tensor(input,sizeof(input)),*bb=tensor(bias,sizeof(bias)),*ba=tensor(NULL,sizeof(input)),*bc=tensor(NULL,sizeof(input));
+    fg_vk_tensor *abort_out=tensor(sentinel,sizeof(sentinel));int ok=si&&sb&&sa&&sc&&bi&&bb&&ba&&bc&&abort_out;
+    fg_vk_counters before={0},after={0};const fg_vk_tensor *current=si;
+    fg_vk_get_counters(context,&before);
+    for(uint32_t step=0;ok&&step<STEPS;step++){fg_vk_tensor *target=(step&1u)?sc:sa;ok=fg_vk_add_f32(context,target,current,sb,VALUES,&error)==FG_OK;current=target;}
+    if(ok)ok=fg_vk_tensor_read(current,0,standalone_got,sizeof(standalone_got),&error)==FG_OK;
+    fg_vk_get_counters(context,&after);
+    if(ok)ok=after.submissions-before.submissions==STEPS;
+    current=bi;fg_vk_get_counters(context,&before);
+    if(ok)ok=fg_vk_begin(context,&error)==FG_OK;
+    for(uint32_t step=0;ok&&step<STEPS;step++){fg_vk_tensor *target=(step&1u)?bc:ba;ok=fg_vk_add_f32(context,target,current,bb,VALUES,&error)==FG_OK;current=target;}
+    if(ok)ok=fg_vk_end(context,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_read(current,0,batched_got,sizeof(batched_got),&error)==FG_OK;
+    fg_vk_get_counters(context,&after);
+    if(ok)ok=after.submissions-before.submissions==1u&&memcmp(standalone_got,batched_got,sizeof(standalone_got))==0;
+    fg_vk_get_counters(context,&before);if(ok)ok=fg_vk_begin(context,&error)==FG_OK&&fg_vk_add_f32(context,abort_out,bi,bb,VALUES,&error)==FG_OK&&fg_vk_abort(context,&error)==FG_OK&&!fg_vk_batch_active(context);fg_vk_get_counters(context,&after);
+    if(ok)ok=after.submissions==before.submissions&&fg_vk_tensor_read(abort_out,0,abort_got,sizeof(abort_got),&error)==FG_OK&&memcmp(abort_got,sentinel,sizeof(sentinel))==0;
+    float zero=0.0f,one=1.0f,large_got=0.0f;fg_vk_tensor *large_input=ok?tensor(&zero,sizeof(zero)):NULL,*large_bias=ok?tensor(&one,sizeof(one)):NULL,*large_a=ok?tensor(&zero,sizeof(zero)):NULL,*large_b=ok?tensor(&zero,sizeof(zero)):NULL;ok=ok&&large_input&&large_bias&&large_a&&large_b;current=large_input;fg_vk_get_counters(context,&before);
+    if(ok)ok=fg_vk_begin(context,&error)==FG_OK;
+    for(uint32_t step=0;ok&&step<QSA_PREFILL_MAX_DISPATCHES;step++){fg_vk_tensor *target=(step&1u)?large_b:large_a;ok=fg_vk_add_f32(context,target,current,large_bias,1u,&error)==FG_OK;current=target;}
+    if(ok)ok=fg_vk_end(context,&error)==FG_OK&&fg_vk_tensor_read(current,0,&large_got,sizeof(large_got),&error)==FG_OK;
+    fg_vk_get_counters(context,&after);
+    if(ok)ok=after.submissions-before.submissions==1u&&large_got==(float)QSA_PREFILL_MAX_DISPATCHES;
+    if(fg_vk_batch_active(context)){fg_error ignored={0};fg_vk_abort(context,&ignored);}
+    fg_vk_tensor_destroy(large_b);fg_vk_tensor_destroy(large_a);fg_vk_tensor_destroy(large_bias);fg_vk_tensor_destroy(large_input);fg_vk_tensor_destroy(abort_out);fg_vk_tensor_destroy(bc);fg_vk_tensor_destroy(ba);fg_vk_tensor_destroy(bb);fg_vk_tensor_destroy(bi);fg_vk_tensor_destroy(sc);fg_vk_tensor_destroy(sa);fg_vk_tensor_destroy(sb);fg_vk_tensor_destroy(si);return ok;
+}
+
 static const fg_vk_profile_kernel *find_profile_kernel(const fg_vk_profile *profile,const char *scope,const char *name){for(uint32_t i=0;i<profile->kernel_count;i++)if(strcmp(profile->kernels[i].scope,scope)==0&&strcmp(profile->kernels[i].name,name)==0)return &profile->kernels[i];return NULL;}
 static int test_gpu_profile(void){
     enum{VALUES=256};float left[VALUES],right[VALUES];for(uint32_t i=0;i<VALUES;i++){left[i]=sinf((float)i*0.031f);right[i]=cosf((float)i*0.017f);}fg_vk_tensor *l=tensor(left,sizeof(left)),*r=tensor(right,sizeof(right)),*sum=tensor(NULL,sizeof(left)),*out=tensor(NULL,sizeof(left));fg_vk_profile profile={0};fg_vk_counters before={0},after={0};fg_vk_get_counters(context,&before);int ok=l&&r&&sum&&out&&!fg_vk_batch_active(context)&&!fg_vk_profile_active(context)&&fg_vk_profile_begin(context,&error)==FG_OK&&fg_vk_profile_active(context)&&fg_vk_begin(context,&error)==FG_OK&&fg_vk_begin(context,&error)==FG_OK&&fg_vk_batch_active(context)&&fg_vk_profile_set_scope(context,"sum",&error)==FG_OK&&fg_vk_add_f32(context,sum,l,r,VALUES,&error)==FG_OK&&fg_vk_end(context,&error)==FG_OK&&fg_vk_batch_active(context)&&fg_vk_profile_set_scope(context,"activation",&error)==FG_OK&&fg_vk_silu_scaled(context,out,sum,VALUES,1.0f,&error)==FG_OK&&fg_vk_end(context,&error)==FG_OK&&!fg_vk_batch_active(context)&&fg_vk_profile_end(context,&profile,&error)==FG_OK&&!fg_vk_profile_active(context);fg_vk_get_counters(context,&after);const fg_vk_profile_kernel *add=ok?find_profile_kernel(&profile,"sum","fg_add_f32.spv"):NULL,*silu=ok?find_profile_kernel(&profile,"activation","fg_silu_scaled.spv"):NULL;ok=ok&&after.submissions-before.submissions==2u&&after.dispatches-before.dispatches==2u&&profile.submissions==1u&&profile.dispatches==2u&&profile.gpu_ms>0.0&&profile.kernel_ms>0.0&&profile.gpu_ms>=profile.kernel_ms&&add&&add->invocations==1u&&add->gpu_ms>0.0&&silu&&silu->invocations==1u&&silu->gpu_ms>0.0;fg_vk_tensor_destroy(out);fg_vk_tensor_destroy(sum);fg_vk_tensor_destroy(r);fg_vk_tensor_destroy(l);return ok;
@@ -341,6 +838,9 @@ static int test_gpu_profile(void){
 static int run_test(const char *name,int (*fn)(void)){fprintf(stderr,"  [%s] ... ",name);fflush(stderr);int ok=fn();fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 static int run_test_i(const char *name,int (*fn)(int),int arg){fprintf(stderr,"  [%s(%d)] ... ",name,arg);fflush(stderr);int ok=fn(arg);fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 int main(void){if(fg_vk_open(&context,&error)!=FG_OK){fprintf(stderr,"Vulkan unavailable: %s\n",error.message);return 77;}fprintf(stderr,"Flash Gordon Vulkan device: %s\n",fg_vk_device_name(context));int ok=1;
+ok=run_test("memory_telemetry_and_canary",test_memory_telemetry_and_canary)&&ok;
+ok=run_test("tensor_view_rebind",test_tensor_view_rebind)&&ok;
+ok=run_test("batch_submission_parity",test_batch_submission_parity)&&ok;
 ok=run_test("gpu_profile",test_gpu_profile)&&ok;
 ok=run_test("q8_dense",test_q8_dense)&&ok;
 ok=run_test("q8_dense_subgroup",test_q8_dense_subgroup)&&ok;
@@ -359,6 +859,8 @@ ok=run_test("ple_decode",test_ple_decode)&&ok;
 ok=run_test("ple_prefill_scan",test_ple_prefill_scan)&&ok;
 ok=run_test("qsa_quant_and_bf16",test_qsa_quant_and_bf16)&&ok;
 ok=run_test("qsa_record_commit",test_qsa_record_commit)&&ok;
+ok=run_test("qsa_tiered_record_commit",test_qsa_tiered_record_commit)&&ok;
+ok=run_test("qsa_segmented_record_commit",test_qsa_segmented_record_commit)&&ok;
 ok=run_test("qsa_record_gather",test_qsa_record_gather)&&ok;
 ok=run_test("swiglu",test_swiglu)&&ok;
 ok=run_test("dense_f32_and_silu",test_dense_f32_and_silu)&&ok;
@@ -366,6 +868,7 @@ ok=run_test("group_norm",test_group_norm)&&ok;
 ok=run_test("gr_mix",test_gr_mix)&&ok;
 ok=run_test("hc_inject_partial",test_hc_inject_partial)&&ok;
 ok=run_test("gr_batch",test_gr_batch)&&ok;
+ok=run_test("gr_partial_boundaries",test_gr_partial_boundaries)&&ok;
 ok=run_test("q5_1_down",test_q5_1_down)&&ok;
 ok=run_test("q5_1_down_cooked",test_q5_1_down_cooked)&&ok;
 ok=run_test("q5_1_down_cooked_benchmark",test_q5_1_down_cooked_benchmark)&&ok;
@@ -379,11 +882,14 @@ ok=run_test("kquant_cooked_benchmark",test_kquant_cooked_benchmark)&&ok;
 ok=run_test_i("kquant_expert_major_batch",test_kquant_expert_major_batch,12)&&ok;
 ok=run_test_i("kquant_expert_major_batch",test_kquant_expert_major_batch,13)&&ok;
 ok=run_test("expert_graph_replay",test_expert_graph_replay)&&ok;
+ok=run_test("expert_graph_rejects_overlap",test_expert_graph_rejects_overlap)&&ok;
 ok=run_test("gdn_project_cooked",test_gdn_project_cooked)&&ok;
 ok=run_test("gdn_decode",test_gdn_decode)&&ok;
 ok=run_test("gdn_algebraic",test_gdn_algebraic)&&ok;
 ok=run_test("gdn_prefill_scan",test_gdn_prefill_scan)&&ok;
 ok=run_test("qsa_indexer",test_qsa_indexer)&&ok;
+ok=run_test("qsa_segmented_index_score",test_qsa_segmented_index_score)&&ok;
+ok=run_test("qsa_prefill_chunk_liveness",test_qsa_prefill_chunk_liveness)&&ok;
 ok=run_test("output_topk",test_output_topk)&&ok;
 ok=run_test("output_argmax",test_output_argmax)&&ok;
 ok=run_test("qsa_prefill_prepare",test_qsa_prefill_prepare)&&ok;

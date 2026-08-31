@@ -6,6 +6,9 @@
 
 typedef struct fg_runtime fg_runtime;
 #define FG_RUNTIME_BOOT_CONTEXT_TOKENS FG_MANIFEST_DEFAULT_CONTEXT_TOKENS
+#define FG_RUNTIME_QSA_HOT_TOKENS 8192u
+#define FG_RUNTIME_QSA_CACHE_MIN_BYTES (UINT64_C(16) << 20u)
+#define FG_RUNTIME_QSA_CACHE_MAX_BYTES (UINT64_C(512) << 20u)
 
 enum {
     FG_RUNTIME_EXPERIMENTAL_CONTEXT = 1u << 0,
@@ -33,6 +36,19 @@ typedef struct fg_runtime_options {
     uint32_t specified;
 } fg_runtime_options;
 
+typedef struct fg_runtime_profile_definition {
+    uint32_t id;
+    const char *name;
+    uint32_t logical_context_tokens;
+    uint32_t gpu_index_tokens;
+    uint32_t qsa_hot_tokens;
+    uint64_t qsa_page_cache_bytes;
+    uint32_t prefill_microbatch;
+    uint32_t prefill_window;
+    uint32_t max_context;
+    fg_position_mode position_mode;
+} fg_runtime_profile_definition;
+
 typedef struct fg_generation_stats {
     uint32_t prompt_tokens;
     uint32_t prefilled_tokens;
@@ -50,6 +66,11 @@ typedef fg_status (*fg_token_callback)(void *context,uint32_t token,const char *
 typedef bool (*fg_interrupt_fn)(void *context);
 
 void fg_runtime_options_init(fg_runtime_options *options);
+const fg_runtime_profile_definition *fg_runtime_profile_definition_get(uint32_t profile);
+fg_status fg_runtime_profile_parse(const char *name,uint32_t *profile,fg_error *err);
+fg_status fg_runtime_profile_validate(const fg_runtime_options *options,
+                                      uint32_t native_context,fg_error *err);
+fg_status fg_runtime_profile_apply(fg_manifest *manifest,uint32_t profile,fg_error *err);
 fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
                                      const fg_manifest *manifest,
                                      const fg_runtime_options *requested,

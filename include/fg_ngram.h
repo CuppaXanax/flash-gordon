@@ -4,7 +4,7 @@
 #include "fg.h"
 #include "fg_vk.h"
 
-#define FG_NGRAM_CACHE_BYTES (64u * 1024u * 1024u)
+#define FG_NGRAM_CACHE_BYTES (8u * 1024u * 1024u)
 #define FG_NGRAM_BLOCK_BYTES 4096u
 #define FG_NGRAM_MAX_READ_BYTES 8192u
 #define FG_NGRAM_ROW_BYTES 90u
@@ -12,7 +12,8 @@
 #define FG_NGRAM_PREFILL_MAX_TOKENS 512u
 #define FG_NGRAM_PREFILL_MAX_ROWS (FG_NGRAM_PREFILL_MAX_TOKENS*FG_NGRAM_HEAD_COUNT)
 #define FG_NGRAM_PREFILL_MAX_BLOCKS (FG_NGRAM_PREFILL_MAX_ROWS*2u)
-#define FG_NGRAM_PREFILL_IO_BYTES ((uint64_t)FG_NGRAM_PREFILL_MAX_BLOCKS*FG_NGRAM_BLOCK_BYTES)
+#define FG_NGRAM_IO_SLOTS 64u
+#define FG_NGRAM_PREFILL_IO_BYTES ((uint64_t)FG_NGRAM_IO_SLOTS*FG_NGRAM_MAX_READ_BYTES)
 
 typedef struct fg_ngram_read {uint64_t offset;uint32_t bytes;} fg_ngram_read;
 typedef struct fg_ngram_cache fg_ngram_cache;
@@ -24,6 +25,7 @@ typedef struct fg_ngram_resident fg_ngram_resident;
 fg_status fg_ngram_plan_reads(const uint64_t *addresses,uint32_t address_count,uint64_t table_bytes,fg_ngram_read *reads,uint32_t read_capacity,uint32_t *read_count,fg_error *err);
 fg_status fg_ngram_cache_create(fg_ngram_cache **out,fg_error *err);
 void fg_ngram_cache_destroy(fg_ngram_cache *cache);
+uint64_t fg_ngram_cache_memory_bytes(void);
 bool fg_ngram_cache_get(fg_ngram_cache *cache,uint64_t block_offset,const void **data);
 fg_status fg_ngram_cache_put(fg_ngram_cache *cache,uint64_t block_offset,const void *block,fg_error *err);
 fg_status fg_q38_ngram_lookup(const int32_t *token_history,size_t token_count,
@@ -40,8 +42,12 @@ fg_status fg_ngram_resident_read(const fg_ngram_resident *resident,const uint64_
                                  uint32_t row_count,uint8_t *packed,uint64_t packed_capacity,
                                  fg_error *err);
 fg_status fg_ngram_store_open(fg_ngram_store **out,fg_vk_context *vk,const char *path,
-                              uint64_t table_bytes,fg_error *err);
+                              uint64_t table_bytes,uint32_t max_tokens,fg_error *err);
 void fg_ngram_store_close(fg_ngram_store *store);
+uint64_t fg_ngram_store_host_bytes(const fg_ngram_store *store);
+uint64_t fg_ngram_store_io_host_bytes(const fg_ngram_store *store);
+uint64_t fg_ngram_store_cache_host_bytes(const fg_ngram_store *store);
+uint64_t fg_ngram_store_vk_bytes(const fg_ngram_store *store);
 fg_status fg_ngram_store_lookup(fg_ngram_store *store,const int32_t *token_history,
                                 size_t token_count,fg_vk_tensor **embedding,fg_error *err);
 fg_status fg_ngram_store_decode_packed(fg_ngram_store *store,const uint8_t *packed,

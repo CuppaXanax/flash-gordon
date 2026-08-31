@@ -13,6 +13,9 @@ void fg_qsa_state_close(fg_qsa_state *state);
 fg_status fg_qsa_state_write_block(fg_qsa_state *state,uint32_t layer_slot,uint32_t block,
                                    const uint8_t *records,
                                    uint32_t committed_tokens,fg_error *err);
+fg_status fg_qsa_state_write_blocks(fg_qsa_state *state,uint32_t layer_slot,
+                                    const uint32_t *blocks,uint32_t block_count,
+                                    const uint8_t *records,fg_error *err);
 fg_status fg_qsa_state_read_block(fg_qsa_state *state,uint32_t layer_slot,uint32_t block,
                                   uint8_t *records,
                                   uint32_t *committed_tokens,fg_error *err);

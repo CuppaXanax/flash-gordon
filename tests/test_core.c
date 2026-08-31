@@ -6,15 +6,25 @@
 #include "fg_quant.h"
 #include "fg_q38_math.h"
 #include "fg_q38_schema.h"
+#include "fg_qsa.h"
+#include "fg_qsa_locality.h"
+#include "fg_qsa_replica.h"
+#include "fg_qsa_cache.h"
 #include "fg_qsa_state.h"
 #include "fg_sha256.h"
 #include "fg_topology.h"
 
 #include <stdio.h>
+#include <fcntl.h>
 #include <math.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 static int failures;
@@ -27,8 +37,215 @@ static void test_expert_map(void){fg_manifest *m=malloc(sizeof(*m));uint16_t (*m
 static void test_expert_map_file(void){fg_manifest *m=malloc(sizeof(*m));CHECK(m!=NULL);if(!m)return;fg_manifest_init(m);char path[128];snprintf(path,sizeof(path),"/tmp/fg-expert-map-%ld.txt",(long)getpid());FILE *file=fopen(path,"w");CHECK(file!=NULL);if(file){static const uint32_t delta[FG_GROUP_SIZE]={0,1,3,5};fputs("# Flash Gordon route placement v1\n",file);for(uint32_t l=0;l<FG_LAYER_COUNT;l++){fprintf(file,"layer=%u ranks=",l);for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)fprintf(file,"%s%u",e?",":"",(l+delta[(e+1u)%FG_GROUP_SIZE])%FG_RANK_COUNT);fputc('\n',file);}fclose(file);fg_error err={0};CHECK(fg_topology_assign_map_file(m,path,&err)==FG_OK);CHECK(m->expert_rank[0][0]==m->layer_groups[0][1]);file=fopen(path,"w");CHECK(file!=NULL);if(file){fputs("layer=0 ranks=0\n",file);fclose(file);CHECK(fg_topology_assign_map_file(m,path,&err)==FG_ERR_FORMAT);CHECK(m->expert_rank[0][0]==m->layer_groups[0][1]);}}unlink(path);free(m);}
 static void test_sealed_expert_map(void){fg_manifest *manifest=malloc(sizeof(*manifest)),*sealed=malloc(sizeof(*sealed));CHECK(manifest&&sealed);if(!manifest||!sealed){free(sealed);free(manifest);return;}fg_manifest_init(manifest);char map_path[128],manifest_path[128];snprintf(map_path,sizeof(map_path),"/tmp/fg-sealed-map-%ld.txt",(long)getpid());snprintf(manifest_path,sizeof(manifest_path),"/tmp/fg-sealed-map-%ld.fgm",(long)getpid());FILE *file=fopen(map_path,"w");CHECK(file!=NULL);if(file){for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){fprintf(file,"layer=%u ranks=",layer);for(uint32_t expert=0;expert<FG_EXPERT_COUNT;expert++)fprintf(file,"%s%u",expert?",":"",manifest->layer_groups[layer][(expert+1u)%FG_GROUP_SIZE]);fputc('\n',file);}fclose(file);fg_error err={0};CHECK(fg_topology_assign_map_file(manifest,map_path,&err)==FG_OK);CHECK(fg_manifest_write(manifest_path,manifest,&err)==FG_OK);unlink(map_path);CHECK(fg_manifest_read(manifest_path,sealed,&err)==FG_OK);CHECK(sealed->expert_rank[0][0]==sealed->layer_groups[0][1]);}unlink(map_path);unlink(manifest_path);free(sealed);free(manifest);}
 static void test_deployment_profile(void){fg_manifest *m=malloc(sizeof(*m));CHECK(m!=NULL);if(!m)return;fg_manifest_init(m);m->flags=FG_MANIFEST_COMPONENTS_TEXT_REQUIRED;char path[128];snprintf(path,sizeof(path),"/tmp/fg-profile-%ld.fgm",(long)getpid());fg_error err={0};CHECK(fg_manifest_write(path,m,&err)==FG_OK);fg_manifest *sealed=malloc(sizeof(*sealed));CHECK(sealed!=NULL);if(sealed){CHECK(fg_manifest_read(path,sealed,&err)==FG_OK);CHECK(fg_manifest_validate_deployment(sealed,&err)==FG_OK);sealed->flags&=~FG_MANIFEST_HAS_NGRAM;CHECK(fg_manifest_write(path,sealed,&err)==FG_OK);CHECK(fg_manifest_read(path,m,&err)==FG_OK);CHECK(fg_manifest_validate_deployment(m,&err)==FG_ERR_MISMATCH);free(sealed);}unlink(path);free(m);}
+static void test_native_262k_profile_geometry(void){fg_manifest *m=malloc(sizeof(*m));CHECK(m!=NULL);if(!m)return;fg_manifest_init(m);m->flags=FG_MANIFEST_COMPONENTS_TEXT_REQUIRED;m->max_context=m->native_context;m->prefill_microbatch=128u;m->session.logical_context_tokens=m->native_context;m->session.gpu_index_tokens=m->native_context;m->session.qsa_hot_record_tokens=8192u;m->session.host_page_cache_bytes=FG_RUNTIME_PROFILE_NATIVE_262K_PAGE_CACHE_BYTES;for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)m->ranks[rank].scratch_bytes=fg_q38_runtime_scratch_bytes(rank,m->prefill_microbatch,m->prefill_window,m->max_context);char path[128];snprintf(path,sizeof(path),"/tmp/fg-native-262k-%ld.fgm",(long)getpid());fg_error err={0};CHECK(fg_manifest_write(path,m,&err)==FG_OK);fg_manifest *sealed=malloc(sizeof(*sealed));CHECK(sealed!=NULL);if(sealed){CHECK(fg_manifest_read(path,sealed,&err)==FG_OK);CHECK(fg_manifest_validate_deployment(sealed,&err)==FG_OK);CHECK(sealed->prefill_microbatch==128u&&sealed->max_context==262144u&&sealed->session.logical_context_tokens==262144u&&sealed->session.gpu_index_tokens==262144u&&sealed->session.qsa_hot_record_tokens==8192u&&sealed->session.host_page_cache_bytes==FG_RUNTIME_PROFILE_NATIVE_262K_PAGE_CACHE_BYTES);free(sealed);}unlink(path);free(m);}
 static void test_protocol(void){const char p[]="expert payload";fg_frame_header h;fg_error err={0};CHECK(fg_crc32c(NULL,0)==0u);CHECK(fg_crc32c("123456789",9)==UINT32_C(0xe3069283));CHECK(fg_frame_encode(&h,FG_MSG_EXPERT_RESULT,0x123456789abcdef0ull,7,0,p,sizeof(p),&err)==FG_OK);uint32_t n=0;CHECK(fg_frame_validate(&h,p,&n,&err)==FG_OK);CHECK(n==sizeof(p));char broken[sizeof(p)];memcpy(broken,p,sizeof(p));broken[0]^=1;CHECK(fg_frame_validate(&h,broken,NULL,&err)==FG_ERR_MISMATCH);int32_t tok[]={1,2,3};CHECK(fg_token_hash_update(0,tok,3)==fg_token_hash_update(fg_token_hash_update(0,tok,1),tok+1,2));}
 static void test_layer_protocol(void){fg_layer_work *work=calloc(1,sizeof(*work)),*decoded=calloc(1,sizeof(*decoded));uint8_t *wire=malloc(FG_LAYER_WORK_MAX_BYTES);CHECK(work&&decoded&&wire);if(!work||!decoded||!wire){free(wire);free(decoded);free(work);return;}work->layer=1;work->source_rank=0;work->destination_rank=1;work->flags=FG_LAYER_WORK_HAS_NGRAM;work->token_index=123;work->position[0]=17;work->position[1]=23;work->position[2]=31;for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)work->hyper[i]=(float)i*0.001f;for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++)work->ngram_embedding[i]=-(float)i*0.002f;uint32_t bytes=0;fg_error err={0};CHECK(fg_layer_work_encode(wire,FG_LAYER_WORK_MAX_BYTES,&bytes,FG_PROTOCOL_VERSION,work,&err)==FG_OK);CHECK(bytes==FG_LAYER_WORK_TEXT_MAX_BYTES);CHECK(fg_layer_work_decode(decoded,FG_PROTOCOL_VERSION,wire,bytes,&err)==FG_OK);CHECK(memcmp(work,decoded,sizeof(*work))==0);wire[3]=0;CHECK(fg_layer_work_decode(decoded,FG_PROTOCOL_VERSION,wire,bytes,&err)==FG_ERR_FORMAT);fg_layer_result *result=calloc(1,sizeof(*result)),*result_decoded=calloc(1,sizeof(*result_decoded));uint8_t *result_wire=malloc(FG_LAYER_RESULT_BYTES);CHECK(result&&result_decoded&&result_wire);if(result&&result_decoded&&result_wire){result->layer=7;result->source_rank=7;result->destination_rank=0;result->token_index=123;for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)result->hyper[i]=(float)i*0.003f;CHECK(fg_layer_result_encode(result_wire,result,&err)==FG_OK);CHECK(fg_layer_result_decode(result_decoded,result_wire,FG_LAYER_RESULT_BYTES,&err)==FG_OK);CHECK(memcmp(result,result_decoded,sizeof(*result))==0);result_wire[3]=1;CHECK(fg_layer_result_decode(result_decoded,result_wire,FG_LAYER_RESULT_BYTES,&err)==FG_ERR_FORMAT);}free(result_wire);free(result_decoded);free(result);free(wire);free(decoded);free(work);}
+
+static void test_qsa_block_protocol(void){
+    enum{TOKENS=2};fg_error err={0};float *hidden=malloc((size_t)TOKENS*FG_HIDDEN_SIZE*4u),*decoded=malloc((size_t)TOKENS*FG_HIDDEN_SIZE*4u);uint32_t positions[TOKENS*3u]={17u,17u,17u,18u,18u,18u},decoded_positions[TOKENS*3u];uint8_t *work_wire=malloc(FG_QSA_BLOCK_PREFILL_WORK_MAX_BYTES),*result_wire=malloc(FG_QSA_BLOCK_PREFILL_RESULT_MAX_BYTES);CHECK(hidden&&decoded&&work_wire&&result_wire);if(hidden&&decoded&&work_wire&&result_wire){for(uint32_t i=0;i<TOKENS*FG_HIDDEN_SIZE;i++)hidden[i]=sinf((float)i*0.001f);CHECK(FG_QSA_BLOCK_WORK_TEXT_BYTES==10264u);CHECK(FG_QSA_BLOCK_RESULT_BYTES==10248u);CHECK(12u*(FG_QSA_BLOCK_WORK_TEXT_BYTES+FG_QSA_BLOCK_RESULT_BYTES)==246144u);
+        fg_qsa_block_work work={.layer=3u,.source_rank=0u,.destination_rank=3u,.position_mode=FG_POSITION_TEXT,.token_index=17u,.position={17u,17u,17u,0u},.hidden=hidden},decoded_work={0};uint32_t bytes=0;CHECK(fg_qsa_block_work_encode(work_wire,FG_QSA_BLOCK_WORK_MAX_BYTES,&bytes,FG_PROTOCOL_VERSION,&work,&err)==FG_OK);CHECK(bytes==FG_QSA_BLOCK_WORK_TEXT_BYTES);CHECK(fg_qsa_block_work_decode(&decoded_work,FG_PROTOCOL_VERSION,decoded,FG_HIDDEN_SIZE,work_wire,bytes,&err)==FG_OK);CHECK(decoded_work.token_index==17u&&memcmp(decoded,hidden,FG_HIDDEN_SIZE*4u)==0);CHECK(fg_qsa_block_work_decode(&decoded_work,FG_PROTOCOL_VERSION,decoded,FG_HIDDEN_SIZE,work_wire,bytes-1u,&err)==FG_ERR_FORMAT);work_wire[3]=1u;CHECK(fg_qsa_block_work_decode(&decoded_work,FG_PROTOCOL_VERSION,decoded,FG_HIDDEN_SIZE,work_wire,bytes,&err)==FG_ERR_FORMAT);work_wire[3]=0u;work_wire[FG_QSA_BLOCK_WORK_TEXT_HEADER_BYTES]=0x7fu;work_wire[FG_QSA_BLOCK_WORK_TEXT_HEADER_BYTES+1u]=0x80u;work_wire[FG_QSA_BLOCK_WORK_TEXT_HEADER_BYTES+2u]=0u;work_wire[FG_QSA_BLOCK_WORK_TEXT_HEADER_BYTES+3u]=0u;CHECK(fg_qsa_block_work_decode(&decoded_work,FG_PROTOCOL_VERSION,decoded,FG_HIDDEN_SIZE,work_wire,bytes,&err)==FG_ERR_FORMAT);CHECK(fg_qsa_block_work_encode(work_wire,FG_QSA_BLOCK_WORK_MAX_BYTES,&bytes,FG_PROTOCOL_MIN_VERSION,&work,&err)==FG_OK);CHECK(bytes==FG_QSA_BLOCK_WORK_LEGACY_HEADER_BYTES+FG_HIDDEN_SIZE*4u);CHECK(fg_qsa_block_work_decode(&decoded_work,FG_PROTOCOL_MIN_VERSION,decoded,FG_HIDDEN_SIZE,work_wire,bytes,&err)==FG_OK);
+        fg_qsa_block_result result={.layer=3u,.source_rank=3u,.destination_rank=0u,.token_index=17u,.hidden=hidden},decoded_result={0};CHECK(fg_qsa_block_result_encode(result_wire,&result,&err)==FG_OK);CHECK(fg_qsa_block_result_decode(&decoded_result,decoded,FG_HIDDEN_SIZE,result_wire,FG_QSA_BLOCK_RESULT_BYTES,&err)==FG_OK);CHECK(memcmp(decoded,hidden,FG_HIDDEN_SIZE*4u)==0);
+        fg_qsa_block_prefill_work prefill={.layer=7u,.source_rank=0u,.destination_rank=7u,.position_mode=FG_POSITION_TEXT,.first_token=17u,.token_count=TOKENS,.positions=positions,.hidden=hidden},decoded_prefill={0};CHECK(fg_qsa_block_prefill_work_encode(work_wire,FG_QSA_BLOCK_PREFILL_WORK_MAX_BYTES,&bytes,FG_PROTOCOL_VERSION,&prefill,&err)==FG_OK);CHECK(bytes==FG_QSA_BLOCK_PREFILL_HEADER_BYTES+TOKENS*3u*4u+TOKENS*FG_HIDDEN_SIZE*4u);CHECK(fg_qsa_block_prefill_work_decode(&decoded_prefill,FG_PROTOCOL_VERSION,decoded_positions,TOKENS*3u,decoded,(uint64_t)TOKENS*FG_HIDDEN_SIZE,work_wire,bytes,&err)==FG_OK);CHECK(memcmp(decoded_positions,positions,sizeof(positions))==0&&memcmp(decoded,hidden,(size_t)TOKENS*FG_HIDDEN_SIZE*4u)==0);
+        fg_qsa_block_prefill_result prefill_result={.layer=7u,.source_rank=7u,.destination_rank=0u,.first_token=17u,.token_count=TOKENS,.hidden=hidden},decoded_prefill_result={0};CHECK(fg_qsa_block_prefill_result_encode(result_wire,FG_QSA_BLOCK_PREFILL_RESULT_MAX_BYTES,&bytes,&prefill_result,&err)==FG_OK);CHECK(bytes==FG_QSA_BLOCK_PREFILL_HEADER_BYTES+TOKENS*FG_HIDDEN_SIZE*4u);CHECK(fg_qsa_block_prefill_result_decode(&decoded_prefill_result,decoded,(uint64_t)TOKENS*FG_HIDDEN_SIZE,result_wire,bytes,&err)==FG_OK);CHECK(memcmp(decoded,hidden,(size_t)TOKENS*FG_HIDDEN_SIZE*4u)==0);
+        fg_frame_header frame;CHECK(fg_frame_encode_version(&frame,FG_PROTOCOL_MIN_VERSION,FG_MSG_QSA_BLOCK_WORK,1u,1u,0u,work_wire,FG_QSA_BLOCK_WORK_LEGACY_HEADER_BYTES+FG_HIDDEN_SIZE*4u,&err)==FG_OK);CHECK(fg_frame_encode_version(&frame,FG_PROTOCOL_VERSION,FG_MSG_QSA_BLOCK_WORK,1u,1u,0u,work_wire,FG_QSA_BLOCK_WORK_LEGACY_HEADER_BYTES+FG_HIDDEN_SIZE*4u,&err)==FG_OK);CHECK(fg_frame_encode_version(&frame,FG_PROTOCOL_MIN_VERSION,FG_MSG_SESSION_PREPARE,1u,1u,0u,work_wire,1u,&err)==FG_ERR_ARGUMENT);
+    }free(result_wire);free(work_wire);free(decoded);free(hidden);
+}
+
+static void test_qsa_page_protocol(void){
+    enum{PAGES=2};fg_error err={0};
+    uint32_t first_block=99u,block_count=99u;
+    CHECK(fg_qsa_completed_page_range(0u,1u,&first_block,&block_count,&err)==FG_OK&&
+          first_block==0u&&block_count==0u);
+    CHECK(fg_qsa_completed_page_range(3u,1u,&first_block,&block_count,&err)==FG_OK&&
+          first_block==0u&&block_count==1u);
+    CHECK(fg_qsa_completed_page_range(4u,4u,&first_block,&block_count,&err)==FG_OK&&
+          first_block==1u&&block_count==1u);
+    CHECK(fg_qsa_completed_page_range(2u,6u,&first_block,&block_count,&err)==FG_OK&&
+          first_block==0u&&block_count==2u);
+    CHECK(fg_qsa_completed_page_range(FG_MAX_CONTEXT-1u,2u,&first_block,&block_count,
+                                      &err)==FG_ERR_LIMIT);
+    uint8_t *records=malloc((size_t)PAGES*FG_QSA_PAGE_RECORD_BYTES);
+    uint8_t *wire=malloc(FG_QSA_PAGE_RESULT_MAX_BYTES);
+    fg_qsa_page pages[PAGES],decoded_pages[PAGES];
+    CHECK(records&&wire);
+    if(!records||!wire){free(wire);free(records);return;}
+    for(uint32_t i=0;i<PAGES*FG_QSA_PAGE_RECORD_BYTES;i++)records[i]=(uint8_t)(i*17u+3u);
+    pages[0]=(fg_qsa_page){.layer=3u,.block=7u,.records=records};
+    pages[1]=(fg_qsa_page){.layer=11u,.block=8u,
+        .records=records+FG_QSA_PAGE_RECORD_BYTES};
+    fg_qsa_page_batch batch={.source_rank=0u,.destination_rank=3u,.batch_id=19u,
+        .page_count=PAGES,.pages=pages},decoded={0};uint32_t bytes=0;
+    CHECK(FG_QSA_PAGE_RECORD_BYTES==4944u);
+    CHECK(FG_QSA_PAGE_BATCH_HEADER_BYTES+
+          FG_QSA_OWNER_LAYER_COUNT*FG_QSA_PAGE_ENTRY_BYTES==29724u);
+    CHECK(2u*(29724u+(uint32_t)sizeof(fg_frame_header))/4u==14878u);
+    CHECK(fg_qsa_page_append_encode(wire,FG_QSA_PAGE_RESULT_MAX_BYTES,&bytes,
+                                    &batch,&err)==FG_OK);
+    CHECK(bytes==FG_QSA_PAGE_BATCH_HEADER_BYTES+PAGES*FG_QSA_PAGE_ENTRY_BYTES);
+    CHECK(fg_qsa_page_append_decode(&decoded,decoded_pages,PAGES,wire,bytes,&err)==FG_OK);
+    CHECK(decoded.batch_id==batch.batch_id&&decoded.page_count==PAGES&&
+          decoded.pages[1].layer==11u&&decoded.pages[1].block==8u&&
+          memcmp(decoded.pages[1].records,pages[1].records,FG_QSA_PAGE_RECORD_BYTES)==0);
+    wire[10]=1u;
+    CHECK(fg_qsa_page_append_decode(&decoded,decoded_pages,PAGES,wire,bytes,&err)==FG_ERR_FORMAT);
+    wire[10]=0u;pages[1].layer=3u;pages[1].block=7u;
+    CHECK(fg_qsa_page_append_encode(wire,FG_QSA_PAGE_RESULT_MAX_BYTES,&bytes,
+                                    &batch,&err)==FG_ERR_FORMAT);
+    pages[1].layer=11u;pages[1].block=8u;pages[0].records=NULL;pages[1].records=NULL;
+    CHECK(fg_qsa_page_fetch_encode(wire,FG_QSA_PAGE_FETCH_MAX_BYTES,&bytes,
+                                   &batch,&err)==FG_OK);
+    CHECK(bytes==FG_QSA_PAGE_BATCH_HEADER_BYTES+PAGES*FG_QSA_PAGE_ENTRY_HEADER_BYTES);
+    CHECK(fg_qsa_page_fetch_decode(&decoded,decoded_pages,PAGES,wire,bytes,&err)==FG_OK);
+    CHECK(decoded.pages[0].records==NULL&&decoded.pages[1].block==8u);
+    pages[0].records=records;pages[1].records=records+FG_QSA_PAGE_RECORD_BYTES;
+    CHECK(fg_qsa_page_result_encode(wire,FG_QSA_PAGE_RESULT_MAX_BYTES,&bytes,
+                                    &batch,&err)==FG_OK);
+    CHECK(fg_qsa_page_result_decode(&decoded,decoded_pages,PAGES,wire,bytes,&err)==FG_OK);
+    fg_frame_header page_frame;
+    CHECK(fg_frame_encode_version(&page_frame,FG_PROTOCOL_VERSION,FG_MSG_QSA_PAGE_RESULT,
+                                  1u,19u,0u,wire,bytes,&err)==FG_OK);
+    CHECK(fg_frame_validate_version(&page_frame,FG_PROTOCOL_VERSION,wire,NULL,&err)==FG_OK);
+    wire[FG_QSA_PAGE_BATCH_HEADER_BYTES+FG_QSA_PAGE_ENTRY_HEADER_BYTES]^=1u;
+    CHECK(fg_frame_validate_version(&page_frame,FG_PROTOCOL_VERSION,wire,NULL,
+                                    &err)==FG_ERR_MISMATCH);
+    wire[FG_QSA_PAGE_BATCH_HEADER_BYTES+FG_QSA_PAGE_ENTRY_HEADER_BYTES]^=1u;
+    batch.page_count=FG_QSA_PAGE_APPEND_MAX_PAGES+1u;
+    CHECK(fg_qsa_page_append_encode(wire,FG_QSA_PAGE_RESULT_MAX_BYTES,&bytes,
+                                    &batch,&err)==FG_ERR_FORMAT);
+    fg_qsa_page *oversized=calloc(FG_QSA_PAGE_APPEND_LAYER_MAX_PAGES+1u,
+                                  sizeof(*oversized));
+    CHECK(oversized!=NULL);
+    if(oversized){
+        for(uint32_t i=0;i<=FG_QSA_PAGE_APPEND_LAYER_MAX_PAGES;i++)
+            oversized[i]=(fg_qsa_page){.layer=3u,.block=i,.records=records};
+        batch.page_count=FG_QSA_PAGE_APPEND_LAYER_MAX_PAGES+1u;
+        batch.pages=oversized;
+        CHECK(fg_qsa_page_append_encode(wire,FG_QSA_PAGE_RESULT_MAX_BYTES,&bytes,
+                                       &batch,&err)==FG_ERR_FORMAT);
+        free(oversized);
+    }
+    batch.page_count=PAGES;
+    batch.pages=pages;
+    fg_qsa_page_barrier barrier={.source_rank=0u,.destination_rank=3u,.batch_id=20u},
+        decoded_barrier={0};uint8_t barrier_wire[FG_QSA_PAGE_BARRIER_BYTES];
+    CHECK(fg_qsa_page_barrier_encode(barrier_wire,&barrier,&err)==FG_OK);
+    CHECK(fg_qsa_page_barrier_decode(&decoded_barrier,barrier_wire,sizeof(barrier_wire),
+                                     &err)==FG_OK);
+    CHECK(decoded_barrier.batch_id==20u);
+    fg_frame_header frame;
+    CHECK(fg_frame_encode_version(&frame,FG_PROTOCOL_VERSION,FG_MSG_QSA_PAGE_APPEND,
+                                  1u,19u,0u,wire,bytes,&err)==FG_OK);
+    CHECK(fg_frame_encode_version(&frame,FG_PROTOCOL_MIN_VERSION,FG_MSG_QSA_PAGE_APPEND,
+                                  1u,19u,0u,wire,bytes,&err)==FG_ERR_ARGUMENT);
+    free(wire);free(records);
+}
+
+static uint64_t test_monotonic_ns(void){
+    struct timespec value;
+    clock_gettime(CLOCK_MONOTONIC,&value);
+    return (uint64_t)value.tv_sec*UINT64_C(1000000000)+(uint64_t)value.tv_nsec;
+}
+
+static void test_prefill_chunk_frontiers(void){
+    const uint32_t totals[]={127u,128u,129u,256u,416u};
+    const uint32_t chunk_capacity=128u;
+    const uint32_t qsa_layers=FG_LAYER_COUNT/4u;
+    const uint32_t record_bytes=FG_Q38_QSA_TOKEN_RECORD_BYTES;
+    for(uint32_t shape=0u;shape<sizeof(totals)/sizeof(totals[0]);shape++){
+        uint32_t total=totals[shape];
+        size_t state_bytes=(size_t)total*qsa_layers*record_bytes;
+        uint8_t *reference=malloc(state_bytes),*chunked=calloc(1,state_bytes);
+        uint32_t *reference_output=malloc((size_t)total*sizeof(*reference_output));
+        uint32_t *chunked_output=calloc(total,sizeof(*chunked_output));
+        CHECK(reference&&chunked&&reference_output&&chunked_output);
+        if(!reference||!chunked||!reference_output||!chunked_output){
+            free(chunked_output);free(reference_output);free(chunked);free(reference);
+            continue;
+        }
+        for(uint32_t token=0u;token<total;token++){
+            reference_output[token]=UINT32_C(0x9e3779b9)*(token+1u);
+            for(uint32_t layer=0u;layer<qsa_layers;layer++)
+                memset(reference+((size_t)layer*total+token)*record_bytes,
+                       (int)(token+layer*17u),record_bytes);
+        }
+        uint32_t frontier=0u,append_batches=0u,expected_batches=0u;
+        for(uint32_t first=0u;first<total;first+=chunk_capacity){
+            uint32_t count=total-first;
+            if(count>chunk_capacity)count=chunk_capacity;
+            if((first+count)/FG_Q38_QSA_COMPRESS_RATIO>
+               first/FG_Q38_QSA_COMPRESS_RATIO)expected_batches++;
+        }
+        uint64_t deadline=test_monotonic_ns()+UINT64_C(5000000000);
+        while(frontier<total){
+            uint32_t count=total-frontier;
+            if(count>chunk_capacity)count=chunk_capacity;
+            uint32_t first_block=UINT32_MAX,block_count=UINT32_MAX;
+            fg_error error={0};
+            CHECK(fg_qsa_completed_page_range(frontier,count,&first_block,
+                                              &block_count,&error)==FG_OK);
+            CHECK(first_block==frontier/FG_Q38_QSA_COMPRESS_RATIO&&
+                  block_count==(frontier+count)/FG_Q38_QSA_COMPRESS_RATIO-
+                               frontier/FG_Q38_QSA_COMPRESS_RATIO);
+            for(uint32_t block=0u;block<block_count;block++)
+                for(uint32_t layer=0u;layer<qsa_layers;layer++)
+                    memcpy(chunked+((size_t)layer*total+
+                                    (first_block+block)*FG_Q38_QSA_COMPRESS_RATIO)*
+                               record_bytes,
+                           reference+((size_t)layer*total+
+                                      (first_block+block)*FG_Q38_QSA_COMPRESS_RATIO)*
+                               record_bytes,
+                           (size_t)FG_Q38_QSA_COMPRESS_RATIO*record_bytes);
+            memcpy(chunked_output+(size_t)frontier,reference_output+frontier,
+                   (size_t)count*sizeof(*chunked_output));
+            if(block_count)append_batches++;
+            frontier+=count;
+            CHECK(test_monotonic_ns()<=deadline);
+        }
+        uint32_t complete=(total/FG_Q38_QSA_COMPRESS_RATIO)*
+                          FG_Q38_QSA_COMPRESS_RATIO;
+        CHECK(frontier==total&&append_batches==expected_batches);
+        for(uint32_t layer=0u;layer<qsa_layers;layer++)
+            CHECK(memcmp(chunked+(size_t)layer*total*record_bytes,
+                         reference+(size_t)layer*total*record_bytes,
+                         (size_t)complete*record_bytes)==0);
+        CHECK(memcmp(chunked_output,reference_output,
+                     (size_t)total*sizeof(*reference_output))==0);
+        for(uint32_t layer=0u;layer<qsa_layers;layer++)
+            for(uint32_t token=complete;token<total;token++){
+                const uint8_t *tail=chunked+
+                    ((size_t)layer*total+token)*record_bytes;
+                for(uint32_t byte=0u;byte<record_bytes;byte++)
+                    CHECK(tail[byte]==0u);
+            }
+        free(chunked_output);free(reference_output);free(chunked);free(reference);
+    }
+}
+
+static void test_qsa_locality_metrics(void){
+    uint32_t budget=1u;
+    fg_qsa_locality *trace=fg_qsa_locality_create(FG_QSA_LOCALITY_SUMMARY,16u,8u,
+                                                   &budget,1u,1234u);
+    CHECK(trace!=NULL);
+    if(!trace)return;
+    uint32_t first[]={0u,1u,1u},second[]={0u,2u},third[]={1u,0u,3u};
+    fg_qsa_locality_record_selection(trace,3u,8u,first,3u);
+    fg_qsa_locality_record_selection(trace,3u,12u,second,2u);
+    fg_qsa_locality_record_cache(trace,3u,false);
+    fg_qsa_locality_record_selection(trace,3u,16u,third,3u);
+    fg_qsa_locality_record_cache(trace,3u,true);
+    fg_qsa_locality_stats stats={0};fg_qsa_locality_get_stats(trace,&stats);
+    CHECK(stats.selections==3u&&stats.selected_refs==8u&&stats.unique_pages==7u);
+    CHECK(stats.dedup_pages==1u&&stats.hot_tail_hits==4u&&stats.cold_refs==3u);
+    CHECK(stats.previous_overlap==2u&&stats.cache_hits==1u&&stats.cache_misses==1u);
+    CHECK(stats.first_cold_refs==2u&&stats.reused_cold_refs==1u);
+    CHECK(stats.reuse_distance_sum==1u&&stats.reuse_distance_max==1u);
+    CHECK(stats.budget_count==1u&&stats.budget_mib[0]==1u);
+    CHECK(stats.budget_hits[0]==1u&&stats.budget_misses[0]==2u);
+    CHECK(stats.selection_digest!=0u);
+    fg_qsa_locality_reset(trace,NULL);fg_qsa_locality_get_stats(trace,&stats);
+    CHECK(stats.selections==0u&&stats.cache_hits==0u&&stats.budget_count==1u);
+    fg_qsa_locality_destroy(trace,NULL);
+}
 
 static void test_output_protocol(void){fg_output_work *work=calloc(1,sizeof(*work)),*decoded=calloc(1,sizeof(*decoded));uint8_t *wire=malloc(FG_OUTPUT_WORK_BYTES);CHECK(work&&decoded&&wire);if(work&&decoded&&wire){work->source_rank=0;work->destination_rank=4;work->token_index=91;for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)work->hyper[i]=sinf((float)i*0.001f);fg_error err={0};CHECK(fg_output_work_encode(wire,work,&err)==FG_OK);CHECK(fg_output_work_decode(decoded,wire,FG_OUTPUT_WORK_BYTES,&err)==FG_OK);CHECK(memcmp(work,decoded,sizeof(*work))==0);wire[2]=1;CHECK(fg_output_work_decode(decoded,wire,FG_OUTPUT_WORK_BYTES,&err)==FG_ERR_FORMAT);fg_output_result result={.source_rank=4,.destination_rank=0,.token_index=91,.token=42,.logit=12.5f},result_decoded;uint8_t result_wire[FG_OUTPUT_RESULT_BYTES];CHECK(fg_output_result_encode(result_wire,&result,&err)==FG_OK);CHECK(fg_output_result_decode(&result_decoded,result_wire,sizeof(result_wire),&err)==FG_OK);CHECK(result.source_rank==result_decoded.source_rank&&result.destination_rank==result_decoded.destination_rank&&result.token_index==result_decoded.token_index&&result.token==result_decoded.token&&result.logit==result_decoded.logit);result_wire[8]=0xff;CHECK(fg_output_result_decode(&result_decoded,result_wire,sizeof(result_wire),&err)==FG_ERR_FORMAT);}free(wire);free(decoded);free(work);}
 static void test_ngram_protocol(void){fg_error err={0};fg_ngram_work work={.source_rank=0,.destination_rank=2,.item_count=3,.token_index=77,.heads={2u,4u,3u},.rows={40000031u,80000111u,60000071u}},decoded_work;uint8_t work_wire[FG_NGRAM_WORK_MAX_BYTES];uint32_t work_bytes=0;CHECK(fg_ngram_work_encode(work_wire,sizeof(work_wire),&work_bytes,&work,&err)==FG_OK);CHECK(work_bytes==35u);CHECK(fg_ngram_work_decode(&decoded_work,work_wire,work_bytes,&err)==FG_OK);CHECK(memcmp(&work,&decoded_work,sizeof(work))==0);CHECK(fg_ngram_work_decode(&decoded_work,work_wire,work_bytes-1u,&err)==FG_ERR_FORMAT);fg_ngram_result result={.source_rank=7,.destination_rank=0,.item_count=2,.token_index=77,.heads={15u,14u}},decoded_result;for(uint32_t i=0;i<2u*FG_NGRAM_WIRE_ROW_BYTES;i++)result.packed[i]=(uint8_t)(i*31u+9u);uint8_t result_wire[FG_NGRAM_RESULT_MAX_BYTES];uint32_t result_bytes=0;CHECK(fg_ngram_result_encode(result_wire,sizeof(result_wire),&result_bytes,&result,&err)==FG_OK);CHECK(result_bytes==8u+2u*(1u+FG_NGRAM_WIRE_ROW_BYTES));CHECK(fg_ngram_result_decode(&decoded_result,result_wire,result_bytes,&err)==FG_OK);CHECK(decoded_result.source_rank==result.source_rank&&decoded_result.destination_rank==result.destination_rank&&decoded_result.item_count==result.item_count&&decoded_result.token_index==result.token_index&&memcmp(decoded_result.heads,result.heads,2u)==0&&memcmp(decoded_result.packed,result.packed,2u*FG_NGRAM_WIRE_ROW_BYTES)==0);result_wire[3]=4u;CHECK(fg_ngram_result_decode(&decoded_result,result_wire,result_bytes,&err)==FG_ERR_FORMAT);}
@@ -48,12 +265,208 @@ static void test_ngram_planner_batch_capacity(void){
     CHECK(fg_ngram_plan_reads(addresses,8,32768,reads,6,&count,&err)==FG_OK);CHECK(count==2);CHECK(reads[0].offset==0&&reads[0].bytes==8192);CHECK(reads[1].offset==8192&&reads[1].bytes==8192);
     CHECK(fg_ngram_plan_reads(addresses,8,32768,reads,1,&count,&err)==FG_ERR_LIMIT);uint64_t edge[]={4096};CHECK(fg_ngram_plan_reads(edge,1,4096,reads,1,&count,&err)==FG_ERR_FORMAT);
 }
+static void test_qsa_scratch_geometry(void){
+    CHECK(fg_qsa_attention_scratch_bytes(0u)==UINT64_MAX);
+    CHECK(fg_qsa_attention_scratch_bytes(FG_PREFILL_MAX_TOKENS+1u)==UINT64_MAX);
+    CHECK(fg_qsa_attention_scratch_bytes(256u)==37144576u);
+    CHECK(fg_qsa_gdn_scratch_bytes(256u)==36274176u);
+    CHECK(fg_qsa_ple_scratch_bytes(256u)==76021760u);
+    CHECK(fg_qsa_attention_family_scratch_bytes(256u)==76021760u);
+    CHECK(fg_qsa_attention_family_scratch_bytes(128u)==38010880u);
+}
 static void test_qsa_state(void){
     char path[128];snprintf(path,sizeof(path),"/tmp/fg-qsa-state-%ld.bin",(long)getpid());unlink(path);uint8_t layers[]={3};fg_error err={0};fg_qsa_state *state=NULL;fg_status status=fg_qsa_state_open(&state,path,layers,1,8,true,&err);if(status==FG_ERR_UNAVAILABLE){unlink(path);return;}CHECK(status==FG_OK);if(status!=FG_OK){unlink(path);return;}
     uint8_t records[FG_Q38_QSA_COMPRESS_RATIO][FG_Q38_QSA_TOKEN_RECORD_BYTES],got[FG_Q38_QSA_COMPRESS_RATIO][FG_Q38_QSA_TOKEN_RECORD_BYTES];for(uint32_t i=0;i<sizeof(records);i++)((uint8_t *)records)[i]=(uint8_t)(i*29u+7u);float key[FG_Q38_ATTN_KV_WIDTH],value[FG_Q38_ATTN_KV_WIDTH],index_key[FG_Q38_INDEX_WIDTH],decoded_key[FG_Q38_ATTN_KV_WIDTH],decoded_value[FG_Q38_ATTN_KV_WIDTH],decoded_index[FG_Q38_INDEX_WIDTH];uint32_t position[3]={17,23,31},decoded_position[3]={0};for(uint32_t i=0;i<FG_Q38_ATTN_KV_WIDTH;i++){key[i]=sinf((float)i*0.031f)*2.0f;value[i]=cosf((float)i*0.019f)*3.0f;}for(uint32_t i=0;i<FG_Q38_INDEX_WIDTH;i++)index_key[i]=sinf((float)i*0.013f);fg_qsa_encode_full_token_record(key,value,index_key,position,records[0]);fg_qsa_decode_token_record(records[0],decoded_key,decoded_value);fg_qsa_decode_token_metadata(records[0],decoded_index,decoded_position);double key_error=0.0,value_error=0.0,index_error=0.0;for(uint32_t i=0;i<FG_Q38_ATTN_KV_WIDTH;i++){key_error+=fabs((double)key[i]-decoded_key[i]);value_error+=fabs((double)value[i]-decoded_value[i]);}for(uint32_t i=0;i<FG_Q38_INDEX_WIDTH;i++)index_error+=fabs((double)index_key[i]-decoded_index[i]);CHECK(key_error/FG_Q38_ATTN_KV_WIDTH<0.02&&value_error/FG_Q38_ATTN_KV_WIDTH<0.2&&index_error/FG_Q38_INDEX_WIDTH<0.02);CHECK(memcmp(position,decoded_position,sizeof(position))==0);CHECK(fg_qsa_state_write_block(state,0,0,&records[0][0],3,&err)==FG_OK);CHECK(fg_qsa_state_layer_tokens(state,0)==3);uint32_t committed=0;CHECK(fg_qsa_state_read_block(state,0,0,&got[0][0],&committed,&err)==FG_OK);CHECK(committed==3&&memcmp(records,got,3u*FG_Q38_QSA_TOKEN_RECORD_BYTES)==0);for(uint32_t i=3u*FG_Q38_QSA_TOKEN_RECORD_BYTES;i<sizeof(got);i++)CHECK(((uint8_t *)got)[i]==0);fg_qsa_state_close(state);state=NULL;
     CHECK(fg_qsa_state_open(&state,path,layers,1,8,false,&err)==FG_OK);if(state){CHECK(fg_qsa_state_layer_tokens(state,0)==3);CHECK(fg_qsa_state_read_block(state,0,0,&got[0][0],&committed,&err)==FG_OK);CHECK(fg_qsa_state_reset(state,&err)==FG_OK);fg_qsa_state_close(state);state=NULL;}CHECK(fg_qsa_state_open(&state,path,layers,1,8,false,&err)==FG_OK);if(state){CHECK(fg_qsa_state_layer_tokens(state,0)==0);fg_qsa_state_close(state);state=NULL;}CHECK(truncate(path,4096)==0);CHECK(fg_qsa_state_open(&state,path,layers,1,8,false,&err)==FG_ERR_MISMATCH);unlink(path);
 }
+static void test_qsa_state_failed_create_cleanup(void){
+    char path[128];snprintf(path,sizeof(path),"test-qsa-create-failure-%ld.bin",(long)getpid());
+    unlink(path);pid_t child=fork();CHECK(child>=0);if(child==0){
+        struct rlimit limit;if(getrlimit(RLIMIT_NOFILE,&limit)!=0)_exit(10);
+        if(limit.rlim_cur>128u)limit.rlim_cur=128u;
+        if(setrlimit(RLIMIT_NOFILE,&limit)!=0)_exit(11);
+        int reserve[256];uint32_t opened=0;while(opened<256u){
+            int fd=open("/dev/null",O_RDONLY);if(fd<0)break;reserve[opened++]=fd;
+        }
+        if(!opened)_exit(12);
+        close(reserve[--opened]);
+        uint8_t layers[]={3u};fg_qsa_state *state=NULL;fg_error err={0};
+        fg_status status=fg_qsa_state_open(&state,path,layers,1u,8u,true,&err);
+        int clean=status!=FG_OK&&!state&&access(path,F_OK)!=0&&
+            err.code==status&&strstr(err.message,"io_uring_setup")!=NULL;
+        fg_qsa_state_close(state);unlink(path);_exit(clean?0:13);
+    }
+    if(child>0){int status=0;CHECK(waitpid(child,&status,0)==child);CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);}
+    unlink(path);
+}
 static void test_qsa_state_batch(void){char path[128];snprintf(path,sizeof(path),"/tmp/fg-qsa-batch-%ld.bin",(long)getpid());unlink(path);uint8_t layers[]={3};fg_error err={0};fg_qsa_state *state=NULL;fg_status status=fg_qsa_state_open(&state,path,layers,1,8,true,&err);if(status==FG_ERR_UNAVAILABLE){unlink(path);return;}CHECK(status==FG_OK);if(status!=FG_OK){unlink(path);return;}uint8_t first[4u*FG_Q38_QSA_TOKEN_RECORD_BYTES],second[4u*FG_Q38_QSA_TOKEN_RECORD_BYTES],got[8u*FG_Q38_QSA_TOKEN_RECORD_BYTES];for(uint32_t i=0;i<sizeof(first);i++){first[i]=(uint8_t)(i*7u+3u);second[i]=(uint8_t)(i*11u+5u);}CHECK(fg_qsa_state_write_block(state,0,0,first,4,&err)==FG_OK);CHECK(fg_qsa_state_write_block(state,0,1,second,2,&err)==FG_OK);uint32_t blocks[]={1,0},committed[2]={0};CHECK(fg_qsa_state_read_blocks(state,0,blocks,2,got,committed,&err)==FG_OK);CHECK(committed[0]==2&&committed[1]==4);CHECK(memcmp(got,second,2u*FG_Q38_QSA_TOKEN_RECORD_BYTES)==0);CHECK(memcmp(got+4u*FG_Q38_QSA_TOKEN_RECORD_BYTES,first,sizeof(first))==0);fg_qsa_state_close(state);unlink(path);}
+
+static void test_qsa_state_write_batch(void){
+    char path[128];snprintf(path,sizeof(path),"test-qsa-write-batch-%ld.bin",(long)getpid());
+    unlink(path);uint8_t layers[]={3};fg_error err={0};fg_qsa_state *state=NULL;
+    fg_status status=fg_qsa_state_open(&state,path,layers,1u,16u,true,&err);
+    if(status==FG_ERR_UNAVAILABLE){unlink(path);return;}
+    CHECK(status==FG_OK);if(status!=FG_OK){unlink(path);return;}
+    uint32_t blocks[]={0u,1u,2u},read_blocks[]={2u,0u,1u},committed[3]={0};
+    uint8_t records[3u*FG_QSA_PAGE_RECORD_BYTES],got[3u*FG_QSA_PAGE_RECORD_BYTES];
+    for(uint32_t i=0;i<sizeof(records);i++)records[i]=(uint8_t)(i*13u+9u);
+    CHECK(fg_qsa_state_write_blocks(state,0u,blocks,3u,records,&err)==FG_OK);
+    CHECK(fg_qsa_state_layer_tokens(state,0u)==12u);
+    CHECK(fg_qsa_state_read_blocks(state,0u,read_blocks,3u,got,committed,&err)==FG_OK);
+    CHECK(committed[0]==4u&&committed[1]==4u&&committed[2]==4u);
+    CHECK(memcmp(got,records+2u*FG_QSA_PAGE_RECORD_BYTES,FG_QSA_PAGE_RECORD_BYTES)==0);
+    CHECK(memcmp(got+FG_QSA_PAGE_RECORD_BYTES,records,FG_QSA_PAGE_RECORD_BYTES)==0);
+    CHECK(memcmp(got+2u*FG_QSA_PAGE_RECORD_BYTES,records+FG_QSA_PAGE_RECORD_BYTES,
+                 FG_QSA_PAGE_RECORD_BYTES)==0);
+    fg_qsa_state_close(state);unlink(path);
+}
+
+typedef struct replica_probe {
+    pthread_mutex_t mutex;
+    pthread_cond_t ready;
+    uint32_t calls;
+    bool entered,release,fail;
+} replica_probe;
+
+static fg_status replica_probe_send(void *opaque,uint32_t owner,uint64_t session_id,
+                                    uint32_t batch_id,const void *payload,uint32_t bytes,
+                                    fg_error *err){
+    replica_probe *probe=opaque;
+    CHECK((owner==3u||owner==7u)&&session_id==99u&&batch_id<2u&&payload&&bytes==1u);
+    pthread_mutex_lock(&probe->mutex);probe->calls++;probe->entered=true;
+    pthread_cond_broadcast(&probe->ready);
+    while(!probe->release)pthread_cond_wait(&probe->ready,&probe->mutex);
+    bool fail=probe->fail;pthread_mutex_unlock(&probe->mutex);
+    if(fail){fg_error_set(err,FG_ERR_IO,"injected replica send failure");return FG_ERR_IO;}
+    return FG_OK;
+}
+
+static void test_qsa_replica_queue(void){
+    replica_probe probe={0};CHECK(pthread_mutex_init(&probe.mutex,NULL)==0);
+    CHECK(pthread_cond_init(&probe.ready,NULL)==0);fg_error err={0};
+    fg_qsa_replica *replica=NULL;
+    CHECK(fg_qsa_replica_create(&replica,replica_probe_send,&probe,&err)==FG_OK);
+    uint8_t *buffers[2]={0};
+    CHECK(fg_qsa_replica_reserve(replica,2u,buffers,&err)==FG_OK);
+    buffers[0][0]=1u;buffers[1][0]=2u;
+    fg_qsa_replica_item items[2]={
+        {.owner=3u,.batch_id=0u,.bytes=1u,.session_id=99u},
+        {.owner=7u,.batch_id=1u,.bytes=1u,.session_id=99u}
+    };
+    CHECK(fg_qsa_replica_commit(replica,items,2u,&err)==FG_OK);
+    pthread_mutex_lock(&probe.mutex);
+    while(!probe.entered)pthread_cond_wait(&probe.ready,&probe.mutex);
+    pthread_mutex_unlock(&probe.mutex);
+    CHECK(fg_qsa_replica_reserve(replica,1u,buffers,&err)==FG_ERR_LIMIT);
+    pthread_mutex_lock(&probe.mutex);probe.release=true;
+    pthread_cond_broadcast(&probe.ready);pthread_mutex_unlock(&probe.mutex);
+    CHECK(fg_qsa_replica_drain(replica,&err)==FG_OK);CHECK(probe.calls==2u);
+    fg_qsa_replica_destroy(replica);replica=NULL;
+    pthread_cond_destroy(&probe.ready);pthread_mutex_destroy(&probe.mutex);
+    probe=(replica_probe){0};CHECK(pthread_mutex_init(&probe.mutex,NULL)==0);
+    CHECK(pthread_cond_init(&probe.ready,NULL)==0);probe.release=true;probe.fail=true;
+    CHECK(fg_qsa_replica_create(&replica,replica_probe_send,&probe,&err)==FG_OK);
+    CHECK(fg_qsa_replica_reserve(replica,1u,buffers,&err)==FG_OK);
+    buffers[0][0]=3u;items[0]=(fg_qsa_replica_item){
+        .owner=3u,.batch_id=0u,.bytes=1u,.session_id=99u};
+    CHECK(fg_qsa_replica_commit(replica,items,1u,&err)==FG_OK);
+    CHECK(fg_qsa_replica_drain(replica,&err)==FG_ERR_IO);
+    CHECK(fg_qsa_replica_status(replica,&err)==FG_ERR_IO);
+    fg_qsa_replica_destroy(replica);
+    pthread_cond_destroy(&probe.ready);pthread_mutex_destroy(&probe.mutex);
+    probe=(replica_probe){0};CHECK(pthread_mutex_init(&probe.mutex,NULL)==0);
+    CHECK(pthread_cond_init(&probe.ready,NULL)==0);probe.fail=true;
+    CHECK(fg_qsa_replica_create(&replica,replica_probe_send,&probe,&err)==FG_OK);
+    CHECK(fg_qsa_replica_reserve(replica,1u,buffers,&err)==FG_OK);
+    buffers[0][0]=4u;items[0]=(fg_qsa_replica_item){
+        .owner=3u,.batch_id=0u,.bytes=1u,.session_id=99u};
+    CHECK(fg_qsa_replica_commit(replica,items,1u,&err)==FG_OK);
+    pthread_mutex_lock(&probe.mutex);
+    while(!probe.entered)pthread_cond_wait(&probe.ready,&probe.mutex);
+    pthread_mutex_unlock(&probe.mutex);
+    CHECK(fg_qsa_replica_reserve(replica,1u,buffers,&err)==FG_OK);
+    buffers[0][0]=5u;items[0]=(fg_qsa_replica_item){
+        .owner=7u,.batch_id=1u,.bytes=1u,.session_id=99u};
+    pthread_mutex_lock(&probe.mutex);probe.release=true;
+    pthread_cond_broadcast(&probe.ready);pthread_mutex_unlock(&probe.mutex);
+    while(fg_qsa_replica_status(replica,&err)==FG_OK)usleep(1000u);
+    CHECK(fg_qsa_replica_commit(replica,items,1u,&err)==FG_ERR_IO);
+    CHECK(fg_qsa_replica_drain(replica,&err)==FG_ERR_IO);CHECK(probe.calls==1u);
+    fg_qsa_replica_destroy(replica);
+    pthread_cond_destroy(&probe.ready);pthread_mutex_destroy(&probe.mutex);
+}
+
+static void test_lazy_qsa_clear_barrier(void){
+    uint64_t session_id=1u;
+    bool state_ready=false;
+    fg_error error={0};
+    fg_qsa_replica *replica=NULL;
+    CHECK(session_id&&fg_qsa_replica_drain_if_present(replica,&error)==FG_OK);
+    state_ready=true;
+    CHECK(state_ready&&session_id==1u&&error.code==FG_OK&&error.message[0]==0);
+}
+
+static void test_prefill_storage_geometry(void){
+    _Static_assert(sizeof(fg_prefill_pair)==FG_PREFILL_PAIR_BYTES,
+                   "prefill pair storage must match wire geometry");
+    _Static_assert(sizeof(fg_prefill_result_pair)==4u,
+                   "prefill result pair storage must remain four bytes");
+    _Static_assert(sizeof(fg_prefill_pair)%_Alignof(fg_prefill_result_pair)==0u,
+                   "combined prefill storage must align result pairs");
+    enum{PAIRS=FG_TOP_K*4u};
+    size_t pair_bytes=(size_t)PAIRS*sizeof(fg_prefill_pair);
+    size_t result_bytes=(size_t)PAIRS*sizeof(fg_prefill_result_pair);
+    uint8_t *arena=malloc(pair_bytes+result_bytes);
+    CHECK(arena!=NULL);
+    if(!arena)return;
+    fg_prefill_pair *pairs=(fg_prefill_pair *)arena;
+    fg_prefill_result_pair *result_pairs=
+        (fg_prefill_result_pair *)(arena+pair_bytes);
+    CHECK((uint8_t *)result_pairs>=arena+pair_bytes);
+    CHECK((uint8_t *)result_pairs+result_bytes<=
+          arena+pair_bytes+result_bytes);
+    pairs[0]=(fg_prefill_pair){.token_slot=1u,.expert_id=2u,
+        .routing_slot=3u,.gate=0.5f};
+    result_pairs[0]=(fg_prefill_result_pair){.token_slot=1u,.routing_slot=3u};
+    CHECK(pairs[0].expert_id==2u&&pairs[0].gate==0.5f&&
+          result_pairs[0].token_slot==1u&&result_pairs[0].routing_slot==3u);
+    free(arena);
+}
+
+static void test_qsa_page_cache(void){
+    fg_error err={0};fg_qsa_page_cache *cache=NULL;
+    CHECK(fg_qsa_page_cache_create(&cache,2u,&err)==FG_OK);if(!cache)return;
+    uint32_t slot1=0,slot2=0,slot3=0,lookup=0;bool hit=false;
+    CHECK(fg_qsa_page_cache_acquire(cache,3u,1u,&slot1,&hit,&err)==FG_OK&&!hit);
+    CHECK(fg_qsa_page_cache_acquire(cache,3u,2u,&slot2,&hit,&err)==FG_OK&&!hit);
+    CHECK(slot1!=slot2&&fg_qsa_page_cache_lookup(cache,3u,1u,&lookup)&&lookup==slot1);
+    CHECK(fg_qsa_page_cache_acquire(cache,3u,3u,&slot3,&hit,&err)==FG_OK&&!hit);
+    CHECK(!fg_qsa_page_cache_lookup(cache,3u,2u,&lookup));
+    CHECK(fg_qsa_page_cache_lookup(cache,3u,1u,&lookup)&&lookup==slot1);
+    CHECK(fg_qsa_page_cache_lookup(cache,3u,3u,&lookup)&&lookup==slot3);
+    uint32_t missing[]={0u,1u},fetch[4]={0},fetch_count=0;
+    CHECK(fg_qsa_page_cache_plan_fetch(cache,3u,missing,2u,6u,24u,fetch,4u,
+                                       &fetch_count,&err)==FG_OK);
+    CHECK(fetch_count==3u&&fetch[0]==0u&&fetch[1]==1u&&fetch[2]==2u);
+    missing[0]=2u;
+    CHECK(fg_qsa_page_cache_plan_fetch(cache,3u,missing,1u,6u,12u,fetch,4u,
+                                       &fetch_count,&err)==FG_OK);
+    CHECK(fetch_count==1u&&fetch[0]==2u);
+    fg_qsa_page_cache_reset(cache);
+    CHECK(!fg_qsa_page_cache_lookup(cache,3u,1u,&lookup));
+    CHECK(fg_qsa_page_cache_acquire(cache,7u,4u,&slot1,&hit,&err)==FG_OK&&!hit);
+    CHECK(fg_qsa_page_cache_lookup(cache,7u,4u,&lookup)&&lookup==slot1);
+    fg_qsa_page_cache_reset(cache);
+    CHECK(fg_qsa_page_cache_acquire(cache,3u,1u,&slot1,&hit,&err)==FG_OK);
+    CHECK(fg_qsa_page_cache_acquire(cache,3u,2u,&slot2,&hit,&err)==FG_OK);
+    CHECK(fg_qsa_page_cache_pin(cache,3u,1u,&err)==FG_OK);
+    CHECK(fg_qsa_page_cache_acquire(cache,3u,3u,&slot3,&hit,&err)==FG_OK);
+    CHECK(fg_qsa_page_cache_lookup(cache,3u,1u,&lookup));
+    CHECK(!fg_qsa_page_cache_lookup(cache,3u,2u,&lookup));
+    fg_qsa_page_cache_unpin(cache,3u,1u);
+    fg_qsa_page_cache_destroy(cache);
+    cache=NULL;CHECK(fg_qsa_page_cache_create(&cache,UINT32_MAX,&err)==FG_ERR_LIMIT&&!cache);
+}
 static void put_u32(FILE *f,uint32_t v){CHECK(fwrite(&v,1,4,f)==4);}static void put_u64(FILE *f,uint64_t v){CHECK(fwrite(&v,1,8,f)==8);}static void put_string(FILE *f,const char *s){uint64_t n=strlen(s);put_u64(f,n);CHECK(fwrite(s,1,(size_t)n,f)==n);}
 static void test_pack(void){char source[128],dir[128],manifest_path[160];snprintf(source,sizeof(source),"/tmp/fg-test-%ld.gguf",(long)getpid());snprintf(dir,sizeof(dir),"/tmp/fg-test-%ld-pack",(long)getpid());snprintf(manifest_path,sizeof(manifest_path),"%s/manifest.fgm",dir);FILE *f=fopen(source,"wb");CHECK(f!=NULL);if(!f)return;put_u32(f,0x46554747u);put_u32(f,3);put_u64(f,2);put_u64(f,0);put_string(f,"token_embd.weight");put_u32(f,1);put_u64(f,1);put_u32(f,0);put_u64(f,0);put_string(f,"blk.0.ffn_gate_exps.weight");put_u32(f,2);put_u64(f,1);put_u64(f,512);put_u32(f,0);put_u64(f,32);while((ftell(f)&31)!=0)fputc(0,f);float one=1.0f;CHECK(fwrite(&one,1,4,f)==4);for(unsigned i=4;i<32;i++)fputc(0,f);for(unsigned i=0;i<512;i++){float v=(float)i;CHECK(fwrite(&v,1,4,f)==4);}fclose(f);const char *sources[]={source};fg_pack_options o={.output_dir=dir,.source_paths=sources,.source_count=1,.skip_model_validation=true};fg_error err={0};fg_status pack_rc=fg_pack_run(&o,&err);if(pack_rc!=FG_OK)fprintf(stderr,"pack error: %s\n",err.message);CHECK(pack_rc==FG_OK);fg_manifest *m=malloc(sizeof(*m));CHECK(m!=NULL);if(m){CHECK(fg_manifest_read(manifest_path,m,&err)==FG_OK);for(uint32_t r=0;r<FG_RANK_COUNT;r++)CHECK(m->ranks[r].scratch_bytes==fg_q38_runtime_scratch_bytes(r,m->prefill_microbatch,m->prefill_window,m->max_context));CHECK(m->tensor_count==5);CHECK(m->tensors[0].dims==1&&m->tensors[0].shape[0]==1);for(uint32_t i=1;i<5;i++)CHECK(m->tensors[i].dims==2&&m->tensors[i].shape[1]==128);for(uint32_t r=0;r<4;r++)CHECK(m->ranks[m->layer_groups[0][r]].tensor_count>=1);char rank_path[160];snprintf(rank_path,sizeof(rank_path),"%s/rank-00.fgw",dir);struct stat st;CHECK(stat(rank_path,&st)==0);void *arena=NULL;CHECK(posix_memalign(&arena,FG_ALIGNMENT,(size_t)st.st_size)==0);FILE *rf=fopen(rank_path,"rb");CHECK(rf!=NULL);if(arena&&rf){CHECK(fread(arena,1,(size_t)st.st_size,rf)==(size_t)st.st_size);fclose(rf);CHECK(fg_verify_rank_arena(m,0,arena,(uint64_t)st.st_size,&err)==FG_OK);((uint8_t *)arena)[m->tensors[0].offset]^=1;CHECK(fg_verify_rank_arena(m,0,arena,(uint64_t)st.st_size,&err)==FG_ERR_MISMATCH);}free(arena);uint64_t sealed_scratch=m->ranks[1].scratch_bytes;m->ranks[1].scratch_bytes=sealed_scratch-1u;CHECK(fg_manifest_write(manifest_path,m,&err)==FG_OK);fg_manifest *understated=malloc(sizeof(*understated));CHECK(understated!=NULL);if(understated){CHECK(fg_manifest_read(manifest_path,understated,&err)==FG_ERR_LIMIT);free(understated);}m->ranks[1].scratch_bytes=sealed_scratch;CHECK(fg_manifest_write(manifest_path,m,&err)==FG_OK);free(m);}f=fopen(manifest_path,"r+b");CHECK(f!=NULL);if(f){CHECK(fseek(f,(long)offsetof(fg_manifest,source_sha256),SEEK_SET)==0);int c=fgetc(f);CHECK(c!=EOF);CHECK(fseek(f,-1,SEEK_CUR)==0);fputc(c^1,f);fclose(f);m=malloc(sizeof(*m));if(m){CHECK(fg_manifest_read(manifest_path,m,&err)==FG_ERR_MISMATCH);free(m);}}unlink(manifest_path);char p[160];for(unsigned r=0;r<8;r++){snprintf(p,sizeof(p),"%s/rank-%02u.fgw",dir,r);unlink(p);}snprintf(p,sizeof(p),"%s/ngram.iq4nl",dir);unlink(p);rmdir(dir);unlink(source);}
 static void test_q38_math(void){
@@ -171,4 +584,4 @@ static void test_prefill_protocol(void){
     free(result_wire);free(decoded_outputs);free(outputs);free(wire);free(decoded_activations);free(activations);
 }
 
-int main(void){test_sha();test_topology();test_profile();test_expert_map();test_expert_map_file();test_sealed_expert_map();test_deployment_profile();test_protocol();test_layer_protocol();test_output_protocol();test_ngram_protocol();test_ngram();test_ngram_planner_batch_capacity();test_qsa_state();test_qsa_state_batch();test_q38_math();test_cooked_q8();test_pack_cooked_q8();test_pack_cooked_experts();test_decode_protocol();test_prefill_protocol();test_pack();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}
+int main(void){test_sha();test_topology();test_profile();test_expert_map();test_expert_map_file();test_sealed_expert_map();test_deployment_profile();test_native_262k_profile_geometry();test_protocol();test_layer_protocol();test_qsa_block_protocol();test_qsa_page_protocol();test_prefill_chunk_frontiers();test_qsa_locality_metrics();test_output_protocol();test_ngram_protocol();test_ngram();test_ngram_planner_batch_capacity();test_qsa_scratch_geometry();test_qsa_state();test_qsa_state_failed_create_cleanup();test_qsa_state_batch();test_qsa_state_write_batch();test_qsa_replica_queue();test_lazy_qsa_clear_barrier();test_prefill_storage_geometry();test_qsa_page_cache();test_q38_math();test_cooked_q8();test_pack_cooked_q8();test_pack_cooked_experts();test_decode_protocol();test_prefill_protocol();test_pack();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}
