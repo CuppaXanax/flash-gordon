@@ -16,7 +16,8 @@ Produce a fleet-testable Flash Gordon build that:
 - Packs it into eight rank-local weight files plus the direct-I/O n-gram table and tokenizer.
 - Starts one coordinator on blade 42 and seven workers on blades 43–49.
 - Executes semantically correct batched text prefill and token decode across all 48 layers.
-- Uses expert parallelism as its only distributed inference architecture: one sequential model graph per autoregressive token, with each layer's routed experts fanned out across their owning blades.
+- Keeps the qualified expert-parallel deployment available while a sealed eight-stage pipeline profile is implemented and qualified against the same semantic and API contracts.
+- In the pipeline profile, owns complete contiguous layer ranges per blade so common weights, routed and shared experts, GDN/QSA state, and execution stay local to the stage.
 - Reaches at least 10 tok/s raw single-stream decode, with 20 tok/s as the engineering target, before MTP or multiple concurrent sessions enter scope.
 - Uses every compute unit exposed by each blade's Vulkan driver. The runtime must not reject a blade merely because it exposes 24 versus 40 CUs; CU mode is telemetry and a benchmark label, not a correctness gate.
 - Preserves hard pack-time limits of 10.4 GiB persistent weights and 13.5 GiB accounted Vulkan residency per rank.
@@ -29,7 +30,7 @@ The immediate milestone is correct text prefill/decode and measured TPS on the r
 - Production implementations only. Do not add placeholder inference, fake success, stub kernels, minimal quant stand-ins, or simulated output.
 - q36 is prior art only. Copy and adapt useful internals into owned Flash Gordon source; never link, vendor, submodule, or treat q36 as an upstream runtime.
 - No worktrees, speculative branches, or competing parallel experiments. Use the current checkout.
-- Pipeline parallelism is out of scope. Do not trade raw single-session expert-parallel throughput for inter-layer or inter-token pipeline scheduling.
+- Pipeline work must use one packed weight placement for both prefill and decode. Prefill throughput may not be purchased by regressing the deployed single-stream decode result.
 - Subagents may implement bounded, non-overlapping components, but the primary agent owns architecture, reviews every accepted diff, reruns the full suite, and oversees commits.
 - Preserve the specialized appliance design. Generic-model abstractions are out of scope unless they directly improve this model's correctness or TPS.
 - Prefer io_uring and fixed registered files/buffers on steady-state storage and fabric paths.
@@ -155,31 +156,38 @@ For the first investigation, compare layer outputs at layers 0, 1, 3, 7, 8, 40, 
 - Decode and prefill transport are direct, but steady-state paths still contain some per-operation heap allocations. Remove these using bounded startup arenas after correctness is established and before final TPS qualification.
 - The manifest records `required_cu=24` as the original qualification profile, but startup intentionally does not gate on 24 versus 40. Vulkan uses all CUs exposed by the driver.
 - The current prefill coordinator submits microbatches sequentially. The manifest records a window of two, but multi-microbatch overlap is not yet realized end-to-end. This is a likely limiter for the 250–300 tok/s target.
+- The current coordinator/expert-parallel topology is retained only as the qualified fallback while the separately packed `pipeline-8stage-262k` profile is developed. Existing packs must never be reinterpreted as pipeline packs.
 - `bench` currently prints the qualification matrix but does not execute the full benchmark sweep.
 - HTTP serving, vision/video preprocessing, vision overlay loading, MTP, 1M YaRN qualification, and the 24-hour mixed soak remain unfinished product milestones.
 - The one-time packer uses buffered stdio for tensor copying, although runtime loading and steady-state n-gram/session I/O use io_uring. This is not an inference TPS limiter but can be replaced later.
 
 ## Performance contract after semantic parity
 
-Canonical measurements use three warm repetitions and the median:
+Canonical measurements use three warm repetitions and the median. Pipeline
+promotion additionally uses paired baseline/candidate decode runs and rejects a
+p95 regression.
 
-| Workload | Release floor | Target |
+| Workload | Healthy gate | Optimization target |
 |---|---:|---:|
-| 32K prefill | 250 tok/s | 300 tok/s |
-| Raw single-stream decode | 10 tok/s | 20 tok/s |
+| 4K cold prefill, 24 CU | 200 tok/s | 250-300 tok/s |
+| Raw single-stream decode | 10.056245 tok/s and no p95 regression | 11-12 tok/s before MTP |
 | Filled 1M sustained decode | 20 tok/s | 25+ tok/s |
 
-Report tokenizer time separately from graph prefill. Graph prefill covers exactly 32,768 already-tokenized tokens from first graph submission until final prompt logits are ready. Also report end-to-end time to first streamed token.
+Report tokenizer time separately from graph prefill. Graph prefill starts at the
+first stage submission and ends when the terminal stage returns final prompt
+logits. Report cold fill and extension at 4K, 8K, 16K, 32K, 64K, 128K, the
+131,072-token segment boundary, 192K, 256K, and 262K. Also report end-to-end time
+to first streamed token.
 
 Optimization order after correctness:
 
-1. Capture and validate a real eight-rank, 48-layer expert-parallel integration trace for a correct decode token.
-2. Account for the complete token wall time across coordinator GPU work, Vulkan submissions, route fan-out, worker execution, fabric transfer, straggler barriers, and reduction.
-3. Choose system changes from that critical path and measure them end to end; isolated microbenchmarks are supporting evidence, not promotion gates.
-4. Remove steady-state allocation, redundant host/Vulkan copies, and avoidable synchronization identified by the integration trace.
-5. Realize the sealed two-microbatch prefill window and overlap routing/fabric/GPU stages.
-6. Tune 128/256/512 microbatches and windows 1–4, preserving exact output equivalence.
-7. Change kernels, layouts, or numerical formats only behind correctness and whole-appliance performance gates.
+1. Treat upstream llama.cpp `qwen4exp` operation ordering as the semantic authority and retain current layer probes as parity oracles.
+2. Add a versioned, separately packed eight-stage profile; do not mutate or reinterpret the qualified expert-parallel artifact.
+3. Establish a correct complete-stage vertical slice before replacing kernels.
+4. Replace decode-shaped prefill work with tiled common matrix multiplication, GPU expert-major routing, grouped expert matrix multiplication, causal GDN scan, and resident batched QSA.
+5. Compile a fixed `T=1` program over the same stage-local weights and prove decode median and p95 non-regression.
+6. Realize two bounded activation slots per stage and tune 32/64/128/256-token chunks from whole-fleet results.
+7. Promote only after semantic, API/tool, 4K prefill, decode, context-curve, fingerprint, and rollback gates all pass.
 
 ## Useful commands
 

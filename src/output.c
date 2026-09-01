@@ -27,9 +27,19 @@ static fg_status scratch(fg_vk_context *vk,uint64_t values,fg_vk_tensor **out,fg
 fg_status fg_output_executor_create(fg_output_executor **out,fg_model *model,fg_error *err){
     if(!out||!model){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output executor arguments");return FG_ERR_ARGUMENT;}
     *out=NULL;
-    if(fg_model_rank(model)!=4u){fg_error_set(err,FG_ERR_MISMATCH,"Qwen output executor must run on rank 4");return FG_ERR_MISMATCH;}
+    uint32_t owner=fg_output_owner_rank(fg_model_manifest(model));
+    if(fg_model_rank(model)!=owner){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "Qwen output executor must run on rank %u",owner);
+        return FG_ERR_MISMATCH;
+    }
     static const char *required[]={"output_hc_norm.weight","output_hc_down.weight","output_hc_up.weight","output.weight"};
-    for(uint32_t i=0;i<sizeof(required)/sizeof(required[0]);i++)if(!fg_model_tensor(model,required[i])){fg_error_set(err,FG_ERR_MISMATCH,"rank 4 is missing %s",required[i]);return FG_ERR_MISMATCH;}
+    for(uint32_t i=0;i<sizeof(required)/sizeof(required[0]);i++)
+        if(!fg_model_tensor(model,required[i])){
+            fg_error_set(err,FG_ERR_MISMATCH,"rank %u is missing %s",
+                         owner,required[i]);
+            return FG_ERR_MISMATCH;
+        }
     fg_output_executor *executor=calloc(1,sizeof(*executor));
     if(!executor){fg_error_set(err,FG_ERR_OOM,"allocate output executor");return FG_ERR_OOM;}
     executor->model=model;fg_vk_context *vk=fg_model_vk(model);
@@ -75,7 +85,7 @@ fg_status fg_output_greedy(fg_output_executor *executor,const fg_vk_tensor *hype
     fg_vk_tensor *logits=NULL;fg_status status=fg_vk_begin(vk,err);if(status==FG_OK)status=fg_output_logits(executor,hyper,&logits,err);const fg_vk_tensor *scores=logits,*ids=executor->vocabulary_ids;uint32_t count=FG_Q38_VOCAB_SIZE,slot=0;
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"output_argmax",err);
     while(status==FG_OK&&count>1u){uint32_t next=0;status=fg_vk_argmax_reduce(vk,executor->topk_scores[slot],executor->topk_ids[slot],scores,ids,count,&next,err);scores=executor->topk_scores[slot];ids=executor->topk_ids[slot];count=next;slot^=1u;}
-    if(status==FG_OK){fg_status end_status=fg_vk_end(vk,err);if(end_status!=FG_OK)status=end_status;}else if(fg_vk_batch_active(vk))fg_vk_end(vk,err);
+    if(status==FG_OK){fg_status end_status=fg_vk_end(vk,err);if(end_status!=FG_OK)status=end_status;}if(status!=FG_OK&&fg_vk_batch_active(vk)){fg_error ignored={0};fg_vk_abort(vk,&ignored);}
     if(status!=FG_OK)return status;
     const float *values=fg_vk_tensor_map((fg_vk_tensor *)scores);const uint32_t *indices=fg_vk_tensor_map((fg_vk_tensor *)ids);uint32_t best=indices[0];float best_value=values[0];
     if(best>=FG_Q38_VOCAB_SIZE||!isfinite(best_value)){fg_error_set(err,FG_ERR_MISMATCH,"invalid output finalist at token %u",best);return FG_ERR_MISMATCH;}

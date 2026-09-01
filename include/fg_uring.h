@@ -16,6 +16,10 @@ void fg_uring_destroy(fg_uring *ring);
 fg_status fg_uring_register_file(fg_uring *ring, int fd, uint32_t *slot, fg_error *err);
 fg_status fg_uring_register_buffer(fg_uring *ring,void *aligned_buffer,uint64_t bytes,fg_error *err);
 fg_status fg_uring_pread(fg_uring *ring, uint32_t file_slot, void *aligned_buffer, uint32_t bytes, uint64_t offset, fg_error *err);
+fg_status fg_uring_pread_batch_results(fg_uring *ring,uint32_t file_slot,
+                                       const fg_uring_read *reads,uint32_t count,
+                                       int32_t *results,uint32_t result_capacity,
+                                       fg_error *err);
 fg_status fg_uring_pread_batch(fg_uring *ring,uint32_t file_slot,const fg_uring_read *reads,
                                uint32_t count,fg_error *err);
 fg_status fg_uring_pwrite_batch(fg_uring *ring,uint32_t file_slot,const fg_uring_read *writes,

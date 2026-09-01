@@ -1,0 +1,36 @@
+#version 450
+
+layout(local_size_x=128,local_size_y=1,local_size_z=1)in;
+
+layout(set=0,binding=0)buffer QKV{float qkv[];};
+
+layout(push_constant)uniform Push{
+    uint tokens;
+    float epsilon;
+}pc;
+
+shared float sum_q[128];
+shared float sum_k[128];
+
+void main(){
+    uint lane=gl_LocalInvocationID.x;
+    uint key_head=gl_WorkGroupID.x;
+    uint token=gl_WorkGroupID.y;
+    uint token_base=token*10240u;
+    uint q_index=token_base+key_head*128u+lane;
+    uint k_index=token_base+2048u+key_head*128u+lane;
+    float q=qkv[q_index];
+    float k=qkv[k_index];
+    sum_q[lane]=q*q;
+    sum_k[lane]=k*k;
+    barrier();
+    for(uint stride=64u;stride>0u;stride>>=1u){
+        if(lane<stride){
+            sum_q[lane]+=sum_q[lane+stride];
+            sum_k[lane]+=sum_k[lane+stride];
+        }
+        barrier();
+    }
+    qkv[q_index]=q*inversesqrt(sum_q[0]+pc.epsilon)*0.08838834764831845;
+    qkv[k_index]=k*inversesqrt(sum_k[0]+pc.epsilon);
+}

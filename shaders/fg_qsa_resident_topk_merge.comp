@@ -1,0 +1,62 @@
+#version 460
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer InputScores{float input_scores[];};
+layout(set=0,binding=1)readonly buffer InputIds{uint input_ids[];};
+layout(set=0,binding=2)writeonly buffer OutputScores{float output_scores[];};
+layout(set=0,binding=3)writeonly buffer OutputIds{uint output_ids[];};
+layout(push_constant)uniform Push{
+    uint count;
+    uint input_stride;
+    uint output_stride;
+    uint query_tokens;
+}pc;
+shared float values[4096];
+shared uint indices[4096];
+bool better(float a,uint ai,float b,uint bi){
+    if(ai==0xffffffffu)return false;
+    if(bi==0xffffffffu)return true;
+    bool af=isnan(a)||isinf(a),bf=isnan(b)||isinf(b);
+    if(af!=bf)return !af;
+    return a>b||(a==b&&ai<bi);
+}
+void main(){
+    uint lane=gl_LocalInvocationID.x,group=gl_WorkGroupID.x;
+    uint query_slot=gl_WorkGroupID.y;
+    if(query_slot>=pc.query_tokens)return;
+    uint base=group*4096u;
+    for(uint i=lane;i<4096u;i+=256u){
+        uint source=base+i;
+        if(source<pc.count){
+            values[i]=input_scores[query_slot*pc.input_stride+source];
+            indices[i]=input_ids[query_slot*pc.input_stride+source];
+        }else{
+            values[i]=-1.0/0.0;
+            indices[i]=0xffffffffu;
+        }
+    }
+    barrier();
+    for(uint width=2u;width<=4096u;width<<=1u)
+        for(uint stride=width>>1u;stride>0u;stride>>=1u){
+            for(uint i=lane;i<4096u;i+=256u){
+                uint other=i^stride;
+                if(other>i){
+                    bool descending=(i&width)==0u;
+                    bool swap=descending?
+                        !better(values[i],indices[i],values[other],indices[other]):
+                        better(values[i],indices[i],values[other],indices[other]);
+                    if(swap){
+                        float score=values[i];values[i]=values[other];
+                        values[other]=score;
+                        uint id=indices[i];indices[i]=indices[other];
+                        indices[other]=id;
+                    }
+                }
+            }
+            barrier();
+        }
+    uint output_base=query_slot*pc.output_stride+group*512u;
+    for(uint i=lane;i<512u;i+=256u){
+        output_scores[output_base+i]=values[i];
+        output_ids[output_base+i]=indices[i];
+    }
+}

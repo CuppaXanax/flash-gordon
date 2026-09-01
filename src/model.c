@@ -1,6 +1,9 @@
 #include "fg_model.h"
 #include "fg_loader.h"
+#include "fg_q38_schema.h"
 #include "fg_quant.h"
+#include "fg_sha256.h"
+#include "fg_topology.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -8,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 struct fg_model {
@@ -23,7 +27,7 @@ struct fg_model {
 
 static uint64_t rank_high_water(const fg_manifest *manifest,uint32_t rank){
     uint64_t high=0;
-    for(uint32_t i=0;i<manifest->tensor_count;i++)if(manifest->tensors[i].rank==rank){uint64_t end=fg_align_up_u64(manifest->tensors[i].offset+manifest->tensors[i].bytes,FG_ALIGNMENT);if(end>high)high=end;}
+    for(uint32_t i=0;i<manifest->tensor_count;i++)if(manifest->tensors[i].rank==rank&&manifest->tensors[i].kind!=FG_TENSOR_HOST_CACHE){uint64_t end=fg_align_up_u64(manifest->tensors[i].offset+manifest->tensors[i].bytes,FG_ALIGNMENT);if(end>high)high=end;}
     return high;
 }
 
@@ -65,9 +69,139 @@ fg_status fg_model_open(fg_model **out,const fg_manifest *manifest,const char *p
     fg_model *model=calloc(1,sizeof(*model));if(!model){fg_error_set(err,FG_ERR_OOM,"allocate model binding");return FG_ERR_OOM;}model->manifest=manifest;model->rank=rank;model->weight_bytes=bytes;model->tensor=calloc(manifest->tensor_count,sizeof(*model->tensor));if(!model->tensor){fg_model_close(model);fg_error_set(err,FG_ERR_OOM,"allocate model tensor index");return FG_ERR_OOM;}
     fg_status status=fg_vk_open(&model->vk,err);if(status==FG_OK)status=fg_vk_tensor_create(model->vk,bytes,&model->arena,err);void *mapped=status==FG_OK?fg_vk_tensor_map(model->arena):NULL;if(status==FG_OK&&(!mapped||!fg_is_aligned_u64((uintptr_t)mapped,FG_ALIGNMENT))){fg_error_set(err,FG_ERR_UNAVAILABLE,"Vulkan weight arena is not 4 KiB aligned for O_DIRECT");status=FG_ERR_UNAVAILABLE;}
     bool cook=cook_experts_on_load();if(status==FG_OK)status=fg_load_rank_weights(manifest,pack_dir,rank,mapped,bytes,err);if(status==FG_OK)status=cook_rank_experts(manifest,rank,mapped,bytes,cook,err);
-    for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++)if(manifest->tensors[i].rank==rank){status=fg_vk_tensor_view(model->arena,manifest->tensors[i].offset,manifest->tensors[i].bytes,&model->tensor[i],err);if(status==FG_OK)fg_vk_tensor_set_format(model->tensor[i],tensor_format(runtime_layout(&manifest->tensors[i],cook)));}
+    for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++)if(manifest->tensors[i].rank==rank&&manifest->tensors[i].kind!=FG_TENSOR_HOST_CACHE){status=fg_vk_tensor_view(model->arena,manifest->tensors[i].offset,manifest->tensors[i].bytes,&model->tensor[i],err);if(status==FG_OK)fg_vk_tensor_set_format(model->tensor[i],tensor_format(runtime_layout(&manifest->tensors[i],cook)));}
     if(status==FG_OK)status=build_tensor_lookup(model,err);
     if(status!=FG_OK){fg_model_close(model);return status;}*out=model;return FG_OK;
+}
+
+static fg_status validate_stage_layout(const fg_manifest *manifest,uint32_t rank,
+                                       const char *pack_dir,fg_error *err){
+    if(manifest->format_version!=FG_MANIFEST_FORMAT_VERSION||
+       manifest->execution_mode!=FG_EXECUTION_PIPELINE||
+       manifest->protocol_version!=FG_PIPELINE_PROTOCOL_VERSION){
+        fg_error_set(err,FG_ERR_MISMATCH,"stage model requires a pipeline v6 manifest");
+        return FG_ERR_MISMATCH;
+    }
+    fg_status status=fg_topology_validate(manifest,err);
+    if(status!=FG_OK)return status;
+    if(manifest->slot_count<FG_PIPELINE_DEFAULT_SLOT_COUNT){
+        fg_error_set(err,FG_ERR_LIMIT,
+                     "pipeline has %u activation slots, requires at least %u",
+                     manifest->slot_count,FG_PIPELINE_DEFAULT_SLOT_COUNT);
+        return FG_ERR_LIMIT;
+    }
+    status=fg_q38_validate_packed_manifest(manifest,err);
+    if(status!=FG_OK)return status;
+    {
+        char path[1024];struct stat info;
+        if(snprintf(path,sizeof(path),"%s/rank-%02u.fgw",pack_dir,rank)>=
+           (int)sizeof(path)){
+            fg_error_set(err,FG_ERR_ARGUMENT,"stage rank artifact path is too long");
+            return FG_ERR_ARGUMENT;
+        }
+        if(stat(path,&info)!=0||info.st_size<0||
+           (uint64_t)info.st_size!=manifest->ranks[rank].persistent_bytes){
+            fg_error_set(err,FG_ERR_MISMATCH,
+                         "stage rank %u artifact does not cover its inventory",rank);
+            return FG_ERR_MISMATCH;
+        }
+    }
+    for(uint32_t i=0;i<manifest->tensor_count;i++){
+        const fg_tensor_record *record=&manifest->tensors[i];
+        if(record->layer>=FG_LAYER_COUNT)continue;
+        uint32_t owner=manifest->layer_owner[record->layer];
+        if(record->rank!=owner){
+            fg_error_set(err,FG_ERR_MISMATCH,
+                         "layer %u tensor %.80s is on foreign rank %u",
+                         record->layer,record->name,record->rank);
+            return FG_ERR_MISMATCH;
+        }
+    }
+    uint64_t bytes=rank_high_water(manifest,rank);
+    const fg_rank_record *record=&manifest->ranks[rank];
+    if(!bytes||record->persistent_bytes!=bytes||
+       record->persistent_bytes>manifest->persistent_cap_bytes){
+        fg_error_set(err,FG_ERR_LIMIT,"stage rank %u persistent ledger is invalid",rank);
+        return FG_ERR_LIMIT;
+    }
+    uint64_t required_kv=0u,required_state=0u;
+    fg_q38_session_state_bytes_for_rank(
+        manifest,rank,&required_kv,&required_state);
+    uint64_t required_scratch=fg_q38_runtime_scratch_bytes_for_manifest(
+        manifest,rank,manifest->prefill_microbatch,manifest->prefill_window,
+        manifest->max_context);
+    if(required_scratch==UINT64_MAX||record->scratch_bytes<required_scratch){
+        fg_error_set(err,FG_ERR_LIMIT,
+                     "stage rank %u scratch ledger is %llu bytes, requires %llu",
+                     rank,(unsigned long long)record->scratch_bytes,
+                     (unsigned long long)required_scratch);
+        return FG_ERR_LIMIT;
+    }
+    if(record->kv_bytes<required_kv||record->state_file_bytes<required_state){
+        fg_error_set(err,FG_ERR_LIMIT,
+                     "stage rank %u state ledger is understated",rank);
+        return FG_ERR_LIMIT;
+    }
+    uint64_t resident=0u;
+    status=fg_q38_rank_residency_bytes(manifest,rank,&resident,err);
+    if(status!=FG_OK)return status;
+    if(resident>manifest->residency_cap_bytes){
+        fg_error_set(err,FG_ERR_LIMIT,
+                     "stage rank %u memory cap: gpu-persistent=%llu host-resident=%llu "
+                     "transient=%llu kv=%llu scratch=%llu driver=%llu total=%llu cap=%llu",
+                     rank,(unsigned long long)record->persistent_bytes,
+                     (unsigned long long)manifest->host_resident_bytes[rank],
+                     (unsigned long long)record->transient_bytes,
+                     (unsigned long long)record->kv_bytes,
+                     (unsigned long long)record->scratch_bytes,
+                     (unsigned long long)record->driver_reserve_bytes,
+                     (unsigned long long)resident,
+                     (unsigned long long)manifest->residency_cap_bytes);
+        return FG_ERR_LIMIT;
+    }
+    if(rank==manifest->stage_ranks[0]){
+        const fg_tensor_record *embedding=fg_q38_find_tensor(
+            manifest,"token_embd.weight",rank);
+        char path[1024];struct stat info;uint8_t digest[32];
+        if(!embedding||embedding->kind!=FG_TENSOR_HOST_CACHE||
+           embedding->layout!=FG_TENSOR_LAYOUT_HOST_Q8_0){
+            fg_error_set(err,FG_ERR_MISMATCH,
+                         "stage 0 is missing its external token embedding");
+            return FG_ERR_MISMATCH;
+        }
+        if(snprintf(path,sizeof(path),"%s/%s",pack_dir,
+                    FG_TOKEN_EMBEDDING_ARTIFACT)>=(int)sizeof(path)){
+            fg_error_set(err,FG_ERR_ARGUMENT,
+                         "token embedding artifact path is too long");
+            return FG_ERR_ARGUMENT;
+        }
+        if(stat(path,&info)!=0||info.st_size<0||
+           (uint64_t)info.st_size!=embedding->bytes){
+            fg_error_set(err,FG_ERR_IO,
+                         "external token embedding is missing or has the wrong size");
+            return FG_ERR_IO;
+        }
+        status=fg_sha256_file(path,digest,err);
+        if(status!=FG_OK)return status;
+        if(memcmp(digest,embedding->sha256,sizeof(digest))){
+            fg_error_set(err,FG_ERR_MISMATCH,
+                         "external token embedding SHA-256 mismatch");
+            return FG_ERR_MISMATCH;
+        }
+    }
+    return FG_OK;
+}
+
+fg_status fg_model_open_stage(fg_model **out,const fg_manifest *manifest,
+                              const char *pack_dir,uint32_t rank,fg_error *err){
+    if(!out||!manifest||!pack_dir||rank>=FG_RANK_COUNT){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid stage model open arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    *out=NULL;
+    fg_status status=validate_stage_layout(manifest,rank,pack_dir,err);
+    if(status!=FG_OK)return status;
+    return fg_model_open(out,manifest,pack_dir,rank,err);
 }
 
 void fg_model_close(fg_model *model){if(!model)return;if(model->tensor){for(uint32_t i=0;i<model->manifest->tensor_count;i++)fg_vk_tensor_destroy(model->tensor[i]);}free(model->tensor_lookup);free(model->tensor);fg_vk_tensor_destroy(model->arena);fg_vk_close(model->vk);free(model);}

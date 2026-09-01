@@ -1,0 +1,29 @@
+#version 460
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer ExpertOutput { float expert[]; };
+layout(set = 0, binding = 1) readonly buffer Gates { float gates[]; };
+layout(set = 0, binding = 2) readonly buffer SharedOutput { float shared_output[]; };
+layout(set = 0, binding = 3) readonly buffer SharedLogit { float shared_logit[]; };
+layout(set = 0, binding = 4) writeonly buffer Output { float output_values[]; };
+
+layout(push_constant) uniform Push {
+    uint width;
+    uint tokens;
+} pc;
+
+const uint TOP_K = 10u;
+
+void main() {
+    uint element = gl_GlobalInvocationID.x;
+    uint token = gl_GlobalInvocationID.y;
+    if (element >= pc.width || token >= pc.tokens) return;
+    float value = shared_output[token * pc.width + element] /
+        (1.0 + exp(-shared_logit[token]));
+    for (uint slot = 0u; slot < TOP_K; slot++) {
+        uint pair = token * TOP_K + slot;
+        value = fma(gates[pair], expert[pair * pc.width + element], value);
+    }
+    output_values[token * pc.width + element] = value;
+}

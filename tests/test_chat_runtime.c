@@ -13,6 +13,10 @@ struct fg_runtime {
     bool force_continuation_miss;
 };
 
+const char *fg_execution_mode_name(fg_execution_mode mode){
+    return mode==FG_EXECUTION_PIPELINE?"pipeline":"expert-parallel";
+}
+
 #include "../src/chat.c"
 
 static int failures;

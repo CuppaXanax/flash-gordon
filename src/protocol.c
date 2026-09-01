@@ -3,6 +3,7 @@
 #include "fg_topology.h"
 
 #include <arpa/inet.h>
+#include <float.h>
 #include <math.h>
 #include <string.h>
 
@@ -14,13 +15,15 @@ static uint16_t bswap16(uint16_t x){return (uint16_t)((x>>8)|(x<<8));}
 static uint64_t ntoh64_halves(uint32_t hi,uint32_t lo){return ((uint64_t)ntohl(hi)<<32)|ntohl(lo);}
 
 bool fg_protocol_version_supported(uint16_t version){
-    return version>=FG_PROTOCOL_MIN_VERSION&&version<=FG_PROTOCOL_VERSION;
+    return version>=FG_PROTOCOL_MIN_VERSION&&version<=FG_PROTOCOL_MAX_VERSION;
 }
 
 static bool message_type_supported(uint16_t version,fg_message_type type){
     if(type>=FG_MSG_HELLO&&type<=FG_MSG_NGRAM_RESULT)return true;
     if(type>=FG_MSG_QSA_BLOCK_WORK&&type<=FG_MSG_QSA_BLOCK_PREFILL_RESULT)return true;
     if(version>=6u&&type>=FG_MSG_QSA_PAGE_APPEND&&type<=FG_MSG_QSA_PAGE_RESULT)return true;
+    if(version>=FG_PIPELINE_PROTOCOL_VERSION&&type>=FG_MSG_PIPELINE_ACTIVATION&&
+       type<=FG_MSG_PIPELINE_ABORT)return true;
     return version>=6u&&type>=FG_MSG_SESSION_PREPARE&&type<=FG_MSG_SESSION_RESTORED;
 }
 
@@ -820,6 +823,401 @@ fg_status fg_owner_session_control_decode(fg_owner_session_control *control,
     control->qsa_hot_tokens=get_u32_be(payload+168u);
     control->qsa_page_cache_bytes=get_u64_be(payload+176u);
     return validate_owner_session_control(control,err);
+}
+
+static fg_status require_pipeline_native_f32_le(fg_error *err){
+    const uint16_t one=1u;
+    if(sizeof(float)!=4u||FLT_RADIX!=2||FLT_MANT_DIG!=24||FLT_MAX_EXP!=128||
+       FLT_MIN_EXP!=-125||*(const uint8_t *)&one!=1u){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "pipeline boundary payload requires native little-endian IEEE-754 FP32");
+        return FG_ERR_UNAVAILABLE;
+    }
+    return FG_OK;
+}
+
+fg_status fg_pipeline_activation_validate(const fg_pipeline_activation *activation,
+                                          fg_error *err){
+    if(!activation||
+       (activation->execution_kind!=FG_PIPELINE_EXECUTION_PREFILL&&
+        activation->execution_kind!=FG_PIPELINE_EXECUTION_DECODE)||
+       activation->slot>=FG_PIPELINE_DEFAULT_SLOT_COUNT||
+       activation->source_stage>=FG_PIPELINE_STAGE_COUNT||
+       activation->destination_stage>=FG_PIPELINE_STAGE_COUNT||
+       activation->destination_stage!=activation->source_stage+1u||
+       !activation->token_count||activation->token_count>FG_PREFILL_MAX_TOKENS||
+       (activation->execution_kind==FG_PIPELINE_EXECUTION_DECODE&&
+        (activation->token_count!=1u||!activation->request_output))||
+       !activation->positions||!activation->boundary||
+       activation->first_token>=FG_NATIVE_CONTEXT||
+       activation->token_count>FG_NATIVE_CONTEXT-activation->first_token){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid pipeline activation header");
+        return FG_ERR_FORMAT;
+    }
+    uint64_t boundary_values=(uint64_t)activation->token_count*FG_PIPELINE_BOUNDARY_WIDTH;
+    for(uint32_t token=0;token<activation->token_count;token++)
+        for(uint32_t axis=0;axis<FG_PIPELINE_POSITION_AXES;axis++){
+            uint64_t i=(uint64_t)token*FG_PIPELINE_POSITION_AXES+axis;
+            uint32_t expected=activation->first_token+token;
+            if(activation->positions[i]>=FG_NATIVE_CONTEXT||
+               activation->positions[i]!=expected){
+                fg_error_set(err,FG_ERR_FORMAT,
+                             "pipeline text position mismatch at token %u axis %u",
+                             token,axis);
+                return FG_ERR_FORMAT;
+            }
+        }
+    for(uint64_t i=0;i<boundary_values;i++)if(!isfinite(activation->boundary[i])){
+        fg_error_set(err,FG_ERR_FORMAT,"non-finite pipeline boundary at %llu",
+                     (unsigned long long)i);
+        return FG_ERR_FORMAT;
+    }
+    for(uint32_t stage=0;stage<FG_PIPELINE_STAGE_COUNT;stage++)
+        if(!isfinite(activation->stage_seconds[stage])||
+           activation->stage_seconds[stage]<0.0f){
+            fg_error_set(err,FG_ERR_FORMAT,
+                         "invalid pipeline stage timing at stage %u",stage);
+            return FG_ERR_FORMAT;
+        }
+    return FG_OK;
+}
+
+fg_status fg_pipeline_activation_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                        const fg_pipeline_activation *activation,
+                                        fg_error *err){
+    if(!output||!bytes){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid pipeline activation output");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_status status=require_pipeline_native_f32_le(err);
+    if(status==FG_OK)status=fg_pipeline_activation_validate(activation,err);
+    if(status!=FG_OK)return status;
+    uint64_t position_values=(uint64_t)activation->token_count*FG_PIPELINE_POSITION_AXES;
+    uint64_t boundary_values=(uint64_t)activation->token_count*FG_PIPELINE_BOUNDARY_WIDTH;
+    uint64_t required=FG_PIPELINE_ACTIVATION_HEADER_BYTES+
+        position_values*4u+boundary_values*FG_PIPELINE_BOUNDARY_FP32_BYTES;
+    if(required>capacity||required>FG_MAX_FRAME_BYTES){
+        fg_error_set(err,FG_ERR_LIMIT,"pipeline activation buffer is too small");
+        return FG_ERR_LIMIT;
+    }
+    memset(output,0,FG_PIPELINE_ACTIVATION_HEADER_BYTES);
+    output[0]=(uint8_t)activation->execution_kind;
+    output[1]=activation->slot;
+    output[2]=activation->source_stage;
+    output[3]=activation->destination_stage;
+    put_u32_be(output+4u,activation->first_token);
+    put_u16_be(output+8u,activation->token_count);
+    output[10]=activation->request_output?1u:0u;
+    for(uint32_t stage=0;stage<FG_PIPELINE_STAGE_COUNT;stage++)
+        put_f32_be(output+16u+stage*4u,activation->stage_seconds[stage]);
+    uint32_t offset=FG_PIPELINE_ACTIVATION_HEADER_BYTES;
+    for(uint64_t i=0;i<position_values;i++,offset+=4u)
+        put_u32_be(output+offset,activation->positions[i]);
+    memcpy(output+offset,activation->boundary,
+           (size_t)boundary_values*FG_PIPELINE_BOUNDARY_FP32_BYTES);
+    *bytes=(uint32_t)required;
+    return FG_OK;
+}
+
+fg_status fg_pipeline_activation_decode(fg_pipeline_activation *activation,
+                                        uint32_t *position_storage,
+                                        uint32_t position_capacity,float *boundary_storage,
+                                        uint64_t boundary_capacity_values,
+                                        const uint8_t *payload,uint32_t bytes,
+                                        fg_error *err){
+    if(!activation||!position_storage||!boundary_storage||!payload||
+       bytes<FG_PIPELINE_ACTIVATION_HEADER_BYTES){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid pipeline activation input");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_status status=require_pipeline_native_f32_le(err);
+    if(status!=FG_OK)return status;
+    uint16_t token_count=get_u16_be(payload+8u);
+    uint64_t position_values=(uint64_t)token_count*FG_PIPELINE_POSITION_AXES;
+    uint64_t boundary_values=(uint64_t)token_count*FG_PIPELINE_BOUNDARY_WIDTH;
+    uint64_t required=FG_PIPELINE_ACTIVATION_HEADER_BYTES+
+        position_values*4u+boundary_values*FG_PIPELINE_BOUNDARY_FP32_BYTES;
+    if((payload[10]&~1u)||payload[11]||get_u32_be(payload+12u)||required!=bytes||
+       position_capacity<position_values||boundary_capacity_values<boundary_values){
+        fg_error_set(err,FG_ERR_FORMAT,
+                     "invalid pipeline activation size, reserved bytes, or storage");
+        return FG_ERR_FORMAT;
+    }
+    memset(activation,0,sizeof(*activation));
+    activation->execution_kind=(fg_pipeline_execution_kind)payload[0];
+    activation->slot=payload[1];
+    activation->source_stage=payload[2];
+    activation->destination_stage=payload[3];
+    activation->first_token=get_u32_be(payload+4u);
+    activation->token_count=token_count;
+    activation->request_output=(payload[10]&1u)!=0u;
+    for(uint32_t stage=0;stage<FG_PIPELINE_STAGE_COUNT;stage++)
+        activation->stage_seconds[stage]=get_f32_be(payload+16u+stage*4u);
+    activation->positions=position_storage;
+    activation->boundary=boundary_storage;
+    uint32_t offset=FG_PIPELINE_ACTIVATION_HEADER_BYTES;
+    for(uint64_t i=0;i<position_values;i++,offset+=4u)
+        position_storage[i]=get_u32_be(payload+offset);
+    memcpy(boundary_storage,payload+offset,
+           (size_t)boundary_values*FG_PIPELINE_BOUNDARY_FP32_BYTES);
+    return fg_pipeline_activation_validate(activation,err);
+}
+
+static fg_status validate_pipeline_credit(const fg_pipeline_credit *credit,fg_error *err){
+    if(!credit||credit->slot>=FG_PIPELINE_DEFAULT_SLOT_COUNT||
+       credit->source_stage==0u||credit->source_stage>=FG_PIPELINE_STAGE_COUNT||
+       credit->destination_stage>=FG_PIPELINE_STAGE_COUNT||
+       credit->destination_stage+1u!=credit->source_stage){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid pipeline credit");
+        return FG_ERR_FORMAT;
+    }
+    return FG_OK;
+}
+
+fg_status fg_pipeline_credit_encode(uint8_t output[FG_PIPELINE_CREDIT_BYTES],
+                                    const fg_pipeline_credit *credit,fg_error *err){
+    if(!output){
+        fg_error_set(err,FG_ERR_ARGUMENT,"pipeline credit output is null");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_status status=validate_pipeline_credit(credit,err);
+    if(status!=FG_OK)return status;
+    output[0]=credit->source_stage;
+    output[1]=credit->destination_stage;
+    output[2]=credit->slot;
+    output[3]=0u;
+    return FG_OK;
+}
+
+fg_status fg_pipeline_credit_decode(fg_pipeline_credit *credit,const uint8_t *payload,
+                                    uint32_t bytes,fg_error *err){
+    if(!credit||!payload){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid pipeline credit input");
+        return FG_ERR_ARGUMENT;
+    }
+    if(bytes!=FG_PIPELINE_CREDIT_BYTES||payload[3]){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid pipeline credit size or reserved byte");
+        return FG_ERR_FORMAT;
+    }
+    *credit=(fg_pipeline_credit){.source_stage=payload[0],
+        .destination_stage=payload[1],.slot=payload[2]};
+    return validate_pipeline_credit(credit,err);
+}
+
+static fg_status validate_pipeline_result(const fg_pipeline_result *result,fg_error *err){
+    if(!result||!result->completed_token_count||
+       result->completed_token_count>FG_PREFILL_MAX_TOKENS||
+       result->completed_first_token>=FG_NATIVE_CONTEXT||
+       result->completed_token_count>FG_NATIVE_CONTEXT-result->completed_first_token||
+       result->completed_frontier!=
+           result->completed_first_token+result->completed_token_count||
+       (result->has_output&&
+        (result->final_token>=FG_Q38_VOCAB_SIZE||!isfinite(result->final_logit)))||
+       (!result->has_output&&
+        (result->final_token!=FG_Q38_VOCAB_SIZE||
+         result->final_logit!=0.0f||signbit(result->final_logit)))){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid pipeline terminal result");
+        return FG_ERR_FORMAT;
+    }
+    for(uint32_t stage=0;stage<FG_PIPELINE_STAGE_COUNT;stage++)
+        if(!isfinite(result->stage_seconds[stage])||
+           result->stage_seconds[stage]<0.0f){
+            fg_error_set(err,FG_ERR_FORMAT,
+                         "invalid pipeline result stage timing");
+            return FG_ERR_FORMAT;
+        }
+    return FG_OK;
+}
+
+fg_status fg_pipeline_result_encode(uint8_t output[FG_PIPELINE_RESULT_BYTES],
+                                    const fg_pipeline_result *result,fg_error *err){
+    if(!output){
+        fg_error_set(err,FG_ERR_ARGUMENT,"pipeline result output is null");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_status status=validate_pipeline_result(result,err);
+    if(status!=FG_OK)return status;
+    memset(output,0,FG_PIPELINE_RESULT_BYTES);
+    put_u32_be(output,result->completed_first_token);
+    put_u16_be(output+4u,result->completed_token_count);
+    output[6]=result->has_output?1u:0u;
+    put_u32_be(output+8u,result->completed_frontier);
+    put_u32_be(output+12u,result->final_token);
+    put_f32_be(output+16u,result->final_logit);
+    for(uint32_t stage=0;stage<FG_PIPELINE_STAGE_COUNT;stage++)
+        put_f32_be(output+20u+stage*4u,result->stage_seconds[stage]);
+    return FG_OK;
+}
+
+fg_status fg_pipeline_result_decode(fg_pipeline_result *result,const uint8_t *payload,
+                                    uint32_t bytes,fg_error *err){
+    if(!result||!payload){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid pipeline result input");
+        return FG_ERR_ARGUMENT;
+    }
+    if(bytes!=FG_PIPELINE_RESULT_BYTES||(payload[6]&~1u)||payload[7]){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid pipeline result size or reserved bytes");
+        return FG_ERR_FORMAT;
+    }
+    *result=(fg_pipeline_result){
+        .completed_first_token=get_u32_be(payload),
+        .completed_token_count=get_u16_be(payload+4u),
+        .completed_frontier=get_u32_be(payload+8u),
+        .has_output=(payload[6]&1u)!=0u,
+        .final_token=get_u32_be(payload+12u),
+        .final_logit=get_f32_be(payload+16u)
+    };
+    for(uint32_t stage=0;stage<FG_PIPELINE_STAGE_COUNT;stage++)
+        result->stage_seconds[stage]=get_f32_be(payload+20u+stage*4u);
+    return validate_pipeline_result(result,err);
+}
+
+static fg_status validate_pipeline_forward_route(uint8_t source,uint8_t destination,
+                                                 fg_error *err){
+    if(source>=FG_PIPELINE_STAGE_COUNT||destination>=FG_PIPELINE_STAGE_COUNT||
+       destination!=source+1u){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid forward pipeline control route");
+        return FG_ERR_FORMAT;
+    }
+    return FG_OK;
+}
+
+static fg_status validate_pipeline_reverse_route(uint8_t source,uint8_t destination,
+                                                 fg_error *err){
+    if(!source||source>=FG_PIPELINE_STAGE_COUNT||
+       destination>=FG_PIPELINE_STAGE_COUNT||destination+1u!=source){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid reverse pipeline control route");
+        return FG_ERR_FORMAT;
+    }
+    return FG_OK;
+}
+
+fg_status fg_pipeline_drain_encode(uint8_t output[FG_PIPELINE_DRAIN_BYTES],
+                                   const fg_pipeline_drain *drain,fg_error *err){
+    if(!output||!drain){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid pipeline drain output");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_status status=validate_pipeline_forward_route(drain->source_stage,
+                                                     drain->destination_stage,err);
+    if(status!=FG_OK)return status;
+    output[0]=drain->source_stage;
+    output[1]=drain->destination_stage;
+    output[2]=0u;
+    output[3]=0u;
+    return FG_OK;
+}
+
+fg_status fg_pipeline_drain_decode(fg_pipeline_drain *drain,const uint8_t *payload,
+                                   uint32_t bytes,fg_error *err){
+    if(!drain||!payload){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid pipeline drain input");
+        return FG_ERR_ARGUMENT;
+    }
+    if(bytes!=FG_PIPELINE_DRAIN_BYTES||payload[2]||payload[3]){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid pipeline drain size or reserved bytes");
+        return FG_ERR_FORMAT;
+    }
+    *drain=(fg_pipeline_drain){.source_stage=payload[0],
+        .destination_stage=payload[1]};
+    return validate_pipeline_forward_route(drain->source_stage,drain->destination_stage,err);
+}
+
+fg_status fg_pipeline_drained_encode(uint8_t output[FG_PIPELINE_DRAINED_BYTES],
+                                     const fg_pipeline_drained *drained,fg_error *err){
+    if(!output||!drained){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid pipeline drained output");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_status status=validate_pipeline_reverse_route(drained->source_stage,
+                                                     drained->destination_stage,err);
+    if(status!=FG_OK)return status;
+    output[0]=drained->source_stage;
+    output[1]=drained->destination_stage;
+    output[2]=0u;
+    output[3]=0u;
+    return FG_OK;
+}
+
+fg_status fg_pipeline_drained_decode(fg_pipeline_drained *drained,const uint8_t *payload,
+                                     uint32_t bytes,fg_error *err){
+    if(!drained||!payload){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid pipeline drained input");
+        return FG_ERR_ARGUMENT;
+    }
+    if(bytes!=FG_PIPELINE_DRAINED_BYTES||payload[2]||payload[3]){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid pipeline drained size or reserved bytes");
+        return FG_ERR_FORMAT;
+    }
+    *drained=(fg_pipeline_drained){.source_stage=payload[0],
+        .destination_stage=payload[1]};
+    return validate_pipeline_reverse_route(drained->source_stage,
+                                           drained->destination_stage,err);
+}
+
+static bool pipeline_abort_status_valid(fg_status status){
+    return status==FG_ERR_ARGUMENT||status==FG_ERR_IO||status==FG_ERR_FORMAT||
+        status==FG_ERR_MISMATCH||status==FG_ERR_OOM||
+        status==FG_ERR_UNAVAILABLE||status==FG_ERR_LIMIT;
+}
+
+fg_status fg_pipeline_abort_encode(uint8_t output[FG_PIPELINE_ABORT_BYTES],
+                                   const fg_pipeline_abort *abort,fg_error *err){
+    if(!output||!abort){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid pipeline abort output");
+        return FG_ERR_ARGUMENT;
+    }
+    if(abort->origin_stage>=FG_PIPELINE_STAGE_COUNT||
+       !pipeline_abort_status_valid(abort->status)){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid pipeline abort");
+        return FG_ERR_FORMAT;
+    }
+    memset(output,0,FG_PIPELINE_ABORT_BYTES);
+    output[0]=abort->origin_stage;
+    put_u16_be(output+2u,(uint16_t)abort->status);
+    put_u32_be(output+4u,abort->failing_sequence);
+    return FG_OK;
+}
+
+fg_status fg_pipeline_abort_decode(fg_pipeline_abort *abort,const uint8_t *payload,
+                                   uint32_t bytes,fg_error *err){
+    if(!abort||!payload){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid pipeline abort input");
+        return FG_ERR_ARGUMENT;
+    }
+    if(bytes!=FG_PIPELINE_ABORT_BYTES||payload[1]||get_u32_be(payload+8u)){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid pipeline abort size or reserved bytes");
+        return FG_ERR_FORMAT;
+    }
+    *abort=(fg_pipeline_abort){.origin_stage=payload[0],
+        .status=(fg_status)get_u16_be(payload+2u),
+        .failing_sequence=get_u32_be(payload+4u)};
+    if(abort->origin_stage>=FG_PIPELINE_STAGE_COUNT||
+       !pipeline_abort_status_valid(abort->status)){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid pipeline abort fields");
+        return FG_ERR_FORMAT;
+    }
+    return FG_OK;
+}
+
+fg_status fg_pipeline_frame_validate_sequence(const fg_frame_header *header,
+                                              fg_message_type expected_type,
+                                              uint64_t expected_request_id,
+                                              uint32_t expected_sequence,
+                                              fg_error *err){
+    if(!header||expected_type<FG_MSG_PIPELINE_ACTIVATION||
+       expected_type>FG_MSG_PIPELINE_ABORT){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid pipeline sequence validation input");
+        return FG_ERR_ARGUMENT;
+    }
+    if(fg_frame_version(header)!=FG_PIPELINE_PROTOCOL_VERSION||
+       fg_frame_type(header)!=expected_type||
+       fg_frame_request_id(header)!=expected_request_id||
+       fg_frame_sequence(header)!=expected_sequence){
+        fg_error_set(err,FG_ERR_MISMATCH,"stale or misrouted pipeline frame");
+        return FG_ERR_MISMATCH;
+    }
+    return FG_OK;
 }
 
 fg_status fg_expert_results_validate_route(const fg_manifest *manifest,uint32_t layer,uint32_t position,uint32_t owner_rank,const uint16_t expert_ids[FG_TOP_K],const fg_expert_result *results,uint32_t result_count,fg_error *err){

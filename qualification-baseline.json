@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "model": "Qwen3.8-Flash-Next",
   "fleet": {
     "ranks": 8,
@@ -11,7 +11,10 @@
     "lkg_tag": "lkg-10.035tps-cooked-experts",
     "minimum_median_tps": 10.03545,
     "main_integration_commit": "4f83137e6f6cc1e1eae2138e997baa8898a0f80f",
-    "main_integration_observed_median_tps": 10.38
+    "main_integration_observed_median_tps": 10.38,
+    "deployed_main_reference_median_tps": 10.056245,
+    "pipeline_minimum_median_tps": 10.056245,
+    "pipeline_p95_must_not_regress": true
   },
   "prefill": {
     "observed_256_token_microbatch_tps": 5.36,
@@ -19,11 +22,31 @@
     "release_minimum_end_to_end_tps": 250.0,
     "release_target_end_to_end_tps": 300.0
   },
+  "pipeline_candidate": {
+    "qualified": false,
+    "decode_lkg": true,
+    "decode_lkg_tag": "lkg-10.49tps-pipeline-decode",
+    "profile": "pipeline-8stage-262k",
+    "required_cu_per_rank": 24,
+    "stage_count": 8,
+    "context_tokens": 262144,
+    "healthy_4k_prefill_tps": 200.0,
+    "optimization_4k_prefill_tps": 250.0,
+    "stretch_4k_prefill_tps": 300.0,
+    "manifest_sha256": "d2cac5f9d99d1df27989e159dca794a9c1ecb1889c80c2fc6661746eeada6abd",
+    "binary_sha256": "6b1593c49049e9ed05862424d3efe3e355ae5352a0c2cb8d14b15cc04cfc731a",
+    "spirv_sha256": "3ddef60b4e514d317453a06d8aa35b0b096fbba71d46303c8aa12b73e4b0c4b3",
+    "measured_4k_prefill_tps": 77.26,
+    "decode_lkg_observed_tps": 10.49,
+    "decode_lkg_generated_tokens": 20,
+    "measured_decode_median_tps": null,
+    "measured_decode_p95_ms": null
+  },
   "openai_harness_acceptance": [
     "non-streaming exact hello response",
     "streaming structured tool call without native tag leakage",
     "tool result continuation",
-    "decode median at or above minimum_median_tps"
+    "decode median at or above the selected profile minimum"
   ],
   "fleet_acceptance": [
     "make test on all eight blades",

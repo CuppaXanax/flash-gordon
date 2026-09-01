@@ -1,0 +1,86 @@
+#version 460
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Records0{uint records_0[];};
+layout(set=0,binding=1)readonly buffer Records1{uint records_1[];};
+layout(set=0,binding=2)readonly buffer Selected{uint selected_blocks[];};
+layout(set=0,binding=3)readonly buffer Query{float query[];};
+layout(set=0,binding=4)readonly buffer Gate{float gate[];};
+layout(set=0,binding=5)writeonly buffer Output{float output_value[];};
+layout(push_constant)uniform Push{
+    uint first_token;
+    uint query_tokens;
+    uint capacity;
+    uint segment_capacity;
+    uint selected_stride;
+}pc;
+shared float reduction[256];
+shared float old_scale;
+shared float new_weight;
+shared float denominator;
+shared float maximum;
+uint load_byte(uint token,uint byte_in_record){
+    uint segment=token/pc.segment_capacity;
+    uint local_token=token-segment*pc.segment_capacity;
+    uint byte_offset=local_token*1236u+byte_in_record;
+    uint word=segment==0u?records_0[byte_offset>>2u]:
+        records_1[byte_offset>>2u];
+    return(word>>((byte_offset&3u)*8u))&255u;
+}
+float load_half(uint token,uint byte_in_record){
+    uint bits=load_byte(token,byte_in_record)|
+        (load_byte(token,byte_in_record+1u)<<8u);
+    return unpackHalf2x16(bits).x;
+}
+float load_q8(uint token,uint base,uint element){
+    uint block=element>>5u,inside=element&31u;
+    uint offset=base+block*34u;
+    int q=int(load_byte(token,offset+2u+inside));
+    if(q>=128)q-=256;
+    return load_half(token,offset)*float(q);
+}
+void attend_token(uint token,uint kv_head,uint query_base,uint lane,
+                  inout float accumulator){
+    reduction[lane]=query[query_base+lane]*load_q8(token,kv_head*272u,lane);
+    barrier();
+    for(uint stride=128u;stride>0u;stride>>=1u){
+        if(lane<stride)reduction[lane]+=reduction[lane+stride];
+        barrier();
+    }
+    if(lane==0u){
+        float score=reduction[0]*0.0625;
+        float next_max=max(maximum,score);
+        old_scale=maximum<-3.0e38?0.0:exp(maximum-next_max);
+        new_weight=exp(score-next_max);
+        denominator=denominator*old_scale+new_weight;
+        maximum=next_max;
+    }
+    barrier();
+    accumulator=accumulator*old_scale+
+        load_q8(token,544u+kv_head*272u,lane)*new_weight;
+    barrier();
+}
+void main(){
+    uint lane=gl_LocalInvocationID.x,head=gl_WorkGroupID.x;
+    uint query_slot=gl_WorkGroupID.y;
+    if(head>=24u||query_slot>=pc.query_tokens)return;
+    uint visible_tokens=pc.first_token+query_slot+1u;
+    uint complete_blocks=visible_tokens/4u;
+    uint kv_head=head/12u;
+    uint query_base=(query_slot*24u+head)*256u;
+    float accumulator=0.0;
+    if(lane==0u){maximum=-3.402823466e38;denominator=0.0;}
+    barrier();
+    uint selected_base=query_slot*pc.selected_stride;
+    for(uint selected=0u;selected<pc.selected_stride;selected++){
+        uint block=selected_blocks[selected_base+selected];
+        if(block==0xffffffffu||block>=complete_blocks)continue;
+        uint first=block*4u;
+        for(uint inside=0u;inside<4u;inside++)
+            attend_token(first+inside,kv_head,query_base,lane,accumulator);
+    }
+    uint tail_first=complete_blocks*4u;
+    for(uint token=tail_first;token<visible_tokens;token++)
+        attend_token(token,kv_head,query_base,lane,accumulator);
+    float sigmoid_gate=1.0/(1.0+exp(-gate[query_base+lane]));
+    output_value[query_base+lane]=accumulator/denominator*sigmoid_gate;
+}

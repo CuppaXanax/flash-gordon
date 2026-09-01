@@ -1,0 +1,104 @@
+#version 460
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Weights { uint wb[]; };
+layout(set = 0, binding = 1) readonly buffer Tiles { uint tiles[]; };
+layout(set = 0, binding = 2) readonly buffer Input { vec4 x4[]; };
+layout(set = 0, binding = 3) writeonly buffer Output { float y[]; };
+
+layout(push_constant) uniform Push {
+    uint out_dim;
+    uint in_dim;
+    uint blocks;
+    uint tile_bytes;
+    uint expert_stride;
+    uint tokens;
+} pc;
+
+const uint TOP_K = 10u;
+const uint PAIR_TILE = 16u;
+const uint TILE_WORDS = 17u;
+const uint INVALID = 0xffffffffu;
+const uint COOK_ROWS = 16u;
+const uint BLOCK_TILE_BYTES = 384u;
+shared uint scale_words[8];
+shared uint high_words[8];
+shared uint quant_words[32];
+shared uint pair_ids[PAIR_TILE];
+shared float sums[PAIR_TILE][64];
+
+uint quant_value(uint packed, uint high, uint lane, uint item) {
+    uint byte_value = (packed >> (item * 8u)) & 255u;
+    uint low = lane < 4u ? byte_value & 15u : byte_value >> 4u;
+    uint bit = (high >> (lane * 4u + item)) & 1u;
+    return low | (bit << 4u);
+}
+
+void main() {
+    uint local_id = gl_LocalInvocationID.x;
+    uint row_slot = local_id >> 3u;
+    uint lane = local_id & 7u;
+    uint row = gl_WorkGroupID.x * 8u + row_slot;
+    uint tile_base = gl_WorkGroupID.y * TILE_WORDS;
+    uint expert = tiles[tile_base];
+    if (expert == INVALID) return;
+    if (local_id < PAIR_TILE) pair_ids[local_id] = tiles[tile_base + 1u + local_id];
+    uint row_tile = row >> 4u;
+    uint tile_row = row & 15u;
+    bool row_live = row < pc.out_dim;
+    float accumulators[PAIR_TILE];
+    for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++)
+        accumulators[pair_slot] = 0.0;
+    barrier();
+
+    for (uint block = 0u; block < pc.blocks; block++) {
+        uint block_base = expert * pc.expert_stride + row_tile * pc.tile_bytes +
+            block * BLOCK_TILE_BYTES;
+        if (lane == 0u) {
+            scale_words[row_slot] = row_live ?
+                wb[(block_base + tile_row * 4u) >> 2u] : 0u;
+            high_words[row_slot] = row_live ?
+                wb[(block_base + 64u + tile_row * 4u) >> 2u] : 0u;
+        }
+        if (lane < 4u)
+            quant_words[row_slot * 4u + lane] = row_live ?
+                wb[(block_base + 128u + tile_row * 16u + lane * 4u) >> 2u] : 0u;
+        barrier();
+        if (row_live) {
+            vec2 scale_min = unpackHalf2x16(scale_words[row_slot]);
+            uint packed = quant_words[row_slot * 4u + (lane & 3u)];
+            uint high = high_words[row_slot];
+            float weight0 = fma(scale_min.x, float(quant_value(packed, high, lane, 0u)), scale_min.y);
+            float weight1 = fma(scale_min.x, float(quant_value(packed, high, lane, 1u)), scale_min.y);
+            float weight2 = fma(scale_min.x, float(quant_value(packed, high, lane, 2u)), scale_min.y);
+            float weight3 = fma(scale_min.x, float(quant_value(packed, high, lane, 3u)), scale_min.y);
+            for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++) {
+                uint pair = pair_ids[pair_slot];
+                if (pair == INVALID) continue;
+                vec4 input_value = x4[pair * (pc.in_dim >> 2u) + block * 8u + lane];
+                accumulators[pair_slot] = fma(weight0, input_value.x, accumulators[pair_slot]);
+                accumulators[pair_slot] = fma(weight1, input_value.y, accumulators[pair_slot]);
+                accumulators[pair_slot] = fma(weight2, input_value.z, accumulators[pair_slot]);
+                accumulators[pair_slot] = fma(weight3, input_value.w, accumulators[pair_slot]);
+            }
+        }
+        barrier();
+    }
+    for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++)
+        sums[pair_slot][local_id] = accumulators[pair_slot];
+    barrier();
+    if (row_live && lane == 0u) {
+        uint offset = row_slot * 8u;
+        for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++) {
+            uint pair = pair_ids[pair_slot];
+            if (pair == INVALID || pair >= pc.tokens * TOP_K) continue;
+            float value =
+                ((sums[pair_slot][offset] + sums[pair_slot][offset + 4u]) +
+                 (sums[pair_slot][offset + 2u] + sums[pair_slot][offset + 6u])) +
+                ((sums[pair_slot][offset + 1u] + sums[pair_slot][offset + 5u]) +
+                 (sums[pair_slot][offset + 3u] + sums[pair_slot][offset + 7u]));
+            y[pair * pc.out_dim + row] = value;
+        }
+    }
+}

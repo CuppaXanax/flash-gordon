@@ -67,6 +67,20 @@
 #define FG_NGRAM_RESULT_MAX_BYTES (8u+FG_NGRAM_SHARD_MAX_ITEMS*(1u+FG_NGRAM_WIRE_ROW_BYTES))
 #define FG_OWNER_SESSION_CONTROL_VERSION 2u
 #define FG_OWNER_SESSION_CONTROL_BYTES 184u
+#define FG_PIPELINE_POSITION_AXES 3u
+#define FG_PIPELINE_BOUNDARY_WIDTH FG_Q38_HYPER_WIDTH
+#define FG_PIPELINE_BOUNDARY_FP32_BYTES 4u
+#define FG_PIPELINE_STAGE_TIMING_BYTES (FG_PIPELINE_STAGE_COUNT*4u)
+#define FG_PIPELINE_ACTIVATION_HEADER_BYTES (16u+FG_PIPELINE_STAGE_TIMING_BYTES)
+/* Protocol 7 boundary tensors are native little-endian IEEE-754 FP32 byte arrays. */
+#define FG_PIPELINE_ACTIVATION_MAX_BYTES \
+    (FG_PIPELINE_ACTIVATION_HEADER_BYTES+FG_PREFILL_MAX_TOKENS*FG_PIPELINE_POSITION_AXES*4u+ \
+     FG_PREFILL_MAX_TOKENS*FG_PIPELINE_BOUNDARY_WIDTH*FG_PIPELINE_BOUNDARY_FP32_BYTES)
+#define FG_PIPELINE_CREDIT_BYTES 4u
+#define FG_PIPELINE_RESULT_BYTES (20u+FG_PIPELINE_STAGE_TIMING_BYTES)
+#define FG_PIPELINE_DRAIN_BYTES 4u
+#define FG_PIPELINE_DRAINED_BYTES 4u
+#define FG_PIPELINE_ABORT_BYTES 12u
 
 typedef enum fg_message_type {
     FG_MSG_HELLO = 1,
@@ -101,8 +115,19 @@ typedef enum fg_message_type {
     FG_MSG_QSA_PAGE_BARRIER = 30,
     FG_MSG_QSA_PAGE_BARRIER_ACK = 31,
     FG_MSG_QSA_PAGE_FETCH = 32,
-    FG_MSG_QSA_PAGE_RESULT = 33
+    FG_MSG_QSA_PAGE_RESULT = 33,
+    FG_MSG_PIPELINE_ACTIVATION = 34,
+    FG_MSG_PIPELINE_CREDIT = 35,
+    FG_MSG_PIPELINE_RESULT = 36,
+    FG_MSG_PIPELINE_DRAIN = 37,
+    FG_MSG_PIPELINE_DRAINED = 38,
+    FG_MSG_PIPELINE_ABORT = 39
 } fg_message_type;
+
+typedef enum fg_pipeline_execution_kind {
+    FG_PIPELINE_EXECUTION_PREFILL = 1,
+    FG_PIPELINE_EXECUTION_DECODE = 2
+} fg_pipeline_execution_kind;
 
 typedef enum fg_owner_session_operation {
     FG_OWNER_SESSION_BEGIN = 1,
@@ -350,6 +375,53 @@ typedef struct fg_ngram_result {
     uint8_t packed[FG_NGRAM_SHARD_MAX_ITEMS*FG_NGRAM_WIRE_ROW_BYTES];
 } fg_ngram_result;
 
+typedef struct fg_pipeline_activation {
+    fg_pipeline_execution_kind execution_kind;
+    uint8_t slot;
+    uint8_t source_stage;
+    uint8_t destination_stage;
+    uint32_t first_token;
+    uint16_t token_count;
+    /* Required for decode; optional for caller-selected prefill completions. */
+    bool request_output;
+    float stage_seconds[FG_PIPELINE_STAGE_COUNT];
+    const uint32_t *positions;
+    const float *boundary;
+} fg_pipeline_activation;
+
+typedef struct fg_pipeline_credit {
+    uint8_t source_stage;
+    uint8_t destination_stage;
+    uint8_t slot;
+} fg_pipeline_credit;
+
+typedef struct fg_pipeline_result {
+    uint32_t completed_first_token;
+    uint16_t completed_token_count;
+    uint32_t completed_frontier;
+    /* False requires final_token == FG_Q38_VOCAB_SIZE and +0.0f final_logit. */
+    bool has_output;
+    uint32_t final_token;
+    float final_logit;
+    float stage_seconds[FG_PIPELINE_STAGE_COUNT];
+} fg_pipeline_result;
+
+typedef struct fg_pipeline_drain {
+    uint8_t source_stage;
+    uint8_t destination_stage;
+} fg_pipeline_drain;
+
+typedef struct fg_pipeline_drained {
+    uint8_t source_stage;
+    uint8_t destination_stage;
+} fg_pipeline_drained;
+
+typedef struct fg_pipeline_abort {
+    uint8_t origin_stage;
+    fg_status status;
+    uint32_t failing_sequence;
+} fg_pipeline_abort;
+
 uint64_t fg_token_hash_update(uint64_t hash, const int32_t *tokens, size_t count);
 uint32_t fg_crc32c(const void *data, size_t bytes);
 bool fg_protocol_version_supported(uint16_t version);
@@ -493,5 +565,41 @@ fg_status fg_owner_session_control_encode(uint8_t output[FG_OWNER_SESSION_CONTRO
 fg_status fg_owner_session_control_decode(fg_owner_session_control *control,
                                          const uint8_t *payload, uint32_t bytes,
                                          fg_error *err);
+fg_status fg_pipeline_activation_validate(const fg_pipeline_activation *activation,
+                                         fg_error *err);
+fg_status fg_pipeline_activation_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                        const fg_pipeline_activation *activation,
+                                        fg_error *err);
+fg_status fg_pipeline_activation_decode(fg_pipeline_activation *activation,
+                                        uint32_t *position_storage,
+                                        uint32_t position_capacity,float *boundary_storage,
+                                        uint64_t boundary_capacity_values,
+                                        const uint8_t *payload,uint32_t bytes,
+                                        fg_error *err);
+fg_status fg_pipeline_credit_encode(uint8_t output[FG_PIPELINE_CREDIT_BYTES],
+                                    const fg_pipeline_credit *credit,fg_error *err);
+fg_status fg_pipeline_credit_decode(fg_pipeline_credit *credit,const uint8_t *payload,
+                                    uint32_t bytes,fg_error *err);
+fg_status fg_pipeline_result_encode(uint8_t output[FG_PIPELINE_RESULT_BYTES],
+                                    const fg_pipeline_result *result,fg_error *err);
+fg_status fg_pipeline_result_decode(fg_pipeline_result *result,const uint8_t *payload,
+                                    uint32_t bytes,fg_error *err);
+fg_status fg_pipeline_drain_encode(uint8_t output[FG_PIPELINE_DRAIN_BYTES],
+                                   const fg_pipeline_drain *drain,fg_error *err);
+fg_status fg_pipeline_drain_decode(fg_pipeline_drain *drain,const uint8_t *payload,
+                                   uint32_t bytes,fg_error *err);
+fg_status fg_pipeline_drained_encode(uint8_t output[FG_PIPELINE_DRAINED_BYTES],
+                                     const fg_pipeline_drained *drained,fg_error *err);
+fg_status fg_pipeline_drained_decode(fg_pipeline_drained *drained,const uint8_t *payload,
+                                     uint32_t bytes,fg_error *err);
+fg_status fg_pipeline_abort_encode(uint8_t output[FG_PIPELINE_ABORT_BYTES],
+                                   const fg_pipeline_abort *abort,fg_error *err);
+fg_status fg_pipeline_abort_decode(fg_pipeline_abort *abort,const uint8_t *payload,
+                                   uint32_t bytes,fg_error *err);
+fg_status fg_pipeline_frame_validate_sequence(const fg_frame_header *header,
+                                             fg_message_type expected_type,
+                                             uint64_t expected_request_id,
+                                             uint32_t expected_sequence,
+                                             fg_error *err);
 
 #endif

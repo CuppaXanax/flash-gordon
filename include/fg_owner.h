@@ -38,6 +38,7 @@ typedef fg_status (*fg_owner_qsa_prefill_dispatch_fn)(void *context,uint32_t lay
 
 fg_status fg_owner_executor_create(fg_owner_executor **out,fg_model *model,fg_error *err);
 void fg_owner_executor_destroy(fg_owner_executor *executor);
+bool fg_owner_owns_layer(const fg_owner_executor *executor,uint32_t layer);
 fg_vk_tensor *fg_owner_prefill_input(fg_owner_executor *executor);
 uint64_t fg_owner_qsa_host_bytes(const fg_owner_executor *executor);
 fg_status fg_owner_reset_state(fg_owner_executor *executor,fg_error *err);
@@ -87,10 +88,16 @@ fg_status fg_owner_qsa_open_mirror(fg_owner_executor *executor,uint32_t logical_
                                    uint32_t hot_tokens,uint32_t cache_pages,uint32_t batch_size,
                                    fg_qsa_page_fetch_fn fetch_pages,void *fetch_opaque,
                                    fg_error *err);
+fg_status fg_owner_qsa_open_resident(fg_owner_executor *executor,fg_error *err);
 void fg_owner_qsa_set_tokens(fg_owner_executor *executor,uint32_t tokens);
 fg_status fg_owner_qsa_decode(fg_owner_executor *executor,uint32_t layer,uint32_t token_index,
                               const uint32_t position[3],const fg_vk_tensor *hidden,
                               fg_vk_tensor **output,fg_error *err);
+fg_status fg_owner_qsa_decode_pipeline(fg_owner_executor *executor,uint32_t layer,
+                                      uint32_t token_index,
+                                      const uint32_t position[3],
+                                      const fg_vk_tensor *hidden,
+                                      fg_vk_tensor **output,fg_error *err);
 fg_status fg_owner_qsa_prefill(fg_owner_executor *executor,uint32_t layer,uint32_t first_token,
                                const uint32_t *positions,uint32_t token_count,
                                const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err);
@@ -117,5 +124,23 @@ fg_status fg_owner_prefill_layer(fg_owner_executor *executor,uint32_t layer,
                                  fg_owner_qsa_prefill_dispatch_fn qsa_dispatch,
                                  void *qsa_context,
                                  fg_vk_tensor **output,fg_error *err);
+fg_status fg_owner_prefill_layer_pipeline(fg_owner_executor *executor,
+                                          fg_expert_executor *expert,
+                                          uint32_t layer,uint32_t first_token,
+                                          const uint32_t *positions,
+                                          uint16_t token_count,
+                                          const fg_vk_tensor *hyper_input,
+                                          const fg_vk_tensor *ngram_embeddings,
+                                          fg_owner_qsa_prefill_dispatch_fn qsa_dispatch,
+                                          void *qsa_context,
+                                          fg_vk_tensor **output,fg_error *err);
+/* Requires an active outer Vulkan batch owned by the pipeline stage. */
+fg_status fg_owner_decode_layer_pipeline(fg_owner_executor *executor,
+                                         fg_expert_executor *expert,
+                                         uint32_t layer,uint32_t token_index,
+                                         const uint32_t position[3],
+                                         const fg_vk_tensor *hyper_input,
+                                         const fg_vk_tensor *ngram_embedding,
+                                         fg_vk_tensor **output,fg_error *err);
 
 #endif

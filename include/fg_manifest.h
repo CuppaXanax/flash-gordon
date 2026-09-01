@@ -5,12 +5,16 @@
 
 #define FG_MANIFEST_MAGIC UINT64_C(0x314d47464e574f51) /* QOWNFGM1 */
 #define FG_MANIFEST_LEGACY_FORMAT_VERSION 4u
-#define FG_MANIFEST_FORMAT_VERSION 5u
+#define FG_MANIFEST_SESSION_FORMAT_VERSION 5u
+#define FG_MANIFEST_FORMAT_VERSION 6u
 #define FG_MANIFEST_CONTRACT_VERSION 1u
 #define FG_MANIFEST_DEFAULT_CONTEXT_TOKENS 8192u
 #define FG_MAX_TENSORS 4096u
 #define FG_TENSOR_NAME_MAX 96u
 #define FG_MAX_ENDPOINT 64u
+#define FG_TOKEN_EMBEDDING_ARTIFACT "token-embedding.q8_0"
+#define FG_NGRAM_SHARD_COUNT (FG_RANK_COUNT - 1u)
+#define FG_NGRAM_SHARD_ARTIFACT_FORMAT "ngram-rank-%02u.iq4nl"
 
 typedef enum fg_tensor_kind {
     FG_TENSOR_COMMON = 1,
@@ -18,14 +22,16 @@ typedef enum fg_tensor_kind {
     FG_TENSOR_NGRAM = 3,
     FG_TENSOR_VISION = 4,
     FG_TENSOR_MTP = 5,
-    FG_TENSOR_TOKENIZER = 6
+    FG_TENSOR_TOKENIZER = 6,
+    FG_TENSOR_HOST_CACHE = 7
 } fg_tensor_kind;
 
 typedef enum fg_tensor_layout {
     FG_TENSOR_LAYOUT_GGML = 0,
     FG_TENSOR_LAYOUT_Q8_0_COOKED = 1,
     FG_TENSOR_LAYOUT_K_QUANT_EXPERT_COOKED = 2,
-    FG_TENSOR_LAYOUT_Q5_1_EXPERT_COOKED = 3
+    FG_TENSOR_LAYOUT_Q5_1_EXPERT_COOKED = 3,
+    FG_TENSOR_LAYOUT_HOST_Q8_0 = 4
 } fg_tensor_layout;
 
 enum {
@@ -47,6 +53,11 @@ typedef enum fg_manifest_component {
     FG_COMPONENT_MTP = 4,
     FG_COMPONENT_COUNT = 5
 } fg_manifest_component;
+
+typedef enum fg_execution_mode {
+    FG_EXECUTION_EXPERT_PARALLEL = 0,
+    FG_EXECUTION_PIPELINE = 1
+} fg_execution_mode;
 
 typedef struct fg_tensor_record {
     char name[FG_TENSOR_NAME_MAX];
@@ -93,6 +104,15 @@ typedef struct fg_manifest_contract {
     uint8_t reserved[60];
 } fg_manifest_contract;
 
+typedef struct fg_ngram_shard_record {
+    uint32_t logical_rank;
+    uint32_t reserved;
+    uint64_t row_begin;
+    uint64_t row_count;
+    uint64_t bytes;
+    uint8_t sha256[32];
+} fg_ngram_shard_record;
+
 typedef struct fg_manifest {
     uint64_t magic;
     uint32_t format_version;
@@ -121,9 +141,21 @@ typedef struct fg_manifest {
     uint16_t expert_rank[FG_LAYER_COUNT][FG_EXPERT_COUNT];
     fg_tensor_record tensors[FG_MAX_TENSORS];
     fg_manifest_contract session;
+    uint32_t execution_mode;
+    uint32_t stage_count;
+    uint8_t stage_ranks[FG_RANK_COUNT];
+    uint32_t layer_offsets[FG_PIPELINE_LAYER_OFFSETS];
+    uint32_t slot_count;
+    uint8_t topology_sha256[32];
+    uint8_t topology_reserved[32];
+    uint32_t ngram_shard_count;
+    uint32_t deployment_reserved;
+    fg_ngram_shard_record ngram_shards[FG_NGRAM_SHARD_COUNT];
+    uint64_t host_resident_bytes[FG_RANK_COUNT];
 } fg_manifest;
 
 #define FG_MANIFEST_V4_BYTES ((size_t)offsetof(fg_manifest, session))
+#define FG_MANIFEST_V5_BYTES ((size_t)offsetof(fg_manifest, execution_mode))
 #define FG_MANIFEST_SIZE ((size_t)sizeof(fg_manifest))
 
 void fg_manifest_init(fg_manifest *manifest);

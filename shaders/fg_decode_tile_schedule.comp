@@ -1,0 +1,19 @@
+#version 460
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Selected { uint selected[]; };
+layout(set = 0, binding = 1) writeonly buffer Tiles { uint tiles[]; };
+
+const uint TOP_K = 10u;
+const uint TILE_WORDS = 9u;
+const uint INVALID = 0xffffffffu;
+
+void main() {
+    uint slot = gl_LocalInvocationID.x;
+    if (slot >= TOP_K) return;
+    uint base = slot * TILE_WORDS;
+    for (uint word = 0u; word < TILE_WORDS; word++) tiles[base + word] = INVALID;
+    tiles[base] = selected[slot];
+    tiles[base + 1u] = slot;
+}

@@ -26,6 +26,9 @@ typedef struct fg_gguf {
 
 fg_status fg_gguf_open(const char *const *paths, uint32_t path_count, fg_gguf *gguf, fg_error *err);
 void fg_gguf_close(fg_gguf *gguf);
+bool fg_gguf_type_layout(uint32_t type,uint32_t *block,uint32_t *block_bytes);
+bool fg_gguf_tensor_bytes(uint32_t type,uint32_t dims,const uint64_t shape[FG_GGUF_MAX_DIMS],
+                          uint64_t *bytes);
 int fg_gguf_tensor_layer(const char *name);
 int fg_gguf_tensor_expert(const char *name);
 fg_tensor_kind fg_gguf_tensor_kind(const char *name);

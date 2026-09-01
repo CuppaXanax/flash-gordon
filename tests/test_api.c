@@ -30,6 +30,10 @@ struct fg_runtime {
     uint32_t reset_count;
 };
 
+const char *fg_execution_mode_name(fg_execution_mode mode){
+    return mode==FG_EXECUTION_PIPELINE?"pipeline":"expert-parallel";
+}
+
 fg_status fg_runtime_open(fg_runtime **out, const char *manifest_path, fg_error *err) {
     (void)out;
     (void)manifest_path;
@@ -422,8 +426,11 @@ static void test_nonstream_tool_response(void) {
         .generated_tokens = 5,
         .context_tokens = 15,
         .reset_reason = FG_PREFIX_RESET_COLD_START,
+        .execution_mode = FG_EXECUTION_PIPELINE,
+        .stage_count = FG_PIPELINE_STAGE_COUNT,
         .prefill_seconds = 2.0,
         .decode_seconds = 0.5,
+        .stage_seconds = {0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8},
     };
     fg_error err = {0};
     CHECK(send_completion(&generation, &generated, &stats, "tool_calls", &err) == FG_OK);
@@ -435,6 +442,9 @@ static void test_nonstream_tool_response(void) {
     CHECK(response && strstr(response, "\"name\":\"weather\""));
     CHECK(response && strstr(response, "\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\""));
     CHECK(response && strstr(response, "X-Flash-Gordon-Prompt-Tokens: 10\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Execution-Mode: pipeline\r\n"));
+    CHECK(response && strstr(response,
+          "X-Flash-Gordon-Stage-Timings: 0=0.100000,1=0.200000"));
     CHECK(response && strstr(response, "X-Flash-Gordon-Prefilled-Tokens: 10\r\n"));
     CHECK(response && strstr(response, "X-Flash-Gordon-Reused-Tokens: 0\r\n"));
     CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: miss\r\n"));

@@ -12,7 +12,7 @@
 
 fg_status fg_verify_rank_arena(const fg_manifest *m,uint32_t rank,const void *arena,uint64_t arena_bytes,fg_error *err){
     if(!m||rank>=FG_RANK_COUNT||!arena){fg_error_set(err,FG_ERR_ARGUMENT,"invalid rank arena");return FG_ERR_ARGUMENT;}const uint8_t *base=arena;
-    for(uint32_t i=0;i<m->tensor_count;i++){const fg_tensor_record *t=&m->tensors[i];if(t->rank!=rank)continue;if(!fg_is_aligned_u64(t->offset,FG_ALIGNMENT)||t->offset>arena_bytes||t->bytes>arena_bytes-t->offset){fg_error_set(err,FG_ERR_FORMAT,"rank %u tensor %.96s is outside or misaligned in arena",rank,t->name);return FG_ERR_FORMAT;}fg_sha256 c;uint8_t digest[32];fg_sha256_init(&c);fg_sha256_update(&c,base+t->offset,(size_t)t->bytes);fg_sha256_final(&c,digest);if(memcmp(digest,t->sha256,32)!=0){fg_error_set(err,FG_ERR_MISMATCH,"rank %u tensor %.96s SHA-256 mismatch",rank,t->name);return FG_ERR_MISMATCH;}}
+    for(uint32_t i=0;i<m->tensor_count;i++){const fg_tensor_record *t=&m->tensors[i];if(t->rank!=rank||t->kind==FG_TENSOR_HOST_CACHE)continue;if(!fg_is_aligned_u64(t->offset,FG_ALIGNMENT)||t->offset>arena_bytes||t->bytes>arena_bytes-t->offset){fg_error_set(err,FG_ERR_FORMAT,"rank %u tensor %.96s is outside or misaligned in arena",rank,t->name);return FG_ERR_FORMAT;}fg_sha256 c;uint8_t digest[32];fg_sha256_init(&c);fg_sha256_update(&c,base+t->offset,(size_t)t->bytes);fg_sha256_final(&c,digest);if(memcmp(digest,t->sha256,32)!=0){fg_error_set(err,FG_ERR_MISMATCH,"rank %u tensor %.96s SHA-256 mismatch",rank,t->name);return FG_ERR_MISMATCH;}}
     return FG_OK;
 }
 

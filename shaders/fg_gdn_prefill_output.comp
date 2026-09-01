@@ -1,0 +1,32 @@
+#version 450
+
+layout(local_size_x=128,local_size_y=1,local_size_z=1)in;
+
+layout(set=0,binding=0)buffer Output{float output_value[];};
+layout(set=0,binding=1)readonly buffer ZGate{float z[];};
+layout(set=0,binding=2)readonly buffer NormWeight{float norm_weight[];};
+
+layout(push_constant)uniform Push{
+    uint tokens;
+    float epsilon;
+}pc;
+
+shared float sum_out[128];
+
+void main(){
+    uint lane=gl_LocalInvocationID.x;
+    uint head=gl_WorkGroupID.x;
+    uint token=gl_WorkGroupID.y;
+    uint index=token*6144u+head*128u+lane;
+    // This workgroup owns the slice and loads every value before any store.
+    float value=output_value[index];
+    sum_out[lane]=value*value;
+    barrier();
+    for(uint stride=64u;stride>0u;stride>>=1u){
+        if(lane<stride)sum_out[lane]+=sum_out[lane+stride];
+        barrier();
+    }
+    float scale=inversesqrt(sum_out[0]/128.0+pc.epsilon);
+    float gate=1.0/(1.0+exp(-z[index]));
+    output_value[index]=value*scale*norm_weight[lane]*gate;
+}
