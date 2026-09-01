@@ -1,0 +1,73 @@
+#version 460
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Logits { float logits[]; };
+layout(set = 0, binding = 1) writeonly buffer Selected { uint selected[]; };
+layout(set = 0, binding = 2) writeonly buffer Gates { float gates[]; };
+
+layout(push_constant) uniform Push {
+    uint experts;
+    uint tokens;
+} pc;
+
+const uint TOP_K = 10u;
+shared float values[512];
+shared float reduced_values[512];
+shared uint reduced_ids[512];
+shared float winners[TOP_K];
+shared uint winner_ids[TOP_K];
+
+void main() {
+    uint token = gl_WorkGroupID.x;
+    uint lid = gl_LocalInvocationID.x;
+    if (token >= pc.tokens) return;
+    for (uint segment = 0u; segment < 2u; segment++) {
+        uint expert = lid + segment * 256u;
+        values[expert] = expert < pc.experts ?
+            logits[token * pc.experts + expert] : -1.0 / 0.0;
+    }
+    barrier();
+
+    for (uint slot = 0u; slot < TOP_K; slot++) {
+        for (uint segment = 0u; segment < 2u; segment++) {
+            uint expert = lid + segment * 256u;
+            reduced_values[expert] = values[expert];
+            reduced_ids[expert] = expert;
+        }
+        barrier();
+        for (uint stride = 256u; stride > 0u; stride >>= 1u) {
+            if (lid < stride) {
+                float left = reduced_values[lid];
+                float right = reduced_values[lid + stride];
+                uint left_id = reduced_ids[lid];
+                uint right_id = reduced_ids[lid + stride];
+                if (right > left || (right == left && right_id < left_id)) {
+                    reduced_values[lid] = right;
+                    reduced_ids[lid] = right_id;
+                }
+            }
+            barrier();
+        }
+        if (lid == 0u) {
+            winner_ids[slot] = reduced_ids[0];
+            winners[slot] = reduced_values[0];
+            values[reduced_ids[0]] = -1.0 / 0.0;
+        }
+        barrier();
+    }
+
+    if (lid == 0u) {
+        float maximum = winners[0];
+        float denominator = 0.0;
+        float probabilities[TOP_K];
+        for (uint slot = 0u; slot < TOP_K; slot++) {
+            probabilities[slot] = exp(winners[slot] - maximum);
+            denominator += probabilities[slot];
+        }
+        for (uint slot = 0u; slot < TOP_K; slot++) {
+            selected[token * TOP_K + slot] = winner_ids[slot];
+            gates[token * TOP_K + slot] = probabilities[slot] / denominator;
+        }
+    }
+}

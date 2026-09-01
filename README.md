@@ -2,9 +2,24 @@
 
 Flash Gordon is a Linux-only C17 inference appliance specialized for Qwen3.8-Flash-Next on eight BC250 blades. It deliberately has no generic-model compatibility layer.
 
-Its distributed execution model keeps the sequential common graph, including QSA projection/search/attention, on the coordinator. Each layer's routed experts still fan out across their owning blades; ranks 3 and 7 are the authoritative long-record owners for six QSA layers each. Whole-layer and pipeline parallelism are not part of the design. The immediate raw single-stream decode contract is a 10 tok/s floor and a 20 tok/s engineering target before MTP or multiple sessions.
+The qualified expert-parallel deployment keeps the sequential common graph on the
+coordinator and fans routed experts across their owning blades. A separately
+packed, protocol-v7 eight-stage pipeline mode is also implemented for fleet
+qualification; it never reinterprets or changes the qualified expert-parallel
+pack.
 
-The current eight-blade LKG qualifies at 99.647 ms/token, or 10.035 tok/s, over the final 20 unprofiled greedy frames with exact response parity and a complete 48-layer route trace. See [PERFORMANCE_TRACE_10_035TPS.md](PERFORMANCE_TRACE_10_035TPS.md) for the qualification record.
+The qualified expert-parallel production LKG remains
+`lkg-10.035tps-cooked-experts`, measured at 99.647 ms/token, or 10.035
+tok/s, over the final 20 unprofiled greedy frames with exact response parity
+and a complete 48-layer route trace. See
+[PERFORMANCE_TRACE_10_035TPS.md](PERFORMANCE_TRACE_10_035TPS.md) for that
+qualification record.
+
+The shelved pipeline decode LKG is `lkg-10.49tps-pipeline-decode`. Its
+eight-blade candidate generated 20 tokens at 10.49 tok/s, exceeding the
+10.056245 tok/s deployed decode reference. This tag is decode-scoped: the last
+comparable 4K pipeline prefill measurement was 77.26 tok/s, so it does not
+claim the 200 tok/s pipeline health gate or production promotion.
 
 The implementation owns its complete runtime boundary: artifact format, rotating expert topology, memory ledger, GGUF parser and repacker, raw io_uring storage, fail-closed wire protocol, quantization primitives, Vulkan allocation/dispatch, and Qwen3.8-specific shaders. There is no linked or vendored inference runtime. Code adapted from another project is copied into Flash Gordon, renamed and maintained here, and admitted to a production path only after model-specific reference and Vulkan parity tests pass. Qwen's published architecture and processor behavior are the semantic authority; behavior inherited from another model runtime is not. Rank and text evaluation refuse a pack until text weights, the n-gram tensor, and tokenizer are sealed into the manifest. Vision and MTP are separately flagged overlays and are not prerequisites for the sealed text profile. The runtime also exposes a resident interactive chat frontend and a deliberately
 single-threaded OpenAI-compatible HTTP frontend. Both use the exact Qwen ChatML
@@ -54,6 +69,112 @@ GPU-index coverage and requires a whole-MiB unified record cache from 16
 through 512 MiB. Other combinations fail before fleet
 startup. One-shot `eval` uses the same resolved profile, rejects prompt plus
 generation beyond the logical limit, and bounds owner state to that limit.
+
+## Pipeline fleet launch and evaluation
+
+Run these commands only on the eight-blade Linux fleet. Build and pack the same
+Git revision everywhere:
+
+```sh
+make clean && make -j2
+./flash-gordon pack --dry-run --profile pipeline-8stage-262k \
+  --output /srv/flash-gordon/pipeline-8stage-262k \
+  --source /models/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf \
+  --source /models/Qwen3.8-Flash-Next-UD-Q4_K_XL-00002-of-00004.gguf \
+  --source /models/Qwen3.8-Flash-Next-UD-Q4_K_XL-00003-of-00004.gguf \
+  --source /models/Qwen3.8-Flash-Next-UD-Q4_K_XL-00004-of-00004.gguf
+./flash-gordon pack --profile pipeline-8stage-262k \
+  --output /srv/flash-gordon/pipeline-8stage-262k \
+  --source /models/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf \
+  --source /models/Qwen3.8-Flash-Next-UD-Q4_K_XL-00002-of-00004.gguf \
+  --source /models/Qwen3.8-Flash-Next-UD-Q4_K_XL-00003-of-00004.gguf \
+  --source /models/Qwen3.8-Flash-Next-UD-Q4_K_XL-00004-of-00004.gguf
+./flash-gordon verify \
+  --manifest /srv/flash-gordon/pipeline-8stage-262k/manifest.fgm \
+  --pack-dir /srv/flash-gordon/pipeline-8stage-262k \
+  --source /models/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf \
+  --source /models/Qwen3.8-Flash-Next-UD-Q4_K_XL-00002-of-00004.gguf \
+  --source /models/Qwen3.8-Flash-Next-UD-Q4_K_XL-00003-of-00004.gguf \
+  --source /models/Qwen3.8-Flash-Next-UD-Q4_K_XL-00004-of-00004.gguf
+sha256sum /srv/flash-gordon/pipeline-8stage-262k/manifest.fgm
+```
+
+An admitted pipeline pack creates `manifest.fgm`, `rank-00.fgw` through
+`rank-07.fgw`, `ngram.iq4nl`, `ngram-rank-01.iq4nl` through
+`ngram-rank-07.iq4nl`, `token-embedding.q8_0`, and
+`tokenizer/tokenizer.fgt`. Each worker shard is copied directly from the
+canonical n-gram tensor using its sealed rank row range; no provisioning step
+is permitted. `verify` checks the full table and every worker shard for exact
+size and SHA-256.
+
+The pipeline dry run prints each shard as
+`bytes = row_count * 90`, `source_offset = tensor_offset + row_begin * 90`,
+and `descriptor_sha256 = SHA256(LE64(source_offset) || LE64(bytes))`. It also
+prints the exact per-rank admission sum
+`gpu-persistent + host-resident + transient + kv + scratch + driver`.
+Host-resident bytes comprise the exact stage-0 token embedding or the rank's
+fixed `FG_PIPELINE_NGRAM_CACHE_BYTES` (1 GiB) n-gram cache and are counted once
+alongside Vulkan UMA. The complete sealed shard remains on disk and is not
+charged as resident memory. Each worker verifies its shard's exact size and
+full SHA-256 before service, then uses O_DIRECT/io_uring 4 KiB pages with
+deterministic four-way clock eviction. One work item deduplicates all requested
+pages and coalesces adjacent misses into at most 8 KiB reads; the request path
+has no heap allocation and exposes hit, miss, page-read, I/O-operation, and
+eviction counters. Expert-parallel workers retain the resident shard path.
+
+The dry-run ledger prints every Vulkan and host component, signed over/under
+values, remaining margins, and the worst rank. For canonical geometry the
+worst rank is rank 7: persistent margin `536246681` bytes and conservative
+13.5 GiB residency margin `713220096` bytes. A rank over either unchanged cap
+fails closed with the complete byte ledger and leaves no partial pack artifacts.
+
+Run the real canonical dry-run only on blade42 through the fleet wrapper:
+
+```powershell
+pwsh -File .\bc-250-dbg\Invoke-BC250Fleet.ps1 `
+  -ScriptPath .\flash-gordon\tools\pipeline-canonical-dry-run.sh `
+  -Targets 192.168.42.42 -TestFilter pipeline_canonical_dry_run
+```
+
+For canonical tensor byte offset `T`, the sealed worker ranges are:
+
+| Rank | Rows | Source bytes | Exact bytes |
+|---:|---:|---:|---:|
+| 1 | `[0, 46666896)` | `[T, T+4200020640)` | 4200020640 |
+| 2 | `[46666896, 93333792)` | `[T+4200020640, T+8400041280)` | 4200020640 |
+| 3 | `[93333792, 140000688)` | `[T+8400041280, T+12600061920)` | 4200020640 |
+| 4 | `[140000688, 180000846)` | `[T+12600061920, T+16200076140)` | 3600014220 |
+| 5 | `[180000846, 226667743)` | `[T+16200076140, T+20400096870)` | 4200020730 |
+| 6 | `[226667743, 273334639)` | `[T+20400096870, T+24600117510)` | 4200020640 |
+| 7 | `[273334639, 320001536)` | `[T+24600117510, T+28800138240)` | 4200020730 |
+
+The full table payload is 28800138240 bytes; only `ngram.iq4nl` receives
+1024 bytes of 4 KiB alignment padding. Worker shard files remain exact-sized.
+
+Copy the complete pack to the same path on every blade. On ranks 1 through 7,
+launch one worker per blade:
+
+```sh
+./flash-gordon rank \
+  --manifest /srv/flash-gordon/pipeline-8stage-262k/manifest.fgm --rank N
+```
+
+Do not launch a separate rank-0 worker. On the rank-0 blade, after all seven
+workers report `READY`, run correctness evaluation:
+
+```sh
+./flash-gordon eval \
+  --manifest /srv/flash-gordon/pipeline-8stage-262k/manifest.fgm \
+  --prompt 'Return exactly: pipeline-ready' --generate 16
+./flash-gordon api \
+  --manifest /srv/flash-gordon/pipeline-8stage-262k/manifest.fgm \
+  --host 127.0.0.1 --port 8000
+```
+
+Capture all eight logs and compare token IDs, terminal logits, generated text,
+stage timings, prefix-hit/divergence behavior, and tool/API responses against
+the unchanged expert-parallel pack before performance qualification. Benchmark
+sweeps and asynchronous intra-stage GPU overlap are intentionally not enabled.
 
 ## OpenAI-compatible API
 

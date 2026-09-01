@@ -49,10 +49,58 @@ static fg_status submit_once(fg_uring *r,uint8_t op,uint32_t slot,void *buffer,u
 }
 static fg_status submit_rw(fg_uring *r,uint8_t op,uint32_t slot,void *b,uint32_t n,uint64_t off,fg_error *e){int done=0;fg_status rc=submit_once(r,op,slot,b,n,off,&done,e);if(rc==FG_OK&&(uint32_t)done!=n){fg_error_set(e,FG_ERR_IO,"short direct I/O: got %d of %u bytes",done,n);rc=FG_ERR_IO;}return rc;}
 fg_status fg_uring_pread(fg_uring *r,uint32_t slot,void *b,uint32_t n,uint64_t off,fg_error *e){return submit_rw(r,IORING_OP_READ,slot,b,n,off,e);}
+fg_status fg_uring_pread_batch_results(fg_uring *r,uint32_t slot,
+                                       const fg_uring_read *reads,uint32_t count,
+                                       int32_t *results,uint32_t result_capacity,
+                                       fg_error *err){
+    if(!r||slot>=r->file_count||!reads||!count||!results||
+       result_capacity<count){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid io_uring read batch");
+        return FG_ERR_ARGUMENT;
+    }
+    for(uint32_t i=0;i<count;i++){
+        uintptr_t begin=(uintptr_t)r->fixed_buffer,address=(uintptr_t)reads[i].buffer;
+        uint64_t displacement=address>=begin?(uint64_t)(address-begin):UINT64_MAX;
+        if(!reads[i].buffer||!reads[i].bytes||!r->buffer_registered||
+           displacement>r->fixed_buffer_bytes||
+           reads[i].bytes>r->fixed_buffer_bytes-displacement){
+            fg_error_set(err,FG_ERR_ARGUMENT,
+                         "read batch item %u is outside the fixed buffer",i);
+            return FG_ERR_ARGUMENT;
+        }
+        results[i]=INT32_MIN;
+    }
+    fg_status status=FG_OK;for(uint32_t base=0;base<count&&status==FG_OK;){uint32_t batch=count-base;if(batch>r->entries)batch=r->entries;unsigned tail=atomic_load_explicit((_Atomic unsigned *)r->sq_tail,memory_order_relaxed),head=atomic_load_explicit((_Atomic unsigned *)r->sq_head,memory_order_acquire);if(tail-head+batch>*r->sq_entries){fg_error_set(err,FG_ERR_LIMIT,"io_uring batch exceeds submission queue");status=FG_ERR_LIMIT;break;}for(uint32_t i=0;i<batch;i++){uint32_t request=base+i,index=(tail+i)&*r->sq_mask;struct io_uring_sqe *sqe=&r->sqes[index];memset(sqe,0,sizeof(*sqe));sqe->opcode=IORING_OP_READ_FIXED;sqe->flags=IOSQE_FIXED_FILE;sqe->fd=(int)slot;sqe->addr=(uint64_t)(uintptr_t)reads[request].buffer;sqe->len=reads[request].bytes;sqe->off=reads[request].offset;sqe->buf_index=0;sqe->user_data=(uint64_t)request+1u;r->sq_array[index]=index;}atomic_store_explicit((_Atomic unsigned *)r->sq_tail,tail+batch,memory_order_release);int submitted=uring_enter(r->fd,batch,batch,IORING_ENTER_GETEVENTS);if(submitted!=(int)batch){fg_error_set(err,FG_ERR_IO,"submit io_uring read batch: %s",submitted<0?strerror(errno):"partial submission");status=FG_ERR_IO;break;}uint32_t completed=0;while(completed<batch){unsigned cq_head=atomic_load_explicit((_Atomic unsigned *)r->cq_head,memory_order_acquire),cq_tail=atomic_load_explicit((_Atomic unsigned *)r->cq_tail,memory_order_acquire);if(cq_head==cq_tail){if(uring_enter(r->fd,0,1,IORING_ENTER_GETEVENTS)<0){fg_error_set(err,FG_ERR_IO,"wait io_uring read batch: %s",strerror(errno));status=FG_ERR_IO;break;}continue;}while(cq_head<cq_tail&&completed<batch){struct io_uring_cqe *cqe=&r->cqes[cq_head&*r->cq_mask];uint64_t tag=cqe->user_data;uint32_t request=tag?(uint32_t)(tag-1u):UINT32_MAX;if(request>=count)status=FG_ERR_FORMAT;else results[request]=cqe->res;cq_head++;completed++;}atomic_store_explicit((_Atomic unsigned *)r->cq_head,cq_head,memory_order_release);}if(status==FG_ERR_FORMAT)fg_error_set(err,status,"invalid io_uring completion tag");base+=batch;}
+    return status;
+}
 fg_status fg_uring_pread_batch(fg_uring *r,uint32_t slot,const fg_uring_read *reads,uint32_t count,fg_error *err){
-    if(!r||slot>=r->file_count||!reads||!count){fg_error_set(err,FG_ERR_ARGUMENT,"invalid io_uring read batch");return FG_ERR_ARGUMENT;}int *results=malloc((size_t)count*sizeof(*results));if(!results){fg_error_set(err,FG_ERR_OOM,"allocate io_uring completion batch");return FG_ERR_OOM;}for(uint32_t i=0;i<count;i++){uintptr_t begin=(uintptr_t)r->fixed_buffer,address=(uintptr_t)reads[i].buffer;uint64_t displacement=address>=begin?(uint64_t)(address-begin):UINT64_MAX;if(!reads[i].buffer||!reads[i].bytes||!r->buffer_registered||displacement>r->fixed_buffer_bytes||reads[i].bytes>r->fixed_buffer_bytes-displacement){free(results);fg_error_set(err,FG_ERR_ARGUMENT,"read batch item %u is outside the fixed buffer",i);return FG_ERR_ARGUMENT;}results[i]=INT32_MIN;}
-    fg_status status=FG_OK;for(uint32_t base=0;base<count&&status==FG_OK;){uint32_t batch=count-base;if(batch>r->entries)batch=r->entries;unsigned tail=atomic_load_explicit((_Atomic unsigned *)r->sq_tail,memory_order_relaxed),head=atomic_load_explicit((_Atomic unsigned *)r->sq_head,memory_order_acquire);if(tail-head+batch>*r->sq_entries){fg_error_set(err,FG_ERR_LIMIT,"io_uring batch exceeds submission queue");status=FG_ERR_LIMIT;break;}for(uint32_t i=0;i<batch;i++){uint32_t request=base+i,index=(tail+i)&*r->sq_mask;struct io_uring_sqe *sqe=&r->sqes[index];memset(sqe,0,sizeof(*sqe));sqe->opcode=IORING_OP_READ_FIXED;sqe->flags=IOSQE_FIXED_FILE;sqe->fd=(int)slot;sqe->addr=(uint64_t)(uintptr_t)reads[request].buffer;sqe->len=reads[request].bytes;sqe->off=reads[request].offset;sqe->buf_index=0;sqe->user_data=(uint64_t)request+1u;r->sq_array[index]=index;}atomic_store_explicit((_Atomic unsigned *)r->sq_tail,tail+batch,memory_order_release);if(uring_enter(r->fd,batch,batch,IORING_ENTER_GETEVENTS)<0){fg_error_set(err,FG_ERR_IO,"submit io_uring read batch: %s",strerror(errno));status=FG_ERR_IO;break;}uint32_t completed=0;while(completed<batch){unsigned cq_head=atomic_load_explicit((_Atomic unsigned *)r->cq_head,memory_order_acquire),cq_tail=atomic_load_explicit((_Atomic unsigned *)r->cq_tail,memory_order_acquire);if(cq_head==cq_tail){if(uring_enter(r->fd,0,1,IORING_ENTER_GETEVENTS)<0){fg_error_set(err,FG_ERR_IO,"wait io_uring read batch: %s",strerror(errno));status=FG_ERR_IO;break;}continue;}while(cq_head<cq_tail&&completed<batch){struct io_uring_cqe *cqe=&r->cqes[cq_head&*r->cq_mask];uint64_t tag=cqe->user_data;uint32_t request=tag?(uint32_t)(tag-1u):UINT32_MAX;if(request>=count)status=FG_ERR_FORMAT;else results[request]=cqe->res;cq_head++;completed++;}atomic_store_explicit((_Atomic unsigned *)r->cq_head,cq_head,memory_order_release);}if(status==FG_ERR_FORMAT)fg_error_set(err,status,"invalid io_uring completion tag");base+=batch;}
-    for(uint32_t i=0;status==FG_OK&&i<count;i++){if(results[i]<0){fg_error_set(err,FG_ERR_IO,"io_uring read batch item %u: %s",i,strerror(-results[i]));status=FG_ERR_IO;}else if((uint32_t)results[i]!=reads[i].bytes){fg_error_set(err,FG_ERR_IO,"short read batch item %u: got %d of %u bytes",i,results[i],reads[i].bytes);status=FG_ERR_IO;}}free(results);return status;
+    if(!reads||!count){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid io_uring read batch");
+        return FG_ERR_ARGUMENT;
+    }
+    for(uint32_t base=0;base<count;){
+        int32_t results[256];
+        uint32_t batch=count-base;
+        if(batch>256u)batch=256u;
+        fg_status status=fg_uring_pread_batch_results(
+            r,slot,reads+base,batch,results,256u,err);
+        if(status!=FG_OK)return status;
+        for(uint32_t i=0;i<batch;i++){
+            if(results[i]<0){
+                fg_error_set(err,FG_ERR_IO,"io_uring read batch item %u: %s",
+                             base+i,strerror(-results[i]));
+                return FG_ERR_IO;
+            }
+            if((uint32_t)results[i]!=reads[base+i].bytes){
+                fg_error_set(err,FG_ERR_IO,
+                             "short read batch item %u: got %d of %u bytes",
+                             base+i,results[i],reads[base+i].bytes);
+                return FG_ERR_IO;
+            }
+        }
+        base+=batch;
+    }
+    return FG_OK;
 }
 fg_status fg_uring_pwrite_batch(fg_uring *r,uint32_t slot,const fg_uring_read *writes,uint32_t count,fg_error *err){
     if(!r||slot>=r->file_count||!writes||!count){fg_error_set(err,FG_ERR_ARGUMENT,"invalid io_uring write batch");return FG_ERR_ARGUMENT;}int *results=malloc((size_t)count*sizeof(*results));if(!results){fg_error_set(err,FG_ERR_OOM,"allocate io_uring completion batch");return FG_ERR_OOM;}for(uint32_t i=0;i<count;i++){uintptr_t begin=(uintptr_t)r->fixed_buffer,address=(uintptr_t)writes[i].buffer;uint64_t displacement=address>=begin?(uint64_t)(address-begin):UINT64_MAX;if(!writes[i].buffer||!writes[i].bytes||!r->buffer_registered||displacement>r->fixed_buffer_bytes||writes[i].bytes>r->fixed_buffer_bytes-displacement){free(results);fg_error_set(err,FG_ERR_ARGUMENT,"write batch item %u is outside the fixed buffer",i);return FG_ERR_ARGUMENT;}results[i]=INT32_MIN;}
@@ -123,6 +171,7 @@ uint64_t fg_uring_host_bytes(const fg_uring *r){
 struct fg_uring{int unavailable;};
 fg_status fg_uring_create(fg_uring **out,fg_ring_class c,uint32_t n,fg_error *e){(void)out;(void)c;(void)n;fg_error_set(e,FG_ERR_UNAVAILABLE,"Flash Gordon requires Linux io_uring");return FG_ERR_UNAVAILABLE;}
 void fg_uring_destroy(fg_uring *r){(void)r;}fg_status fg_uring_register_file(fg_uring*r,int f,uint32_t*s,fg_error*e){(void)r;(void)f;(void)s;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_register_buffer(fg_uring*r,void*b,uint64_t n,fg_error*e){(void)r;(void)b;(void)n;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_pread(fg_uring*r,uint32_t s,void*b,uint32_t n,uint64_t o,fg_error*e){(void)r;(void)s;(void)b;(void)n;(void)o;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_pread_batch(fg_uring*r,uint32_t s,const fg_uring_read*q,uint32_t n,fg_error*e){(void)r;(void)s;(void)q;(void)n;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_pwrite_batch(fg_uring*r,uint32_t s,const fg_uring_read*q,uint32_t n,fg_error*e){(void)r;(void)s;(void)q;(void)n;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_pwrite(fg_uring*r,uint32_t s,const void*b,uint32_t n,uint64_t o,fg_error*e){(void)r;(void)s;(void)b;(void)n;(void)o;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_send_all(fg_uring*r,uint32_t s,const void*b,uint32_t n,fg_error*e){(void)r;(void)s;(void)b;(void)n;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_recv_all(fg_uring*r,uint32_t s,void*b,uint32_t n,fg_error*e){(void)r;(void)s;(void)b;(void)n;return fg_uring_create(NULL,0,0,e);}
+fg_status fg_uring_pread_batch_results(fg_uring*r,uint32_t s,const fg_uring_read*q,uint32_t n,int32_t*x,uint32_t c,fg_error*e){(void)r;(void)s;(void)q;(void)n;(void)x;(void)c;return fg_uring_create(NULL,0,0,e);}
 fg_status fg_uring_prep_recv(fg_uring*r,uint32_t s,void*b,uint32_t n,uint64_t t,fg_error*e){(void)r;(void)s;(void)b;(void)n;(void)t;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_prep_send(fg_uring*r,uint32_t s,const void*b,uint32_t n,uint64_t t,fg_error*e){(void)r;(void)s;(void)b;(void)n;(void)t;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_flush(fg_uring*r,uint32_t n,fg_error*e){(void)r;(void)n;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_reap(fg_uring*r,uint32_t m,fg_uring_cqe*o,uint32_t c,uint32_t*d,fg_error*e){(void)r;(void)m;(void)o;(void)c;(void)d;return fg_uring_create(NULL,0,0,e);}
 uint64_t fg_uring_host_bytes(const fg_uring*r){(void)r;return 0u;}
 #endif

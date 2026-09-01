@@ -1,0 +1,56 @@
+#version 460
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Selected { uint selected[]; };
+layout(set = 0, binding = 1) buffer Tiles { uint tiles[]; };
+
+layout(push_constant) uniform Push {
+    uint pairs;
+    uint experts;
+    uint tile_capacity;
+} pc;
+
+const uint PAIR_TILE = 16u;
+const uint TILE_WORDS = 17u;
+const uint INVALID = 0xffffffffu;
+shared uint counts[512];
+shared uint offsets[512];
+shared uint starts[512];
+shared uint tile_offsets[512];
+
+void main() {
+    uint lid = gl_LocalInvocationID.x;
+    for (uint segment = 0u; segment < 2u; segment++) {
+        uint expert = lid + segment * 256u;
+        counts[expert] = 0u;
+    }
+    for (uint word = lid; word < pc.tile_capacity * TILE_WORDS; word += 256u)
+        tiles[word] = INVALID;
+    barrier();
+
+    for (uint pair = lid; pair < pc.pairs; pair += 256u)
+        atomicAdd(counts[selected[pair]], 1u);
+    barrier();
+
+    if (lid == 0u) {
+        uint pair_offset = 0u;
+        uint tile_offset = 0u;
+        for (uint expert = 0u; expert < pc.experts; expert++) {
+            offsets[expert] = pair_offset;
+            starts[expert] = pair_offset;
+            tile_offsets[expert] = tile_offset;
+            pair_offset += counts[expert];
+            tile_offset += (counts[expert] + PAIR_TILE - 1u) / PAIR_TILE;
+        }
+    }
+    barrier();
+
+    for (uint pair = lid; pair < pc.pairs; pair += 256u) {
+        uint expert = selected[pair];
+        uint rank = atomicAdd(offsets[expert], 1u) - starts[expert];
+        uint base = (tile_offsets[expert] + rank / PAIR_TILE) * TILE_WORDS;
+        if ((rank & (PAIR_TILE - 1u)) == 0u) tiles[base] = expert;
+        tiles[base + 1u + (rank & (PAIR_TILE - 1u))] = pair;
+    }
+}

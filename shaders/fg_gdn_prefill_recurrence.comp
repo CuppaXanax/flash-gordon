@@ -1,0 +1,72 @@
+#version 450
+
+layout(local_size_x=32,local_size_y=1,local_size_z=1)in;
+
+layout(set=0,binding=0)readonly buffer QKV{float qkv[];};
+layout(set=0,binding=1)readonly buffer Alpha{float alpha[];};
+layout(set=0,binding=2)readonly buffer Beta{float beta[];};
+layout(set=0,binding=3)readonly buffer ADecay{float a_decay[];};
+layout(set=0,binding=4)readonly buffer DtBias{float dt_bias[];};
+layout(set=0,binding=5)buffer RecurrentState{float recurrent[];};
+layout(set=0,binding=6)writeonly buffer RawOutput{float raw_output[];};
+
+layout(push_constant)uniform Push{uint tokens;}pc;
+
+shared float reduction[32];
+
+float softplus(float value){
+    return max(value,0.0)+log(1.0+exp(-abs(value)));
+}
+
+float reduce_add_32(float value){
+    uint lane=gl_LocalInvocationID.x;
+    reduction[lane]=value;
+    barrier();
+    for(uint stride=16u;stride>0u;stride>>=1u){
+        if(lane<stride)reduction[lane]+=reduction[lane+stride];
+        barrier();
+    }
+    float result=reduction[0];
+    barrier();
+    return result;
+}
+
+void main(){
+    uint lane=gl_LocalInvocationID.x;
+    uint head=gl_WorkGroupID.x;
+    uint col=gl_WorkGroupID.z;
+    uint key_head=head%16u;
+    uint state_base=head*16384u;
+    float state_rows[4];
+    for(uint r=0u;r<4u;r++){
+        uint row=lane+32u*r;
+        state_rows[r]=recurrent[state_base+row*128u+col];
+    }
+    for(uint token=0u;token<pc.tokens;token++){
+        uint token_base=token*10240u;
+        uint q_base=token_base+key_head*128u;
+        uint k_base=token_base+2048u+key_head*128u;
+        float decay=exp(a_decay[head]*softplus(
+            alpha[token*48u+head]+dt_bias[head]));
+        float partial=0.0;
+        for(uint r=0u;r<4u;r++){
+            uint row=lane+32u*r;
+            partial=fma(state_rows[r]*decay,qkv[k_base+row],partial);
+        }
+        float memory_col=reduce_add_32(partial);
+        float mix=1.0/(1.0+exp(-beta[token*48u+head]));
+        float delta_col=(qkv[token_base+4096u+head*128u+col]-memory_col)*mix;
+        float output_partial=0.0;
+        for(uint r=0u;r<4u;r++){
+            uint row=lane+32u*r;
+            state_rows[r]=fma(qkv[k_base+row],delta_col,state_rows[r]*decay);
+            output_partial=fma(state_rows[r],qkv[q_base+row],output_partial);
+        }
+        float output_col=reduce_add_32(output_partial);
+        if(lane==0u)raw_output[token*6144u+head*128u+col]=output_col;
+    }
+    for(uint r=0u;r<4u;r++){
+        uint row=lane+32u*r;
+        recurrent[state_base+row*128u+col]=state_rows[r];
+    }
+}

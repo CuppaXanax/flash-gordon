@@ -26,7 +26,8 @@ static bool read_metadata_value(FILE *f,uint32_t type,const char *key,uint32_t *
     return skip_value(f,type,alignment);
 }
 
-static bool type_layout(uint32_t type,uint32_t *block,uint32_t *bytes){
+bool fg_gguf_type_layout(uint32_t type,uint32_t *block,uint32_t *bytes){
+    if(!block||!bytes)return false;
     switch(type){
         case 0:*block=1;*bytes=4;return true;case 1:*block=1;*bytes=2;return true;
         case 2:*block=32;*bytes=18;return true;case 3:*block=32;*bytes=20;return true;
@@ -48,6 +49,22 @@ static bool type_layout(uint32_t type,uint32_t *block,uint32_t *bytes){
     }
 }
 
+bool fg_gguf_tensor_bytes(uint32_t type,uint32_t dims,const uint64_t shape[FG_GGUF_MAX_DIMS],
+                          uint64_t *bytes){
+    if(bytes)*bytes=0u;
+    if(!shape||!bytes||!dims||dims>FG_GGUF_MAX_DIMS)return false;
+    uint64_t elements=1u;uint32_t block=0u,block_bytes=0u;
+    for(uint32_t dimension=0;dimension<dims;dimension++){
+        if(!shape[dimension]||elements>UINT64_MAX/shape[dimension])return false;
+        elements*=shape[dimension];
+    }
+    if(!fg_gguf_type_layout(type,&block,&block_bytes)||elements%block)return false;
+    uint64_t blocks=elements/block;
+    if(blocks>UINT64_MAX/block_bytes)return false;
+    *bytes=blocks*block_bytes;
+    return true;
+}
+
 static fg_status parse_shard(const char *path,uint32_t shard,fg_gguf *g,fg_error *err){
     FILE *f=fopen(path,"rb");if(!f){fg_error_set(err,FG_ERR_IO,"open GGUF %s: %s",path,strerror(errno));return FG_ERR_IO;}uint32_t magic,version;uint64_t nt,nkv;
     if(!read_u32(f,&magic)||!read_u32(f,&version)||!read_u64(f,&nt)||!read_u64(f,&nkv)||magic!=GGUF_MAGIC||version<2||version>3||nt>FG_MAX_TENSORS*32ull||nkv>(1u<<20)){fclose(f);fg_error_set(err,FG_ERR_FORMAT,"invalid GGUF header in %s",path);return FG_ERR_FORMAT;}
@@ -57,7 +74,7 @@ static fg_status parse_shard(const char *path,uint32_t shard,fg_gguf *g,fg_error
     for(uint64_t i=0;i<nt;i++){
         fg_gguf_tensor *t=&g->tensors[base+i];t->name=read_string(f);if(!t->name||!read_u32(f,&t->dims)||t->dims<1||t->dims>FG_GGUF_MAX_DIMS){fclose(f);fg_error_set(err,FG_ERR_FORMAT,"invalid tensor descriptor in %s",path);return FG_ERR_FORMAT;}
         uint64_t elements=1;for(uint32_t d=0;d<t->dims;d++){if(!read_u64(f,&t->shape[d])||t->shape[d]==0||elements>UINT64_MAX/t->shape[d]){fclose(f);fg_error_set(err,FG_ERR_FORMAT,"invalid tensor shape %s",t->name);return FG_ERR_FORMAT;}elements*=t->shape[d];}
-        uint64_t relative;uint32_t block,block_bytes;if(!read_u32(f,&t->type)||!read_u64(f,&relative)||!type_layout(t->type,&block,&block_bytes)||elements%block){fclose(f);fg_error_set(err,FG_ERR_FORMAT,"unsupported tensor type/shape for %s (type %u)",t->name,t->type);return FG_ERR_FORMAT;}t->bytes=(elements/block)*block_bytes;t->offset=relative;t->shard=shard;
+        uint64_t relative;if(!read_u32(f,&t->type)||!read_u64(f,&relative)||!fg_gguf_tensor_bytes(t->type,t->dims,t->shape,&t->bytes)){fclose(f);fg_error_set(err,FG_ERR_FORMAT,"unsupported tensor type/shape for %s (type %u)",t->name,t->type);return FG_ERR_FORMAT;}t->offset=relative;t->shard=shard;
     }
     long pos=ftell(f);if(pos<0){fclose(f);fg_error_set(err,FG_ERR_IO,"tell GGUF %s",path);return FG_ERR_IO;}uint64_t data=fg_align_up_u64((uint64_t)pos,alignment);for(uint64_t i=0;i<nt;i++)g->tensors[base+i].offset+=data;g->tensor_count=new_count;g->alignment=alignment;fclose(f);return FG_OK;
 }

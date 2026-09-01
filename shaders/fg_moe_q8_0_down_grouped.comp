@@ -1,0 +1,78 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Weights { uint wb[]; };
+layout(set = 0, binding = 1) readonly buffer Tiles { uint tiles[]; };
+layout(set = 0, binding = 2) readonly buffer Input { vec4 x4[]; };
+layout(set = 0, binding = 3) writeonly buffer Output { float y[]; };
+
+layout(push_constant) uniform Push {
+    uint out_dim;
+    uint in_dim;
+    uint row_bytes;
+    uint expert_stride;
+    uint tokens;
+} pc;
+
+const uint TOP_K = 10u;
+const uint PAIR_TILE = 16u;
+const uint TILE_WORDS = 17u;
+const uint INVALID = 0xffffffffu;
+shared uint pair_ids[PAIR_TILE];
+shared float sums[PAIR_TILE][64];
+
+void main() {
+    uint local_id = gl_LocalInvocationID.x;
+    uint row_slot = local_id >> 3u;
+    uint lane = local_id & 7u;
+    uint row = gl_WorkGroupID.x * 8u + row_slot;
+    uint tile_base = gl_WorkGroupID.y * TILE_WORDS;
+    uint expert = tiles[tile_base];
+    if (expert == INVALID) return;
+    if (local_id < PAIR_TILE) pair_ids[local_id] = tiles[tile_base + 1u + local_id];
+    bool row_live = row < pc.out_dim;
+    float accumulators[PAIR_TILE];
+    for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++)
+        accumulators[pair_slot] = 0.0;
+    barrier();
+
+    uint blocks = pc.in_dim / 32u;
+    uint row_base = expert * pc.expert_stride + row * pc.row_bytes;
+    for (uint block = 0u; block < blocks; block++) {
+        uint block_base = row_base + block * 34u;
+        uint scale_word = row_live ? wb[block_base >> 2u] : 0u;
+        float delta = (block_base & 2u) == 0u ?
+            unpackHalf2x16(scale_word).x : unpackHalf2x16(scale_word).y;
+        uint qbase = block_base + 2u + lane * 4u;
+        uint packed = row_live ? ((qbase & 2u) == 0u ? wb[qbase >> 2u] :
+            (wb[qbase >> 2u] >> 16u) | (wb[(qbase >> 2u) + 1u] << 16u)) : 0u;
+        vec4 weight_value = vec4(unpack8(int(packed))) * delta;
+        for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++) {
+            uint pair = pair_ids[pair_slot];
+            if (pair == INVALID) continue;
+            vec4 input_value = x4[pair * (pc.in_dim >> 2u) + block * 8u + lane];
+            accumulators[pair_slot] = fma(weight_value.x, input_value.x, accumulators[pair_slot]);
+            accumulators[pair_slot] = fma(weight_value.y, input_value.y, accumulators[pair_slot]);
+            accumulators[pair_slot] = fma(weight_value.z, input_value.z, accumulators[pair_slot]);
+            accumulators[pair_slot] = fma(weight_value.w, input_value.w, accumulators[pair_slot]);
+        }
+    }
+    for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++)
+        sums[pair_slot][local_id] = accumulators[pair_slot];
+    barrier();
+    if (row_live && lane == 0u) {
+        uint offset = row_slot * 8u;
+        for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++) {
+            uint pair = pair_ids[pair_slot];
+            if (pair == INVALID || pair >= pc.tokens * TOP_K) continue;
+            float value =
+                ((sums[pair_slot][offset] + sums[pair_slot][offset + 4u]) +
+                 (sums[pair_slot][offset + 2u] + sums[pair_slot][offset + 6u])) +
+                ((sums[pair_slot][offset + 1u] + sums[pair_slot][offset + 5u]) +
+                 (sums[pair_slot][offset + 3u] + sums[pair_slot][offset + 7u]));
+            y[pair * pc.out_dim + row] = value;
+        }
+    }
+}

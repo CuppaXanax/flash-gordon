@@ -1351,8 +1351,10 @@ fg_status fg_chat_main_with_options(const char *manifest_path, uint32_t max_toke
                 stats.decode_seconds > 0.0 ? (double)stats.generated_tokens / stats.decode_seconds :
                                              0.0;
             fprintf(stderr,
-                    "[prefix %s, reused %u, reset %s; prefill %u/%u tokens, %.2f tok/s; "
+                    "[mode %s; prefix %s, reused %u, reset %s; "
+                    "prefill %u/%u tokens, %.2f tok/s; "
                     "generation %u tokens, %.2f tok/s; context %u/%u]\n",
+                    fg_execution_mode_name(stats.execution_mode),
                     stats.prefix_cache_hit ? "hit" : "miss", stats.reused_tokens,
                     fg_prefix_reset_reason_name(stats.reset_reason), stats.prefilled_tokens,
                     stats.prompt_tokens, prefill_tps, stats.generated_tokens, decode_tps,

@@ -1,0 +1,131 @@
+#version 460
+layout(local_size_x=128,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Query{float query[];};
+layout(set=0,binding=1)readonly buffer Keys0{uint keys_0[];};
+layout(set=0,binding=2)readonly buffer Keys1{uint keys_1[];};
+layout(set=0,binding=3)readonly buffer Norm{float norm_weight[];};
+layout(set=0,binding=4)readonly buffer Positions{uint positions[];};
+layout(set=0,binding=5)writeonly buffer Scores{float output_scores[];};
+layout(set=0,binding=6)writeonly buffer Ids{uint output_ids[];};
+layout(push_constant)uniform Push{
+    uint first_token;
+    uint query_tokens;
+    uint capacity;
+    uint segment_capacity;
+    uint group_count;
+}pc;
+shared float values[4096];
+shared uint indices[4096];
+shared float key_value[128];
+shared float reduce_value[128];
+shared float head_sum[4];
+uint load_byte(uint token,uint byte_in_key){
+    uint segment=token/pc.segment_capacity;
+    uint local_token=token-segment*pc.segment_capacity;
+    uint byte_offset=local_token*136u+byte_in_key;
+    uint word=segment==0u?keys_0[byte_offset>>2u]:keys_1[byte_offset>>2u];
+    return(word>>((byte_offset&3u)*8u))&255u;
+}
+float load_q8(uint token,uint element){
+    uint block=element>>5u,inside=element&31u,base=block*34u;
+    uint half_bits=load_byte(token,base)|(load_byte(token,base+1u)<<8u);
+    int q=int(load_byte(token,base+2u+inside));
+    if(q>=128)q-=256;
+    return unpackHalf2x16(half_bits).x*float(q);
+}
+bool better(float a,uint ai,float b,uint bi){
+    if(ai==0xffffffffu)return false;
+    if(bi==0xffffffffu)return true;
+    bool af=isnan(a)||isinf(a),bf=isnan(b)||isinf(b);
+    if(af!=bf)return !af;
+    return a>b||(a==b&&ai<bi);
+}
+void main(){
+    uint lane=gl_LocalInvocationID.x;
+    uint group=gl_WorkGroupID.x;
+    uint query_slot=gl_WorkGroupID.y;
+    if(query_slot>=pc.query_tokens||group>=pc.group_count)return;
+    uint visible_tokens=pc.first_token+query_slot+1u;
+    uint visible_blocks=visible_tokens/4u;
+    uint output_base=(query_slot*pc.group_count+group)*512u;
+    if(visible_blocks<=512u){
+        for(uint i=lane;i<512u;i+=128u){
+            bool valid=group==0u&&i<visible_blocks;
+            output_scores[output_base+i]=valid?0.0:-1.0/0.0;
+            output_ids[output_base+i]=valid?i:0xffffffffu;
+        }
+        return;
+    }
+    uint block_base=group*4096u;
+    for(uint local_block=0u;local_block<4096u;local_block++){
+        uint block=block_base+local_block;
+        if(block<visible_blocks){
+            uint first=block*4u;
+            float pooled=0.0;
+            for(uint t=0u;t<4u;t++)pooled+=load_q8(first+t,lane)*0.25;
+            key_value[lane]=pooled;
+            reduce_value[lane]=pooled*pooled;
+            barrier();
+            for(uint stride=64u;stride>0u;stride>>=1u){
+                if(lane<stride)reduce_value[lane]+=reduce_value[lane+stride];
+                barrier();
+            }
+            key_value[lane]=pooled*inversesqrt(reduce_value[0]/128.0+1e-6)*
+                norm_weight[lane];
+            barrier();
+            if(lane<32u){
+                uint axis=(lane%3u==1u)?1u:((lane%3u==2u&&lane<30u)?2u:0u);
+                float angle=float(positions[first*3u+axis])/
+                    pow(10000000.0,float(2u*lane)/64.0);
+                float c=cos(angle),s=sin(angle),a=key_value[lane],
+                    b=key_value[lane+32u];
+                key_value[lane]=a*c-b*s;
+                key_value[lane+32u]=b*c+a*s;
+            }
+            barrier();
+            for(uint head=0u;head<4u;head++){
+                reduce_value[lane]=query[(query_slot*4u+head)*128u+lane]*
+                    key_value[lane];
+                barrier();
+                for(uint stride=64u;stride>0u;stride>>=1u){
+                    if(lane<stride)reduce_value[lane]+=reduce_value[lane+stride];
+                    barrier();
+                }
+                if(lane==0u)head_sum[head]=max(reduce_value[0],0.0);
+                barrier();
+            }
+            if(lane==0u){
+                values[local_block]=(head_sum[0]+head_sum[1]+head_sum[2]+
+                    head_sum[3])*0.08838834764831845;
+                indices[local_block]=block;
+            }
+        }else if(lane==0u){
+            values[local_block]=-1.0/0.0;
+            indices[local_block]=0xffffffffu;
+        }
+        barrier();
+    }
+    for(uint width=2u;width<=4096u;width<<=1u)
+        for(uint stride=width>>1u;stride>0u;stride>>=1u){
+            for(uint i=lane;i<4096u;i+=128u){
+                uint other=i^stride;
+                if(other>i){
+                    bool descending=(i&width)==0u;
+                    bool swap=descending?
+                        !better(values[i],indices[i],values[other],indices[other]):
+                        better(values[i],indices[i],values[other],indices[other]);
+                    if(swap){
+                        float score=values[i];values[i]=values[other];
+                        values[other]=score;
+                        uint id=indices[i];indices[i]=indices[other];
+                        indices[other]=id;
+                    }
+                }
+            }
+            barrier();
+        }
+    for(uint i=lane;i<512u;i+=128u){
+        output_scores[output_base+i]=values[i];
+        output_ids[output_base+i]=indices[i];
+    }
+}

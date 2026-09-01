@@ -7,6 +7,11 @@ typedef struct fg_vk_context fg_vk_context;
 typedef struct fg_vk_tensor fg_vk_tensor;
 typedef struct fg_vk_expert_graph fg_vk_expert_graph;
 
+#define FG_VK_PREFILL_PAIR_TILE 16u
+#define FG_VK_PREFILL_TILE_WORDS (1u+FG_VK_PREFILL_PAIR_TILE)
+#define FG_VK_GDN_PIPELINE_PREFILL_MAX_TOKENS 128u
+#define FG_VK_GDN_PIPELINE_PREFILL_DISPATCHES 3u
+
 typedef enum fg_vk_tensor_format {
     FG_VK_TENSOR_FORMAT_DEFAULT = 0,
     FG_VK_TENSOR_FORMAT_Q8_0_COOKED = 1,
@@ -114,6 +119,14 @@ fg_status fg_vk_dense_q8_0_cooked(fg_vk_context *context,fg_vk_tensor *output,
                                   const fg_vk_tensor *weights,const fg_vk_tensor *input,
                                   uint32_t input_width,uint32_t output_width,
                                   uint32_t tokens,float scale,fg_error *err);
+fg_status fg_vk_dense_q8_0_cooked_prefill(fg_vk_context *context,
+                                          fg_vk_tensor *output,
+                                          const fg_vk_tensor *weights,
+                                          const fg_vk_tensor *input,
+                                          uint32_t input_width,
+                                          uint32_t output_width,
+                                          uint32_t tokens,float scale,
+                                          fg_error *err);
 fg_status fg_vk_dense_q8_0_cooked_split(fg_vk_context *context,fg_vk_tensor *output,
                                         fg_vk_tensor *partials,const fg_vk_tensor *weights,
                                         const fg_vk_tensor *input,uint32_t input_width,
@@ -196,6 +209,18 @@ fg_status fg_vk_gdn_recurrent_prefill(fg_vk_context *context,fg_vk_tensor *outpu
                                       const fg_vk_tensor *dt_bias,const fg_vk_tensor *norm_weight,
                                       uint32_t value_heads,uint32_t key_heads,uint32_t head_dim,
                                       uint32_t tokens,float epsilon,fg_error *err);
+fg_status fg_vk_gdn_recurrent_prefill_pipeline(fg_vk_context *context,
+                                               fg_vk_tensor *output,
+                                               fg_vk_tensor *state,
+                                               fg_vk_tensor *qkv,
+                                               const fg_vk_tensor *z,
+                                               const fg_vk_tensor *alpha,
+                                               const fg_vk_tensor *beta,
+                                               const fg_vk_tensor *a_decay,
+                                               const fg_vk_tensor *dt_bias,
+                                               const fg_vk_tensor *norm_weight,
+                                               uint32_t tokens,float epsilon,
+                                               fg_error *err);
 fg_status fg_vk_qsa_index_score(fg_vk_context *context,fg_vk_tensor *scores,
                                 fg_vk_tensor *block_ids,
                                 const fg_vk_tensor *query,const fg_vk_tensor *index_keys_q8,
@@ -255,9 +280,40 @@ fg_status fg_vk_qsa_record_gather(fg_vk_context *context,fg_vk_tensor *output,
 fg_status fg_vk_qsa_attention(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *records,
                               const fg_vk_tensor *query,const fg_vk_tensor *gate,
                               uint32_t selected_count,fg_error *err);
+fg_status fg_vk_qsa_resident_record_commit(
+    fg_vk_context *context,fg_vk_tensor *record_segment_0,
+    fg_vk_tensor *record_segment_1,fg_vk_tensor *index_segment_0,
+    fg_vk_tensor *index_segment_1,const fg_vk_tensor *keys_q8,
+    const fg_vk_tensor *values_q8,const fg_vk_tensor *index_keys_q8,
+    const fg_vk_tensor *positions,uint32_t first_token,uint32_t token_count,
+    uint32_t capacity,uint32_t segment_capacity,fg_error *err);
+fg_status fg_vk_qsa_resident_select(
+    fg_vk_context *context,fg_vk_tensor *scores_0,fg_vk_tensor *ids_0,
+    fg_vk_tensor *scores_1,fg_vk_tensor *ids_1,const fg_vk_tensor *query,
+    const fg_vk_tensor *index_segment_0,const fg_vk_tensor *index_segment_1,
+    const fg_vk_tensor *key_norm,const fg_vk_tensor *positions,
+    uint32_t first_token,uint32_t query_tokens,uint32_t capacity,
+    uint32_t segment_capacity,uint32_t *final_side,fg_error *err);
+fg_status fg_vk_qsa_resident_attention(
+    fg_vk_context *context,fg_vk_tensor *output,
+    const fg_vk_tensor *record_segment_0,const fg_vk_tensor *record_segment_1,
+    const fg_vk_tensor *selected_blocks,const fg_vk_tensor *query,
+    const fg_vk_tensor *gate,uint32_t first_token,uint32_t query_tokens,
+    uint32_t capacity,uint32_t segment_capacity,uint32_t selected_stride,
+    fg_error *err);
 fg_status fg_vk_topk_reduce(fg_vk_context *context,fg_vk_tensor *output_scores,fg_vk_tensor *output_ids,
                             const fg_vk_tensor *input_scores,const fg_vk_tensor *input_ids,
                             uint32_t count,uint32_t *output_count,fg_error *err);
+fg_status fg_vk_router_top10(fg_vk_context *context,fg_vk_tensor *selected,
+                             fg_vk_tensor *gates,const fg_vk_tensor *logits,
+                             uint32_t experts,uint32_t tokens,fg_error *err);
+fg_status fg_vk_expert_major_pack(fg_vk_context *context,fg_vk_tensor *tiles,
+                                  const fg_vk_tensor *selected,uint32_t experts,
+                                  uint32_t tokens,fg_error *err);
+fg_status fg_vk_decode_tile_schedule(fg_vk_context *context,
+                                     fg_vk_tensor *tiles,
+                                     const fg_vk_tensor *selected,
+                                     fg_error *err);
 fg_status fg_vk_argmax_reduce(fg_vk_context *context,fg_vk_tensor *output_scores,
                                                             fg_vk_tensor *output_ids,const fg_vk_tensor *input_scores,
                                                             const fg_vk_tensor *input_ids,uint32_t count,
@@ -302,6 +358,44 @@ fg_status fg_vk_moe_kquant_cooked(fg_vk_context *context,fg_vk_tensor *output,
                                         uint32_t expert_stride,uint32_t used_experts,
                                         uint32_t routed_pairs,bool packed_weights,
                                         uint32_t tile_count,fg_error *err);
+fg_status fg_vk_moe_kquant_cooked_grouped(fg_vk_context *context,
+                                         fg_vk_tensor *output,
+                                         const fg_vk_tensor *weights,
+                                         const fg_vk_tensor *activation_q8k,
+                                         const fg_vk_tensor *tiles,
+                                         uint32_t ggml_type,
+                                         uint32_t output_width,
+                                         uint32_t input_width,
+                                         uint32_t expert_stride,
+                                         uint32_t weight_experts,
+                                         uint32_t tokens,fg_error *err);
+fg_status fg_vk_moe_q5_1_down_cooked_grouped(fg_vk_context *context,
+                                            fg_vk_tensor *output,
+                                            const fg_vk_tensor *weights,
+                                            const fg_vk_tensor *tiles,
+                                            const fg_vk_tensor *input,
+                                            uint32_t output_width,
+                                            uint32_t input_width,
+                                            uint32_t expert_stride,
+                                            uint32_t weight_experts,
+                                            uint32_t tokens,fg_error *err);
+fg_status fg_vk_moe_q8_0_down_grouped(fg_vk_context *context,
+                                      fg_vk_tensor *output,
+                                      const fg_vk_tensor *weights,
+                                      const fg_vk_tensor *tiles,
+                                      const fg_vk_tensor *input,
+                                      uint32_t output_width,
+                                      uint32_t input_width,
+                                      uint32_t expert_stride,
+                                      uint32_t weight_experts,
+                                      uint32_t tokens,fg_error *err);
+fg_status fg_vk_moe_prefill_reduce(fg_vk_context *context,fg_vk_tensor *output,
+                                   const fg_vk_tensor *expert_output,
+                                   const fg_vk_tensor *gates,
+                                   const fg_vk_tensor *shared_output,
+                                   const fg_vk_tensor *shared_logit,
+                                   uint32_t width,uint32_t tokens,
+                                   fg_error *err);
 
 /* GPU timestamp-profiled kernel benchmark. Reports per-shape:
     A. raw GPU kernel GB/s (no inter-dispatch barriers)

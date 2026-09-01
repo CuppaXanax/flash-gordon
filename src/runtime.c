@@ -1,5 +1,6 @@
 #include "fg_runtime.h"
 #include "fg_expert.h"
+#include "fg_embedding.h"
 #include "fg_fabric.h"
 #include "fg_model.h"
 #include "fg_ngram.h"
@@ -11,6 +12,9 @@
 #include "fg_qsa_owner.h"
 #include "fg_qsa_replica.h"
 #include "fg_qsa_state.h"
+#include "fg_pipeline.h"
+#include "fg_pipeline_runtime.h"
+#include "fg_stage.h"
 #include "fg_tokenizer.h"
 #include "fg_uring.h"
 
@@ -807,7 +811,68 @@ static fg_status begin_session(fg_fabric *fabric,const fg_manifest *manifest,
     return status;
 }
 
-static fg_status handle_ngram_work(fg_fabric *fabric,const fg_ngram_resident *resident,uint32_t self,uint64_t session_id,uint32_t peer,const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,fg_error *err){fg_ngram_work work;fg_status status=fg_ngram_work_decode(&work,payload,bytes,err);uint64_t request=fg_frame_request_id(header);if(status==FG_OK&&(!session_id||request!=session_id||peer!=0u||work.source_rank!=0u||work.destination_rank!=self||fg_frame_sequence(header)!=work.token_index)){fg_error_set(err,FG_ERR_MISMATCH,"stale or misrouted resident n-gram work");status=FG_ERR_MISMATCH;}fg_ngram_result result={.source_rank=(uint8_t)self,.destination_rank=0u,.item_count=work.item_count,.token_index=work.token_index};if(status==FG_OK){memcpy(result.heads,work.heads,work.item_count);status=fg_ngram_resident_read(resident,work.rows,work.item_count,result.packed,sizeof(result.packed),err);}uint8_t wire[FG_NGRAM_RESULT_MAX_BYTES];uint32_t result_bytes=0;if(status==FG_OK)status=fg_ngram_result_encode(wire,sizeof(wire),&result_bytes,&result,err);if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,FG_MSG_NGRAM_RESULT,request,work.token_index,0,wire,result_bytes,err);return status;}
+static fg_status handle_ngram_work(fg_fabric *fabric,
+                                   const fg_ngram_resident *resident,
+                                   fg_fabric_class result_class,uint32_t self,
+                                   uint64_t session_id,uint32_t peer,
+                                   const fg_frame_header *header,
+                                   const uint8_t *payload,uint32_t bytes,
+                                   fg_error *err){
+    fg_ngram_work work;
+    fg_status status=fg_ngram_work_decode(&work,payload,bytes,err);
+    uint64_t request=fg_frame_request_id(header);
+    if(status==FG_OK&&(!session_id||request!=session_id||peer!=0u||
+       work.source_rank!=0u||work.destination_rank!=self||
+       fg_frame_sequence(header)!=work.token_index)){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "stale or misrouted resident n-gram work");
+        status=FG_ERR_MISMATCH;
+    }
+    fg_ngram_result result={.source_rank=(uint8_t)self,.destination_rank=0u,
+        .item_count=work.item_count,.token_index=work.token_index};
+    if(status==FG_OK){
+        memcpy(result.heads,work.heads,work.item_count);
+        status=fg_ngram_resident_read(resident,work.rows,work.item_count,
+                                      result.packed,sizeof(result.packed),err);
+    }
+    uint8_t wire[FG_NGRAM_RESULT_MAX_BYTES];uint32_t result_bytes=0;
+    if(status==FG_OK)status=fg_ngram_result_encode(
+        wire,sizeof(wire),&result_bytes,&result,err);
+    if(status==FG_OK)status=fg_fabric_send(fabric,0u,result_class,
+        FG_MSG_NGRAM_RESULT,request,work.token_index,0,wire,result_bytes,err);
+    return status;
+}
+
+static fg_status handle_pipeline_ngram_work(
+    fg_fabric *fabric,fg_ngram_pipeline_cache *cache,
+    fg_fabric_class result_class,uint32_t self,uint64_t session_id,
+    uint32_t peer,const fg_frame_header *header,const uint8_t *payload,
+    uint32_t bytes,fg_error *err){
+    fg_ngram_work work;
+    fg_status status=fg_ngram_work_decode(&work,payload,bytes,err);
+    uint64_t request=fg_frame_request_id(header);
+    if(status==FG_OK&&(!session_id||request!=session_id||peer!=0u||
+       work.source_rank!=0u||work.destination_rank!=self||
+       fg_frame_sequence(header)!=work.token_index)){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "stale or misrouted pipeline n-gram work");
+        status=FG_ERR_MISMATCH;
+    }
+    fg_ngram_result result={.source_rank=(uint8_t)self,.destination_rank=0u,
+        .item_count=work.item_count,.token_index=work.token_index};
+    if(status==FG_OK){
+        memcpy(result.heads,work.heads,work.item_count);
+        status=fg_ngram_pipeline_cache_read(
+            cache,work.rows,work.item_count,result.packed,sizeof(result.packed),err);
+    }
+    uint8_t wire[FG_NGRAM_RESULT_MAX_BYTES];uint32_t result_bytes=0u;
+    if(status==FG_OK)status=fg_ngram_result_encode(
+        wire,sizeof(wire),&result_bytes,&result,err);
+    if(status==FG_OK)status=fg_fabric_send(
+        fabric,0u,result_class,FG_MSG_NGRAM_RESULT,request,work.token_index,
+        0u,wire,result_bytes,err);
+    return status;
+}
 
 static fg_status handle_output_work(fg_fabric *fabric,fg_output_executor *output,fg_vk_context *vk,uint32_t self,uint64_t session_id,uint32_t peer,const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,fg_vk_tensor *hyper_tensor,fg_error *err){
     if(self!=4u||!output){fg_error_set(err,FG_ERR_MISMATCH,"output work reached a non-output rank");return FG_ERR_MISMATCH;}
@@ -831,11 +896,223 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_expert_executor *expert,f
     if(!control||!ew_result||!ew_wire){free(ew_wire);free(ew_result);free(control);fg_error_set(err,FG_ERR_OOM,"allocate rank worker buffers");return FG_ERR_OOM;}
     fg_status status=prefill_worker_buffers_create(&prefill,manifest->prefill_microbatch,
                                                    false,err);if(status==FG_OK)status=qsa_owner_runtime_create(&qsa,manifest,self,err);if(status==FG_OK&&output)status=fg_vk_tensor_create(fg_model_vk(model),FG_HYPER_WIDTH*4u,&hyper,err);if(status==FG_OK)status=token_profile_prepare(fg_model_vk(model),err);uint8_t *bulk_receive=prefill.receive;uint32_t bulk_capacity=prefill.receive_capacity;if(qsa.enabled&&qsa.receive_capacity>bulk_capacity){bulk_receive=qsa.receive_wire;bulk_capacity=qsa.receive_capacity;}uint64_t session_id=0;
-    while(status==FG_OK){uint32_t peer=0,bytes=0;fg_frame_header header;fg_fabric_class ready_class;fg_fabric_recv_timing receive_timing={0};receive_timing.poll_start_ns=critical_ns();status=fg_fabric_wait_ready(fabric,3u,&peer,&ready_class,err);receive_timing.ready_ns=critical_ns();if(status!=FG_OK)break;if(ready_class==FG_FABRIC_BULK){status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_BULK,&header,bulk_receive,bulk_capacity,&bytes,&receive_timing,err);fg_message_type type=status==FG_OK?fg_frame_type(&header):0;if(status==FG_OK&&type==FG_MSG_PREFILL_WORK)status=handle_prefill_expert_work(fabric,expert,manifest,self,session_id,peer,&header,bulk_receive,bytes,&prefill,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_APPEND)status=handle_qsa_page_append(&qsa,manifest,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_BARRIER)status=handle_qsa_page_barrier(fabric,&qsa,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_FETCH)status=handle_qsa_page_fetch(fabric,&qsa,manifest,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported bulk message %u",self,type);status=FG_ERR_FORMAT;}continue;}status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_CONTROL,&header,control,control_capacity,&bytes,&receive_timing,err);if(status!=FG_OK)break;fg_message_type type=fg_frame_type(&header);if(type==FG_MSG_DECODE_WORK){if(!session_id||fg_frame_request_id(&header)!=session_id){fg_error_set(err,FG_ERR_MISMATCH,"stale expert work request");status=FG_ERR_MISMATCH;}else status=handle_expert_work(fabric,expert,fg_model_vk(model),self,peer,&header,control,bytes,&receive_timing,ew_result,ew_wire,err);}else if(type==FG_MSG_NGRAM_WORK)status=handle_ngram_work(fabric,ngram,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_SESSION_BEGIN)status=begin_session(fabric,manifest,directory,&qsa,self,peer,&header,control,bytes,&session_id,err);else if(type==FG_MSG_OUTPUT_WORK)status=handle_output_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,err);else{fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported control message %u",self,type);status=FG_ERR_FORMAT;}}
+    while(status==FG_OK){uint32_t peer=0,bytes=0;fg_frame_header header;fg_fabric_class ready_class;fg_fabric_recv_timing receive_timing={0};receive_timing.poll_start_ns=critical_ns();status=fg_fabric_wait_ready(fabric,3u,&peer,&ready_class,err);receive_timing.ready_ns=critical_ns();if(status!=FG_OK)break;if(ready_class==FG_FABRIC_BULK){status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_BULK,&header,bulk_receive,bulk_capacity,&bytes,&receive_timing,err);fg_message_type type=status==FG_OK?fg_frame_type(&header):0;if(status==FG_OK&&type==FG_MSG_PREFILL_WORK)status=handle_prefill_expert_work(fabric,expert,manifest,self,session_id,peer,&header,bulk_receive,bytes,&prefill,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_APPEND)status=handle_qsa_page_append(&qsa,manifest,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_BARRIER)status=handle_qsa_page_barrier(fabric,&qsa,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_FETCH)status=handle_qsa_page_fetch(fabric,&qsa,manifest,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported bulk message %u",self,type);status=FG_ERR_FORMAT;}continue;}status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_CONTROL,&header,control,control_capacity,&bytes,&receive_timing,err);if(status!=FG_OK)break;fg_message_type type=fg_frame_type(&header);if(type==FG_MSG_DECODE_WORK){if(!session_id||fg_frame_request_id(&header)!=session_id){fg_error_set(err,FG_ERR_MISMATCH,"stale expert work request");status=FG_ERR_MISMATCH;}else status=handle_expert_work(fabric,expert,fg_model_vk(model),self,peer,&header,control,bytes,&receive_timing,ew_result,ew_wire,err);    }else if(type==FG_MSG_NGRAM_WORK)status=handle_ngram_work(fabric,ngram,FG_FABRIC_BULK,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_SESSION_BEGIN)status=begin_session(fabric,manifest,directory,&qsa,self,peer,&header,control,bytes,&session_id,err);else if(type==FG_MSG_OUTPUT_WORK)status=handle_output_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,err);else{fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported control message %u",self,type);status=FG_ERR_FORMAT;}}
     fg_vk_tensor_destroy(hyper);qsa_owner_runtime_destroy(&qsa);prefill_worker_buffers_destroy(&prefill);free(ew_wire);free(ew_result);free(control);return status;
 }
 
-fg_status fg_rank_main(const char *path,uint32_t rank,fg_error *err){if(rank>=FG_RANK_COUNT){fg_error_set(err,FG_ERR_ARGUMENT,"rank must be 0..7");return FG_ERR_ARGUMENT;}fg_manifest *manifest=NULL;fg_status status=load_checked(path,&manifest,err);char directory[1024];if(status==FG_OK)status=manifest_directory(path,directory,err);fg_model *model=NULL;fg_expert_executor *expert=NULL;fg_output_executor *output=NULL;fg_ngram_resident *ngram=NULL;fg_fabric *fabric=NULL;if(status==FG_OK)status=fg_model_open(&model,manifest,directory,rank,err);if(status==FG_OK)status=fg_expert_executor_create(&expert,model,err);if(status==FG_OK&&rank==4u)status=fg_output_executor_create(&output,model,err);uint64_t row_begin=0,row_count=0;char ngram_path[1200];if(status==FG_OK)status=fg_q38_ngram_rank_range(rank,&row_begin,&row_count,err);if(status==FG_OK&&snprintf(ngram_path,sizeof(ngram_path),"%s/ngram-rank-%02u.iq4nl",directory,rank)>=(int)sizeof(ngram_path)){fg_error_set(err,FG_ERR_LIMIT,"resident n-gram shard path is too long");status=FG_ERR_LIMIT;}if(status==FG_OK)status=fg_ngram_resident_open(&ngram,ngram_path,row_begin,row_count,err);if(status==FG_OK)status=fg_fabric_open(&fabric,manifest,rank,err);if(status==FG_OK)status=rank_ready(fabric,rank,err);if(status==FG_OK){printf("rank %u READY: %.3f GiB sealed weights, %.3f GiB n-gram rows resident on %s\n",rank,(double)fg_model_weight_bytes(model)/(1024.0*1024.0*1024.0),(double)(row_count*FG_NGRAM_ROW_BYTES)/(1024.0*1024.0*1024.0),fg_vk_device_name(fg_model_vk(model)));fflush(stdout);status=rank_worker_loop(fabric,expert,output,ngram,model,manifest,directory,rank,err);}fg_fabric_close(fabric);fg_ngram_resident_close(ngram);fg_output_executor_destroy(output);fg_expert_executor_destroy(expert);fg_model_close(model);free(manifest);return status;}
+static uint32_t frame_flags(const fg_frame_header *header){
+    return ntohl(header->flags_be);
+}
+
+static fg_status pipeline_worker_begin_session(
+    fg_fabric *fabric,fg_pipeline *pipeline,fg_stage_executor *stage,
+    const fg_manifest *manifest,uint32_t self,const fg_frame_header *header,
+    const uint8_t *payload,uint32_t bytes,uint64_t *session_id,fg_error *err){
+    fg_status status=fg_pipeline_session_begin_validate(
+        header,*session_id,err);
+    if(status!=FG_OK)return status;
+    uint64_t request=fg_frame_request_id(header);
+    uint32_t flags=frame_flags(header);
+    if(*session_id&&!fg_pipeline_is_drained(pipeline)){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "pipeline session changed before the prior drain");
+        return FG_ERR_MISMATCH;
+    }
+    fg_session_identity identity;
+    fg_owner_session_control control;
+    status=fg_session_identity_from_manifest(manifest,&identity,err);
+    if(status==FG_OK)
+        status=fg_owner_session_control_decode(&control,payload,bytes,err);
+    if(status==FG_OK&&
+       (control.operation!=FG_OWNER_SESSION_BEGIN||control.rank!=self||
+        control.session_nonce!=request||
+        control.position_mode!=(fg_position_mode)manifest->session.position_mode||
+        memcmp(control.identity_sha256,identity.identity_sha256,32u)||
+        memcmp(control.state_format_sha256,
+               manifest->session.rank_state_format_sha256[self],32u))){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "pipeline session identity or rank mismatch");
+        status=FG_ERR_MISMATCH;
+    }
+    if(status==FG_OK&&(flags&FG_PIPELINE_SESSION_RESET_FLAG))
+        status=fg_stage_executor_reset(stage,err);
+    if(status==FG_OK)status=fg_pipeline_begin(pipeline,request,0u,err);
+    uint8_t wire[FG_OWNER_SESSION_CONTROL_BYTES];
+    if(status==FG_OK){
+        control.operation=FG_OWNER_SESSION_READY;
+        status=fg_owner_session_control_encode(wire,&control,err);
+    }
+    if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_CONTROL,
+        FG_MSG_SESSION_READY,request,0u,flags,wire,sizeof(wire),err);
+    if(status==FG_OK)*session_id=request;
+    return status;
+}
+
+static fg_status pipeline_rank_worker_loop(
+    fg_fabric *fabric,fg_pipeline *pipeline,fg_stage_executor *stage,
+    fg_ngram_pipeline_cache *ngram,const fg_manifest *manifest,uint32_t self,
+    fg_error *err){
+    uint32_t capacity=FG_OWNER_SESSION_CONTROL_BYTES;
+    if(capacity<FG_NGRAM_WORK_MAX_BYTES)capacity=FG_NGRAM_WORK_MAX_BYTES;
+    uint8_t *control=malloc(capacity);
+    if(!control){
+        fg_error_set(err,FG_ERR_OOM,"allocate pipeline rank control buffer");
+        return FG_ERR_OOM;
+    }
+    uint64_t session_id=0u;
+    fg_status status=FG_OK;
+    while(status==FG_OK){
+        uint32_t peer=0u,bytes=0u;
+        fg_frame_header header;
+        fg_fabric_class ready_class;
+        status=fg_fabric_wait_ready(fabric,3u,&peer,&ready_class,err);
+        if(status!=FG_OK)break;
+        if(ready_class==FG_FABRIC_BULK){
+            status=fg_pipeline_step(pipeline,err);
+            continue;
+        }
+        status=fg_fabric_recv(fabric,peer,FG_FABRIC_CONTROL,&header,
+                              control,capacity,&bytes,err);
+        if(status!=FG_OK)break;
+        fg_message_type type=fg_frame_type(&header);
+        if(type==FG_MSG_SESSION_BEGIN&&peer==0u)
+            status=pipeline_worker_begin_session(fabric,pipeline,stage,manifest,
+                self,&header,control,bytes,&session_id,err);
+        else if(type==FG_MSG_NGRAM_WORK)
+            status=handle_pipeline_ngram_work(
+                fabric,ngram,FG_FABRIC_CONTROL,self,session_id,peer,&header,
+                control,bytes,err);
+        else{
+            fg_error_set(err,FG_ERR_FORMAT,
+                         "pipeline rank %u received unsupported control message %u",
+                         self,type);
+            status=FG_ERR_FORMAT;
+        }
+    }
+    free(control);
+    return status;
+}
+
+static fg_status pipeline_rank_main_loaded(
+    fg_manifest *manifest,const char *directory,uint32_t rank,fg_error *err){
+    fg_model *model=NULL;
+    fg_stage_executor *stage=NULL;
+    fg_ngram_pipeline_cache *ngram=NULL;
+    fg_fabric *fabric=NULL;
+    fg_pipeline *pipeline=NULL;
+    fg_status status=fg_model_open_stage(&model,manifest,directory,rank,err);
+    fg_stage_config stage_config={.model=model};
+    if(status==FG_OK)
+        status=fg_stage_executor_create(&stage,&stage_config,err);
+    const fg_ngram_shard_record *ngram_record=status==FG_OK?
+        fg_q38_find_ngram_shard(manifest,rank):NULL;
+    if(status==FG_OK&&!ngram_record){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "pipeline rank %u has no sealed resident n-gram shard",rank);
+        status=FG_ERR_MISMATCH;
+    }
+    if(status==FG_OK)
+        status=fg_ngram_pipeline_cache_open_manifest(
+            &ngram,manifest,directory,rank,err);
+    if(status==FG_OK)status=fg_fabric_open(&fabric,manifest,rank,err);
+    if(status==FG_OK){
+        fg_pipeline_transport transport;
+        fg_pipeline_transport_init_fabric(&transport,fabric);
+        fg_pipeline_config config={.manifest=manifest,.rank=rank,
+            .transport=transport,.execute=fg_stage_pipeline_execute,
+            .execute_context=stage};
+        status=fg_pipeline_create(&pipeline,&config,err);
+    }
+    if(status==FG_OK)status=rank_ready(fabric,rank,err);
+    if(status==FG_OK){
+        uint64_t resident=0u;
+        status=fg_q38_rank_residency_bytes(manifest,rank,&resident,err);
+        if(status!=FG_OK)goto cleanup;
+        printf("rank %u READY: pipeline stage %u, %.3f GiB sealed weights, "
+               "%.3f GiB sealed n-gram file, %.3f GiB n-gram cache, "
+               "%.3f GiB total UMA ledger on %s\n",
+               rank,fg_pipeline_stage(pipeline),
+               (double)fg_model_weight_bytes(model)/(1024.0*1024.0*1024.0),
+               (double)ngram_record->bytes/(1024.0*1024.0*1024.0),
+               (double)fg_ngram_pipeline_cache_host_bytes(ngram)/
+                   (1024.0*1024.0*1024.0),
+               (double)resident/(1024.0*1024.0*1024.0),
+               fg_vk_device_name(fg_model_vk(model)));
+        fflush(stdout);
+        status=pipeline_rank_worker_loop(fabric,pipeline,stage,ngram,manifest,
+                                         rank,err);
+    }
+cleanup:
+    fg_pipeline_destroy(pipeline);
+    fg_fabric_close(fabric);
+    if(ngram){
+        fg_ngram_pipeline_cache_stats stats;
+        fg_ngram_pipeline_cache_get_stats(ngram,&stats);
+        fprintf(stderr,
+                "rank %u n-gram cache requests=%llu page-hits=%llu "
+                "page-misses=%llu pages-read=%llu read-ops=%llu evictions=%llu\n",
+                rank,(unsigned long long)stats.requests,
+                (unsigned long long)stats.page_hits,
+                (unsigned long long)stats.page_misses,
+                (unsigned long long)stats.pages_read,
+                (unsigned long long)stats.read_operations,
+                (unsigned long long)stats.evictions);
+    }
+    fg_ngram_pipeline_cache_close(ngram);
+    fg_stage_executor_close(stage);
+    fg_model_close(model);
+    return status;
+}
+
+fg_status fg_rank_main(const char *path,uint32_t rank,fg_error *err){
+    if(rank>=FG_RANK_COUNT){
+        fg_error_set(err,FG_ERR_ARGUMENT,"rank must be 0..7");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_manifest *manifest=NULL;
+    fg_status status=load_checked(path,&manifest,err);
+    char directory[1024];
+    if(status==FG_OK)status=manifest_directory(path,directory,err);
+    if(status==FG_OK&&manifest->execution_mode==FG_EXECUTION_PIPELINE)
+        status=pipeline_rank_main_loaded(manifest,directory,rank,err);
+    else if(status==FG_OK){
+        fg_model *model=NULL;fg_expert_executor *expert=NULL;
+        fg_output_executor *output=NULL;fg_ngram_resident *ngram=NULL;
+        fg_fabric *fabric=NULL;uint64_t row_begin=0,row_count=0;
+        char ngram_path[1200];
+        status=fg_model_open(&model,manifest,directory,rank,err);
+        if(status==FG_OK)status=fg_expert_executor_create(&expert,model,err);
+        if(status==FG_OK&&rank==4u)
+            status=fg_output_executor_create(&output,model,err);
+        if(status==FG_OK)
+            status=fg_q38_ngram_rank_range(rank,&row_begin,&row_count,err);
+        if(status==FG_OK&&snprintf(ngram_path,sizeof(ngram_path),
+           "%s/ngram-rank-%02u.iq4nl",directory,rank)>=(int)sizeof(ngram_path)){
+            fg_error_set(err,FG_ERR_LIMIT,
+                         "resident n-gram shard path is too long");
+            status=FG_ERR_LIMIT;
+        }
+        if(status==FG_OK)
+            status=fg_ngram_resident_open(&ngram,ngram_path,row_begin,row_count,err);
+        if(status==FG_OK)status=fg_fabric_open(&fabric,manifest,rank,err);
+        if(status==FG_OK)status=rank_ready(fabric,rank,err);
+        if(status==FG_OK){
+            printf("rank %u READY: %.3f GiB sealed weights, %.3f GiB n-gram "
+                   "rows resident on %s\n",rank,
+                   (double)fg_model_weight_bytes(model)/(1024.0*1024.0*1024.0),
+                   (double)(row_count*FG_NGRAM_ROW_BYTES)/(1024.0*1024.0*1024.0),
+                   fg_vk_device_name(fg_model_vk(model)));
+            fflush(stdout);
+            status=rank_worker_loop(fabric,expert,output,ngram,model,manifest,
+                                    directory,rank,err);
+        }
+        fg_fabric_close(fabric);fg_ngram_resident_close(ngram);
+        fg_output_executor_destroy(output);fg_expert_executor_destroy(expert);
+        fg_model_close(model);
+    }
+    free(manifest);
+    return status;
+}
 
 typedef struct qsa_page_transport {
     fg_qsa_page *append_pages[2],*fetch_pages,*result_pages;
@@ -1402,9 +1679,28 @@ static fg_status coordinator_qsa_barrier(fg_coordinator *coordinator,fg_error *e
     return FG_OK;
 }
 
+typedef struct fg_pipeline_coordinator {
+    const fg_manifest *manifest;
+    fg_runtime_options options;
+    fg_session_identity identity;
+    fg_model *model;
+    fg_stage_executor *stage;
+    fg_pipeline *pipeline;
+    fg_pipeline_runtime *driver;
+    fg_fabric *fabric;
+    fg_embedding *embedding;
+    fg_tokenizer *tokenizer;
+    fg_ngram_store *ngram;
+    const int32_t *active_history;
+    size_t active_history_count;
+    uint64_t session_id;
+    bool retired;
+} fg_pipeline_coordinator;
+
 struct fg_runtime {
     fg_manifest *manifest;
     fg_coordinator coordinator;
+    fg_pipeline_coordinator pipeline;
     int32_t *history;
     size_t history_count,history_capacity;
     char *rendered_history;
@@ -1597,7 +1893,11 @@ static fg_status coordinator_output(fg_coordinator *coordinator,uint32_t token_i
 
 static fg_status ngram_rank_for_row(uint64_t row,uint32_t *owner,fg_error *err){if(!owner){fg_error_set(err,FG_ERR_ARGUMENT,"n-gram row owner output is null");return FG_ERR_ARGUMENT;}for(uint32_t rank=1u;rank<FG_RANK_COUNT;rank++){uint64_t begin=0,count=0;fg_status status=fg_q38_ngram_rank_range(rank,&begin,&count,err);if(status!=FG_OK)return status;if(row>=begin&&row-begin<count){*owner=rank;return FG_OK;}}fg_error_set(err,FG_ERR_MISMATCH,"n-gram row %llu has no resident owner",(unsigned long long)row);return FG_ERR_MISMATCH;}
 
-static fg_status coordinator_ngram_resident(fg_coordinator *coordinator,const int32_t *history,size_t history_count,uint32_t token_index,fg_vk_tensor **embedding,fg_error *err){
+static fg_status resident_ngram_lookup(
+    fg_fabric *fabric,fg_ngram_store *ngram,uint64_t session_id,
+    atomic_uint *transport_state,fg_fabric_class result_class,
+    const int32_t *history,size_t history_count,uint32_t token_index,
+    fg_vk_tensor **embedding,fg_error *err){
     uint64_t rows[FG_NGRAM_HEAD_COUNT],addresses[FG_NGRAM_HEAD_COUNT];
     fg_status status=fg_q38_ngram_lookup(history,history_count,rows,addresses,err);
     fg_ngram_work work[FG_RANK_COUNT]={0};
@@ -1627,14 +1927,14 @@ static fg_status coordinator_ngram_resident(fg_coordinator *coordinator,const in
         uint32_t bytes=0;
         status=fg_ngram_work_encode(work_wire,sizeof(work_wire),&bytes,&work[rank],err);
         if(status==FG_OK){
-            status=fg_fabric_send(coordinator->fabric,rank,FG_FABRIC_CONTROL,
-                FG_MSG_NGRAM_WORK,coordinator->session_id,token_index,0,work_wire,bytes,err);
+            status=fg_fabric_send(fabric,rank,FG_FABRIC_CONTROL,
+                FG_MSG_NGRAM_WORK,session_id,token_index,0,work_wire,bytes,err);
             if(status==FG_OK){
                 sent[rank]=true;sent_count++;
-                transport_pending(&coordinator->transport_state);
+                if(transport_state)transport_pending(transport_state);
             }else{
                 transport_failed=true;
-                transport_poison(&coordinator->transport_state);
+                if(transport_state)transport_poison(transport_state);
             }
         }
     }
@@ -1642,7 +1942,7 @@ static fg_status coordinator_ngram_resident(fg_coordinator *coordinator,const in
     uint32_t consumed=0;
     while(consumed<sent_count){
         uint32_t peer=0,bytes=0;fg_frame_header header;fg_error receive_error={0};
-        fg_status receive_status=fg_fabric_recv_any(coordinator->fabric,FG_FABRIC_BULK,
+        fg_status receive_status=fg_fabric_recv_any(fabric,result_class,
             &peer,&header,result_wire,sizeof(result_wire),&bytes,
             status==FG_OK?err:&receive_error);
         if(receive_status!=FG_OK){
@@ -1653,7 +1953,7 @@ static fg_status coordinator_ngram_resident(fg_coordinator *coordinator,const in
         consumed++;
         bool valid=peer>0u&&peer<FG_RANK_COUNT&&sent[peer]&&!received[peer]&&
             fg_frame_type(&header)==FG_MSG_NGRAM_RESULT&&
-            fg_frame_request_id(&header)==coordinator->session_id&&
+            fg_frame_request_id(&header)==session_id&&
             fg_frame_sequence(&header)==token_index;
         if(!valid){
             transport_failed=true;
@@ -1696,10 +1996,12 @@ static fg_status coordinator_ngram_resident(fg_coordinator *coordinator,const in
     bool all_received=true;
     for(uint32_t rank=1u;rank<FG_RANK_COUNT;rank++)
         if(sent[rank]!=received[rank]){all_received=false;break;}
-    if(consumed==sent_count&&all_received&&!transport_failed)
-        transport_complete(&coordinator->transport_state);
-    else
-        transport_poison(&coordinator->transport_state);
+    if(transport_state){
+        if(consumed==sent_count&&all_received&&!transport_failed)
+            transport_complete(transport_state);
+        else
+            transport_poison(transport_state);
+    }
     for(uint32_t head=0;status==FG_OK&&head<FG_NGRAM_HEAD_COUNT;head++)
         if(!seen_head[head]){
             fg_error_set(err,FG_ERR_MISMATCH,"missing resident n-gram head %u",head);
@@ -1709,13 +2011,13 @@ static fg_status coordinator_ngram_resident(fg_coordinator *coordinator,const in
     if(status==FG_OK&&token_profile_requested(token_index)&&verify&&*verify&&
        strcmp(verify,"0")!=0){
         uint32_t mismatch=UINT32_MAX;
-        status=fg_ngram_store_verify_packed(coordinator->ngram,addresses,
+        status=fg_ngram_store_verify_packed(ngram,addresses,
             FG_NGRAM_HEAD_COUNT,packed,&mismatch,err);
         if(status==FG_OK)
             fprintf(stderr,"NGRAM_RESIDENT_VERIFY token=%u rows=%u status=exact\n",
                     token_index,FG_NGRAM_HEAD_COUNT);
     }
-    if(status==FG_OK)status=fg_ngram_store_decode_packed(coordinator->ngram,packed,
+    if(status==FG_OK)status=fg_ngram_store_decode_packed(ngram,packed,
                                                          FG_NGRAM_HEAD_COUNT,embedding,err);
     double decoded=dispatch_ts();
     if(frame_trace_enabled())
@@ -1723,6 +2025,14 @@ static fg_status coordinator_ngram_resident(fg_coordinator *coordinator,const in
                 token_index,sent_count,fired-start,collected-fired,decoded-collected,
                 decoded-start);
     return status;
+}
+
+static fg_status coordinator_ngram_resident(
+    fg_coordinator *coordinator,const int32_t *history,size_t history_count,
+    uint32_t token_index,fg_vk_tensor **embedding,fg_error *err){
+    return resident_ngram_lookup(coordinator->fabric,coordinator->ngram,
+        coordinator->session_id,&coordinator->transport_state,FG_FABRIC_BULK,history,
+        history_count,token_index,embedding,err);
 }
 
 /* Expert-parallel decode: all 48 layers on the coordinator, MoE dispatched to workers */
@@ -1771,6 +2081,237 @@ static fg_status coordinator_open(fg_coordinator *coordinator,const fg_manifest 
     /* Allocate only coordinator-side asynchronous receive payloads. */
     for(uint32_t i=0;status==FG_OK&&i<FG_GROUP_SIZE;i++){coordinator->async_recv_payloads[i]=malloc(FG_EXPERT_RESULT_SINGLE_BYTES);if(!coordinator->async_recv_payloads[i]){fg_error_set(err,FG_ERR_OOM,"allocate async expert recv buffer %u",i);status=FG_ERR_OOM;}}if(status==FG_OK)status=prefill_worker_buffers_create(&coordinator->prefill_expert,manifest->prefill_microbatch,true,err);if(status==FG_OK)status=prefill_layer_buffers_create(&coordinator->prefill_layer,coordinator->model,manifest->prefill_microbatch,err);if(status==FG_OK)status=fg_fabric_open(&coordinator->fabric,manifest,0u,err);if(status==FG_OK)atomic_init(&coordinator->transport_state,FG_TRANSPORT_READY);if(status==FG_OK)status=qsa_page_transport_create(&coordinator->qsa_pages,coordinator->fabric,&coordinator->transport_state,err);if(status==FG_OK)status=rank_ready(coordinator->fabric,0u,err);if(status==FG_OK)status=token_profile_prepare(fg_model_vk(coordinator->model),err);if(status==FG_OK)status=coordinator_begin_session(coordinator,err);if(status==FG_OK)coordinator_memory_report(coordinator);if(status!=FG_OK)coordinator_close(coordinator);coordinator->directory=directory;return status;}
 
+static fg_status pipeline_progress(void *context,fg_pipeline *pipeline,
+                                   fg_error *err){
+    (void)context;
+    return fg_pipeline_step(pipeline,err);
+}
+
+static fg_status pipeline_prepare(
+    void *context,fg_pipeline_execution_kind kind,const uint32_t *token_ids,
+    uint32_t first_token,uint16_t token_count,uint32_t *positions,float *boundary,
+    fg_error *err){
+    (void)kind;
+    fg_pipeline_coordinator *coordinator=context;
+    for(uint32_t token=0;token<token_count;token++)
+        for(uint32_t axis=0;axis<FG_PIPELINE_POSITION_AXES;axis++)
+            positions[(uint64_t)token*FG_PIPELINE_POSITION_AXES+axis]=
+                first_token+token;
+    return fg_embedding_gather(coordinator->embedding,token_ids,token_count,
+        boundary,(size_t)token_count*FG_PIPELINE_BOUNDARY_WIDTH,err);
+}
+
+static fg_status pipeline_ngram_prefill(
+    void *context,uint64_t request_id,uint32_t sequence,uint32_t first_token,
+    uint16_t token_count,fg_vk_tensor **embeddings,fg_error *err){
+    (void)sequence;
+    fg_pipeline_coordinator *coordinator=context;
+    if(request_id!=coordinator->session_id||!coordinator->active_history||
+       first_token>coordinator->active_history_count||
+       token_count>coordinator->active_history_count-first_token){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "pipeline prefill n-gram frontier is unavailable");
+        return FG_ERR_MISMATCH;
+    }
+    return fg_ngram_store_lookup_prefill(coordinator->ngram,
+        coordinator->active_history,coordinator->active_history_count,
+        first_token,token_count,embeddings,err);
+}
+
+static fg_status pipeline_ngram_decode(
+    void *context,uint64_t request_id,uint32_t sequence,uint32_t token_index,
+    fg_vk_tensor **embedding,fg_error *err){
+    (void)sequence;
+    fg_pipeline_coordinator *coordinator=context;
+    if(request_id!=coordinator->session_id||!coordinator->active_history||
+       coordinator->active_history_count!=token_index+1u){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "pipeline decode n-gram frontier is unavailable");
+        return FG_ERR_MISMATCH;
+    }
+    return resident_ngram_lookup(coordinator->fabric,coordinator->ngram,
+        coordinator->session_id,NULL,FG_FABRIC_CONTROL,coordinator->active_history,
+        coordinator->active_history_count,token_index,embedding,err);
+}
+
+static void pipeline_coordinator_close(fg_pipeline_coordinator *coordinator){
+    if(!coordinator)return;
+    fg_pipeline_runtime_destroy(coordinator->driver);
+    fg_pipeline_destroy(coordinator->pipeline);
+    fg_embedding_close(coordinator->embedding);
+    fg_ngram_store_close(coordinator->ngram);
+    fg_tokenizer_close(coordinator->tokenizer);
+    fg_fabric_close(coordinator->fabric);
+    fg_stage_executor_close(coordinator->stage);
+    fg_model_close(coordinator->model);
+    memset(coordinator,0,sizeof(*coordinator));
+}
+
+static fg_status pipeline_coordinator_open(
+    fg_pipeline_coordinator *coordinator,const fg_manifest *manifest,
+    const char *directory,const fg_runtime_options *options,fg_error *err){
+    memset(coordinator,0,sizeof(*coordinator));
+    coordinator->manifest=manifest;
+    coordinator->options=*options;
+    fg_status status=fg_session_identity_from_manifest(
+        manifest,&coordinator->identity,err);
+    if(status==FG_OK)
+        status=fg_model_open_stage(&coordinator->model,manifest,directory,0u,err);
+    if(status==FG_OK)
+        status=fg_embedding_open(&coordinator->embedding,manifest,directory,0u,err);
+    if(status==FG_OK)
+        status=fg_tokenizer_open(&coordinator->tokenizer,directory,manifest,err);
+    if(status==FG_OK)
+        status=fg_tokenizer_validate_qwen38(coordinator->tokenizer,err);
+    const fg_tensor_record *ngram_record=NULL;
+    for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++)
+        if(manifest->tensors[i].kind==FG_TENSOR_NGRAM){
+            if(ngram_record){
+                fg_error_set(err,FG_ERR_MISMATCH,
+                             "multiple n-gram tensors in pipeline manifest");
+                status=FG_ERR_MISMATCH;
+            }else ngram_record=&manifest->tensors[i];
+        }
+    char ngram_path[1200];
+    if(status==FG_OK&&!ngram_record){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "pipeline manifest has no n-gram tensor");
+        status=FG_ERR_MISMATCH;
+    }
+    if(status==FG_OK&&snprintf(ngram_path,sizeof(ngram_path),"%s/ngram.iq4nl",
+       directory)>=(int)sizeof(ngram_path)){
+        fg_error_set(err,FG_ERR_LIMIT,"pipeline n-gram path is too long");
+        status=FG_ERR_LIMIT;
+    }
+    if(status==FG_OK)
+        status=fg_ngram_store_open(&coordinator->ngram,
+            fg_model_vk(coordinator->model),ngram_path,ngram_record->bytes,
+            manifest->prefill_microbatch,err);
+    if(status==FG_OK)status=fg_fabric_open(&coordinator->fabric,manifest,0u,err);
+    fg_stage_config stage_config={.model=coordinator->model,
+        .ngram_decode=pipeline_ngram_decode,
+        .ngram_prefill=pipeline_ngram_prefill,
+        .ngram_context=coordinator};
+    if(status==FG_OK)
+        status=fg_stage_executor_create(&coordinator->stage,&stage_config,err);
+    if(status==FG_OK){
+        fg_pipeline_transport transport;
+        fg_pipeline_transport_init_fabric(&transport,coordinator->fabric);
+        fg_pipeline_config pipeline_config={.manifest=manifest,.rank=0u,
+            .transport=transport,.execute=fg_stage_pipeline_execute,
+            .execute_context=coordinator->stage};
+        status=fg_pipeline_create(&coordinator->pipeline,&pipeline_config,err);
+    }
+    if(status==FG_OK){
+        fg_pipeline_runtime_config driver_config={.manifest=manifest,
+            .pipeline=coordinator->pipeline,.prepare=pipeline_prepare,
+            .progress=pipeline_progress,.context=coordinator};
+        status=fg_pipeline_runtime_create(&coordinator->driver,&driver_config,err);
+    }
+    if(status==FG_OK)status=rank_ready(coordinator->fabric,0u,err);
+    if(status!=FG_OK)pipeline_coordinator_close(coordinator);
+    return status;
+}
+
+static fg_status pipeline_begin_session(
+    fg_pipeline_coordinator *coordinator,bool reset,fg_error *err){
+    if(coordinator->retired||
+       fg_pipeline_runtime_reopen_required(coordinator->driver)){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "pipeline runtime is retired; reopen is required");
+        return FG_ERR_UNAVAILABLE;
+    }
+    struct timespec now;
+    if(clock_gettime(CLOCK_REALTIME,&now)!=0){
+        fg_error_set(err,FG_ERR_IO,"read pipeline session clock");
+        return FG_ERR_IO;
+    }
+    uint64_t request=((uint64_t)(uint32_t)now.tv_sec<<32u)^
+        (uint32_t)now.tv_nsec^(uint64_t)(uint32_t)getpid();
+    if(!request)request=1u;
+    if(request<=coordinator->session_id){
+        if(coordinator->session_id==UINT64_MAX){
+            fg_error_set(err,FG_ERR_LIMIT,"pipeline session nonce space exhausted");
+            return FG_ERR_LIMIT;
+        }
+        request=coordinator->session_id+1u;
+    }
+    uint32_t flags=reset?FG_PIPELINE_SESSION_RESET_FLAG:0u;
+    for(uint32_t peer=1u;peer<FG_RANK_COUNT;peer++){
+        fg_owner_session_control control={
+            .version=FG_OWNER_SESSION_CONTROL_VERSION,
+            .operation=FG_OWNER_SESSION_BEGIN,.rank=(uint8_t)peer,
+            .position_mode=(fg_position_mode)coordinator->manifest->session.position_mode,
+            .session_nonce=request,
+            .logical_context_tokens=coordinator->options.logical_context_tokens,
+            .gpu_index_tokens=coordinator->options.gpu_index_tokens,
+            .qsa_hot_tokens=coordinator->options.qsa_hot_tokens,
+            .qsa_page_cache_bytes=coordinator->options.qsa_page_cache_bytes
+        };
+        memcpy(control.identity_sha256,coordinator->identity.identity_sha256,32u);
+        memcpy(control.state_format_sha256,
+               coordinator->manifest->session.rank_state_format_sha256[peer],32u);
+        uint8_t wire[FG_OWNER_SESSION_CONTROL_BYTES];
+        fg_status status=fg_owner_session_control_encode(wire,&control,err);
+        if(status==FG_OK)status=fg_fabric_send(coordinator->fabric,peer,
+            FG_FABRIC_CONTROL,FG_MSG_SESSION_BEGIN,request,0u,flags,
+            wire,sizeof(wire),err);
+        if(status!=FG_OK){
+            coordinator->retired=true;
+            return status;
+        }
+    }
+    bool ready_peers[FG_RANK_COUNT]={0};
+    uint8_t wire[FG_OWNER_SESSION_CONTROL_BYTES];
+    for(uint32_t received=1u;received<FG_RANK_COUNT;received++){
+        uint32_t peer=0u,bytes=0u;
+        fg_frame_header header;
+        fg_status status=fg_fabric_recv_any(coordinator->fabric,
+            FG_FABRIC_CONTROL,&peer,&header,wire,sizeof(wire),&bytes,err);
+        if(status!=FG_OK){
+            coordinator->retired=true;
+            return status;
+        }
+        fg_owner_session_control control;
+        status=fg_owner_session_control_decode(&control,wire,bytes,err);
+        if(status!=FG_OK||fg_frame_type(&header)!=FG_MSG_SESSION_READY||
+           fg_frame_request_id(&header)!=request||
+           fg_frame_sequence(&header)!=0u||frame_flags(&header)!=flags||
+           peer==0u||peer>=FG_RANK_COUNT||ready_peers[peer]||
+           control.operation!=FG_OWNER_SESSION_READY||control.rank!=peer||
+           control.session_nonce!=request||
+           memcmp(control.identity_sha256,
+                  coordinator->identity.identity_sha256,32u)){
+            if(status==FG_OK)
+                fg_error_set(err,FG_ERR_MISMATCH,
+                             "invalid pipeline session readiness from rank %u",
+                             peer);
+            coordinator->retired=true;
+            return status==FG_OK?FG_ERR_MISMATCH:status;
+        }
+        ready_peers[peer]=true;
+    }
+    if(reset){
+        fg_status status=fg_stage_executor_reset(coordinator->stage,err);
+        if(status!=FG_OK){
+            coordinator->retired=true;
+            return status;
+        }
+    }
+    coordinator->session_id=request;
+    fg_status status=fg_pipeline_runtime_begin(coordinator->driver,request,0u,err);
+    if(status!=FG_OK)coordinator->retired=true;
+    return status;
+}
+
+static fg_status pipeline_reset_state(fg_pipeline_coordinator *coordinator,
+                                      fg_error *err){
+    fg_status status=pipeline_begin_session(coordinator,true,err);
+    if(status==FG_OK)status=fg_pipeline_runtime_finish(coordinator->driver,err);
+    if(status!=FG_OK)coordinator->retired=true;
+    return status;
+}
+
 static double elapsed_seconds(const struct timespec *start,const struct timespec *end){return (double)(end->tv_sec-start->tv_sec)+(double)(end->tv_nsec-start->tv_nsec)*1e-9;}
 
 static fg_status runtime_reserve_history(fg_runtime *runtime,size_t count,fg_error *err){
@@ -1784,11 +2325,23 @@ static fg_status runtime_reserve_history(fg_runtime *runtime,size_t count,fg_err
 
 static fg_status runtime_reset_state(fg_runtime *runtime,fg_prefix_reset_reason reason,
                                      fg_error *err){
-    if(!transport_ready(&runtime->coordinator.transport_state)){
+    fg_status status=FG_OK;
+    if(runtime->manifest->execution_mode==FG_EXECUTION_PIPELINE){
+        status=pipeline_reset_state(&runtime->pipeline,err);
+    }else{
+        if(!transport_ready(&runtime->coordinator.transport_state)){
+            runtime->state_ready=false;
+            fg_error_set(err,FG_ERR_UNAVAILABLE,
+                         "distributed transport is not reusable; reopen the runtime");
+            return FG_ERR_UNAVAILABLE;
+        }
+        status=fg_owner_reset_state(runtime->coordinator.owner,err);
+        if(status==FG_OK&&runtime->session_started)
+            status=coordinator_begin_session(&runtime->coordinator,err);
+    }
+    if(status!=FG_OK){
         runtime->state_ready=false;
-        fg_error_set(err,FG_ERR_UNAVAILABLE,
-                     "distributed transport is not reusable; reopen the runtime");
-        return FG_ERR_UNAVAILABLE;
+        return status;
     }
     runtime->state_ready=false;
     runtime->history_count=0;
@@ -1802,9 +2355,6 @@ static fg_status runtime_reset_state(fg_runtime *runtime,fg_prefix_reset_reason 
     runtime->pending_boundary_bytes=0;
     runtime->pending_eos_token=0;
     runtime->pending_eos_valid=false;
-    fg_status status=fg_owner_reset_state(runtime->coordinator.owner,err);
-    if(status==FG_OK&&runtime->session_started)
-        status=coordinator_begin_session(&runtime->coordinator,err);
     if(status==FG_OK)runtime->session_started=true;
     if(status!=FG_OK)return status;
     runtime->state_ready=true;
@@ -1820,8 +2370,12 @@ fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
                                                        requested,err);
     if(status==FG_OK)runtime->context_limit=runtime->options.logical_context_tokens;
     if(status==FG_OK)status=manifest_directory(path,runtime->directory,err);
-    if(status==FG_OK)status=coordinator_open(&runtime->coordinator,runtime->manifest,
-                                             runtime->directory,&runtime->options,err);
+    if(status==FG_OK&&runtime->manifest->execution_mode==FG_EXECUTION_PIPELINE)
+        status=pipeline_coordinator_open(&runtime->pipeline,runtime->manifest,
+                                         runtime->directory,&runtime->options,err);
+    else if(status==FG_OK)
+        status=coordinator_open(&runtime->coordinator,runtime->manifest,
+                                runtime->directory,&runtime->options,err);
     if(status==FG_OK)status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
     if(status!=FG_OK){fg_runtime_close(runtime);return status;}*out=runtime;return FG_OK;
 }
@@ -1832,22 +2386,25 @@ fg_status fg_runtime_open(fg_runtime **out,const char *path,fg_error *err){
 
 void fg_runtime_close(fg_runtime *runtime){
     if(!runtime)return;
-    coordinator_close(&runtime->coordinator);
+    if(runtime->manifest&&runtime->manifest->execution_mode==FG_EXECUTION_PIPELINE)
+        pipeline_coordinator_close(&runtime->pipeline);
+    else
+        coordinator_close(&runtime->coordinator);
     free(runtime->rendered_history);free(runtime->history);free(runtime->manifest);free(runtime);
 }
 
 fg_status fg_runtime_reset(fg_runtime *runtime,fg_error *err){
-    if(!runtime||!runtime->coordinator.owner){fg_error_set(err,FG_ERR_ARGUMENT,"resident runtime is not open");return FG_ERR_ARGUMENT;}
+    if(!runtime){fg_error_set(err,FG_ERR_ARGUMENT,"resident runtime is not open");return FG_ERR_ARGUMENT;}
     return runtime_reset_state(runtime,FG_PREFIX_RESET_EXPLICIT,err);
 }
 
 fg_status fg_runtime_reset_public_history(fg_runtime *runtime,fg_error *err){
-    if(!runtime||!runtime->coordinator.owner){fg_error_set(err,FG_ERR_ARGUMENT,"resident runtime is not open");return FG_ERR_ARGUMENT;}
+    if(!runtime){fg_error_set(err,FG_ERR_ARGUMENT,"resident runtime is not open");return FG_ERR_ARGUMENT;}
     return runtime_reset_state(runtime,FG_PREFIX_RESET_PUBLIC_MISMATCH,err);
 }
 
 fg_status fg_runtime_reset_failure(fg_runtime *runtime,fg_error *err){
-    if(!runtime||!runtime->coordinator.owner){fg_error_set(err,FG_ERR_ARGUMENT,"resident runtime is not open");return FG_ERR_ARGUMENT;}
+    if(!runtime){fg_error_set(err,FG_ERR_ARGUMENT,"resident runtime is not open");return FG_ERR_ARGUMENT;}
     return runtime_reset_state(runtime,FG_PREFIX_RESET_FAILURE,err);
 }
 
@@ -1873,6 +2430,189 @@ static fg_status runtime_render_append(char **rendered,size_t *length,size_t *ca
     return FG_OK;
 }
 
+static fg_tokenizer *runtime_tokenizer(const fg_runtime *runtime){
+    return runtime->manifest->execution_mode==FG_EXECUTION_PIPELINE?
+        runtime->pipeline.tokenizer:runtime->coordinator.tokenizer;
+}
+
+static void pipeline_accumulate_stage_times(
+    fg_generation_stats *stats,const fg_pipeline_result *result){
+    if(!stats||!result)return;
+    for(uint32_t stage=0;stage<FG_PIPELINE_STAGE_COUNT;stage++)
+        stats->stage_seconds[stage]+=result->stage_seconds[stage];
+}
+
+static fg_status pipeline_generate_tokens(
+    fg_runtime *runtime,const char *transcript,const fg_tokens *prompt,
+    bool require_prefix_hit,bool *prefix_miss,uint32_t max_tokens,
+    fg_token_callback callback,void *callback_context,
+    fg_interrupt_fn interrupted,void *interrupt_context,
+    fg_generation_stats *stats,fg_error *err){
+    if(prefix_miss)*prefix_miss=false;
+    if(!runtime||!transcript||!prompt||(!prompt->data&&prompt->count)||!callback||
+       !max_tokens||max_tokens>4096u){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid pipeline generation arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    if(!runtime->state_ready||runtime->pipeline.retired||
+       fg_pipeline_runtime_reopen_required(runtime->pipeline.driver)){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "pipeline runtime requires reopen after an aborted request");
+        return FG_ERR_UNAVAILABLE;
+    }
+    if(stats){
+        memset(stats,0,sizeof(*stats));
+        stats->execution_mode=FG_EXECUTION_PIPELINE;
+        stats->stage_count=runtime->manifest->stage_count;
+    }
+    fg_prefix_plan plan={0};
+    fg_status status=fg_prefix_plan_tokens(runtime->history,runtime->history_count,
+        runtime->next_token_valid,prompt->data,prompt->count,runtime->empty_reason,
+        &plan,err);
+    if(status==FG_OK&&require_prefix_hit&&!plan.hit){
+        if(prefix_miss)*prefix_miss=true;
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "pipeline continuation is not an exact token-prefix hit");
+        return FG_ERR_UNAVAILABLE;
+    }
+    if(status==FG_OK&&(!prompt->count||
+       prompt->count+(size_t)max_tokens>runtime->context_limit)){
+        fg_error_set(err,FG_ERR_LIMIT,
+                     "prompt plus generation would use %zu of %u context tokens",
+                     prompt->count+(size_t)max_tokens,runtime->context_limit);
+        status=FG_ERR_LIMIT;
+    }
+    if(status==FG_OK)status=runtime_reserve_history(
+        runtime,prompt->count+(size_t)max_tokens,err);
+    if(status!=FG_OK)return status;
+
+    size_t history_capacity=prompt->count+(size_t)max_tokens;
+    int32_t *candidate_history=malloc(history_capacity*sizeof(*candidate_history));
+    size_t candidate_length=strlen(transcript),candidate_capacity=candidate_length+1u;
+    char *candidate=malloc(candidate_capacity);
+    if(!candidate_history||!candidate){
+        free(candidate);free(candidate_history);
+        fg_error_set(err,FG_ERR_OOM,"allocate pipeline request candidate state");
+        return FG_ERR_OOM;
+    }
+    memcpy(candidate,transcript,candidate_capacity);
+    for(size_t i=0;i<prompt->count;i++)
+        candidate_history[i]=(int32_t)prompt->data[i];
+    size_t candidate_count=prompt->count;
+    size_t prefill_offset=plan.hit?plan.prefill_offset:0u;
+    bool reset_stages=!plan.hit&&runtime->history_count!=0u;
+    if(stats){
+        stats->prompt_tokens=(uint32_t)prompt->count;
+        stats->prefilled_tokens=(uint32_t)(prompt->count-prefill_offset);
+        stats->reused_tokens=(uint32_t)plan.reused_tokens;
+        stats->prefix_cache_hit=plan.hit;
+        stats->exact_frontier=plan.exact_frontier;
+        stats->reset_reason=plan.reset_reason;
+    }
+
+    runtime->pipeline.active_history=candidate_history;
+    runtime->pipeline.active_history_count=candidate_count;
+    status=pipeline_begin_session(&runtime->pipeline,reset_stages,err);
+    bool request_active=status==FG_OK;
+    uint32_t next=runtime->next_token;
+    float logit=runtime->next_logit;
+    if(status==FG_OK&&prefill_offset<prompt->count){
+        fg_pipeline_result result={0};
+        status=fg_pipeline_runtime_prefill(runtime->pipeline.driver,
+            prompt->data+prefill_offset,(uint32_t)prefill_offset,
+            (uint32_t)(prompt->count-prefill_offset),&result,
+            stats?&stats->prefill_seconds:NULL,err);
+        if(status==FG_OK){
+            next=result.final_token;
+            logit=result.final_logit;
+            pipeline_accumulate_stage_times(stats,&result);
+        }
+    }
+
+    struct timespec decode_start={0},decode_end={0};
+    if(status==FG_OK)clock_gettime(CLOCK_MONOTONIC,&decode_start);
+    uint32_t generated=0u;
+    bool stopped_on_eos=false;
+    size_t pending_boundary_bytes=0u;
+    uint32_t pending_eos=0u;
+    while(status==FG_OK&&generated<max_tokens){
+        if(interrupted&&interrupted(interrupt_context))break;
+        if(next==fg_tokenizer_eos(runtime->pipeline.tokenizer)){
+            const char *eos_text=NULL;size_t eos_bytes=0u;
+            status=fg_tokenizer_token(runtime->pipeline.tokenizer,next,&eos_text,
+                                       &eos_bytes,NULL,err);
+            if(status==FG_OK)status=runtime_render_append(&candidate,&candidate_length,
+                &candidate_capacity,eos_text,eos_bytes,err);
+            if(status==FG_OK)status=runtime_render_append(&candidate,&candidate_length,
+                &candidate_capacity,"\n",1u,err);
+            if(status==FG_OK){
+                stopped_on_eos=true;
+                pending_boundary_bytes=eos_bytes+1u;
+                pending_eos=next;
+            }
+            break;
+        }
+        char decoded[4096];size_t bytes=0u;
+        status=fg_tokenizer_decode_token(runtime->pipeline.tokenizer,next,decoded,
+                                         sizeof(decoded),&bytes,err);
+        if(status==FG_OK)status=callback(callback_context,next,decoded,bytes,err);
+        if(status==FG_OK)status=runtime_render_append(&candidate,&candidate_length,
+            &candidate_capacity,decoded,bytes,err);
+        if(status!=FG_OK)break;
+        candidate_history[candidate_count++]=(int32_t)next;
+        generated++;
+        runtime->pipeline.active_history_count=candidate_count;
+        fg_pipeline_result result={0};
+        status=fg_pipeline_runtime_decode(runtime->pipeline.driver,next,
+            (uint32_t)candidate_count-1u,&result,err);
+        if(status==FG_OK){
+            next=result.final_token;
+            logit=result.final_logit;
+            pipeline_accumulate_stage_times(stats,&result);
+        }
+    }
+    if(status==FG_OK)clock_gettime(CLOCK_MONOTONIC,&decode_end);
+    if(request_active&&!fg_pipeline_runtime_reopen_required(runtime->pipeline.driver)){
+        fg_error finish_error={0};
+        fg_status finish_status=fg_pipeline_runtime_finish(
+            runtime->pipeline.driver,&finish_error);
+        if(finish_status!=FG_OK){
+            status=finish_status;
+            *err=finish_error;
+        }
+    }
+    runtime->pipeline.active_history=NULL;
+    runtime->pipeline.active_history_count=0u;
+    if(status==FG_OK){
+        memcpy(runtime->history,candidate_history,
+               candidate_count*sizeof(*candidate_history));
+        runtime->history_count=candidate_count;
+        runtime->next_token=next;
+        runtime->next_logit=logit;
+        runtime->next_token_valid=true;
+        runtime->empty_reason=FG_PREFIX_RESET_NONE;
+        free(runtime->rendered_history);
+        runtime->rendered_history=candidate;
+        runtime->rendered_history_length=candidate_length;
+        runtime->pending_boundary_bytes=pending_boundary_bytes;
+        runtime->pending_eos_token=pending_eos;
+        runtime->pending_eos_valid=stopped_on_eos;
+        candidate=NULL;
+        if(stats){
+            stats->generated_tokens=generated;
+            stats->context_tokens=(uint32_t)candidate_count;
+            stats->decode_seconds=elapsed_seconds(&decode_start,&decode_end);
+        }
+    }else{
+        runtime->state_ready=false;
+        if(fg_pipeline_runtime_reopen_required(runtime->pipeline.driver))
+            runtime->pipeline.retired=true;
+    }
+    free(candidate);
+    free(candidate_history);
+    return status;
+}
+
 static fg_status runtime_generate_tokens(
     fg_runtime *runtime,const char *transcript,const fg_tokens *prompt,
     bool require_prefix_hit,bool *prefix_miss,
@@ -1880,11 +2620,18 @@ static fg_status runtime_generate_tokens(
     fg_token_callback callback,void *callback_context,
     fg_interrupt_fn interrupted,void *interrupt_context,
     fg_generation_stats *stats,fg_error *err){
+    if(runtime&&runtime->manifest->execution_mode==FG_EXECUTION_PIPELINE)
+        return pipeline_generate_tokens(runtime,transcript,prompt,require_prefix_hit,
+            prefix_miss,max_tokens,callback,callback_context,interrupted,
+            interrupt_context,stats,err);
     if(prefix_miss)*prefix_miss=false;
     if(!runtime||!transcript||!prompt||(!prompt->data&&prompt->count)||!callback||
        !max_tokens||max_tokens>4096u){fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident generation arguments");return FG_ERR_ARGUMENT;}
     if(!runtime->state_ready){fg_error_set(err,FG_ERR_MISMATCH,"resident runtime requires a successful reset");return FG_ERR_MISMATCH;}
-    if(stats)memset(stats,0,sizeof(*stats));
+    if(stats){
+        memset(stats,0,sizeof(*stats));
+        stats->execution_mode=FG_EXECUTION_EXPERT_PARALLEL;
+    }
     fg_status status=FG_OK;
     fg_prefix_plan plan={0};
     if(status==FG_OK)status=fg_prefix_plan_tokens(
@@ -2045,7 +2792,7 @@ fg_status fg_runtime_generate(fg_runtime *runtime,const char *transcript,uint32_
                               fg_generation_stats *stats,fg_error *err){
     fg_tokens prompt={0};
     fg_status status=runtime&&transcript?
-        fg_tokenizer_encode(runtime->coordinator.tokenizer,transcript,true,&prompt,err):
+        fg_tokenizer_encode(runtime_tokenizer(runtime),transcript,true,&prompt,err):
         FG_ERR_ARGUMENT;
     if(status==FG_ERR_ARGUMENT)
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident generation arguments");
@@ -2079,11 +2826,11 @@ static void runtime_trace_continuation(const fg_runtime *runtime,
     if(!prefix_trace_enabled())return;
     fg_tokens public_tokens={0},private_tokens={0};
     fg_error ignored={0};
-    fg_status public_status=fg_tokenizer_encode(runtime->coordinator.tokenizer,
+    fg_status public_status=fg_tokenizer_encode(runtime_tokenizer(runtime),
                                                 public_transcript,true,
                                                 &public_tokens,&ignored);
     memset(&ignored,0,sizeof(ignored));
-    fg_status private_status=fg_tokenizer_encode(runtime->coordinator.tokenizer,
+    fg_status private_status=fg_tokenizer_encode(runtime_tokenizer(runtime),
                                                  private_transcript,true,
                                                  &private_tokens,&ignored);
     if(public_status==FG_OK&&private_status==FG_OK){
@@ -2119,7 +2866,7 @@ fg_status fg_runtime_generate_continuation(
     if(!runtime||!public_transcript||!continuation||!runtime->rendered_history||
        !runtime->pending_eos_valid||!runtime->next_token_valid||
        runtime->pending_eos_token!=runtime->next_token||
-       runtime->pending_eos_token!=fg_tokenizer_eos(runtime->coordinator.tokenizer)||
+       runtime->pending_eos_token!=fg_tokenizer_eos(runtime_tokenizer(runtime))||
        !runtime->pending_boundary_bytes||
        runtime->pending_boundary_bytes>runtime->rendered_history_length){
         if(prefix_miss)*prefix_miss=true;
@@ -2129,7 +2876,7 @@ fg_status fg_runtime_generate_continuation(
     }
     const char *eos_text=NULL;
     size_t eos_bytes=0;
-    fg_status status=fg_tokenizer_token(runtime->coordinator.tokenizer,
+    fg_status status=fg_tokenizer_token(runtime_tokenizer(runtime),
                                         runtime->pending_eos_token,&eos_text,
                                         &eos_bytes,NULL,err);
     const char *boundary=runtime->rendered_history+
@@ -2177,7 +2924,7 @@ fg_status fg_runtime_generate_continuation(
 
     fg_tokens suffix_tokens={0},prompt={0};
     if(status==FG_OK)
-        status=fg_tokenizer_encode(runtime->coordinator.tokenizer,suffix,true,
+        status=fg_tokenizer_encode(runtime_tokenizer(runtime),suffix,true,
                                    &suffix_tokens,err);
     if(status==FG_OK)
         status=fg_prefix_build_continuation_tokens(
@@ -2201,6 +2948,14 @@ fg_status fg_runtime_generate_continuation(
 uint32_t fg_runtime_context_tokens(const fg_runtime *runtime){return runtime?(uint32_t)runtime->history_count:0u;}
 uint32_t fg_runtime_context_limit(const fg_runtime *runtime){return runtime?runtime->context_limit:0u;}
 const char *fg_runtime_model_name(const fg_runtime *runtime){return runtime?"Qwen3.8-Flash-Next":NULL;}
+fg_execution_mode fg_runtime_execution_mode(const fg_runtime *runtime){
+    return runtime&&runtime->manifest?
+        (fg_execution_mode)runtime->manifest->execution_mode:
+        FG_EXECUTION_EXPERT_PARALLEL;
+}
+const char *fg_execution_mode_name(fg_execution_mode mode){
+    return mode==FG_EXECUTION_PIPELINE?"pipeline":"expert-parallel";
+}
 
 fg_status fg_serve_main(const char *path,fg_error *err){fg_manifest *m=NULL;fg_status rc=load_checked(path,&m,err);if(rc==FG_OK){fg_manifest_print(m);fg_error_set(err,FG_ERR_UNAVAILABLE,"HTTP serving is not enabled until the owned request path is qualified");rc=FG_ERR_UNAVAILABLE;}free(m);return rc;}
 fg_status fg_bench_main(const char *path,fg_error *err){
@@ -2309,6 +3064,18 @@ fg_status fg_bench_main(const char *path,fg_error *err){
     fg_vk_close(vk);
     return status;
 }
+
+static fg_status pipeline_eval_token(void *context,uint32_t token,const char *text,
+                                     size_t bytes,fg_error *err){
+    (void)context;(void)token;
+    if(bytes&&fwrite(text,1u,bytes,stdout)!=bytes){
+        fg_error_set(err,FG_ERR_IO,"write pipeline evaluation output");
+        return FG_ERR_IO;
+    }
+    fflush(stdout);
+    return FG_OK;
+}
+
 fg_status fg_eval_main(const char *path,const char *prompt,uint32_t generate,fg_error *err){
     if(!prompt||generate>4096u){fg_error_set(err,FG_ERR_ARGUMENT,"eval prompt is null or generation exceeds 4096 tokens");return FG_ERR_ARGUMENT;}
     /* Wrap in Qwen chat template if the user passed raw text. */
@@ -2322,6 +3089,37 @@ fg_status fg_eval_main(const char *path,const char *prompt,uint32_t generate,fg_
     }
     fg_manifest *manifest=NULL;fg_runtime_options options;uint32_t qsa_capacity=0u;
     fg_status status=load_checked(path,&manifest,err);
+    if(status==FG_OK&&manifest->execution_mode==FG_EXECUTION_PIPELINE){
+        free(manifest);manifest=NULL;
+        if(!generate){
+            fg_error_set(err,FG_ERR_ARGUMENT,
+                         "pipeline eval requires at least one generated token");
+            free(wrapped);
+            return FG_ERR_ARGUMENT;
+        }
+        fg_runtime *runtime=NULL;
+        status=fg_runtime_open(&runtime,path,err);
+        fg_generation_stats stats={0};
+        if(status==FG_OK)status=fg_runtime_generate(runtime,prompt,generate,
+            pipeline_eval_token,NULL,NULL,NULL,&stats,err);
+        if(status==FG_OK)
+            fprintf(stderr,
+                "\npipeline eval: prefill %u tokens %.2f tok/s, decode %u tokens "
+                "%.2f tok/s\n",stats.prefilled_tokens,
+                stats.prefill_seconds>0.0?
+                    (double)stats.prefilled_tokens/stats.prefill_seconds:0.0,
+                stats.generated_tokens,stats.decode_seconds>0.0?
+                    (double)stats.generated_tokens/stats.decode_seconds:0.0);
+        if(status==FG_OK){
+            fprintf(stderr,"pipeline stages:");
+            for(uint32_t stage=0;stage<FG_PIPELINE_STAGE_COUNT;stage++)
+                fprintf(stderr," %u=%.6f",stage,stats.stage_seconds[stage]);
+            fputc('\n',stderr);
+        }
+        fg_runtime_close(runtime);
+        free(wrapped);
+        return status;
+    }
     if(status==FG_OK)status=fg_runtime_options_resolve(&options,manifest,NULL,err);
     char directory[1024];if(status==FG_OK)status=manifest_directory(path,directory,err);
     fg_coordinator coordinator={0};

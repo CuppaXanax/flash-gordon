@@ -7,6 +7,8 @@
 typedef struct fg_model fg_model;
 
 fg_status fg_model_open(fg_model **out,const fg_manifest *manifest,const char *pack_dir,uint32_t rank,fg_error *err);
+fg_status fg_model_open_stage(fg_model **out,const fg_manifest *manifest,
+                              const char *pack_dir,uint32_t rank,fg_error *err);
 fg_status fg_model_open_replicated(fg_model **out,const fg_manifest *manifest,const char *pack_dir,uint32_t rank,fg_error *err);
 fg_status fg_model_open_coordinator(fg_model **out,const fg_manifest *manifest,const char *pack_dir,
                                     uint32_t rank,fg_error *err);

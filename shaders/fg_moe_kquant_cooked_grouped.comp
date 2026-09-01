@@ -1,0 +1,170 @@
+#version 460
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Weights { uint wb[]; };
+layout(set = 0, binding = 1) readonly buffer Activation { uint q8[]; };
+layout(set = 0, binding = 2) readonly buffer Tiles { uint tiles[]; };
+layout(set = 0, binding = 3) writeonly buffer Output { float y[]; };
+
+layout(push_constant) uniform Push {
+    uint out_dim;
+    uint blocks;
+    uint tile_bytes;
+    uint expert_stride;
+    uint type;
+    uint tokens;
+} pc;
+
+const uint Q4_K = 12u;
+const uint Q5_K = 13u;
+const uint TOP_K = 10u;
+const uint PAIR_TILE = 16u;
+const uint TILE_WORDS = 17u;
+const uint INVALID = 0xffffffffu;
+const uint Q8K_WORDS = 74u;
+shared uint metadata[32];
+shared uint pair_ids[PAIR_TILE];
+shared float sums[PAIR_TILE][64];
+shared float minimum_sums[PAIR_TILE][64];
+
+uint metadata_byte(uint row_slot, uint offset) {
+    uint word = metadata[row_slot * 4u + 1u + (offset >> 2u)];
+    return (word >> ((offset & 3u) * 8u)) & 255u;
+}
+
+void scale_min(uint row_slot, uint group, out uint scale, out uint minimum) {
+    uint first = metadata_byte(row_slot, group);
+    if (group < 4u) {
+        scale = first & 63u;
+        minimum = metadata_byte(row_slot, 4u + group) & 63u;
+    } else {
+        uint upper = metadata_byte(row_slot, 4u + group);
+        uint lower = metadata_byte(row_slot, group - 4u);
+        scale = (upper & 15u) | ((lower >> 6u) << 4u);
+        minimum = (upper >> 4u) | ((first >> 6u) << 4u);
+    }
+}
+
+int signed_byte(uint packed, uint item) {
+    uint value = (packed >> (item * 8u)) & 255u;
+    return value >= 128u ? int(value) - 256 : int(value);
+}
+
+int signed_half(uint packed, uint upper) {
+    uint value = upper == 0u ? packed & 65535u : packed >> 16u;
+    return value >= 32768u ? int(value) - 65536 : int(value);
+}
+
+uint quant_value(uint packed, uint high, uint group, uint item) {
+    uint byte_value = (packed >> (item * 8u)) & 255u;
+    uint low = (group & 1u) == 0u ? byte_value & 15u : byte_value >> 4u;
+    if (pc.type == Q4_K) return low;
+    uint high_byte = (high >> (item * 8u)) & 255u;
+    return low | (((high_byte >> group) & 1u) << 4u);
+}
+
+void main() {
+    uint local_id = gl_LocalInvocationID.x;
+    uint row_slot = local_id >> 3u;
+    uint lane = local_id & 7u;
+    uint row = gl_WorkGroupID.x * 8u + row_slot;
+    uint tile_base = gl_WorkGroupID.y * TILE_WORDS;
+    uint expert = tiles[tile_base];
+    if (expert == INVALID) return;
+    if (local_id < PAIR_TILE) pair_ids[local_id] = tiles[tile_base + 1u + local_id];
+    uint row_tile = row >> 3u;
+    uint tile_row = row & 7u;
+    bool row_live = row < pc.out_dim;
+    float accumulators[PAIR_TILE];
+    float minima[PAIR_TILE];
+    for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++) {
+        accumulators[pair_slot] = 0.0;
+        minima[pair_slot] = 0.0;
+    }
+    barrier();
+
+    for (uint block = 0u; block < pc.blocks; block++) {
+        uint block_tile_bytes = pc.type == Q4_K ? 1152u : 1408u;
+        uint block_base = expert * pc.expert_stride + row_tile * pc.tile_bytes +
+            block * block_tile_bytes;
+        if (lane == 0u)
+            metadata[row_slot * 4u] = row_live ?
+                wb[(block_base + tile_row * 4u) >> 2u] : 0u;
+        if (lane < 3u)
+            metadata[row_slot * 4u + 1u + lane] = row_live ?
+                wb[(block_base + 32u + tile_row * 12u + lane * 4u) >> 2u] : 0u;
+        barrier();
+
+        if (row_live) {
+            vec2 delta_min = unpackHalf2x16(metadata[row_slot * 4u]);
+            uint high = pc.type == Q5_K ?
+                wb[(block_base + 128u + tile_row * 32u + lane * 4u) >> 2u] : 0u;
+            uint quant_base = block_base + (pc.type == Q5_K ? 384u : 128u) +
+                tile_row * 128u;
+            for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++) {
+                uint pair = pair_ids[pair_slot];
+                if (pair == INVALID) continue;
+                uint activation_base = (pair / TOP_K) * pc.blocks * Q8K_WORDS +
+                    block * Q8K_WORDS;
+                float activation_delta = uintBitsToFloat(q8[activation_base]);
+                int integer_dot = 0;
+                for (uint group = 0u; group < 8u; group++) {
+                    uint packed_quant = wb[(quant_base + (group >> 1u) * 32u +
+                        lane * 4u) >> 2u];
+                    uint packed_activation = q8[activation_base + 2u + group * 8u + lane];
+                    uint scale_value;
+                    uint minimum_value;
+                    scale_min(row_slot, group, scale_value, minimum_value);
+                    int group_dot =
+                        int(quant_value(packed_quant, high, group, 0u)) * signed_byte(packed_activation, 0u) +
+                        int(quant_value(packed_quant, high, group, 1u)) * signed_byte(packed_activation, 1u) +
+                        int(quant_value(packed_quant, high, group, 2u)) * signed_byte(packed_activation, 2u) +
+                        int(quant_value(packed_quant, high, group, 3u)) * signed_byte(packed_activation, 3u);
+                    integer_dot += int(scale_value) * group_dot;
+                }
+                accumulators[pair_slot] = fma(delta_min.x * activation_delta,
+                    float(integer_dot), accumulators[pair_slot]);
+                if ((pc.type == Q5_K && lane == 0u) ||
+                    (pc.type == Q4_K && lane < 4u)) {
+                    int minimum_dot = 0;
+                    uint begin = pc.type == Q5_K ? 0u : lane * 2u;
+                    uint end = pc.type == Q5_K ? 8u : begin + 2u;
+                    for (uint group = begin; group < end; group++) {
+                        uint scale_value;
+                        uint minimum_value;
+                        scale_min(row_slot, group, scale_value, minimum_value);
+                        uint packed_sums = q8[activation_base + 66u + group];
+                        minimum_dot += int(minimum_value) *
+                            (signed_half(packed_sums, 0u) + signed_half(packed_sums, 1u));
+                    }
+                    minima[pair_slot] = fma(-delta_min.y * activation_delta,
+                        float(minimum_dot), minima[pair_slot]);
+                }
+            }
+        }
+        barrier();
+    }
+
+    for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++) {
+        sums[pair_slot][local_id] = accumulators[pair_slot];
+        minimum_sums[pair_slot][local_id] = minima[pair_slot];
+    }
+    barrier();
+    if (row_live && lane == 0u) {
+        uint offset = row_slot * 8u;
+        for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++) {
+            uint pair = pair_ids[pair_slot];
+            if (pair == INVALID || pair >= pc.tokens * TOP_K) continue;
+            float value =
+                ((sums[pair_slot][offset] + sums[pair_slot][offset + 4u]) +
+                 (sums[pair_slot][offset + 2u] + sums[pair_slot][offset + 6u])) +
+                ((sums[pair_slot][offset + 1u] + sums[pair_slot][offset + 5u]) +
+                 (sums[pair_slot][offset + 3u] + sums[pair_slot][offset + 7u]));
+            if (pc.type == Q5_K) value += minimum_sums[pair_slot][offset];
+            else for (uint i = 0u; i < 4u; i++)
+                value += minimum_sums[pair_slot][offset + i];
+            y[pair * pc.out_dim + row] = value;
+        }
+    }
+}

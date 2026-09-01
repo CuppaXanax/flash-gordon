@@ -1,4 +1,5 @@
 #include "fg_manifest.h"
+#include "fg_embedding.h"
 #include "fg_loader.h"
 #include "fg_ngram.h"
 #include "fg_pack.h"
@@ -14,6 +15,7 @@
 #include "fg_sha256.h"
 #include "fg_topology.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <fcntl.h>
 #include <math.h>
@@ -31,8 +33,50 @@ static int failures;
 #define CHECK(x) do{if(!(x)){fprintf(stderr,"FAIL %s:%d: %s\n",__FILE__,__LINE__,#x);failures++;}}while(0)
 
 static void test_sha(void){fg_sha256 c;uint8_t d[32];char hex[65];fg_sha256_init(&c);fg_sha256_update(&c,"abc",3);fg_sha256_final(&c,d);fg_sha256_hex(d,hex);CHECK(strcmp(hex,"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")==0);}
-static void test_topology(void){fg_manifest *m=malloc(sizeof(*m));CHECK(m!=NULL);if(!m)return;fg_manifest_init(m);for(uint32_t l=0;l<FG_LAYER_COUNT;l++){CHECK(m->layer_owner[l]==l%8);uint16_t count[8]={0};for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)count[m->expert_rank[l][e]]++;for(uint32_t g=0;g<4;g++)CHECK(count[m->layer_groups[l][g]]==128);}fg_q38_account_session_state(m);uint64_t gdn_layer=(uint64_t)FG_Q38_GDN_CONV_WIDTH*16u+(uint64_t)FG_Q38_GDN_HEADS*128u*128u*4u;CHECK(m->ranks[0].kv_bytes==6u*gdn_layer);CHECK(m->ranks[0].state_file_bytes==0);CHECK(m->ranks[3].kv_bytes==(6ull*136u+12u)*FG_MAX_CONTEXT);CHECK(m->ranks[3].state_file_bytes==FG_Q38_QSA_STATE_PAGE_BYTES+6ull*(FG_MAX_CONTEXT/4u)*FG_Q38_QSA_STATE_PAGE_BYTES);CHECK(m->ranks[7].kv_bytes==m->ranks[3].kv_bytes&&m->ranks[7].state_file_bytes==m->ranks[3].state_file_bytes);free(m);}
-static void test_profile(void){fg_manifest *m=malloc(sizeof(*m));double (*p)[FG_EXPERT_COUNT]=calloc(FG_LAYER_COUNT,sizeof(*p));CHECK(m&&p);if(!m||!p){free(m);free(p);return;}fg_manifest_init(m);for(uint32_t l=0;l<FG_LAYER_COUNT;l++)for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)p[l][e]=(double)(FG_EXPERT_COUNT-e);fg_error err={0};CHECK(fg_topology_assign_profile(m,(const double (*)[FG_EXPERT_COUNT])p,&err)==FG_OK);for(uint32_t l=0;l<FG_LAYER_COUNT;l++){uint16_t count[8]={0};for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)count[m->expert_rank[l][e]]++;for(uint32_t g=0;g<4;g++)CHECK(count[m->layer_groups[l][g]]==128);}free(p);free(m);}
+static void test_topology(void){fg_manifest *m=malloc(sizeof(*m));CHECK(m!=NULL);if(!m)return;fg_manifest_init(m);for(uint32_t l=0;l<FG_LAYER_COUNT;l++){CHECK(m->layer_owner[l]==l%8);uint16_t count[8]={0};for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)count[m->expert_rank[l][e]]++;for(uint32_t g=0;g<4;g++)CHECK(count[m->layer_groups[l][g]]==128);}fg_error err={0};CHECK(fg_topology_validate(m,&err)==FG_OK);m->layer_offsets[3]=256u;fg_topology_seal(m);CHECK(fg_topology_validate(m,&err)==FG_ERR_FORMAT);m->layer_offsets[3]=0u;fg_topology_seal(m);fg_q38_account_session_state(m);uint64_t gdn_layer=(uint64_t)FG_Q38_GDN_CONV_WIDTH*16u+(uint64_t)FG_Q38_GDN_HEADS*128u*128u*4u;CHECK(m->ranks[0].kv_bytes==6u*gdn_layer);CHECK(m->ranks[0].state_file_bytes==0);CHECK(m->ranks[3].kv_bytes==(6ull*136u+12u)*FG_MAX_CONTEXT);CHECK(m->ranks[3].state_file_bytes==FG_Q38_QSA_STATE_PAGE_BYTES+6ull*(FG_MAX_CONTEXT/4u)*FG_Q38_QSA_STATE_PAGE_BYTES);CHECK(m->ranks[7].kv_bytes==m->ranks[3].kv_bytes&&m->ranks[7].state_file_bytes==m->ranks[3].state_file_bytes);free(m);}
+static void test_pipeline_topology(void){
+    fg_manifest *m=malloc(sizeof(*m));CHECK(m!=NULL);if(!m)return;
+    fg_manifest_init(m);fg_topology_build_pipeline(m);fg_error err={0};
+    CHECK(m->execution_mode==FG_EXECUTION_PIPELINE);
+    CHECK(m->stage_count==FG_PIPELINE_STAGE_COUNT&&
+          m->slot_count==FG_PIPELINE_DEFAULT_SLOT_COUNT);
+    for(uint32_t stage=0;stage<FG_PIPELINE_STAGE_COUNT;stage++){
+        CHECK(m->stage_ranks[stage]==stage);
+        CHECK(m->layer_offsets[stage]==stage*FG_PIPELINE_DEFAULT_LAYERS_PER_STAGE);
+        for(uint32_t layer=m->layer_offsets[stage];layer<m->layer_offsets[stage+1u];layer++){
+            CHECK(m->layer_owner[layer]==stage);
+            for(uint32_t expert=0;expert<FG_EXPERT_COUNT;expert++)
+                CHECK(m->expert_rank[layer][expert]==stage);
+        }
+    }
+    CHECK(m->layer_offsets[FG_PIPELINE_STAGE_COUNT]==FG_LAYER_COUNT);
+    CHECK(fg_topology_validate(m,&err)==FG_OK);
+    CHECK(2u*fg_q38_pipeline_activation_slot_bytes(128u)==
+          2ull*128ull*(10240ull*4ull+3ull*4ull));
+    m->max_context=FG_NATIVE_CONTEXT;m->prefill_microbatch=128u;
+    m->prefill_window=2u;fg_q38_account_session_state(m);
+    uint64_t gdn=(uint64_t)FG_Q38_GDN_CONV_WIDTH*16u+
+        (uint64_t)FG_Q38_GDN_HEADS*128u*128u*4u;
+    uint64_t qsa=(uint64_t)m->max_context*
+        (FG_Q38_QSA_TOKEN_RECORD_BYTES+FG_Q38_QSA_INDEX_KEY_BYTES);
+    uint64_t positions=(uint64_t)m->max_context*FG_Q38_QSA_POSITION_BYTES;
+    CHECK(m->ranks[0].kv_bytes==5u*gdn+qsa+positions);
+    CHECK(m->ranks[1].kv_bytes==4u*gdn+2u*qsa+positions);
+    static const uint64_t scratch[FG_RANK_COUNT]={
+        335544320u,268435456u,268435456u,268435456u,
+        268435456u,268435456u,268435456u,268435456u
+    };
+    for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){
+        CHECK(fg_q38_runtime_scratch_bytes_for_manifest(
+                  m,rank,128u,2u,FG_NATIVE_CONTEXT)==scratch[rank]);
+        uint64_t resident=FG_PERSISTENT_CAP_BYTES+(1024ull<<20u)+
+            m->ranks[rank].kv_bytes+scratch[rank];
+        CHECK(resident<=FG_RESIDENCY_CAP_BYTES);
+    }
+    m->expert_rank[17][511]=0u;fg_topology_seal(m);
+    CHECK(fg_topology_validate(m,&err)==FG_ERR_FORMAT);free(m);
+}
+static void test_profile(void){fg_manifest *m=malloc(sizeof(*m));double (*p)[FG_EXPERT_COUNT]=calloc(FG_LAYER_COUNT,sizeof(*p));CHECK(m&&p);if(!m||!p){free(m);free(p);return;}fg_manifest_init(m);for(uint32_t l=0;l<FG_LAYER_COUNT;l++)for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)p[l][e]=(double)(FG_EXPERT_COUNT-e);fg_error err={0};CHECK(fg_topology_assign_profile(m,(const double (*)[FG_EXPERT_COUNT])p,&err)==FG_OK);for(uint32_t l=0;l<FG_LAYER_COUNT;l++){uint16_t count[8]={0};for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)count[m->expert_rank[l][e]]++;for(uint32_t g=0;g<4;g++)CHECK(count[m->layer_groups[l][g]]==128);}fg_topology_build_pipeline(m);uint8_t fingerprint[32];memcpy(fingerprint,m->topology_sha256,sizeof(fingerprint));CHECK(fg_topology_assign_profile(m,(const double (*)[FG_EXPERT_COUNT])p,&err)==FG_ERR_UNAVAILABLE);CHECK(memcmp(fingerprint,m->topology_sha256,sizeof(fingerprint))==0);CHECK(m->expert_rank[17][511]==m->layer_owner[17]);free(p);free(m);}
 static void test_expert_map(void){fg_manifest *m=malloc(sizeof(*m));uint16_t (*map)[FG_EXPERT_COUNT]=malloc(sizeof(*map)*FG_LAYER_COUNT);CHECK(m&&map);if(!m||!map){free(map);free(m);return;}fg_manifest_init(m);for(uint32_t l=0;l<FG_LAYER_COUNT;l++)for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)map[l][e]=m->layer_groups[l][(e+1u)%FG_GROUP_SIZE];fg_error err={0};CHECK(fg_topology_assign_map(m,(const uint16_t (*)[FG_EXPERT_COUNT])map,&err)==FG_OK);CHECK(m->expert_rank[0][0]==m->layer_groups[0][1]);uint16_t saved=map[0][0];map[0][0]=2u;CHECK(fg_topology_assign_map(m,(const uint16_t (*)[FG_EXPERT_COUNT])map,&err)==FG_ERR_FORMAT);CHECK(m->expert_rank[0][0]==saved);map[0][0]=map[0][1];CHECK(fg_topology_assign_map(m,(const uint16_t (*)[FG_EXPERT_COUNT])map,&err)==FG_ERR_FORMAT);CHECK(m->expert_rank[0][0]==saved);free(map);free(m);}
 static void test_expert_map_file(void){fg_manifest *m=malloc(sizeof(*m));CHECK(m!=NULL);if(!m)return;fg_manifest_init(m);char path[128];snprintf(path,sizeof(path),"/tmp/fg-expert-map-%ld.txt",(long)getpid());FILE *file=fopen(path,"w");CHECK(file!=NULL);if(file){static const uint32_t delta[FG_GROUP_SIZE]={0,1,3,5};fputs("# Flash Gordon route placement v1\n",file);for(uint32_t l=0;l<FG_LAYER_COUNT;l++){fprintf(file,"layer=%u ranks=",l);for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)fprintf(file,"%s%u",e?",":"",(l+delta[(e+1u)%FG_GROUP_SIZE])%FG_RANK_COUNT);fputc('\n',file);}fclose(file);fg_error err={0};CHECK(fg_topology_assign_map_file(m,path,&err)==FG_OK);CHECK(m->expert_rank[0][0]==m->layer_groups[0][1]);file=fopen(path,"w");CHECK(file!=NULL);if(file){fputs("layer=0 ranks=0\n",file);fclose(file);CHECK(fg_topology_assign_map_file(m,path,&err)==FG_ERR_FORMAT);CHECK(m->expert_rank[0][0]==m->layer_groups[0][1]);}}unlink(path);free(m);}
 static void test_sealed_expert_map(void){fg_manifest *manifest=malloc(sizeof(*manifest)),*sealed=malloc(sizeof(*sealed));CHECK(manifest&&sealed);if(!manifest||!sealed){free(sealed);free(manifest);return;}fg_manifest_init(manifest);char map_path[128],manifest_path[128];snprintf(map_path,sizeof(map_path),"/tmp/fg-sealed-map-%ld.txt",(long)getpid());snprintf(manifest_path,sizeof(manifest_path),"/tmp/fg-sealed-map-%ld.fgm",(long)getpid());FILE *file=fopen(map_path,"w");CHECK(file!=NULL);if(file){for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){fprintf(file,"layer=%u ranks=",layer);for(uint32_t expert=0;expert<FG_EXPERT_COUNT;expert++)fprintf(file,"%s%u",expert?",":"",manifest->layer_groups[layer][(expert+1u)%FG_GROUP_SIZE]);fputc('\n',file);}fclose(file);fg_error err={0};CHECK(fg_topology_assign_map_file(manifest,map_path,&err)==FG_OK);CHECK(fg_manifest_write(manifest_path,manifest,&err)==FG_OK);unlink(map_path);CHECK(fg_manifest_read(manifest_path,sealed,&err)==FG_OK);CHECK(sealed->expert_rank[0][0]==sealed->layer_groups[0][1]);}unlink(map_path);unlink(manifest_path);free(sealed);free(manifest);}
@@ -265,11 +309,66 @@ static void test_ngram_planner_batch_capacity(void){
     CHECK(fg_ngram_plan_reads(addresses,8,32768,reads,6,&count,&err)==FG_OK);CHECK(count==2);CHECK(reads[0].offset==0&&reads[0].bytes==8192);CHECK(reads[1].offset==8192&&reads[1].bytes==8192);
     CHECK(fg_ngram_plan_reads(addresses,8,32768,reads,1,&count,&err)==FG_ERR_LIMIT);uint64_t edge[]={4096};CHECK(fg_ngram_plan_reads(edge,1,4096,reads,1,&count,&err)==FG_ERR_FORMAT);
 }
+static void test_pipeline_owner_transient_geometry(void){
+    fg_q38_pipeline_owner_transient_layout layout={0};
+    CHECK(!fg_q38_pipeline_owner_transient_layout_get(0u,&layout));
+    CHECK(!fg_q38_pipeline_owner_transient_layout_get(513u,&layout));
+    CHECK(fg_q38_pipeline_owner_transient_bytes(0u)==UINT64_MAX);
+    CHECK(fg_q38_pipeline_owner_transient_layout_get(128u,&layout));
+    CHECK(layout.total_bytes==UINT64_C(16166912));
+    CHECK(FG_Q38_DECODE_TILE_WORDS==9u);
+    CHECK(FG_Q38_PIPELINE_DECODE_EXTRA_BYTES==UINT64_C(92200));
+    CHECK(layout.bytes[FG_Q38_PIPELINE_TRANSIENT_SELECTED]==
+          128u*FG_TOP_K*4u);
+    CHECK(layout.bytes[FG_Q38_PIPELINE_TRANSIENT_GATES]==
+          128u*FG_TOP_K*4u);
+    CHECK(layout.bytes[FG_Q38_PIPELINE_TRANSIENT_PREFILL_TILES]==
+          128u*FG_TOP_K*FG_Q38_PREFILL_TILE_WORDS*4u);
+    CHECK(FG_Q38_PREFILL_TILE_WORDS==FG_VK_PREFILL_TILE_WORDS);
+    for(uint32_t i=0;i<FG_Q38_PIPELINE_TRANSIENT_COUNT;i++){
+        CHECK(layout.offsets[i]%FG_ALIGNMENT==0u);
+        CHECK(layout.bytes[i]>0u&&
+              layout.offsets[i]+layout.bytes[i]<=layout.total_bytes);
+        for(uint32_t j=i+1u;j<FG_Q38_PIPELINE_TRANSIENT_COUNT;j++)
+            CHECK(layout.offsets[i]+layout.bytes[i]<=layout.offsets[j]||
+                  layout.offsets[j]+layout.bytes[j]<=layout.offsets[i]);
+    }
+
+    enum{TOKENS=2};
+    CHECK(fg_q38_pipeline_owner_transient_layout_get(TOKENS,&layout));
+    uint64_t ple_bytes=fg_qsa_ple_scratch_bytes(TOKENS);
+    uint64_t residual_offset=(uint64_t)TOKENS*
+        (6u*FG_Q38_HYPER_WIDTH+FG_HIDDEN_SIZE)*4u;
+    uint64_t residual_bytes=(uint64_t)TOKENS*FG_Q38_HYPER_WIDTH*4u;
+    uint8_t *ple=malloc((size_t)ple_bytes);
+    uint8_t *transient=malloc((size_t)layout.total_bytes);
+    CHECK(ple&&transient);
+    if(ple&&transient){
+        uintptr_t ple_begin=(uintptr_t)ple,ple_end=ple_begin+ple_bytes;
+        uintptr_t transient_begin=(uintptr_t)transient;
+        uintptr_t transient_end=transient_begin+layout.total_bytes;
+        CHECK(ple_end<=transient_begin||transient_end<=ple_begin);
+        memset(ple,0,(size_t)ple_bytes);
+        memset(ple+residual_offset,0x5a,(size_t)residual_bytes);
+        /* Simulate every MoE transient being overwritten before layer-1 GR write. */
+        memset(transient,0xa5,(size_t)layout.total_bytes);
+        bool intact=true;
+        for(uint64_t i=0;i<residual_bytes;i++)
+            if(ple[residual_offset+i]!=0x5a){intact=false;break;}
+        CHECK(intact);
+    }
+    free(transient);free(ple);
+}
+
 static void test_qsa_scratch_geometry(void){
     CHECK(fg_qsa_attention_scratch_bytes(0u)==UINT64_MAX);
     CHECK(fg_qsa_attention_scratch_bytes(FG_PREFILL_MAX_TOKENS+1u)==UINT64_MAX);
     CHECK(fg_qsa_attention_scratch_bytes(256u)==37144576u);
     CHECK(fg_qsa_gdn_scratch_bytes(256u)==36274176u);
+    CHECK(fg_gdn_pipeline_prefill_scratch_bytes(128u)==18137088u);
+    CHECK(fg_gdn_pipeline_prefill_scratch_bytes(129u)==UINT64_MAX);
+    CHECK(FG_VK_GDN_PIPELINE_PREFILL_MAX_TOKENS==128u);
+    CHECK(FG_VK_GDN_PIPELINE_PREFILL_DISPATCHES==3u);
     CHECK(fg_qsa_ple_scratch_bytes(256u)==76021760u);
     CHECK(fg_qsa_attention_family_scratch_bytes(256u)==76021760u);
     CHECK(fg_qsa_attention_family_scratch_bytes(128u)==38010880u);
@@ -468,7 +567,131 @@ static void test_qsa_page_cache(void){
     cache=NULL;CHECK(fg_qsa_page_cache_create(&cache,UINT32_MAX,&err)==FG_ERR_LIMIT&&!cache);
 }
 static void put_u32(FILE *f,uint32_t v){CHECK(fwrite(&v,1,4,f)==4);}static void put_u64(FILE *f,uint64_t v){CHECK(fwrite(&v,1,8,f)==8);}static void put_string(FILE *f,const char *s){uint64_t n=strlen(s);put_u64(f,n);CHECK(fwrite(s,1,(size_t)n,f)==n);}
-static void test_pack(void){char source[128],dir[128],manifest_path[160];snprintf(source,sizeof(source),"/tmp/fg-test-%ld.gguf",(long)getpid());snprintf(dir,sizeof(dir),"/tmp/fg-test-%ld-pack",(long)getpid());snprintf(manifest_path,sizeof(manifest_path),"%s/manifest.fgm",dir);FILE *f=fopen(source,"wb");CHECK(f!=NULL);if(!f)return;put_u32(f,0x46554747u);put_u32(f,3);put_u64(f,2);put_u64(f,0);put_string(f,"token_embd.weight");put_u32(f,1);put_u64(f,1);put_u32(f,0);put_u64(f,0);put_string(f,"blk.0.ffn_gate_exps.weight");put_u32(f,2);put_u64(f,1);put_u64(f,512);put_u32(f,0);put_u64(f,32);while((ftell(f)&31)!=0)fputc(0,f);float one=1.0f;CHECK(fwrite(&one,1,4,f)==4);for(unsigned i=4;i<32;i++)fputc(0,f);for(unsigned i=0;i<512;i++){float v=(float)i;CHECK(fwrite(&v,1,4,f)==4);}fclose(f);const char *sources[]={source};fg_pack_options o={.output_dir=dir,.source_paths=sources,.source_count=1,.skip_model_validation=true};fg_error err={0};fg_status pack_rc=fg_pack_run(&o,&err);if(pack_rc!=FG_OK)fprintf(stderr,"pack error: %s\n",err.message);CHECK(pack_rc==FG_OK);fg_manifest *m=malloc(sizeof(*m));CHECK(m!=NULL);if(m){CHECK(fg_manifest_read(manifest_path,m,&err)==FG_OK);for(uint32_t r=0;r<FG_RANK_COUNT;r++)CHECK(m->ranks[r].scratch_bytes==fg_q38_runtime_scratch_bytes(r,m->prefill_microbatch,m->prefill_window,m->max_context));CHECK(m->tensor_count==5);CHECK(m->tensors[0].dims==1&&m->tensors[0].shape[0]==1);for(uint32_t i=1;i<5;i++)CHECK(m->tensors[i].dims==2&&m->tensors[i].shape[1]==128);for(uint32_t r=0;r<4;r++)CHECK(m->ranks[m->layer_groups[0][r]].tensor_count>=1);char rank_path[160];snprintf(rank_path,sizeof(rank_path),"%s/rank-00.fgw",dir);struct stat st;CHECK(stat(rank_path,&st)==0);void *arena=NULL;CHECK(posix_memalign(&arena,FG_ALIGNMENT,(size_t)st.st_size)==0);FILE *rf=fopen(rank_path,"rb");CHECK(rf!=NULL);if(arena&&rf){CHECK(fread(arena,1,(size_t)st.st_size,rf)==(size_t)st.st_size);fclose(rf);CHECK(fg_verify_rank_arena(m,0,arena,(uint64_t)st.st_size,&err)==FG_OK);((uint8_t *)arena)[m->tensors[0].offset]^=1;CHECK(fg_verify_rank_arena(m,0,arena,(uint64_t)st.st_size,&err)==FG_ERR_MISMATCH);}free(arena);uint64_t sealed_scratch=m->ranks[1].scratch_bytes;m->ranks[1].scratch_bytes=sealed_scratch-1u;CHECK(fg_manifest_write(manifest_path,m,&err)==FG_OK);fg_manifest *understated=malloc(sizeof(*understated));CHECK(understated!=NULL);if(understated){CHECK(fg_manifest_read(manifest_path,understated,&err)==FG_ERR_LIMIT);free(understated);}m->ranks[1].scratch_bytes=sealed_scratch;CHECK(fg_manifest_write(manifest_path,m,&err)==FG_OK);free(m);}f=fopen(manifest_path,"r+b");CHECK(f!=NULL);if(f){CHECK(fseek(f,(long)offsetof(fg_manifest,source_sha256),SEEK_SET)==0);int c=fgetc(f);CHECK(c!=EOF);CHECK(fseek(f,-1,SEEK_CUR)==0);fputc(c^1,f);fclose(f);m=malloc(sizeof(*m));if(m){CHECK(fg_manifest_read(manifest_path,m,&err)==FG_ERR_MISMATCH);free(m);}}unlink(manifest_path);char p[160];for(unsigned r=0;r<8;r++){snprintf(p,sizeof(p),"%s/rank-%02u.fgw",dir,r);unlink(p);}snprintf(p,sizeof(p),"%s/ngram.iq4nl",dir);unlink(p);rmdir(dir);unlink(source);}
+static void test_pack(void){char source[128],dir[128],manifest_path[160];snprintf(source,sizeof(source),"/tmp/fg-test-%ld.gguf",(long)getpid());snprintf(dir,sizeof(dir),"/tmp/fg-test-%ld-pack",(long)getpid());snprintf(manifest_path,sizeof(manifest_path),"%s/manifest.fgm",dir);FILE *f=fopen(source,"wb");CHECK(f!=NULL);if(!f)return;put_u32(f,0x46554747u);put_u32(f,3);put_u64(f,2);put_u64(f,0);put_string(f,"token_embd.weight");put_u32(f,1);put_u64(f,1);put_u32(f,0);put_u64(f,0);put_string(f,"blk.0.ffn_gate_exps.weight");put_u32(f,2);put_u64(f,1);put_u64(f,512);put_u32(f,0);put_u64(f,32);while((ftell(f)&31)!=0)fputc(0,f);float one=1.0f;CHECK(fwrite(&one,1,4,f)==4);for(unsigned i=4;i<32;i++)fputc(0,f);for(unsigned i=0;i<512;i++){float v=(float)i;CHECK(fwrite(&v,1,4,f)==4);}fclose(f);const char *sources[]={source};fg_pack_options o={.output_dir=dir,.source_paths=sources,.source_count=1,.skip_model_validation=true};fg_error err={0};fg_status pack_rc=fg_pack_run(&o,&err);if(pack_rc!=FG_OK)fprintf(stderr,"pack error: %s\n",err.message);CHECK(pack_rc==FG_OK);fg_manifest *m=malloc(sizeof(*m));CHECK(m!=NULL);if(m){CHECK(fg_manifest_read(manifest_path,m,&err)==FG_OK);for(uint32_t r=0;r<FG_RANK_COUNT;r++)CHECK(m->ranks[r].scratch_bytes==fg_q38_runtime_scratch_bytes(r,m->prefill_microbatch,m->prefill_window,m->max_context));CHECK(m->tensor_count==5);CHECK(m->tensors[0].dims==1&&m->tensors[0].shape[0]==1&&m->tensors[0].kind==FG_TENSOR_COMMON&&m->tensors[0].layout==FG_TENSOR_LAYOUT_GGML);char external_path[160];struct stat external_info;snprintf(external_path,sizeof(external_path),"%s/%s",dir,FG_TOKEN_EMBEDDING_ARTIFACT);CHECK(stat(external_path,&external_info)!=0&&errno==ENOENT);for(uint32_t i=1;i<5;i++){uint32_t rank=m->layer_groups[0][i-1u];char expected[FG_TENSOR_NAME_MAX];snprintf(expected,sizeof(expected),"blk.0.ffn_gate_exps.weight.rank%u",rank);CHECK(m->tensors[i].dims==2&&m->tensors[i].shape[1]==128);CHECK(!strcmp(m->tensors[i].name,expected)&&m->tensors[i].rank==rank&&m->tensors[i].bytes==512u);}for(uint32_t r=0;r<4;r++)CHECK(m->ranks[m->layer_groups[0][r]].tensor_count>=1);char rank_path[160];snprintf(rank_path,sizeof(rank_path),"%s/rank-00.fgw",dir);struct stat st;CHECK(stat(rank_path,&st)==0);void *arena=NULL;CHECK(posix_memalign(&arena,FG_ALIGNMENT,(size_t)st.st_size)==0);FILE *rf=fopen(rank_path,"rb");CHECK(rf!=NULL);if(arena&&rf){CHECK(fread(arena,1,(size_t)st.st_size,rf)==(size_t)st.st_size);fclose(rf);CHECK(fg_verify_rank_arena(m,0,arena,(uint64_t)st.st_size,&err)==FG_OK);((uint8_t *)arena)[m->tensors[0].offset]^=1;CHECK(fg_verify_rank_arena(m,0,arena,(uint64_t)st.st_size,&err)==FG_ERR_MISMATCH);}free(arena);uint64_t sealed_scratch=m->ranks[1].scratch_bytes;m->ranks[1].scratch_bytes=sealed_scratch-1u;CHECK(fg_manifest_write(manifest_path,m,&err)==FG_OK);fg_manifest *understated=malloc(sizeof(*understated));CHECK(understated!=NULL);if(understated){CHECK(fg_manifest_read(manifest_path,understated,&err)==FG_ERR_LIMIT);free(understated);}m->ranks[1].scratch_bytes=sealed_scratch;CHECK(fg_manifest_write(manifest_path,m,&err)==FG_OK);free(m);}f=fopen(manifest_path,"r+b");CHECK(f!=NULL);if(f){CHECK(fseek(f,(long)offsetof(fg_manifest,source_sha256),SEEK_SET)==0);int c=fgetc(f);CHECK(c!=EOF);CHECK(fseek(f,-1,SEEK_CUR)==0);fputc(c^1,f);fclose(f);m=malloc(sizeof(*m));if(m){CHECK(fg_manifest_read(manifest_path,m,&err)==FG_ERR_MISMATCH);free(m);}}unlink(manifest_path);char p[160];for(unsigned r=0;r<8;r++){snprintf(p,sizeof(p),"%s/rank-%02u.fgw",dir,r);unlink(p);}snprintf(p,sizeof(p),"%s/ngram.iq4nl",dir);unlink(p);rmdir(dir);unlink(source);}
+
+static const fg_tensor_record *manifest_record(const fg_manifest *manifest,const char *name){
+    for(uint32_t i=0;i<manifest->tensor_count;i++)
+        if(!strcmp(manifest->tensors[i].name,name))return &manifest->tensors[i];
+    return NULL;
+}
+
+static void test_pipeline_pack(void){
+    char source[128],directory[128],manifest_path[160],path[160];
+    long pid=(long)getpid();
+    snprintf(source,sizeof(source),"test-pipeline-pack-%ld.gguf",pid);
+    snprintf(directory,sizeof(directory),"test-pipeline-pack-%ld",pid);
+    snprintf(manifest_path,sizeof(manifest_path),"%s/manifest.fgm",directory);
+    FILE *file=fopen(source,"wb");CHECK(file!=NULL);if(!file)return;
+    put_u32(file,0x46554747u);put_u32(file,3u);put_u64(file,4u);put_u64(file,0u);
+    put_string(file,"token_embd.weight");put_u32(file,2u);put_u64(file,32u);put_u64(file,1u);put_u32(file,8u);put_u64(file,0u);
+    put_string(file,"output.weight");put_u32(file,1u);put_u64(file,1u);put_u32(file,0u);put_u64(file,64u);
+    put_string(file,"blk.6.probe.weight");put_u32(file,1u);put_u64(file,1u);put_u32(file,0u);put_u64(file,96u);
+    put_string(file,"blk.6.ffn_gate_exps.weight");put_u32(file,2u);put_u64(file,1u);put_u64(file,FG_EXPERT_COUNT);put_u32(file,0u);put_u64(file,128u);
+    while((ftell(file)&31)!=0)fputc(0,file);
+    long data_start=ftell(file);for(uint32_t i=0;i<FG_Q38_Q8_0_BLOCK_BYTES;i++)fputc((int)(i*7u+3u),file);
+    while((uint64_t)(ftell(file)-data_start)<64u)fputc(0,file);
+    float value=2.0f;CHECK(fwrite(&value,1,4u,file)==4u);for(uint32_t i=4u;i<32u;i++)fputc(0,file);
+    value=3.0f;CHECK(fwrite(&value,1,4u,file)==4u);for(uint32_t i=4u;i<32u;i++)fputc(0,file);
+    for(uint32_t expert=0;expert<FG_EXPERT_COUNT;expert++){value=(float)expert;CHECK(fwrite(&value,1,4u,file)==4u);}
+    fclose(file);
+    const char *sources[]={source};fg_error error={0};
+    fg_pack_options options={.output_dir=directory,.source_paths=sources,.source_count=1u,
+        .runtime_profile=FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K,
+        .skip_model_validation=true};
+    CHECK(fg_pack_run(&options,&error)==FG_OK);
+    fg_manifest *manifest=malloc(sizeof(*manifest));CHECK(manifest!=NULL);
+    if(manifest){
+        fg_status read_status=fg_manifest_read(manifest_path,manifest,&error);
+        if(read_status!=FG_OK)fprintf(stderr,"pipeline manifest read: %s\n",error.message);
+        CHECK(read_status==FG_OK);
+        CHECK(manifest->execution_mode==FG_EXECUTION_PIPELINE&&manifest->tensor_count==4u);
+        const fg_tensor_record *embedding=manifest_record(manifest,"token_embd.weight");
+        const fg_tensor_record *output=manifest_record(manifest,"output.weight");
+        const fg_tensor_record *common=manifest_record(manifest,"blk.6.probe.weight");
+        const fg_tensor_record *expert=manifest_record(manifest,"blk.6.ffn_gate_exps.weight");
+        CHECK(embedding&&embedding->rank==manifest->stage_ranks[0]&&
+              embedding->kind==FG_TENSOR_HOST_CACHE&&
+              embedding->layout==FG_TENSOR_LAYOUT_HOST_Q8_0&&
+              embedding->bytes==FG_Q38_Q8_0_BLOCK_BYTES);
+        CHECK(embedding&&manifest->host_resident_bytes[manifest->stage_ranks[0]]==
+              embedding->bytes);
+        CHECK(manifest->ranks[manifest->stage_ranks[0]].tensor_count==0u&&
+              manifest->ranks[manifest->stage_ranks[0]].persistent_bytes==0u);
+        CHECK(output&&output->rank==manifest->stage_ranks[manifest->stage_count-1u]);
+        CHECK(common&&common->rank==manifest->layer_owner[6]);
+        CHECK(expert&&expert->rank==manifest->layer_owner[6]&&
+              expert->bytes==(uint64_t)FG_EXPERT_COUNT*4u&&
+              expert->shape[1]==FG_EXPERT_COUNT&&!strstr(expert->name,".rank"));
+        CHECK(manifest->ranks[manifest->layer_owner[6]].tensor_count==2u);
+        for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){
+            CHECK(manifest->ranks[rank].scratch_bytes==
+                  fg_q38_runtime_scratch_bytes_for_manifest(
+                      manifest,rank,manifest->prefill_microbatch,
+                      manifest->prefill_window,manifest->max_context));
+            snprintf(path,sizeof(path),"%s/rank-%02u.fgw",directory,rank);
+            struct stat info;CHECK(stat(path,&info)==0);
+            CHECK((uint64_t)info.st_size==manifest->ranks[rank].persistent_bytes);
+        }
+        fg_verify_options verify={.manifest_path=manifest_path,.pack_dir=directory,
+            .source_paths=sources,.source_count=1u};
+        fg_status verify_status=fg_pack_verify(&verify,&error);
+        if(verify_status!=FG_OK)fprintf(stderr,"pipeline pack verify: %s\n",error.message);
+        CHECK(verify_status==FG_OK);
+        snprintf(path,sizeof(path),"%s/%s",directory,FG_TOKEN_EMBEDDING_ARTIFACT);
+        struct stat embedding_info;CHECK(stat(path,&embedding_info)==0&&
+            (uint64_t)embedding_info.st_size==embedding->bytes);
+        uint8_t embedding_digest[32];CHECK(fg_sha256_file(path,embedding_digest,&error)==FG_OK&&
+            !memcmp(embedding_digest,embedding->sha256,sizeof(embedding_digest)));
+        CHECK(unlink(path)==0);
+        CHECK(fg_pack_verify(&verify,&error)==FG_ERR_MISMATCH);
+        FILE *external=fopen(path,"wb");CHECK(external!=NULL);
+        if(external){for(uint32_t i=0;i<FG_Q38_Q8_0_BLOCK_BYTES;i++)fputc((int)(i*7u+3u),external);CHECK(fclose(external)==0);}
+        external=fopen(path,"r+b");CHECK(external!=NULL);
+        if(external){CHECK(fputc(0xff,external)!=EOF);CHECK(fclose(external)==0);}
+        CHECK(fg_pack_verify(&verify,&error)==FG_ERR_MISMATCH);
+        free(manifest);
+    }
+    options.router_profile_path="unused-router-profile";
+    CHECK(fg_pack_run(&options,&error)==FG_ERR_UNAVAILABLE);
+    options.router_profile_path=NULL;options.expert_map_path="unused-expert-map";
+    CHECK(fg_pack_run(&options,&error)==FG_ERR_UNAVAILABLE);
+    unlink(manifest_path);
+    for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){snprintf(path,sizeof(path),"%s/rank-%02u.fgw",directory,rank);unlink(path);}
+    for(uint32_t rank=1;rank<FG_RANK_COUNT;rank++){snprintf(path,sizeof(path),"%s/" FG_NGRAM_SHARD_ARTIFACT_FORMAT,directory,rank);unlink(path);}
+    snprintf(path,sizeof(path),"%s/ngram.iq4nl",directory);unlink(path);
+    snprintf(path,sizeof(path),"%s/%s",directory,FG_TOKEN_EMBEDDING_ARTIFACT);unlink(path);
+    rmdir(directory);unlink(source);
+}
+
+static void test_pipeline_spill_admission(void){
+    char source[128];snprintf(source,sizeof(source),
+                              "test-pipeline-spill-%ld.gguf",(long)getpid());
+    FILE *file=fopen(source,"wb");CHECK(file!=NULL);if(!file)return;
+    const uint64_t token_bytes=(uint64_t)FG_Q38_VOCAB_SIZE*
+        (FG_HIDDEN_SIZE/FG_QK8_0)*FG_Q38_Q8_0_BLOCK_BYTES;
+    const uint64_t rank_bytes=(FG_PERSISTENT_CAP_BYTES-2u*FG_ALIGNMENT)&~3ull;
+    const uint64_t common_offset=fg_align_up_u64(token_bytes,32u);
+    put_u32(file,0x46554747u);put_u32(file,3u);put_u64(file,2u);put_u64(file,0u);
+    put_string(file,"token_embd.weight");put_u32(file,2u);
+    put_u64(file,FG_HIDDEN_SIZE);put_u64(file,FG_Q38_VOCAB_SIZE);
+    put_u32(file,8u);put_u64(file,0u);
+    put_string(file,"blk.0.probe.weight");put_u32(file,1u);
+    put_u64(file,rank_bytes/4u);put_u32(file,0u);put_u64(file,common_offset);
+    while((ftell(file)&31)!=0)fputc(0,file);
+    uint64_t data_start=(uint64_t)ftell(file);
+    CHECK(ftruncate(fileno(file),(off_t)(data_start+common_offset+rank_bytes))==0);
+    CHECK(fclose(file)==0);
+    CHECK(fg_align_up_u64(token_bytes,FG_ALIGNMENT)+
+          fg_align_up_u64(rank_bytes,FG_ALIGNMENT)>FG_PERSISTENT_CAP_BYTES);
+    const char *sources[]={source};fg_pack_options options={
+        .output_dir="unused-pipeline-spill-output",.source_paths=sources,
+        .source_count=1u,.runtime_profile=FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K,
+        .dry_run=true,.skip_model_validation=true
+    };fg_error error={0};
+    CHECK(fg_pack_run(&options,&error)==FG_OK);
+    unlink(source);
+}
+
 static void test_q38_math(void){
     uint8_t q5[24]={0};float x[32];
     q5[0]=0x00;q5[1]=0x3c;q5[2]=0x00;q5[3]=0x38;
@@ -584,4 +807,4 @@ static void test_prefill_protocol(void){
     free(result_wire);free(decoded_outputs);free(outputs);free(wire);free(decoded_activations);free(activations);
 }
 
-int main(void){test_sha();test_topology();test_profile();test_expert_map();test_expert_map_file();test_sealed_expert_map();test_deployment_profile();test_native_262k_profile_geometry();test_protocol();test_layer_protocol();test_qsa_block_protocol();test_qsa_page_protocol();test_prefill_chunk_frontiers();test_qsa_locality_metrics();test_output_protocol();test_ngram_protocol();test_ngram();test_ngram_planner_batch_capacity();test_qsa_scratch_geometry();test_qsa_state();test_qsa_state_failed_create_cleanup();test_qsa_state_batch();test_qsa_state_write_batch();test_qsa_replica_queue();test_lazy_qsa_clear_barrier();test_prefill_storage_geometry();test_qsa_page_cache();test_q38_math();test_cooked_q8();test_pack_cooked_q8();test_pack_cooked_experts();test_decode_protocol();test_prefill_protocol();test_pack();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}
+int main(void){test_sha();test_topology();test_pipeline_topology();test_profile();test_expert_map();test_expert_map_file();test_sealed_expert_map();test_deployment_profile();test_native_262k_profile_geometry();test_protocol();test_layer_protocol();test_qsa_block_protocol();test_qsa_page_protocol();test_prefill_chunk_frontiers();test_qsa_locality_metrics();test_output_protocol();test_ngram_protocol();test_ngram();test_ngram_planner_batch_capacity();test_pipeline_owner_transient_geometry();test_qsa_scratch_geometry();test_qsa_state();test_qsa_state_failed_create_cleanup();test_qsa_state_batch();test_qsa_state_write_batch();test_qsa_replica_queue();test_lazy_qsa_clear_barrier();test_prefill_storage_geometry();test_qsa_page_cache();test_q38_math();test_cooked_q8();test_pack_cooked_q8();test_pack_cooked_experts();test_decode_protocol();test_prefill_protocol();test_pack();test_pipeline_pack();test_pipeline_spill_admission();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}

@@ -1,0 +1,58 @@
+#version 460
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Keys{uint keys_q8[];};
+layout(set=0,binding=1)readonly buffer Values{uint values_q8[];};
+layout(set=0,binding=2)readonly buffer IndexKeys{uint index_keys_q8[];};
+layout(set=0,binding=3)readonly buffer Positions{uint positions[];};
+layout(set=0,binding=4)buffer Records0{uint records_0[];};
+layout(set=0,binding=5)buffer Records1{uint records_1[];};
+layout(set=0,binding=6)buffer Index0{uint index_0[];};
+layout(set=0,binding=7)buffer Index1{uint index_1[];};
+layout(push_constant)uniform Push{
+    uint first_token;
+    uint token_count;
+    uint capacity;
+    uint segment_capacity;
+}pc;
+const uint KEY_WORDS=136u;
+const uint VALUE_WORDS=136u;
+const uint INDEX_WORDS=34u;
+const uint POSITION_WORDS=3u;
+const uint RECORD_WORDS=309u;
+void main(){
+    uint item=gl_GlobalInvocationID.x;
+    uint token_slot=item/RECORD_WORDS;
+    if(token_slot>=pc.token_count)return;
+    uint word=item-token_slot*RECORD_WORDS;
+    uint token=pc.first_token+token_slot;
+    if(token>=pc.capacity)return;
+    uint segment=token/pc.segment_capacity;
+    uint local_token=token-segment*pc.segment_capacity;
+    uint record_at=local_token*RECORD_WORDS+word;
+    if(word<KEY_WORDS){
+        uint value=keys_q8[token_slot*KEY_WORDS+word];
+        if(segment==0u)records_0[record_at]=value;else records_1[record_at]=value;
+        return;
+    }
+    word-=KEY_WORDS;
+    if(word<VALUE_WORDS){
+        uint value=values_q8[token_slot*VALUE_WORDS+word];
+        if(segment==0u)records_0[record_at]=value;else records_1[record_at]=value;
+        return;
+    }
+    word-=VALUE_WORDS;
+    if(word<INDEX_WORDS){
+        uint value=index_keys_q8[token_slot*INDEX_WORDS+word];
+        if(segment==0u){
+            records_0[record_at]=value;
+            index_0[local_token*INDEX_WORDS+word]=value;
+        }else{
+            records_1[record_at]=value;
+            index_1[local_token*INDEX_WORDS+word]=value;
+        }
+        return;
+    }
+    word-=INDEX_WORDS;
+    uint value=positions[token_slot*POSITION_WORDS+word];
+    if(segment==0u)records_0[record_at]=value;else records_1[record_at]=value;
+}

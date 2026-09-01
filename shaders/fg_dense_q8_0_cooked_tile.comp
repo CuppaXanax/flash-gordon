@@ -1,0 +1,95 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Weights { uint wb[]; };
+layout(set = 0, binding = 1) readonly buffer Input { float x[]; };
+layout(set = 0, binding = 2) writeonly buffer Output { float y[]; };
+
+layout(push_constant) uniform Push {
+    uint out_dim;
+    uint tokens;
+    uint blocks;
+    uint tile_bytes;
+    float scale;
+} pc;
+
+const uint ROW_TILE = 16u;
+const uint ROWS = 64u;
+const uint TOKEN_TILE = 32u;
+const uint K_TILE = 32u;
+
+shared float weights[K_TILE][ROWS];
+shared float inputs[K_TILE][TOKEN_TILE + 1u];
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint row0 = gl_WorkGroupID.x * ROWS;
+    uint token0 = gl_WorkGroupID.y * TOKEN_TILE;
+    uint token_lane = tid & 31u;
+    uint row_lane = tid >> 5u;
+    uint in_dim = pc.blocks * K_TILE;
+    uint quant_offset = (ROW_TILE * pc.blocks * 2u + 63u) & ~63u;
+    float sum[8];
+    for (uint i = 0u; i < 8u; i++) sum[i] = 0.0;
+
+    for (uint block = 0u; block < pc.blocks; block++) {
+        uint staged_row = tid >> 2u;
+        uint element0 = (tid & 3u) * 8u;
+        uint row = row0 + staged_row;
+        uint tile_base = (row / ROW_TILE) * pc.tile_bytes;
+        uint tile_row = row & (ROW_TILE - 1u);
+        bool row_live = row < pc.out_dim;
+        uint scale_half = (tile_base >> 1u) + block * ROW_TILE + tile_row;
+        uint qbase = tile_base + quant_offset +
+            (tile_row * pc.blocks + block) * K_TILE + element0;
+        uint scale_word = 0u;
+        uint p0 = 0u;
+        uint p1 = 0u;
+        if (row_live) {
+            scale_word = wb[scale_half >> 1u];
+            p0 = wb[qbase >> 2u];
+            p1 = wb[(qbase >> 2u) + 1u];
+        }
+        float delta = row_live ?
+            ((scale_half & 1u) == 0u ? unpackHalf2x16(scale_word).x :
+                                       unpackHalf2x16(scale_word).y) : 0.0;
+        vec4 w0 = vec4(unpack8(int(p0))) * delta;
+        vec4 w1 = vec4(unpack8(int(p1))) * delta;
+        weights[element0 + 0u][staged_row] = w0.x;
+        weights[element0 + 1u][staged_row] = w0.y;
+        weights[element0 + 2u][staged_row] = w0.z;
+        weights[element0 + 3u][staged_row] = w0.w;
+        weights[element0 + 4u][staged_row] = w1.x;
+        weights[element0 + 5u][staged_row] = w1.y;
+        weights[element0 + 6u][staged_row] = w1.z;
+        weights[element0 + 7u][staged_row] = w1.w;
+
+        uint staged_token = tid >> 3u;
+        uint input_element0 = (tid & 7u) * 4u;
+        uint token = token0 + staged_token;
+        uint input_base = token * in_dim + block * K_TILE + input_element0;
+        bool token_live = token < pc.tokens;
+        inputs[input_element0 + 0u][staged_token] = token_live ? x[input_base + 0u] : 0.0;
+        inputs[input_element0 + 1u][staged_token] = token_live ? x[input_base + 1u] : 0.0;
+        inputs[input_element0 + 2u][staged_token] = token_live ? x[input_base + 2u] : 0.0;
+        inputs[input_element0 + 3u][staged_token] = token_live ? x[input_base + 3u] : 0.0;
+        barrier();
+
+        for (uint k = 0u; k < K_TILE; k++) {
+            float value = inputs[k][token_lane];
+            for (uint i = 0u; i < 8u; i++)
+                sum[i] = fma(weights[k][row_lane + 8u * i], value, sum[i]);
+        }
+        barrier();
+    }
+
+    uint token = token0 + token_lane;
+    if (token >= pc.tokens) return;
+    for (uint i = 0u; i < 8u; i++) {
+        uint row = row0 + row_lane + 8u * i;
+        if (row < pc.out_dim)
+            y[token * pc.out_dim + row] = sum[i] * pc.scale;
+    }
+}

@@ -1,5 +1,6 @@
 #include "fg_runtime.h"
 #include "fg_q38_schema.h"
+#include "fg_topology.h"
 
 #include <string.h>
 
@@ -12,6 +13,18 @@ static const fg_runtime_profile_definition runtime_profiles[]={
         0u,
         FG_RUNTIME_PROFILE_NATIVE_262K_PAGE_CACHE_BYTES,
         128u,
+        FG_DEFAULT_WINDOW,
+        FG_NATIVE_CONTEXT,
+        FG_POSITION_TEXT
+    },
+    {
+        FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K,
+        FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K_NAME,
+        FG_NATIVE_CONTEXT,
+        FG_NATIVE_CONTEXT,
+        0u,
+        FG_RUNTIME_PROFILE_NATIVE_262K_PAGE_CACHE_BYTES,
+        FG_PIPELINE_DEFAULT_MICROBATCH,
         FG_DEFAULT_WINDOW,
         FG_NATIVE_CONTEXT,
         FG_POSITION_TEXT
@@ -66,6 +79,7 @@ fg_status fg_runtime_profile_apply(fg_manifest *manifest,uint32_t profile,fg_err
         return FG_ERR_ARGUMENT;
     }
     if(manifest->format_version!=FG_MANIFEST_LEGACY_FORMAT_VERSION&&
+       manifest->format_version!=FG_MANIFEST_SESSION_FORMAT_VERSION&&
        manifest->format_version!=FG_MANIFEST_FORMAT_VERSION){
         fg_error_set(err,FG_ERR_MISMATCH,
                      "runtime profile %s is incompatible with manifest format v%u",
@@ -76,6 +90,31 @@ fg_status fg_runtime_profile_apply(fg_manifest *manifest,uint32_t profile,fg_err
        manifest->native_context!=definition->logical_context_tokens){
         fg_error_set(err,FG_ERR_MISMATCH,
                      "runtime profile %s is incompatible with manifest native context",
+                     definition->name);
+        return FG_ERR_MISMATCH;
+    }
+    bool pipeline=profile==FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K;
+    if(pipeline){
+        if(manifest->format_version!=FG_MANIFEST_FORMAT_VERSION){
+            fg_error_set(err,FG_ERR_MISMATCH,
+                         "runtime profile %s requires a manifest v6 source pack",
+                         definition->name);
+            return FG_ERR_MISMATCH;
+        }
+        bool packed=manifest->tensor_count!=0u;
+        for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)
+            packed=packed||manifest->ranks[rank].tensor_count!=0u||
+                manifest->ranks[rank].persistent_bytes!=0u;
+        if(packed){
+            fg_error_set(err,FG_ERR_UNAVAILABLE,
+                         "runtime profile %s requires repacking from source",
+                         definition->name);
+            return FG_ERR_UNAVAILABLE;
+        }
+    }else if(manifest->format_version==FG_MANIFEST_FORMAT_VERSION&&
+             manifest->execution_mode!=FG_EXECUTION_EXPERT_PARALLEL){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "runtime profile %s requires expert-parallel execution",
                      definition->name);
         return FG_ERR_MISMATCH;
     }
@@ -98,7 +137,7 @@ fg_status fg_runtime_profile_apply(fg_manifest *manifest,uint32_t profile,fg_err
                      definition->name,manifest->prefill_microbatch);
         return FG_ERR_MISMATCH;
     }
-    if(manifest->format_version==FG_MANIFEST_FORMAT_VERSION){
+    if(manifest->format_version!=FG_MANIFEST_LEGACY_FORMAT_VERSION){
         uint32_t boot=manifest->native_context<FG_RUNTIME_BOOT_CONTEXT_TOKENS?
             manifest->native_context:FG_RUNTIME_BOOT_CONTEXT_TOKENS;
         bool default_contract=manifest->session.logical_context_tokens==boot&&
@@ -134,6 +173,13 @@ fg_status fg_runtime_profile_apply(fg_manifest *manifest,uint32_t profile,fg_err
     manifest->session.gpu_index_tokens=definition->gpu_index_tokens;
     manifest->session.qsa_hot_record_tokens=definition->qsa_hot_tokens;
     manifest->session.host_page_cache_bytes=definition->qsa_page_cache_bytes;
+    if(pipeline){
+        fg_topology_build_pipeline(manifest);
+        manifest->protocol_version=FG_PIPELINE_PROTOCOL_VERSION;
+    }else if(manifest->format_version==FG_MANIFEST_FORMAT_VERSION){
+        fg_topology_set_expert_parallel_metadata(manifest);
+        manifest->protocol_version=FG_PROTOCOL_VERSION;
+    }
     for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)
         manifest->ranks[rank].scratch_bytes=fg_q38_runtime_scratch_bytes(
             rank,manifest->prefill_microbatch,manifest->prefill_window,
