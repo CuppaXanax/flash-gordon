@@ -308,6 +308,35 @@ static void test_openai_tools_request(void) {
     json_free(root);
 }
 
+static void test_openai_structured_text_content(void) {
+    const char *body =
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"text\",\"text\":\"Hey Qwen, \"},"
+        "{\"type\":\"input_text\",\"text\":\"can you see this repo?\"}]}]}";
+    fg_error err = {0};
+    json_value *root = parse_json_body(body, strlen(body), &err);
+    api_chat_request request = {0};
+    CHECK(root != NULL);
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &request, &err) == FG_OK);
+    CHECK(request.message_count == 1u);
+    CHECK(request.messages[0].content != NULL);
+    CHECK(strcmp(request.messages[0].content,
+                 "Hey Qwen, can you see this repo?") == 0);
+    api_chat_request_free(&request);
+    json_free(root);
+
+    const char *image =
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"image_url\",\"image_url\":{\"url\":\"https://example.invalid/x.png\"}}]}]}";
+    memset(&err, 0, sizeof(err));
+    root = parse_json_body(image, strlen(image), &err);
+    CHECK(root != NULL);
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &request, &err) == FG_ERR_ARGUMENT);
+    CHECK(strstr(err.message, "image_url") != NULL);
+    api_chat_request_free(&request);
+    json_free(root);
+}
+
 static void test_unknown_tool_result_rejected(void) {
     const char *body =
         "{\"messages\":[{\"role\":\"tool\",\"tool_call_id\":\"missing\","
@@ -1023,6 +1052,7 @@ static void test_failed_generation_fails_closed(void) {
 
 int main(void) {
     test_openai_tools_request();
+    test_openai_structured_text_content();
     test_unknown_tool_result_rejected();
     test_tool_choice_modes();
     test_history_reasoning_and_empty_calls();
