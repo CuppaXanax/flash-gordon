@@ -2549,7 +2549,7 @@ static fg_status pipeline_generate_tokens(
     fg_generation_stats *stats,fg_error *err){
     if(prefix_miss)*prefix_miss=false;
     if(!runtime||!transcript||!prompt||(!prompt->data&&prompt->count)||!callback||
-       !max_tokens||max_tokens>4096u){
+       !max_tokens){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid pipeline generation arguments");
         return FG_ERR_ARGUMENT;
     }
@@ -2734,7 +2734,7 @@ static fg_status runtime_generate_tokens(
             interrupt_context,stats,err);
     if(prefix_miss)*prefix_miss=false;
     if(!runtime||!transcript||!prompt||(!prompt->data&&prompt->count)||!callback||
-       !max_tokens||max_tokens>4096u){fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident generation arguments");return FG_ERR_ARGUMENT;}
+       !max_tokens){fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident generation arguments");return FG_ERR_ARGUMENT;}
     if(!runtime->state_ready){fg_error_set(err,FG_ERR_MISMATCH,"resident runtime requires a successful reset");return FG_ERR_MISMATCH;}
     if(stats){
         memset(stats,0,sizeof(*stats));
