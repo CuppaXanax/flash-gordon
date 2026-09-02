@@ -1,0 +1,41 @@
+#version 460
+/* Exact portable fallback for devices without the n-ary subgroup path. */
+layout(local_size_x=256,local_size_y=1,local_size_z=1) in;
+layout(set=0,binding=0) readonly buffer InputScores { float input_scores[]; };
+layout(set=0,binding=1) readonly buffer InputIds { uint input_ids[]; };
+layout(set=0,binding=2) writeonly buffer OutputScores { float output_scores[]; };
+layout(set=0,binding=3) writeonly buffer OutputIds { uint output_ids[]; };
+layout(push_constant) uniform Push { uint count; uint k; } pc;
+const uint BLOCK_SIZE=1024u;
+const uint INVALID_ID=0xffffffffu;
+shared float values[BLOCK_SIZE];
+shared uint indices[BLOCK_SIZE];
+shared uint selected[BLOCK_SIZE];
+bool before(float left,uint left_id,float right,uint right_id) {
+    bool lp=left_id==INVALID_ID,rp=right_id==INVALID_ID;
+    if (lp||rp) return !lp&&rp;
+    bool ln=isnan(left)||isinf(left),rn=isnan(right)||isinf(right);
+    if (ln) return false;
+    if (rn) return true;
+    return left>right||(left==right&&left_id<right_id);
+}
+void main() {
+    uint tid=gl_LocalInvocationID.x,base=gl_WorkGroupID.x*BLOCK_SIZE;
+    uint available=pc.count>base?min(BLOCK_SIZE,pc.count-base):0u;
+    for(uint i=tid;i<BLOCK_SIZE;i+=256u) {
+        uint source=base+i;
+        if(i<available){values[i]=input_scores[source];indices[i]=input_ids[source];}
+        else{values[i]=-1.0/0.0;indices[i]=INVALID_ID;}
+        selected[i]=0u;
+    }
+    barrier();
+    if(tid==0u)for(uint rank=0u;rank<pc.k;rank++) {
+        float best=-1.0/0.0;uint best_id=INVALID_ID,best_index=0u;
+        for(uint i=0u;i<available;i++)if(selected[i]==0u&&before(values[i],indices[i],best,best_id)){
+            best=values[i];best_id=indices[i];best_index=i;
+        }
+        selected[best_index]=1u;
+        output_scores[gl_WorkGroupID.x*pc.k+rank]=best;
+        output_ids[gl_WorkGroupID.x*pc.k+rank]=best_id;
+    }
+}

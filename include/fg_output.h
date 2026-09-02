@@ -16,5 +16,12 @@ fg_status fg_output_logits(fg_output_executor *executor,const fg_vk_tensor *hype
                            fg_vk_tensor **logits,fg_error *err);
 fg_status fg_output_greedy(fg_output_executor *executor,const fg_vk_tensor *hyper,
                            uint32_t *token,float *logit,fg_error *err);
+/* Produce exactly K finite vocabulary candidates. Candidate order is
+   unspecified; callers sort before applying additional sampling filters.
+   The returned tensor views are executor-owned scratch and remain valid until
+   the next output operation or executor destruction. */
+fg_status fg_output_topk(fg_output_executor *executor,const fg_vk_tensor *hyper,
+                         uint32_t k,fg_vk_tensor **scores,fg_vk_tensor **ids,
+                         uint32_t *count,fg_error *err);
 
 #endif
