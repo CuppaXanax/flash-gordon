@@ -402,6 +402,15 @@ static void test_greedy_controls(void) {
     api_chat_request_free(&request);
     json_free(root);
 
+    const char *large_completion =
+        "{\"max_tokens\":32768,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+    root = parse_json_body(large_completion, strlen(large_completion), &err);
+    CHECK(root != NULL);
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &request, &err) == FG_OK);
+    CHECK(request.max_tokens == 32768u);
+    api_chat_request_free(&request);
+    json_free(root);
+
     const char *sampled =
         "{\"temperature\":0.5,\"top_p\":0.8,\"top_k\":20,\"seed\":7,"
         "\"min_p\":0,\"presence_penalty\":1.5,\"frequency_penalty\":0.25,"

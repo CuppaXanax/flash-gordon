@@ -1147,12 +1147,6 @@ static fg_status parse_chat_request(const json_value *root, const char *runtime_
     }
     if (max_completion) request->max_tokens = (uint32_t)max_completion->as.number;
     else if (max_tokens) request->max_tokens = (uint32_t)max_tokens->as.number;
-    if (request->max_tokens > 4096u) {
-        fg_error_set(err, FG_ERR_ARGUMENT,
-                     "max_tokens cannot exceed the runtime limit of 4096");
-        return FG_ERR_ARGUMENT;
-    }
-
     json_value *stream = json_object_get(root, "stream");
     if (stream) {
         if (stream->type != JSON_BOOL) {
