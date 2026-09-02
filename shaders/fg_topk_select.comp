@@ -1,0 +1,120 @@
+#version 460
+#extension GL_KHR_shader_subgroup_basic : enable
+#extension GL_KHR_shader_subgroup_ballot : enable
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+
+/* One invocation owns one element, matching llama.cpp's n-ary tile shape.
+   The caller reduces the per-tile candidates until one tile remains. */
+layout(local_size_x=1024,local_size_y=1,local_size_z=1) in;
+layout(set=0,binding=0) readonly buffer InputScores { float input_scores[]; };
+layout(set=0,binding=1) readonly buffer InputIds { uint input_ids[]; };
+layout(set=0,binding=2) writeonly buffer OutputScores { float output_scores[]; };
+layout(set=0,binding=3) writeonly buffer OutputIds { uint output_ids[]; };
+layout(push_constant) uniform Push { uint count; uint k; } pc;
+
+const uint BLOCK_SIZE=1024u;
+const uint INVALID_ID=0xffffffffu;
+shared float values[BLOCK_SIZE];
+shared uint indices[BLOCK_SIZE];
+shared uint bucket_counts[64];
+shared uint subgroup_top[32];
+shared uint subgroup_equal[32];
+shared uint threshold_bucket;
+shared uint threshold_total;
+shared uint top_total;
+shared uint equal_total;
+
+uint float_key(float value) {
+    if (isnan(value) || isinf(value)) return 0u;
+    uint bits=floatBitsToUint(value);
+    return (bits & 0x80000000u)!=0u ? bits^0xffffffffu : bits|0x80000000u;
+}
+
+void main() {
+    uint tid=gl_LocalInvocationID.x;
+    uint base=gl_WorkGroupID.x*BLOCK_SIZE;
+    uint available=pc.count>base?min(BLOCK_SIZE,pc.count-base):0u;
+    if (tid<available) { values[tid]=input_scores[base+tid]; indices[tid]=input_ids[base+tid]; }
+    else { values[tid]=-1.0/0.0; indices[tid]=INVALID_ID; }
+    barrier();
+
+    uint lanes=gl_SubgroupSize;
+    uint lane_bits=lanes>=64u?6u:5u;
+    uint bucket_count=1u<<lane_bits;
+    uint shift=32u-lane_bits;
+    uint mask=((1u<<lane_bits)-1u)<<shift;
+    uint range_min=0u,range_max=0xff800000u,total=0u;
+    uint limit=min(pc.k,available);
+    while (limit>0u&&mask!=0u) {
+        if (tid<bucket_count) bucket_counts[tid]=0u;
+        barrier();
+        uint key=float_key(values[tid]);
+        if (key>=range_min&&key<range_max) atomicAdd(bucket_counts[(key&mask)>>shift],1u);
+        barrier();
+        if (tid<lanes) {
+            uint reverse=lanes-1u-gl_SubgroupInvocationID;
+            uint partial=subgroupInclusiveAdd(bucket_counts[reverse])+total;
+            uvec4 ballot=subgroupBallot(partial>=limit);
+            uint found=subgroupBallotFindLSB(ballot);
+            if (gl_SubgroupInvocationID==found) {
+                threshold_bucket=reverse;
+                threshold_total=partial;
+            }
+        }
+        barrier();
+        uint bucket=threshold_bucket,total_at=threshold_total;
+        range_max=range_min+((bucket+1u)<<shift);
+        range_min=range_min+(bucket<<shift);
+        if (total_at==limit) { total=total_at; break; }
+        total=total_at-bucket_counts[bucket];
+        if (shift==0u) mask=0u;
+        else if (shift<lane_bits) { mask=(1u<<shift)-1u;shift=0u; }
+        else { shift-=lane_bits;mask=((1u<<lane_bits)-1u)<<shift; }
+    }
+
+    if (limit>0u) {
+        float value=values[tid];uint id=indices[tid];
+        bool is_top=float_key(value)>range_min;
+        bool is_equal=float_key(value)==range_min;
+        if (isnan(value)||isinf(value)) { is_top=false;is_equal=false; }
+        barrier();
+        uvec4 top_ballot=subgroupBallot(is_top);
+        uvec4 equal_ballot=subgroupBallot(is_equal);
+        uint subgroup=tid/lanes;
+        if (gl_SubgroupInvocationID==0u) {
+            subgroup_top[subgroup]=subgroupBallotBitCount(top_ballot);
+            subgroup_equal[subgroup]=subgroupBallotBitCount(equal_ballot);
+        }
+        barrier();
+        if (tid==0u) {
+            top_total=0u;equal_total=0u;
+            for(uint s=0u;s<1024u/lanes;s++) {
+                top_total+=subgroup_top[s];equal_total+=subgroup_equal[s];
+            }
+        }
+        barrier();
+        uint local_top=0u,local_equal=0u;
+        for(uint s=0u;s<subgroup;s++) { local_top+=subgroup_top[s];local_equal+=subgroup_equal[s]; }
+        uint top_index=local_top+subgroupBallotExclusiveBitCount(top_ballot);
+        uint equal_index=local_equal+subgroupBallotExclusiveBitCount(equal_ballot);
+        if (is_top) { values[top_index]=value;indices[top_index]=id; }
+        if (is_equal) {
+            uint equal_start=BLOCK_SIZE-equal_total;
+            values[equal_start+equal_index]=value;
+            indices[equal_start+equal_index]=id;
+        }
+        barrier();
+        if (tid<limit&&tid>=top_total&&tid-top_total<equal_total) {
+            uint at=BLOCK_SIZE-equal_total+tid-top_total;
+            values[tid]=values[at];indices[tid]=indices[at];
+        } else if (tid<limit&&tid>=top_total) {
+            values[tid]=-1.0/0.0;indices[tid]=INVALID_ID;
+        }
+        barrier();
+    }
+    if (tid<pc.k) {
+        uint at=gl_WorkGroupID.x*pc.k+tid;
+        if (tid<available) { output_scores[at]=values[tid];output_ids[at]=indices[tid]; }
+        else { output_scores[at]=-1.0/0.0;output_ids[at]=INVALID_ID; }
+    }
+}

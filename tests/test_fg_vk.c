@@ -793,6 +793,72 @@ static int test_output_topk(void){
     enum{COUNT=FG_Q38_VOCAB_SIZE,FIRST=(COUNT+4095)/4096*512};float *scores=malloc((size_t)COUNT*4u),top_scores[4];uint32_t *ids=malloc((size_t)COUNT*4u),top_ids[4];if(!scores||!ids){free(ids);free(scores);return 0;}for(uint32_t i=0;i<COUNT;i++){scores[i]=-(float)i;ids[i]=i;}scores[12345]=100.0f;scores[23456]=99.0f;scores[34567]=98.0f;scores[45678]=NAN;fg_vk_tensor *input_scores=tensor(scores,(uint64_t)COUNT*4u),*input_ids=tensor(ids,(uint64_t)COUNT*4u),*scratch_scores[2]={tensor(NULL,(uint64_t)FIRST*4u),tensor(NULL,(uint64_t)FIRST*4u)},*scratch_ids[2]={tensor(NULL,(uint64_t)FIRST*4u),tensor(NULL,(uint64_t)FIRST*4u)};uint32_t count=COUNT,slot=0;int ok=input_scores&&input_ids&&scratch_scores[0]&&scratch_scores[1]&&scratch_ids[0]&&scratch_ids[1]&&fg_vk_begin(context,&error)==FG_OK;const fg_vk_tensor *source_scores=input_scores,*source_ids=input_ids;while(ok&&count>512u){uint32_t next=0;ok=fg_vk_topk_reduce(context,scratch_scores[slot],scratch_ids[slot],source_scores,source_ids,count,&next,&error)==FG_OK;source_scores=scratch_scores[slot];source_ids=scratch_ids[slot];count=next;slot^=1u;}if(ok)ok=fg_vk_end(context,&error)==FG_OK&&count==512u&&fg_vk_tensor_read(source_scores,0,top_scores,sizeof(top_scores),&error)==FG_OK&&fg_vk_tensor_read(source_ids,0,top_ids,sizeof(top_ids),&error)==FG_OK&&top_ids[0]==45678u&&!isfinite(top_scores[0])&&top_ids[1]==12345u&&top_ids[2]==23456u&&top_ids[3]==34567u&&top_scores[1]==100.0f&&top_scores[2]==99.0f&&top_scores[3]==98.0f;else if(fg_vk_batch_active(context))fg_vk_end(context,&error);fg_vk_tensor_destroy(scratch_ids[1]);fg_vk_tensor_destroy(scratch_ids[0]);fg_vk_tensor_destroy(scratch_scores[1]);fg_vk_tensor_destroy(scratch_scores[0]);fg_vk_tensor_destroy(input_ids);fg_vk_tensor_destroy(input_scores);free(ids);free(scores);return ok;
 }
 
+static int test_generation_topk_selector(void){
+    enum{COUNT=19,K=4};
+    float scores[COUNT]={1.0f,9.0f,7.0f,9.0f,3.0f,8.0f,2.0f,7.0f,6.0f,5.0f,
+                        4.0f,0.0f,-1.0f,-2.0f,-3.0f,-4.0f,-5.0f,-6.0f,NAN};
+    uint32_t ids[COUNT],got_ids[K];float got_scores[K];
+    for(uint32_t i=0;i<COUNT;i++)ids[i]=i;
+    fg_vk_tensor *input_scores=tensor(scores,sizeof(scores)),
+        *input_ids=tensor(ids,sizeof(ids)),*output_scores=tensor(NULL,sizeof(got_scores)),
+        *output_ids=tensor(NULL,sizeof(got_ids));
+    uint32_t produced=0;int ok=input_scores&&input_ids&&output_scores&&output_ids&&
+        fg_vk_topk_select(context,output_scores,output_ids,input_scores,input_ids,
+                          COUNT,0,&produced,&error)==FG_ERR_ARGUMENT&&
+        fg_vk_topk_select(context,output_scores,output_ids,input_scores,input_ids,
+                          COUNT,65,&produced,&error)==FG_ERR_ARGUMENT&&
+        fg_vk_begin(context,&error)==FG_OK&&
+        fg_vk_topk_select(context,output_scores,output_ids,input_scores,input_ids,
+                          COUNT,K,&produced,&error)==FG_OK&&produced==K&&
+        fg_vk_end(context,&error)==FG_OK&&
+        fg_vk_tensor_read(output_scores,0,got_scores,sizeof(got_scores),&error)==FG_OK&&
+        fg_vk_tensor_read(output_ids,0,got_ids,sizeof(got_ids),&error)==FG_OK;
+    const uint32_t expected_ids[K]={1u,3u,5u,2u};
+    bool seen[K]={0};
+    for(uint32_t i=0;ok&&i<K;i++){
+        uint32_t match=K;
+        for(uint32_t j=0u;j<K;j++)if(got_ids[i]==expected_ids[j])match=j;
+        if(match==K||seen[match]||got_scores[i]!=scores[got_ids[i]])ok=0;
+        else seen[match]=true;
+    }
+    uint32_t repeat_ids[K];float repeat_scores[K];
+    if(ok)ok=fg_vk_begin(context,&error)==FG_OK&&
+        fg_vk_topk_select(context,output_scores,output_ids,input_scores,input_ids,
+                          COUNT,K,&produced,&error)==FG_OK&&produced==K&&
+        fg_vk_end(context,&error)==FG_OK&&
+        fg_vk_tensor_read(output_scores,0,repeat_scores,sizeof(repeat_scores),&error)==FG_OK&&
+        fg_vk_tensor_read(output_ids,0,repeat_ids,sizeof(repeat_ids),&error)==FG_OK&&
+        memcmp(got_ids,repeat_ids,sizeof(got_ids))==0&&
+        memcmp(got_scores,repeat_scores,sizeof(got_scores))==0;
+    uint32_t single_id=UINT32_MAX;float single_score=0.0f;
+    if(ok)ok=fg_vk_begin(context,&error)==FG_OK&&
+        fg_vk_topk_select(context,output_scores,output_ids,input_scores,input_ids,
+                          COUNT,1u,&produced,&error)==FG_OK&&produced==1u&&
+        fg_vk_end(context,&error)==FG_OK&&
+        fg_vk_tensor_read(output_scores,0,&single_score,sizeof(single_score),&error)==FG_OK&&
+        fg_vk_tensor_read(output_ids,0,&single_id,sizeof(single_id),&error)==FG_OK&&
+        /* IDs 1 and 3 tie at 9.0; the deterministic winner is the smaller ID. */
+        single_id==1u&&single_score==9.0f;
+    float shortage[COUNT];
+    for(uint32_t i=0u;i<COUNT;i++)shortage[i]=NAN;
+    shortage[1]=9.0f;shortage[3]=8.0f;
+    fg_vk_tensor *short_input=tensor(shortage,sizeof(shortage));
+    uint32_t shortage_ids[K];float shortage_scores[K];
+    if(ok)ok=short_input&&fg_vk_begin(context,&error)==FG_OK&&
+        fg_vk_topk_select(context,output_scores,output_ids,short_input,input_ids,
+                          COUNT,K,&produced,&error)==FG_OK&&produced==K&&
+        fg_vk_end(context,&error)==FG_OK&&
+        fg_vk_tensor_read(output_scores,0,shortage_scores,sizeof(shortage_scores),&error)==FG_OK&&
+        fg_vk_tensor_read(output_ids,0,shortage_ids,sizeof(shortage_ids),&error)==FG_OK&&
+        shortage_ids[0]!=UINT32_MAX&&shortage_ids[1]!=UINT32_MAX&&
+        shortage_ids[2]==UINT32_MAX&&!isfinite(shortage_scores[2]);
+    if(fg_vk_batch_active(context)){fg_error ignored={0};fg_vk_abort(context,&ignored);}
+    fg_vk_tensor_destroy(short_input);
+    fg_vk_tensor_destroy(output_ids);fg_vk_tensor_destroy(output_scores);
+    fg_vk_tensor_destroy(input_ids);fg_vk_tensor_destroy(input_scores);
+    return ok;
+}
+
 static int test_output_argmax(void){
     enum{COUNT=FG_Q38_VOCAB_SIZE,GROUPS=(COUNT+4095u)/4096u};float *scores=malloc((size_t)COUNT*4u),got_score=0.0f;uint32_t *ids=malloc((size_t)COUNT*4u),got_id=UINT32_MAX;if(!scores||!ids){free(ids);free(scores);return 0;}for(uint32_t i=0;i<COUNT;i++){scores[i]=-(float)i;ids[i]=i;}scores[12345]=100.0f;scores[23456]=100.0f;fg_vk_tensor *input_scores=tensor(scores,(uint64_t)COUNT*4u),*input_ids=tensor(ids,(uint64_t)COUNT*4u),*scratch_scores[2]={tensor(NULL,GROUPS*4u),tensor(NULL,GROUPS*4u)},*scratch_ids[2]={tensor(NULL,GROUPS*4u),tensor(NULL,GROUPS*4u)};uint32_t count=COUNT,slot=0;int ok=input_scores&&input_ids&&scratch_scores[0]&&scratch_scores[1]&&scratch_ids[0]&&scratch_ids[1]&&fg_vk_begin(context,&error)==FG_OK;const fg_vk_tensor *source_scores=input_scores,*source_ids=input_ids;while(ok&&count>1u){uint32_t next=0;ok=fg_vk_argmax_reduce(context,scratch_scores[slot],scratch_ids[slot],source_scores,source_ids,count,&next,&error)==FG_OK;source_scores=scratch_scores[slot];source_ids=scratch_ids[slot];count=next;slot^=1u;}if(ok)ok=fg_vk_end(context,&error)==FG_OK&&count==1u&&fg_vk_tensor_read(source_scores,0,&got_score,sizeof(got_score),&error)==FG_OK&&fg_vk_tensor_read(source_ids,0,&got_id,sizeof(got_id),&error)==FG_OK&&got_id==12345u&&got_score==100.0f;else if(fg_vk_batch_active(context))fg_vk_end(context,&error);if(ok){scores[45678]=NAN;ok=fg_vk_tensor_write(input_scores,0,scores,(uint64_t)COUNT*4u,&error)==FG_OK;count=COUNT;slot=0;source_scores=input_scores;source_ids=input_ids;if(ok)ok=fg_vk_begin(context,&error)==FG_OK;while(ok&&count>1u){uint32_t next=0;ok=fg_vk_argmax_reduce(context,scratch_scores[slot],scratch_ids[slot],source_scores,source_ids,count,&next,&error)==FG_OK;source_scores=scratch_scores[slot];source_ids=scratch_ids[slot];count=next;slot^=1u;}if(ok)ok=fg_vk_end(context,&error)==FG_OK&&fg_vk_tensor_read(source_scores,0,&got_score,sizeof(got_score),&error)==FG_OK&&fg_vk_tensor_read(source_ids,0,&got_id,sizeof(got_id),&error)==FG_OK&&got_id==45678u&&!isfinite(got_score);else if(fg_vk_batch_active(context))fg_vk_end(context,&error);}fg_vk_tensor_destroy(scratch_ids[1]);fg_vk_tensor_destroy(scratch_ids[0]);fg_vk_tensor_destroy(scratch_scores[1]);fg_vk_tensor_destroy(scratch_scores[0]);fg_vk_tensor_destroy(input_ids);fg_vk_tensor_destroy(input_scores);free(ids);free(scores);return ok;
 }
@@ -2176,6 +2242,7 @@ ok=run_test("qsa_indexer",test_qsa_indexer)&&ok;
 ok=run_test("qsa_segmented_index_score",test_qsa_segmented_index_score)&&ok;
 ok=run_test("qsa_prefill_chunk_liveness",test_qsa_prefill_chunk_liveness)&&ok;
 ok=run_test("output_topk",test_output_topk)&&ok;
+ok=run_test("generation_topk_selector",test_generation_topk_selector)&&ok;
 ok=run_test("output_argmax",test_output_argmax)&&ok;
 ok=run_test("qsa_prefill_prepare",test_qsa_prefill_prepare)&&ok;
 ok=run_test("qsa_attention_single",test_qsa_attention_single)&&ok;

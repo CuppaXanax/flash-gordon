@@ -264,14 +264,18 @@ static fg_status finish_terminal(fg_stage_executor *executor,
                      "terminal pipeline stage requires result storage");
         return FG_ERR_ARGUMENT;
     }
-    uint64_t offset=(uint64_t)(token_count-1u)*
-        FG_PIPELINE_BOUNDARY_WIDTH*sizeof(float);
-    fg_status status=fg_vk_tensor_write(executor->terminal_input,0,
-        (const uint8_t *)fg_vk_tensor_map((fg_vk_tensor *)output)+offset,
-        (uint64_t)FG_PIPELINE_BOUNDARY_WIDTH*sizeof(float),err);
-    if(status==FG_OK)status=fg_output_greedy(executor->output,
-        executor->terminal_input,&terminal->final_token,
-        &terminal->final_logit,err);
+    fg_status status=FG_OK;
+    const fg_vk_tensor *final_input=output;
+    if(token_count!=1u){
+        uint64_t offset=(uint64_t)(token_count-1u)*
+            FG_PIPELINE_BOUNDARY_WIDTH*sizeof(float);
+        status=fg_vk_tensor_write(executor->terminal_input,0,
+            (const uint8_t *)fg_vk_tensor_map((fg_vk_tensor *)output)+offset,
+            (uint64_t)FG_PIPELINE_BOUNDARY_WIDTH*sizeof(float),err);
+        final_input=executor->terminal_input;
+    }
+    if(status==FG_OK)status=fg_output_greedy(executor->output,final_input,
+        &terminal->final_token,&terminal->final_logit,err);
     if(status==FG_OK)terminal->has_output=true;
     return status;
 }

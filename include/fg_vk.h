@@ -304,6 +304,11 @@ fg_status fg_vk_qsa_resident_attention(
 fg_status fg_vk_topk_reduce(fg_vk_context *context,fg_vk_tensor *output_scores,fg_vk_tensor *output_ids,
                             const fg_vk_tensor *input_scores,const fg_vk_tensor *input_ids,
                             uint32_t count,uint32_t *output_count,fg_error *err);
+/* Select up to 64 finalists per 1024-value tile.  Call repeatedly over the
+   compacted result until one tile remains.  Candidate order is unspecified. */
+fg_status fg_vk_topk_select(fg_vk_context *context,fg_vk_tensor *output_scores,fg_vk_tensor *output_ids,
+                            const fg_vk_tensor *input_scores,const fg_vk_tensor *input_ids,
+                            uint32_t count,uint32_t k,uint32_t *output_count,fg_error *err);
 fg_status fg_vk_router_top10(fg_vk_context *context,fg_vk_tensor *selected,
                              fg_vk_tensor *gates,const fg_vk_tensor *logits,
                              uint32_t experts,uint32_t tokens,fg_error *err);

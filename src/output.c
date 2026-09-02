@@ -93,3 +93,54 @@ fg_status fg_output_greedy(fg_output_executor *executor,const fg_vk_tensor *hype
     fprintf(stderr,"greedy: best %u=%.4f hyper[0:4]=%.4f,%.4f,%.4f,%.4f hidden[0:4]=%.4f,%.4f,%.4f,%.4f\n",best,best_value,hyper_raw[0],hyper_raw[1],hyper_raw[2],hyper_raw[3],hidden_raw[0],hidden_raw[1],hidden_raw[2],hidden_raw[3]);
     *token=best;if(logit)*logit=best_value;return FG_OK;
 }
+
+fg_status fg_output_topk(fg_output_executor *executor,const fg_vk_tensor *hyper,
+                         uint32_t k,fg_vk_tensor **scores,fg_vk_tensor **ids,
+                         uint32_t *count,fg_error *err){
+    if(!executor||!hyper||!scores||!ids||!count||k<1u||k>64u){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid generation top-k arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_vk_context *vk=fg_model_vk(executor->model);
+    if(fg_vk_batch_active(vk)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"generation top-k cannot run inside a Vulkan batch");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_vk_tensor *logits=NULL;
+    fg_status status=fg_vk_begin(vk,err);
+    uint32_t produced=FG_Q38_VOCAB_SIZE,slot=0u;
+    const fg_vk_tensor *candidate_scores=NULL,*candidate_ids=NULL;
+    if(status==FG_OK)status=fg_output_logits(executor,hyper,&logits,err);
+    candidate_scores=logits;candidate_ids=executor->vocabulary_ids;
+    do {
+        if(status!=FG_OK)break;
+        status=fg_vk_topk_select(vk,executor->topk_scores[slot],
+            executor->topk_ids[slot],candidate_scores,candidate_ids,
+            produced,k,&produced,err);
+        if(status!=FG_OK)break;
+        candidate_scores=executor->topk_scores[slot];
+        candidate_ids=executor->topk_ids[slot];
+        slot^=1u;
+    } while(produced>k);
+    if(status==FG_OK){
+        fg_status end_status=fg_vk_end(vk,err);
+        if(end_status!=FG_OK)status=end_status;
+    }
+    if(status!=FG_OK&&fg_vk_batch_active(vk)){
+        fg_error ignored={0};
+        fg_vk_abort(vk,&ignored);
+    }
+    if(status!=FG_OK)return status;
+    const float *values=fg_vk_tensor_map((fg_vk_tensor *)candidate_scores);
+    const uint32_t *indices=fg_vk_tensor_map((fg_vk_tensor *)candidate_ids);
+    for(uint32_t i=0u;i<k;i++){
+        if(indices[i]>=FG_Q38_VOCAB_SIZE||!isfinite(values[i])){
+            fg_error_set(err,FG_ERR_MISMATCH,"invalid generation finalist at rank %u",i);
+            return FG_ERR_MISMATCH;
+        }
+    }
+    *scores=(fg_vk_tensor *)candidate_scores;
+    *ids=(fg_vk_tensor *)candidate_ids;
+    *count=k;
+    return FG_OK;
+}
