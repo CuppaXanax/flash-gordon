@@ -23,7 +23,7 @@ static bool message_type_supported(uint16_t version,fg_message_type type){
     if(type>=FG_MSG_QSA_BLOCK_WORK&&type<=FG_MSG_QSA_BLOCK_PREFILL_RESULT)return true;
     if(version>=6u&&type>=FG_MSG_QSA_PAGE_APPEND&&type<=FG_MSG_QSA_PAGE_RESULT)return true;
     if(version>=FG_PIPELINE_PROTOCOL_VERSION&&type>=FG_MSG_PIPELINE_ACTIVATION&&
-       type<=FG_MSG_PIPELINE_ABORT)return true;
+       type<=FG_MSG_OUTPUT_HISTORY_ACK)return true;
     return version>=6u&&type>=FG_MSG_SESSION_PREPARE&&type<=FG_MSG_SESSION_RESTORED;
 }
 
