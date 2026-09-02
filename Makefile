@@ -80,7 +80,7 @@ tests/test_hc_down_split: tests/test_hc_down_split.o src/vk.o src/quant.o src/q3
 tests/test_model_load: tests/test_model_load.o src/model.o src/vk.o src/quant.o src/q38_math.o src/ngram.o src/loader.o src/uring.o src/sha256.o src/manifest.o src/runtime_options.o src/topology.o src/q38_schema.o src/gguf.o src/util.o | shaders
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
-tests/test_qsa_model_load: tests/test_qsa_model_load.o src/model.o src/expert.o src/owner.o src/qsa.o src/qsa_cache.o src/qsa_locality.o src/qsa_state.o src/protocol.o src/vk.o src/quant.o src/q38_math.o src/ngram.o src/loader.o src/uring.o src/sha256.o src/manifest.o src/runtime_options.o src/topology.o src/q38_schema.o src/gguf.o src/util.o | shaders
+tests/test_qsa_model_load: tests/test_qsa_model_load.o src/model.o src/expert.o src/owner.o src/qsa.o src/qsa_cache.o src/qsa_locality.o src/qsa_state.o src/protocol.o src/sampler.o src/vk.o src/quant.o src/q38_math.o src/ngram.o src/loader.o src/uring.o src/sha256.o src/manifest.o src/runtime_options.o src/topology.o src/q38_schema.o src/gguf.o src/util.o | shaders
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
 tests/test_tokenizer: tests/test_tokenizer.o src/tokenizer.o src/prefix.o src/quant.o src/q38_math.o src/uring.o src/sha256.o src/manifest.o src/runtime_options.o src/topology.o src/q38_schema.o src/gguf.o src/util.o
