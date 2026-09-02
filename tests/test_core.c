@@ -813,6 +813,17 @@ static void test_output_history_protocol(void){
     fg_output_history source={.tokens=tokens,.count=3u},decoded={0};
     CHECK(fg_output_history_encode(wire,sizeof(wire),&bytes,&source,&err)==FG_OK);
     CHECK(bytes==FG_OUTPUT_HISTORY_HEADER_BYTES+12u);
+    fg_frame_header frame={0};uint32_t frame_bytes=0u;
+    CHECK(fg_frame_encode_version(&frame,FG_PIPELINE_PROTOCOL_VERSION,
+        FG_MSG_OUTPUT_HISTORY,17u,0u,0u,wire,bytes,&err)==FG_OK);
+    CHECK(fg_frame_validate_version(&frame,FG_PIPELINE_PROTOCOL_VERSION,
+        wire,&frame_bytes,&err)==FG_OK&&frame_bytes==bytes);
+    CHECK(fg_frame_encode_version(&frame,FG_PIPELINE_PROTOCOL_VERSION,
+        FG_MSG_OUTPUT_HISTORY_ACK,17u,0u,0u,NULL,0u,&err)==FG_OK);
+    CHECK(fg_frame_validate_version(&frame,FG_PIPELINE_PROTOCOL_VERSION,
+        NULL,&frame_bytes,&err)==FG_OK&&frame_bytes==0u);
+    CHECK(fg_frame_encode_version(&frame,FG_PROTOCOL_VERSION,
+        FG_MSG_OUTPUT_HISTORY,17u,0u,0u,wire,bytes,&err)==FG_ERR_ARGUMENT);
     CHECK(fg_output_history_decode(&decoded,storage,8u,wire,bytes,&err)==FG_OK);
     CHECK(decoded.count==3u&&storage[0]==7u&&storage[1]==7u&&storage[2]==42u);
     fg_output_history empty={.tokens=NULL,.count=0u},empty_decoded={0};
