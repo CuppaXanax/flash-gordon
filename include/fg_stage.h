@@ -37,12 +37,25 @@ fg_status fg_stage_decode(fg_stage_executor *executor,uint32_t token_index,
                           const fg_vk_tensor *ngram_embedding,
                           fg_vk_tensor **output,fg_pipeline_result *terminal_result,
                           fg_error *err);
+fg_status fg_stage_decode_with_sampler(fg_stage_executor *executor,uint32_t token_index,
+                          const uint32_t position[FG_PIPELINE_POSITION_AXES],
+                          const fg_vk_tensor *input,const fg_vk_tensor *ngram_embedding,
+                          const fg_sampler_config *sampler,float uniform,
+                          fg_vk_tensor **output,fg_pipeline_result *terminal_result,
+                          fg_error *err);
 /* request_output is forwarded on every stage and only materialized by the terminal stage. */
 fg_status fg_stage_prefill(fg_stage_executor *executor,uint32_t first_token,
                            const uint32_t *positions,uint16_t token_count,
                            bool request_output,
                            const fg_vk_tensor *input,
                            const fg_vk_tensor *ngram_embeddings,
+                           fg_vk_tensor **output,fg_pipeline_result *terminal_result,
+                           fg_error *err);
+fg_status fg_stage_prefill_with_sampler(fg_stage_executor *executor,uint32_t first_token,
+                           const uint32_t *positions,uint16_t token_count,
+                           bool request_output,const fg_vk_tensor *input,
+                           const fg_vk_tensor *ngram_embeddings,
+                           const fg_sampler_config *sampler,float uniform,
                            fg_vk_tensor **output,fg_pipeline_result *terminal_result,
                            fg_error *err);
 

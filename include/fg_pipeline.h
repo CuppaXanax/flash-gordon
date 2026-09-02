@@ -2,6 +2,7 @@
 #define FLASH_GORDON_PIPELINE_H
 
 #include "fg_fabric.h"
+#include "fg_sampler.h"
 
 typedef struct fg_pipeline fg_pipeline;
 
@@ -65,6 +66,12 @@ fg_status fg_pipeline_submit(fg_pipeline *pipeline,
                              bool request_output,
                              const uint32_t *positions,const float *boundary,
                              uint32_t *sequence,fg_error *err);
+fg_status fg_pipeline_submit_with_sampler(fg_pipeline *pipeline,
+                             fg_pipeline_execution_kind execution_kind,
+                             uint32_t first_token,uint16_t token_count,
+                             bool request_output,const uint32_t *positions,
+                             const float *boundary,const fg_sampler_config *sampler,
+                             float uniform,uint32_t *sequence,fg_error *err);
 fg_status fg_pipeline_step(fg_pipeline *pipeline,fg_error *err);
 fg_status fg_pipeline_request_drain(fg_pipeline *pipeline,fg_error *err);
 fg_status fg_pipeline_take_result(fg_pipeline *pipeline,fg_pipeline_result *result,

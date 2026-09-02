@@ -255,6 +255,7 @@ static fg_status local_prefill_dispatch(
 static fg_status finish_terminal(fg_stage_executor *executor,
                                  const fg_vk_tensor *output,
                                  uint16_t token_count,bool request_output,
+                                 const fg_sampler_config *sampler,float uniform,
                                  fg_pipeline_result *terminal,fg_error *err){
     const fg_manifest *manifest=fg_model_manifest(executor->model);
     bool final=executor->stage+1u==manifest->stage_count;
@@ -274,16 +275,21 @@ static fg_status finish_terminal(fg_stage_executor *executor,
             (uint64_t)FG_PIPELINE_BOUNDARY_WIDTH*sizeof(float),err);
         final_input=executor->terminal_input;
     }
-    if(status==FG_OK)status=fg_output_greedy(executor->output,final_input,
-        &terminal->final_token,&terminal->final_logit,err);
+    if(status==FG_OK){
+        status=sampler?fg_output_sample(executor->output,final_input,sampler,
+            uniform,&terminal->final_token,&terminal->final_logit,err):
+            fg_output_greedy(executor->output,final_input,&terminal->final_token,
+                &terminal->final_logit,err);
+    }
     if(status==FG_OK)terminal->has_output=true;
     return status;
 }
 
-fg_status fg_stage_decode(fg_stage_executor *executor,uint32_t token_index,
+fg_status fg_stage_decode_with_sampler(fg_stage_executor *executor,uint32_t token_index,
                           const uint32_t position[FG_PIPELINE_POSITION_AXES],
                           const fg_vk_tensor *input,
                           const fg_vk_tensor *ngram_embedding,
+                          const fg_sampler_config *sampler,float uniform,
                           fg_vk_tensor **output,fg_pipeline_result *terminal,
                           fg_error *err){
     fg_status status=stage_ready(executor,err);
@@ -317,18 +323,27 @@ fg_status fg_stage_decode(fg_stage_executor *executor,uint32_t token_index,
             local=abort_error;
         }
     }
-    if(status==FG_OK)status=finish_terminal(executor,current,1u,true,terminal,
-                                             &local);
+    if(status==FG_OK)status=finish_terminal(executor,current,1u,true,sampler,uniform,
+                                             terminal,&local);
     if(status!=FG_OK)return stage_fail(executor,status,&local,err);
     *output=(fg_vk_tensor *)current;
     return FG_OK;
 }
 
-fg_status fg_stage_prefill(fg_stage_executor *executor,uint32_t first_token,
+fg_status fg_stage_decode(fg_stage_executor *executor,uint32_t token_index,
+                          const uint32_t position[FG_PIPELINE_POSITION_AXES],
+                          const fg_vk_tensor *input,const fg_vk_tensor *ngram_embedding,
+                          fg_vk_tensor **output,fg_pipeline_result *terminal,fg_error *err){
+    return fg_stage_decode_with_sampler(executor,token_index,position,input,
+        ngram_embedding,NULL,0.0f,output,terminal,err);
+}
+
+fg_status fg_stage_prefill_with_sampler(fg_stage_executor *executor,uint32_t first_token,
                            const uint32_t *positions,uint16_t token_count,
                            bool request_output,
                            const fg_vk_tensor *input,
                            const fg_vk_tensor *ngram_embeddings,
+                           const fg_sampler_config *sampler,float uniform,
                            fg_vk_tensor **output,fg_pipeline_result *terminal,
                            fg_error *err){
     fg_status status=stage_ready(executor,err);
@@ -358,10 +373,20 @@ fg_status fg_stage_prefill(fg_stage_executor *executor,uint32_t first_token,
         current=next;
     }
     if(status==FG_OK)status=finish_terminal(executor,current,token_count,
-                                            request_output,terminal,&local);
+                                            request_output,sampler,uniform,terminal,&local);
     if(status!=FG_OK)return stage_fail(executor,status,&local,err);
     *output=(fg_vk_tensor *)current;
     return FG_OK;
+}
+
+fg_status fg_stage_prefill(fg_stage_executor *executor,uint32_t first_token,
+                           const uint32_t *positions,uint16_t token_count,
+                           bool request_output,const fg_vk_tensor *input,
+                           const fg_vk_tensor *ngram_embeddings,
+                           fg_vk_tensor **output,fg_pipeline_result *terminal,
+                           fg_error *err){
+    return fg_stage_prefill_with_sampler(executor,first_token,positions,token_count,
+        request_output,input,ngram_embeddings,NULL,0.0f,output,terminal,err);
 }
 
 fg_status fg_stage_pipeline_execute(void *context,uint32_t stage,
@@ -415,13 +440,15 @@ fg_status fg_stage_pipeline_execute(void *context,uint32_t stage,
             fg_error_set(&local,FG_ERR_MISMATCH,
                          "pipeline decode activation must contain one token");
             status=FG_ERR_MISMATCH;
-        }else status=fg_stage_decode(executor,activation->first_token,
-            activation->positions,input,ngram,&result,terminal,&local);
+        }else status=fg_stage_decode_with_sampler(executor,activation->first_token,
+            activation->positions,input,ngram,&activation->sampler,
+            activation->uniform,&result,terminal,&local);
     }else if(status==FG_OK&&activation->execution_kind==
                               FG_PIPELINE_EXECUTION_PREFILL)
-        status=fg_stage_prefill(executor,activation->first_token,
+        status=fg_stage_prefill_with_sampler(executor,activation->first_token,
             activation->positions,activation->token_count,
             activation->request_output,input,ngram,
+            &activation->sampler,activation->uniform,
             &result,terminal,&local);
     else if(status==FG_OK){
         fg_error_set(&local,FG_ERR_MISMATCH,

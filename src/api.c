@@ -4,6 +4,8 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <float.h>
+#include <math.h>
 #include <netdb.h>
 #include <poll.h>
 #include <signal.h>
@@ -83,6 +85,7 @@ typedef struct api_chat_request {
     char *tool_choice_name;
     uint32_t max_tokens;
     bool stream;
+    fg_sampler_config sampler;
 } api_chat_request;
 
 typedef struct api_public_session {
@@ -842,14 +845,28 @@ static bool number_is_integer(double value) {
     return value >= 0.0 && value <= (double)UINT32_MAX && value == (double)(uint32_t)value;
 }
 
+static fg_status parse_sampler_controls(const json_value *root,api_chat_request *request,
+                                        fg_error *err){
+    fg_sampler_config_defaults(&request->sampler);
+    json_value *value=json_object_get(root,"temperature");
+    if(value){if(value->type!=JSON_NUMBER||!isfinite(value->as.number)||value->as.number<0.0||value->as.number>FLT_MAX){fg_error_set(err,FG_ERR_ARGUMENT,"temperature must be a finite non-negative number");return FG_ERR_ARGUMENT;}request->sampler.temperature=(float)value->as.number;}
+    value=json_object_get(root,"top_p");
+    if(value){if(value->type!=JSON_NUMBER||!isfinite(value->as.number)||value->as.number<=0.0||value->as.number>1.0){fg_error_set(err,FG_ERR_ARGUMENT,"top_p must be greater than 0 and at most 1");return FG_ERR_ARGUMENT;}request->sampler.top_p=(float)value->as.number;}
+    value=json_object_get(root,"top_k");
+    if(value){if(value->type!=JSON_NUMBER||!number_is_integer(value->as.number)||value->as.number<1.0||value->as.number>64.0){fg_error_set(err,FG_ERR_ARGUMENT,"top_k must be an integer from 1 through 64");return FG_ERR_ARGUMENT;}request->sampler.top_k=(uint32_t)value->as.number;}
+    value=json_object_get(root,"seed");
+    if(value){if(value->type!=JSON_NUMBER||!isfinite(value->as.number)||value->as.number<0.0||value->as.number>9007199254740991.0||value->as.number!=floor(value->as.number)){fg_error_set(err,FG_ERR_ARGUMENT,"seed must be a non-negative integer");return FG_ERR_ARGUMENT;}request->sampler.seed=(uint64_t)value->as.number;}
+    return fg_sampler_config_validate(&request->sampler,err);
+}
+
 static fg_status reject_control(const json_value *root, const char *name, double allowed,
                                 fg_error *err) {
     json_value *value = json_object_get(root, name);
     if (!value) return FG_OK;
     if (value->type != JSON_NUMBER || value->as.number != allowed) {
-        fg_error_set(err, FG_ERR_ARGUMENT,
-                     "%s is unsupported; Flash Gordon currently serves greedy decoding only",
-                     name);
+            fg_error_set(err, FG_ERR_ARGUMENT,
+                         "%s is unsupported",
+                         name);
         return FG_ERR_ARGUMENT;
     }
     return FG_OK;
@@ -1081,19 +1098,16 @@ static fg_status parse_chat_request(const json_value *root, const char *runtime_
     fg_status status = parse_tools(root, request, err);
     if (status == FG_OK) status = parse_tool_choice(root, request, err);
     if (status != FG_OK) return status;
-    static const char *unsupported[] = {
-        "top_k", "min_p", "typical_p", "seed", "logit_bias",
-    };
+    static const char *unsupported[] = {"min_p", "typical_p", "logit_bias"};
     for (size_t i = 0; i < sizeof(unsupported) / sizeof(unsupported[0]); i++) {
         if (json_object_has(root, unsupported[i])) {
             fg_error_set(err, FG_ERR_ARGUMENT,
-                         "%s is unsupported; Flash Gordon currently serves greedy decoding only",
+                         "%s is unsupported",
                          unsupported[i]);
             return FG_ERR_ARGUMENT;
         }
     }
-    status = reject_control(root, "temperature", 0.0, err);
-    if (status == FG_OK) status = reject_control(root, "top_p", 1.0, err);
+    status = parse_sampler_controls(root,request,err);
     if (status == FG_OK) status = reject_control(root, "presence_penalty", 0.0, err);
     if (status == FG_OK) status = reject_control(root, "frequency_penalty", 0.0, err);
     if (status == FG_OK) status = reject_control(root, "n", 1.0, err);
@@ -2100,6 +2114,7 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     }
     fg_generation_stats stats = {0};
     bool generation_attempted=false;
+    if(status==FG_OK)status=fg_runtime_set_sampler(runtime,&request.sampler,err);
     if(status==FG_OK){
         generation_attempted=true;
         if(public_continuation){

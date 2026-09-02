@@ -717,11 +717,11 @@ fg_status fg_qsa_page_barrier_decode(fg_qsa_page_barrier *barrier,
     return FG_OK;
 }
 
-static fg_status validate_output_work(const fg_output_work *work,fg_error *err){if(!work||work->source_rank>=FG_RANK_COUNT||work->destination_rank!=4u){fg_error_set(err,FG_ERR_FORMAT,"invalid output work route");return FG_ERR_FORMAT;}for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(work->hyper[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite output input at %u",i);return FG_ERR_FORMAT;}return FG_OK;}
+static fg_status validate_output_work(const fg_output_work *work,fg_error *err){if(!work||work->source_rank>=FG_RANK_COUNT||work->destination_rank!=4u){fg_error_set(err,FG_ERR_FORMAT,"invalid output work route");return FG_ERR_FORMAT;}if(work->sampler.temperature>0.0f&&fg_sampler_config_validate(&work->sampler,err)!=FG_OK)return FG_ERR_FORMAT;if(!isfinite(work->uniform)||work->uniform<0.0f||work->uniform>=1.0f){fg_error_set(err,FG_ERR_FORMAT,"invalid output sampler draw");return FG_ERR_FORMAT;}for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(work->hyper[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite output input at %u",i);return FG_ERR_FORMAT;}return FG_OK;}
 
-fg_status fg_output_work_encode(uint8_t output[FG_OUTPUT_WORK_BYTES],const fg_output_work *work,fg_error *err){if(!output){fg_error_set(err,FG_ERR_ARGUMENT,"output work buffer is null");return FG_ERR_ARGUMENT;}fg_status status=validate_output_work(work,err);if(status!=FG_OK)return status;output[0]=work->source_rank;output[1]=work->destination_rank;output[2]=0;output[3]=0;put_u32_be(output+4u,work->token_index);for(uint32_t i=0,offset=8u;i<FG_HYPER_WIDTH;i++,offset+=4u)put_f32_be(output+offset,work->hyper[i]);return FG_OK;}
+fg_status fg_output_work_encode(uint8_t output[FG_OUTPUT_WORK_BYTES],const fg_output_work *work,fg_error *err){if(!output){fg_error_set(err,FG_ERR_ARGUMENT,"output work buffer is null");return FG_ERR_ARGUMENT;}fg_status status=validate_output_work(work,err);if(status!=FG_OK)return status;output[0]=work->source_rank;output[1]=work->destination_rank;output[2]=0;output[3]=0;put_u32_be(output+4u,work->token_index);put_f32_be(output+8u,work->sampler.temperature);put_f32_be(output+12u,work->sampler.top_p);put_u32_be(output+16u,work->sampler.top_k);put_f32_be(output+20u,work->uniform);for(uint32_t i=0,offset=FG_OUTPUT_WORK_HEADER_BYTES;i<FG_HYPER_WIDTH;i++,offset+=4u)put_f32_be(output+offset,work->hyper[i]);return FG_OK;}
 
-fg_status fg_output_work_decode(fg_output_work *work,const uint8_t *payload,uint32_t bytes,fg_error *err){if(!work||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output work input");return FG_ERR_ARGUMENT;}if(bytes!=FG_OUTPUT_WORK_BYTES||payload[2]||payload[3]){fg_error_set(err,FG_ERR_FORMAT,"invalid output work size or reserved bytes");return FG_ERR_FORMAT;}memset(work,0,sizeof(*work));work->source_rank=payload[0];work->destination_rank=payload[1];work->token_index=get_u32_be(payload+4u);for(uint32_t i=0,offset=8u;i<FG_HYPER_WIDTH;i++,offset+=4u)work->hyper[i]=get_f32_be(payload+offset);return validate_output_work(work,err);}
+fg_status fg_output_work_decode(fg_output_work *work,const uint8_t *payload,uint32_t bytes,fg_error *err){if(!work||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output work input");return FG_ERR_ARGUMENT;}if(bytes!=FG_OUTPUT_WORK_BYTES||payload[2]||payload[3]){fg_error_set(err,FG_ERR_FORMAT,"invalid output work size or reserved bytes");return FG_ERR_FORMAT;}memset(work,0,sizeof(*work));work->source_rank=payload[0];work->destination_rank=payload[1];work->token_index=get_u32_be(payload+4u);work->sampler.temperature=get_f32_be(payload+8u);work->sampler.top_p=get_f32_be(payload+12u);work->sampler.top_k=get_u32_be(payload+16u);work->uniform=get_f32_be(payload+20u);for(uint32_t i=0,offset=FG_OUTPUT_WORK_HEADER_BYTES;i<FG_HYPER_WIDTH;i++,offset+=4u)work->hyper[i]=get_f32_be(payload+offset);return validate_output_work(work,err);}
 
 static fg_status validate_output_result(const fg_output_result *result,fg_error *err){if(!result||result->source_rank!=4u||result->destination_rank>=FG_RANK_COUNT||result->token>=FG_Q38_VOCAB_SIZE||!isfinite(result->logit)){fg_error_set(err,FG_ERR_FORMAT,"invalid output result");return FG_ERR_FORMAT;}return FG_OK;}
 
@@ -879,6 +879,12 @@ fg_status fg_pipeline_activation_validate(const fg_pipeline_activation *activati
                          "invalid pipeline stage timing at stage %u",stage);
             return FG_ERR_FORMAT;
         }
+    if(activation->sampler.temperature>0.0f&&
+       fg_sampler_config_validate(&activation->sampler,err)!=FG_OK)
+        return FG_ERR_FORMAT;
+    if(!isfinite(activation->uniform)||activation->uniform<0.0f||activation->uniform>=1.0f){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid pipeline sampler draw");return FG_ERR_FORMAT;
+    }
     return FG_OK;
 }
 
@@ -910,6 +916,10 @@ fg_status fg_pipeline_activation_encode(uint8_t *output,uint32_t capacity,uint32
     output[10]=activation->request_output?1u:0u;
     for(uint32_t stage=0;stage<FG_PIPELINE_STAGE_COUNT;stage++)
         put_f32_be(output+16u+stage*4u,activation->stage_seconds[stage]);
+    put_f32_be(output+48u,activation->sampler.temperature);
+    put_f32_be(output+52u,activation->sampler.top_p);
+    put_u32_be(output+56u,activation->sampler.top_k);
+    put_f32_be(output+60u,activation->uniform);
     uint32_t offset=FG_PIPELINE_ACTIVATION_HEADER_BYTES;
     for(uint64_t i=0;i<position_values;i++,offset+=4u)
         put_u32_be(output+offset,activation->positions[i]);
@@ -953,6 +963,10 @@ fg_status fg_pipeline_activation_decode(fg_pipeline_activation *activation,
     activation->request_output=(payload[10]&1u)!=0u;
     for(uint32_t stage=0;stage<FG_PIPELINE_STAGE_COUNT;stage++)
         activation->stage_seconds[stage]=get_f32_be(payload+16u+stage*4u);
+    activation->sampler.temperature=get_f32_be(payload+48u);
+    activation->sampler.top_p=get_f32_be(payload+52u);
+    activation->sampler.top_k=get_u32_be(payload+56u);
+    activation->uniform=get_f32_be(payload+60u);
     activation->positions=position_storage;
     activation->boundary=boundary_storage;
     uint32_t offset=FG_PIPELINE_ACTIVATION_HEADER_BYTES;

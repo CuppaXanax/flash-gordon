@@ -2,6 +2,7 @@
 #define FLASH_GORDON_OUTPUT_H
 
 #include "fg_model.h"
+#include "fg_sampler.h"
 
 typedef struct fg_output_executor fg_output_executor;
 
@@ -23,5 +24,8 @@ fg_status fg_output_greedy(fg_output_executor *executor,const fg_vk_tensor *hype
 fg_status fg_output_topk(fg_output_executor *executor,const fg_vk_tensor *hyper,
                          uint32_t k,fg_vk_tensor **scores,fg_vk_tensor **ids,
                          uint32_t *count,fg_error *err);
+fg_status fg_output_sample(fg_output_executor *executor,const fg_vk_tensor *hyper,
+                           const fg_sampler_config *config,
+                           float uniform,uint32_t *token,float *logit,fg_error *err);
 
 #endif

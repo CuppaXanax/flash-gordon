@@ -18,6 +18,9 @@ static int failures;
         }                                                                                 \
     } while (0)
 
+static char *run_chat_request(fg_runtime *runtime, api_public_session *session,
+                              const char *body, fg_status *result);
+
 struct fg_runtime {
     char *history;
     size_t history_length;
@@ -28,7 +31,16 @@ struct fg_runtime {
     bool force_continuation_miss;
     bool require_clean_generation;
     uint32_t reset_count;
+    uint32_t sampler_set_count;
+    fg_sampler_config last_sampler;
 };
+
+fg_status fg_runtime_set_sampler(fg_runtime *runtime,const fg_sampler_config *config,
+                                 fg_error *err){
+    (void)err;
+    if(runtime&&config){runtime->sampler_set_count++;runtime->last_sampler=*config;}
+    return FG_OK;
+}
 
 const char *fg_execution_mode_name(fg_execution_mode mode){
     return mode==FG_EXECUTION_PIPELINE?"pipeline":"expert-parallel";
@@ -390,16 +402,47 @@ static void test_greedy_controls(void) {
     api_chat_request_free(&request);
     json_free(root);
 
-    const char *rejected =
-        "{\"temperature\":0.5,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+    const char *sampled =
+        "{\"temperature\":0.5,\"top_p\":0.8,\"top_k\":20,\"seed\":7,"
+        "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
     memset(&err, 0, sizeof(err));
-    root = parse_json_body(rejected, strlen(rejected), &err);
+    root = parse_json_body(sampled, strlen(sampled), &err);
     CHECK(root != NULL);
-    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &request, &err) ==
-          FG_ERR_ARGUMENT);
-    CHECK(strstr(err.message, "greedy decoding only") != NULL);
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &request, &err) == FG_OK);
+    CHECK(request.sampler.temperature==0.5f&&request.sampler.top_p==0.8f&&
+          request.sampler.top_k==20u&&request.sampler.seed==7u);
     api_chat_request_free(&request);
     json_free(root);
+
+    const char *invalid = "{\"temperature\":-1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+    root = parse_json_body(invalid, strlen(invalid), &err);
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &request, &err)==FG_ERR_ARGUMENT);
+    api_chat_request_free(&request);json_free(root);
+
+    const char *bad_top_p = "{\"top_p\":0,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+    root=parse_json_body(bad_top_p,strlen(bad_top_p),&err);
+    CHECK(parse_chat_request(root,"Qwen3.8-Flash-Next",&request,&err)==FG_ERR_ARGUMENT);
+    api_chat_request_free(&request);json_free(root);
+    const char *bad_top_k = "{\"top_k\":65,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+    root=parse_json_body(bad_top_k,strlen(bad_top_k),&err);
+    CHECK(parse_chat_request(root,"Qwen3.8-Flash-Next",&request,&err)==FG_ERR_ARGUMENT);
+    api_chat_request_free(&request);json_free(root);
+
+    const char *defaults = "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+    root = parse_json_body(defaults, strlen(defaults), &err);
+    CHECK(root != NULL);
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &request, &err)==FG_OK);
+    CHECK(request.sampler.temperature==1.0f&&request.sampler.top_p==0.95f&&request.sampler.top_k==20u);
+    api_chat_request_free(&request);json_free(root);
+
+    fg_runtime runtime={0};api_public_session session={0};fg_status result=FG_OK;
+    char *response=run_chat_request(&runtime,&session,
+        "{\"temperature\":0.7,\"top_p\":0.8,\"top_k\":20,"
+        "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",&result);
+    CHECK(result==FG_OK&&response!=NULL&&runtime.sampler_set_count==1u);
+    CHECK(runtime.last_sampler.temperature==0.7f&&runtime.last_sampler.top_p==0.8f&&
+          runtime.last_sampler.top_k==20u);
+    free(response);api_public_session_free(&session);fg_runtime_close(&runtime);
 }
 
 static void test_nonstream_tool_response(void) {
