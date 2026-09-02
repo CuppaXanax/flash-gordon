@@ -1,0 +1,19 @@
+#version 460
+layout(local_size_x=256,local_size_y=1,local_size_z=1) in;
+layout(set=0,binding=0) buffer Logits { float value[]; } logits;
+layout(set=0,binding=1) readonly buffer Counts { uint count[]; } history;
+layout(push_constant) uniform Push {
+    uint values;
+    float presence;
+    float frequency;
+    float repetition;
+} pc;
+
+void main(){
+    uint id=gl_GlobalInvocationID.x;
+    if(id>=pc.values || history.count[id]==0u)return;
+    float value=logits.value[id];
+    if(pc.repetition!=1.0)
+        value=value>0.0?value/pc.repetition:value*pc.repetition;
+    logits.value[id]=value-pc.frequency*float(history.count[id])-pc.presence;
+}

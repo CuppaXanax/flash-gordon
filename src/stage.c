@@ -202,11 +202,20 @@ fg_status fg_stage_executor_reset(fg_stage_executor *executor,fg_error *err){
     fg_status status=FG_OK;
     if(fg_vk_batch_active(vk))status=fg_vk_abort(vk,err);
     if(status==FG_OK)status=fg_owner_reset_state(executor->owner,err);
+    if(status==FG_OK&&executor->output)
+        status=fg_output_history_reset(executor->output,NULL,0u,err);
     if(status==FG_OK){
         executor->failed=false;
         memset(&executor->failure,0,sizeof(executor->failure));
     }
     return status;
+}
+
+fg_status fg_stage_history_reset(fg_stage_executor *executor,const uint32_t *history,
+                                 uint32_t count,fg_error *err){
+    if(!executor||!executor->output){fg_error_set(err,FG_ERR_ARGUMENT,
+        "stage output history is unavailable");return FG_ERR_ARGUMENT;}
+    return fg_output_history_reset(executor->output,history,count,err);
 }
 
 static fg_status local_prefill_dispatch(

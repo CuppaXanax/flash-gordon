@@ -45,7 +45,9 @@ static void pipeline_protocol_test(void){
         .execution_kind=FG_PIPELINE_EXECUTION_PREFILL,
         .slot=1u,.source_stage=3u,.destination_stage=4u,
         .first_token=40u,.token_count=TOKENS,.request_output=false,
-        .sampler={1.0f,0.95f,20u,0u},.uniform=0.37f,
+        .sampler={.temperature=1.0f,.top_p=0.95f,.top_k=20u,
+                  .presence_penalty=0.0f,.frequency_penalty=0.0f,
+                  .repetition_penalty=1.0f,.min_p=0.0f},.uniform=0.37f,
         .positions=positions,.boundary=boundary
     },decoded={0};
     uint32_t bytes=0;
@@ -67,6 +69,10 @@ static void pipeline_protocol_test(void){
         decoded.first_token==activation.first_token&&decoded.token_count==TOKENS&&
         !decoded.request_output&&decoded.sampler.temperature==activation.sampler.temperature&&
         decoded.sampler.top_p==activation.sampler.top_p&&decoded.sampler.top_k==activation.sampler.top_k&&
+        decoded.sampler.presence_penalty==activation.sampler.presence_penalty&&
+        decoded.sampler.frequency_penalty==activation.sampler.frequency_penalty&&
+        decoded.sampler.repetition_penalty==activation.sampler.repetition_penalty&&
+        decoded.sampler.min_p==activation.sampler.min_p&&
         decoded.uniform==activation.uniform);
     PROTOCOL_CHECK(memcmp(decoded_positions,positions,sizeof(positions))==0);
     PROTOCOL_CHECK(memcmp(decoded_boundary,boundary,(size_t)boundary_values*4u)==0);

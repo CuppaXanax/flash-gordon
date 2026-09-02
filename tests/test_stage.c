@@ -44,7 +44,7 @@ struct fg_output_executor { fg_model *model; };
 static uint32_t graph_weight_experts;
 static uint64_t graph_tiles_bytes,graph_reduced_bytes;
 static uint32_t owner_calls,owner_resets,qsa_opens,ngram_calls;
-static uint32_t output_creates,output_destroys,output_calls;
+static uint32_t output_creates,output_destroys,output_calls,output_history_resets;
 static uint32_t fail_layer=UINT32_MAX;
 static uint32_t abort_calls;
 static uint32_t decode_schedule_calls,fast_moe_calls,grouped_moe_calls;
@@ -548,6 +548,13 @@ void fg_output_executor_destroy(fg_output_executor *output){
     if(output)output_destroys++;
     free(output);
 }
+fg_status fg_output_history_reset(fg_output_executor *output,
+                                  const uint32_t *history,uint32_t count,
+                                  fg_error *err){
+    (void)output;(void)history;(void)count;(void)err;
+    output_history_resets++;
+    return FG_OK;
+}
 fg_status fg_output_greedy(fg_output_executor *output,const fg_vk_tensor *hyper,
                            uint32_t *token,float *logit,fg_error *err){
     fg_status status=fg_vk_begin(&output->model->vk,err);
@@ -681,6 +688,8 @@ static void test_decode_prefill_and_reset(void){
     uint32_t positions[2u*FG_PIPELINE_POSITION_AXES]={0,0,0,1,1,1};
     fg_pipeline_activation activation={.execution_kind=FG_PIPELINE_EXECUTION_DECODE,
         .token_count=1u,.first_token=7u,.request_output=true,
+        .sampler={.temperature=0.0f,.top_p=1.0f,.top_k=1u,
+                  .repetition_penalty=1.0f},
         .positions=positions,.boundary=boundary};
     decode_dispatch_ok=false;
     uint64_t submissions=model.vk.submissions;
@@ -738,7 +747,9 @@ static void test_stage_local_batch_failure(void){
     uint32_t position[FG_PIPELINE_POSITION_AXES]={0};
     fg_pipeline_activation activation={
         .execution_kind=FG_PIPELINE_EXECUTION_DECODE,.token_count=1u,
-        .first_token=1u,.request_output=true,.positions=position,
+        .first_token=1u,.request_output=true,
+        .sampler={.temperature=0.0f,.top_p=1.0f,.top_k=1u,
+                  .repetition_penalty=1.0f},.positions=position,
         .boundary=boundary
     };
     profile_active=true;fail_moe=true;
@@ -767,7 +778,9 @@ static void test_stage0_ngram_and_terminal(void){
     float boundary[FG_PIPELINE_BOUNDARY_WIDTH]={0};
     uint32_t position[FG_PIPELINE_POSITION_AXES]={0};
     fg_pipeline_activation activation={.execution_kind=FG_PIPELINE_EXECUTION_DECODE,
-        .token_count=1u,.request_output=true,.positions=position,
+        .token_count=1u,.request_output=true,
+        .sampler={.temperature=0.0f,.top_p=1.0f,.top_k=1u,
+                  .repetition_penalty=1.0f},.positions=position,
         .boundary=boundary};
     uint32_t prior_ngram=ngram_calls;
     uint64_t stage0_submissions=stage0_model.vk.submissions;
@@ -787,7 +800,9 @@ static void test_stage0_ngram_and_terminal(void){
         .final_token=FG_Q38_VOCAB_SIZE,.final_logit=0.0f};
     activation=(fg_pipeline_activation){
         .execution_kind=FG_PIPELINE_EXECUTION_PREFILL,.token_count=2u,
-        .first_token=20u,.request_output=false,.positions=positions,
+        .first_token=20u,.request_output=false,
+        .sampler={.temperature=0.0f,.top_p=1.0f,.top_k=1u,
+                  .repetition_penalty=1.0f},.positions=positions,
         .boundary=terminal_boundary};
     uint32_t calls_before=output_calls;
     CHECK(fg_stage_pipeline_execute(stage7,7u,1u,2u,&activation,
@@ -816,7 +831,9 @@ static void test_stage0_ngram_and_terminal(void){
                                    terminal_boundary,&result,&error)==
           FG_ERR_MISMATCH);
     CHECK(output_calls==calls_before+1u);
-    CHECK(fg_stage_executor_reset(stage7,&error)==FG_OK);
+    uint32_t history_resets_stage7=output_history_resets;
+    CHECK(fg_stage_executor_reset(stage7,&error)==FG_OK&&
+          output_history_resets==history_resets_stage7+1u);
     activation.request_output=true;
     result.has_output=false;result.final_token=FG_Q38_VOCAB_SIZE;
     result.final_logit=0.0f;

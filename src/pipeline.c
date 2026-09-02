@@ -814,10 +814,11 @@ fg_status fg_pipeline_submit_with_sampler(fg_pipeline *pipeline,
     }
     pipeline_slot *slot=&pipeline->slots[slot_index];
     pipeline->operation_sequence=pipeline->next_submit_sequence;
+    fg_sampler_config valid_sampler;fg_sampler_config_greedy(&valid_sampler);
     fg_pipeline_activation input={.execution_kind=execution_kind,
         .slot=(uint8_t)slot_index,.source_stage=0u,.destination_stage=1u,
         .first_token=first_token,.token_count=token_count,
-        .request_output=request_output,.sampler=sampler?*sampler:(fg_sampler_config){0},
+        .request_output=request_output,.sampler=sampler?*sampler:valid_sampler,
         .uniform=uniform,.positions=positions,.boundary=boundary};
     fg_error local={0};
     status=fg_pipeline_activation_validate(&input,&local);

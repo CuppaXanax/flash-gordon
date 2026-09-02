@@ -774,7 +774,8 @@ static fg_status handle_qsa_page_fetch(fg_fabric *fabric,qsa_owner_runtime *runt
 static fg_status begin_session(fg_fabric *fabric,const fg_manifest *manifest,
                                const char *directory,qsa_owner_runtime *qsa,uint32_t self,
                                uint32_t peer,const fg_frame_header *header,const uint8_t *payload,
-                               uint32_t bytes,uint64_t *session_id,fg_error *err){
+                               uint32_t bytes,uint64_t *session_id,
+                               fg_output_executor *output,fg_error *err){
     uint64_t request=fg_frame_request_id(header);
     if(peer!=0u||!request||(*session_id&&request<=*session_id)){fg_error_set(err,FG_ERR_MISMATCH,"invalid, stale, or duplicate session begin");return FG_ERR_MISMATCH;}
     fg_session_identity identity;fg_status status=fg_session_identity_from_manifest(manifest,&identity,err);
@@ -784,6 +785,7 @@ static fg_status begin_session(fg_fabric *fabric,const fg_manifest *manifest,
                                                        request,NULL,err);
         if(status==FG_OK)status=fg_fabric_send(fabric,peer,FG_FABRIC_CONTROL,
                                                FG_MSG_SESSION_READY,request,0,0,NULL,0,err);
+        if(status==FG_OK&&output)status=fg_output_history_reset(output,NULL,0u,err);
         if(status==FG_OK)*session_id=request;
         return status;
     }
@@ -800,6 +802,7 @@ static fg_status begin_session(fg_fabric *fabric,const fg_manifest *manifest,
     }
     if(status==FG_OK)status=qsa_owner_open_session(qsa,manifest,directory,&identity,
                                                    request,&control,err);
+    if(status==FG_OK&&output)status=fg_output_history_reset(output,NULL,0u,err);
     uint8_t wire[FG_OWNER_SESSION_CONTROL_BYTES];
     if(status==FG_OK){
         control.operation=FG_OWNER_SESSION_READY;
@@ -890,14 +893,49 @@ static fg_status handle_output_work(fg_fabric *fabric,fg_output_executor *output
     free(work);return status;
 }
 
+static bool output_history_count(const uint8_t *payload,uint32_t bytes,
+                                 uint32_t *count){
+    if(!payload||!count||bytes<FG_OUTPUT_HISTORY_HEADER_BYTES)return false;
+    uint32_t value=((uint32_t)payload[0u]<<24u)|((uint32_t)payload[1u]<<16u)|
+                   ((uint32_t)payload[2u]<<8u)|payload[3u];
+    uint32_t reserved=((uint32_t)payload[4u]<<24u)|((uint32_t)payload[5u]<<16u)|
+                      ((uint32_t)payload[6u]<<8u)|payload[7u];
+    if(reserved||value>FG_NATIVE_CONTEXT||
+       (uint64_t)FG_OUTPUT_HISTORY_HEADER_BYTES+(uint64_t)value*4u!=bytes)
+        return false;
+    *count=value;return true;
+}
+
+static fg_status handle_output_history(fg_fabric *fabric,fg_output_executor *output,
+                                       uint32_t self,uint64_t session_id,uint32_t peer,
+                                       const fg_frame_header *header,const uint8_t *payload,
+                                       uint32_t bytes,fg_error *err){
+    if(self!=4u||!output||peer!=0u||fg_frame_request_id(header)!=session_id){
+        fg_error_set(err,FG_ERR_MISMATCH,"stale or misrouted output history");return FG_ERR_MISMATCH;
+    }
+    uint32_t count=0u;
+    if(!output_history_count(payload,bytes,&count)){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid output history size");return FG_ERR_FORMAT;
+    }
+    uint32_t *tokens=count?malloc((size_t)count*sizeof(*tokens)):NULL;
+    if(count&&!tokens){fg_error_set(err,FG_ERR_OOM,"allocate output history decode");return FG_ERR_OOM;}
+    fg_output_history history={0};fg_status status=fg_output_history_decode(
+        &history,tokens,count,payload,bytes,err);
+    if(status==FG_OK)status=fg_output_history_reset(output,history.tokens,history.count,err);
+    if(status==FG_OK)status=fg_fabric_send(fabric,peer,FG_FABRIC_CONTROL,
+        FG_MSG_OUTPUT_HISTORY_ACK,fg_frame_request_id(header),fg_frame_sequence(header),0u,
+        NULL,0u,err);
+    free(tokens);return status;
+}
+
 static fg_status rank_worker_loop(fg_fabric *fabric,fg_expert_executor *expert,fg_output_executor *output,const fg_ngram_resident *ngram,fg_model *model,const fg_manifest *manifest,const char *directory,uint32_t self,fg_error *err){
-    uint32_t control_capacity=FG_LAYER_WORK_FOUR_AXIS_BASE_BYTES;if(control_capacity<FG_OUTPUT_WORK_BYTES)control_capacity=FG_OUTPUT_WORK_BYTES;if(control_capacity<FG_DECODE_WORK_BYTES)control_capacity=FG_DECODE_WORK_BYTES;if(control_capacity<FG_QSA_BLOCK_WORK_MAX_BYTES)control_capacity=FG_QSA_BLOCK_WORK_MAX_BYTES;uint8_t *control=malloc(control_capacity);prefill_worker_buffers prefill={0};qsa_owner_runtime qsa={0};fg_vk_tensor *hyper=NULL;
+    uint32_t control_capacity=FG_LAYER_WORK_FOUR_AXIS_BASE_BYTES;if(control_capacity<FG_OUTPUT_WORK_BYTES)control_capacity=FG_OUTPUT_WORK_BYTES;if(control_capacity<FG_OUTPUT_HISTORY_MAX_BYTES)control_capacity=FG_OUTPUT_HISTORY_MAX_BYTES;if(control_capacity<FG_DECODE_WORK_BYTES)control_capacity=FG_DECODE_WORK_BYTES;if(control_capacity<FG_QSA_BLOCK_WORK_MAX_BYTES)control_capacity=FG_QSA_BLOCK_WORK_MAX_BYTES;uint8_t *control=malloc(control_capacity);prefill_worker_buffers prefill={0};qsa_owner_runtime qsa={0};fg_vk_tensor *hyper=NULL;
     /* Pre-allocate expert work buffers — eliminates ~200 KB malloc/free per expert request */
     fg_expert_result *ew_result=malloc(sizeof(*ew_result));uint8_t *ew_wire=malloc(FG_EXPERT_RESULT_SINGLE_BYTES);
     if(!control||!ew_result||!ew_wire){free(ew_wire);free(ew_result);free(control);fg_error_set(err,FG_ERR_OOM,"allocate rank worker buffers");return FG_ERR_OOM;}
     fg_status status=prefill_worker_buffers_create(&prefill,manifest->prefill_microbatch,
                                                    false,err);if(status==FG_OK)status=qsa_owner_runtime_create(&qsa,manifest,self,err);if(status==FG_OK&&output)status=fg_vk_tensor_create(fg_model_vk(model),FG_HYPER_WIDTH*4u,&hyper,err);if(status==FG_OK)status=token_profile_prepare(fg_model_vk(model),err);uint8_t *bulk_receive=prefill.receive;uint32_t bulk_capacity=prefill.receive_capacity;if(qsa.enabled&&qsa.receive_capacity>bulk_capacity){bulk_receive=qsa.receive_wire;bulk_capacity=qsa.receive_capacity;}uint64_t session_id=0;
-    while(status==FG_OK){uint32_t peer=0,bytes=0;fg_frame_header header;fg_fabric_class ready_class;fg_fabric_recv_timing receive_timing={0};receive_timing.poll_start_ns=critical_ns();status=fg_fabric_wait_ready(fabric,3u,&peer,&ready_class,err);receive_timing.ready_ns=critical_ns();if(status!=FG_OK)break;if(ready_class==FG_FABRIC_BULK){status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_BULK,&header,bulk_receive,bulk_capacity,&bytes,&receive_timing,err);fg_message_type type=status==FG_OK?fg_frame_type(&header):0;if(status==FG_OK&&type==FG_MSG_PREFILL_WORK)status=handle_prefill_expert_work(fabric,expert,manifest,self,session_id,peer,&header,bulk_receive,bytes,&prefill,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_APPEND)status=handle_qsa_page_append(&qsa,manifest,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_BARRIER)status=handle_qsa_page_barrier(fabric,&qsa,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_FETCH)status=handle_qsa_page_fetch(fabric,&qsa,manifest,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported bulk message %u",self,type);status=FG_ERR_FORMAT;}continue;}status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_CONTROL,&header,control,control_capacity,&bytes,&receive_timing,err);if(status!=FG_OK)break;fg_message_type type=fg_frame_type(&header);if(type==FG_MSG_DECODE_WORK){if(!session_id||fg_frame_request_id(&header)!=session_id){fg_error_set(err,FG_ERR_MISMATCH,"stale expert work request");status=FG_ERR_MISMATCH;}else status=handle_expert_work(fabric,expert,fg_model_vk(model),self,peer,&header,control,bytes,&receive_timing,ew_result,ew_wire,err);    }else if(type==FG_MSG_NGRAM_WORK)status=handle_ngram_work(fabric,ngram,FG_FABRIC_BULK,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_SESSION_BEGIN)status=begin_session(fabric,manifest,directory,&qsa,self,peer,&header,control,bytes,&session_id,err);else if(type==FG_MSG_OUTPUT_WORK)status=handle_output_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,err);else{fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported control message %u",self,type);status=FG_ERR_FORMAT;}}
+    while(status==FG_OK){uint32_t peer=0,bytes=0;fg_frame_header header;fg_fabric_class ready_class;fg_fabric_recv_timing receive_timing={0};receive_timing.poll_start_ns=critical_ns();status=fg_fabric_wait_ready(fabric,3u,&peer,&ready_class,err);receive_timing.ready_ns=critical_ns();if(status!=FG_OK)break;if(ready_class==FG_FABRIC_BULK){status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_BULK,&header,bulk_receive,bulk_capacity,&bytes,&receive_timing,err);fg_message_type type=status==FG_OK?fg_frame_type(&header):0;if(status==FG_OK&&type==FG_MSG_PREFILL_WORK)status=handle_prefill_expert_work(fabric,expert,manifest,self,session_id,peer,&header,bulk_receive,bytes,&prefill,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_APPEND)status=handle_qsa_page_append(&qsa,manifest,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_BARRIER)status=handle_qsa_page_barrier(fabric,&qsa,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_FETCH)status=handle_qsa_page_fetch(fabric,&qsa,manifest,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported bulk message %u",self,type);status=FG_ERR_FORMAT;}continue;}status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_CONTROL,&header,control,control_capacity,&bytes,&receive_timing,err);if(status!=FG_OK)break;fg_message_type type=fg_frame_type(&header);if(type==FG_MSG_DECODE_WORK){if(!session_id||fg_frame_request_id(&header)!=session_id){fg_error_set(err,FG_ERR_MISMATCH,"stale expert work request");status=FG_ERR_MISMATCH;}else status=handle_expert_work(fabric,expert,fg_model_vk(model),self,peer,&header,control,bytes,&receive_timing,ew_result,ew_wire,err);    }else if(type==FG_MSG_NGRAM_WORK)status=handle_ngram_work(fabric,ngram,FG_FABRIC_BULK,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_SESSION_BEGIN)status=begin_session(fabric,manifest,directory,&qsa,self,peer,&header,control,bytes,&session_id,output,err);else if(type==FG_MSG_OUTPUT_HISTORY)status=handle_output_history(fabric,output,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_OUTPUT_WORK)status=handle_output_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,err);else{fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported control message %u",self,type);status=FG_ERR_FORMAT;}}
     fg_vk_tensor_destroy(hyper);qsa_owner_runtime_destroy(&qsa);prefill_worker_buffers_destroy(&prefill);free(ew_wire);free(ew_result);free(control);return status;
 }
 
@@ -949,11 +987,34 @@ static fg_status pipeline_worker_begin_session(
     return status;
 }
 
+static fg_status handle_pipeline_output_history(fg_fabric *fabric,fg_stage_executor *stage,
+                                                const fg_manifest *manifest,uint32_t self,
+                                                uint64_t session_id,uint32_t peer,
+                                                const fg_frame_header *header,const uint8_t *payload,
+                                                uint32_t bytes,fg_error *err){
+    if(!manifest||self!=fg_output_owner_rank(manifest)||peer!=0u||fg_frame_request_id(header)!=session_id){
+        fg_error_set(err,FG_ERR_MISMATCH,"stale or misrouted pipeline output history");return FG_ERR_MISMATCH;
+    }
+    uint32_t count=0u;
+    if(!output_history_count(payload,bytes,&count)){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid pipeline output history size");return FG_ERR_FORMAT;
+    }
+    uint32_t *tokens=count?malloc((size_t)count*sizeof(*tokens)):NULL;
+    if(count&&!tokens){fg_error_set(err,FG_ERR_OOM,"allocate pipeline output history decode");return FG_ERR_OOM;}
+    fg_output_history history={0};fg_status status=fg_output_history_decode(
+        &history,tokens,count,payload,bytes,err);
+    if(status==FG_OK)status=fg_stage_history_reset(stage,history.tokens,history.count,err);
+    if(status==FG_OK)status=fg_fabric_send(fabric,peer,FG_FABRIC_CONTROL,
+        FG_MSG_OUTPUT_HISTORY_ACK,fg_frame_request_id(header),fg_frame_sequence(header),0u,
+        NULL,0u,err);
+    free(tokens);return status;
+}
+
 static fg_status pipeline_rank_worker_loop(
     fg_fabric *fabric,fg_pipeline *pipeline,fg_stage_executor *stage,
     fg_ngram_pipeline_cache *ngram,const fg_manifest *manifest,uint32_t self,
     fg_error *err){
-    uint32_t capacity=FG_OWNER_SESSION_CONTROL_BYTES;
+    uint32_t capacity=FG_OUTPUT_HISTORY_MAX_BYTES;
     if(capacity<FG_NGRAM_WORK_MAX_BYTES)capacity=FG_NGRAM_WORK_MAX_BYTES;
     uint8_t *control=malloc(capacity);
     if(!control){
@@ -983,6 +1044,9 @@ static fg_status pipeline_rank_worker_loop(
             status=handle_pipeline_ngram_work(
                 fabric,ngram,FG_FABRIC_CONTROL,self,session_id,peer,&header,
                 control,bytes,err);
+        else if(type==FG_MSG_OUTPUT_HISTORY)
+            status=handle_pipeline_output_history(fabric,stage,manifest,self,session_id,peer,
+                &header,control,bytes,err);
         else{
             fg_error_set(err,FG_ERR_FORMAT,
                          "pipeline rank %u received unsupported control message %u",
@@ -2390,6 +2454,26 @@ fg_status fg_runtime_open(fg_runtime **out,const char *path,fg_error *err){
     return fg_runtime_open_with_options(out,path,NULL,err);
 }
 
+static fg_status sync_output_history(fg_fabric *fabric,uint32_t owner,uint64_t session_id,
+                                     const uint32_t *tokens,uint32_t count,fg_error *err){
+    if(!fabric||owner>=FG_RANK_COUNT||!session_id||count>FG_NATIVE_CONTEXT||
+       (count&&!tokens)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output history sync");return FG_ERR_ARGUMENT;}
+    uint8_t *wire=malloc(FG_OUTPUT_HISTORY_MAX_BYTES);
+    if(!wire){fg_error_set(err,FG_ERR_OOM,"allocate output history wire");return FG_ERR_OOM;}
+    fg_output_history history={.tokens=tokens,.count=count};uint32_t bytes=0;
+    fg_status status=fg_output_history_encode(wire,FG_OUTPUT_HISTORY_MAX_BYTES,&bytes,&history,err);
+    if(status==FG_OK)status=fg_fabric_send(fabric,owner,FG_FABRIC_CONTROL,
+        FG_MSG_OUTPUT_HISTORY,session_id,0u,0u,wire,bytes,err);
+    uint8_t ack[1];fg_frame_header header;uint32_t ack_bytes=0;
+    if(status==FG_OK)status=fg_fabric_recv(fabric,owner,FG_FABRIC_CONTROL,&header,
+        ack,sizeof(ack),&ack_bytes,err);
+    if(status==FG_OK&&(fg_frame_type(&header)!=FG_MSG_OUTPUT_HISTORY_ACK||
+        fg_frame_request_id(&header)!=session_id||fg_frame_sequence(&header)!=0u||ack_bytes!=0u)){
+        fg_error_set(err,FG_ERR_MISMATCH,"invalid output history acknowledgement");status=FG_ERR_MISMATCH;
+    }
+    free(wire);return status;
+}
+
 fg_status fg_runtime_set_sampler(fg_runtime *runtime,const fg_sampler_config *config,
                                  fg_error *err){
     if(!runtime||!config){fg_error_set(err,FG_ERR_ARGUMENT,"invalid runtime sampler");return FG_ERR_ARGUMENT;}
@@ -2529,6 +2613,10 @@ static fg_status pipeline_generate_tokens(
     runtime->pipeline.active_history_count=candidate_count;
     status=pipeline_begin_session(&runtime->pipeline,reset_stages,err);
     bool request_active=status==FG_OK;
+    if(status==FG_OK&&fg_sampler_penalties_active(&runtime->sampler))
+        status=sync_output_history(runtime->pipeline.fabric,
+            runtime->manifest->stage_ranks[runtime->manifest->stage_count-1u],
+            runtime->pipeline.session_id,prompt->data,(uint32_t)prompt->count,err);
     if(status==FG_OK)status=fg_pipeline_runtime_set_sampler(
         runtime->pipeline.driver,&runtime->sampler,err);
     uint32_t next=runtime->next_token;
@@ -2690,6 +2778,10 @@ static fg_status runtime_generate_tokens(
     for(size_t i=prefill_offset;i<prompt->count;i++)
         runtime->history[i]=(int32_t)prompt->data[i];
     runtime->history_count=prompt->count;
+
+    if(status==FG_OK&&fg_sampler_penalties_active(&runtime->sampler))
+        status=sync_output_history(runtime->coordinator.fabric,4u,
+            runtime->coordinator.session_id,prompt->data,(uint32_t)prompt->count,err);
 
     if(stats){
         stats->prompt_tokens=(uint32_t)prompt->count;
