@@ -34,8 +34,12 @@ void main() {
     uint tid=gl_LocalInvocationID.x;
     uint base=gl_WorkGroupID.x*BLOCK_SIZE;
     uint available=pc.count>base?min(BLOCK_SIZE,pc.count-base):0u;
-    if (tid<available) { values[tid]=input_scores[base+tid]; indices[tid]=input_ids[base+tid]; }
-    else { values[tid]=-1.0/0.0; indices[tid]=INVALID_ID; }
+    if (tid<available) {
+        float value=input_scores[base+tid];
+        bool valid=!isnan(value)&&!isinf(value);
+        values[tid]=valid?value:-1.0/0.0;
+        indices[tid]=valid?input_ids[base+tid]:INVALID_ID;
+    } else { values[tid]=-1.0/0.0; indices[tid]=INVALID_ID; }
     barrier();
 
     uint lanes=gl_SubgroupSize;

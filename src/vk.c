@@ -155,6 +155,9 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
     c->q8_0_grouped=(fg_vk_kernel){.file="fg_moe_q8_0_down_grouped.spv",.bindings=4,.push_bytes=20};
     c->moe_prefill_reduce=(fg_vk_kernel){.file="fg_moe_prefill_reduce.spv",.bindings=5,.push_bytes=8};
     c->apply_penalties=(fg_vk_kernel){.file="fg_apply_penalties.spv",.bindings=2,.push_bytes=16};
+    c->qsa_prepare=(fg_vk_kernel){.file="fg_qsa_prepare.spv",.bindings=8,.push_bytes=0};c->qsa_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_prepare_prefill.spv",.bindings=8,.push_bytes=4};c->qsa_index_prepare=(fg_vk_kernel){.file="fg_qsa_index_prepare.spv",.bindings=4,.push_bytes=0};c->qsa_index_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_index_prepare_prefill.spv",.bindings=4,.push_bytes=4};c->qsa_record_commit=(fg_vk_kernel){.file="fg_qsa_record_commit.spv",.bindings=6,.push_bytes=24};c->qsa_record_gather=(fg_vk_kernel){.file="fg_qsa_record_gather.spv",.bindings=3,.push_bytes=20};c->qsa_score=(fg_vk_kernel){.file="fg_qsa_index_score.spv",.bindings=6,.push_bytes=12};c->qsa_attention=(fg_vk_kernel){.file="fg_qsa_attention.spv",.bindings=4,.push_bytes=4};c->qsa_resident_commit=(fg_vk_kernel){.file="fg_qsa_resident_record_commit.spv",.bindings=8,.push_bytes=16};c->qsa_resident_select=(fg_vk_kernel){.file="fg_qsa_resident_select.spv",.bindings=7,.push_bytes=20};c->qsa_resident_merge=(fg_vk_kernel){.file="fg_qsa_resident_topk_merge.spv",.bindings=4,.push_bytes=16};c->qsa_resident_attention=(fg_vk_kernel){.file="fg_qsa_resident_attention.spv",.bindings=6,.push_bytes=20};c->topk=(fg_vk_kernel){.file="fg_topk_reduce.spv",.bindings=4,.push_bytes=4};
+    c->topk_select=(fg_vk_kernel){.file="fg_topk_select.spv",.bindings=4,.push_bytes=8};
+    c->topk_select_fallback=(fg_vk_kernel){.file="fg_topk_select_fallback.spv",.bindings=4,.push_bytes=8};
     *out=c;return FG_OK;
 }
 
