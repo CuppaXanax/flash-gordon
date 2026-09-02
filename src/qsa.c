@@ -1014,6 +1014,26 @@ fg_status fg_qsa_session_decode_pipeline(fg_qsa_session *s,uint32_t layer,
                             output,err);
 }
 
+fg_status fg_qsa_session_prefill_pipeline(fg_qsa_session *s,uint32_t layer,
+                                          uint32_t first_token,
+                                          const uint32_t *positions,
+                                          uint32_t token_count,
+                                          const fg_vk_tensor *hidden,
+                                          fg_vk_tensor **output,fg_error *err){
+    int signed_slot=s?layer_slot(s,layer):-1;
+    fg_vk_context *vk=s?fg_model_vk(s->model):NULL;
+    if(!s||signed_slot<0||!positions||!token_count||
+       token_count>s->max_tokens||token_count>s->max_context||
+       first_token>s->max_context-token_count||!hidden||!output||!s->resident||
+       !fg_vk_batch_active(vk)){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "pipeline QSA prefill requires an active resident stage batch");
+        return FG_ERR_MISMATCH;
+    }
+    return resident_prefill(s,layer,(uint32_t)signed_slot,first_token,positions,
+                            token_count,hidden,false,output,err);
+}
+
 fg_status fg_qsa_session_prefill(fg_qsa_session *s,uint32_t layer,uint32_t first_token,const uint32_t *positions,uint32_t token_count,const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err){
     int signed_slot=s?layer_slot(s,layer):-1;if(!s||signed_slot<0||!positions||!hidden||!output||!token_count||token_count>s->max_tokens||token_count>s->max_context||first_token>s->max_context-token_count){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA prefill arguments");return FG_ERR_ARGUMENT;}uint32_t slot=(uint32_t)signed_slot;if(first_token!=s->committed[slot]){fg_error_set(err,FG_ERR_MISMATCH,"QSA prefill range does not start at committed state");return FG_ERR_MISMATCH;}
     if(s->resident)

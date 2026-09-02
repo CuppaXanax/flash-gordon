@@ -568,6 +568,23 @@ fg_status fg_owner_qsa_prefill(fg_owner_executor *executor,uint32_t layer,uint32
     if(!executor||!executor->qsa||!owns_layer(executor,layer)||(layer&3u)!=3u||!token_count||token_count>executor->max_tokens){fg_error_set(err,FG_ERR_MISMATCH,"QSA prefill is not on an initialized QSA layer owner or exceeds the sealed microbatch");return FG_ERR_MISMATCH;}
     return fg_qsa_session_prefill(executor->qsa,layer,first_token,positions,token_count,hidden,output,err);
 }
+fg_status fg_owner_qsa_prefill_pipeline(fg_owner_executor *executor,
+                                        uint32_t layer,uint32_t first_token,
+                                        const uint32_t *positions,
+                                        uint32_t token_count,
+                                        const fg_vk_tensor *hidden,
+                                        fg_vk_tensor **output,fg_error *err){
+    fg_vk_context *vk=executor?fg_model_vk(executor->model):NULL;
+    if(!executor||!executor->qsa||executor->replicated||
+       !owns_layer(executor,layer)||(layer&3u)!=3u||!token_count||
+       token_count>executor->max_tokens||!fg_vk_batch_active(vk)){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "pipeline QSA prefill is not in an active resident stage batch");
+        return FG_ERR_MISMATCH;
+    }
+    return fg_qsa_session_prefill_pipeline(executor->qsa,layer,first_token,
+                                           positions,token_count,hidden,output,err);
+}
 fg_status fg_owner_qsa_page_records(const fg_owner_executor *executor,uint32_t layer,
                                     uint32_t block,const uint8_t **records,fg_error *err){
     if(!executor||!executor->qsa){
@@ -828,8 +845,8 @@ fg_status fg_owner_prefill_layer_pipeline(fg_owner_executor *e,
         status=qsa_dispatch(qsa_context,layer,first_token,positions,token_count,
                             mixed,&block,err);
     else if(status==FG_OK&&(layer&3u)==3u)
-        status=fg_owner_qsa_prefill(e,layer,first_token,positions,token_count,
-                                    mixed,&block,err);
+        status=fg_owner_qsa_prefill_pipeline(e,layer,first_token,positions,
+                                             token_count,mixed,&block,err);
     else if(status==FG_OK)
         status=owner_gdn_prefill(e,layer,token_count,mixed,true,&block,err);
     if(status==FG_OK&&profiling)
