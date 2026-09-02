@@ -368,6 +368,9 @@ fg_status fg_stage_prefill_with_sampler(fg_stage_executor *executor,uint32_t fir
                      "invalid stage prefill boundary or PLE embeddings");
         return stage_fail(executor,FG_ERR_MISMATCH,&local,err);
     }
+    fg_vk_context *vk=fg_model_vk(executor->model);
+    bool stage_batch=token_count>1u;
+    if(stage_batch)status=fg_vk_begin(vk,&local);
     const fg_vk_tensor *current=input;
     for(uint32_t layer=executor->layer_begin;
         status==FG_OK&&layer<executor->layer_end;layer++){
@@ -380,6 +383,15 @@ fg_status fg_stage_prefill_with_sampler(fg_stage_executor *executor,uint32_t fir
             positions,token_count,current,layer==1u?ngram_embeddings:NULL,
             local_prefill_dispatch,executor,NULL,NULL,&next,&local);
         current=next;
+    }
+    if(status==FG_OK&&stage_batch)status=fg_vk_end(vk,&local);
+    if(status!=FG_OK&&fg_vk_batch_active(vk)){
+        fg_error abort_error={0};
+        fg_status abort_status=fg_vk_abort(vk,&abort_error);
+        if(abort_status!=FG_OK){
+            status=abort_status;
+            local=abort_error;
+        }
     }
     if(status==FG_OK)status=finish_terminal(executor,current,token_count,
                                             request_output,sampler,uniform,terminal,&local);

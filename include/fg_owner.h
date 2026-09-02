@@ -101,6 +101,12 @@ fg_status fg_owner_qsa_decode_pipeline(fg_owner_executor *executor,uint32_t laye
 fg_status fg_owner_qsa_prefill(fg_owner_executor *executor,uint32_t layer,uint32_t first_token,
                                const uint32_t *positions,uint32_t token_count,
                                const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err);
+fg_status fg_owner_qsa_prefill_pipeline(fg_owner_executor *executor,uint32_t layer,
+                                        uint32_t first_token,
+                                        const uint32_t *positions,
+                                        uint32_t token_count,
+                                        const fg_vk_tensor *hidden,
+                                        fg_vk_tensor **output,fg_error *err);
 fg_status fg_owner_qsa_page_records(const fg_owner_executor *executor,uint32_t layer,
                                     uint32_t block,const uint8_t **records,fg_error *err);
 void fg_owner_qsa_page_published(fg_owner_executor *executor,uint32_t layer,uint32_t block);

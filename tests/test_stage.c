@@ -511,9 +511,21 @@ fg_status fg_owner_prefill_layer_pipeline(fg_owner_executor *owner,
     }
     CHECK(token_count>1u);
     CHECK((layer==1u)==(ngram!=NULL));
-    prefill_dispatch_ok=true;
-    *output=owner_output(owner,input,token_count,layer);
-    return FG_OK;
+    fg_status status=fg_vk_begin(&owner->model->vk,err);
+    if(status==FG_OK&&fail_moe){
+        fg_error_set(err,FG_ERR_IO,"synthetic stage-local expert failure");
+        status=FG_ERR_IO;
+    }
+    if(status==FG_OK){
+        prefill_dispatch_ok=true;
+        *output=owner_output(owner,input,token_count,layer);
+        status=fg_vk_end(&owner->model->vk,err);
+    }
+    if(status!=FG_OK&&fg_vk_batch_active(&owner->model->vk)){
+        fg_error ignored={0};
+        fg_vk_abort(&owner->model->vk,&ignored);
+    }
+    return status;
 }
 
 fg_status fg_owner_decode_layer_pipeline(fg_owner_executor *owner,
@@ -557,6 +569,7 @@ fg_status fg_output_history_reset(fg_output_executor *output,
 }
 fg_status fg_output_greedy(fg_output_executor *output,const fg_vk_tensor *hyper,
                            uint32_t *token,float *logit,fg_error *err){
+    CHECK(!fg_vk_batch_active(&output->model->vk));
     fg_status status=fg_vk_begin(&output->model->vk,err);
     if(status!=FG_OK)return status;
     output_calls++;
@@ -704,12 +717,24 @@ static void test_decode_prefill_and_reset(void){
     activation.request_output=false;
     prefill_dispatch_ok=false;
     uint32_t outputs_before=output_calls;
+    uint64_t prefill_submissions=model.vk.submissions;
     CHECK(fg_stage_pipeline_execute(stage,2u,1u,11u,&activation,boundary,NULL,
                                     &error)==FG_OK);
     CHECK(prefill_dispatch_ok&&boundary[0]==6.0f&&
           boundary[FG_PIPELINE_BOUNDARY_WIDTH]==16.0f);
-    CHECK(output_calls==outputs_before);
+    CHECK(output_calls==outputs_before&&
+          model.vk.submissions==prefill_submissions+1u&&
+          !fg_vk_batch_active(&model.vk));
 
+    uint32_t prefill_aborts=abort_calls;
+    prefill_submissions=model.vk.submissions;
+    fail_moe=true;
+    CHECK(fg_stage_pipeline_execute(stage,2u,1u,12u,&activation,boundary,NULL,
+                                    &error)==FG_ERR_IO);
+    CHECK(!fg_vk_batch_active(&model.vk)&&abort_calls==prefill_aborts+1u&&
+          model.vk.submissions==prefill_submissions);
+    fail_moe=false;
+    CHECK(fg_stage_executor_reset(stage,&error)==FG_OK);
     fail_layer=14u;uint32_t before=owner_calls;
     activation.execution_kind=FG_PIPELINE_EXECUTION_DECODE;
     activation.token_count=1u;activation.request_output=true;
@@ -822,7 +847,8 @@ static void test_stage0_ngram_and_terminal(void){
                                    terminal_boundary,&result,&error)==FG_OK);
     CHECK(result.has_output&&result.final_token==1234u&&
           result.final_logit==16.0f&&output_calls==calls_before+1u&&
-          stage7_model.vk.submissions==prefill_submissions+1u);
+          stage7_model.vk.submissions==prefill_submissions+2u&&
+          !fg_vk_batch_active(&stage7_model.vk));
 
     activation.execution_kind=FG_PIPELINE_EXECUTION_DECODE;
     activation.token_count=1u;activation.request_output=false;
