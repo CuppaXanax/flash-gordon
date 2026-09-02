@@ -14,6 +14,8 @@ struct fg_pipeline_runtime {
     float *boundary[FG_PIPELINE_DEFAULT_SLOT_COUNT];
     bool active;
     bool retired;
+    fg_sampler_config sampler;
+    fg_sampler_state sampler_state;
 };
 
 static double elapsed(const struct timespec *start,const struct timespec *end){
@@ -64,6 +66,8 @@ fg_status fg_pipeline_runtime_create(fg_pipeline_runtime **out,
     runtime->prepare=config->prepare;
     runtime->progress=config->progress;
     runtime->context=config->context;
+    fg_sampler_config_greedy(&runtime->sampler);
+    fg_sampler_state_init(&runtime->sampler_state,runtime->sampler.seed);
     uint64_t position_values=(uint64_t)config->manifest->prefill_microbatch*
         FG_PIPELINE_POSITION_AXES;
     uint64_t boundary_values=(uint64_t)config->manifest->prefill_microbatch*
@@ -82,6 +86,23 @@ fg_status fg_pipeline_runtime_create(fg_pipeline_runtime **out,
     }
     *out=runtime;
     return FG_OK;
+}
+
+fg_status fg_pipeline_runtime_set_sampler(fg_pipeline_runtime *runtime,
+                                          const fg_sampler_config *sampler,
+                                          fg_error *err){
+    fg_status status=ready(runtime,err);
+    if(status!=FG_OK)return status;
+    status=fg_sampler_config_validate(sampler,err);
+    if(status!=FG_OK)return status;
+    runtime->sampler=*sampler;
+    fg_sampler_state_init(&runtime->sampler_state,sampler->seed);
+    return FG_OK;
+}
+
+static float sampler_draw(fg_pipeline_runtime *runtime){
+    return runtime->sampler.temperature>0.0f?
+        fg_sampler_uniform(&runtime->sampler_state):0.0f;
 }
 
 void fg_pipeline_runtime_destroy(fg_pipeline_runtime *runtime){
@@ -164,6 +185,8 @@ fg_status fg_pipeline_runtime_prefill(fg_pipeline_runtime *runtime,
     uint32_t submitted=0u,completed=0u;
     uint32_t submitted_chunks=0u,outstanding_chunks=0u;
     bool timer_started=false;
+    float pending_uniform=0.0f;
+    bool pending_uniform_valid=false;
     double stage_seconds[FG_PIPELINE_STAGE_COUNT]={0};
     while(completed<token_count){
         bool backpressured=false;
@@ -184,10 +207,15 @@ fg_status fg_pipeline_runtime_prefill(fg_pipeline_runtime *runtime,
                 clock_gettime(CLOCK_MONOTONIC,&start);
                 timer_started=true;
             }
-            status=fg_pipeline_submit(runtime->pipeline,
+            if(final&&!pending_uniform_valid){
+                pending_uniform=sampler_draw(runtime);
+                pending_uniform_valid=true;
+            }
+            status=fg_pipeline_submit_with_sampler(runtime->pipeline,
                 FG_PIPELINE_EXECUTION_PREFILL,first_token+submitted,
                 (uint16_t)count,final,runtime->positions[slot],
-                runtime->boundary[slot],NULL,err);
+                runtime->boundary[slot],&runtime->sampler,
+                final?pending_uniform:0.0f,NULL,err);
             if(admission_backpressured(runtime,status)){
                 memset(err,0,sizeof(*err));
                 backpressured=true;
@@ -197,6 +225,7 @@ fg_status fg_pipeline_runtime_prefill(fg_pipeline_runtime *runtime,
             submitted+=count;
             submitted_chunks++;
             outstanding_chunks++;
+            if(final)pending_uniform_valid=false;
         }
         bool consumed_result=false;
         for(;;){
@@ -261,12 +290,13 @@ fg_status fg_pipeline_runtime_decode(fg_pipeline_runtime *runtime,
     status=runtime->prepare(runtime->context,FG_PIPELINE_EXECUTION_DECODE,
         &token_id,token_index,1u,runtime->positions[0],runtime->boundary[0],err);
     if(status!=FG_OK)return retire(runtime,status,err);
+    float uniform=sampler_draw(runtime);
     for(;;){
         status=progress_until_admission(runtime,err);
         if(status!=FG_OK)return status;
-        status=fg_pipeline_submit(runtime->pipeline,FG_PIPELINE_EXECUTION_DECODE,
+        status=fg_pipeline_submit_with_sampler(runtime->pipeline,FG_PIPELINE_EXECUTION_DECODE,
             token_index,1u,true,runtime->positions[0],runtime->boundary[0],
-            NULL,err);
+            &runtime->sampler,uniform,NULL,err);
         if(!admission_backpressured(runtime,status))break;
         memset(err,0,sizeof(*err));
     }

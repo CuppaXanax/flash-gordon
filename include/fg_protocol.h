@@ -4,6 +4,7 @@
 #include "fg_manifest.h"
 #include "fg_q38_schema.h"
 #include "fg_session.h"
+#include "fg_sampler.h"
 
 #define FG_FRAME_MAGIC UINT32_C(0x31474646) /* FFG1 */
 #define FG_MAX_FRAME_BYTES (64u * 1024u * 1024u)
@@ -25,7 +26,8 @@
 #define FG_LAYER_WORK_TEXT_MAX_BYTES (FG_LAYER_WORK_BASE_BYTES+FG_NGRAM_EMBED_VALUES*4u)
 #define FG_LAYER_WORK_MAX_BYTES (FG_LAYER_WORK_FOUR_AXIS_BASE_BYTES+FG_NGRAM_EMBED_VALUES*4u)
 #define FG_LAYER_RESULT_BYTES (8u+FG_HYPER_WIDTH*4u)
-#define FG_OUTPUT_WORK_BYTES (8u+FG_HYPER_WIDTH*4u)
+#define FG_OUTPUT_WORK_HEADER_BYTES 24u
+#define FG_OUTPUT_WORK_BYTES (FG_OUTPUT_WORK_HEADER_BYTES+FG_HYPER_WIDTH*4u)
 #define FG_OUTPUT_RESULT_BYTES 16u
 #define FG_LAYER_WORK_HAS_NGRAM 1u
 #define FG_PREFILL_MAX_TOKENS 512u
@@ -71,7 +73,7 @@
 #define FG_PIPELINE_BOUNDARY_WIDTH FG_Q38_HYPER_WIDTH
 #define FG_PIPELINE_BOUNDARY_FP32_BYTES 4u
 #define FG_PIPELINE_STAGE_TIMING_BYTES (FG_PIPELINE_STAGE_COUNT*4u)
-#define FG_PIPELINE_ACTIVATION_HEADER_BYTES (16u+FG_PIPELINE_STAGE_TIMING_BYTES)
+#define FG_PIPELINE_ACTIVATION_HEADER_BYTES (32u+FG_PIPELINE_STAGE_TIMING_BYTES)
 /* Protocol 7 boundary tensors are native little-endian IEEE-754 FP32 byte arrays. */
 #define FG_PIPELINE_ACTIVATION_MAX_BYTES \
     (FG_PIPELINE_ACTIVATION_HEADER_BYTES+FG_PREFILL_MAX_TOKENS*FG_PIPELINE_POSITION_AXES*4u+ \
@@ -346,6 +348,8 @@ typedef struct fg_output_work {
     uint8_t source_rank;
     uint8_t destination_rank;
     uint32_t token_index;
+    fg_sampler_config sampler;
+    float uniform;
     float hyper[FG_HYPER_WIDTH];
 } fg_output_work;
 
@@ -385,6 +389,8 @@ typedef struct fg_pipeline_activation {
     /* Required for decode; optional for caller-selected prefill completions. */
     bool request_output;
     float stage_seconds[FG_PIPELINE_STAGE_COUNT];
+    fg_sampler_config sampler;
+    float uniform;
     const uint32_t *positions;
     const float *boundary;
 } fg_pipeline_activation;

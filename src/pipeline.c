@@ -785,11 +785,12 @@ fg_status fg_pipeline_session_begin_validate(const fg_frame_header *header,
     return FG_OK;
 }
 
-fg_status fg_pipeline_submit(fg_pipeline *pipeline,
+fg_status fg_pipeline_submit_with_sampler(fg_pipeline *pipeline,
                              fg_pipeline_execution_kind execution_kind,
                              uint32_t first_token,uint16_t token_count,
                              bool request_output,
                              const uint32_t *positions,const float *boundary,
+                             const fg_sampler_config *sampler,float uniform,
                              uint32_t *sequence,fg_error *err){
     fg_status status=pipeline_owner(pipeline,err);
     if(status!=FG_OK)return status;
@@ -816,8 +817,8 @@ fg_status fg_pipeline_submit(fg_pipeline *pipeline,
     fg_pipeline_activation input={.execution_kind=execution_kind,
         .slot=(uint8_t)slot_index,.source_stage=0u,.destination_stage=1u,
         .first_token=first_token,.token_count=token_count,
-        .request_output=request_output,
-        .positions=positions,.boundary=boundary};
+        .request_output=request_output,.sampler=sampler?*sampler:(fg_sampler_config){0},
+        .uniform=uniform,.positions=positions,.boundary=boundary};
     fg_error local={0};
     status=fg_pipeline_activation_validate(&input,&local);
     if(status!=FG_OK)return pipeline_poison(pipeline,status,&local,err);
@@ -839,8 +840,8 @@ fg_status fg_pipeline_submit(fg_pipeline *pipeline,
         .slot=input.slot,.source_stage=input.source_stage,
         .destination_stage=input.destination_stage,
         .first_token=input.first_token,.token_count=input.token_count,
-        .request_output=input.request_output,
-        .positions=slot->positions,.boundary=slot->boundary};
+        .request_output=input.request_output,.sampler=input.sampler,
+        .uniform=input.uniform,.positions=slot->positions,.boundary=slot->boundary};
     slot->sequence=pipeline->next_submit_sequence;
     slot->occupied=true;
     status=execute_slot(pipeline,slot,NULL,err);
@@ -860,6 +861,15 @@ fg_status fg_pipeline_submit(fg_pipeline *pipeline,
     if(sequence)*sequence=pipeline->next_submit_sequence;
     pipeline->next_submit_sequence++;
     return FG_OK;
+}
+
+fg_status fg_pipeline_submit(fg_pipeline *pipeline,
+                             fg_pipeline_execution_kind execution_kind,
+                             uint32_t first_token,uint16_t token_count,
+                             bool request_output,const uint32_t *positions,
+                             const float *boundary,uint32_t *sequence,fg_error *err){
+    return fg_pipeline_submit_with_sampler(pipeline,execution_kind,first_token,
+        token_count,request_output,positions,boundary,NULL,0.0f,sequence,err);
 }
 
 fg_status fg_pipeline_step(fg_pipeline *pipeline,fg_error *err){

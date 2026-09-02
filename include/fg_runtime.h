@@ -3,6 +3,7 @@
 
 #include "fg_manifest.h"
 #include "fg_prefix.h"
+#include "fg_sampler.h"
 
 typedef struct fg_runtime fg_runtime;
 #define FG_RUNTIME_BOOT_CONTEXT_TOKENS FG_MANIFEST_DEFAULT_CONTEXT_TOKENS
@@ -89,6 +90,7 @@ void fg_runtime_close(fg_runtime *runtime);
 fg_status fg_runtime_reset(fg_runtime *runtime,fg_error *err);
 fg_status fg_runtime_reset_public_history(fg_runtime *runtime,fg_error *err);
 fg_status fg_runtime_reset_failure(fg_runtime *runtime,fg_error *err);
+fg_status fg_runtime_set_sampler(fg_runtime *runtime,const fg_sampler_config *config,fg_error *err);
 fg_status fg_runtime_generate(fg_runtime *runtime,const char *rendered_transcript,
                               uint32_t max_tokens,
                               fg_token_callback callback,void *callback_context,

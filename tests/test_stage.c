@@ -557,6 +557,13 @@ fg_status fg_output_greedy(fg_output_executor *output,const fg_vk_tensor *hyper,
     return fg_vk_end(&output->model->vk,err);
 }
 
+fg_status fg_output_sample(fg_output_executor *output,const fg_vk_tensor *hyper,
+                           const fg_sampler_config *config,
+                           float uniform,uint32_t *token,float *logit,fg_error *err){
+    (void)config;(void)uniform;
+    return fg_output_greedy(output,hyper,token,logit,err);
+}
+
 static fg_status prepared_ngram_decode(void *context,uint64_t request_id,
     uint32_t sequence,uint32_t token_index,fg_vk_tensor **embedding,
     fg_error *err){

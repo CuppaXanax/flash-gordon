@@ -27,6 +27,9 @@ void fg_pipeline_runtime_destroy(fg_pipeline_runtime *runtime);
 fg_status fg_pipeline_runtime_begin(fg_pipeline_runtime *runtime,
                                     uint64_t request_id,uint32_t first_sequence,
                                     fg_error *err);
+fg_status fg_pipeline_runtime_set_sampler(fg_pipeline_runtime *runtime,
+                                          const fg_sampler_config *sampler,
+                                          fg_error *err);
 fg_status fg_pipeline_runtime_prefill(fg_pipeline_runtime *runtime,
                                       const uint32_t *token_ids,
                                       uint32_t first_token,uint32_t token_count,

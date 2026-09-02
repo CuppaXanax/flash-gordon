@@ -144,3 +144,18 @@ fg_status fg_output_topk(fg_output_executor *executor,const fg_vk_tensor *hyper,
     *count=k;
     return FG_OK;
 }
+
+fg_status fg_output_sample(fg_output_executor *executor,const fg_vk_tensor *hyper,
+                           const fg_sampler_config *config,
+                           float uniform,uint32_t *token,float *logit,fg_error *err){
+    if(!executor||!hyper||!config||!token||!logit){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid sampled output arguments");return FG_ERR_ARGUMENT;
+    }
+    if(config->temperature==0.0f)return fg_output_greedy(executor,hyper,token,logit,err);
+    fg_vk_tensor *scores=NULL,*ids=NULL;uint32_t count=0u;float values[64];uint32_t tokens[64];
+    fg_status status=fg_output_topk(executor,hyper,config->top_k,&scores,&ids,&count,err);
+    if(status==FG_OK)status=fg_vk_tensor_read(scores,0,values,(uint64_t)count*sizeof(float),err);
+    if(status==FG_OK)status=fg_vk_tensor_read(ids,0,tokens,(uint64_t)count*sizeof(uint32_t),err);
+    if(status==FG_OK)status=fg_sampler_select(config,values,tokens,count,uniform,token,logit,err);
+    return status;
+}

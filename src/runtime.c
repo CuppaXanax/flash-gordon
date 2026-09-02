@@ -882,7 +882,8 @@ static fg_status handle_output_work(fg_fabric *fabric,fg_output_executor *output
     token_profile_capture capture={0};if(status==FG_OK)status=token_profile_begin(&capture,vk,work->token_index,err);
     if(status==FG_OK)status=fg_vk_tensor_write(hyper_tensor,0,work->hyper,sizeof(work->hyper),err);
     fg_output_result result={.source_rank=(uint8_t)self,.destination_rank=work->source_rank,.token_index=work->token_index};
-    if(status==FG_OK)status=fg_output_greedy(output,hyper_tensor,&result.token,&result.logit,err);
+    if(status==FG_OK)status=fg_output_sample(output,hyper_tensor,&work->sampler,
+        work->uniform,&result.token,&result.logit,err);
     uint8_t wire[FG_OUTPUT_RESULT_BYTES];if(status==FG_OK)status=fg_output_result_encode(wire,&result,err);
     if(status==FG_OK)status=fg_fabric_send(fabric,peer,FG_FABRIC_BULK,FG_MSG_OUTPUT_RESULT,request,fg_frame_sequence(header),0,wire,sizeof(wire),err);
     status=token_profile_end(&capture,self,"output",work->token_index,UINT32_MAX,status,err);
@@ -1181,7 +1182,7 @@ static fg_status qsa_page_transport_ensure(qsa_page_transport *transport,fg_erro
     return status;
 }
 
-typedef struct fg_coordinator {const fg_manifest *manifest;fg_runtime_options options;fg_session_identity identity;fg_model *model;fg_expert_executor *expert;fg_owner_executor *owner;fg_fabric *fabric;fg_ngram_store *ngram;fg_tokenizer *tokenizer;prefill_worker_buffers prefill_expert;prefill_layer_buffers prefill_layer;qsa_page_transport qsa_pages;uint64_t session_id;uint8_t *async_recv_payloads[FG_GROUP_SIZE];const char *directory;atomic_uint transport_state;} fg_coordinator;
+typedef struct fg_coordinator {const fg_manifest *manifest;fg_runtime_options options;fg_session_identity identity;fg_model *model;fg_expert_executor *expert;fg_owner_executor *owner;fg_fabric *fabric;fg_ngram_store *ngram;fg_tokenizer *tokenizer;prefill_worker_buffers prefill_expert;prefill_layer_buffers prefill_layer;qsa_page_transport qsa_pages;uint64_t session_id;uint8_t *async_recv_payloads[FG_GROUP_SIZE];const char *directory;atomic_uint transport_state;fg_sampler_config sampler;fg_sampler_state sampler_state;} fg_coordinator;
 
 static uint64_t coordinator_prefill_host_bytes(const prefill_worker_buffers *buffers){
     if(!buffers)return 0;
@@ -1718,6 +1719,7 @@ struct fg_runtime {
     fg_runtime_options options;
     uint32_t context_limit;
     char directory[1024];
+    fg_sampler_config sampler;
 };
 
 static fg_status coordinator_begin_session(fg_coordinator *coordinator,fg_error *err){
@@ -1856,6 +1858,9 @@ static fg_status coordinator_output(fg_coordinator *coordinator,uint32_t token_i
         return FG_ERR_OOM;
     }
     work->source_rank=0u;work->destination_rank=4u;work->token_index=token_index;
+    work->sampler=coordinator->sampler;
+    work->uniform=work->sampler.temperature>0.0f?
+        fg_sampler_uniform(&coordinator->sampler_state):0.0f;
     fg_status status=fg_vk_tensor_read(hyper,0,work->hyper,sizeof(work->hyper),err);
     if(status==FG_OK)status=fg_output_work_encode(wire,work,err);
     uint32_t sequence=token_index*FG_LAYER_COUNT+FG_LAYER_COUNT;
@@ -2365,6 +2370,7 @@ fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
                                        const fg_runtime_options *requested,fg_error *err){
     if(!out||!path){fg_error_set(err,FG_ERR_ARGUMENT,"invalid runtime open arguments");return FG_ERR_ARGUMENT;}*out=NULL;
     fg_runtime *runtime=calloc(1,sizeof(*runtime));if(!runtime){fg_error_set(err,FG_ERR_OOM,"allocate resident runtime");return FG_ERR_OOM;}
+    fg_sampler_config_greedy(&runtime->sampler);
     fg_status status=load_checked(path,&runtime->manifest,err);
     if(status==FG_OK)status=fg_runtime_options_resolve(&runtime->options,runtime->manifest,
                                                        requested,err);
@@ -2382,6 +2388,15 @@ fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
 
 fg_status fg_runtime_open(fg_runtime **out,const char *path,fg_error *err){
     return fg_runtime_open_with_options(out,path,NULL,err);
+}
+
+fg_status fg_runtime_set_sampler(fg_runtime *runtime,const fg_sampler_config *config,
+                                 fg_error *err){
+    if(!runtime||!config){fg_error_set(err,FG_ERR_ARGUMENT,"invalid runtime sampler");return FG_ERR_ARGUMENT;}
+    fg_status status=fg_sampler_config_validate(config,err);
+    if(status!=FG_OK)return status;
+    runtime->sampler=*config;
+    return FG_OK;
 }
 
 void fg_runtime_close(fg_runtime *runtime){
@@ -2514,6 +2529,8 @@ static fg_status pipeline_generate_tokens(
     runtime->pipeline.active_history_count=candidate_count;
     status=pipeline_begin_session(&runtime->pipeline,reset_stages,err);
     bool request_active=status==FG_OK;
+    if(status==FG_OK)status=fg_pipeline_runtime_set_sampler(
+        runtime->pipeline.driver,&runtime->sampler,err);
     uint32_t next=runtime->next_token;
     float logit=runtime->next_logit;
     if(status==FG_OK&&prefill_offset<prompt->count){
@@ -2620,6 +2637,9 @@ static fg_status runtime_generate_tokens(
     fg_token_callback callback,void *callback_context,
     fg_interrupt_fn interrupted,void *interrupt_context,
     fg_generation_stats *stats,fg_error *err){
+    if(!runtime)return FG_ERR_ARGUMENT;
+    runtime->coordinator.sampler=runtime->sampler;
+    fg_sampler_state_init(&runtime->coordinator.sampler_state,runtime->sampler.seed);
     if(runtime&&runtime->manifest->execution_mode==FG_EXECUTION_PIPELINE)
         return pipeline_generate_tokens(runtime,transcript,prompt,require_prefix_hit,
             prefix_miss,max_tokens,callback,callback_context,interrupted,
