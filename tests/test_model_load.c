@@ -1,5 +1,6 @@
 #include "fg_manifest.h"
 #include "fg_model.h"
+#include "fg_ngram.h"
 #include "fg_quant.h"
 #include "fg_q38_schema.h"
 #include "fg_runtime.h"
@@ -149,6 +150,16 @@ static bool build_stage_manifest(fg_manifest *manifest,const uint8_t digest[32],
         manifest->ranks[rank].scratch_bytes=fg_q38_runtime_scratch_bytes_for_manifest(
             manifest,rank,manifest->prefill_microbatch,manifest->prefill_window,
             manifest->max_context);
+    for(uint32_t rank=1u;rank<FG_RANK_COUNT;rank++){
+        fg_ngram_shard_record *record=
+            &manifest->ngram_shards[manifest->ngram_shard_count++];
+        record->logical_rank=rank;
+        if(fg_q38_ngram_rank_range(rank,&record->row_begin,&record->row_count,
+                                   error)!=FG_OK)return false;
+        record->bytes=record->row_count*FG_NGRAM_ROW_BYTES;
+        memcpy(record->sha256,digest,sizeof(record->sha256));
+        manifest->host_resident_bytes[rank]=FG_PIPELINE_NGRAM_CACHE_BYTES;
+    }
     return manifest->tensor_count==1224u;
 }
 
@@ -159,7 +170,7 @@ static int test_pipeline_stage_load(void){
     if(mkdir(directory,0700)!=0)return 1;
     fg_manifest *manifest=malloc(sizeof(*manifest));
     if(!manifest){rmdir(directory);return 1;}
-    uint8_t digest[32]={0};fg_error error={0};
+    uint8_t digest[32]={1};fg_error error={0};
     int ok=build_stage_manifest(manifest,digest,&error)&&
         fg_q38_validate_packed_manifest(manifest,&error)==FG_OK;
     fg_manifest *invalid=malloc(sizeof(*invalid));
