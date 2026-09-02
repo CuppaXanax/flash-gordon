@@ -404,13 +404,17 @@ static void test_greedy_controls(void) {
 
     const char *sampled =
         "{\"temperature\":0.5,\"top_p\":0.8,\"top_k\":20,\"seed\":7,"
+        "\"min_p\":0,\"presence_penalty\":1.5,\"frequency_penalty\":0.25,"
+        "\"repetition_penalty\":1,"
         "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
     memset(&err, 0, sizeof(err));
     root = parse_json_body(sampled, strlen(sampled), &err);
     CHECK(root != NULL);
     CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &request, &err) == FG_OK);
     CHECK(request.sampler.temperature==0.5f&&request.sampler.top_p==0.8f&&
-          request.sampler.top_k==20u&&request.sampler.seed==7u);
+          request.sampler.top_k==20u&&request.sampler.seed==7u&&
+          request.sampler.min_p==0.0f&&request.sampler.presence_penalty==1.5f&&
+          request.sampler.frequency_penalty==0.25f&&request.sampler.repetition_penalty==1.0f);
     api_chat_request_free(&request);
     json_free(root);
 
@@ -428,6 +432,23 @@ static void test_greedy_controls(void) {
     CHECK(parse_chat_request(root,"Qwen3.8-Flash-Next",&request,&err)==FG_ERR_ARGUMENT);
     api_chat_request_free(&request);json_free(root);
 
+    const char *bad_presence = "{\"presence_penalty\":2.1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+    root=parse_json_body(bad_presence,strlen(bad_presence),&err);
+    CHECK(parse_chat_request(root,"Qwen3.8-Flash-Next",&request,&err)==FG_ERR_ARGUMENT);
+    api_chat_request_free(&request);json_free(root);
+    const char *bad_frequency = "{\"frequency_penalty\":-2.1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+    root=parse_json_body(bad_frequency,strlen(bad_frequency),&err);
+    CHECK(parse_chat_request(root,"Qwen3.8-Flash-Next",&request,&err)==FG_ERR_ARGUMENT);
+    api_chat_request_free(&request);json_free(root);
+    const char *bad_repetition = "{\"repetition_penalty\":0,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+    root=parse_json_body(bad_repetition,strlen(bad_repetition),&err);
+    CHECK(parse_chat_request(root,"Qwen3.8-Flash-Next",&request,&err)==FG_ERR_ARGUMENT);
+    api_chat_request_free(&request);json_free(root);
+    const char *bad_min_p = "{\"min_p\":0.1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+    root=parse_json_body(bad_min_p,strlen(bad_min_p),&err);
+    CHECK(parse_chat_request(root,"Qwen3.8-Flash-Next",&request,&err)==FG_ERR_ARGUMENT);
+    api_chat_request_free(&request);json_free(root);
+
     const char *defaults = "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
     root = parse_json_body(defaults, strlen(defaults), &err);
     CHECK(root != NULL);
@@ -438,10 +459,15 @@ static void test_greedy_controls(void) {
     fg_runtime runtime={0};api_public_session session={0};fg_status result=FG_OK;
     char *response=run_chat_request(&runtime,&session,
         "{\"temperature\":0.7,\"top_p\":0.8,\"top_k\":20,"
+        "\"min_p\":0,\"presence_penalty\":1.5,\"frequency_penalty\":0,"
+        "\"repetition_penalty\":1,"
         "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",&result);
     CHECK(result==FG_OK&&response!=NULL&&runtime.sampler_set_count==1u);
     CHECK(runtime.last_sampler.temperature==0.7f&&runtime.last_sampler.top_p==0.8f&&
-          runtime.last_sampler.top_k==20u);
+          runtime.last_sampler.top_k==20u&&runtime.last_sampler.min_p==0.0f&&
+          runtime.last_sampler.presence_penalty==1.5f&&
+          runtime.last_sampler.frequency_penalty==0.0f&&
+          runtime.last_sampler.repetition_penalty==1.0f);
     free(response);api_public_session_free(&session);fg_runtime_close(&runtime);
 }
 

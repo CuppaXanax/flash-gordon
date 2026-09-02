@@ -717,17 +717,53 @@ fg_status fg_qsa_page_barrier_decode(fg_qsa_page_barrier *barrier,
     return FG_OK;
 }
 
-static fg_status validate_output_work(const fg_output_work *work,fg_error *err){if(!work||work->source_rank>=FG_RANK_COUNT||work->destination_rank!=4u){fg_error_set(err,FG_ERR_FORMAT,"invalid output work route");return FG_ERR_FORMAT;}if(work->sampler.temperature>0.0f&&fg_sampler_config_validate(&work->sampler,err)!=FG_OK)return FG_ERR_FORMAT;if(!isfinite(work->uniform)||work->uniform<0.0f||work->uniform>=1.0f){fg_error_set(err,FG_ERR_FORMAT,"invalid output sampler draw");return FG_ERR_FORMAT;}for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(work->hyper[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite output input at %u",i);return FG_ERR_FORMAT;}return FG_OK;}
+static fg_status validate_output_work(const fg_output_work *work,fg_error *err){if(!work||work->source_rank>=FG_RANK_COUNT||work->destination_rank!=4u){fg_error_set(err,FG_ERR_FORMAT,"invalid output work route");return FG_ERR_FORMAT;}if((work->sampler.temperature!=0.0f||work->sampler.top_p!=0.0f||work->sampler.top_k!=0u||work->sampler.presence_penalty!=0.0f||work->sampler.frequency_penalty!=0.0f||work->sampler.repetition_penalty!=0.0f||work->sampler.min_p!=0.0f)&&fg_sampler_config_validate(&work->sampler,err)!=FG_OK)return FG_ERR_FORMAT;if(!isfinite(work->uniform)||work->uniform<0.0f||work->uniform>=1.0f){fg_error_set(err,FG_ERR_FORMAT,"invalid output sampler draw");return FG_ERR_FORMAT;}for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(work->hyper[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite output input at %u",i);return FG_ERR_FORMAT;}return FG_OK;}
 
-fg_status fg_output_work_encode(uint8_t output[FG_OUTPUT_WORK_BYTES],const fg_output_work *work,fg_error *err){if(!output){fg_error_set(err,FG_ERR_ARGUMENT,"output work buffer is null");return FG_ERR_ARGUMENT;}fg_status status=validate_output_work(work,err);if(status!=FG_OK)return status;output[0]=work->source_rank;output[1]=work->destination_rank;output[2]=0;output[3]=0;put_u32_be(output+4u,work->token_index);put_f32_be(output+8u,work->sampler.temperature);put_f32_be(output+12u,work->sampler.top_p);put_u32_be(output+16u,work->sampler.top_k);put_f32_be(output+20u,work->uniform);for(uint32_t i=0,offset=FG_OUTPUT_WORK_HEADER_BYTES;i<FG_HYPER_WIDTH;i++,offset+=4u)put_f32_be(output+offset,work->hyper[i]);return FG_OK;}
+fg_status fg_output_work_encode(uint8_t output[FG_OUTPUT_WORK_BYTES],const fg_output_work *work,fg_error *err){if(!output){fg_error_set(err,FG_ERR_ARGUMENT,"output work buffer is null");return FG_ERR_ARGUMENT;}fg_status status=validate_output_work(work,err);if(status!=FG_OK)return status;output[0]=work->source_rank;output[1]=work->destination_rank;output[2]=0;output[3]=0;put_u32_be(output+4u,work->token_index);put_f32_be(output+8u,work->sampler.temperature);put_f32_be(output+12u,work->sampler.top_p);put_u32_be(output+16u,work->sampler.top_k);put_f32_be(output+20u,work->uniform);put_f32_be(output+24u,work->sampler.presence_penalty);put_f32_be(output+28u,work->sampler.frequency_penalty);put_f32_be(output+32u,work->sampler.repetition_penalty);put_f32_be(output+36u,work->sampler.min_p);for(uint32_t i=0,offset=FG_OUTPUT_WORK_HEADER_BYTES;i<FG_HYPER_WIDTH;i++,offset+=4u)put_f32_be(output+offset,work->hyper[i]);return FG_OK;}
 
-fg_status fg_output_work_decode(fg_output_work *work,const uint8_t *payload,uint32_t bytes,fg_error *err){if(!work||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output work input");return FG_ERR_ARGUMENT;}if(bytes!=FG_OUTPUT_WORK_BYTES||payload[2]||payload[3]){fg_error_set(err,FG_ERR_FORMAT,"invalid output work size or reserved bytes");return FG_ERR_FORMAT;}memset(work,0,sizeof(*work));work->source_rank=payload[0];work->destination_rank=payload[1];work->token_index=get_u32_be(payload+4u);work->sampler.temperature=get_f32_be(payload+8u);work->sampler.top_p=get_f32_be(payload+12u);work->sampler.top_k=get_u32_be(payload+16u);work->uniform=get_f32_be(payload+20u);for(uint32_t i=0,offset=FG_OUTPUT_WORK_HEADER_BYTES;i<FG_HYPER_WIDTH;i++,offset+=4u)work->hyper[i]=get_f32_be(payload+offset);return validate_output_work(work,err);}
+fg_status fg_output_work_decode(fg_output_work *work,const uint8_t *payload,uint32_t bytes,fg_error *err){if(!work||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output work input");return FG_ERR_ARGUMENT;}if(bytes!=FG_OUTPUT_WORK_BYTES||payload[2]||payload[3]){fg_error_set(err,FG_ERR_FORMAT,"invalid output work size or reserved bytes");return FG_ERR_FORMAT;}memset(work,0,sizeof(*work));work->source_rank=payload[0];work->destination_rank=payload[1];work->token_index=get_u32_be(payload+4u);work->sampler.temperature=get_f32_be(payload+8u);work->sampler.top_p=get_f32_be(payload+12u);work->sampler.top_k=get_u32_be(payload+16u);work->uniform=get_f32_be(payload+20u);work->sampler.presence_penalty=get_f32_be(payload+24u);work->sampler.frequency_penalty=get_f32_be(payload+28u);work->sampler.repetition_penalty=get_f32_be(payload+32u);work->sampler.min_p=get_f32_be(payload+36u);for(uint32_t i=0,offset=FG_OUTPUT_WORK_HEADER_BYTES;i<FG_HYPER_WIDTH;i++,offset+=4u)work->hyper[i]=get_f32_be(payload+offset);return validate_output_work(work,err);}
 
 static fg_status validate_output_result(const fg_output_result *result,fg_error *err){if(!result||result->source_rank!=4u||result->destination_rank>=FG_RANK_COUNT||result->token>=FG_Q38_VOCAB_SIZE||!isfinite(result->logit)){fg_error_set(err,FG_ERR_FORMAT,"invalid output result");return FG_ERR_FORMAT;}return FG_OK;}
 
 fg_status fg_output_result_encode(uint8_t output[FG_OUTPUT_RESULT_BYTES],const fg_output_result *result,fg_error *err){if(!output){fg_error_set(err,FG_ERR_ARGUMENT,"output result buffer is null");return FG_ERR_ARGUMENT;}fg_status status=validate_output_result(result,err);if(status!=FG_OK)return status;output[0]=result->source_rank;output[1]=result->destination_rank;output[2]=0;output[3]=0;put_u32_be(output+4u,result->token_index);put_u32_be(output+8u,result->token);put_f32_be(output+12u,result->logit);return FG_OK;}
 
 fg_status fg_output_result_decode(fg_output_result *result,const uint8_t *payload,uint32_t bytes,fg_error *err){if(!result||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output result input");return FG_ERR_ARGUMENT;}if(bytes!=FG_OUTPUT_RESULT_BYTES||payload[2]||payload[3]){fg_error_set(err,FG_ERR_FORMAT,"invalid output result size or reserved bytes");return FG_ERR_FORMAT;}memset(result,0,sizeof(*result));result->source_rank=payload[0];result->destination_rank=payload[1];result->token_index=get_u32_be(payload+4u);result->token=get_u32_be(payload+8u);result->logit=get_f32_be(payload+12u);return validate_output_result(result,err);}
+
+fg_status fg_output_history_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                   const fg_output_history *history,fg_error *err){
+    if(!output||!bytes||!history||history->count>FG_NATIVE_CONTEXT||
+       (history->count&&!history->tokens)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid output history");return FG_ERR_ARGUMENT;
+    }
+    uint64_t required=FG_OUTPUT_HISTORY_HEADER_BYTES+(uint64_t)history->count*4u;
+    if(required>capacity||required>FG_MAX_FRAME_BYTES){fg_error_set(err,FG_ERR_LIMIT,
+        "output history buffer is too small");return FG_ERR_LIMIT;}
+    put_u32_be(output,history->count);put_u32_be(output+4u,0u);
+    for(uint32_t i=0;i<history->count;i++){
+        if(history->tokens[i]>=FG_Q38_VOCAB_SIZE){fg_error_set(err,FG_ERR_FORMAT,
+            "output history token is outside vocabulary");return FG_ERR_FORMAT;}
+        put_u32_be(output+FG_OUTPUT_HISTORY_HEADER_BYTES+i*4u,history->tokens[i]);
+    }
+    *bytes=(uint32_t)required;return FG_OK;
+}
+
+fg_status fg_output_history_decode(fg_output_history *history,uint32_t *storage,
+                                   uint32_t capacity,const uint8_t *payload,
+                                   uint32_t bytes,fg_error *err){
+    if(!history||!payload||bytes<FG_OUTPUT_HISTORY_HEADER_BYTES){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid output history input");return FG_ERR_ARGUMENT;
+    }
+    uint32_t count=get_u32_be(payload),reserved=get_u32_be(payload+4u);
+    uint64_t required=FG_OUTPUT_HISTORY_HEADER_BYTES+(uint64_t)count*4u;
+    if(reserved||count>FG_NATIVE_CONTEXT||count>capacity||required!=bytes||
+       (count&&!storage)){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid output history size or reserved bytes");return FG_ERR_FORMAT;
+    }
+    for(uint32_t i=0;i<count;i++){uint32_t token=get_u32_be(payload+
+        FG_OUTPUT_HISTORY_HEADER_BYTES+i*4u);if(token>=FG_Q38_VOCAB_SIZE){fg_error_set(err,
+            FG_ERR_FORMAT,"output history token is outside vocabulary");return FG_ERR_FORMAT;}storage[i]=token;}
+    history->tokens=storage;history->count=count;return FG_OK;
+}
 
 static fg_status validate_ngram_items(uint8_t source,uint8_t destination,uint8_t item_count,const uint8_t heads[FG_NGRAM_SHARD_MAX_ITEMS],fg_error *err){if(source>=FG_RANK_COUNT||destination>=FG_RANK_COUNT||source==destination||!item_count||item_count>FG_NGRAM_SHARD_MAX_ITEMS){fg_error_set(err,FG_ERR_FORMAT,"invalid resident n-gram route");return FG_ERR_FORMAT;}bool seen[FG_NGRAM_HEAD_COUNT]={0};for(uint32_t i=0;i<item_count;i++){uint32_t head=heads[i];if(head>=FG_NGRAM_HEAD_COUNT||seen[head]){fg_error_set(err,FG_ERR_FORMAT,"invalid resident n-gram head %u",head);return FG_ERR_FORMAT;}seen[head]=true;}return FG_OK;}
 
@@ -879,7 +915,10 @@ fg_status fg_pipeline_activation_validate(const fg_pipeline_activation *activati
                          "invalid pipeline stage timing at stage %u",stage);
             return FG_ERR_FORMAT;
         }
-    if(activation->sampler.temperature>0.0f&&
+    if((activation->sampler.temperature!=0.0f||activation->sampler.top_p!=0.0f||
+        activation->sampler.top_k!=0u||activation->sampler.presence_penalty!=0.0f||
+        activation->sampler.frequency_penalty!=0.0f||activation->sampler.repetition_penalty!=0.0f||
+        activation->sampler.min_p!=0.0f)&&
        fg_sampler_config_validate(&activation->sampler,err)!=FG_OK)
         return FG_ERR_FORMAT;
     if(!isfinite(activation->uniform)||activation->uniform<0.0f||activation->uniform>=1.0f){
@@ -920,6 +959,10 @@ fg_status fg_pipeline_activation_encode(uint8_t *output,uint32_t capacity,uint32
     put_f32_be(output+52u,activation->sampler.top_p);
     put_u32_be(output+56u,activation->sampler.top_k);
     put_f32_be(output+60u,activation->uniform);
+    put_f32_be(output+64u,activation->sampler.presence_penalty);
+    put_f32_be(output+68u,activation->sampler.frequency_penalty);
+    put_f32_be(output+72u,activation->sampler.repetition_penalty);
+    put_f32_be(output+76u,activation->sampler.min_p);
     uint32_t offset=FG_PIPELINE_ACTIVATION_HEADER_BYTES;
     for(uint64_t i=0;i<position_values;i++,offset+=4u)
         put_u32_be(output+offset,activation->positions[i]);
@@ -967,6 +1010,10 @@ fg_status fg_pipeline_activation_decode(fg_pipeline_activation *activation,
     activation->sampler.top_p=get_f32_be(payload+52u);
     activation->sampler.top_k=get_u32_be(payload+56u);
     activation->uniform=get_f32_be(payload+60u);
+    activation->sampler.presence_penalty=get_f32_be(payload+64u);
+    activation->sampler.frequency_penalty=get_f32_be(payload+68u);
+    activation->sampler.repetition_penalty=get_f32_be(payload+72u);
+    activation->sampler.min_p=get_f32_be(payload+76u);
     activation->positions=position_storage;
     activation->boundary=boundary_storage;
     uint32_t offset=FG_PIPELINE_ACTIVATION_HEADER_BYTES;

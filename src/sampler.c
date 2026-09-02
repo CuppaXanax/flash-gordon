@@ -8,23 +8,55 @@ static const uint64_t FG_SAMPLER_DEFAULT_SEED = UINT64_C(0x9e3779b97f4a7c15);
 void fg_sampler_config_greedy(fg_sampler_config *config){
     if(!config)return;
     config->temperature=0.0f;config->top_p=1.0f;config->top_k=1u;
+    config->presence_penalty=0.0f;config->frequency_penalty=0.0f;
+    config->repetition_penalty=1.0f;config->min_p=0.0f;
     config->seed=FG_SAMPLER_DEFAULT_SEED;
 }
 
 void fg_sampler_config_defaults(fg_sampler_config *config){
     if(!config)return;
     config->temperature=1.0f;config->top_p=0.95f;config->top_k=20u;
+    config->presence_penalty=0.0f;config->frequency_penalty=0.0f;
+    config->repetition_penalty=1.0f;config->min_p=0.0f;
     config->seed=FG_SAMPLER_DEFAULT_SEED;
 }
 
 fg_status fg_sampler_config_validate(const fg_sampler_config *config,fg_error *err){
     if(!config||!isfinite(config->temperature)||config->temperature<0.0f||
        !isfinite(config->top_p)||config->top_p<=0.0f||config->top_p>1.0f||
-       !config->top_k||config->top_k>64u){
+       !config->top_k||config->top_k>64u||
+       !isfinite(config->presence_penalty)||config->presence_penalty < -2.0f||
+       config->presence_penalty > 2.0f||
+       !isfinite(config->frequency_penalty)||config->frequency_penalty < -2.0f||
+       config->frequency_penalty > 2.0f||
+       !isfinite(config->repetition_penalty)||config->repetition_penalty<=0.0f||
+       !isfinite(config->min_p)||config->min_p!=0.0f){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid sampler controls");
         return FG_ERR_ARGUMENT;
     }
     return FG_OK;
+}
+
+bool fg_sampler_penalties_active(const fg_sampler_config *config){
+    return config&&(
+        config->presence_penalty!=0.0f||config->frequency_penalty!=0.0f||
+        config->repetition_penalty!=1.0f);
+}
+
+void fg_sampler_apply_penalties(float *scores,const uint32_t *ids,
+                                const uint32_t *counts,uint32_t count,
+                                const fg_sampler_config *config){
+    if(!scores||!ids||!counts||!config)return;
+    for(uint32_t i=0;i<count;i++){
+        uint32_t seen=counts[ids[i]];
+        if(!seen)continue;
+        if(config->repetition_penalty!=1.0f)
+            scores[i]=scores[i]>0.0f?
+                scores[i]/config->repetition_penalty:
+                scores[i]*config->repetition_penalty;
+        scores[i]-=config->frequency_penalty*(float)seen+
+            config->presence_penalty;
+    }
 }
 
 void fg_sampler_state_init(fg_sampler_state *state,uint64_t seed){

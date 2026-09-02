@@ -1011,7 +1011,9 @@ static bool inject_activation(test_endpoint *source,uint64_t request_id,
     if(!boundary||!wire){free(wire);free(boundary);return false;}
     fg_pipeline_activation activation={.execution_kind=FG_PIPELINE_EXECUTION_DECODE,
         .slot=slot,.source_stage=0u,.destination_stage=1u,.first_token=0u,
-        .token_count=1u,.request_output=true,.positions=positions,.boundary=boundary};
+        .token_count=1u,.request_output=true,
+        .sampler={.temperature=0.0f,.top_p=1.0f,.top_k=1u,
+                  .repetition_penalty=1.0f},.positions=positions,.boundary=boundary};
     uint32_t bytes=0u;
     fg_status status=fg_pipeline_activation_encode(wire,
         FG_PIPELINE_ACTIVATION_HEADER_BYTES+FG_PIPELINE_POSITION_AXES*4u+
@@ -1091,7 +1093,9 @@ static void test_activation_validation_and_frontiers(void){
     if(!boundary)return;
     fg_pipeline_activation activation={.execution_kind=FG_PIPELINE_EXECUTION_DECODE,
         .slot=0u,.source_stage=0u,.destination_stage=1u,.first_token=5u,
-        .token_count=1u,.request_output=true,.positions=positions,.boundary=boundary};
+        .token_count=1u,.request_output=true,
+        .sampler={.temperature=0.0f,.top_p=1.0f,.top_k=1u,
+                  .repetition_penalty=1.0f},.positions=positions,.boundary=boundary};
     CHECK(fg_pipeline_activation_validate(&activation,&error)==FG_OK);
     activation.request_output=false;
     CHECK(fg_pipeline_activation_validate(&activation,&error)==FG_ERR_FORMAT);
@@ -1295,6 +1299,8 @@ static void test_callback_and_peer_failure(void){
                 .execution_kind=FG_PIPELINE_EXECUTION_DECODE,.slot=0u,
                 .source_stage=6u,.destination_stage=7u,.first_token=0u,
                 .token_count=1u,.request_output=true,
+                .sampler={.temperature=0.0f,.top_p=1.0f,.top_k=1u,
+                          .repetition_penalty=1.0f},
                 .positions=positions,.boundary=boundary
             };
             uint32_t bytes=0u;

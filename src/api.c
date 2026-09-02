@@ -856,6 +856,14 @@ static fg_status parse_sampler_controls(const json_value *root,api_chat_request 
     if(value){if(value->type!=JSON_NUMBER||!number_is_integer(value->as.number)||value->as.number<1.0||value->as.number>64.0){fg_error_set(err,FG_ERR_ARGUMENT,"top_k must be an integer from 1 through 64");return FG_ERR_ARGUMENT;}request->sampler.top_k=(uint32_t)value->as.number;}
     value=json_object_get(root,"seed");
     if(value){if(value->type!=JSON_NUMBER||!isfinite(value->as.number)||value->as.number<0.0||value->as.number>9007199254740991.0||value->as.number!=floor(value->as.number)){fg_error_set(err,FG_ERR_ARGUMENT,"seed must be a non-negative integer");return FG_ERR_ARGUMENT;}request->sampler.seed=(uint64_t)value->as.number;}
+    value=json_object_get(root,"presence_penalty");
+    if(value){if(value->type!=JSON_NUMBER||!isfinite(value->as.number)){fg_error_set(err,FG_ERR_ARGUMENT,"presence_penalty must be finite");return FG_ERR_ARGUMENT;}request->sampler.presence_penalty=(float)value->as.number;}
+    value=json_object_get(root,"frequency_penalty");
+    if(value){if(value->type!=JSON_NUMBER||!isfinite(value->as.number)){fg_error_set(err,FG_ERR_ARGUMENT,"frequency_penalty must be finite");return FG_ERR_ARGUMENT;}request->sampler.frequency_penalty=(float)value->as.number;}
+    value=json_object_get(root,"repetition_penalty");
+    if(value){if(value->type!=JSON_NUMBER||!isfinite(value->as.number)){fg_error_set(err,FG_ERR_ARGUMENT,"repetition_penalty must be finite");return FG_ERR_ARGUMENT;}request->sampler.repetition_penalty=(float)value->as.number;}
+    value=json_object_get(root,"min_p");
+    if(value){if(value->type!=JSON_NUMBER||!isfinite(value->as.number)||value->as.number!=0.0){fg_error_set(err,FG_ERR_ARGUMENT,"min_p currently supports only 0");return FG_ERR_ARGUMENT;}request->sampler.min_p=0.0f;}
     return fg_sampler_config_validate(&request->sampler,err);
 }
 
@@ -1098,7 +1106,7 @@ static fg_status parse_chat_request(const json_value *root, const char *runtime_
     fg_status status = parse_tools(root, request, err);
     if (status == FG_OK) status = parse_tool_choice(root, request, err);
     if (status != FG_OK) return status;
-    static const char *unsupported[] = {"min_p", "typical_p", "logit_bias"};
+    static const char *unsupported[] = {"typical_p", "logit_bias"};
     for (size_t i = 0; i < sizeof(unsupported) / sizeof(unsupported[0]); i++) {
         if (json_object_has(root, unsupported[i])) {
             fg_error_set(err, FG_ERR_ARGUMENT,
@@ -1108,8 +1116,6 @@ static fg_status parse_chat_request(const json_value *root, const char *runtime_
         }
     }
     status = parse_sampler_controls(root,request,err);
-    if (status == FG_OK) status = reject_control(root, "presence_penalty", 0.0, err);
-    if (status == FG_OK) status = reject_control(root, "frequency_penalty", 0.0, err);
     if (status == FG_OK) status = reject_control(root, "n", 1.0, err);
     if (status != FG_OK) return status;
     if (json_object_has(root, "stop") || json_object_has(root, "logprobs")) {

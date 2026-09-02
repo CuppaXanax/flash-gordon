@@ -30,6 +30,8 @@ fg_status fg_stage_executor_create(fg_stage_executor **out,
                                    const fg_stage_config *config,fg_error *err);
 void fg_stage_executor_close(fg_stage_executor *executor);
 fg_status fg_stage_executor_reset(fg_stage_executor *executor,fg_error *err);
+fg_status fg_stage_history_reset(fg_stage_executor *executor,const uint32_t *history,
+                                 uint32_t count,fg_error *err);
 
 fg_status fg_stage_decode(fg_stage_executor *executor,uint32_t token_index,
                           const uint32_t position[FG_PIPELINE_POSITION_AXES],

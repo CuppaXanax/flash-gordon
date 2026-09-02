@@ -26,9 +26,11 @@
 #define FG_LAYER_WORK_TEXT_MAX_BYTES (FG_LAYER_WORK_BASE_BYTES+FG_NGRAM_EMBED_VALUES*4u)
 #define FG_LAYER_WORK_MAX_BYTES (FG_LAYER_WORK_FOUR_AXIS_BASE_BYTES+FG_NGRAM_EMBED_VALUES*4u)
 #define FG_LAYER_RESULT_BYTES (8u+FG_HYPER_WIDTH*4u)
-#define FG_OUTPUT_WORK_HEADER_BYTES 24u
+#define FG_OUTPUT_WORK_HEADER_BYTES 40u
 #define FG_OUTPUT_WORK_BYTES (FG_OUTPUT_WORK_HEADER_BYTES+FG_HYPER_WIDTH*4u)
 #define FG_OUTPUT_RESULT_BYTES 16u
+#define FG_OUTPUT_HISTORY_HEADER_BYTES 8u
+#define FG_OUTPUT_HISTORY_MAX_BYTES (FG_OUTPUT_HISTORY_HEADER_BYTES+FG_NATIVE_CONTEXT*4u)
 #define FG_LAYER_WORK_HAS_NGRAM 1u
 #define FG_PREFILL_MAX_TOKENS 512u
 #define FG_PREFILL_MAX_PAIRS (FG_PREFILL_MAX_TOKENS*FG_TOP_K)
@@ -73,7 +75,7 @@
 #define FG_PIPELINE_BOUNDARY_WIDTH FG_Q38_HYPER_WIDTH
 #define FG_PIPELINE_BOUNDARY_FP32_BYTES 4u
 #define FG_PIPELINE_STAGE_TIMING_BYTES (FG_PIPELINE_STAGE_COUNT*4u)
-#define FG_PIPELINE_ACTIVATION_HEADER_BYTES (32u+FG_PIPELINE_STAGE_TIMING_BYTES)
+#define FG_PIPELINE_ACTIVATION_HEADER_BYTES (48u+FG_PIPELINE_STAGE_TIMING_BYTES)
 /* Protocol 7 boundary tensors are native little-endian IEEE-754 FP32 byte arrays. */
 #define FG_PIPELINE_ACTIVATION_MAX_BYTES \
     (FG_PIPELINE_ACTIVATION_HEADER_BYTES+FG_PREFILL_MAX_TOKENS*FG_PIPELINE_POSITION_AXES*4u+ \
@@ -123,7 +125,9 @@ typedef enum fg_message_type {
     FG_MSG_PIPELINE_RESULT = 36,
     FG_MSG_PIPELINE_DRAIN = 37,
     FG_MSG_PIPELINE_DRAINED = 38,
-    FG_MSG_PIPELINE_ABORT = 39
+    FG_MSG_PIPELINE_ABORT = 39,
+    FG_MSG_OUTPUT_HISTORY = 40,
+    FG_MSG_OUTPUT_HISTORY_ACK = 41
 } fg_message_type;
 
 typedef enum fg_pipeline_execution_kind {
@@ -361,6 +365,11 @@ typedef struct fg_output_result {
     float logit;
 } fg_output_result;
 
+typedef struct fg_output_history {
+    const uint32_t *tokens;
+    uint32_t count;
+} fg_output_history;
+
 typedef struct fg_ngram_work {
     uint8_t source_rank;
     uint8_t destination_rank;
@@ -557,6 +566,11 @@ fg_status fg_output_result_encode(uint8_t output[FG_OUTPUT_RESULT_BYTES],const f
                                   fg_error *err);
 fg_status fg_output_result_decode(fg_output_result *result,const uint8_t *payload,uint32_t bytes,
                                   fg_error *err);
+fg_status fg_output_history_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                   const fg_output_history *history,fg_error *err);
+fg_status fg_output_history_decode(fg_output_history *history,uint32_t *storage,
+                                   uint32_t capacity,const uint8_t *payload,
+                                   uint32_t bytes,fg_error *err);
 fg_status fg_ngram_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
                                const fg_ngram_work *work,fg_error *err);
 fg_status fg_ngram_work_decode(fg_ngram_work *work,const uint8_t *payload,uint32_t bytes,

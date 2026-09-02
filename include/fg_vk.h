@@ -180,6 +180,10 @@ fg_status fg_vk_ple_conv_prefill(fg_vk_context *context,fg_vk_tensor *output,fg_
                                  const fg_vk_tensor *weight,uint32_t tokens,fg_error *err);
 fg_status fg_vk_add_f32(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *left,
                         const fg_vk_tensor *right,uint32_t values,fg_error *err);
+fg_status fg_vk_apply_penalties(fg_vk_context *context,fg_vk_tensor *logits,
+                                const fg_vk_tensor *counts,uint32_t values,
+                                float presence_penalty,float frequency_penalty,
+                                float repetition_penalty,fg_error *err);
 fg_status fg_vk_gdn_conv_decode(fg_vk_context *context,fg_vk_tensor *output,fg_vk_tensor *state,
                                 const fg_vk_tensor *projection,const fg_vk_tensor *weight,
                                 uint32_t channels,fg_error *err);
