@@ -603,6 +603,52 @@ static json_value *json_object_get(const json_value *object, const char *name) {
     return NULL;
 }
 
+static fg_status message_content_text(const json_value *content,const char **output,
+                                      fg_error *err){
+    if(!output){fg_error_set(err,FG_ERR_ARGUMENT,"message content output is null");return FG_ERR_ARGUMENT;}
+    *output=NULL;
+    if(!content||content->type==JSON_NULL){
+        *output=strdup("");
+        if(!*output){fg_error_set(err,FG_ERR_OOM,"copy empty message content");return FG_ERR_OOM;}
+        return FG_OK;
+    }
+    if(content->type==JSON_STRING){
+        *output=strdup(content->as.string);
+        if(!*output){fg_error_set(err,FG_ERR_OOM,"copy message content");return FG_ERR_OOM;}
+        return FG_OK;
+    }
+    if(content->type!=JSON_ARRAY){
+        fg_error_set(err,FG_ERR_ARGUMENT,"message content must be a string, array, or null");
+        return FG_ERR_ARGUMENT;
+    }
+    api_buffer text={0};fg_status status=FG_OK;
+    for(size_t i=0;status==FG_OK&&i<content->as.array.count;i++){
+        json_value *part=content->as.array.items[i];
+        if(part&&part->type==JSON_STRING){
+            status=buffer_append(&text,part->as.string,err);
+            continue;
+        }
+        json_value *type=json_object_get(part,"type");
+        json_value *value=json_object_get(part,"text");
+        if(!part||part->type!=JSON_OBJECT||!type||type->type!=JSON_STRING||
+           (strcmp(type->as.string,"text")&&strcmp(type->as.string,"input_text"))||
+           !value||value->type!=JSON_STRING){
+            if(type&&type->type==JSON_STRING)
+                fg_error_set(err,FG_ERR_ARGUMENT,"message content part type '%s' is unsupported",type->as.string);
+            else fg_error_set(err,FG_ERR_ARGUMENT,"message content array requires text parts");
+            status=FG_ERR_ARGUMENT;
+            break;
+        }
+        status=buffer_append(&text,value->as.string,err);
+    }
+    if(status==FG_OK&&!text.data){
+        text.data=strdup("");
+        if(!text.data){fg_error_set(err,FG_ERR_OOM,"copy empty message content array");status=FG_ERR_OOM;}
+    }
+    if(status!=FG_OK){free(text.data);return status;}
+    *output=text.data;return FG_OK;
+}
+
 static bool json_object_has(const json_value *object, const char *name) {
     return json_object_get(object, name) != NULL;
 }
@@ -1175,7 +1221,8 @@ static fg_status parse_chat_request(const json_value *root, const char *runtime_
         json_value *tool_call_id = json_object_get(message, "tool_call_id");
         if (!message || message->type != JSON_OBJECT || !role ||
             role->type != JSON_STRING ||
-            (content && content->type != JSON_STRING && content->type != JSON_NULL) ||
+            (content && content->type != JSON_STRING && content->type != JSON_ARRAY &&
+             content->type != JSON_NULL) ||
             (reasoning && reasoning->type != JSON_STRING &&
              reasoning->type != JSON_NULL)) {
             fg_error_set(err, FG_ERR_ARGUMENT,
@@ -1227,10 +1274,15 @@ static fg_status parse_chat_request(const json_value *root, const char *runtime_
             return FG_ERR_ARGUMENT;
         }
         request->messages[i].role = strdup(accepted_role);
-        request->messages[i].content =
-            strdup(content && content->type == JSON_STRING ? content->as.string : "");
+        fg_status content_status=message_content_text(content,&request->messages[i].content,err);
         request->message_count++;
-        if (!request->messages[i].role || !request->messages[i].content) {
+        if (!request->messages[i].role || content_status!=FG_OK) {
+            if(content_status==FG_OK)
+                fg_error_set(err, FG_ERR_OOM, "copy API chat message");
+            api_chat_request_free(request);
+            return content_status==FG_OK?FG_ERR_OOM:content_status;
+        }
+        if (!request->messages[i].content) {
             fg_error_set(err, FG_ERR_OOM, "copy API chat message");
             api_chat_request_free(request);
             return FG_ERR_OOM;
