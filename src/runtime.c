@@ -3100,8 +3100,8 @@ fg_status fg_bench_main(const char *path,fg_error *err){
     uint32_t warmup=50,iters=200;
     fprintf(stderr,"=== Q8_0→F32 dense matvec kernel benchmark (GFX1013) ===\n");
     fprintf(stderr,"warmup=%u  iterations=%u  tokens=1\n\n",warmup,iters);
-    fprintf(stderr,"%-25s %8s %8s %10s %10s %6s\n","shape","weight","wall","eff.BW","roofline","util");
-    fprintf(stderr,"%-25s %8s %8s %10s %10s %6s\n","","(MB)","(us)","(GB/s)","(GB/s)","(%)");
+    fprintf(stderr,"%-25s %8s %8s %10s %12s %6s\n","shape","weight","wall","eff.BW","roofline","util");
+    fprintf(stderr,"%-25s %8s %8s %10s %12s %6s\n","","(MB)","(us)","(GB/s)","(unknown)","(n/a)");
     fprintf(stderr,"----------------------------------------------------------------------\n");
     for(uint32_t s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++){
         uint32_t in_dim=shapes[s].in,out_dim=shapes[s].out;
@@ -3134,10 +3134,8 @@ fg_status fg_bench_main(const char *path,fg_error *err){
             double per_call_us=elapsed_s*1e6/(double)iters;
             double total_bytes=(double)(weight_bytes+input_bytes+output_bytes);
             double eff_gbps=total_bytes/(per_call_us*1e-6)/1e9;
-            double roofline=357.0;
-            double util=eff_gbps/roofline*100.0;
-            fprintf(stderr,"%-25s %7.2f %7.1f %9.1f %9.1f %5.1f%%\n",
-                shapes[s].name,(double)weight_bytes/1e6,per_call_us,eff_gbps,roofline,util);
+            fprintf(stderr,"%-25s %7.2f %7.1f %9.1f %12s %6s\n",
+                shapes[s].name,(double)weight_bytes/1e6,per_call_us,eff_gbps,"unknown","n/a");
         }
         double standalone_us=0;
         if(status==FG_OK){
@@ -3160,14 +3158,11 @@ fg_status fg_bench_main(const char *path,fg_error *err){
                 double per_call_us=elapsed_s*1e6/(double)batch_iters;
                 double total_bytes=(double)(weight_bytes+input_bytes+output_bytes);
                 double eff_gbps=total_bytes/(per_call_us*1e-6)/1e9;
-                double roofline=357.0;
-                double util=eff_gbps/roofline*100.0;
-                fprintf(stderr,"  └ batched (%u in 1 CB)  %7s %7.1f %9.1f %9.1f %5.1f%%\n",
-                    batch_iters,""  ,per_call_us,eff_gbps,roofline,util);
+                fprintf(stderr,"  └ batched (%u in 1 CB)  %7s %7.1f %9.1f %12s %6s\n",
+                    batch_iters,""  ,per_call_us,eff_gbps,"unknown","n/a");
                 double dispatch_overhead=standalone_us-per_call_us;
-                double theoretical_us=(double)(weight_bytes+input_bytes+output_bytes)/(357.0*1e3);
-                fprintf(stderr,"  └ dispatch overhead     %7s %7.1f   (theoretical minimum: %.1f μs)\n",
-                    "",dispatch_overhead,theoretical_us);
+                fprintf(stderr,"  └ dispatch overhead     %7s %7.1f   (theoretical minimum: unknown)\n",
+                    "",dispatch_overhead);
             }
         }
         fg_vk_tensor_destroy(y);fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);

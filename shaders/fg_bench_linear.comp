@@ -1,0 +1,20 @@
+#version 460
+/* Primitive roofline traffic: source is read in coalesced 32-bit words.
+   mode 0 writes one checksum per workgroup; mode 1 copies every word. */
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Source{uint source[];};
+layout(set=0,binding=1)writeonly buffer Destination{uint destination[];};
+layout(push_constant)uniform Push{uint words;uint mode;}pc;
+shared uint partial[256];
+void main(){
+    uint group=gl_WorkGroupID.y*gl_NumWorkGroups.x+gl_WorkGroupID.x;
+    uint tid=gl_LocalInvocationID.x,index=group*gl_WorkGroupSize.x+tid;
+    uint value=index<pc.words?source[index]:0u;
+    if(pc.mode!=0u){if(index<pc.words)destination[index]=value;return;}
+    partial[tid]=value;barrier();
+    for(uint stride=128u;stride>0u;stride>>=1u){
+        if(tid<stride)partial[tid]+=partial[tid+stride];
+        barrier();
+    }
+    if(tid==0u)destination[group]=partial[0];
+}
