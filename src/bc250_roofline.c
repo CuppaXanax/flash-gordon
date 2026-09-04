@@ -35,6 +35,19 @@ static int append_double(char *out,size_t cap,size_t *used,double value){
     return isfinite(value)?append(out,cap,used,"%.9g",value):append(out,cap,used,"null");
 }
 
+static int append_qsa_geometry(char *out,size_t cap,size_t *used,
+                               const fg_bc250_roofline_record *record){
+    return append(out,cap,used,",\"component\":")&&
+        append_string(out,cap,used,record->component)&&
+        append(out,cap,used,",\"visible_tokens\":%u,\"query_tokens\":%u,\"complete_blocks\":%u,\"selector_groups\":%u,\"candidate_count\":%u,\"merge_passes\":%u,\"selected_stride\":%u,\"capacity\":%u,\"segment_capacity\":%u,\"scratch_bytes\":",
+                record->visible_tokens,record->query_tokens,
+                record->complete_blocks,record->selector_groups,
+                record->candidate_count,record->merge_passes,
+                record->selected_stride,record->capacity,
+                record->segment_capacity)&&
+        append_u64(out,cap,used,record->scratch_bytes);
+}
+
 int fg_bc250_q8_0_weight_bytes(uint32_t input_width,uint32_t output_width,
                                uint64_t *bytes){
     if(!bytes||!input_width||!output_width||input_width%32u)return 0;
@@ -79,7 +92,10 @@ int fg_bc250_roofline_record_format(char *output,size_t capacity,
     if(!output||!capacity||!record||!record->benchmark||!record->name||
        !record->shape||!record->access_pattern||!record->device)return 0;
     size_t used=0;
-    if(!append(output,capacity,&used,"{\"schema\":\"%s\",\"benchmark\":",FG_BC250_ROOFLINE_SCHEMA)||
+    if(!append(output,capacity,&used,"{\"schema\":")||
+       !append_string(output,capacity,&used,record->schema?record->schema:
+                     FG_BC250_ROOFLINE_SCHEMA)||
+       !append(output,capacity,&used,",\"benchmark\":")||
        !append_string(output,capacity,&used,record->benchmark)||
        !append(output,capacity,&used,",\"name\":")||
        !append_string(output,capacity,&used,record->name)||
@@ -105,6 +121,7 @@ int fg_bc250_roofline_record_format(char *output,size_t capacity,
        !append_double(output,capacity,&used,record->derived_flops)||
        !append(output,capacity,&used,",\"device\":")||
        !append_string(output,capacity,&used,record->device)||
+       (record->component && !append_qsa_geometry(output,capacity,&used,record))||
        !append(output,capacity,&used,"}\n"))return 0;
     return (int)used;
 }
