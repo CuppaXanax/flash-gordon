@@ -11,7 +11,7 @@ OBJ := $(SRC:.c=.o)
 DEP := $(OBJ:.o=.d) tests/test_core.d tests/test_session.d tests/test_prefix.d tests/test_chat.d tests/test_chat_runtime.d tests/test_api.d tests/test_embedding.d tests/test_ngram_deployment.d tests/test_fg_vk.d tests/test_hc_down_split.d tests/test_model_load.d tests/test_qsa_model_load.d tests/test_tokenizer.d tests/test_fabric.d tests/test_pipeline.d tests/test_stage.d tests/bench_bc250_roofline.d tests/test_bc250_roofline.d tests/bench_bc250_qsa_curve.d tests/test_bc250_qsa_curve.d tests/test_fg_ledger.d src/bc250_roofline.d src/bc250_qsa_curve.d
 TEST_COMMON := src/util.o src/manifest.o src/session.o src/topology.o src/sha256.o src/gguf.o src/q38_schema.o src/q38_math.o src/quant.o src/vk.o src/tokenizer.o src/pack.o src/uring.o src/loader.o src/ngram.o src/qsa_state.o src/qsa_locality.o src/qsa_cache.o src/qsa_owner.o src/qsa_replica.o src/protocol.o src/runtime_options.o src/sampler.o
 
-.PHONY: all clean test test-sampler test-embedding test-ngram-deployment test-vulkan test-qsa-fleet test-gdn-fleet test-pipeline-decode-fleet test_stage bench-bc250-roofline test-bc250-roofline bench-bc250-qsa-curve test-bc250-qsa-curve test-fg-ledger test-fg-profile-analysis shaders
+.PHONY: all clean test test-sampler test-embedding test-ngram-deployment test-vulkan test-qsa-fleet test-gdn-fleet test-pipeline-decode-fleet test_stage bench-bc250-roofline test-bc250-roofline bench-bc250-qsa-curve test-bc250-qsa-curve test-fg-ledger test-fg-profile-analysis test-qwen-qualification shaders
 all: flash-gordon
 
 flash-gordon: $(OBJ)
@@ -106,6 +106,9 @@ test-fg-ledger: tests/test_fg_ledger
 
 test-fg-profile-analysis:
 	python3 -m unittest tools/test_analyze_fg_profile.py
+
+test-qwen-qualification:
+	python3 -m unittest tools/test_qwen_qualification.py
 
 tests/test_hc_down_split: tests/test_hc_down_split.o src/vk.o src/quant.o src/q38_math.o src/ngram.o src/uring.o src/sha256.o src/q38_schema.o src/gguf.o src/util.o | shaders
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS) -lvulkan

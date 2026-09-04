@@ -112,9 +112,91 @@ typedef struct api_generation {
 
 static volatile sig_atomic_t api_stop_requested;
 static unsigned long long api_request_sequence;
+static bool api_profile_enabled;
+static FILE *api_profile_file;
 
 static int utf8_unit(const unsigned char *text,size_t available,size_t *bytes);
 static void tool_call_id(const api_generation *generation,size_t index,char output[128]);
+
+static void api_profile_json_string(FILE *file, const char *text) {
+    fputc('"', file);
+    for (const unsigned char *cursor = (const unsigned char *)(text ? text : "");
+         *cursor; cursor++) {
+        switch (*cursor) {
+            case '"': fputs("\\\"", file); break;
+            case '\\': fputs("\\\\", file); break;
+            case '\b': fputs("\\b", file); break;
+            case '\f': fputs("\\f", file); break;
+            case '\n': fputs("\\n", file); break;
+            case '\r': fputs("\\r", file); break;
+            case '\t': fputs("\\t", file); break;
+            default:
+                if (*cursor < 0x20u) fprintf(file, "\\u%04x", (unsigned)*cursor);
+                else fputc(*cursor, file);
+                break;
+        }
+    }
+    fputc('"', file);
+}
+
+static fg_status api_profile_open(fg_error *err) {
+    api_profile_enabled = false;
+    api_profile_file = NULL;
+    const char *setting = getenv("FG_QUALIFICATION_PROFILE");
+    if (!setting || !strcmp(setting, "0") || !strcmp(setting, "false")) return FG_OK;
+    const char *path = (!strcmp(setting, "1") || !strcmp(setting, "true")) ?
+        "fg-qualification-server.jsonl" : setting;
+    api_profile_file = fopen(path, "a");
+    if (!api_profile_file) {
+        fg_error_set(err, FG_ERR_IO, "FG_QUALIFICATION_PROFILE: cannot open %s: %s",
+                     path, strerror(errno));
+        return FG_ERR_IO;
+    }
+    api_profile_enabled = true;
+    return FG_OK;
+}
+
+static void api_profile_close(void) {
+    if (!api_profile_file) return;
+    fclose(api_profile_file);
+    api_profile_file = NULL;
+    api_profile_enabled = false;
+}
+
+static void api_profile_emit(const api_generation *generation,
+                             const api_chat_request *request,
+                             const fg_generation_stats *stats,
+                             const char *finish_reason,
+                             unsigned http_status, const char *status) {
+    if (!api_profile_enabled || !api_profile_file) return;
+    double prefill_ms = stats->prefill_seconds * 1000.0;
+    double decode_ms = stats->decode_seconds * 1000.0;
+    double prefill_tps = stats->prefill_seconds > 0.0 ?
+        (double)stats->prefilled_tokens / stats->prefill_seconds : 0.0;
+    double decode_tps = stats->decode_seconds > 0.0 ?
+        (double)stats->generated_tokens / stats->decode_seconds : 0.0;
+    flockfile(api_profile_file);
+    fputs("{\"schema\":\"fg.qwen.qual.server.v1\",\"request_id\":", api_profile_file);
+    api_profile_json_string(api_profile_file, generation->id);
+    fprintf(api_profile_file,
+            ",\"sampling\":{\"temperature\":%.9g,\"top_p\":%.9g,\"top_k\":%u}"
+            ",\"prompt_tokens\":%u,\"reused_tokens\":%u,\"prefilled_tokens\":%u"
+            ",\"generated_tokens\":%u,\"prefill_ms\":%.6f,\"decode_ms\":%.6f"
+            ",\"prefill_tps\":%.6f,\"decode_tps\":%.6f,\"context_tokens\":%u"
+            ",\"prefix_cache_hit\":%s,\"reset_reason\":",
+            request->sampler.temperature, request->sampler.top_p, request->sampler.top_k,
+            stats->prompt_tokens, stats->reused_tokens, stats->prefilled_tokens,
+            stats->generated_tokens, prefill_ms, decode_ms, prefill_tps, decode_tps,
+            stats->context_tokens, stats->prefix_cache_hit ? "true" : "false");
+    api_profile_json_string(api_profile_file, fg_prefix_reset_reason_name(stats->reset_reason));
+    fputs(",\"finish_reason\":", api_profile_file);
+    api_profile_json_string(api_profile_file, finish_reason ? finish_reason : "error");
+    fprintf(api_profile_file, ",\"http_status\":%u,\"status\":", http_status);
+    api_profile_json_string(api_profile_file, status ? status : "error");
+    fputs("}\n", api_profile_file);
+    fflush(api_profile_file);
+    funlockfile(api_profile_file);
+}
 
 static fg_status buffer_reserve(api_buffer *buffer, size_t extra, fg_error *err) {
     if (extra > SIZE_MAX - buffer->length - 1u) {
@@ -1904,6 +1986,7 @@ static fg_status send_stream_start(const api_generation *generation, fg_error *e
 
 static fg_status send_stream_end(api_generation *generation,
                                  const fg_chat_generated *generated,const char *reason,
+                                 const fg_generation_stats *stats,
                                  fg_error *err) {
     for(size_t i=generation->streamed_tool_calls;i<generated->tool_call_count;i++){
         fg_status tool=send_tool_call_delta(generation,&generated->tool_calls[i],i,err);
@@ -1938,7 +2021,19 @@ static fg_status send_stream_end(api_generation *generation,
             &event, ",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":", err);
     if (status == FG_OK)
         status = buffer_append_json_string(&event, reason, strlen(reason), err);
-    if (status == FG_OK) status = buffer_append(&event, "}]}\n\ndata: [DONE]\n\n", err);
+    if (status == FG_OK) {
+        char usage[192];
+        if (api_profile_enabled) {
+            snprintf(usage, sizeof(usage),
+                     "}],\"usage\":{\"prompt_tokens\":%u,\"completion_tokens\":%u,\"total_tokens\":%u}}\n\ndata: [DONE]\n\n",
+                     stats ? stats->prompt_tokens : 0u,
+                     stats ? stats->generated_tokens : 0u,
+                     stats ? stats->prompt_tokens + stats->generated_tokens : 0u);
+        } else {
+            snprintf(usage, sizeof(usage), "}]}\n\ndata: [DONE]\n\n");
+        }
+        status = buffer_append(&event, usage, err);
+    }
     if (status == FG_OK) status = send_all(generation->fd, event.data, event.length, err);
     free(event.data);
     return status;
@@ -2216,7 +2311,7 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     bool response_committed=false;
     if (status == FG_OK) {
         if (request.stream)
-            status = send_stream_end(&generation, &generated, finish_reason, err);
+            status = send_stream_end(&generation, &generated, finish_reason, &stats, err);
         else
             status = send_completion(&generation, &generated, &stats, finish_reason, err);
         if(status==FG_OK){
@@ -2236,6 +2331,11 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
         if(stream_started)send_stream_error(&generation,message,&send_err);
         else send_error_response(fd, response_status, message, &send_err);
     }
+    api_profile_emit(&generation, &request, &stats, finish_reason,
+                     response_committed ? 200u :
+                     (status == FG_ERR_ARGUMENT || status == FG_ERR_FORMAT ||
+                      status == FG_ERR_LIMIT ? 400u : 500u),
+                     response_committed ? "ok" : "error");
     free(generation.content.data);
     free(generation.visible_pending.data);
     fg_chat_generated_free(&generated);
@@ -2326,6 +2426,12 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
     struct sigaction action = {0}, old_int = {0}, old_term = {0}, ignore_pipe = {0},
                      old_pipe = {0};
     api_stop_requested = 0;
+    status = api_profile_open(err);
+    if (status != FG_OK) {
+        close(listener);
+        fg_runtime_close(runtime);
+        return status;
+    }
     action.sa_handler = api_signal_handler;
     sigemptyset(&action.sa_mask);
     ignore_pipe.sa_handler = SIG_IGN;
@@ -2403,6 +2509,7 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
     sigaction(SIGTERM, &old_term, NULL);
     sigaction(SIGPIPE, &old_pipe, NULL);
     api_public_session_free(&public_session);
+    api_profile_close();
     fg_runtime_close(runtime);
     return status;
 }

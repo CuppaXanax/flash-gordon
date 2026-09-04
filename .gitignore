@@ -24,6 +24,7 @@ tests/test_chat_runtime
 tests/test_embedding
 tests/test_ngram_deployment
 tests/test_pipeline
+tests/test_stage
 tests/test_bc250_roofline
 tests/bench_bc250_roofline
 tests/test_bc250_qsa_curve

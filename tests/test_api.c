@@ -598,7 +598,10 @@ static void test_streamed_tool_response(void) {
     CHECK(api_token(&generation, 3, tail, strlen(tail), &err) == FG_OK);
     fg_chat_generated generated = {0};
     CHECK(fg_chat_parse_generated(generation.content.data, true, &generated, &err) == FG_OK);
-    CHECK(send_stream_end(&generation, &generated, "tool_calls", &err) == FG_OK);
+    fg_generation_stats stream_stats = {0};
+    stream_stats.prompt_tokens = 3u;
+    stream_stats.generated_tokens = 2u;
+    CHECK(send_stream_end(&generation, &generated, "tool_calls", &stream_stats, &err) == FG_OK);
     shutdown(sockets[0], SHUT_WR);
     char *response = read_socket_response(sockets[1]);
     CHECK(response && strstr(response, "\"content\":\"Answer before tool\""));
@@ -609,6 +612,7 @@ static void test_streamed_tool_response(void) {
     CHECK(response && strstr(response, "\"name\":\"clock\""));
     CHECK(response && strstr(response, "\"finish_reason\":\"tool_calls\""));
     CHECK(response && strstr(response, "data: [DONE]"));
+    CHECK(response && !strstr(response, "\"usage\""));
     CHECK(response && !strstr(response, "hidden"));
     CHECK(response && !strstr(response, "<tool_call>"));
     free(response);
@@ -617,6 +621,51 @@ static void test_streamed_tool_response(void) {
     free(generation.visible_pending.data);
     close(sockets[0]);
     close(sockets[1]);
+}
+
+static void test_qualification_profile_is_opt_in(void) {
+    int sockets[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    api_chat_request request = {0};
+    api_generation generation = {
+        .fd = sockets[0], .stream = true, .id = "chatcmpl-profile",
+        .model = "Qwen3.8-Flash-Next", .request = &request,
+    };
+    fg_chat_generated generated = {0};
+    fg_generation_stats stats = {
+        .prompt_tokens = 4096u, .reused_tokens = 4000u, .prefilled_tokens = 96u,
+        .generated_tokens = 8u, .context_tokens = 4104u,
+        .prefill_seconds = 0.25, .decode_seconds = 0.125,
+    };
+    fg_error err = {0};
+    api_profile_enabled = true;
+    CHECK(send_stream_end(&generation, &generated, "length", &stats, &err) == FG_OK);
+    api_profile_enabled = false;
+    shutdown(sockets[0], SHUT_WR);
+    char *response = read_socket_response(sockets[1]);
+    CHECK(response && strstr(response,
+          "\"usage\":{\"prompt_tokens\":4096,\"completion_tokens\":8,\"total_tokens\":4104}"));
+    free(response);
+    close(sockets[0]);
+    close(sockets[1]);
+
+    api_profile_file = tmpfile();
+    CHECK(api_profile_file != NULL);
+    if (api_profile_file) {
+        api_profile_enabled = true;
+        request.sampler.temperature = 1.0f;
+        request.sampler.top_p = 0.95f;
+        request.sampler.top_k = 20u;
+        api_profile_emit(&generation, &request, &stats, "length", 200u, "ok");
+        rewind(api_profile_file);
+        char line[2048] = {0};
+        CHECK(fgets(line, sizeof(line), api_profile_file) != NULL);
+        CHECK(strstr(line, "\"schema\":\"fg.qwen.qual.server.v1\""));
+        CHECK(strstr(line, "\"request_id\":\"chatcmpl-profile\""));
+        CHECK(strstr(line, "\"top_k\":20"));
+        CHECK(strstr(line, "\"prefilled_tokens\":96"));
+        api_profile_close();
+    }
 }
 
 static void test_streamed_incomplete_tags_do_not_leak(void) {
@@ -1059,6 +1108,7 @@ int main(void) {
     test_greedy_controls();
     test_nonstream_tool_response();
     test_streamed_tool_response();
+    test_qualification_profile_is_opt_in();
     test_streamed_incomplete_tags_do_not_leak();
     test_streamed_utf8_and_sentinel_filtering();
     test_json_nul_and_member_limit();
