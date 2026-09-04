@@ -3,12 +3,22 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static bool stage_profile_requested(uint32_t sequence){
-    const char *value=getenv("FG_PIPELINE_PROFILE_SEQUENCE");
-    if(!value||!*value)return false;
-    char *end=NULL;unsigned long requested=strtoul(value,&end,10);
-    return end&&!*end&&requested<=UINT32_MAX&&(uint32_t)requested==sequence;
+    static bool initialized=false,enabled=false;
+    static uint32_t requested=0u;
+    if(!initialized){
+        const char *value=getenv("FG_PIPELINE_PROFILE_SEQUENCE");
+        if(value&&*value){
+            char *end=NULL;unsigned long parsed=strtoul(value,&end,10);
+            if(end&&!*end&&parsed<=UINT32_MAX){
+                requested=(uint32_t)parsed;enabled=true;
+            }
+        }
+        initialized=true;
+    }
+    return enabled&&requested==sequence;
 }
 
 struct fg_stage_executor {
@@ -432,11 +442,19 @@ fg_status fg_stage_pipeline_execute(void *context,uint32_t stage,
     }
     uint64_t bytes=(uint64_t)activation->token_count*
         FG_PIPELINE_BOUNDARY_WIDTH*sizeof(float);
+    struct timespec service_start={0},service_end={0};
+    bool profiling=false,profile_started=false;
     fg_vk_tensor *input=fg_owner_prefill_input(executor->owner);
+    if(stage_profile_requested(sequence)){
+        clock_gettime(CLOCK_MONOTONIC,&service_start);
+        profiling=true;
+    }
     status=fg_vk_tensor_write(input,0,boundary,bytes,&local);
     fg_vk_context *vk=fg_model_vk(executor->model);
-    bool profiling=status==FG_OK&&stage_profile_requested(sequence);
-    if(profiling)status=fg_vk_profile_begin(vk,&local);
+    if(profiling&&status==FG_OK){
+        status=fg_vk_profile_begin(vk,&local);
+        profile_started=status==FG_OK;
+    }
     fg_vk_tensor *ngram=NULL,*result=NULL;
     bool has_ple=executor->layer_begin<=1u&&executor->layer_end>1u;
     if(status==FG_OK&&has_ple){
@@ -477,7 +495,8 @@ fg_status fg_stage_pipeline_execute(void *context,uint32_t stage,
         status=FG_ERR_MISMATCH;
     }
     if(status==FG_OK)status=fg_vk_tensor_read(result,0,boundary,bytes,&local);
-    if(profiling){
+    if(profiling&&profile_started){
+        clock_gettime(CLOCK_MONOTONIC,&service_end);
         fg_vk_profile profile={0};fg_error profile_error={0};
         fg_status profile_status=fg_vk_profile_end(
             vk,&profile,status==FG_OK?&local:&profile_error);
@@ -497,6 +516,40 @@ fg_status fg_stage_pipeline_execute(void *context,uint32_t stage,
                 profile.kernels[i].name,
                 (unsigned long long)profile.kernels[i].invocations,
                 profile.kernels[i].gpu_ms);
+        double wall_ms=((double)(service_end.tv_sec-service_start.tv_sec)+
+                        (double)(service_end.tv_nsec-service_start.tv_nsec)*1e-9)*1000.0;
+        fprintf(stderr,
+            "{\"schema\":\"flash-gordon.profile\",\"version\":1,"
+            "\"record_type\":\"stage_service\",\"rank\":%u,"
+            "\"stage\":%u,\"sequence\":%u,\"execution_kind\":\"%s\","
+            "\"first_token\":%u,\"tokens\":%u,\"wall_ms\":%.6f,"
+            "\"gpu_ms\":%.6f,\"kernel_ms\":%.6f,\"submissions\":%llu,"
+            "\"dispatches\":%llu,\"boundary_bytes\":%llu,\"terminal\":%s,"
+            "\"status\":%d}\n",
+            executor->rank,executor->stage,sequence,
+            activation->execution_kind==FG_PIPELINE_EXECUTION_DECODE?
+                "decode":"prefill",activation->first_token,
+            activation->token_count,wall_ms,profile.gpu_ms,profile.kernel_ms,
+            (unsigned long long)profile.submissions,
+            (unsigned long long)profile.dispatches,
+            (unsigned long long)bytes,
+            executor->stage+1u==fg_model_manifest(executor->model)->stage_count?
+                "true":"false",(int)status);
+        for(uint32_t i=0;i<profile.kernel_count;i++)
+            fprintf(stderr,
+                "{\"schema\":\"flash-gordon.profile\",\"version\":1,"
+                "\"record_type\":\"kernel_service\",\"rank\":%u,"
+                "\"stage\":%u,\"sequence\":%u,\"execution_kind\":\"%s\","
+                "\"first_token\":%u,\"tokens\":%u,\"scope\":\"%s\","
+                "\"kernel\":\"%s\",\"calls\":%llu,\"gpu_ms\":%.6f,"
+                "\"status\":%d}\n",
+                executor->rank,executor->stage,sequence,
+                activation->execution_kind==FG_PIPELINE_EXECUTION_DECODE?
+                    "decode":"prefill",activation->first_token,
+                activation->token_count,profile.kernels[i].scope,
+                profile.kernels[i].name,
+                (unsigned long long)profile.kernels[i].invocations,
+                profile.kernels[i].gpu_ms,(int)status);
     }
     if(status!=FG_OK)return stage_fail(executor,status,&local,err);
     return FG_OK;

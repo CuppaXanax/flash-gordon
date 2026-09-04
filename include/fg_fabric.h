@@ -9,6 +9,9 @@ typedef enum fg_fabric_class { FG_FABRIC_CONTROL=0, FG_FABRIC_BULK=1 } fg_fabric
 typedef struct fg_fabric fg_fabric;
 typedef struct fg_fabric_recv_timing {
     uint64_t poll_start_ns,ready_ns,header_end_ns,payload_end_ns,validate_end_ns;
+    /* Monotonic counterparts used only by FG_FABRIC_PROFILE instrumentation. */
+    uint64_t profile_poll_start_ns,profile_ready_ns,profile_header_end_ns,
+             profile_payload_end_ns,profile_validate_end_ns;
     uint32_t ready_mask;
 } fg_fabric_recv_timing;
 typedef struct fg_fabric_send_item {uint32_t peer;fg_fabric_class cls;fg_message_type type;uint64_t request_id;uint32_t sequence,flags;const void *payload;uint32_t bytes;} fg_fabric_send_item;

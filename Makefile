@@ -8,10 +8,10 @@ FG_SHADER_OUT := $(patsubst shaders/%.comp,vulkan/%.spv,$(FG_SHADER_SRC))
 
 SRC := src/main.c src/util.c src/manifest.c src/session.c src/topology.c src/sha256.c src/gguf.c src/q38_schema.c src/q38_math.c src/quant.c src/vk.c src/model.c src/expert.c src/owner.c src/output.c src/stage.c src/embedding.c src/tokenizer.c src/pack.c src/uring.c src/loader.c src/ngram.c src/qsa_state.c src/qsa_locality.c src/qsa_cache.c src/qsa.c src/qsa_owner.c src/qsa_replica.c src/protocol.c src/fabric.c src/pipeline.c src/pipeline_runtime.c src/prefix.c src/runtime_options.c src/sampler.c src/runtime.c src/chat.c src/api.c
 OBJ := $(SRC:.c=.o)
-DEP := $(OBJ:.o=.d) tests/test_core.d tests/test_session.d tests/test_prefix.d tests/test_chat.d tests/test_chat_runtime.d tests/test_api.d tests/test_embedding.d tests/test_ngram_deployment.d tests/test_fg_vk.d tests/test_hc_down_split.d tests/test_model_load.d tests/test_qsa_model_load.d tests/test_tokenizer.d tests/test_fabric.d tests/test_pipeline.d tests/test_stage.d tests/bench_bc250_roofline.d tests/test_bc250_roofline.d tests/bench_bc250_qsa_curve.d tests/test_bc250_qsa_curve.d src/bc250_roofline.d src/bc250_qsa_curve.d
+DEP := $(OBJ:.o=.d) tests/test_core.d tests/test_session.d tests/test_prefix.d tests/test_chat.d tests/test_chat_runtime.d tests/test_api.d tests/test_embedding.d tests/test_ngram_deployment.d tests/test_fg_vk.d tests/test_hc_down_split.d tests/test_model_load.d tests/test_qsa_model_load.d tests/test_tokenizer.d tests/test_fabric.d tests/test_pipeline.d tests/test_stage.d tests/bench_bc250_roofline.d tests/test_bc250_roofline.d tests/bench_bc250_qsa_curve.d tests/test_bc250_qsa_curve.d tests/test_fg_ledger.d src/bc250_roofline.d src/bc250_qsa_curve.d
 TEST_COMMON := src/util.o src/manifest.o src/session.o src/topology.o src/sha256.o src/gguf.o src/q38_schema.o src/q38_math.o src/quant.o src/vk.o src/tokenizer.o src/pack.o src/uring.o src/loader.o src/ngram.o src/qsa_state.o src/qsa_locality.o src/qsa_cache.o src/qsa_owner.o src/qsa_replica.o src/protocol.o src/runtime_options.o src/sampler.o
 
-.PHONY: all clean test test-sampler test-embedding test-ngram-deployment test-vulkan test-qsa-fleet test-gdn-fleet test-pipeline-decode-fleet test_stage bench-bc250-roofline test-bc250-roofline bench-bc250-qsa-curve test-bc250-qsa-curve shaders
+.PHONY: all clean test test-sampler test-embedding test-ngram-deployment test-vulkan test-qsa-fleet test-gdn-fleet test-pipeline-decode-fleet test_stage bench-bc250-roofline test-bc250-roofline bench-bc250-qsa-curve test-bc250-qsa-curve test-fg-ledger test-fg-profile-analysis shaders
 all: flash-gordon
 
 flash-gordon: $(OBJ)
@@ -98,6 +98,15 @@ tests/test_bc250_qsa_curve: tests/test_bc250_qsa_curve.o src/bc250_qsa_curve.o s
 test-bc250-qsa-curve: tests/test_bc250_qsa_curve
 	./tests/test_bc250_qsa_curve
 
+tests/test_fg_ledger: tests/test_fg_ledger.c include/fg_ledger.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_fg_ledger.c -lm
+
+test-fg-ledger: tests/test_fg_ledger
+	./tests/test_fg_ledger
+
+test-fg-profile-analysis:
+	python3 -m unittest tools/test_analyze_fg_profile.py
+
 tests/test_hc_down_split: tests/test_hc_down_split.o src/vk.o src/quant.o src/q38_math.o src/ngram.o src/uring.o src/sha256.o src/q38_schema.o src/gguf.o src/util.o | shaders
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS) -lvulkan
 
@@ -160,6 +169,6 @@ test-pipeline-decode-fleet: tests/test_fg_vk tests/test_stage
 	done
 
 clean:
-	rm -f flash-gordon $(OBJ) $(DEP) tests/*.o tests/test_core tests/test_session tests/test_prefix tests/test_chat tests/test_chat_runtime tests/test_api tests/test_sampler tests/test_embedding tests/test_ngram_deployment tests/test_fg_vk tests/bench_bc250_roofline tests/test_bc250_roofline tests/bench_bc250_qsa_curve tests/test_bc250_qsa_curve tests/test_hc_down_split tests/test_model_load tests/test_qsa_model_load tests/test_tokenizer tests/test_fabric tests/test_pipeline tests/test_stage vulkan/*.spv
+	rm -f flash-gordon $(OBJ) $(DEP) tests/*.o tests/test_core tests/test_session tests/test_prefix tests/test_chat tests/test_chat_runtime tests/test_api tests/test_sampler tests/test_embedding tests/test_ngram_deployment tests/test_fg_vk tests/bench_bc250_roofline tests/test_bc250_roofline tests/bench_bc250_qsa_curve tests/test_bc250_qsa_curve tests/test_fg_ledger tests/test_hc_down_split tests/test_model_load tests/test_qsa_model_load tests/test_tokenizer tests/test_fabric tests/test_pipeline tests/test_stage vulkan/*.spv
 
 -include $(DEP)
