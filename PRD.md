@@ -1,229 +1,422 @@
-# Flash Gordon — Qwen3.8-Flash-Next BC250 Appliance PRD
+# Flash Gordon Expert-Parallel Recovery PRD
 
-## Status and handoff boundary
+## Authority and status
 
-Flash Gordon is a greenfield, Linux-only C17/Vulkan runtime specialized for the Unsloth Qwen3.8-Flash-Next `UD-Q4_K_XL` artifacts and the eight-blade BC250 topology at `192.0.2.42` through `192.0.2.49`.
+This is the authoritative architecture and delivery contract for Flash Gordon. It
+supersedes every earlier plan that permitted an eight-stage layer pipeline, stage-local
+decode or prefill, or a pipeline deployment profile.
 
-The implementation was originally committed at `430a250a2f43efa5ad451d22d930a9c9c07da1c0` (BC250 repository) and this PRD at `99e31edc50e51651f1dea3ab8ae95537d0c0f6f8`. Both were extracted into this standalone repository. The fleet has not been mutated.
+Flash Gordon is an expert-parallel inference appliance for Qwen3.8-Flash-Next on eight
+AMD BC250 blades. Pipeline parallelism is not a supported mode, fallback, experiment,
+qualification target, or future option in this repository.
 
-The local implementation and component-level qualifications are complete enough for the first real-weight fleet deployment. Full-model semantic parity and throughput are not yet proven because the 111 GB source artifacts are available only on `192.0.2.42`, to which the current Codex environment does not have SSH authentication.
+Recovery is forward-only from current `main` on `codex/expert-parallel-forward` in the
+root checkout. Recovery may add commits and merge reviewed branches. It may not rewrite
+history, revert commits, reset to an old tree, check out an old revision, cherry-pick an
+old implementation, or use worktrees.
+
+## Incident statement and evidence status
+
+The intended system kept the sequential common graph on the coordinator and fanned each
+layer's routed experts out to their owning blades. A separate pipeline runtime was later
+introduced. Pipeline-specific API, sampling, prefill, qualification, and promotion work
+was then presented as the production LKG even though the harness explicitly reported
+`execution_mode=pipeline`.
+
+That promotion violated the architecture. Its end-to-end throughput, TTFT, context-curve,
+and stage-service results are invalid as Flash Gordon qualification evidence. These labels
+may remain in immutable Git history but must be identified as invalidated experiments in
+the current tree:
+
+- `lkg-10.49tps-pipeline-decode`
+- `lkg-15.18tps-106.07prefill-p4`
+- Results derived from `/home/user/flash-gordon-pipeline-candidate`
+- Qualifications that required `execution_mode=pipeline`
+
+No historical tag will be deleted or moved. A forward commit will record the invalidation
+and prevent these artifacts from satisfying a current release gate. All prior fleet
+performance data is excluded from the new EP baseline. Component observations may inform
+test design, but every number used for prioritization, release, or public claims must be
+remeasured by the EP-only harness.
 
 ## Product objective
 
-Produce a fleet-testable Flash Gordon build that:
+Deliver one Qwen3.8-Flash-Next runtime that:
 
-- Consumes the existing official Unsloth Qwen3.8-Flash-Next `UD-Q4_K_XL` four-shard GGUF artifact.
-- Packs it into eight rank-local weight files plus the direct-I/O n-gram table and tokenizer.
-- Starts one coordinator on blade 42 and seven workers on blades 43–49.
-- Executes semantically correct batched text prefill and token decode across all 48 layers.
-- Keeps the qualified expert-parallel deployment available while a sealed eight-stage pipeline profile is implemented and qualified against the same semantic and API contracts.
-- In the pipeline profile, owns complete contiguous layer ranges per blade so common weights, routed and shared experts, GDN/QSA state, and execution stay local to the stage.
-- Reaches at least 10 tok/s raw single-stream decode, with 20 tok/s as the engineering target, before MTP or multiple concurrent sessions enter scope.
-- Uses every compute unit exposed by each blade's Vulkan driver. The runtime must not reject a blade merely because it exposes 24 versus 40 CUs; CU mode is telemetry and a benchmark label, not a correctness gate.
-- Preserves hard pack-time limits of 10.4 GiB persistent weights and 13.5 GiB accounted Vulkan residency per rank.
-- Fails closed on artifact, manifest, topology, protocol, session, rank, sequence, routing, truncation, checksum, direct-I/O, and allocation errors.
+- Runs the complete ordered 48-layer common graph on the coordinator.
+- Routes every layer's top-10 experts to their sealed owners.
+- Executes routed experts concurrently across participating blades.
+- Overlaps the coordinator's shared expert with routed experts where dependencies allow.
+- Validates and reduces all routed results before advancing to the next layer.
+- Supports batched prefill and raw decode through the native 262,144-token context.
+- Supports nonzero temperature, `top_k`, `top_p`, presence/frequency penalties, and
+  repetition penalty without full-vocabulary CPU readback.
+- Provides an OpenAI-compatible API suitable for Pi coding sessions, including tools,
+  structured content, transcript reuse, and context-sized completion budgets.
+- Fails closed on invalid topology, routing, protocol, artifacts, context, and sampling.
+- Measures the real EP critical path and cannot qualify another architecture through a
+  manifest, command switch, or benchmark wrapper.
 
-The immediate milestone is correct text prefill/decode and measured TPS on the real eight-blade fleet. HTTP serving, vision/video, and MTP remain later production milestones and must not be represented as working before their complete owned paths are implemented and qualified.
+Flash Gordon is a creative-studio appliance, not a generic inference-provider platform.
+Generic model abstractions, multi-tenant scheduling, and benchmark-only execution modes
+are out of scope unless they directly improve this model's correctness or single-session
+performance.
 
-## Non-negotiable engineering rules
+## Required architecture
 
-- Production implementations only. Do not add placeholder inference, fake success, stub kernels, minimal quant stand-ins, or simulated output.
-- q36 is prior art only. Copy and adapt useful internals into owned Flash Gordon source; never link, vendor, submodule, or treat q36 as an upstream runtime.
-- No worktrees, speculative branches, or competing parallel experiments. Use the current checkout.
-- Pipeline work must use one packed weight placement for both prefill and decode. Prefill throughput may not be purchased by regressing the deployed single-stream decode result.
-- Subagents may implement bounded, non-overlapping components, but the primary agent owns architecture, reviews every accepted diff, reruns the full suite, and oversees commits.
-- Preserve the specialized appliance design. Generic-model abstractions are out of scope unless they directly improve this model's correctness or TPS.
-- Prefer io_uring and fixed registered files/buffers on steady-state storage and fabric paths.
-- Do not add an artificial 24/40-CU startup gate. Vulkan should use all hardware exposed by the driver.
-- Do not evict a working Ornith deployment until the exact fleet action is ready to use the released GPU memory immediately.
+### Coordinator common graph
 
-## Canonical artifacts
+Rank 0 owns and executes all 48 ordered transformer layers:
 
-Repository: `unsloth/Qwen3.8-Flash-Next-GGUF`, directory `UD-Q4_K_XL`.
+1. Token embedding and PLE/n-gram injection.
+2. Hyperconnection attention read.
+3. GDN or QSA attention-family work.
+4. Hyperconnection attention write.
+5. Hyperconnection FFN read.
+6. Router logits and deterministic top-10 selection.
+7. Shared expert.
+8. Expert fan-out, collection, weighted reduction, and FFN write.
+9. Final norm and output sampling, whether the sealed output bundle remains on a helper
+   rank or becomes coordinator-resident in a later measured change.
 
-| Shard | Bytes | SHA-256 |
-|---|---:|---|
-| `00001-of-00004` | 10,946,624 | `4448186216b3af4cc558bbce2c3213f01608f8f8b2e5267a9767971dd3ec8082` |
-| `00002-of-00004` | 49,859,583,136 | `3f342f1c1580473f1ee94ddd5b28206e8c07a70fa1a366f59d1d6c922919a6c9` |
-| `00003-of-00004` | 49,376,141,504 | `56758f40269cad5cd9b0d3d6fbae0f40f6d5be6de49e4ab392dbe83157d9cbd3` |
-| `00004-of-00004` | 12,087,983,520 | `753bda48b98ba4f1636134a90a967de1b2d3908a236c026e464777342e53510a` |
+Layer dependencies remain sequential. The coordinator never sends a generic hidden-state
+boundary to another blade so that blade can execute a contiguous layer range.
 
-`flash-gordon pack` is bound to these four ordered sizes and hashes. A dry run validates canonical sizes and the complete GGUF schema while intentionally deferring payload hashes; a full pack hashes every source shard and fails closed on any mismatch.
+### Expert workers
 
-The real schema contains 1,224 tensors. Splitting each of the 144 routed-expert tensors into four rank-local segments yields 1,656 packed model records. The full pack adds one external tokenizer record.
+Ranks 1 through 7, plus rank 0 where sealed ownership requires it, provide expert service
+rather than transformer-stage service. At every layer:
 
-## Implemented architecture
+- The top-10 route is partitioned by the manifest's `(layer, expert) -> owner` map.
+- One bounded request per participating owner contains only the required activation and
+  selected expert slots.
+- Independent owners execute concurrently.
+- Responses identify request, session, token/prefill range, layer, experts, slots,
+  quantization contract, and payload length.
+- The coordinator rejects missing, duplicate, stale, misrouted, truncated, or non-finite
+  results before advancing.
+- Every routed expert is reduced exactly once using its model-defined gate.
 
-### Artifact and loading path
+Workers must not own contiguous transformer layers, execute attention as stages, receive
+stage credits, or forward hidden states to another worker.
 
-- Four-shard GGUF parser with exact Qwen3.8 tensor-name, shape, and quant-type validation.
-- Byte-preserving Q4/Q5/Q8/IQ4_NL repacker.
-- Rotating four-rank groups `{L, L+1, L+3, L+5} mod 8`.
-- Exactly 128 of 512 experts per participating rank, with round-robin or frequency-profile assignment under equal residency.
-- Common tensors owned by `L mod 8`; token embedding on rank 0; output bundle on rank 4; n-gram tensor retained as a rank-0 local-NVMe artifact.
-- All segments and artifacts are 4 KiB aligned.
-- Rank weights load through `O_DIRECT` and io_uring registered files/buffers directly into the final mapped Vulkan arena, then each tensor SHA-256 is verified.
-- Tokenizer and n-gram artifacts use sealed direct-I/O paths.
+### Placement
 
-### Text execution
+The packer seals one owner for every `(layer, expert)` pair while respecting persistent
+and transient memory limits. Placement is prompt-independent. Oracle maps learned from a
+qualification prompt are diagnostic-only and can never qualify or ship.
 
-- Owned Vulkan kernels for grouped RMS, hyperconnection gating/finalization, GDN, QSA, PLE, Q8/Q5 expert matrices, Q8_K activations, IQ4_NL n-gram dequantization, embedding, routing reduction, and output projection.
-- Durable GDN recurrent state and QSA Q8-key/Q4-value/Q8-index state.
-- Batched QSA prefill commits causally in token order without repeating the decode API.
-- Batched n-gram lookup computes every prompt position, sorts/deduplicates/coalesces 4–8 KiB reads, uses a fixed 64 MiB cache, and performs one Vulkan IQ4_NL dequantization dispatch per microbatch.
-- Prefill is a true microbatch graph, not decode repeated over prompt tokens.
-- The coordinator holds the replicated common path and executes all 48 dependent layers for prefill and decode.
-- At every layer, the router's top-10 experts are partitioned by expert owner and dispatched concurrently. Coordinator shared-expert work overlaps routed-expert execution; all routed results are validated and reduced before the next layer begins.
-- Layer 1 alone carries the n-gram injection. Wire validation rejects missing or misplaced n-gram data.
-- Protocol version is 5 so incompatible coordinator and expert-worker binaries cannot join silently.
+The initial recovery retains balanced rotating ownership unless an EP trace proves a
+better prompt-independent map. A placement change requires identical routing semantics,
+a complete memory ledger, representative-corpus evidence, and no context or route-shape
+regression.
 
-### Current text deployment profile
+### QSA and native context
 
-A sealed text deployment requires text weights, n-gram tensor, and tokenizer flags. Vision and MTP are separately flagged future overlays and are not required to start the text evaluation profile. `serve` deliberately fails closed because its owned HTTP request path is not implemented. `eval` is the first-fleet correctness and performance entrypoint.
+QSA is part of the coordinator's ordered common graph. Durable records may be stored or
+served by designated blades, but those blades are page owners, not transformer stages.
+Page fetch, cache, selection, and attention must be causally correct and measured.
 
-## Verified evidence
+Native context means 262,144 real accumulated tokens with all required records and
+positions. It may not mean a smaller hidden resident window, repeated filler, skipped
+records, undeclared approximate selection, or precomputed state.
 
-The following completed successfully from a clean build under WSL/Linux:
+### Prefill
 
-```sh
-make clean
-make shaders
-make -j2
-make test
-make test-vulkan
-```
+Prefill is a true token-batched EP graph:
 
-Evidence:
+- The coordinator executes common projections in token tiles.
+- Router selection is computed for every token.
+- Routed `(token, expert)` pairs are grouped by owner and expert.
+- Owners process grouped expert batches concurrently.
+- Results return in bounded grouped payloads and reduce in token order.
+- GDN scans, QSA commits, n-gram injection, and hyperconnections preserve causality.
 
-- C17 build passes with `-Wall -Wextra -Wpedantic -Werror`.
-- Core protocol, topology, quant, state, manifest, corruption, truncation, scratch-ledger, and pack tests pass.
-- Production-dimension CPU/reference-versus-Vulkan kernel oracles pass on llvmpipe.
-- Fixed-buffer `O_DIRECT` to final Vulkan arena test passes.
-- Sealed direct-I/O tokenizer test passes.
-- Eight-process dual-channel TCP/io_uring mesh test passes.
-- The expert-parallel trace validator accepts a complete 48-layer coordinator/worker artifact and rejects corrupted expert-slot coverage.
-- Real public shard headers were range-fetched into exact-size sparse fixtures and parsed as the actual 1,224-tensor schema.
-- Canonical dry-run packing produces 1,656 model records and the following memory ledger:
+Prefill must not run decode once per prompt token. It must not distribute contiguous
+layers across blades to manufacture aggregate throughput.
 
-| Rank | Persistent GiB | Accounted residency GiB | NVMe state file GiB |
-|---:|---:|---:|---:|
-| 0 | 9.967 | 11.298 | 0 |
-| 1 | 9.492 | 10.948 | 0 |
-| 2 | 9.448 | 10.778 | 0 |
-| 3 | 9.474 | 11.657 | 6.000 |
-| 4 | 10.034 | 11.365 | 0 |
-| 5 | 9.448 | 10.778 | 0 |
-| 6 | 9.399 | 10.730 | 0 |
-| 7 | 9.596 | 11.779 | 6.000 |
+### Decode
 
-All ranks are below the 10.4 GiB persistent and 13.5 GiB accounted-residency limits.
+Decode carries one autoregressive token through the coordinator's complete common graph.
+At each MoE layer, otherwise-idle blades become useful through concurrent expert fan-out.
+The critical path is common-graph time plus the maximum participating owner time, not the
+sum of eight transformer stages. MTP/speculation is out of scope until raw EP decode clears
+its gate.
 
-## First-fleet critical path
+## Pipeline-parallel removal contract
 
-Do these in order. Do not claim semantic completion merely because startup succeeds.
+Pipeline parallelism is removed, not hidden behind a feature flag.
 
-1. Push the standalone Flash Gordon repository to its own `origin` after reviewing the public diff for secrets and unintended files.
-2. On blade 42, locate the four existing GGUF shards under `/models` and run the same clean build/test suite. This build/test step should not require evicting Ornith unless its Vulkan allocation prevents the small kernel qualification suite.
-3. Run `pack --dry-run` against the real shard paths. Compare the printed ledger to the table above.
-4. Confirm at least roughly 110 GB of additional free NVMe space for the packed artifacts, plus 6 GB QSA state capacity on ranks 3 and 7. Do not delete or overwrite the source weights.
-5. Evict Ornith only when ready to start the full pack/load sequence immediately.
-6. Run the full pack. This reads and hashes all four source shards, writes `rank-00.fgw` through `rank-07.fgw`, writes `ngram.iq4nl`, writes `tokenizer/tokenizer.fgt`, and seals `manifest.fgm`.
-7. Preserve the manifest, tokenizer, and rank-specific file on every destination. Rank 0 additionally requires `ngram.iq4nl`; ranks 3 and 7 require local space for their QSA session files.
-8. Build the exact same Git revision on all eight blades. Do not mix protocol versions or manifests.
-9. Start `flash-gordon rank --manifest ... --rank N` on blades 43–49 for ranks 1–7. Rank 0 is the `eval` coordinator on blade 42; do not start a separate rank-0 worker for the same session.
-10. Run a one-token greedy text evaluation on rank 0. Capture every rank log, device name, load time, manifest hash, first token ID, first-token logit, and failure text.
-11. Compare tokenizer IDs, first-token logits, and greedy continuation with the current llama.cpp/Qwen reference using the same GGUF, prompt bytes, BOS behavior, greedy sampling, and context position.
-12. If parity passes, run short decode, then 32K prefill. Only after correctness is stable should optimization and TPS qualification begin.
+### Runtime and public surface
 
-## Required reference-parity vectors
+The forward implementation removes:
 
-Use at least these categories, recording raw prompt bytes, token IDs, first-token logit/token, and greedy continuation:
+- `FG_EXECUTION_PIPELINE` and every runtime branch selected by it.
+- `fg_pipeline_*`, `fg_pipeline_runtime_*`, and `fg_stage_*` model orchestration APIs.
+- Contiguous layer-owner execution as a deployment mode.
+- Pipeline activation, credit, result, drain, drained, and abort messages.
+- Pipeline slots, frontiers, admission, stage state, and terminal forwarding.
+- Pipeline CLI profiles, pack modes, API branches, tests, and fleet targets.
 
-- ASCII factual prompt.
-- Unicode and multi-byte punctuation.
-- Chat-template prompt with system/user/assistant delimiters.
-- Prompt crossing multiple 256-token microbatches.
-- EOS-separated content to exercise n-gram segment reset.
-- A prompt long enough to exercise both GDN and QSA durable history across every layer owner.
+The expected deletion inventory, subject to a dependency audit, is:
 
-For the first investigation, compare layer outputs at layers 0, 1, 3, 7, 8, 40, and 47 if the final logits diverge. Do not paper over differences with loose output-text comparison; isolate tokenizer, embedding, GR gates, recurrent/QSA state, routing, expert output, PLE, and output projection in that order.
+- `include/fg_pipeline.h`, `include/fg_pipeline_runtime.h`, `include/fg_stage.h`
+- `src/pipeline.c`, `src/pipeline_runtime.c`, `src/stage.c`
+- `tests/test_pipeline.c`, `tests/test_stage.c`, `tests/pipeline_manifest_fixture.h`
+- `tools/pipeline-canonical-dry-run.sh`
 
-## Known remaining risks
+The build must stop compiling or exposing these components.
 
-- Full source-payload hashing, full packing, and loading of the real artifacts have not run in this environment.
-- End-to-end model logits and greedy continuations have not yet been compared with llama.cpp on the real weights.
-- Vulkan qualification here used llvmpipe, not RADV/GFX1013. Shader correctness and allocation behavior must be confirmed on BC250.
-- Decode and prefill transport are direct, but steady-state paths still contain some per-operation heap allocations. Remove these using bounded startup arenas after correctness is established and before final TPS qualification.
-- The manifest records `required_cu=24` as the original qualification profile, but startup intentionally does not gate on 24 versus 40. Vulkan uses all CUs exposed by the driver.
-- The current prefill coordinator submits microbatches sequentially. The manifest records a window of two, but multi-microbatch overlap is not yet realized end-to-end. This is a likely limiter for the 250–300 tok/s target.
-- The current coordinator/expert-parallel topology is retained only as the qualified fallback while the separately packed `pipeline-8stage-262k` profile is developed. Existing packs must never be reinterpreted as pipeline packs.
-- `bench` currently prints the qualification matrix but does not execute the full benchmark sweep.
-- HTTP serving, vision/video preprocessing, vision overlay loading, MTP, 1M YaRN qualification, and the 24-hour mixed soak remain unfinished product milestones.
-- The one-time packer uses buffered stdio for tensor copying, although runtime loading and steady-state n-gram/session I/O use io_uring. This is not an inference TPS limiter but can be replaced later.
+### Manifest and protocol migration
 
-## Performance contract after semantic parity
+New manifests encode one fixed architecture identity: Expert Parallel. They offer no
+execution-mode choice. The reader may retain the minimum code needed to identify an old
+pipeline manifest, but must reject it with a stable error such as `retired pipeline
+manifest is unsupported; repack for expert-parallel`. It must never reinterpret old
+weight placement.
 
-Canonical measurements use three warm repetitions and the median. Pipeline
-promotion additionally uses paired baseline/candidate decode runs and rejects a
-p95 regression.
+Retired message numbers remain reserved and produce a protocol error if received. Their
+payload types, codecs, and handlers are deleted.
 
-| Workload | Healthy gate | Optimization target |
+### Kernel salvage
+
+A mathematically useful GPU kernel is not deleted solely because it arrived with pipeline
+work. Each is classified:
+
+- Keep and rename it if it serves EP model math, has a reference oracle, and contains no
+  stage or contiguous-layer assumption.
+- Adapt it to EP when it improves coordinator token tiling or grouped expert service.
+- Delete it if its only consumer is stage transport, ownership, credit, or termination.
+
+No dead shader, public function, or compatibility wrapper remains. Every retained kernel
+has an EP-oriented name, caller, and test.
+
+### Static anti-regression gate
+
+A source-tree test fails if production/build/tool/test code reintroduces the removed
+files, `FG_EXECUTION_PIPELINE`, `FG_MSG_PIPELINE_*`, model-execution `fg_pipeline_*` or
+`fg_stage_*` symbols, or a contiguous-layer pack profile. Incident documents may name the
+retired design, and manifest parsing may contain one stable rejection message. Generic
+Vulkan compute-pipeline terminology is allowed.
+
+## User-visible feature preservation
+
+The EP runtime must own and test:
+
+- GPU-bounded vocabulary selection and temperature-zero greedy generation.
+- Finite positive temperature, `top_k`, `top_p`, and their interaction order.
+- Presence, frequency, and repetition penalties over accepted history.
+- Deterministic seeded tests and bounded production RNG.
+- Supported string/structured content and system/developer/user/assistant/tool roles.
+- Assistant tool calls, tool-call IDs, and tool results.
+- Prefix reuse without divergent or unevaluated transcript acceptance.
+- Completion budgets up to remaining native capacity.
+- OpenAI-compatible validation errors.
+
+Tests must instantiate an EP manifest/runtime fixture. A mode-neutral parser test does not
+prove that a feature reaches EP inference.
+
+## Correctness contract
+
+Qwen's architecture and processor behavior are semantic authority. llama.cpp's Qwen code
+is prior art and an oracle, not permission to alter semantics.
+
+Required parity evidence includes exact tokenizer IDs; checkpoints at layers 0, 1, 3, 7,
+8, 15, 31, 40, and 47; GDN/QSA state transitions; router logits and ordered top-10 routes;
+per-expert outputs; reduced MoE output; final logits; sampled-distribution checks; prefix
+reuse/full recompute equivalence; and cold/append prefill equivalence. Tolerances are
+specified per operation. Text similarity alone is not a gate.
+
+## Observability and EP conformance
+
+Every request has a stable correlation ID. Measured records include coordinator GPU time
+by layer/family, routing, fan-out timestamps, anonymous route counts, worker queue/GPU/
+response time, shared/routed overlap, collection/reduction, QSA selection/cache/page
+traffic, n-gram work, sampling, correlated fabric bytes, TTFT, prefill TPS, and raw decode
+TPS.
+
+An EP conformance trace proves:
+
+- Rank 0 enters and exits all 48 ordered layers.
+- Every routed slot has exactly one sealed owner and returned result.
+- Independent owners overlap when a route spans owners.
+- Shared/routed work overlaps when enabled.
+- Workers execute experts and never transformer stages.
+- No retired message type appears.
+
+Crashes leave request ID, last completed layer, outstanding owners, transport state,
+Vulkan result, and exit signal in durable logs. Core dumps supplement structured logs.
+
+## Measurement and anti-reward-hacking rules
+
+No throughput is valid until EP conformance passes. Representative coding/chat corpora and
+append-only sessions are required. Repeated filler, prompt-trained placement, cached
+answers, skipped operations, reduced dimensions/expert count, truncated attention, hidden
+context caps, state snapshots, and synthetic-only product evidence are prohibited.
+
+Kernel benchmarks are labeled component measurements and never model TPS, fleet TPS, TTFT,
+or release results. Every performance report includes commit/dirty state, artifact and EP
+identity, eight device identities/CUs, corpus and token counts, all repetitions, median,
+p95, failures, tokenizer/prefill/TTFT/decode separation, useful-work/idle accounting, and
+all context points: empty, 2K, 4K, 8K, 16K, 32K, 64K, 128K, 192K, 256K, and 262K.
+
+Discontinuities trigger investigation and are never excluded from an average. No public
+claim comes from an unmerged branch, an instrumented run represented as uninstrumented,
+or a candidate failing semantic gates.
+
+## Performance requirements
+
+These are requirements, not present claims:
+
+| Workload | Minimum | Directional target |
 |---|---:|---:|
-| 4K cold prefill, 24 CU | 200 tok/s | 250-300 tok/s |
-| Raw single-stream decode | 10.056245 tok/s and no p95 regression | 11-12 tok/s before MTP |
-| Filled 1M sustained decode | 20 tok/s | 25+ tok/s |
+| 4K cold graph prefill | 250 tok/s | 600 tok/s |
+| Raw single-stream 4K decode before MTP | 50 tok/s | 100 tok/s |
+| Native 262K prefill | Complete and maximize | Derive from EP roofline |
+| Decode context curve | No unexplained cliff | Smooth decline through 262K |
+| OpenAI/Pi session | Representative coding session completes | Daily-driver stability |
 
-Report tokenizer time separately from graph prefill. Graph prefill starts at the
-first stage submission and ends when the terminal stage returns final prompt
-logits. Report cold fill and extension at 4K, 8K, 16K, 32K, 64K, 128K, the
-131,072-token segment boundary, 192K, 256K, and 262K. Also report end-to-end time
-to first streamed token.
+A lower engineering baseline may be recorded honestly but cannot replace these gates.
+Before optimization, construct a first-principles budget from sustainable bandwidth,
+quantized matrix throughput, bytes/operations for common and selected-expert work, maximum
+concurrent owner time, correlated fabric cost, QSA context work, and required submissions.
+Comparisons with llama.cpp validate ambition but do not define the fleet ceiling.
 
-Optimization order after correctness:
+## Forward recovery plan and commit boundaries
 
-1. Treat upstream llama.cpp `qwen4exp` operation ordering as the semantic authority and retain current layer probes as parity oracles.
-2. Add a versioned, separately packed eight-stage profile; do not mutate or reinterpret the qualified expert-parallel artifact.
-3. Establish a correct complete-stage vertical slice before replacing kernels.
-4. Replace decode-shaped prefill work with tiled common matrix multiplication, GPU expert-major routing, grouped expert matrix multiplication, causal GDN scan, and resident batched QSA.
-5. Compile a fixed `T=1` program over the same stage-local weights and prove decode median and p95 non-regression.
-6. Realize two bounded activation slots per stage and tune 32/64/128/256-token chunks from whole-fleet results.
-7. Promote only after semantic, API/tool, 4K prefill, decode, context-curve, fingerprint, and rollback gates all pass.
+Every leg is a reviewable forward commit that compiles and passes relevant local tests.
+There is no fleet computation or deployment during R0-R5.
 
-## Useful commands
+### R0 — Specification and evidence invalidation
 
-From the repository root on Linux:
+- Install this PRD as the single architecture authority.
+- Add an invalid-results ledger and README warning.
+- Separate last verified EP evidence from invalid pipeline evidence.
+- Change no runtime behavior.
 
-```sh
-make clean
-make shaders
-make -j2
-make test
-make test-vulkan
-```
+Exit: the current tree cannot plausibly describe pipeline mode as a product objective.
 
-Canonical dry run, substituting the actual shard directory:
+### R1 — Architecture lock and manifest migration
 
-```sh
-./flash-gordon pack --dry-run --output /models/flash-gordon-q38 \
-  --source /models/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf \
-  --source /models/Qwen3.8-Flash-Next-UD-Q4_K_XL-00002-of-00004.gguf \
-  --source /models/Qwen3.8-Flash-Next-UD-Q4_K_XL-00003-of-00004.gguf \
-  --source /models/Qwen3.8-Flash-Next-UD-Q4_K_XL-00004-of-00004.gguf
-```
+- Make EP the sole new-manifest architecture.
+- Remove pipeline profile creation/selection.
+- Reject historical pipeline manifests without reinterpretation.
+- Make architecture reporting constant and explicit.
+- Add manifest and CLI regression tests.
 
-Remove `--dry-run` only after confirming destination space and exact source paths.
+Exit: no command creates or launches a new pipeline deployment.
 
-## Definition of done for the immediate milestone
+### R2 — Remove transport and orchestration
 
-The immediate fleet milestone is complete only when all of the following are evidenced:
+- Delete stage/pipeline runtime files, public headers, tests, and build targets.
+- Remove retired protocol codecs/handlers while reserving numeric IDs.
+- Remove contiguous layer-owner branches and pipeline-only repository tools.
+- Add the anti-regression scan.
 
-- The four real sources pass canonical full SHA-256 verification.
-- The full pack is written and every rank artifact passes sealed load verification.
-- All eight participating processes join protocol 5 with the identical manifest hash.
-- A real prompt completes batched prefill and at least one decode step without fallback or simulated output.
-- Tokenization, first logits, first token, and greedy continuation match the accepted reference within explicitly recorded numerical tolerances.
-- Rank failure, wrong manifest, corrupted artifact, and truncated/stale frame tests fail closed on the fleet.
-- Actual per-rank memory use remains within the sealed caps.
-- Initial 32K prefill and decode TPS are recorded, even if further optimization is required.
+Exit: the tree builds with no pipeline execution implementation or selectable path.
 
-Do not mark the broader appliance finished at this point; HTTP, multimodal, MTP, long-context, benchmark automation, performance gates, and soak qualification remain subsequent milestones.
+### R3 — EP runtime closure
+
+- Repair ownership assumptions exposed by R2.
+- Make coordinator/worker construction unconditionally EP-shaped.
+- Verify top-10 fan-out, concurrent owners, shared overlap, and exact reduction.
+- Salvage useful tiled/grouped kernels behind EP-oriented interfaces.
+- Add eight-process synthetic EP success and failure tests.
+
+Exit: local integration proves EP is the sole topology.
+
+### R4 — EP OpenAI and sampler closure
+
+- Bind API, chat, tool, history, budget, and sampling tests to EP fixtures.
+- Add a Pi-shaped multi-turn/tool transcript integration test.
+- Verify GPU sampling against a CPU reference without full-vocabulary readback.
+
+Exit: every user-visible feature previously exercised on the wrong runtime is proven on EP.
+
+### R5 — EP measurement suite
+
+- Add correlated EP critical-path tracing and representative context collectors.
+- Assert architecture/routing conformance before recording throughput.
+- Emit raw machine-readable records and deterministic summaries.
+- Keep measurement and promotion as separate operations.
+
+Exit: the suite attributes coordinator, expert, QSA, n-gram, fabric, and synchronization
+cost without deploying or mutating the operational service.
+
+### Mandatory manual pause
+
+After R0-R5, stop for user review of the complete diff and local test output. Code review
+does not authorize fleet action.
+
+### R6 — Isolated manual fleet correctness
+
+Only with explicit direction: build the exact commit on all blades in an isolated location,
+leave the operational pack untouched until the test window, start one EP coordinator and
+seven workers, prove conformance before evaluation, run bounded parity/API/Pi checks,
+collect failure evidence, stop the candidate, and restore normal service manually.
+
+### R7 — Valid EP baseline
+
+In a separate approved window: run bounded 4K prefill and short decode, then the context
+curve only after correctness and tracing pass. Produce the first valid EP baseline and
+first-principles budget. Select one bottleneck from evidence.
+
+### R8+ — Evidence-driven optimization
+
+Possible families are tiled coordinator projections, grouped EP prefill, QSA selection and
+locality, expert kernels, fabric overlap, and submission reduction. Their order is not
+fixed before R7. Each commit requires reference parity, EP conformance, affected curve
+non-regression, median/p95 improvement, and no workload or semantic change.
+
+## Local test matrix
+
+The recovery branch covers:
+
+1. Clean warnings-as-errors build and shader registration.
+2. EP manifest creation/load and old-pipeline rejection/corruption/truncation.
+3. EP protocol and retired-message rejection.
+4. Complete `(layer, expert)` ownership and top-10/gate parity.
+5. Expert success, timeout, duplicate, stale, wrong-owner, and partial failure.
+6. Concurrent fan-out and deterministic reduction.
+7. GDN, QSA, hyperconnection, PLE, MoE prefill/decode parity.
+8. Sampling, penalties, OpenAI messages/streaming/tools/history/errors.
+9. EP trace validation, anti-pipeline scan, and injected crash-report completeness.
+
+CPU references, software Vulkan, loopback processes, and small fixtures are allowed for
+local correctness. Their timings are never fleet evidence.
+
+## Deployment and promotion policy
+
+Fleet actions are manual and user-observed. Promotion requires one evidence bundle with a
+clean identical commit on all blades, EP artifact identity, complete conformance trace,
+numerical/API parity, representative 4K prefill and raw decode, the context curve required
+for the claim, per-rank memory/health, zero unexplained failures, and explicit user approval.
+
+The promotion tool independently validates evidence instead of trusting a filename or
+mutable summary. It refuses every retired pipeline artifact.
+
+## Multimodal and MTP boundary
+
+Vision/video and MTP do not begin until text EP is the sole architecture, passes Pi-shaped
+sessions, and has a trustworthy curve. Multimodal extends the EP contract and cannot
+reintroduce contiguous stages. MTP always reports raw base decode separately.
+
+## Definition of done
+
+Recovery is complete only when:
+
+- This architecture contract is merged into current `main`.
+- Pipeline/stage runtime, profiles, protocol handlers, tests, and tools are absent.
+- Old pipeline manifests fail closed and cannot promote.
+- The anti-regression gate prevents reintroduction.
+- The sole runtime executes all common layers on rank 0 and concurrently fans experts to
+  sealed owners.
+- Sampling, OpenAI tools/history, and native context are proven on EP locally and on fleet.
+- A representative Pi coding session completes without workaround.
+- The first valid EP context curve and critical-path budget are archived.
+- Reports use only EP-conformant evidence and retain every curve point.
+- The user manually approves candidate, merge, and promotion.
+
+Correctness below required performance is an honest intermediate milestone, not completion.
+Meeting a TPS number with the wrong architecture, reduced work, or selective harness is
+failure.
