@@ -19,6 +19,19 @@ tests/test_hc_down_split
 tests/test_model_load
 tests/test_tokenizer
 tests/test_fabric
+tests/test_prefix
+tests/test_chat_runtime
+tests/test_embedding
+tests/test_ngram_deployment
+tests/test_pipeline
+tests/test_bc250_roofline
+tests/bench_bc250_roofline
+tests/test_bc250_qsa_curve
+tests/bench_bc250_qsa_curve
+tests/test_fg_ledger
+
+# Python test bytecode
+tools/__pycache__/
 
 # Compiled SPIR-V shaders
 vulkan/*.spv
