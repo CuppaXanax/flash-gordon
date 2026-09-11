@@ -804,8 +804,7 @@ fg_status fg_qsa_session_decode(fg_qsa_session *s,uint32_t layer,uint32_t token,
     if(trace)t_commit=qsa_now_ms();
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"qsa_output",err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,s->output,ow,s->attention,6144u,2560u,1u,1.0f,err);
-    if(status==FG_OK)status=fg_qsa_submit_host_reads(vk,err);
-    else if(fg_vk_batch_active(vk)){fg_error ignored={0};fg_vk_abort(vk,&ignored);}
+    if(status!=FG_OK&&fg_vk_batch_active(vk)){fg_error ignored={0};fg_vk_abort(vk,&ignored);}
     if(trace)fprintf(stderr,"QSA_TRACE layer=%u token=%u status=%d proj_ms=%.3f commit_attend_ms=%.3f out_ms=%.3f total_ms=%.3f\n",layer,token,(int)status,t_proj-t0,t_commit-t_proj,qsa_now_ms()-t_commit,qsa_now_ms()-t0);
     if(status==FG_OK){*output=s->output;}return status;
 }
@@ -874,7 +873,7 @@ static fg_status select_prefill_tile(fg_qsa_session *s,uint32_t slot,
     }
     uint32_t sides[FG_QSA_PREFILL_QUERY_TILE]={0};
     for(uint32_t q=0;status==FG_OK&&q<queries;q++){
-        uint32_t count=blocks,side=0;
+        uint32_t count=(first_token+first_query+q+1u)/4u,side=0;
         do{
             uint32_t next=0;
             status=fg_vk_topk_reduce(vk,s->tile_scores[q][side^1u],s->tile_ids[q][side^1u],

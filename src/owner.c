@@ -596,7 +596,6 @@ fg_status fg_owner_decode_layer(fg_owner_executor *e,uint32_t layer,uint32_t tok
     fg_status status=fg_vk_profile_active(vk)?fg_vk_profile_set_scope(vk,"gr_attn_read",err):FG_OK;if(status==FG_OK)status=fg_vk_begin(vk,err);if(status==FG_OK){status=fg_owner_gr_read(e,layer,false,layer_input,&mixed,&residual,&injection,err);}double t_gr1=ts_ms();
     if(status==FG_OK&&(layer&3u)==3u){
         status=fg_owner_qsa_decode(e,layer,token,position,mixed,&block,err);
-        if(status==FG_OK)status=fg_vk_begin(vk,err);
     }else if(status==FG_OK)
         status=fg_owner_gdn_decode(e,layer,mixed,&block,err);
     double t_attn=ts_ms();
@@ -648,9 +647,8 @@ fg_status fg_owner_decode_layer_async(fg_owner_executor *e,uint32_t layer,uint32
     if(status==FG_OK){status=fg_owner_gr_read(e,layer,false,layer_input,&mixed,&residual,&injection,err);}
     bool remote_qsa=(layer&3u)==3u&&qsa_dispatch;
     if(status==FG_OK&&remote_qsa){status=finish_batch(vk,status,err);if(status==FG_OK)status=qsa_dispatch(qsa_context,layer,token,position,mixed,&block,err);if(status==FG_OK)status=fg_vk_begin(vk,err);}
-    else if(status==FG_OK&&(layer&3u)==3u){
+    else     if(status==FG_OK&&(layer&3u)==3u){
         status=fg_owner_qsa_decode(e,layer,token,position,mixed,&block,err);
-        if(status==FG_OK)status=fg_vk_begin(vk,err);
     }else if(status==FG_OK)status=fg_owner_gdn_decode(e,layer,mixed,&block,err);
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_attn_write",err);
     if(status==FG_OK){status=fg_owner_gr_write(e,residual,block,injection,&after_attention,err);}
