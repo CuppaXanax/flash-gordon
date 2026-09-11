@@ -27,6 +27,9 @@ struct fg_qsa_session {
     fg_vk_tensor *raw_index_query,*raw_index_key,*index_query;
     fg_vk_tensor *key_q8,*value_q4,*index_key_q8;
     fg_vk_tensor *scores[2],*ids[2],*selected_records,*attention,*output;
+    fg_vk_tensor *tile_scores[FG_QSA_PREFILL_QUERY_TILE][2];
+    fg_vk_tensor *tile_ids[FG_QSA_PREFILL_QUERY_TILE][2];
+    fg_vk_tensor *tile_records[FG_QSA_PREFILL_QUERY_TILE];
     fg_vk_tensor *position_view,*token_position_view,*index_query_view,*query_view,*gate_view;
     fg_vk_tensor *attention_view,*key_q8_view,*value_q4_view,*index_key_q8_view;
     uint8_t *read_records;
@@ -34,7 +37,6 @@ struct fg_qsa_session {
     fg_qsa_page_fetch_fn fetch_pages;
     void *fetch_opaque;
     fg_qsa_locality *locality;
-    bool resident;
 };
 
 static fg_status make_tensor(fg_qsa_session *s,uint64_t bytes,fg_vk_tensor **out,fg_error *err){return fg_vk_tensor_create(fg_model_vk(s->model),bytes,out,err);}
@@ -189,7 +191,8 @@ static fg_status create_attention_views(fg_qsa_session *s,fg_vk_tensor *scratch,
 
 static fg_status create_selection_views(fg_qsa_session *s,fg_vk_tensor *scratch,
                                          uint32_t batch_size,fg_error *err){
-    uint64_t blocks=s->max_blocks,score_bytes=blocks*sizeof(uint32_t);
+    uint64_t queries=fg_qsa_query_tile_size(batch_size);
+    uint64_t blocks=s->max_blocks,score_bytes=queries*blocks*sizeof(uint32_t);
     uint64_t offset=fg_align_up_u64(fg_qsa_attention_scratch_bytes(batch_size),
                                     FG_ALIGNMENT);
     fg_vk_tensor **scores[]={&s->scores[0],&s->scores[1],
@@ -200,34 +203,9 @@ static fg_status create_selection_views(fg_qsa_session *s,fg_vk_tensor *scratch,
         offset=fg_align_up_u64(offset+score_bytes,FG_ALIGNMENT);
     }
     return fg_vk_tensor_view(scratch,offset,
-                             (uint64_t)FG_QSA_SELECTED_TOKENS*
+                             queries*FG_QSA_SELECTED_TOKENS*
                                  FG_Q38_QSA_TOKEN_RECORD_BYTES,
                              &s->selected_records,err);
-}
-
-static fg_status create_resident_selection_views(fg_qsa_session *s,
-                                                  fg_vk_tensor *scratch,
-                                                  uint32_t batch_size,
-                                                  fg_error *err){
-    uint64_t entries=fg_qsa_resident_candidate_entries(s->max_context,batch_size);
-    uint64_t bytes=entries*sizeof(uint32_t);
-    uint64_t offset=fg_align_up_u64(fg_qsa_attention_scratch_bytes(batch_size),
-                                    FG_ALIGNMENT);
-    fg_vk_tensor **fields[]={&s->scores[0],&s->ids[0],&s->scores[1],&s->ids[1]};
-    for(uint32_t i=0;i<4u;i++){
-        fg_status status=fg_vk_tensor_view(scratch,offset,bytes,fields[i],err);
-        if(status!=FG_OK)return status;
-        offset=fg_align_up_u64(offset+bytes,FG_ALIGNMENT);
-    }
-    uint64_t required=fg_align_up_u64(fg_qsa_attention_scratch_bytes(batch_size),
-                                      FG_ALIGNMENT)+
-        fg_qsa_resident_selection_scratch_bytes(s->max_context,batch_size);
-    if(offset!=required||required>fg_vk_tensor_bytes(scratch)){
-        fg_error_set(err,FG_ERR_MISMATCH,
-                     "resident QSA shared selection scratch geometry mismatch");
-        return FG_ERR_MISMATCH;
-    }
-    return FG_OK;
 }
 
 static fg_status ensure_read_records(fg_qsa_session *s,fg_error *err){
@@ -331,14 +309,13 @@ static fg_status restore_state(fg_qsa_session *s,fg_error *err){
 
 fg_status fg_qsa_session_open(fg_qsa_session **out,fg_model *model,const char *path,bool create,fg_error *err){
     if(!out||!model||!path){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA session arguments");return FG_ERR_ARGUMENT;}*out=NULL;const fg_manifest *manifest=fg_model_manifest(model);uint32_t rank=fg_model_rank(model);fg_qsa_session *s=calloc(1,sizeof(*s));if(!s){fg_error_set(err,FG_ERR_OOM,"allocate QSA session");return FG_ERR_OOM;}s->model=model;s->max_context=manifest->session.logical_context_tokens;s->max_blocks=(s->max_context+3u)/4u;s->max_tokens=manifest->prefill_microbatch;if(!s->max_context||s->max_context>manifest->native_context||s->max_context>manifest->max_context){fg_error_set(err,FG_ERR_MISMATCH,"manifest QSA logical context is invalid");fg_qsa_session_close(s);return FG_ERR_MISMATCH;}if(!s->max_tokens||s->max_tokens>512u){fg_error_set(err,FG_ERR_MISMATCH,"manifest prefill microbatch exceeds QSA session limit");fg_qsa_session_close(s);return FG_ERR_MISMATCH;}
-    bool coordinator=manifest->execution_mode!=FG_EXECUTION_PIPELINE&&rank==0u;
+    bool coordinator=rank==0u;
     for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u){
         if(coordinator||manifest->layer_owner[layer]==rank)
             s->layers[s->layer_count++]=(uint8_t)layer;
     }
     uint32_t expected_layers=coordinator?FG_QSA_MAX_LAYERS:
-        manifest->execution_mode==FG_EXECUTION_PIPELINE?s->layer_count:
-        FG_QSA_OWNER_LAYERS;
+                FG_QSA_OWNER_LAYERS;
     if(!s->layer_count||s->layer_count!=expected_layers){fg_error_set(err,FG_ERR_MISMATCH,"rank %u has %u QSA layers, expected %u",rank,s->layer_count,expected_layers);fg_qsa_session_close(s);return FG_ERR_MISMATCH;}
     fg_status status=fg_qsa_state_open(&s->state,path,s->layers,s->layer_count,
                                        s->max_context,create,err);
@@ -364,6 +341,20 @@ fg_status fg_qsa_session_open(fg_qsa_session **out,fg_model *model,const char *p
     if(status==FG_OK)status=make_tensor(s,batch*2560u*4u,&s->output,err);
     if(status==FG_OK)status=create_reusable_views(s,err);
     s->read_records=status==FG_OK?malloc((uint64_t)FG_QSA_MAX_SELECTED_BLOCKS*4u*FG_Q38_QSA_TOKEN_RECORD_BYTES):NULL;if(status==FG_OK&&!s->read_records){fg_error_set(err,FG_ERR_OOM,"allocate QSA state staging");status=FG_ERR_OOM;}if(status==FG_OK&&!create)status=restore_state(s,err);if(status==FG_OK)for(uint32_t slot=0;slot<s->layer_count;slot++)s->committed[slot]=fg_qsa_state_layer_tokens(s->state,slot);if(status!=FG_OK){if(created_state)return fail_created_session(s,path,status,err);fg_qsa_session_close(s);return status;}*out=s;return FG_OK;
+}
+
+static fg_status create_tile_views(fg_qsa_session *s,uint32_t batch_size,fg_error *err){
+    fg_status status=FG_OK;
+    for(uint32_t q=0;status==FG_OK&&q<fg_qsa_query_tile_size(batch_size);q++){
+        for(uint32_t side=0;status==FG_OK&&side<2u;side++){
+            uint64_t bytes=(uint64_t)s->max_blocks*4u;
+            status=fg_vk_tensor_view(s->scores[side],q*bytes,bytes,&s->tile_scores[q][side],err);
+            if(status==FG_OK)status=fg_vk_tensor_view(s->ids[side],q*bytes,bytes,&s->tile_ids[q][side],err);
+        }
+        uint64_t bytes=(uint64_t)FG_QSA_SELECTED_TOKENS*FG_Q38_QSA_TOKEN_RECORD_BYTES;
+        if(status==FG_OK)status=fg_vk_tensor_view(s->selected_records,q*bytes,bytes,&s->tile_records[q],err);
+    }
+    return status;
 }
 
 static fg_status open_decode_config(fg_qsa_session **out,fg_model *model,const char *state_path,
@@ -392,7 +383,7 @@ static fg_status open_decode_config(fg_qsa_session **out,fg_model *model,const c
         return FG_ERR_MISMATCH;
     }
     *out=NULL;const fg_manifest *manifest=fg_model_manifest(model);uint32_t rank=fg_model_rank(model);
-    bool coordinator=manifest->execution_mode!=FG_EXECUTION_PIPELINE&&rank==0u;
+    bool coordinator=rank==0u;
     if(!state_path&&!coordinator){
         fg_error_set(err,FG_ERR_ARGUMENT,"only the coordinator may open a fileless QSA mirror");
         return FG_ERR_ARGUMENT;
@@ -407,8 +398,7 @@ static fg_status open_decode_config(fg_qsa_session **out,fg_model *model,const c
         if(coordinator||manifest->layer_owner[layer]==rank)
             s->layers[s->layer_count++]=(uint8_t)layer;
     uint32_t expected_layers=coordinator?FG_QSA_MAX_LAYERS:
-        manifest->execution_mode==FG_EXECUTION_PIPELINE?s->layer_count:
-        FG_QSA_OWNER_LAYERS;
+                FG_QSA_OWNER_LAYERS;
     if(!s->layer_count||s->layer_count!=expected_layers){
         fg_error_set(err,FG_ERR_MISMATCH,"rank %u has %u QSA layers, expected %u",
                      rank,s->layer_count,expected_layers);
@@ -494,11 +484,11 @@ static fg_status open_decode_config(fg_qsa_session **out,fg_model *model,const c
     if(status==FG_OK&&shared_scratch)
         status=create_selection_views(s,shared_scratch,batch_size,err);
     for(uint32_t i=0;status==FG_OK&&!shared_scratch&&i<2u;i++){
-        status=make_tensor(s,(uint64_t)s->max_blocks*4u,&s->scores[i],err);
-        if(status==FG_OK)status=make_tensor(s,(uint64_t)s->max_blocks*4u,&s->ids[i],err);
+        status=make_tensor(s,(uint64_t)fg_qsa_query_tile_size(batch_size)*s->max_blocks*4u,&s->scores[i],err);
+        if(status==FG_OK)status=make_tensor(s,(uint64_t)fg_qsa_query_tile_size(batch_size)*s->max_blocks*4u,&s->ids[i],err);
     }
     if(status==FG_OK&&!shared_scratch)
-        status=make_tensor(s,(uint64_t)FG_QSA_SELECTED_TOKENS*
+        status=make_tensor(s,(uint64_t)fg_qsa_query_tile_size(batch_size)*FG_QSA_SELECTED_TOKENS*
                                         FG_Q38_QSA_TOKEN_RECORD_BYTES,&s->selected_records,err);
     if(status==FG_OK&&!shared_scratch)
         status=make_tensor(s,(uint64_t)batch_size*6144u*4u,&s->attention,err);
@@ -506,6 +496,7 @@ static fg_status open_decode_config(fg_qsa_session **out,fg_model *model,const c
         status=make_tensor(s,(uint64_t)batch_size*2560u*4u,&s->output,err);
     if(status==FG_OK)status=create_reusable_views(s,err);
     if(status==FG_OK&&state_path)status=ensure_read_records(s,err);
+    if(status==FG_OK)status=create_tile_views(s,batch_size,err);
     fg_vk_memory_stats memory_stats={0};fg_vk_get_memory_stats(fg_model_vk(model),&memory_stats);
     fprintf(stderr,"[rank %u] QSA decode session: %u logical, %u cache pages, %u layers, "
                    "%.1f MiB index, %.1f MiB record cache\n",rank,logical_context,
@@ -566,106 +557,7 @@ fg_status fg_qsa_session_open_mirror_with_scratch(
                               scratch,fetch_pages,fetch_opaque,err);
 }
 
-fg_status fg_qsa_session_open_resident(fg_qsa_session **out,fg_model *model,
-                                      uint32_t batch_size,fg_vk_tensor *scratch,
-                                      fg_error *err){
-    if(!out||!model||!batch_size||!scratch){
-        fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident QSA session arguments");
-        return FG_ERR_ARGUMENT;
-    }
-    *out=NULL;
-    const fg_manifest *manifest=fg_model_manifest(model);
-    uint32_t rank=fg_model_rank(model);
-    if(manifest->execution_mode!=FG_EXECUTION_PIPELINE||
-       batch_size!=manifest->prefill_microbatch){
-        fg_error_set(err,FG_ERR_MISMATCH,
-                     "resident QSA requires the sealed pipeline microbatch");
-        return FG_ERR_MISMATCH;
-    }
-    uint32_t logical_context=manifest->session.logical_context_tokens;
-    uint64_t required=fg_align_up_u64(fg_qsa_attention_scratch_bytes(batch_size),
-                                     FG_ALIGNMENT)+
-        fg_qsa_resident_selection_scratch_bytes(logical_context,batch_size);
-    if(required==UINT64_MAX||fg_vk_tensor_bytes(scratch)<required||
-       fg_qsa_index_segment_count(logical_context)>FG_QSA_RESIDENT_MAX_SEGMENTS){
-        fg_error_set(err,FG_ERR_LIMIT,
-                     "resident QSA geometry exceeds the sealed scratch or segment limit");
-        return FG_ERR_LIMIT;
-    }
-    fg_qsa_session *s=calloc(1,sizeof(*s));
-    if(!s){
-        fg_error_set(err,FG_ERR_OOM,"allocate resident QSA session");
-        return FG_ERR_OOM;
-    }
-    s->model=model;s->resident=true;s->max_context=logical_context;
-    s->max_blocks=(logical_context+FG_Q38_QSA_COMPRESS_RATIO-1u)/
-        FG_Q38_QSA_COMPRESS_RATIO;
-    s->max_tokens=batch_size;
-    for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
-        if(manifest->layer_owner[layer]==rank)
-            s->layers[s->layer_count++]=(uint8_t)layer;
-    if(!s->layer_count){
-        fg_error_set(err,FG_ERR_MISMATCH,
-                     "pipeline rank %u owns no resident QSA layers",rank);
-        fg_qsa_session_close(s);
-        return FG_ERR_MISMATCH;
-    }
-    s->index_segment_count=fg_qsa_index_segment_count(logical_context);
-    for(uint32_t segment=0;segment<s->index_segment_count;segment++)
-        s->index_segment_tokens[segment]=
-            fg_qsa_index_segment_tokens(logical_context,segment);
-    fg_status status=make_tensor(s,(uint64_t)logical_context*
-                                FG_Q38_QSA_POSITION_BYTES,&s->positions,err);
-    uint64_t requested=fg_vk_tensor_bytes(s->positions),touched=0u;
-    if(status==FG_OK){
-        uint64_t bytes=0u;
-        status=fg_vk_tensor_residency_canary(s->positions,&bytes,err);
-        if(status==FG_OK&&bytes!=fg_vk_tensor_bytes(s->positions)){
-            fg_error_set(err,FG_ERR_MISMATCH,
-                         "resident QSA position canary did not touch the segment");
-            status=FG_ERR_MISMATCH;
-        }
-        touched+=bytes;
-    }
-    for(uint32_t slot=0;status==FG_OK&&slot<s->layer_count;slot++)
-        for(uint32_t segment=0;status==FG_OK&&segment<s->index_segment_count;
-            segment++){
-            status=make_tensor(s,fg_qsa_record_segment_bytes(logical_context,segment),
-                              &s->records[slot][segment],err);
-            if(status==FG_OK)status=make_tensor(
-                s,fg_qsa_index_segment_bytes(logical_context,segment),
-                &s->index_keys[slot][segment],err);
-            fg_vk_tensor *resident[]={s->records[slot][segment],
-                                     s->index_keys[slot][segment]};
-            for(uint32_t i=0;status==FG_OK&&i<2u;i++){
-                uint64_t bytes=0u;
-                requested+=fg_vk_tensor_bytes(resident[i]);
-                status=fg_vk_tensor_residency_canary(resident[i],&bytes,err);
-                if(status==FG_OK&&bytes!=fg_vk_tensor_bytes(resident[i])){
-                    fg_error_set(err,FG_ERR_MISMATCH,
-                                "resident QSA canary did not touch a complete segment");
-                    status=FG_ERR_MISMATCH;
-                }
-                touched+=bytes;
-            }
-        }
-    if(status==FG_OK)status=create_attention_views(s,scratch,batch_size,err);
-    if(status==FG_OK)status=create_resident_selection_views(s,scratch,batch_size,err);
-    if(status==FG_OK)status=create_reusable_views(s,err);
-    if(status!=FG_OK){
-        fg_qsa_session_close(s);
-        return status;
-    }
-    fprintf(stderr,"[rank %u] resident QSA: layers=%u segments=%u "
-                   "requested=%llu touched=%llu scratch=%llu bytes\n",
-            rank,s->layer_count,s->layer_count*s->index_segment_count,
-            (unsigned long long)requested,(unsigned long long)touched,
-            (unsigned long long)required);
-    *out=s;
-    return FG_OK;
-}
-
-void fg_qsa_session_close(fg_qsa_session *s){if(!s)return;fg_qsa_locality_destroy(s->locality,"close");fg_qsa_page_cache_destroy(s->cache);free(s->read_records);fg_vk_tensor_destroy(s->index_key_q8_view);fg_vk_tensor_destroy(s->value_q4_view);fg_vk_tensor_destroy(s->key_q8_view);fg_vk_tensor_destroy(s->attention_view);fg_vk_tensor_destroy(s->gate_view);fg_vk_tensor_destroy(s->query_view);fg_vk_tensor_destroy(s->index_query_view);fg_vk_tensor_destroy(s->token_position_view);fg_vk_tensor_destroy(s->position_view);fg_vk_tensor_destroy(s->output);fg_vk_tensor_destroy(s->attention);fg_vk_tensor_destroy(s->selected_records);for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(s->ids[i]);fg_vk_tensor_destroy(s->scores[i]);}fg_vk_tensor_destroy(s->index_key_q8);fg_vk_tensor_destroy(s->value_q4);fg_vk_tensor_destroy(s->key_q8);fg_vk_tensor_destroy(s->index_query);fg_vk_tensor_destroy(s->raw_index_key);fg_vk_tensor_destroy(s->raw_index_query);fg_vk_tensor_destroy(s->key);fg_vk_tensor_destroy(s->gate);fg_vk_tensor_destroy(s->query);fg_vk_tensor_destroy(s->raw_value);fg_vk_tensor_destroy(s->raw_key);fg_vk_tensor_destroy(s->raw_query_gate);for(uint32_t i=0;i<FG_QSA_MAX_LAYERS;i++)for(uint32_t segment=0;segment<FG_QSA_INDEX_MAX_SEGMENTS;segment++){fg_vk_tensor_destroy(s->records[i][segment]);fg_vk_tensor_destroy(s->index_keys[i][segment]);}fg_vk_tensor_destroy(s->cache_records);fg_vk_tensor_destroy(s->positions);fg_qsa_state_close(s->state);free(s);}
+void fg_qsa_session_close(fg_qsa_session *s){if(!s)return;for(uint32_t q=0;q<FG_QSA_PREFILL_QUERY_TILE;q++){fg_vk_tensor_destroy(s->tile_records[q]);for(uint32_t side=0;side<2u;side++){fg_vk_tensor_destroy(s->tile_scores[q][side]);fg_vk_tensor_destroy(s->tile_ids[q][side]);}}fg_qsa_locality_destroy(s->locality,"close");fg_qsa_page_cache_destroy(s->cache);free(s->read_records);fg_vk_tensor_destroy(s->index_key_q8_view);fg_vk_tensor_destroy(s->value_q4_view);fg_vk_tensor_destroy(s->key_q8_view);fg_vk_tensor_destroy(s->attention_view);fg_vk_tensor_destroy(s->gate_view);fg_vk_tensor_destroy(s->query_view);fg_vk_tensor_destroy(s->index_query_view);fg_vk_tensor_destroy(s->token_position_view);fg_vk_tensor_destroy(s->position_view);fg_vk_tensor_destroy(s->output);fg_vk_tensor_destroy(s->attention);fg_vk_tensor_destroy(s->selected_records);for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(s->ids[i]);fg_vk_tensor_destroy(s->scores[i]);}fg_vk_tensor_destroy(s->index_key_q8);fg_vk_tensor_destroy(s->value_q4);fg_vk_tensor_destroy(s->key_q8);fg_vk_tensor_destroy(s->index_query);fg_vk_tensor_destroy(s->raw_index_key);fg_vk_tensor_destroy(s->raw_index_query);fg_vk_tensor_destroy(s->key);fg_vk_tensor_destroy(s->gate);fg_vk_tensor_destroy(s->query);fg_vk_tensor_destroy(s->raw_value);fg_vk_tensor_destroy(s->raw_key);fg_vk_tensor_destroy(s->raw_query_gate);for(uint32_t i=0;i<FG_QSA_MAX_LAYERS;i++)for(uint32_t segment=0;segment<FG_QSA_INDEX_MAX_SEGMENTS;segment++){fg_vk_tensor_destroy(s->records[i][segment]);fg_vk_tensor_destroy(s->index_keys[i][segment]);}fg_vk_tensor_destroy(s->cache_records);fg_vk_tensor_destroy(s->positions);fg_qsa_state_close(s->state);free(s);}
 
 fg_status fg_qsa_session_reset(fg_qsa_session *s,fg_error *err){if(!s){fg_error_set(err,FG_ERR_ARGUMENT,"QSA session reset is null");return FG_ERR_ARGUMENT;}fg_qsa_locality_reset(s->locality,"reset");memset(s->committed,0,sizeof(s->committed));memset(s->partial,0,sizeof(s->partial));fg_qsa_page_cache_reset(s->cache);return s->state?fg_qsa_state_reset(s->state,err):FG_OK;}
 
@@ -784,8 +676,6 @@ static fg_status attend_cache(fg_qsa_session *s,uint32_t slot,uint32_t tokens,
             if(s->locality)fg_qsa_locality_record_cache(s->locality,s->layers[slot],true);
         }else{
             if(s->locality)fg_qsa_locality_record_cache(s->locality,s->layers[slot],false);
-            fprintf(stderr,"QSA_CACHE_MISS layer=%u block=%u tokens=%u cache_pages=%u\n",
-                    s->layers[slot],selected[i],tokens,s->cache_pages);
             missing[missing_count++]=selected[i];
         }
     }
@@ -875,101 +765,8 @@ static fg_status commit_and_attend(fg_qsa_session *s,uint32_t slot,uint32_t toke
     uint32_t tail=tokens%FG_Q38_QSA_COMPRESS_RATIO;if(status==FG_OK&&tail){memcpy((uint8_t *)fg_vk_tensor_map(s->selected_records)+(uint64_t)selected_tokens*FG_Q38_QSA_TOKEN_RECORD_BYTES,s->partial[slot],(uint64_t)tail*FG_Q38_QSA_TOKEN_RECORD_BYTES);selected_tokens+=tail;}if(status==FG_OK)status=fg_vk_qsa_attention(fg_model_vk(s->model),attention,s->selected_records,query,gate,selected_tokens,err);return status;
 }
 
-static fg_status resident_prefill(fg_qsa_session *s,uint32_t layer,uint32_t slot,
-                                  uint32_t first_token,const uint32_t *positions,
-                                  uint32_t token_count,const fg_vk_tensor *hidden,
-                                  bool submit,fg_vk_tensor **output,
-                                  fg_error *err){
-    if(first_token!=s->committed[slot]||
-       first_token>s->max_context-token_count){
-        fg_error_set(err,FG_ERR_MISMATCH,
-                     "resident QSA range does not start at committed state");
-        return FG_ERR_MISMATCH;
-    }
-    fg_vk_tensor *qw=layer_weight(s,layer,"attn_q.weight",err);
-    fg_vk_tensor *kw=layer_weight(s,layer,"attn_k.weight",err);
-    fg_vk_tensor *vw=layer_weight(s,layer,"attn_v.weight",err);
-    fg_vk_tensor *qn=layer_weight(s,layer,"attn_q_norm.weight",err);
-    fg_vk_tensor *kn=layer_weight(s,layer,"attn_k_norm.weight",err);
-    fg_vk_tensor *ow=layer_weight(s,layer,"attn_output.weight",err);
-    fg_vk_tensor *iqw=layer_weight(s,layer,"indexer.q_proj.weight",err);
-    fg_vk_tensor *ikw=layer_weight(s,layer,"indexer.k_proj.weight",err);
-    fg_vk_tensor *iqn=layer_weight(s,layer,"indexer.q_norm.weight",err);
-    fg_vk_tensor *ikn=layer_weight(s,layer,"indexer.k_norm.weight",err);
-    if(!qw||!kw||!vw||!qn||!kn||!ow||!iqw||!ikw||!iqn||!ikn)
-        return FG_ERR_MISMATCH;
-    fg_vk_context *vk=fg_model_vk(s->model);
-    fg_status status=FG_OK;
-    if(submit)status=fg_qsa_submit_host_reads(vk,err);
-    else if(!fg_vk_batch_active(vk)){
-        fg_error_set(err,FG_ERR_MISMATCH,
-                     "resident pipeline QSA requires an active stage batch");
-        status=FG_ERR_MISMATCH;
-    }
-    if(status==FG_OK)status=fg_vk_tensor_write(
-        s->positions,(uint64_t)first_token*FG_Q38_QSA_POSITION_BYTES,
-        positions,(uint64_t)token_count*FG_Q38_QSA_POSITION_BYTES,err);
-    if(status==FG_OK)status=fg_vk_tensor_view_rebind(
-        s->position_view,s->positions,
-        (uint64_t)first_token*FG_Q38_QSA_POSITION_BYTES,
-        (uint64_t)token_count*FG_Q38_QSA_POSITION_BYTES,err);
-    if(status==FG_OK)status=fg_vk_begin(vk,err);
-    if(status==FG_OK)status=fg_vk_dense_q8_0_f32(
-        vk,s->raw_query_gate,qw,hidden,FG_HIDDEN_SIZE,12288u,token_count,1.0f,err);
-    if(status==FG_OK)status=fg_vk_dense_q8_0_f32(
-        vk,s->raw_key,kw,hidden,FG_HIDDEN_SIZE,512u,token_count,1.0f,err);
-    if(status==FG_OK)status=fg_vk_dense_q8_0_f32(
-        vk,s->raw_value,vw,hidden,FG_HIDDEN_SIZE,512u,token_count,1.0f,err);
-    if(status==FG_OK)status=fg_vk_qsa_prepare_prefill(
-        vk,s->query,s->gate,s->key,s->raw_query_gate,s->raw_key,qn,kn,
-        s->position_view,token_count,err);
-    if(status==FG_OK)status=fg_vk_dense_bf16_f32(
-        vk,s->raw_index_query,iqw,hidden,FG_HIDDEN_SIZE,512u,token_count,err);
-    if(status==FG_OK)status=fg_vk_dense_bf16_f32(
-        vk,s->raw_index_key,ikw,hidden,FG_HIDDEN_SIZE,128u,token_count,err);
-    if(status==FG_OK)status=fg_vk_qsa_index_prepare_prefill(
-        vk,s->index_query,s->raw_index_query,iqn,s->position_view,token_count,err);
-    if(status==FG_OK)status=fg_vk_quantize_q8_0(
-        vk,s->key_q8,s->key,512u,token_count,err);
-    if(status==FG_OK)status=fg_vk_quantize_q8_0(
-        vk,s->value_q4,s->raw_value,512u,token_count,err);
-    if(status==FG_OK)status=fg_vk_quantize_q8_0(
-        vk,s->index_key_q8,s->raw_index_key,128u,token_count,err);
-    fg_vk_tensor *record_1=s->index_segment_count>1u?s->records[slot][1]:NULL;
-    fg_vk_tensor *index_1=s->index_segment_count>1u?s->index_keys[slot][1]:NULL;
-    if(status==FG_OK)status=fg_vk_qsa_resident_record_commit(
-        vk,s->records[slot][0],record_1,s->index_keys[slot][0],index_1,
-        s->key_q8,s->value_q4,s->index_key_q8,s->position_view,first_token,
-        token_count,s->max_context,FG_QSA_RESIDENT_SEGMENT_TOKEN_CAPACITY,err);
-    uint32_t final_side=0u;
-    if(status==FG_OK)status=fg_vk_qsa_resident_select(
-        vk,s->scores[0],s->ids[0],s->scores[1],s->ids[1],s->index_query,
-        s->index_keys[slot][0],index_1,ikn,s->positions,first_token,token_count,
-        s->max_context,FG_QSA_RESIDENT_SEGMENT_TOKEN_CAPACITY,&final_side,err);
-    if(status==FG_OK)status=fg_vk_qsa_resident_attention(
-        vk,s->attention,s->records[slot][0],record_1,s->ids[final_side],
-        s->query,s->gate,first_token,token_count,s->max_context,
-        FG_QSA_RESIDENT_SEGMENT_TOKEN_CAPACITY,FG_QSA_TOPK_CANDIDATES,err);
-    if(status==FG_OK)status=fg_vk_dense_q8_0_f32(
-        vk,s->output,ow,s->attention,6144u,FG_HIDDEN_SIZE,token_count,1.0f,err);
-    if(status==FG_OK)status=submit?fg_qsa_submit_host_reads(vk,err):
-                                      fg_vk_end(vk,err);
-    else if(fg_vk_batch_active(vk)){
-        fg_error ignored={0};
-        fg_vk_abort(vk,&ignored);
-    }
-    if(status==FG_OK){
-        s->committed[slot]=first_token+token_count;
-        *output=s->output;
-    }
-    return status;
-}
-
 fg_status fg_qsa_session_decode(fg_qsa_session *s,uint32_t layer,uint32_t token,const uint32_t position[3],const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err){
     int signed_slot=s?layer_slot(s,layer):-1;if(!s||signed_slot<0||!position||!hidden||!output){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA decode arguments");return FG_ERR_ARGUMENT;}uint32_t slot=(uint32_t)signed_slot;if(token!=s->committed[slot]||token>=s->max_context){fg_error_set(err,FG_ERR_MISMATCH,"QSA token position does not match committed state");return FG_ERR_MISMATCH;}fg_vk_tensor *qw=layer_weight(s,layer,"attn_q.weight",err),*kw=layer_weight(s,layer,"attn_k.weight",err),*vw=layer_weight(s,layer,"attn_v.weight",err),*qn=layer_weight(s,layer,"attn_q_norm.weight",err),*kn=layer_weight(s,layer,"attn_k_norm.weight",err),*ow=layer_weight(s,layer,"attn_output.weight",err),*iqw=layer_weight(s,layer,"indexer.q_proj.weight",err),*ikw=layer_weight(s,layer,"indexer.k_proj.weight",err),*iqn=layer_weight(s,layer,"indexer.q_norm.weight",err);if(!qw||!kw||!vw||!qn||!kn||!ow||!iqw||!ikw||!iqn)return FG_ERR_MISMATCH;
-    if(s->resident)
-        return resident_prefill(s,layer,slot,token,position,1u,hidden,true,
-                                output,err);
     fg_vk_context *vk=fg_model_vk(s->model);fg_status status=fg_qsa_submit_host_reads(vk,err);
     uint32_t *resident_positions=status==FG_OK?fg_vk_tensor_map(s->positions):NULL;if(status==FG_OK&&slot==0)memcpy(resident_positions+(uint64_t)token*3u,position,12u);else if(status==FG_OK&&memcmp(resident_positions+(uint64_t)token*3u,position,12u)!=0){fg_error_set(err,FG_ERR_MISMATCH,"QSA layers received inconsistent MRoPE positions");return FG_ERR_MISMATCH;}if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->position_view,s->positions,(uint64_t)token*12u,12u,err);if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"qsa_projection",err);
     if(status==FG_OK)status=fg_vk_begin(vk,err);
@@ -994,51 +791,194 @@ fg_status fg_qsa_session_decode(fg_qsa_session *s,uint32_t layer,uint32_t token,
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,s->output,ow,s->attention,6144u,2560u,1u,1.0f,err);
     if(status==FG_OK)status=fg_qsa_submit_host_reads(vk,err);
     else if(fg_vk_batch_active(vk)){fg_error ignored={0};fg_vk_abort(vk,&ignored);}
-    if(status==FG_OK&&token<30u){const float *ap=fg_vk_tensor_map(s->attention),*op=fg_vk_tensor_map(s->output);double a2=0.0,o2=0.0;for(uint32_t i=0;i<6144u;i++)a2+=(double)ap[i]*ap[i];for(uint32_t i=0;i<2560u;i++)o2+=(double)op[i]*op[i];fprintf(stderr,"qsa[%u] t=%u selected=%u attn_rms=%.6f out_rms=%.6f\n",layer,token,token+1u,sqrt(a2/6144.0),sqrt(o2/2560.0));}
     if(status==FG_OK){*output=s->output;}return status;
 }
 
-fg_status fg_qsa_session_decode_pipeline(fg_qsa_session *s,uint32_t layer,
-                                         uint32_t token,
-                                         const uint32_t position[3],
-                                         const fg_vk_tensor *hidden,
-                                         fg_vk_tensor **output,fg_error *err){
-    int signed_slot=s?layer_slot(s,layer):-1;
-    if(!s||signed_slot<0||!position||!hidden||!output||!s->resident){
-        fg_error_set(err,FG_ERR_MISMATCH,
-                     "pipeline QSA decode requires a resident owned layer");
-        return FG_ERR_MISMATCH;
+/* Commit projected records independently of attention. New pages stay pinned
+ * until the coordinator publishes them to their storage owners. */
+static fg_status commit_prefill_records(fg_qsa_session *s,uint32_t slot,
+    uint32_t first,uint32_t count,fg_error *err){
+    fg_vk_context *vk=fg_model_vk(s->model);
+    fg_status status=fg_vk_begin(vk,err);
+    for(uint32_t i=0;status==FG_OK&&i<count;i++){
+        uint32_t token=first+i,segment=0,offset=0,cache_slot=0;bool hit=false;
+        if(!fg_qsa_index_token_location(s->max_context,token,&segment,&offset)){
+            fg_error_set(err,FG_ERR_LIMIT,"QSA prefill token has no index segment");
+            status=FG_ERR_LIMIT;break;
+        }
+        status=fg_qsa_page_cache_acquire(s->cache,s->layers[slot],token/4u,&cache_slot,&hit,err);
+        if(status==FG_OK)status=fg_qsa_page_cache_pin(s->cache,s->layers[slot],token/4u,err);
+        if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->key_q8_view,s->key_q8,
+            (uint64_t)i*FG_Q38_QSA_KEY_BYTES,FG_Q38_QSA_KEY_BYTES,err);
+        if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->value_q4_view,s->value_q4,
+            (uint64_t)i*FG_Q38_QSA_VALUE_BYTES,FG_Q38_QSA_VALUE_BYTES,err);
+        if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->index_key_q8_view,s->index_key_q8,
+            (uint64_t)i*FG_Q38_QSA_INDEX_KEY_BYTES,FG_Q38_QSA_INDEX_KEY_BYTES,err);
+        if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->token_position_view,s->positions,
+            (uint64_t)token*FG_Q38_QSA_POSITION_BYTES,FG_Q38_QSA_POSITION_BYTES,err);
+        if(status==FG_OK)status=fg_vk_qsa_record_commit_segmented(vk,s->cache_records,
+            s->index_keys[slot][segment],s->key_q8_view,s->value_q4_view,
+            s->index_key_q8_view,s->token_position_view,0u,token,offset,
+            s->index_segment_tokens[segment],cache_slot*4u+token%4u,s->cache_pages*4u,err);
     }
-    uint32_t slot=(uint32_t)signed_slot;
-    return resident_prefill(s,layer,slot,token,position,1u,hidden,false,
-                            output,err);
+    if(status==FG_OK)status=fg_qsa_submit_host_reads(vk,err);
+    return status;
 }
 
-fg_status fg_qsa_session_prefill_pipeline(fg_qsa_session *s,uint32_t layer,
-                                          uint32_t first_token,
-                                          const uint32_t *positions,
-                                          uint32_t token_count,
-                                          const fg_vk_tensor *hidden,
-                                          fg_vk_tensor **output,fg_error *err){
-    int signed_slot=s?layer_slot(s,layer):-1;
-    fg_vk_context *vk=s?fg_model_vk(s->model):NULL;
-    if(!s||signed_slot<0||!positions||!token_count||
-       token_count>s->max_tokens||token_count>s->max_context||
-       first_token>s->max_context-token_count||!hidden||!output||!s->resident||
-       !fg_vk_batch_active(vk)){
-        fg_error_set(err,FG_ERR_MISMATCH,
-                     "pipeline QSA prefill requires an active resident stage batch");
-        return FG_ERR_MISMATCH;
+static fg_status select_prefill_tile(fg_qsa_session *s,uint32_t slot,
+    uint32_t first_token,uint32_t first_query,uint32_t queries,
+    uint32_t selected[FG_QSA_PREFILL_QUERY_TILE][FG_QSA_MAX_SELECTED_BLOCKS],
+    uint32_t *counts,fg_error *err){
+    uint32_t tokens=first_token+first_query+queries,blocks=tokens/4u;
+    for(uint32_t q=0;q<queries;q++){
+        uint32_t complete=(first_token+first_query+q+1u)/4u;
+        counts[q]=complete<FG_QSA_MAX_SELECTED_BLOCKS?complete:FG_QSA_MAX_SELECTED_BLOCKS;
     }
-    return resident_prefill(s,layer,(uint32_t)signed_slot,first_token,positions,
-                            token_count,hidden,false,output,err);
+    if(blocks<=FG_QSA_MAX_SELECTED_BLOCKS){
+        for(uint32_t q=0;q<queries;q++)for(uint32_t i=0;i<counts[q];i++)selected[q][i]=i;
+        return FG_OK;
+    }
+    fg_vk_context *vk=fg_model_vk(s->model);
+    fg_vk_tensor *norm=layer_weight(s,s->layers[slot],"indexer.k_norm.weight",err);
+    if(!norm)return FG_ERR_MISMATCH;
+    fg_status status=fg_vk_tensor_view_rebind(s->index_query_view,s->index_query,
+        (uint64_t)first_query*512u*4u,(uint64_t)queries*512u*4u,err);
+    if(status==FG_OK)status=fg_vk_begin(vk,err);
+    for(uint32_t segment=0;status==FG_OK&&segment<s->index_segment_count;segment++){
+        uint32_t first=fg_qsa_index_segment_first(s->max_context,segment);
+        if(first>=tokens)break;
+        uint32_t count=tokens-first;
+        if(count>s->index_segment_tokens[segment])count=s->index_segment_tokens[segment];
+        if(count<4u)continue;
+        status=fg_vk_tensor_view_rebind(s->token_position_view,s->positions,
+            (uint64_t)first*FG_Q38_QSA_POSITION_BYTES,(uint64_t)count*FG_Q38_QSA_POSITION_BYTES,err);
+        if(status==FG_OK)status=fg_vk_qsa_index_score_batch(vk,s->scores[0],s->ids[0],
+            s->index_query_view,s->index_keys[slot][segment],norm,s->token_position_view,
+            count,first/4u,s->max_blocks,first_token+first_query+1u,queries,err);
+    }
+    uint32_t sides[FG_QSA_PREFILL_QUERY_TILE]={0};
+    for(uint32_t q=0;status==FG_OK&&q<queries;q++){
+        uint32_t count=blocks,side=0;
+        do{
+            uint32_t next=0;
+            status=fg_vk_topk_reduce(vk,s->tile_scores[q][side^1u],s->tile_ids[q][side^1u],
+                s->tile_scores[q][side],s->tile_ids[q][side],count,&next,err);
+            count=next;side^=1u;
+        }while(status==FG_OK&&count>FG_QSA_MAX_SELECTED_BLOCKS);
+        sides[q]=side;
+    }
+    if(status==FG_OK)status=fg_qsa_submit_host_reads(vk,err);
+    for(uint32_t q=0;status==FG_OK&&q<queries;q++)
+        status=fg_vk_tensor_read(s->tile_ids[q][sides[q]],0,selected[q],(uint64_t)counts[q]*4u,err);
+    return status;
+}
+
+typedef struct qsa_missing_page {uint32_t block,query,index;} qsa_missing_page;
+static int missing_page_order(const void *a,const void *b){
+    uint32_t left=((const qsa_missing_page *)a)->block,right=((const qsa_missing_page *)b)->block;
+    return (left>right)-(left<right);
+}
+
+static fg_status gather_prefill_tile(fg_qsa_session *s,uint32_t slot,
+    uint32_t first_visible,uint32_t queries,
+    uint32_t selected[FG_QSA_PREFILL_QUERY_TILE][FG_QSA_MAX_SELECTED_BLOCKS],
+    const uint32_t *counts,fg_error *err){
+    qsa_missing_page missing[FG_QSA_PREFILL_QUERY_TILE*FG_QSA_MAX_SELECTED_BLOCKS];
+    uint32_t missing_count=0,layer=s->layers[slot];
+    fg_vk_context *vk=fg_model_vk(s->model);
+    fg_status status=fg_vk_begin(vk,err);
+    /* Gather cache hits before any eviction. Each query then owns a private,
+     * bounded record slice, so even a union larger than the cache is safe. */
+    for(uint32_t q=0;status==FG_OK&&q<queries;q++){
+        uint32_t cache_slots[FG_QSA_MAX_SELECTED_BLOCKS],tokens=first_visible+q;
+        if(s->locality)fg_qsa_locality_record_selection(s->locality,layer,tokens,selected[q],counts[q]);
+        for(uint32_t i=0;i<counts[q];i++){
+            if(selected[q][i]>=tokens/4u){
+                fg_error_set(err,FG_ERR_MISMATCH,"QSA tile selected a future block");
+                status=FG_ERR_MISMATCH;break;
+            }
+            bool hit=fg_qsa_page_cache_lookup(s->cache,layer,selected[q][i],&cache_slots[i]);
+            if(s->locality)fg_qsa_locality_record_cache(s->locality,layer,hit);
+            if(!hit){
+                cache_slots[i]=UINT32_MAX;
+                missing[missing_count++]=(qsa_missing_page){selected[q][i],q,i};
+            }
+        }
+        uint32_t tail=tokens%4u,tail_slot=0;
+        if(status==FG_OK&&tail&&!fg_qsa_page_cache_lookup(s->cache,layer,tokens/4u,&tail_slot)){
+            fg_error_set(err,FG_ERR_MISMATCH,"QSA tile lost its causal tail");
+            status=FG_ERR_MISMATCH;
+        }
+        if(status==FG_OK&&counts[q])status=fg_vk_tensor_write(s->tile_ids[q][0],0,
+            cache_slots,(uint64_t)counts[q]*4u,err);
+        if(status==FG_OK)status=fg_vk_qsa_record_gather(vk,s->tile_records[q],s->cache_records,
+            s->tile_ids[q][0],0u,s->cache_pages*4u,counts[q],tail_slot*4u,tail,err);
+    }
+    if(status==FG_OK)status=fg_qsa_submit_host_reads(vk,err);
+    if(status!=FG_OK||!missing_count)return status;
+    if(!s->fetch_pages){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"QSA cold page miss has no owner fetch service");
+        return FG_ERR_UNAVAILABLE;
+    }
+    status=ensure_read_records(s,err);
+    qsort(missing,missing_count,sizeof(*missing),missing_page_order);
+    uint32_t at=0;
+    while(status==FG_OK&&at<missing_count){
+        uint32_t fetch[FG_QSA_MAX_SELECTED_BLOCKS],starts[FG_QSA_MAX_SELECTED_BLOCKS+1u];
+        uint32_t count=0,end=at;
+        while(end<missing_count&&count<FG_QSA_MAX_SELECTED_BLOCKS){
+            starts[count]=end;fetch[count]=missing[end].block;
+            do{end++;}while(end<missing_count&&missing[end].block==fetch[count]);
+            count++;
+        }
+        starts[count]=end;
+        status=s->fetch_pages(s->fetch_opaque,layer,fetch,count,s->read_records,err);
+        for(uint32_t i=0;status==FG_OK&&i<count;i++){
+            const uint8_t *page=s->read_records+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES;
+            for(uint32_t j=starts[i];status==FG_OK&&j<starts[i+1u];j++)
+                status=fg_vk_tensor_write(s->tile_records[missing[j].query],
+                    (uint64_t)missing[j].index*FG_QSA_PAGE_RECORD_BYTES,page,FG_QSA_PAGE_RECORD_BYTES,err);
+            if(status!=FG_OK)break;
+            /* Cache insertion is optional; unpublished pages may pin all slots. */
+            uint32_t cache_slot=0;bool hit=false;fg_error cache_error={0};
+            fg_status cached=fg_qsa_page_cache_acquire(s->cache,layer,fetch[i],&cache_slot,&hit,&cache_error);
+            if(status==FG_OK&&cached==FG_OK)status=fg_vk_tensor_write(s->cache_records,
+                (uint64_t)cache_slot*FG_QSA_PAGE_RECORD_BYTES,page,FG_QSA_PAGE_RECORD_BYTES,err);
+            else if(status==FG_OK&&cached!=FG_ERR_LIMIT){status=cached;if(err)*err=cache_error;}
+        }
+        at=end;
+    }
+    return status;
+}
+
+static fg_status attend_prefill_tiles(fg_qsa_session *s,uint32_t slot,
+    uint32_t first_token,uint32_t token_count,fg_error *err){
+    fg_vk_context *vk=fg_model_vk(s->model);
+    fg_status status=commit_prefill_records(s,slot,first_token,token_count,err);
+    uint32_t tile_size=fg_qsa_query_tile_size(s->max_tokens);
+    for(uint32_t first=0;status==FG_OK&&first<token_count;first+=tile_size){
+        uint32_t queries=token_count-first;if(queries>tile_size)queries=tile_size;
+        uint32_t selected[FG_QSA_PREFILL_QUERY_TILE][FG_QSA_MAX_SELECTED_BLOCKS];
+        uint32_t counts[FG_QSA_PREFILL_QUERY_TILE];
+        status=select_prefill_tile(s,slot,first_token,first,queries,selected,counts,err);
+        if(status==FG_OK)status=gather_prefill_tile(s,slot,first_token+first+1u,
+            queries,selected,counts,err);
+        if(status==FG_OK)status=fg_vk_begin(vk,err);
+        for(uint32_t q=0;status==FG_OK&&q<queries;q++){
+            uint64_t offset=(uint64_t)(first+q)*6144u*4u;
+            status=fg_vk_tensor_view_rebind(s->query_view,s->query,offset,6144u*4u,err);
+            if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->gate_view,s->gate,offset,6144u*4u,err);
+            if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->attention_view,s->attention,offset,6144u*4u,err);
+            if(status==FG_OK)status=fg_vk_qsa_attention(vk,s->attention_view,s->tile_records[q],
+                s->query_view,s->gate_view,counts[q]*4u+(first_token+first+q+1u)%4u,err);
+        }
+        if(status==FG_OK)status=fg_qsa_submit_host_reads(vk,err);
+    }
+    return status;
 }
 
 fg_status fg_qsa_session_prefill(fg_qsa_session *s,uint32_t layer,uint32_t first_token,const uint32_t *positions,uint32_t token_count,const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err){
     int signed_slot=s?layer_slot(s,layer):-1;if(!s||signed_slot<0||!positions||!hidden||!output||!token_count||token_count>s->max_tokens||token_count>s->max_context||first_token>s->max_context-token_count){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA prefill arguments");return FG_ERR_ARGUMENT;}uint32_t slot=(uint32_t)signed_slot;if(first_token!=s->committed[slot]){fg_error_set(err,FG_ERR_MISMATCH,"QSA prefill range does not start at committed state");return FG_ERR_MISMATCH;}
-    if(s->resident)
-        return resident_prefill(s,layer,slot,first_token,positions,token_count,
-                                hidden,true,output,err);
     fg_vk_tensor *qw=layer_weight(s,layer,"attn_q.weight",err),*kw=layer_weight(s,layer,"attn_k.weight",err),*vw=layer_weight(s,layer,"attn_v.weight",err),*qn=layer_weight(s,layer,"attn_q_norm.weight",err),*kn=layer_weight(s,layer,"attn_k_norm.weight",err),*ow=layer_weight(s,layer,"attn_output.weight",err),*iqw=layer_weight(s,layer,"indexer.q_proj.weight",err),*ikw=layer_weight(s,layer,"indexer.k_proj.weight",err),*iqn=layer_weight(s,layer,"indexer.q_norm.weight",err);if(!qw||!kw||!vw||!qn||!kn||!ow||!iqw||!ikw||!iqn)return FG_ERR_MISMATCH;
     fg_vk_context *vk=fg_model_vk(s->model);fg_status status=fg_qsa_submit_host_reads(vk,err);
     uint32_t *resident_positions=status==FG_OK?fg_vk_tensor_map(s->positions):NULL;for(uint32_t i=0;status==FG_OK&&i<token_count;i++){uint32_t token=first_token+i;uint32_t *resident=resident_positions+(uint64_t)token*3u;const uint32_t *position=positions+(uint64_t)i*3u;if(slot==0u)memcpy(resident,position,FG_Q38_QSA_POSITION_BYTES);else if(memcmp(resident,position,FG_Q38_QSA_POSITION_BYTES)!=0){fg_error_set(err,FG_ERR_MISMATCH,"QSA layers received inconsistent MRoPE positions");return FG_ERR_MISMATCH;}}
@@ -1057,24 +997,23 @@ fg_status fg_qsa_session_prefill(fg_qsa_session *s,uint32_t layer,uint32_t first
     if(status==FG_OK)status=fg_qsa_submit_host_reads(vk,err);
     else if(fg_vk_batch_active(vk)){fg_error ignored={0};fg_vk_abort(vk,&ignored);}
     if(status!=FG_OK)return status;
-    const uint8_t *keys=s->cache?NULL:fg_vk_tensor_map(s->key_q8),*values=s->cache?NULL:fg_vk_tensor_map(s->value_q4),*index_keys=s->cache?NULL:fg_vk_tensor_map(s->index_key_q8);
-    status=fg_vk_begin(vk,err);
-    for(uint32_t i=0;status==FG_OK&&i<token_count;i++){
-        status=fg_vk_tensor_view_rebind(s->index_query_view,s->index_query,(uint64_t)i*512u*4u,512u*4u,err);
-        if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->query_view,s->query,(uint64_t)i*6144u*4u,6144u*4u,err);
-        if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->gate_view,s->gate,(uint64_t)i*6144u*4u,6144u*4u,err);
-        if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->attention_view,s->attention,(uint64_t)i*6144u*4u,6144u*4u,err);
-        if(status==FG_OK&&s->cache)status=fg_vk_tensor_view_rebind(s->key_q8_view,s->key_q8,(uint64_t)i*FG_Q38_QSA_KEY_BYTES,FG_Q38_QSA_KEY_BYTES,err);
-        if(status==FG_OK&&s->cache)status=fg_vk_tensor_view_rebind(s->value_q4_view,s->value_q4,(uint64_t)i*FG_Q38_QSA_VALUE_BYTES,FG_Q38_QSA_VALUE_BYTES,err);
-        if(status==FG_OK&&s->cache)status=fg_vk_tensor_view_rebind(s->index_key_q8_view,s->index_key_q8,(uint64_t)i*FG_Q38_QSA_INDEX_KEY_BYTES,FG_Q38_QSA_INDEX_KEY_BYTES,err);
-        if(status==FG_OK&&s->cache)status=fg_vk_tensor_view_rebind(s->token_position_view,s->positions,(uint64_t)(first_token+i)*FG_Q38_QSA_POSITION_BYTES,FG_Q38_QSA_POSITION_BYTES,err);
-        if(status==FG_OK&&s->cache)status=commit_and_attend_cache(s,slot,first_token+i,s->key_q8_view,s->value_q4_view,s->index_key_q8_view,s->token_position_view,s->index_query_view,s->query_view,s->gate_view,s->attention_view,err);
-        else if(status==FG_OK)status=commit_and_attend(s,slot,first_token+i,positions+(uint64_t)i*3u,keys+(uint64_t)i*FG_Q38_QSA_KEY_BYTES,values+(uint64_t)i*FG_Q38_QSA_VALUE_BYTES,index_keys+(uint64_t)i*FG_Q38_QSA_INDEX_KEY_BYTES,s->index_query_view,s->query_view,s->gate_view,s->attention_view,err);
+    if(s->cache){
+        status=attend_prefill_tiles(s,slot,first_token,token_count,err);
+    }else{
+        const uint8_t *keys=fg_vk_tensor_map(s->key_q8),*values=fg_vk_tensor_map(s->value_q4),*index_keys=fg_vk_tensor_map(s->index_key_q8);
+        status=fg_vk_begin(vk,err);
+        for(uint32_t i=0;status==FG_OK&&i<token_count;i++){
+            status=fg_vk_tensor_view_rebind(s->index_query_view,s->index_query,(uint64_t)i*512u*4u,512u*4u,err);
+            if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->query_view,s->query,(uint64_t)i*6144u*4u,6144u*4u,err);
+            if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->gate_view,s->gate,(uint64_t)i*6144u*4u,6144u*4u,err);
+            if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->attention_view,s->attention,(uint64_t)i*6144u*4u,6144u*4u,err);
+            if(status==FG_OK)status=commit_and_attend(s,slot,first_token+i,positions+(uint64_t)i*3u,keys+(uint64_t)i*FG_Q38_QSA_KEY_BYTES,values+(uint64_t)i*FG_Q38_QSA_VALUE_BYTES,index_keys+(uint64_t)i*FG_Q38_QSA_INDEX_KEY_BYTES,s->index_query_view,s->query_view,s->gate_view,s->attention_view,err);
+        }
     }
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,s->output,ow,s->attention,6144u,FG_HIDDEN_SIZE,token_count,1.0f,err);
     if(status==FG_OK)status=fg_qsa_submit_host_reads(vk,err);
     else if(fg_vk_batch_active(vk)){fg_error ignored={0};fg_vk_abort(vk,&ignored);}
-    if(status==FG_OK)*output=s->output;
+    if(status==FG_OK){s->committed[slot]=first_token+token_count;*output=s->output;}
     return status;
 }
 

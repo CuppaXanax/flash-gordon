@@ -8,15 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-_Static_assert(FG_Q38_PIPELINE_DECODE_EXTRA_BYTES==UINT64_C(92200),
-               "pipeline decode scratch delta must match the admission ledger");
-
-uint64_t fg_q38_pipeline_activation_slot_bytes(uint32_t microbatch){
-    return (uint64_t)microbatch*
-        ((uint64_t)FG_PIPELINE_BOUNDARY_WIDTH*FG_PIPELINE_BOUNDARY_FP32_BYTES+
-         FG_PIPELINE_POSITION_AXES*sizeof(uint32_t));
-}
-
 fg_status fg_tensor_record_expected_bytes(const fg_tensor_record *record,uint64_t *bytes,
                                           fg_error *err){
     if(!record||!bytes){
@@ -193,14 +184,11 @@ fg_status fg_manifest_validate_tensor_storage(const fg_manifest *manifest,fg_err
 }
 
 static uint64_t runtime_scratch_bytes(uint32_t rank,uint32_t microbatch,uint32_t window,
-                                      uint32_t max_context,bool ple,bool qsa,bool output,
-                                      uint32_t activation_slots,bool resident_qsa,
-                                      uint64_t pipeline_owner_transient,
-                                      uint64_t pipeline_decode_extra){
+                                      uint32_t max_context,bool ple,bool qsa,bool output){
     if(rank>=FG_RANK_COUNT||!microbatch||microbatch>512u||!window||window>4u||!max_context)return UINT64_MAX;
     uint64_t tokens=microbatch,pairs=tokens*FG_TOP_K,q8k=(FG_HIDDEN_SIZE/256u)*296u;
     uint64_t expert=tokens*q8k+
-        pairs*FG_Q38_DECODE_TILE_WORDS*4u+
+        pairs*FG_Q38_PREFILL_TILE_WORDS*4u+
         pairs*FG_Q38_EXPERT_WIDTH*4u*3u+
         pairs*FG_HIDDEN_SIZE*4u;
     uint64_t owner_stateless=(FG_Q38_HYPER_WIDTH+FG_Q38_HYPER_RANK*2u+FG_Q38_HYPER_WIDTH+FG_Q38_HYPER_COUNT+FG_HIDDEN_SIZE+FG_Q38_HYPER_COUNT+FG_Q38_HYPER_WIDTH+FG_EXPERT_COUNT)*4u*tokens+tokens*q8k+(FG_Q38_EXPERT_WIDTH*3u+FG_HIDDEN_SIZE+1u+FG_HIDDEN_SIZE)*4u*tokens;
@@ -212,50 +200,23 @@ static uint64_t runtime_scratch_bytes(uint32_t rank,uint32_t microbatch,uint32_t
     uint64_t fixed=(FG_Q38_HYPER_WIDTH+FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH)*4u;
     if(ple)fixed+=(uint64_t)FG_Q38_HYPER_WIDTH*9u*4u;
     if(qsa){
-        if(resident_qsa)
-            fixed+=fg_qsa_resident_selection_scratch_bytes(max_context,microbatch);
-        else{
-            uint64_t blocks=((uint64_t)max_context+3u)/4u;
-            fixed+=blocks*4u*4u+
-                (uint64_t)(FG_Q38_INDEX_BUDGET+
-                           FG_Q38_QSA_COMPRESS_RATIO-1u)*
-                    FG_Q38_QSA_TOKEN_RECORD_BYTES;
-        }
+        fixed+=fg_qsa_selection_scratch_bytes(max_context,microbatch);
         fixed+=4u*1024u*1024u;
     }
     if(output)fixed+=(uint64_t)(FG_Q38_HYPER_WIDTH*2u+FG_Q38_HYPER_RANK*2u+FG_HIDDEN_SIZE+FG_Q38_VOCAB_SIZE)*4u;
-    fixed+=(uint64_t)activation_slots*
-        fg_q38_pipeline_activation_slot_bytes(microbatch);
-    fixed+=pipeline_owner_transient;
-    fixed+=pipeline_decode_extra;
     return fg_align_up_u64(per_window*window+fixed,64ull<<20u);
 }
 
 uint64_t fg_q38_runtime_scratch_bytes(uint32_t rank,uint32_t microbatch,uint32_t window,uint32_t max_context){
     return runtime_scratch_bytes(rank,microbatch,window,max_context,rank==1u,
-                                 rank==3u||rank==7u,rank==4u,0u,false,0u,0u);
+                                 rank==3u||rank==7u,rank==4u);
 }
 
 uint64_t fg_q38_runtime_scratch_bytes_for_manifest(const fg_manifest *manifest,
                                                    uint32_t rank,uint32_t microbatch,
                                                    uint32_t window,uint32_t max_context){
     if(!manifest)return UINT64_MAX;
-    if(manifest->execution_mode!=FG_EXECUTION_PIPELINE)
-        return fg_q38_runtime_scratch_bytes(rank,microbatch,window,max_context);
-    bool qsa=false;
-    for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
-        if(manifest->layer_owner[layer]==rank){qsa=true;break;}
-    bool ple=manifest->layer_owner[1u]==rank;
-    bool output=manifest->stage_count&&
-        manifest->stage_ranks[manifest->stage_count-1u]==rank;
-    uint64_t pipeline_transient=fg_q38_pipeline_owner_transient_bytes(microbatch);
-    if(pipeline_transient==UINT64_MAX)return UINT64_MAX;
-    uint64_t pipeline=runtime_scratch_bytes(
-        rank,microbatch,window,max_context,ple,qsa,output,manifest->slot_count,true,
-        pipeline_transient,FG_Q38_PIPELINE_DECODE_EXTRA_BYTES);
-    uint64_t admission=fg_q38_runtime_scratch_bytes(
-        rank,microbatch,window,max_context);
-    return pipeline>admission?pipeline:admission;
+    return fg_q38_runtime_scratch_bytes(rank,microbatch,window,max_context);
 }
 
 typedef struct tensor_spec {
@@ -404,23 +365,23 @@ fg_status fg_q38_validate_ngram_shards(const fg_manifest *manifest,fg_error *err
         return FG_ERR_ARGUMENT;
     }
     if(manifest->format_version!=FG_MANIFEST_FORMAT_VERSION||
-       manifest->execution_mode!=FG_EXECUTION_PIPELINE){
+       manifest->execution_mode!=FG_EXECUTION_EXPERT_PARALLEL){
         if(manifest->ngram_shard_count){
             fg_error_set(err,FG_ERR_MISMATCH,
-                         "resident n-gram shards require a pipeline v6 manifest");
+                         "resident n-gram shards require a expert-parallel v6 manifest");
             return FG_ERR_MISMATCH;
         }
         return FG_OK;
     }
     if(manifest->ngram_shard_count!=FG_NGRAM_SHARD_COUNT){
         fg_error_set(err,FG_ERR_MISMATCH,
-                     "pipeline manifest seals %u resident n-gram shards, expected %u",
+                     "manifest seals %u resident n-gram shards, expected %u",
                      manifest->ngram_shard_count,FG_NGRAM_SHARD_COUNT);
         return FG_ERR_MISMATCH;
     }
     if(manifest->deployment_reserved){
         fg_error_set(err,FG_ERR_FORMAT,
-                     "pipeline resident n-gram metadata has invalid reserved bytes");
+                     "resident n-gram metadata has invalid reserved bytes");
         return FG_ERR_FORMAT;
     }
     const fg_tensor_record *full=NULL;
@@ -428,7 +389,7 @@ fg_status fg_q38_validate_ngram_shards(const fg_manifest *manifest,fg_error *err
         if(manifest->tensors[i].kind!=FG_TENSOR_NGRAM)continue;
         if(full){
             fg_error_set(err,FG_ERR_MISMATCH,
-                         "pipeline manifest has multiple full n-gram tensors");
+                         "manifest has multiple full n-gram tensors");
             return FG_ERR_MISMATCH;
         }
         full=&manifest->tensors[i];
@@ -439,7 +400,7 @@ fg_status fg_q38_validate_ngram_shards(const fg_manifest *manifest,fg_error *err
        full->shape[1]!=total_rows||full->shape[2]||full->shape[3]||
        full->bytes!=total_rows*FG_NGRAM_ROW_BYTES){
         fg_error_set(err,FG_ERR_MISMATCH,
-                     "pipeline full n-gram tensor geometry is not canonical");
+                     "full n-gram tensor geometry is not canonical");
         return FG_ERR_MISMATCH;
     }
     uint64_t next_row=0u;
@@ -455,9 +416,9 @@ fg_status fg_q38_validate_ngram_shards(const fg_manifest *manifest,fg_error *err
            record->bytes!=row_count*FG_NGRAM_ROW_BYTES||
            record->row_begin!=next_row||!digest_nonzero(record->sha256)||
            manifest->host_resident_bytes[rank]!=
-               FG_PIPELINE_NGRAM_CACHE_BYTES){
+               record->bytes){
             fg_error_set(err,FG_ERR_MISMATCH,
-                         "pipeline sealed n-gram shard/cache metadata is invalid at index %u",
+                         "sealed n-gram shard/cache metadata is invalid at index %u",
                          i);
             return FG_ERR_MISMATCH;
         }
@@ -466,7 +427,7 @@ fg_status fg_q38_validate_ngram_shards(const fg_manifest *manifest,fg_error *err
     }
     if(next_row!=total_rows){
         fg_error_set(err,FG_ERR_MISMATCH,
-                     "pipeline resident n-gram shards cover %llu rows, expected %llu",
+                     "resident n-gram shards cover %llu rows, expected %llu",
                      (unsigned long long)next_row,(unsigned long long)total_rows);
         return FG_ERR_MISMATCH;
     }
@@ -512,9 +473,7 @@ void fg_q38_session_state_bytes_for_rank(const fg_manifest *manifest,uint32_t ra
         if((layer&3u)==3u){
             qsa_layers++;
             kv+=(uint64_t)manifest->max_context*
-                (FG_Q38_QSA_INDEX_KEY_BYTES+
-                 (manifest->execution_mode==FG_EXECUTION_PIPELINE?
-                  FG_Q38_QSA_TOKEN_RECORD_BYTES:0u));
+                FG_Q38_QSA_INDEX_KEY_BYTES;
         }else kv+=gdn_layer_bytes;
     }
     uint64_t state=0u;
@@ -544,19 +503,11 @@ fg_status fg_q38_validate_packed_manifest(const fg_manifest *m,fg_error *err){
         "ffn_down_exps.weight","ffn_gate_exps.weight","ffn_up_exps.weight"
     };
     if(!m){fg_error_set(err,FG_ERR_ARGUMENT,"packed Qwen3.8 manifest is null");return FG_ERR_ARGUMENT;}
-    bool pipeline=m->execution_mode==FG_EXECUTION_PIPELINE;
-    if(pipeline&&m->stage_count!=FG_PIPELINE_STAGE_COUNT){
-        fg_error_set(err,FG_ERR_MISMATCH,"pipeline stage count is invalid");
-        return FG_ERR_MISMATCH;
-    }
+
     fg_status storage_status=fg_manifest_validate_tensor_storage(m,err);
     if(storage_status!=FG_OK)return storage_status;
-    if(pipeline){
-        fg_status shard_status=fg_q38_validate_ngram_shards(m,err);
-        if(shard_status!=FG_OK)return shard_status;
-    }
-    uint32_t packed_model_tensors=pipeline?SOURCE_TENSORS:
-        SOURCE_TENSORS+FG_LAYER_COUNT*EXPERT_FAMILIES*(FG_GROUP_SIZE-1u);
+
+    uint32_t packed_model_tensors=SOURCE_TENSORS+FG_LAYER_COUNT*EXPERT_FAMILIES*(FG_GROUP_SIZE-1u);
     uint32_t model_tensors=0,tokenizer_tensors=0,vision_tensors=0,mtp_tensors=0;
     for(uint32_t i=0;i<m->tensor_count;i++)switch(m->tensors[i].kind){
         case FG_TENSOR_COMMON:case FG_TENSOR_ROUTED_EXPERT:case FG_TENSOR_NGRAM:
@@ -586,13 +537,10 @@ fg_status fg_q38_validate_packed_manifest(const fg_manifest *m,fg_error *err){
         if(r->layer<FG_LAYER_COUNT&&r->kind==FG_TENSOR_COMMON&&r->rank!=m->layer_owner[r->layer]){
             free(names);free(synthetic.tensors);fg_error_set(err,FG_ERR_MISMATCH,"owner tensor %s is on rank %u, expected %u",r->name,r->rank,m->layer_owner[r->layer]);return FG_ERR_MISMATCH;
         }
-        uint32_t first_rank=pipeline?m->stage_ranks[0]:0u;
-        uint32_t terminal_rank=pipeline?m->stage_ranks[m->stage_count-1u]:4u;
+        uint32_t first_rank=0u;
+        uint32_t terminal_rank=4u;
         if(strcmp(r->name,"token_embd.weight")==0){
-            bool storage_ok=pipeline?
-                r->kind==FG_TENSOR_HOST_CACHE&&
-                    r->layout==FG_TENSOR_LAYOUT_HOST_Q8_0&&r->offset==0u:
-                r->kind==FG_TENSOR_COMMON&&r->layout==FG_TENSOR_LAYOUT_GGML;
+            bool storage_ok=r->kind==FG_TENSOR_COMMON&&r->layout==FG_TENSOR_LAYOUT_GGML;
             if(r->rank!=first_rank||!storage_ok){free(names);free(synthetic.tensors);fg_error_set(err,FG_ERR_MISMATCH,"token embedding storage or owner is invalid");return FG_ERR_MISMATCH;}
         }
         if((strcmp(r->name,"output.weight")==0||strncmp(r->name,"output_hc_",10u)==0)&&r->rank!=terminal_rank){free(names);free(synthetic.tensors);fg_error_set(err,FG_ERR_MISMATCH,"output bundle tensor %s must be on rank %u",r->name,terminal_rank);return FG_ERR_MISMATCH;}
@@ -604,15 +552,7 @@ fg_status fg_q38_validate_packed_manifest(const fg_manifest *m,fg_error *err){
     for(uint32_t l=0;l<FG_LAYER_COUNT;l++)for(uint32_t family=0;family<EXPERT_FAMILIES;family++){
         char base[FG_TENSOR_NAME_MAX];snprintf(base,sizeof(base),"blk.%u.%s",l,expert_suffix[family]);
         const fg_tensor_record *representative=NULL;
-        if(pipeline){
-            uint32_t rank=m->layer_owner[l];
-            const fg_tensor_record *r=fg_q38_find_tensor(m,base,rank);
-            if(!r||r->kind!=FG_TENSOR_ROUTED_EXPERT||r->layer!=l||
-               r->dims!=3||r->shape[2]!=FG_EXPERT_COUNT){
-                free(names);free(synthetic.tensors);fg_error_set(err,FG_ERR_MISMATCH,"invalid stage-local expert tensor %s",base);return FG_ERR_MISMATCH;
-            }
-            representative=r;
-        }else{
+
             for(uint32_t gi=0;gi<FG_GROUP_SIZE;gi++){
                 uint32_t rank=m->layer_groups[l][gi];char packed[FG_TENSOR_NAME_MAX+16u];snprintf(packed,sizeof(packed),"%s.rank%u",base,rank);
                 const fg_tensor_record *r=fg_q38_find_tensor(m,packed,rank);
@@ -624,7 +564,7 @@ fg_status fg_q38_validate_packed_manifest(const fg_manifest *m,fg_error *err){
                 }
                 representative=r;
             }
-        }
+
         if(reconstructed>=SOURCE_TENSORS){free(names);free(synthetic.tensors);fg_error_set(err,FG_ERR_LIMIT,"too many reconstructed tensors");return FG_ERR_LIMIT;}
         snprintf(names[reconstructed],FG_TENSOR_NAME_MAX,"%s",base);synthetic.tensors[reconstructed].name=names[reconstructed];
         synthetic.tensors[reconstructed].dims=representative->dims;memcpy(synthetic.tensors[reconstructed].shape,representative->shape,sizeof(representative->shape));

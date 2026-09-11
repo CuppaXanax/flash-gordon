@@ -94,12 +94,10 @@ static fg_status open_pack_output(pack_output *out,const char *final_path,
 
 static fg_status open_outputs(const fg_pack_options *o,
                               pack_output rank[FG_RANK_COUNT],
-                              pack_output *ngram,pack_output *embedding,
-                              pack_output shards[FG_NGRAM_SHARD_COUNT],
+                              pack_output *ngram,
                               fg_error *err){
     if(o->dry_run)return FG_OK;
     if(mkdir_one(o->output_dir,err)!=FG_OK)return err->code;
-    bool pipeline=o->runtime_profile==FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K;
     char path[1024];
     for(uint32_t r=0;r<FG_RANK_COUNT;r++){
         if(snprintf(path,sizeof(path),"%s/rank-%02u.fgw",o->output_dir,r)>=
@@ -107,55 +105,19 @@ static fg_status open_outputs(const fg_pack_options *o,
             fg_error_set(err,FG_ERR_LIMIT,"rank output path is too long");
             return FG_ERR_LIMIT;
         }
-        fg_status status=open_pack_output(&rank[r],path,pipeline,err);
+        fg_status status=open_pack_output(&rank[r],path,true,err);
         if(status!=FG_OK)return status;
     }
     if(snprintf(path,sizeof(path),"%s/ngram.iq4nl",o->output_dir)>=(int)sizeof(path)){
         fg_error_set(err,FG_ERR_LIMIT,"n-gram output path is too long");
         return FG_ERR_LIMIT;
     }
-    fg_status status=open_pack_output(ngram,path,pipeline,err);
+    fg_status status=open_pack_output(ngram,path,true,err);
     if(status!=FG_OK)return status;
-    if(o->runtime_profile==FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K){
-        for(uint32_t rank_index=1u;rank_index<FG_RANK_COUNT;rank_index++){
-            if(snprintf(path,sizeof(path),"%s/" FG_NGRAM_SHARD_ARTIFACT_FORMAT,
-                        o->output_dir,rank_index)>=(int)sizeof(path)){
-                fg_error_set(err,FG_ERR_LIMIT,
-                             "resident n-gram shard output path is too long");
-                return FG_ERR_LIMIT;
-            }
-            status=open_pack_output(&shards[rank_index-1u],path,true,err);
-            if(status!=FG_OK)return status;
-        }
-        if(snprintf(path,sizeof(path),"%s/%s",o->output_dir,
-                    FG_TOKEN_EMBEDDING_ARTIFACT)>=(int)sizeof(path)){
-            fg_error_set(err,FG_ERR_LIMIT,
-                         "token embedding output path is too long");
-            return FG_ERR_LIMIT;
-        }
-        status=open_pack_output(embedding,path,true,err);
-        if(status!=FG_OK)return status;
-    }
+
     return FG_OK;
 }
 static fg_status finalize_output(pack_output *out,fg_error *err){fg_status rc=pad_to(out,fg_align_up_u64(out->offset,FG_ALIGNMENT),err);if(!out->file)return rc;if(rc==FG_OK&&(fflush(out->file)!=0||fsync(fileno(out->file))!=0)){fg_error_set(err,FG_ERR_IO,"flush %s: %s",out->path,strerror(errno));rc=FG_ERR_IO;}if(fclose(out->file)!=0&&rc==FG_OK){fg_error_set(err,FG_ERR_IO,"close %s: %s",out->path,strerror(errno));rc=FG_ERR_IO;}out->file=NULL;return rc;}
-static fg_status finalize_exact_output(pack_output *out,fg_error *err){if(!out->file)return FG_OK;fg_status rc=FG_OK;if(fflush(out->file)!=0||fsync(fileno(out->file))!=0){fg_error_set(err,FG_ERR_IO,"flush %s: %s",out->path,strerror(errno));rc=FG_ERR_IO;}if(fclose(out->file)!=0&&rc==FG_OK){fg_error_set(err,FG_ERR_IO,"close %s: %s",out->path,strerror(errno));rc=FG_ERR_IO;}out->file=NULL;return rc;}
-static fg_status close_outputs(pack_output rank[FG_RANK_COUNT],pack_output *ngram,
-                               pack_output *embedding,
-                               pack_output shards[FG_NGRAM_SHARD_COUNT],
-                               fg_error *err){
-    fg_status rc=FG_OK;
-    for(uint32_t r=0;r<FG_RANK_COUNT;r++){
-        fg_status one=finalize_output(&rank[r],err);if(rc==FG_OK)rc=one;
-    }
-    fg_status one=finalize_output(ngram,err);if(rc==FG_OK)rc=one;
-    one=finalize_exact_output(embedding,err);if(rc==FG_OK)rc=one;
-    for(uint32_t i=0;i<FG_NGRAM_SHARD_COUNT;i++){
-        one=finalize_exact_output(&shards[i],err);if(rc==FG_OK)rc=one;
-    }
-    return rc;
-}
-
 static void discard_output(pack_output *out){
     if(!out)return;
     if(out->file){fclose(out->file);out->file=NULL;}
@@ -163,12 +125,19 @@ static void discard_output(pack_output *out){
     if(out->committed&&out->final_path[0])unlink(out->final_path);
 }
 
-static void discard_outputs(pack_output rank[FG_RANK_COUNT],pack_output *ngram,
-                            pack_output *embedding,
-                            pack_output shards[FG_NGRAM_SHARD_COUNT]){
+static fg_status close_outputs(pack_output rank[FG_RANK_COUNT],pack_output *ngram,fg_error *err){
+    fg_status status=FG_OK;
+    for(uint32_t r=0;r<FG_RANK_COUNT;r++){
+        fg_status one=finalize_output(&rank[r],err);
+        if(status==FG_OK)status=one;
+    }
+    fg_status one=finalize_output(ngram,err);
+    return status==FG_OK?one:status;
+}
+
+static void discard_outputs(pack_output rank[FG_RANK_COUNT],pack_output *ngram){
     for(uint32_t r=0;r<FG_RANK_COUNT;r++)discard_output(&rank[r]);
-    discard_output(ngram);discard_output(embedding);
-    for(uint32_t i=0;i<FG_NGRAM_SHARD_COUNT;i++)discard_output(&shards[i]);
+    discard_output(ngram);
 }
 
 static fg_status commit_output(pack_output *out,fg_error *err){
@@ -182,31 +151,17 @@ static fg_status commit_output(pack_output *out,fg_error *err){
     return FG_OK;
 }
 
-static fg_status commit_outputs(pack_output rank[FG_RANK_COUNT],
-                                pack_output *ngram,pack_output *embedding,
-                                pack_output shards[FG_NGRAM_SHARD_COUNT],
-                                fg_error *err){
+static fg_status commit_outputs(pack_output rank[FG_RANK_COUNT],pack_output *ngram,fg_error *err){
     for(uint32_t r=0;r<FG_RANK_COUNT;r++){
-        fg_status status=commit_output(&rank[r],err);if(status!=FG_OK)return status;
+        fg_status status=commit_output(&rank[r],err);
+        if(status!=FG_OK)return status;
     }
-    fg_status status=commit_output(ngram,err);if(status!=FG_OK)return status;
-    status=commit_output(embedding,err);if(status!=FG_OK)return status;
-    for(uint32_t i=0;i<FG_NGRAM_SHARD_COUNT;i++){
-        status=commit_output(&shards[i],err);if(status!=FG_OK)return status;
-    }
-    return FG_OK;
+    return commit_output(ngram,err);
 }
+
 static fg_status pad_to(pack_output *out,uint64_t target,fg_error *err){static const uint8_t zero[FG_ALIGNMENT]={0};while(out->offset<target){size_t n=(size_t)(target-out->offset);if(n>sizeof(zero))n=sizeof(zero);if(out->file&&fwrite(zero,1,n,out->file)!=n){fg_error_set(err,FG_ERR_IO,"pad %s: %s",out->path,strerror(errno));return FG_ERR_IO;}out->offset+=n;}return FG_OK;}
 static fg_status copy_range(FILE *src,uint64_t offset,uint64_t bytes,pack_output *out,fg_sha256 *hash,fg_error *err){if(!out->file){uint8_t descriptor[16];memcpy(descriptor,&offset,8);memcpy(descriptor+8,&bytes,8);fg_sha256_update(hash,descriptor,sizeof(descriptor));out->offset+=bytes;return FG_OK;}uint8_t *buf=malloc(1u<<20);if(!buf){fg_error_set(err,FG_ERR_OOM,"allocate pack copy buffer");return FG_ERR_OOM;}if(fseeko(src,(off_t)offset,SEEK_SET)!=0){free(buf);fg_error_set(err,FG_ERR_IO,"seek source: %s",strerror(errno));return FG_ERR_IO;}while(bytes){size_t n=bytes>(1u<<20)?(1u<<20):(size_t)bytes;if(fread(buf,1,n,src)!=n||fwrite(buf,1,n,out->file)!=n){free(buf);fg_error_set(err,FG_ERR_IO,"copy tensor: %s",ferror(src)?"unexpected end of source":strerror(errno));return FG_ERR_IO;}fg_sha256_update(hash,buf,n);out->offset+=n;bytes-=n;}free(buf);return FG_OK;}
 
-static void hash_range_descriptor(fg_sha256 *hash,uint64_t offset,uint64_t bytes){
-    uint8_t descriptor[16];
-    for(uint32_t i=0;i<8u;i++){
-        descriptor[i]=(uint8_t)(offset>>(i*8u));
-        descriptor[8u+i]=(uint8_t)(bytes>>(i*8u));
-    }
-    fg_sha256_update(hash,descriptor,sizeof(descriptor));
-}
 static fg_status load_profile(const char *path,double profile[FG_LAYER_COUNT][FG_EXPERT_COUNT],fg_error *err){FILE *f=fopen(path,"r");if(!f){fg_error_set(err,FG_ERR_IO,"open router profile %s: %s",path,strerror(errno));return FG_ERR_IO;}unsigned l,e;double v;while(fscanf(f,"%u %u %lf",&l,&e,&v)==3){if(l>=FG_LAYER_COUNT||e>=FG_EXPERT_COUNT||v<0){fclose(f);fg_error_set(err,FG_ERR_FORMAT,"invalid router profile row");return FG_ERR_FORMAT;}profile[l][e]=v;}if(!feof(f)){fclose(f);fg_error_set(err,FG_ERR_FORMAT,"malformed router profile");return FG_ERR_FORMAT;}fclose(f);return FG_OK;}
 static fg_status record_segment(fg_manifest *m,const fg_gguf_tensor *source,const char *name,uint64_t start,uint64_t bytes,uint32_t rank,uint32_t layer,uint32_t expert,fg_tensor_kind kind,fg_tensor_layout layout,uint64_t local_experts,fg_sha256 *hash,fg_error *err){fg_tensor_record r={0};snprintf(r.name,sizeof(r.name),"%s",name);r.offset=start;r.bytes=bytes;r.ggml_type=source->type;r.dims=source->dims;memcpy(r.shape,source->shape,sizeof(r.shape));if(local_experts)r.shape[r.dims-1]=local_experts;r.rank=(uint16_t)rank;r.layer=(uint16_t)(layer<FG_LAYER_COUNT?layer:UINT16_MAX);r.expert=(uint16_t)(expert<FG_EXPERT_COUNT?expert:UINT16_MAX);r.kind=(uint8_t)kind;r.layout=(uint8_t)layout;fg_sha256_final(hash,r.sha256);fg_status rc=fg_manifest_add_tensor(m,&r,err);if(rc==FG_OK){if(kind==FG_TENSOR_COMMON||kind==FG_TENSOR_ROUTED_EXPERT||kind==FG_TENSOR_HOST_CACHE)m->flags|=FG_MANIFEST_HAS_TEXT;else if(kind==FG_TENSOR_NGRAM)m->flags|=FG_MANIFEST_HAS_NGRAM;else if(kind==FG_TENSOR_VISION)m->flags|=FG_MANIFEST_HAS_VISION;else if(kind==FG_TENSOR_MTP)m->flags|=FG_MANIFEST_HAS_MTP;else if(kind==FG_TENSOR_TOKENIZER)m->flags|=FG_MANIFEST_HAS_TOKENIZER;}if(rc==FG_OK&&rank<FG_RANK_COUNT&&kind!=FG_TENSOR_HOST_CACHE){m->ranks[rank].tensor_count++;m->ranks[rank].persistent_bytes+=fg_align_up_u64(bytes,FG_ALIGNMENT);}return rc;}
 
@@ -226,14 +181,8 @@ static bool cook_expert_data(const fg_gguf_tensor *tensor,fg_tensor_layout layou
 
 static fg_status process_cooked_expert(FILE *source,const fg_gguf_tensor *tensor,uint64_t offset,uint64_t bytes,fg_tensor_layout layout,pack_output *output,fg_sha256 *hash,fg_error *err){if(!output->file){uint64_t descriptor[3]={offset,bytes,layout};fg_sha256_update(hash,descriptor,sizeof(descriptor));output->offset+=bytes;return FG_OK;}uint8_t *packed=malloc((size_t)bytes),*cooked=malloc((size_t)bytes);if(!packed||!cooked){free(cooked);free(packed);fg_error_set(err,FG_ERR_OOM,"allocate cooked expert buffers");return FG_ERR_OOM;}if(fseeko(source,(off_t)offset,SEEK_SET)!=0||fread(packed,1,(size_t)bytes,source)!=(size_t)bytes){free(cooked);free(packed);fg_error_set(err,FG_ERR_IO,"read expert tensor %s: %s",tensor->name,ferror(source)?"unexpected end of source":strerror(errno));return FG_ERR_IO;}bool converted=layout==FG_TENSOR_LAYOUT_K_QUANT_EXPERT_COOKED?fg_cook_k_quant_rows(packed,cooked,bytes,(uint32_t)tensor->shape[0],(uint32_t)tensor->shape[1],tensor->type):layout==FG_TENSOR_LAYOUT_Q5_1_EXPERT_COOKED?fg_cook_q5_1_rows(packed,cooked,bytes,(uint32_t)tensor->shape[0],(uint32_t)tensor->shape[1]):false;if(!converted||fwrite(cooked,1,(size_t)bytes,output->file)!=(size_t)bytes){free(cooked);free(packed);fg_error_set(err,FG_ERR_IO,"cook expert tensor %s: %s",tensor->name,converted?strerror(errno):"invalid layout");return FG_ERR_IO;}fg_sha256_update(hash,cooked,(size_t)bytes);output->offset+=bytes;free(cooked);free(packed);return FG_OK;}
 
-static uint32_t common_owner(const fg_manifest *manifest,const fg_gguf_tensor *tensor,int layer){
-    if(manifest->execution_mode==FG_EXECUTION_PIPELINE){
-        if(layer>=0)return manifest->layer_owner[layer];
-        if(strcmp(tensor->name,"output.weight")==0||
-           strncmp(tensor->name,"output_hc_",10u)==0)
-            return manifest->stage_ranks[manifest->stage_count-1u];
-        return manifest->stage_ranks[0];
-    }
+static uint32_t common_owner(const fg_gguf_tensor *tensor,int layer){
+
     if(layer>=0)return (uint32_t)layer%FG_RANK_COUNT;
     if(strcmp(tensor->name,"token_embd.weight")==0)return 0u;
     if(strcmp(tensor->name,"output.weight")==0||
@@ -241,117 +190,17 @@ static uint32_t common_owner(const fg_manifest *manifest,const fg_gguf_tensor *t
     return 0u;
 }
 
-static fg_status copy_ngram_segment(FILE *source,uint64_t source_offset,
-                                    uint64_t bytes,pack_output *full,
-                                    fg_sha256 *full_hash,pack_output *shard,
-                                    fg_sha256 *shard_hash,fg_error *err){
-    uint8_t *buffer=malloc(1u<<20u);
-    if(!buffer){
-        fg_error_set(err,FG_ERR_OOM,"allocate n-gram shard copy buffer");
-        return FG_ERR_OOM;
-    }
-    if(fseeko(source,(off_t)source_offset,SEEK_SET)!=0){
-        free(buffer);fg_error_set(err,FG_ERR_IO,"seek n-gram tensor: %s",
-                                  strerror(errno));
-        return FG_ERR_IO;
-    }
-    uint64_t remaining=bytes;
-    while(remaining){
-        size_t request=remaining>(1u<<20u)?(1u<<20u):(size_t)remaining;
-        if(fread(buffer,1,request,source)!=request||
-           (full->file&&fwrite(buffer,1,request,full->file)!=request)||
-           (shard->file&&fwrite(buffer,1,request,shard->file)!=request)){
-            free(buffer);fg_error_set(err,FG_ERR_IO,
-                "copy n-gram shard: %s",ferror(source)?"unexpected end of source":
-                strerror(errno));
-            return FG_ERR_IO;
-        }
-        fg_sha256_update(full_hash,buffer,request);
-        fg_sha256_update(shard_hash,buffer,request);
-        full->offset+=request;shard->offset+=request;remaining-=request;
-    }
-    free(buffer);
-    return FG_OK;
-}
-
-static fg_status pack_pipeline_ngram(const fg_gguf_tensor *tensor,FILE *source,
-                                     fg_manifest *manifest,pack_output *full,
-                                     pack_output shards[FG_NGRAM_SHARD_COUNT],
-                                     fg_error *err){
-    const uint64_t total_rows=UINT64_C(320001536);
-    if(tensor->type!=20u||tensor->dims!=2u||
-       tensor->shape[0]!=FG_NGRAM_EMBED_WIDTH||
-       tensor->shape[1]!=total_rows||tensor->bytes!=total_rows*FG_NGRAM_ROW_BYTES||
-       full->offset){
-        fg_error_set(err,FG_ERR_MISMATCH,
-                     "pipeline n-gram tensor does not have canonical row geometry");
-        return FG_ERR_MISMATCH;
-    }
-    fg_sha256 full_hash;fg_sha256_init(&full_hash);
-    if(!full->file){
-        hash_range_descriptor(&full_hash,tensor->offset,tensor->bytes);
-        full->offset=tensor->bytes;
-    }
-    manifest->ngram_shard_count=0u;
-    for(uint32_t rank=1u;rank<FG_RANK_COUNT;rank++){
-        uint64_t row_begin=0u,row_count=0u;
-        fg_status status=fg_q38_ngram_rank_range(rank,&row_begin,&row_count,err);
-        if(status!=FG_OK)return status;
-        uint64_t bytes=row_count*FG_NGRAM_ROW_BYTES;
-        uint64_t source_offset=tensor->offset+row_begin*FG_NGRAM_ROW_BYTES;
-        pack_output *shard=&shards[rank-1u];
-        fg_sha256 shard_hash;fg_sha256_init(&shard_hash);
-        if(full->file){
-            status=copy_ngram_segment(source,source_offset,bytes,full,&full_hash,
-                                      shard,&shard_hash,err);
-            if(status!=FG_OK)return status;
-        }else{
-            hash_range_descriptor(&shard_hash,source_offset,bytes);
-            shard->offset=bytes;
-        }
-        fg_ngram_shard_record *record=
-            &manifest->ngram_shards[manifest->ngram_shard_count++];
-        record->logical_rank=rank;
-        record->row_begin=row_begin;
-        record->row_count=row_count;
-        record->bytes=bytes;
-        fg_sha256_final(&shard_hash,record->sha256);
-        manifest->host_resident_bytes[rank]=FG_PIPELINE_NGRAM_CACHE_BYTES;
-        if(!full->file){
-            char digest[65];fg_sha256_hex(record->sha256,digest);
-            printf(FG_NGRAM_SHARD_ARTIFACT_FORMAT
-                   " rows=[%llu,%llu) source_offset=%llu bytes=%llu "
-                   "descriptor_sha256=%s\n",rank,
-                   (unsigned long long)row_begin,
-                   (unsigned long long)(row_begin+row_count),
-                   (unsigned long long)source_offset,
-                   (unsigned long long)bytes,digest);
-        }
-    }
-    return record_segment(manifest,tensor,tensor->name,0u,tensor->bytes,
-                          UINT16_MAX,UINT32_MAX,UINT32_MAX,FG_TENSOR_NGRAM,
-                          FG_TENSOR_LAYOUT_GGML,0u,&full_hash,err);
-}
-
 static fg_status pack_common(const fg_gguf_tensor *t,FILE *src,fg_manifest *m,
                              pack_output rank[FG_RANK_COUNT],pack_output *ngram,
-                             pack_output *embedding,
-                             pack_output shards[FG_NGRAM_SHARD_COUNT],
                              fg_error *err){
     fg_tensor_kind kind=fg_gguf_tensor_kind(t->name);
-    if(kind==FG_TENSOR_NGRAM&&m->execution_mode==FG_EXECUTION_PIPELINE)
-        return pack_pipeline_ngram(t,src,m,ngram,shards,err);
-    int layer=fg_gguf_tensor_layer(t->name);uint32_t owner=common_owner(m,t,layer);
-    bool external_embedding=m->execution_mode==FG_EXECUTION_PIPELINE&&
-        !strcmp(t->name,"token_embd.weight");
-    if(external_embedding)kind=FG_TENSOR_HOST_CACHE;
-    pack_output *out=kind==FG_TENSOR_NGRAM?ngram:
-        external_embedding?embedding:&rank[owner];
+
+    int layer=fg_gguf_tensor_layer(t->name);uint32_t owner=common_owner(t,layer);
+    pack_output *out=kind==FG_TENSOR_NGRAM?ngram:&rank[owner];
     uint64_t start=fg_align_up_u64(out->offset,FG_ALIGNMENT);
     fg_status rc=pad_to(out,start,err);if(rc!=FG_OK)return rc;
     fg_sha256 hash;fg_sha256_init(&hash);
-    fg_tensor_layout layout=external_embedding?FG_TENSOR_LAYOUT_HOST_Q8_0:
-        use_cooked_q8_0(t)?FG_TENSOR_LAYOUT_Q8_0_COOKED:FG_TENSOR_LAYOUT_GGML;
+    fg_tensor_layout layout=use_cooked_q8_0(t)?FG_TENSOR_LAYOUT_Q8_0_COOKED:FG_TENSOR_LAYOUT_GGML;
     uint64_t bytes=t->bytes;
     if(layout==FG_TENSOR_LAYOUT_Q8_0_COOKED){
         bytes=fg_q8_0_cooked_matrix_bytes((uint32_t)t->shape[0],
@@ -367,34 +216,13 @@ static fg_status pack_common(const fg_gguf_tensor *t,FILE *src,fg_manifest *m,
     rc=record_segment(m,t,t->name,start,bytes,
         kind==FG_TENSOR_NGRAM?UINT16_MAX:owner,
         layer<0?UINT32_MAX:(uint32_t)layer,UINT32_MAX,kind,layout,0,&hash,err);
-    if(rc==FG_OK&&external_embedding){
-        if(m->host_resident_bytes[owner]){
-            fg_error_set(err,FG_ERR_MISMATCH,
-                         "pipeline stage 0 host embedding is duplicated");
-            return FG_ERR_MISMATCH;
-        }
-        m->host_resident_bytes[owner]=bytes;
-    }
+
     return rc;
 }
 
 static fg_status pack_expert_tensor(const fg_gguf *g,const fg_gguf_tensor *t,FILE *src,fg_manifest *m,pack_output rank[FG_RANK_COUNT],fg_error *err){
     (void)g;int layer=fg_gguf_tensor_layer(t->name);if(layer<0||t->shape[t->dims-1]!=FG_EXPERT_COUNT||t->bytes%FG_EXPERT_COUNT){fg_error_set(err,FG_ERR_FORMAT,"routed tensor %s is not a 512-expert layer tensor",t->name);return FG_ERR_FORMAT;}uint64_t expert_bytes=t->bytes/FG_EXPERT_COUNT;fg_tensor_layout layout=expert_layout(t);
-    if(m->execution_mode==FG_EXECUTION_PIPELINE){
-        uint32_t owner=m->layer_owner[layer];pack_output *out=&rank[owner];
-        uint64_t start=fg_align_up_u64(out->offset,FG_ALIGNMENT);
-        fg_status rc=pad_to(out,start,err);if(rc!=FG_OK)return rc;
-        fg_sha256 hash;fg_sha256_init(&hash);
-        if(layout==FG_TENSOR_LAYOUT_GGML)
-            rc=copy_range(src,t->offset,t->bytes,out,&hash,err);
-        else for(uint32_t expert=0;expert<FG_EXPERT_COUNT&&rc==FG_OK;expert++)
-            rc=process_cooked_expert(src,t,t->offset+(uint64_t)expert*expert_bytes,
-                                     expert_bytes,layout,out,&hash,err);
-        if(rc!=FG_OK)return rc;
-        return record_segment(m,t,t->name,start,t->bytes,owner,(uint32_t)layer,
-                              UINT32_MAX,FG_TENSOR_ROUTED_EXPERT,layout,
-                              FG_EXPERT_COUNT,&hash,err);
-    }
+
     for(uint32_t gi=0;gi<FG_GROUP_SIZE;gi++){uint32_t r=m->layer_groups[layer][gi];pack_output *out=&rank[r];uint64_t start=fg_align_up_u64(out->offset,FG_ALIGNMENT);fg_status rc=pad_to(out,start,err);if(rc!=FG_OK)return rc;fg_sha256 hash;fg_sha256_init(&hash);uint32_t copied=0;
         for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)if(m->expert_rank[layer][e]==r){uint64_t offset=t->offset+(uint64_t)e*expert_bytes;rc=layout==FG_TENSOR_LAYOUT_GGML?copy_range(src,offset,expert_bytes,out,&hash,err):process_cooked_expert(src,t,offset,expert_bytes,layout,out,&hash,err);if(rc!=FG_OK)return rc;copied++;}
         if(copied!=FG_EXPERTS_PER_RANK){fg_error_set(err,FG_ERR_FORMAT,"layer %d rank %u selected %u experts",layer,r,copied);return FG_ERR_FORMAT;}char name[FG_TENSOR_NAME_MAX];snprintf(name,sizeof(name),"%.80s.rank%u",t->name,r);rc=record_segment(m,t,name,start,expert_bytes*copied,r,(uint32_t)layer,UINT32_MAX,FG_TENSOR_ROUTED_EXPERT,layout,FG_EXPERTS_PER_RANK,&hash,err);if(rc!=FG_OK)return rc;
@@ -462,7 +290,7 @@ static fg_status validate_pack_memory(const fg_manifest *manifest,bool print,
                    residency_delta,persistent_margin,residency_margin);
         }
         if(print)
-            printf("pipeline worst margins persistent-rank=%u persistent-remaining=%+lld "
+            printf("pack worst margins persistent-rank=%u persistent-remaining=%+lld "
                    "residency-rank=%u residency-remaining=%+lld\n",
                    worst_persistent_rank,(long long)worst_persistent_margin,
                    worst_residency_rank,(long long)worst_residency_margin);
@@ -515,19 +343,7 @@ fg_status fg_pack_run(const fg_pack_options *o,fg_error *err){
                      o->runtime_profile);
         return FG_ERR_ARGUMENT;
     }
-    if(o->runtime_profile==FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K&&
-       (o->router_profile_path||o->expert_map_path)){
-        fg_error_set(err,FG_ERR_UNAVAILABLE,
-                     "pipeline packing does not accept router profiles or expert maps");
-        return FG_ERR_UNAVAILABLE;
-    }
-    if(o->runtime_profile==FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K&&
-       !o->dry_run&&!o->skip_model_validation){
-        fg_pack_options preflight=*o;
-        preflight.dry_run=true;
-        fg_status preflight_status=fg_pack_run(&preflight,err);
-        if(preflight_status!=FG_OK)return preflight_status;
-    }
+
     fg_gguf g;
     fg_status rc=fg_gguf_open(o->source_paths,o->source_count,&g,err);
     if(rc!=FG_OK)return rc;
@@ -540,14 +356,13 @@ fg_status fg_pack_run(const fg_pack_options *o,fg_error *err){
         fg_gguf_close(&g);fg_error_set(err,FG_ERR_OOM,"allocate manifest");
         return FG_ERR_OOM;
     }
-    pack_output rank[FG_RANK_COUNT]={0},ngram={0},embedding={0};
-    pack_output shards[FG_NGRAM_SHARD_COUNT]={0};
+    pack_output rank[FG_RANK_COUNT]={0},ngram={0};
     bool tokenizer_attempted=false;
     fg_manifest_init(m);
-    if(o->runtime_profile!=FG_RUNTIME_PROFILE_NONE){
-        rc=fg_runtime_profile_apply(m,o->runtime_profile,err);
-        if(rc!=FG_OK)goto done;
-    }
+    uint32_t profile=o->runtime_profile==FG_RUNTIME_PROFILE_NONE?
+        FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_128:o->runtime_profile;
+    rc=fg_runtime_profile_apply(m,profile,err);
+    if(rc!=FG_OK)goto done;
     if(o->router_profile_path){
         double (*profile)[FG_EXPERT_COUNT]=calloc(FG_LAYER_COUNT,sizeof(*profile));
         if(!profile){rc=FG_ERR_OOM;fg_error_set(err,rc,"allocate router profile");goto done;}
@@ -562,7 +377,7 @@ fg_status fg_pack_run(const fg_pack_options *o,fg_error *err){
     }
     rc=hash_pack_sources(o,m->source_sha256,err);
     if(rc!=FG_OK)goto done;
-    rc=open_outputs(o,rank,&ngram,&embedding,shards,err);
+    rc=open_outputs(o,rank,&ngram,err);
     if(rc!=FG_OK)goto done;
     for(uint32_t r=0;r<FG_RANK_COUNT;r++){
         snprintf(m->ranks[r].endpoint,sizeof(m->ranks[r].endpoint),
@@ -581,14 +396,14 @@ fg_status fg_pack_run(const fg_pack_options *o,fg_error *err){
         }
         if(fg_gguf_tensor_kind(tensor->name)==FG_TENSOR_ROUTED_EXPERT)
             rc=pack_expert_tensor(&g,tensor,source,m,rank,err);
-        else rc=pack_common(tensor,source,m,rank,&ngram,&embedding,shards,err);
+        else rc=pack_common(tensor,source,m,rank,&ngram,err);
         fclose(source);
         if(rc!=FG_OK)break;
     }
     {
         fg_error close_error={0};
         fg_status close_rc=close_outputs(
-            rank,&ngram,&embedding,shards,rc==FG_OK?err:&close_error);
+            rank,&ngram,rc==FG_OK?err:&close_error);
         if(rc==FG_OK)rc=close_rc;
     }
     if(rc!=FG_OK)goto done;
@@ -602,8 +417,7 @@ fg_status fg_pack_run(const fg_pack_options *o,fg_error *err){
             fg_error_set(err,FG_ERR_LIMIT,"tokenizer output path is too long");
             rc=FG_ERR_LIMIT;goto done;
         }
-        if(m->execution_mode==FG_EXECUTION_PIPELINE&&
-           (stat(tokenizer_path,&existing)==0||errno!=ENOENT)){
+        if((stat(tokenizer_path,&existing)==0||errno!=ENOENT)){
             fg_error_set(err,FG_ERR_IO,"pack output already exists: %s",
                          tokenizer_path);
             rc=FG_ERR_IO;goto done;
@@ -619,15 +433,14 @@ fg_status fg_pack_run(const fg_pack_options *o,fg_error *err){
     if(rc!=FG_OK)goto done;
     if(!o->skip_model_validation){
         rc=fg_q38_validate_packed_manifest(m,err);
-        if(rc==FG_OK&&m->execution_mode==FG_EXECUTION_PIPELINE)
-            rc=fg_q38_validate_ngram_shards(m,err);
+
         if(rc!=FG_OK)goto done;
     }
     rc=validate_pack_memory(m,o->dry_run,err);
     if(rc!=FG_OK)goto done;
     uint8_t zero[32]={0};memcpy(m->manifest_sha256,zero,32);
     if(!o->dry_run){
-        rc=commit_outputs(rank,&ngram,&embedding,shards,err);
+        rc=commit_outputs(rank,&ngram,err);
         if(rc!=FG_OK)goto done;
         char path[1024];
         if(snprintf(path,sizeof(path),"%s/manifest.fgm",o->output_dir)>=
@@ -636,8 +449,7 @@ fg_status fg_pack_run(const fg_pack_options *o,fg_error *err){
             rc=FG_ERR_LIMIT;goto done;
         }
         struct stat existing;
-        if(m->execution_mode==FG_EXECUTION_PIPELINE&&
-           (stat(path,&existing)==0||errno!=ENOENT)){
+        if((stat(path,&existing)==0||errno!=ENOENT)){
             fg_error_set(err,FG_ERR_IO,"pack output already exists: %s",path);
             rc=FG_ERR_IO;goto done;
         }
@@ -646,8 +458,8 @@ fg_status fg_pack_run(const fg_pack_options *o,fg_error *err){
     }else fg_manifest_print(m);
 done:
     if(rc!=FG_OK){
-        discard_outputs(rank,&ngram,&embedding,shards);
-        if(tokenizer_attempted&&m->execution_mode==FG_EXECUTION_PIPELINE){
+        discard_outputs(rank,&ngram);
+        if(tokenizer_attempted){
             char path[1200],directory[1024];
             if(snprintf(path,sizeof(path),"%s/tokenizer/tokenizer.fgt",o->output_dir)<
                (int)sizeof(path))unlink(path);
@@ -703,11 +515,7 @@ fg_status fg_pack_verify(const fg_verify_options *o,fg_error *err){
     fg_manifest *m=malloc(sizeof(*m));if(!m){fg_error_set(err,FG_ERR_OOM,"allocate manifest");return FG_ERR_OOM;}
     fg_status rc=fg_manifest_read(o->manifest_path,m,err);if(rc!=FG_OK){free(m);return rc;}
     rc=fg_manifest_validate_tensor_storage(m,err);if(rc!=FG_OK){free(m);return rc;}
-    if(m->execution_mode==FG_EXECUTION_PIPELINE&&
-       ((m->flags&FG_MANIFEST_HAS_NGRAM)||m->ngram_shard_count)){
-        rc=fg_q38_validate_ngram_shards(m,err);
-        if(rc!=FG_OK){free(m);return rc;}
-    }
+
     fg_gguf g;rc=fg_gguf_open(o->source_paths,o->source_count,&g,err);if(rc!=FG_OK){free(m);return rc;}
 
     printf("Verifying %u manifest tensors against %llu GGUF tensors\n",m->tensor_count,(unsigned long long)g.tensor_count);
@@ -783,18 +591,7 @@ fg_status fg_pack_verify(const fg_verify_options *o,fg_error *err){
             printf("  FAIL full n-gram artifact metadata, size, or SHA-256\n");nfail++;
         }else npass++;
     }
-    if(m->execution_mode==FG_EXECUTION_PIPELINE&&full_ngram){
-        for(uint32_t rank=1u;rank<FG_RANK_COUNT;rank++){
-            const fg_ngram_shard_record *record=fg_q38_find_ngram_shard(m,rank);
-            char path[1200];uint8_t digest[32];
-            if(!record||snprintf(path,sizeof(path),
-               "%s/" FG_NGRAM_SHARD_ARTIFACT_FORMAT,o->pack_dir,rank)>=(int)sizeof(path)||
-               hash_artifact_payload(path,record?record->bytes:0u,true,digest,err)!=FG_OK||
-               memcmp(digest,record->sha256,sizeof(digest))){
-                printf("  FAIL resident n-gram shard rank %u\n",rank);nfail++;
-            }else npass++;
-        }
-    }
+
     printf("N-gram artifacts: %u pass, %u fail\n",npass,nfail);
 
     /* Phase 3: verify expert tensors */
@@ -806,22 +603,16 @@ fg_status fg_pack_verify(const fg_verify_options *o,fg_error *err){
         char gguf_name[FG_TENSOR_NAME_MAX];
         uint32_t rank=t->rank;
         uint32_t local_experts=FG_EXPERTS_PER_RANK;
-        if(m->execution_mode==FG_EXECUTION_PIPELINE){
-            snprintf(gguf_name,sizeof(gguf_name),"%s",t->name);
-            local_experts=FG_EXPERT_COUNT;
-        }else{
+
             const char *rank_suffix=strstr(t->name,".rank");
             if(!rank_suffix){printf("  FAIL expert %.80s: cannot parse rank suffix\n",t->name);efail++;continue;}
             size_t base_len=(size_t)(rank_suffix-t->name);
             if(base_len>=sizeof(gguf_name)){efail++;continue;}
             memcpy(gguf_name,t->name,base_len);gguf_name[base_len]=0;
             rank=(uint32_t)strtoul(rank_suffix+5,NULL,10);
-        }
+
         int layer=fg_gguf_tensor_layer(gguf_name);
         if(layer<0||rank>=FG_RANK_COUNT){printf("  FAIL expert %.80s: bad layer/rank\n",t->name);efail++;continue;}
-        if(m->execution_mode==FG_EXECUTION_PIPELINE&&rank!=m->layer_owner[layer]){
-            printf("  FAIL expert %.80s: not on layer owner\n",t->name);efail++;continue;
-        }
 
         const fg_gguf_tensor *gt=find_gguf_tensor(&g,gguf_name);
         if(!gt){printf("  FAIL expert %.80s: GGUF tensor %s not found\n",t->name,gguf_name);efail++;continue;}
@@ -862,14 +653,11 @@ fg_status fg_pack_verify(const fg_verify_options *o,fg_error *err){
 
     /* Phase 4: verify .fgw data matches GGUF via direct byte comparison (spot check) */
     printf("\nPhase 4: Direct byte comparison (first expert of layer 0 on each rank)\n");
-    uint32_t rank_count=m->execution_mode==FG_EXECUTION_PIPELINE?1u:FG_GROUP_SIZE;
+    uint32_t rank_count=FG_GROUP_SIZE;
     for(uint32_t gi=0;gi<rank_count;gi++){
-        uint32_t rank=m->execution_mode==FG_EXECUTION_PIPELINE?
-            m->layer_owner[0]:m->layer_groups[0][gi];
+        uint32_t rank=m->layer_groups[0][gi];
         char tname[FG_TENSOR_NAME_MAX];
-        if(m->execution_mode==FG_EXECUTION_PIPELINE)
-            snprintf(tname,sizeof(tname),"blk.0.ffn_gate_exps.weight");
-        else snprintf(tname,sizeof(tname),"blk.0.ffn_gate_exps.weight.rank%u",rank);
+        snprintf(tname,sizeof(tname),"blk.0.ffn_gate_exps.weight.rank%u",rank);
         const fg_tensor_record *t=NULL;
         for(uint32_t i=0;i<m->tensor_count;i++)if(strcmp(m->tensors[i].name,tname)==0){t=&m->tensors[i];break;}
         if(!t){printf("  SKIP rank %u: tensor %s not in manifest\n",rank,tname);continue;}

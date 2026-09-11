@@ -5,7 +5,6 @@
 #include "fg_vk.h"
 
 #define FG_NGRAM_CACHE_BYTES (8u * 1024u * 1024u)
-#define FG_PIPELINE_NGRAM_CACHE_BYTES (UINT64_C(1) << 30u)
 #define FG_NGRAM_BLOCK_BYTES 4096u
 #define FG_NGRAM_MAX_READ_BYTES 8192u
 #define FG_NGRAM_ROW_BYTES 90u
@@ -19,21 +18,13 @@
 typedef struct fg_ngram_read {uint64_t offset;uint32_t bytes;} fg_ngram_read;
 typedef struct fg_ngram_cache fg_ngram_cache;
 typedef struct fg_ngram_store fg_ngram_store;
-typedef struct fg_ngram_resident fg_ngram_resident;
-typedef struct fg_ngram_pipeline_cache fg_ngram_pipeline_cache;
-typedef struct fg_ngram_pipeline_cache_stats {
-    uint64_t requests;
-    uint64_t page_hits;
-    uint64_t page_misses;
-    uint64_t pages_read;
-    uint64_t read_operations;
-    uint64_t evictions;
-    uint32_t last_page_hits;
-    uint32_t last_page_misses;
-    uint32_t last_pages_read;
-    uint32_t last_read_operations;
-} fg_ngram_pipeline_cache_stats;
 
+/* Validate and hash a suffix plus its two-token dependency window. Earlier
+ * history belongs to the runtime's already-validated prefix; no state is cached. */
+fg_status fg_q38_ngram_lookup_range(const int32_t *history,size_t history_count,
+    size_t first_token,uint32_t token_count,uint64_t *rows,uint64_t *addresses,
+    fg_error *err);
+typedef struct fg_ngram_resident fg_ngram_resident;
 /* Converts arbitrary tensor byte addresses to sorted, deduplicated 4-8 KiB
    O_DIRECT reads. Adjacent blocks are paired, never widened beyond 8 KiB. */
 fg_status fg_ngram_plan_reads(const uint64_t *addresses,uint32_t address_count,uint64_t table_bytes,fg_ngram_read *reads,uint32_t read_capacity,uint32_t *read_count,fg_error *err);
@@ -62,24 +53,6 @@ void fg_ngram_resident_close(fg_ngram_resident *resident);
 fg_status fg_ngram_resident_read(const fg_ngram_resident *resident,const uint64_t *rows,
                                  uint32_t row_count,uint8_t *packed,uint64_t packed_capacity,
                                  fg_error *err);
-fg_status fg_ngram_pipeline_cache_open_manifest(
-    fg_ngram_pipeline_cache **out,const fg_manifest *manifest,const char *pack_dir,
-    uint32_t rank,fg_error *err);
-void fg_ngram_pipeline_cache_close(fg_ngram_pipeline_cache *cache);
-fg_status fg_ngram_pipeline_cache_read(
-    fg_ngram_pipeline_cache *cache,const uint64_t *rows,uint32_t row_count,
-    uint8_t *packed,uint64_t packed_capacity,fg_error *err);
-void fg_ngram_pipeline_cache_get_stats(
-    const fg_ngram_pipeline_cache *cache,fg_ngram_pipeline_cache_stats *stats);
-uint64_t fg_ngram_pipeline_cache_host_bytes(const fg_ngram_pipeline_cache *cache);
-uint32_t fg_ngram_pipeline_cache_page_capacity(const fg_ngram_pipeline_cache *cache);
-
-/* Hardware-independent cache exercise hook. Production opens are always
-   O_DIRECT/io_uring and always allocate FG_PIPELINE_NGRAM_CACHE_BYTES. */
-fg_status fg_ngram_pipeline_cache_open_test(
-    fg_ngram_pipeline_cache **out,const char *path,uint64_t row_begin,
-    uint64_t row_count,const uint8_t sha256[32],uint64_t cache_bytes,
-    fg_error *err);
 fg_status fg_ngram_store_open(fg_ngram_store **out,fg_vk_context *vk,const char *path,
                               uint64_t table_bytes,uint32_t max_tokens,fg_error *err);
 void fg_ngram_store_close(fg_ngram_store *store);

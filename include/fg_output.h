@@ -7,8 +7,8 @@
 typedef struct fg_output_executor fg_output_executor;
 
 static inline uint32_t fg_output_owner_rank(const fg_manifest *manifest){
-    return manifest&&manifest->execution_mode==FG_EXECUTION_PIPELINE&&
-        manifest->stage_count?manifest->stage_ranks[manifest->stage_count-1u]:4u;
+    (void)manifest;
+    return 4u;
 }
 
 fg_status fg_output_executor_create(fg_output_executor **out,fg_model *model,fg_error *err);

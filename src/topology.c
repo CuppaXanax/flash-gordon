@@ -26,7 +26,7 @@ static void topology_fingerprint(const fg_manifest *m,uint8_t out[32]){
     topology_hash_u32(&hash,m->execution_mode);
     topology_hash_u32(&hash,m->stage_count);
     fg_sha256_update(&hash,m->stage_ranks,sizeof(m->stage_ranks));
-    for(uint32_t i=0;i<FG_PIPELINE_LAYER_OFFSETS;i++)
+    for(uint32_t i=0;i<FG_RESERVED_LAYER_OFFSETS;i++)
         topology_hash_u32(&hash,m->layer_offsets[i]);
     topology_hash_u32(&hash,m->slot_count);
     fg_sha256_update(&hash,m->layer_owner,sizeof(m->layer_owner));
@@ -62,31 +62,8 @@ void fg_topology_build(fg_manifest *m) {
     fg_topology_set_expert_parallel_metadata(m);
 }
 
-void fg_topology_build_pipeline(fg_manifest *m){
-    if(!m)return;
-    m->execution_mode=FG_EXECUTION_PIPELINE;
-    m->stage_count=FG_PIPELINE_STAGE_COUNT;
-    m->slot_count=FG_PIPELINE_DEFAULT_SLOT_COUNT;
-    memset(m->topology_reserved,0,sizeof(m->topology_reserved));
-    for(uint32_t stage=0;stage<FG_PIPELINE_STAGE_COUNT;stage++){
-        m->stage_ranks[stage]=(uint8_t)stage;
-        m->layer_offsets[stage]=stage*FG_PIPELINE_DEFAULT_LAYERS_PER_STAGE;
-    }
-    m->layer_offsets[FG_PIPELINE_STAGE_COUNT]=FG_LAYER_COUNT;
-    for(uint32_t stage=0;stage<FG_PIPELINE_STAGE_COUNT;stage++)
-        for(uint32_t layer=m->layer_offsets[stage];layer<m->layer_offsets[stage+1u];layer++){
-            uint8_t rank=m->stage_ranks[stage];
-            m->layer_owner[layer]=rank;
-            for(uint32_t group=0;group<FG_GROUP_SIZE;group++)
-                m->layer_groups[layer][group]=rank;
-            for(uint32_t expert=0;expert<FG_EXPERT_COUNT;expert++)
-                m->expert_rank[layer][expert]=rank;
-        }
-    fg_topology_seal(m);
-}
 bool fg_topology_rank_in_layer(const fg_manifest *m,uint32_t layer,uint32_t rank){
     if(layer>=FG_LAYER_COUNT||rank>=FG_RANK_COUNT)return false;
-    if(m->execution_mode==FG_EXECUTION_PIPELINE)return m->layer_owner[layer]==rank;
     for(uint32_t i=0;i<FG_GROUP_SIZE;i++)if(m->layer_groups[layer][i]==rank)return true;
     return false;
 }
@@ -94,8 +71,7 @@ bool fg_topology_rank_in_layer(const fg_manifest *m,uint32_t layer,uint32_t rank
 fg_status fg_topology_assign_round_robin(fg_manifest *m,fg_error *err){
     (void)err;
     for(uint32_t l=0;l<FG_LAYER_COUNT;l++)for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)
-        m->expert_rank[l][e]=m->execution_mode==FG_EXECUTION_PIPELINE?
-            m->layer_owner[l]:m->layer_groups[l][e%FG_GROUP_SIZE];
+        m->expert_rank[l][e]=m->layer_groups[l][e%FG_GROUP_SIZE];
     fg_topology_seal(m);
     return FG_OK;
 }
@@ -105,11 +81,7 @@ static int score_cmp(const void *a,const void *b){const expert_score *x=a,*y=b;r
 
 fg_status fg_topology_assign_profile(fg_manifest *m,const double frequency[FG_LAYER_COUNT][FG_EXPERT_COUNT],fg_error *err){
     if(!frequency){fg_error_set(err,FG_ERR_ARGUMENT,"router profile is null");return FG_ERR_ARGUMENT;}
-    if(m->execution_mode==FG_EXECUTION_PIPELINE){
-        fg_error_set(err,FG_ERR_UNAVAILABLE,
-                     "router profiles are not supported for pipeline topology");
-        return FG_ERR_UNAVAILABLE;
-    }
+
     for(uint32_t l=0;l<FG_LAYER_COUNT;l++){
         expert_score scores[FG_EXPERT_COUNT];double load[FG_GROUP_SIZE]={0};uint16_t count[FG_GROUP_SIZE]={0};
         for(uint32_t e=0;e<FG_EXPERT_COUNT;e++){scores[e].frequency=frequency[l][e];scores[e].expert=(uint16_t)e;}
@@ -134,10 +106,7 @@ fg_status fg_topology_assign_map(fg_manifest *m,const uint16_t expert_rank[FG_LA
             if(rank>=FG_RANK_COUNT||!fg_topology_rank_in_layer(m,l,rank)){fg_error_set(err,FG_ERR_FORMAT,"layer %u expert %u assigned to rank %u outside its group",l,e,rank);return FG_ERR_FORMAT;}
             count[rank]++;
         }
-        if(m->execution_mode==FG_EXECUTION_PIPELINE){
-            uint32_t rank=m->layer_owner[l];
-            if(count[rank]!=FG_EXPERT_COUNT){fg_error_set(err,FG_ERR_FORMAT,"layer %u stage rank %u owns %u experts, expected %u",l,rank,count[rank],FG_EXPERT_COUNT);return FG_ERR_FORMAT;}
-        }else for(uint32_t g=0;g<FG_GROUP_SIZE;g++){
+        for(uint32_t g=0;g<FG_GROUP_SIZE;g++){
             uint32_t rank=m->layer_groups[l][g];
             if(count[rank]!=FG_EXPERTS_PER_RANK){fg_error_set(err,FG_ERR_FORMAT,"layer %u rank %u owns %u experts, expected %u",l,rank,count[rank],FG_EXPERTS_PER_RANK);return FG_ERR_FORMAT;}
         }
@@ -149,97 +118,62 @@ fg_status fg_topology_assign_map(fg_manifest *m,const uint16_t expert_rank[FG_LA
 
 fg_status fg_topology_validate(const fg_manifest *m,fg_error *err){
     if(!m){fg_error_set(err,FG_ERR_ARGUMENT,"manifest topology is null");return FG_ERR_ARGUMENT;}
-    bool pipeline=m->format_version>=FG_MANIFEST_FORMAT_VERSION&&
-        m->execution_mode==FG_EXECUTION_PIPELINE;
-    if(m->format_version>=FG_MANIFEST_FORMAT_VERSION&&
-       m->execution_mode>FG_EXECUTION_PIPELINE){
-        fg_error_set(err,FG_ERR_MISMATCH,"unsupported execution mode %u",m->execution_mode);
+    if(m->execution_mode!=FG_EXECUTION_EXPERT_PARALLEL){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "retired pipeline manifest is unsupported; repack for expert-parallel");
         return FG_ERR_MISMATCH;
     }
-    if(pipeline){
-        if(m->stage_count!=FG_PIPELINE_STAGE_COUNT||
-           m->slot_count<1u||m->slot_count>4u||
-           m->layer_offsets[0]!=0u||
-           m->layer_offsets[FG_PIPELINE_STAGE_COUNT]!=FG_LAYER_COUNT){
-            fg_error_set(err,FG_ERR_FORMAT,"invalid pipeline stage geometry");
+
+    if(m->format_version>=FG_MANIFEST_FORMAT_VERSION&&
+       (m->stage_count||m->slot_count)){
+        fg_error_set(err,FG_ERR_FORMAT,"expert-parallel manifest has pipeline geometry");
+        return FG_ERR_FORMAT;
+    }
+    if(m->format_version>=FG_MANIFEST_FORMAT_VERSION){
+        for(uint32_t i=0;i<FG_RANK_COUNT;i++)if(m->stage_ranks[i]){
+            fg_error_set(err,FG_ERR_FORMAT,
+                         "expert-parallel stage rank metadata is non-zero");
             return FG_ERR_FORMAT;
         }
-        uint16_t ranks=0u;
-        for(uint32_t stage=0;stage<FG_PIPELINE_STAGE_COUNT;stage++){
-            uint32_t rank=m->stage_ranks[stage];
-            uint32_t begin=m->layer_offsets[stage],end=m->layer_offsets[stage+1u];
-            if(rank>=FG_RANK_COUNT||(ranks&(1u<<rank))||begin>=end||end>FG_LAYER_COUNT){
-                fg_error_set(err,FG_ERR_FORMAT,"invalid pipeline stage %u",stage);
-                return FG_ERR_FORMAT;
-            }
-            ranks|=(uint16_t)(1u<<rank);
-            for(uint32_t layer=begin;layer<end;layer++){
-                if(m->layer_owner[layer]!=rank){
-                    fg_error_set(err,FG_ERR_FORMAT,"layer %u owner does not match stage %u",layer,stage);
-                    return FG_ERR_FORMAT;
-                }
-                for(uint32_t group=0;group<FG_GROUP_SIZE;group++)if(m->layer_groups[layer][group]!=rank){
-                    fg_error_set(err,FG_ERR_FORMAT,"layer %u group is not stage-local",layer);
-                    return FG_ERR_FORMAT;
-                }
-                for(uint32_t expert=0;expert<FG_EXPERT_COUNT;expert++)
-                    if(m->expert_rank[layer][expert]!=rank){
-                        fg_error_set(err,FG_ERR_FORMAT,"layer %u expert %u is not stage-local",layer,expert);
-                        return FG_ERR_FORMAT;
-                    }
-            }
-        }
-    }else{
-        if(m->format_version>=FG_MANIFEST_FORMAT_VERSION&&
-           (m->stage_count||m->slot_count)){
-            fg_error_set(err,FG_ERR_FORMAT,"expert-parallel manifest has pipeline geometry");
-            return FG_ERR_FORMAT;
-        }
-        if(m->format_version>=FG_MANIFEST_FORMAT_VERSION){
-            for(uint32_t i=0;i<FG_RANK_COUNT;i++)if(m->stage_ranks[i]){
+        for(uint32_t i=0;i<FG_RESERVED_LAYER_OFFSETS;i++)
+            if(m->layer_offsets[i]){
                 fg_error_set(err,FG_ERR_FORMAT,
-                             "expert-parallel stage rank metadata is non-zero");
+                             "expert-parallel layer offset metadata is non-zero");
                 return FG_ERR_FORMAT;
             }
-            for(uint32_t i=0;i<FG_PIPELINE_LAYER_OFFSETS;i++)
-                if(m->layer_offsets[i]){
-                    fg_error_set(err,FG_ERR_FORMAT,
-                                 "expert-parallel layer offset metadata is non-zero");
-                    return FG_ERR_FORMAT;
-                }
+    }
+    for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){
+        if(m->layer_owner[layer]!=layer%FG_RANK_COUNT){
+            fg_error_set(err,FG_ERR_FORMAT,"layer %u owner mismatch",layer);
+            return FG_ERR_FORMAT;
         }
-        for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){
-            if(m->layer_owner[layer]!=layer%FG_RANK_COUNT){
-                fg_error_set(err,FG_ERR_FORMAT,"layer %u owner mismatch",layer);
+        uint16_t counts[FG_RANK_COUNT]={0};uint16_t groups=0u;
+        for(uint32_t group=0;group<FG_GROUP_SIZE;group++){
+            uint32_t rank=m->layer_groups[layer][group];
+            uint32_t expected=(layer+ep_delta[group])%FG_RANK_COUNT;
+            if(rank>=FG_RANK_COUNT||rank!=expected||(groups&(1u<<rank))){
+                fg_error_set(err,FG_ERR_FORMAT,"layer %u group topology mismatch",layer);
                 return FG_ERR_FORMAT;
             }
-            uint16_t counts[FG_RANK_COUNT]={0};uint16_t groups=0u;
-            for(uint32_t group=0;group<FG_GROUP_SIZE;group++){
-                uint32_t rank=m->layer_groups[layer][group];
-                uint32_t expected=(layer+ep_delta[group])%FG_RANK_COUNT;
-                if(rank>=FG_RANK_COUNT||rank!=expected||(groups&(1u<<rank))){
-                    fg_error_set(err,FG_ERR_FORMAT,"layer %u group topology mismatch",layer);
-                    return FG_ERR_FORMAT;
-                }
-                groups|=(uint16_t)(1u<<rank);
+            groups|=(uint16_t)(1u<<rank);
+        }
+        for(uint32_t expert=0;expert<FG_EXPERT_COUNT;expert++){
+            uint32_t rank=m->expert_rank[layer][expert];
+            if(rank>=FG_RANK_COUNT||!(groups&(1u<<rank))){
+                fg_error_set(err,FG_ERR_FORMAT,"layer %u expert %u assigned outside group",layer,expert);
+                return FG_ERR_FORMAT;
             }
-            for(uint32_t expert=0;expert<FG_EXPERT_COUNT;expert++){
-                uint32_t rank=m->expert_rank[layer][expert];
-                if(rank>=FG_RANK_COUNT||!(groups&(1u<<rank))){
-                    fg_error_set(err,FG_ERR_FORMAT,"layer %u expert %u assigned outside group",layer,expert);
-                    return FG_ERR_FORMAT;
-                }
-                counts[rank]++;
-            }
-            for(uint32_t group=0;group<FG_GROUP_SIZE;group++){
-                uint32_t rank=m->layer_groups[layer][group];
-                if(counts[rank]!=FG_EXPERTS_PER_RANK){
-                    fg_error_set(err,FG_ERR_FORMAT,"layer %u rank %u owns %u experts, expected %u",layer,rank,counts[rank],FG_EXPERTS_PER_RANK);
-                    return FG_ERR_FORMAT;
-                }
+            counts[rank]++;
+        }
+        for(uint32_t group=0;group<FG_GROUP_SIZE;group++){
+            uint32_t rank=m->layer_groups[layer][group];
+            if(counts[rank]!=FG_EXPERTS_PER_RANK){
+                fg_error_set(err,FG_ERR_FORMAT,"layer %u rank %u owns %u experts, expected %u",layer,rank,counts[rank],FG_EXPERTS_PER_RANK);
+                return FG_ERR_FORMAT;
             }
         }
     }
+
     if(m->format_version>=FG_MANIFEST_FORMAT_VERSION){
         uint8_t reserved=0u;
         for(size_t i=0;i<sizeof(m->topology_reserved);i++)reserved|=m->topology_reserved[i];

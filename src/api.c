@@ -2024,25 +2024,10 @@ static fg_status send_completion(const api_generation *generation,
                 stats->prefilled_tokens / stats->prefill_seconds : 0.0;
         double decode_tps =
             stats->decode_seconds > 0.0 ? stats->generated_tokens / stats->decode_seconds : 0.0;
-        char stage_timings[256]={0};
-        size_t stage_length=0u;
-        for(uint32_t stage=0;stage<stats->stage_count&&
-            stage<FG_PIPELINE_STAGE_COUNT;stage++){
-            int written=snprintf(stage_timings+stage_length,
-                sizeof(stage_timings)-stage_length,"%s%u=%.6f",
-                stage?",":"",stage,stats->stage_seconds[stage]);
-            if(written<0||(size_t)written>=sizeof(stage_timings)-stage_length){
-                fg_error_set(err,FG_ERR_LIMIT,"API stage timings exceed buffer");
-                status=FG_ERR_LIMIT;
-                break;
-            }
-            stage_length+=(size_t)written;
-        }
         char metrics[1280];
         int metrics_length = snprintf(
             metrics, sizeof(metrics),
             "X-Flash-Gordon-Execution-Mode: %s\r\n"
-            "X-Flash-Gordon-Stage-Timings: %s\r\n"
             "X-Flash-Gordon-Prompt-Tokens: %u\r\n"
             "X-Flash-Gordon-Prefilled-Tokens: %u\r\n"
             "X-Flash-Gordon-Reused-Tokens: %u\r\n"
@@ -2055,7 +2040,7 @@ static fg_status send_completion(const api_generation *generation,
             "X-Flash-Gordon-Prefill-TPS: %.6f\r\n"
             "X-Flash-Gordon-Decode-Seconds: %.9f\r\n"
             "X-Flash-Gordon-Decode-TPS: %.6f\r\n",
-            fg_execution_mode_name(stats->execution_mode),stage_timings,
+            fg_execution_mode_name(stats->execution_mode),
             stats->prompt_tokens, stats->prefilled_tokens, stats->reused_tokens,
             stats->prefix_cache_hit ? "hit" : "miss",
             stats->exact_frontier ? "true" : "false",

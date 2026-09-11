@@ -61,7 +61,7 @@ static int add_owner_weight(FILE *file,fg_manifest *manifest,const char *name,
     return 1;
 }
 
-static int test_owner_gr_prefill_boundaries(void){
+static int test_owner_gr_prefill_boundaries(bool with_ple){
     const uint32_t max_tokens=128u,hidden=FG_HIDDEN_SIZE,groups=FG_GROUP_SIZE;
     const uint64_t norm_bytes=(uint64_t)hidden*groups*sizeof(float);
     const uint64_t down_bytes=fg_q8_0_cooked_matrix_bytes(10240u,320u);
@@ -103,6 +103,21 @@ static int test_owner_gr_prefill_boundaries(void){
     if(ok)ok=add_owner_weight(file,manifest,"blk.0.hc_attn_inject.weight",
                                &offset,inject,inject_bytes,FG_HYPER_WIDTH,
                                groups,FG_TENSOR_LAYOUT_GGML,&error);
+    if(ok&&with_ple){
+        /* Zero PLE weights leave the nonzero input unchanged. Subsequent GR
+         * scratch writes must not corrupt that still-live residual. */
+        const char *names[]={"blk.1.ple_key.weight","blk.1.ple_value.weight",
+            "blk.1.ple_norm_key.weight","blk.1.ple_norm_query.weight",
+            "blk.1.ple_norm_conv.weight","blk.1.ple_conv1d.weight"};
+        const uint64_t sizes[]={27852800u,6963200u,40960u,40960u,40960u,163840u};
+        uint8_t *zero=calloc(1,(size_t)sizes[0]);
+        if(!zero)ok=0;
+        for(uint32_t i=0;ok&&i<6u;i++)
+            ok=add_owner_weight(file,manifest,names[i],&offset,zero,sizes[i],
+                i<2u?2560u:10240u,i==0u?10240u:i==1u?2560u:i==5u?4u:1u,
+                FG_TENSOR_LAYOUT_GGML,&error);
+        free(zero);
+    }
     if(file)ok=ok&&fclose(file)==0;
     fg_model *model=NULL;fg_owner_executor *owner=NULL;fg_vk_tensor *hidden_tensor=NULL;
     fg_vk_tensor *block_tensor=NULL;
@@ -153,11 +168,14 @@ static int test_owner_gr_prefill_boundaries(void){
                                   (uint64_t)max_tokens*FG_HYPER_WIDTH*4u,
                                   &error)==FG_OK;
         }
+        fg_vk_tensor *live_input=prefill_input;
+        if(ok&&with_ple)ok=fg_owner_ple_prefill(owner,prefill_input,block_tensor,
+                                               tokens,&live_input,&error)==FG_OK;
         mixed=NULL;residual=NULL;injection_output=NULL;output=NULL;
-        if(ok)ok=fg_owner_gr_read_batch(owner,0u,false,prefill_input,tokens,
+        if(ok)ok=fg_owner_gr_read_batch(owner,0u,false,live_input,tokens,
                                         &mixed,&residual,&injection_output,
                                         &error)==FG_OK&&mixed&&
-               residual==prefill_input&&injection_output&&
+               residual==live_input&&injection_output&&
                fg_vk_tensor_bytes(injection_output)==
                    (uint64_t)max_tokens*groups*4u;
         if(ok)ok=fg_owner_gr_write_batch(owner,residual,block_tensor,
@@ -223,8 +241,8 @@ static int test_owner_prefill_failure_cleanup(void){
     if(ok)ok=write_rank(path,block,(uint32_t)(sizeof(weights)/sizeof(weights[0])));
     if(ok){
         fg_manifest_init(manifest);
-        manifest->execution_mode=FG_EXECUTION_PIPELINE;
-        manifest->protocol_version=FG_PIPELINE_PROTOCOL_VERSION;
+        manifest->execution_mode=FG_EXECUTION_EXPERT_PARALLEL;
+        manifest->protocol_version=FG_PROTOCOL_VERSION;
         manifest->prefill_microbatch=32u;
         for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++)
             manifest->layer_owner[layer]=(uint8_t)(layer<2u?0u:1u);
@@ -332,7 +350,7 @@ static int test_index_segment_geometry(void){
     uint64_t selection=fg_qsa_selection_scratch_bytes(262144u,256u);
     uint64_t resident_selection=
         fg_qsa_resident_selection_scratch_bytes(262144u,128u);
-    uint64_t legacy_selection=fg_qsa_selection_scratch_bytes(262144u,128u);
+    uint64_t cache_selection=fg_qsa_selection_scratch_bytes(262144u,128u);
     ok=ok&&selection>0u&&qsa+selection<family;
     ok=ok&&FG_Q38_QSA_KEY_BYTES==544u&&FG_Q38_QSA_VALUE_BYTES==544u&&
         FG_Q38_QSA_INDEX_KEY_BYTES==136u&&FG_Q38_QSA_POSITION_BYTES==12u&&
@@ -350,7 +368,7 @@ static int test_index_segment_geometry(void){
         fg_qsa_resident_candidate_groups(65536u*4u)==16u&&
         fg_qsa_resident_candidate_entries(262144u,128u)==UINT64_C(1048576);
     ok=ok&&resident_selection==UINT64_C(16777216)&&
-        resident_selection-legacy_selection==UINT64_C(13193216)&&
+        cache_selection==UINT64_C(14336000)&&
         fg_qsa_attention_scratch_bytes(128u)+resident_selection==
             UINT64_C(35349504)&&
         fg_qsa_attention_scratch_bytes(128u)+resident_selection<
@@ -366,7 +384,7 @@ static int test_index_segment_geometry(void){
     ok=ok&&fg_qsa_completed_page_range(0u,128u,&first_block,&block_count,&error)==
         FG_OK&&first_block==0u&&block_count==32u;
     if(!ok)fprintf(stderr,"geometry detail: record=%u layer=%llu groups=%u/%u/%u/%u "
-                           "entries=%llu legacy=%llu resident=%llu total=%llu family=%llu\n",
+                           "entries=%llu cache=%llu resident=%llu total=%llu family=%llu\n",
         FG_Q38_QSA_TOKEN_RECORD_BYTES,
         (unsigned long long)fg_qsa_resident_layer_bytes(262144u),
         fg_qsa_resident_candidate_groups(513u*4u),
@@ -374,25 +392,10 @@ static int test_index_segment_geometry(void){
         fg_qsa_resident_candidate_groups(32769u*4u),
         fg_qsa_resident_candidate_groups(65536u*4u),
         (unsigned long long)fg_qsa_resident_candidate_entries(262144u,128u),
-        (unsigned long long)legacy_selection,
+        (unsigned long long)cache_selection,
         (unsigned long long)resident_selection,
         (unsigned long long)(fg_qsa_attention_scratch_bytes(128u)+resident_selection),
         (unsigned long long)fg_qsa_attention_family_scratch_bytes(128u));
-    fg_manifest *pipeline=malloc(sizeof(*pipeline));
-    if(pipeline){
-        fg_manifest_init(pipeline);fg_topology_build_pipeline(pipeline);
-        pipeline->max_context=FG_NATIVE_CONTEXT;
-        pipeline->session.logical_context_tokens=FG_NATIVE_CONTEXT;
-        pipeline->prefill_microbatch=128u;pipeline->prefill_window=2u;
-        static const uint64_t expected[FG_RANK_COUNT]={
-            335544320u,268435456u,268435456u,268435456u,
-            268435456u,268435456u,268435456u,268435456u
-        };
-        for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)
-            ok=ok&&fg_q38_runtime_scratch_bytes_for_manifest(
-                pipeline,rank,128u,2u,FG_NATIVE_CONTEXT)==expected[rank];
-        free(pipeline);
-    }else ok=0;
     return ok;
 }
 
@@ -423,7 +426,7 @@ static int test_memory_ledger_arithmetic(void){
         FG_QSA_PAGE_RECORD_BYTES+
         fg_qsa_page_cache_memory_bytes_for_pages(cache_pages);
     uint64_t prefill_wire=FG_PREFILL_RESULT_HEADER_BYTES+
-        pairs*FG_PREFILL_RESULT_PAIR_BYTES;
+        pairs*FG_PREFILL_RESULT_PAIR_BYTES+(uint64_t)tokens*FG_HIDDEN_SIZE*4u;
     uint64_t prefill_work_wire=FG_PREFILL_WORK_HEADER_BYTES+
         (uint64_t)tokens*FG_Q8K_ACTIVATION_BYTES+
         (uint64_t)tokens*FG_TOP_K*FG_PREFILL_PAIR_BYTES;
@@ -594,7 +597,8 @@ int main(void){
         puts("QSA resident geometry and ledger arithmetic: PASS");
         return 0;
     }
-    int owner_prefill=test_owner_gr_prefill_boundaries();
+    int owner_prefill=test_owner_gr_prefill_boundaries(false);
+    if(owner_prefill==0)owner_prefill=test_owner_gr_prefill_boundaries(true);
     if(owner_prefill==1)return 1;
     if(owner_prefill==77)
         fprintf(stderr,"SKIP owner GR prefill boundary test: Vulkan unavailable\n");
@@ -724,75 +728,6 @@ int main(void){
         char name[FG_TENSOR_NAME_MAX];snprintf(name,sizeof(name),"blk.3.%s",qsa_suffixes[i]);
         ok=fg_model_tensor(owner,name)!=NULL;
     }
-    uint32_t saved_mode=manifest->execution_mode;
-    uint32_t saved_logical=manifest->session.logical_context_tokens;
-    uint32_t saved_microbatch=manifest->prefill_microbatch;
-    uint16_t saved_qsa_owners[FG_LAYER_COUNT/4u];uint32_t saved_owner_count=0u;
-    for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
-        saved_qsa_owners[saved_owner_count++]=manifest->layer_owner[layer];
-    manifest->execution_mode=FG_EXECUTION_PIPELINE;
-    manifest->session.logical_context_tokens=4u;
-    manifest->prefill_microbatch=1u;
-    for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
-        manifest->layer_owner[layer]=(uint16_t)(layer==3u?3u:0u);
-    fg_vk_tensor *resident_scratch=NULL;fg_qsa_session *resident_session=NULL;
-    fg_vk_memory_stats resident_before={0},resident_open={0},resident_after={0};
-    fg_vk_counters resident_canary_before={0},resident_canary_after={0};
-    if(ok)phase="resident QSA lifecycle";
-    if(ok)ok=fg_vk_tensor_create(fg_model_vk(owner),
-        fg_qsa_attention_family_scratch_bytes(1u),&resident_scratch,&error)==FG_OK;
-    if(ok){
-        fg_vk_get_memory_stats(fg_model_vk(owner),&resident_before);
-        fg_vk_get_counters(fg_model_vk(owner),&resident_canary_before);
-        ok=fg_qsa_session_open_resident(&resident_session,owner,1u,
-                                        resident_scratch,&error)==FG_OK;
-    }
-    if(ok){
-        fg_vk_get_memory_stats(fg_model_vk(owner),&resident_open);
-        fg_vk_get_counters(fg_model_vk(owner),&resident_canary_after);
-        uint64_t expected_delta=4u*(FG_Q38_QSA_TOKEN_RECORD_BYTES+
-            FG_Q38_QSA_INDEX_KEY_BYTES+FG_Q38_QSA_POSITION_BYTES);
-        uint64_t requested_delta=resident_open.requested_live_bytes-
-            resident_before.requested_live_bytes;
-        uint64_t canary_delta=resident_canary_after.residency_canary_calls-
-            resident_canary_before.residency_canary_calls;
-        if(fg_qsa_session_host_bytes(resident_session)!=0u||
-           fg_qsa_session_tokens(resident_session,3u)!=0u||
-           requested_delta!=expected_delta||canary_delta!=3u){
-            fg_error_set(&error,FG_ERR_MISMATCH,
-                "resident QSA open mismatch: host=%llu tokens=%u "
-                "requested_delta=%llu/%llu canary_delta=%llu/3",
-                (unsigned long long)fg_qsa_session_host_bytes(resident_session),
-                fg_qsa_session_tokens(resident_session,3u),
-                (unsigned long long)requested_delta,
-                (unsigned long long)expected_delta,
-                (unsigned long long)canary_delta);
-            ok=0;
-        }else if(fg_qsa_session_reset(resident_session,&error)!=FG_OK)ok=0;
-    }
-    fg_qsa_session_close(resident_session);resident_session=NULL;
-    fg_vk_get_memory_stats(fg_model_vk(owner),&resident_after);
-    if(ok&&(resident_after.requested_live_bytes!=resident_before.requested_live_bytes||
-           resident_after.allocated_live_bytes!=resident_before.allocated_live_bytes||
-           resident_after.live_allocations!=resident_before.live_allocations)){
-        fg_error_set(&error,FG_ERR_MISMATCH,
-            "resident QSA close memory mismatch: requested=%llu/%llu "
-            "allocated=%llu/%llu live_allocations=%llu/%llu",
-            (unsigned long long)resident_after.requested_live_bytes,
-            (unsigned long long)resident_before.requested_live_bytes,
-            (unsigned long long)resident_after.allocated_live_bytes,
-            (unsigned long long)resident_before.allocated_live_bytes,
-            (unsigned long long)resident_after.live_allocations,
-            (unsigned long long)resident_before.live_allocations);
-        ok=0;
-    }
-    fg_vk_tensor_destroy(resident_scratch);
-    manifest->execution_mode=saved_mode;
-    manifest->session.logical_context_tokens=saved_logical;
-    manifest->prefill_microbatch=saved_microbatch;
-    saved_owner_count=0u;
-    for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
-        manifest->layer_owner[layer]=saved_qsa_owners[saved_owner_count++];
     char owner_state_path[128];snprintf(owner_state_path,sizeof(owner_state_path),
         "%s/owner-session.qsa",directory);unlink(owner_state_path);
     fg_qsa_session *file_session=NULL;struct stat owner_state_info={0};

@@ -55,8 +55,7 @@ typedef enum fg_manifest_component {
 } fg_manifest_component;
 
 typedef enum fg_execution_mode {
-    FG_EXECUTION_EXPERT_PARALLEL = 0,
-    FG_EXECUTION_PIPELINE = 1
+    FG_EXECUTION_EXPERT_PARALLEL = 0 /* Value 1 is retired and rejected. */
 } fg_execution_mode;
 
 typedef struct fg_tensor_record {
@@ -144,7 +143,7 @@ typedef struct fg_manifest {
     uint32_t execution_mode;
     uint32_t stage_count;
     uint8_t stage_ranks[FG_RANK_COUNT];
-    uint32_t layer_offsets[FG_PIPELINE_LAYER_OFFSETS];
+    uint32_t layer_offsets[FG_RESERVED_LAYER_OFFSETS];
     uint32_t slot_count;
     uint8_t topology_sha256[32];
     uint8_t topology_reserved[32];

@@ -1,5 +1,4 @@
 #include "fg_manifest.h"
-#include "fg_embedding.h"
 #include "fg_runtime.h"
 #include "fg_quant.h"
 #include "fg_q38_schema.h"
@@ -139,8 +138,7 @@ static uint32_t manifest_minimum_protocol(const fg_manifest *manifest){
         return FG_PROTOCOL_MIN_VERSION;
     if(manifest->format_version==FG_MANIFEST_SESSION_FORMAT_VERSION)
         return FG_PROTOCOL_VERSION;
-    return manifest->execution_mode==FG_EXECUTION_PIPELINE?
-        FG_PIPELINE_PROTOCOL_VERSION:FG_PROTOCOL_VERSION;
+    return FG_PROTOCOL_VERSION;
 }
 
 static void build_contract(const fg_manifest *manifest,fg_manifest_contract *contract){
@@ -294,7 +292,7 @@ fg_status fg_manifest_validate(const fg_manifest *manifest,fg_error *err){
             }
         }
         if(!manifest->ngram_shard_count){
-            uint32_t first=manifest->execution_mode==FG_EXECUTION_PIPELINE?1u:0u;
+            uint32_t first=0u;
             for(uint32_t rank=first;rank<FG_RANK_COUNT;rank++)
                 if(manifest->host_resident_bytes[rank]){
                     fg_error_set(err,FG_ERR_FORMAT,
@@ -326,18 +324,8 @@ fg_status fg_manifest_validate(const fg_manifest *manifest,fg_error *err){
             return FG_ERR_FORMAT;
         }
         if(tensor->layout==FG_TENSOR_LAYOUT_HOST_Q8_0){
-            uint64_t row=tensor->shape[0]/FG_QK8_0*FG_Q38_Q8_0_BLOCK_BYTES;
-            if(!current||manifest->execution_mode!=FG_EXECUTION_PIPELINE||
-               strcmp(tensor->name,"token_embd.weight")||tensor->rank!=
-                   manifest->stage_ranks[0]||tensor->layer!=UINT16_MAX||
-               tensor->offset!=0u||tensor->ggml_type!=8u||tensor->dims!=2u||
-               tensor->shape[0]%FG_QK8_0||!row||
-               tensor->shape[1]>UINT64_MAX/row||
-               tensor->bytes!=row*tensor->shape[1]){
-                fg_error_set(err,FG_ERR_FORMAT,
-                             "tensor %u has an invalid host Q8_0 layout",i);
-                return FG_ERR_FORMAT;
-            }
+            fg_error_set(err,FG_ERR_FORMAT,"retired external embedding layout is unsupported");
+            return FG_ERR_FORMAT;
         }
         if(tensor->layout==FG_TENSOR_LAYOUT_Q8_0_COOKED){
             if(tensor->ggml_type!=8u||tensor->dims!=2u||tensor->shape[0]>UINT32_MAX||
@@ -357,14 +345,8 @@ fg_status fg_manifest_validate(const fg_manifest *manifest,fg_error *err){
                 return FG_ERR_FORMAT;
             }
         }
-        uint32_t shard_experts=current&&manifest->execution_mode==FG_EXECUTION_PIPELINE?
-            FG_EXPERT_COUNT:FG_EXPERTS_PER_RANK;
-        if(current&&manifest->execution_mode==FG_EXECUTION_PIPELINE&&
-           tensor->layer<FG_LAYER_COUNT&&tensor->kind!=FG_TENSOR_NGRAM&&
-           tensor->rank!=manifest->layer_owner[tensor->layer]){
-            fg_error_set(err,FG_ERR_FORMAT,"tensor %u is not stored on its layer stage",i);
-            return FG_ERR_FORMAT;
-        }
+        uint32_t shard_experts=FG_EXPERTS_PER_RANK;
+
         if(tensor->layout==FG_TENSOR_LAYOUT_K_QUANT_EXPERT_COOKED){
             uint64_t matrix=tensor->shape[0]<=UINT32_MAX&&tensor->shape[1]<=UINT32_MAX?
                 fg_k_quant_cooked_matrix_bytes((uint32_t)tensor->shape[0],
@@ -449,139 +431,9 @@ fg_status fg_manifest_validate(const fg_manifest *manifest,fg_error *err){
     return FG_OK;
 }
 
-static fg_status validate_pipeline_deployment(const fg_manifest *manifest,
-                                              fg_error *err){
-    const fg_runtime_profile_definition *profile=
-        fg_runtime_profile_definition_get(
-            FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K);
-    if(!profile||manifest->format_version!=FG_MANIFEST_FORMAT_VERSION||
-       manifest->protocol_version!=FG_PIPELINE_PROTOCOL_VERSION||
-       manifest->required_cu!=FG_REQUIRED_CU||
-       manifest->persistent_cap_bytes!=FG_PERSISTENT_CAP_BYTES||
-       manifest->residency_cap_bytes!=FG_RESIDENCY_CAP_BYTES||
-       manifest->native_context!=FG_NATIVE_CONTEXT||
-       manifest->max_context!=profile->max_context||
-       manifest->prefill_microbatch!=profile->prefill_microbatch||
-       manifest->prefill_window!=profile->prefill_window||
-       manifest->session.position_mode!=profile->position_mode||
-       manifest->session.logical_context_tokens!=
-           profile->logical_context_tokens||
-       manifest->session.gpu_index_tokens!=profile->gpu_index_tokens||
-       manifest->session.qsa_hot_record_tokens!=profile->qsa_hot_tokens||
-       manifest->session.host_page_cache_bytes!=profile->qsa_page_cache_bytes){
-        fg_error_set(err,FG_ERR_MISMATCH,
-                     "pipeline deployment does not match the sealed runtime profile");
-        return FG_ERR_MISMATCH;
-    }
-    if(manifest->stage_count!=FG_PIPELINE_STAGE_COUNT||
-       manifest->slot_count!=FG_PIPELINE_DEFAULT_SLOT_COUNT){
-        fg_error_set(err,FG_ERR_MISMATCH,
-                     "pipeline deployment geometry is not qualified");
-        return FG_ERR_MISMATCH;
-    }
-    for(uint32_t stage=0;stage<FG_PIPELINE_STAGE_COUNT;stage++)
-        if(manifest->stage_ranks[stage]!=stage||
-           manifest->layer_offsets[stage]!=
-               stage*FG_PIPELINE_DEFAULT_LAYERS_PER_STAGE){
-            fg_error_set(err,FG_ERR_MISMATCH,
-                         "pipeline deployment topology is not the sealed profile");
-            return FG_ERR_MISMATCH;
-        }
-    if(manifest->layer_offsets[FG_PIPELINE_STAGE_COUNT]!=FG_LAYER_COUNT){
-        fg_error_set(err,FG_ERR_MISMATCH,
-                     "pipeline deployment terminal layer offset is invalid");
-        return FG_ERR_MISMATCH;
-    }
-    fg_status status=fg_q38_validate_packed_manifest(manifest,err);
-    if(status!=FG_OK)return status;
-    status=fg_q38_validate_ngram_shards(manifest,err);
-    if(status!=FG_OK)return status;
-    for(uint32_t i=0;i<manifest->tensor_count;i++)
-        if(digest_is_zero(manifest->tensors[i].sha256)){
-            fg_error_set(err,FG_ERR_MISMATCH,
-                         "pipeline tensor %.80s has no sealed SHA-256",
-                         manifest->tensors[i].name);
-            return FG_ERR_MISMATCH;
-        }
-    const fg_tensor_record *embedding=fg_q38_find_tensor(
-        manifest,"token_embd.weight",manifest->stage_ranks[0]);
-    if(!fg_embedding_record_metadata_valid(
-           embedding,manifest->stage_ranks[0])){
-        fg_error_set(err,FG_ERR_MISMATCH,
-                     "pipeline external token embedding metadata is incomplete");
-        return FG_ERR_MISMATCH;
-    }
-    if(manifest->host_resident_bytes[manifest->stage_ranks[0]]!=embedding->bytes||
-       embedding->bytes!=FG_EMBEDDING_ARTIFACT_BYTES){
-        fg_error_set(err,FG_ERR_MISMATCH,
-                     "pipeline stage 0 host-resident ledger must seal exactly "
-                     "%llu embedding bytes",
-                     (unsigned long long)FG_EMBEDDING_ARTIFACT_BYTES);
-        return FG_ERR_MISMATCH;
-    }
-    for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){
-        const fg_rank_record *record=&manifest->ranks[rank];
-        uint64_t required_kv=0u,required_state=0u;
-        fg_q38_session_state_bytes_for_rank(
-            manifest,rank,&required_kv,&required_state);
-        uint64_t required_scratch=fg_q38_runtime_scratch_bytes_for_manifest(
-            manifest,rank,manifest->prefill_microbatch,
-            manifest->prefill_window,manifest->max_context);
-        if(record->transient_bytes<FG_PACK_RANK_TRANSIENT_BYTES||
-           record->driver_reserve_bytes<
-               FG_PACK_DRIVER_RESERVE_BYTES){
-            fg_error_set(err,FG_ERR_LIMIT,
-                         "pipeline rank %u fixed residency reserve is understated",
-                         rank);
-            return FG_ERR_LIMIT;
-        }
-        if(record->transient_bytes!=FG_PACK_RANK_TRANSIENT_BYTES||
-           record->driver_reserve_bytes!=FG_PACK_DRIVER_RESERVE_BYTES){
-            fg_error_set(err,FG_ERR_MISMATCH,
-                         "pipeline rank %u fixed residency reserve is not qualified",
-                         rank);
-            return FG_ERR_MISMATCH;
-        }
-        if(!record->tensor_count||!record->persistent_bytes||
-           required_scratch==UINT64_MAX||
-           record->scratch_bytes<required_scratch||
-           record->kv_bytes<required_kv||
-           record->state_file_bytes<required_state){
-            fg_error_set(err,FG_ERR_LIMIT,
-                         "pipeline rank %u residency ledger is incomplete",rank);
-            return FG_ERR_LIMIT;
-        }
-        uint64_t resident=0u;
-        status=fg_q38_rank_residency_bytes(manifest,rank,&resident,err);
-        if(status!=FG_OK)return status;
-        if(record->persistent_bytes>manifest->persistent_cap_bytes||
-           resident>manifest->residency_cap_bytes){
-            fg_error_set(err,FG_ERR_LIMIT,
-                         "pipeline rank %u memory cap: gpu-persistent=%llu "
-                         "host-resident=%llu transient=%llu kv=%llu scratch=%llu "
-                         "driver=%llu total=%llu persistent-cap=%llu residency-cap=%llu",
-                         rank,(unsigned long long)record->persistent_bytes,
-                         (unsigned long long)manifest->host_resident_bytes[rank],
-                         (unsigned long long)record->transient_bytes,
-                         (unsigned long long)record->kv_bytes,
-                         (unsigned long long)record->scratch_bytes,
-                         (unsigned long long)record->driver_reserve_bytes,
-                         (unsigned long long)resident,
-                         (unsigned long long)manifest->persistent_cap_bytes,
-                         (unsigned long long)manifest->residency_cap_bytes);
-            return FG_ERR_LIMIT;
-        }
-    }
-    return FG_OK;
-}
-
 fg_status fg_manifest_validate_deployment(const fg_manifest *manifest,fg_error *err){
     fg_status status=fg_manifest_validate(manifest,err);if(status!=FG_OK)return status;
-    if(manifest->format_version==FG_MANIFEST_FORMAT_VERSION&&
-       manifest->execution_mode==FG_EXECUTION_PIPELINE){
-        status=validate_pipeline_deployment(manifest,err);
-        if(status!=FG_OK)return status;
-    }
+
     if(manifest->format_version!=FG_MANIFEST_LEGACY_FORMAT_VERSION&&
        manifest->session.position_mode==FG_POSITION_FOUR_AXIS){
         fg_error_set(err,FG_ERR_UNAVAILABLE,
@@ -640,8 +492,7 @@ fg_status fg_manifest_validate_compatibility(const fg_manifest *manifest,
 fg_status fg_manifest_write(const char *path,fg_manifest *manifest,fg_error *err){
     if(!path||!manifest){fg_error_set(err,FG_ERR_ARGUMENT,"invalid manifest write");return FG_ERR_ARGUMENT;}
     if(manifest->format_version==FG_MANIFEST_FORMAT_VERSION){
-        manifest->protocol_version=manifest->execution_mode==FG_EXECUTION_PIPELINE?
-            FG_PIPELINE_PROTOCOL_VERSION:FG_PROTOCOL_VERSION;
+        manifest->protocol_version=FG_PROTOCOL_VERSION;
         manifest->header_bytes=(uint32_t)sizeof(*manifest);
         fg_topology_seal(manifest);
         fg_status topology_status=fg_topology_validate(manifest,err);
@@ -714,11 +565,7 @@ fg_status fg_manifest_upgrade_with_profile(const char *input_path,const char *ou
     }
     fg_status status=fg_manifest_read(input_path,manifest,err);
     if(status==FG_OK){
-        if(runtime_profile==FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K){
-            fg_error_set(err,FG_ERR_UNAVAILABLE,
-                         "pipeline profile conversion requires repacking from source");
-            status=FG_ERR_UNAVAILABLE;
-        }else if(runtime_profile!=FG_RUNTIME_PROFILE_NONE)
+        if(runtime_profile!=FG_RUNTIME_PROFILE_NONE)
             status=fg_runtime_profile_apply(manifest,runtime_profile,err);
     }
     if(status==FG_OK){
@@ -781,14 +628,12 @@ fg_status fg_manifest_add_tensor(fg_manifest *manifest,const fg_tensor_record *r
 void fg_manifest_print(const fg_manifest *manifest){
     const char *profile="default/custom";
     static const uint32_t profiles[]={
-        FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_128,
-        FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K
+        FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_128
     };
     for(uint32_t i=0;i<sizeof(profiles)/sizeof(profiles[0]);i++){
         const fg_runtime_profile_definition *definition=
             fg_runtime_profile_definition_get(profiles[i]);
-        uint32_t mode=profiles[i]==FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K?
-            FG_EXECUTION_PIPELINE:FG_EXECUTION_EXPERT_PARALLEL;
+        uint32_t mode=FG_EXECUTION_EXPERT_PARALLEL;
         if(definition&&manifest->execution_mode==mode&&
            manifest->prefill_microbatch==definition->prefill_microbatch&&
            manifest->prefill_window==definition->prefill_window&&
@@ -805,18 +650,11 @@ void fg_manifest_print(const fg_manifest *manifest){
            "mode=%s prefill=%ux%u context=%u/%u position=%s\n",
            manifest->format_version,manifest->protocol_version,manifest->required_cu,
            manifest->tensor_count,profile,
-           manifest->execution_mode==FG_EXECUTION_PIPELINE?"pipeline":"expert-parallel",
+           "expert-parallel",
            manifest->prefill_microbatch,manifest->prefill_window,
            manifest->native_context,manifest->max_context,
            manifest->session.position_mode==FG_POSITION_FOUR_AXIS?"four-axis":"text");
-    if(manifest->execution_mode==FG_EXECUTION_PIPELINE)
-        printf("pipeline stages=%u slots=%u layers=%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
-               manifest->stage_count,manifest->slot_count,
-               manifest->layer_offsets[0],manifest->layer_offsets[1],
-               manifest->layer_offsets[2],manifest->layer_offsets[3],
-               manifest->layer_offsets[4],manifest->layer_offsets[5],
-               manifest->layer_offsets[6],manifest->layer_offsets[7],
-               manifest->layer_offsets[8]);
+
     uint32_t cooked_q8=0,cooked_k=0,cooked_q5=0,host_q8=0;uint64_t cooked_bytes=0;
     for(uint32_t i=0;i<manifest->tensor_count;i++){
         uint32_t layout=manifest->tensors[i].layout;

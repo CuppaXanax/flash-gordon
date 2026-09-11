@@ -14,6 +14,7 @@ void main(){
     uint source_token;
     if(output_token<pc.block_count*4u){
         uint selected_block=output_token/4u;
+        if(block_ids[selected_block]>=pc.capacity/4u)return;
         source_token=block_ids[selected_block]*4u+(output_token&3u);
     }else{
         source_token=pc.tail_start+output_token-pc.block_count*4u;

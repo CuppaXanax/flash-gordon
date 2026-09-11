@@ -35,8 +35,6 @@ static void usage(FILE *file) {
             "  --profile " FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_128_NAME
             " (seals 262144/262144/8192/16 MiB with microbatch 128; "
             "valid for pack and upgrade-manifest)\n"
-            "  --profile " FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K_NAME
-            " (seals protocol 7, eight six-layer stages, and two activation slots; "
             "pack from source only)\n"
             "  flash-gordon inspect --manifest FILE\n",
             FG_VERSION_MAJOR, FG_VERSION_MINOR);
@@ -336,7 +334,7 @@ static fg_status manifest_cmd(const char *command, int argc, char **argv, fg_err
                     !strcmp(argv[i],"--window")||
                     !strcmp(argv[i],"--prefill-window"))) {
             fg_error_set(err,FG_ERR_UNAVAILABLE,
-                         "pipeline bench sweeps are not implemented");
+                         "bench prefill overrides are not implemented");
             return FG_ERR_UNAVAILABLE;
         } else {
             fg_error_set(err, FG_ERR_ARGUMENT, "unknown %s option: %s", command, argv[i]);

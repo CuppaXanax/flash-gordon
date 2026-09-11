@@ -1135,7 +1135,7 @@ static int test_q8_cooked_token_tiles(void){
                                      &y,&error)==FG_OK;
             }else ok=0;
             struct timespec begin,end;clock_gettime(CLOCK_MONOTONIC,&begin);
-            ok=x&&y&&fg_vk_dense_q8_0_cooked_prefill(context,y,weights,x,
+            ok=x&&y&&fg_vk_dense_q8_0_f32(context,y,weights,x,
                 width,ROWS,tokens,0.75f,&error)==FG_OK&&
                 fg_vk_tensor_read(y,0,got,output_bytes,
                                   &error)==FG_OK;
@@ -1250,6 +1250,42 @@ static int test_decode_tile_schedule(void){
     }
     fg_vk_tensor_destroy(gt);fg_vk_tensor_destroy(gg);
     fg_vk_tensor_destroy(gs);fg_vk_tensor_destroy(gl);
+    return ok;
+}
+
+static int test_router_nonfinite(void){
+    float logits[2u*FG_EXPERT_COUNT]={0},gates[2u*FG_TOP_K];
+    uint32_t ids[2u*FG_TOP_K];
+    fg_vk_tensor *gl=tensor(logits,sizeof(logits));
+    fg_vk_tensor *gi=tensor(NULL,sizeof(ids)),*gg=tensor(NULL,sizeof(gates));
+    int ok=gl&&gi&&gg;
+    for(uint32_t pattern=0;ok&&pattern<4u;pattern++){
+        for(uint32_t i=FG_EXPERT_COUNT;i<2u*FG_EXPERT_COUNT;i++)
+            logits[i]=pattern>=2u?-INFINITY:0.0f;
+        if(pattern<2u)logits[FG_EXPERT_COUNT+511u]=pattern==0u?NAN:INFINITY;
+        if(pattern==3u)logits[FG_EXPERT_COUNT+5u]=0.0f;
+        ok=fg_vk_tensor_write(gl,0,logits,sizeof(logits),&error)==FG_OK&&
+            fg_vk_router_top10(context,gi,gg,gl,FG_EXPERT_COUNT,2u,&error)==FG_OK&&
+            fg_vk_tensor_read(gi,0,ids,sizeof(ids),&error)==FG_OK&&
+            fg_vk_tensor_read(gg,0,gates,sizeof(gates),&error)==FG_OK;
+        for(uint32_t i=0;ok&&i<FG_TOP_K;i++)
+            ok=ids[i]==i&&fabsf(gates[i]-0.1f)<2e-6f;
+        uint32_t ref_ids[FG_TOP_K];float ref_gates[FG_TOP_K];fg_error expected={0};
+        fg_status status=fg_q38_router_topk(logits+FG_EXPERT_COUNT,FG_EXPERT_COUNT,
+            FG_TOP_K,ref_ids,ref_gates,&expected);
+        if(pattern<3u){
+            bool rejected=false;
+            for(uint32_t i=FG_TOP_K;i<2u*FG_TOP_K;i++)
+                rejected|=ids[i]>=FG_EXPERT_COUNT||!isfinite(gates[i]);
+            ok=ok&&status==FG_ERR_FORMAT&&rejected;
+        }else{
+            ok=ok&&status==FG_OK;
+            for(uint32_t i=0;ok&&i<FG_TOP_K;i++)
+                ok=ids[FG_TOP_K+i]==ref_ids[i]&&
+                   fabsf(gates[FG_TOP_K+i]-ref_gates[i])<2e-6f;
+        }
+    }
+    fg_vk_tensor_destroy(gg);fg_vk_tensor_destroy(gi);fg_vk_tensor_destroy(gl);
     return ok;
 }
 
@@ -1386,7 +1422,7 @@ static int test_grouped_kquant_prefill(int type){
             fg_vk_expert_major_pack(context,gt,gs,FG_EXPERT_COUNT,tokens,
                                     &error)==FG_OK&&
             fg_vk_moe_kquant_cooked_grouped(context,go,weights,ga,gt,
-                (uint32_t)type,OUTPUT,INPUT,expert_stride,EXPERTS,tokens,
+                (uint32_t)type,OUTPUT,INPUT,expert_stride,EXPERTS,tokens,pairs,
                 &error)==FG_OK&&fg_vk_end(context,&error)==FG_OK&&
             fg_vk_tensor_read(go,0,got,(uint64_t)pairs*OUTPUT*4u,
                               &error)==FG_OK;
@@ -1476,9 +1512,9 @@ static int test_grouped_down_prefill(void){
             fg_vk_expert_major_pack(context,gt,gs,FG_EXPERT_COUNT,tokens,
                                     &error)==FG_OK&&
             fg_vk_moe_q5_1_down_cooked_grouped(context,o5,gq5,gt,gi,
-                OUTPUT,INPUT,q5_stride,EXPERTS,tokens,&error)==FG_OK&&
+                OUTPUT,INPUT,q5_stride,EXPERTS,tokens,pairs,&error)==FG_OK&&
             fg_vk_moe_q8_0_down_grouped(context,o8,gq8,gt,gi,OUTPUT,INPUT,
-                q8_stride,EXPERTS,tokens,&error)==FG_OK&&
+                q8_stride,EXPERTS,tokens,pairs,&error)==FG_OK&&
             fg_vk_end(context,&error)==FG_OK&&
             fg_vk_tensor_read(o5,0,got_q5,(uint64_t)pairs*OUTPUT*4u,
                               &error)==FG_OK&&
@@ -1817,12 +1853,12 @@ static int gdn_pipeline_dispatch(uint32_t tokens,const gdn_prefill_data *data,
     fg_vk_get_counters(context,&before);
     int ok=qkv&&z&&alpha&&beta&&a&&dt&&norm&&
         fg_vk_begin(context,&error)==FG_OK&&
-        fg_vk_gdn_recurrent_prefill_pipeline(context,output,state,qkv,z,alpha,beta,
+        fg_vk_gdn_recurrent_prefill_chunked(context,output,state,qkv,z,alpha,beta,
             a,dt,norm,tokens,1e-6f,&error)==FG_OK&&
         fg_vk_end(context,&error)==FG_OK;
     fg_vk_get_counters(context,&after);
     ok=ok&&after.dispatches-before.dispatches==
-        FG_VK_GDN_PIPELINE_PREFILL_DISPATCHES;
+        FG_VK_GDN_CHUNKED_PREFILL_DISPATCHES;
     if(fg_vk_batch_active(context)){fg_error ignored={0};fg_vk_abort(context,&ignored);}
     fg_vk_tensor_destroy(norm);fg_vk_tensor_destroy(dt);fg_vk_tensor_destroy(a);
     fg_vk_tensor_destroy(beta);fg_vk_tensor_destroy(alpha);
@@ -1830,7 +1866,7 @@ static int gdn_pipeline_dispatch(uint32_t tokens,const gdn_prefill_data *data,
     return ok;
 }
 
-static int gdn_pipeline_prefill_case(uint32_t tokens,uint32_t mode){
+static int gdn_chunked_prefill_case(uint32_t tokens,uint32_t mode){
     gdn_prefill_data data;
     if(!gdn_prefill_data_init(&data,tokens,mode))return 0;
     uint64_t output_values=(uint64_t)tokens*GDN_VALUE_WIDTH;
@@ -1868,26 +1904,26 @@ static int gdn_pipeline_prefill_case(uint32_t tokens,uint32_t mode){
     return ok;
 }
 
-static int gdn_pipeline_prefill_parity_mode(uint32_t mode){
+static int gdn_chunked_prefill_parity_mode(uint32_t mode){
     static const uint32_t lengths[]={1u,2u,17u,128u};
     for(uint32_t i=0;i<sizeof(lengths)/sizeof(lengths[0]);i++)
-        if(!gdn_pipeline_prefill_case(lengths[i],mode))return 0;
+        if(!gdn_chunked_prefill_case(lengths[i],mode))return 0;
     return 1;
 }
 
-static int test_gdn_pipeline_prefill_parity_zero(void){
-    return gdn_pipeline_prefill_parity_mode(0u);
+static int test_gdn_chunked_prefill_parity_zero(void){
+    return gdn_chunked_prefill_parity_mode(0u);
 }
 
-static int test_gdn_pipeline_prefill_parity_random(void){
-    return gdn_pipeline_prefill_parity_mode(1u);
+static int test_gdn_chunked_prefill_parity_random(void){
+    return gdn_chunked_prefill_parity_mode(1u);
 }
 
-static int test_gdn_pipeline_prefill_parity_extreme(void){
-    return gdn_pipeline_prefill_parity_mode(2u);
+static int test_gdn_chunked_prefill_parity_extreme(void){
+    return gdn_chunked_prefill_parity_mode(2u);
 }
 
-static int test_gdn_pipeline_prefill_composition(void){
+static int test_gdn_chunked_prefill_composition(void){
     enum{TOKENS=128,CHUNK=64};
     gdn_prefill_data data;
     if(!gdn_prefill_data_init(&data,TOKENS,1u))return 0;
@@ -1908,7 +1944,7 @@ static int test_gdn_pipeline_prefill_composition(void){
     fg_vk_tensor *output_chunk=tensor(NULL,value_bytes);
     int ok=qkv_full&&qkv_chunk&&z&&alpha&&beta&&a&&dt&&norm&&state_full&&
         state_chunk&&output_full&&output_chunk&&fg_vk_begin(context,&error)==FG_OK&&
-        fg_vk_gdn_recurrent_prefill_pipeline(context,output_full,state_full,qkv_full,
+        fg_vk_gdn_recurrent_prefill_chunked(context,output_full,state_full,qkv_full,
             z,alpha,beta,a,dt,norm,TOKENS,1e-6f,&error)==FG_OK&&
         fg_vk_end(context,&error)==FG_OK;
     for(uint32_t chunk=0;ok&&chunk<2u;chunk++){
@@ -1927,7 +1963,7 @@ static int test_gdn_pipeline_prefill_composition(void){
             fg_vk_tensor_view(output_chunk,v_offset,
                 (uint64_t)CHUNK*GDN_VALUE_WIDTH*4u,&ov,&error)==FG_OK&&
             fg_vk_begin(context,&error)==FG_OK&&
-            fg_vk_gdn_recurrent_prefill_pipeline(context,ov,state_chunk,qv,zv,av,bv,
+            fg_vk_gdn_recurrent_prefill_chunked(context,ov,state_chunk,qv,zv,av,bv,
                 a,dt,norm,CHUNK,1e-6f,&error)==FG_OK&&
             fg_vk_end(context,&error)==FG_OK;
         fg_vk_tensor_destroy(ov);fg_vk_tensor_destroy(bv);
@@ -1957,8 +1993,8 @@ static int test_gdn_pipeline_prefill_composition(void){
     return ok;
 }
 
-static int test_gdn_pipeline_prefill_decode_compat(void){
-    enum{PREFILL=17,TOKENS=18};
+static int gdn_prefill_decode_compat(uint32_t PREFILL,bool chunked){
+    uint32_t TOKENS=PREFILL+1u;
     gdn_prefill_data data;
     if(!gdn_prefill_data_init(&data,TOKENS,1u))return 0;
     fg_vk_tensor *reference_state=tensor(data.state,GDN_STATE_VALUES*4u);
@@ -1989,9 +2025,12 @@ static int test_gdn_pipeline_prefill_decode_compat(void){
                           (uint64_t)PREFILL*GDN_VALUE_WIDTH*4u,
                           &out_prefill,&error)==FG_OK&&
         fg_vk_begin(context,&error)==FG_OK&&
-        fg_vk_gdn_recurrent_prefill_pipeline(context,out_prefill,candidate_state,
+        (chunked?fg_vk_gdn_recurrent_prefill_chunked(context,out_prefill,candidate_state,
             q_prefill,z_prefill,alpha_prefill,beta_prefill,a,dt,norm,PREFILL,
-            1e-6f,&error)==FG_OK&&fg_vk_end(context,&error)==FG_OK;
+            1e-6f,&error):fg_vk_gdn_recurrent_prefill(context,out_prefill,
+            candidate_state,q_prefill,z_prefill,alpha_prefill,beta_prefill,
+            a,dt,norm,GDN_VALUE_HEADS,GDN_KEY_HEADS,GDN_DIM,PREFILL,
+            1e-6f,&error))==FG_OK&&fg_vk_end(context,&error)==FG_OK;
     fg_vk_tensor *q_decode=NULL,*z_decode=NULL,*alpha_decode=NULL,*beta_decode=NULL;
     fg_vk_tensor *out_decode=NULL;
     ok=ok&&fg_vk_tensor_view(qkv,(uint64_t)PREFILL*GDN_QKV_WIDTH*4u,
@@ -2039,6 +2078,10 @@ static int test_gdn_pipeline_prefill_decode_compat(void){
     gdn_prefill_data_free(&data);
     return ok;
 }
+
+
+static int test_gdn_chunked_prefill_decode_compat(void){return gdn_prefill_decode_compat(17u,true);}
+static int test_gdn_prefill_decode_compat(void){return gdn_prefill_decode_compat(128u,false);}
 
 static int test_iq4_nl_dequant(void){
     enum{ROWS=16,WIDTH=160,ROW_BYTES=90};uint8_t packed[ROWS*ROW_BYTES];float expected[ROWS*WIDTH],got[ROWS*WIDTH];memset(packed,0,sizeof(packed));for(uint32_t row=0;row<ROWS;row++)for(uint32_t block=0;block<WIDTH/32u;block++){uint8_t *p=packed+row*ROW_BYTES+block*18u;uint16_t d=fg_f32_to_f16(0.00390625f*(float)(row+block+1u));memcpy(p,&d,2u);for(uint32_t i=0;i<16u;i++)p[2u+i]=(uint8_t)(((i+row)&15u)|(((15u-i+block)&15u)<<4u));}fg_dequantize_iq4_nl(packed,expected,ROWS*WIDTH);fg_vk_tensor *input=tensor(packed,sizeof(packed)),*output=tensor(NULL,sizeof(got));int ok=input&&output&&fg_vk_dequantize_iq4_nl(context,output,input,ROWS,WIDTH,&error)==FG_OK&&fg_vk_tensor_read(output,0,got,sizeof(got),&error)==FG_OK;for(uint32_t i=0;ok&&i<ROWS*WIDTH;i++)if(got[i]!=expected[i]){fprintf(stderr,"IQ4_NL %u GPU=%g CPU=%g\n",i,got[i],expected[i]);ok=0;}fg_vk_tensor_destroy(output);fg_vk_tensor_destroy(input);return ok;
@@ -2223,6 +2266,7 @@ ok=run_test_i("kquant_expert_major_batch",test_kquant_expert_major_batch,13)&&ok
 ok=run_test("q8_cooked_token_tiles",test_q8_cooked_token_tiles)&&ok;
 ok=run_test("decode_tile_schedule",test_decode_tile_schedule)&&ok;
 ok=run_test("router_and_expert_packing",test_router_and_expert_packing)&&ok;
+ok=run_test("router_nonfinite",test_router_nonfinite)&&ok;
 ok=run_test_i("grouped_kquant_prefill",test_grouped_kquant_prefill,12)&&ok;
 ok=run_test_i("grouped_kquant_prefill",test_grouped_kquant_prefill,13)&&ok;
 ok=run_test("grouped_down_prefill",test_grouped_down_prefill)&&ok;
@@ -2233,11 +2277,12 @@ ok=run_test("gdn_project_cooked",test_gdn_project_cooked)&&ok;
 ok=run_test("gdn_decode",test_gdn_decode)&&ok;
 ok=run_test("gdn_algebraic",test_gdn_algebraic)&&ok;
 ok=run_test("gdn_prefill_scan",test_gdn_prefill_scan)&&ok;
-ok=run_test("gdn_pipeline_prefill_parity_zero",test_gdn_pipeline_prefill_parity_zero)&&ok;
-ok=run_test("gdn_pipeline_prefill_parity_random",test_gdn_pipeline_prefill_parity_random)&&ok;
-ok=run_test("gdn_pipeline_prefill_parity_extreme",test_gdn_pipeline_prefill_parity_extreme)&&ok;
-ok=run_test("gdn_pipeline_prefill_composition",test_gdn_pipeline_prefill_composition)&&ok;
-ok=run_test("gdn_pipeline_prefill_decode_compat",test_gdn_pipeline_prefill_decode_compat)&&ok;
+ok=run_test("gdn_prefill_decode_compat",test_gdn_prefill_decode_compat)&&ok;
+ok=run_test("gdn_chunked_prefill_parity_zero",test_gdn_chunked_prefill_parity_zero)&&ok;
+ok=run_test("gdn_chunked_prefill_parity_random",test_gdn_chunked_prefill_parity_random)&&ok;
+ok=run_test("gdn_chunked_prefill_parity_extreme",test_gdn_chunked_prefill_parity_extreme)&&ok;
+ok=run_test("gdn_chunked_prefill_composition",test_gdn_chunked_prefill_composition)&&ok;
+ok=run_test("gdn_chunked_prefill_decode_compat",test_gdn_chunked_prefill_decode_compat)&&ok;
 ok=run_test("qsa_indexer",test_qsa_indexer)&&ok;
 ok=run_test("qsa_segmented_index_score",test_qsa_segmented_index_score)&&ok;
 ok=run_test("qsa_prefill_chunk_liveness",test_qsa_prefill_chunk_liveness)&&ok;

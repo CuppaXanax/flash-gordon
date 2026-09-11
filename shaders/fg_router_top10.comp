@@ -15,25 +15,39 @@ const uint TOP_K = 10u;
 shared float values[512];
 shared float reduced_values[512];
 shared uint reduced_ids[512];
+shared uint taken[512];
 shared float winners[TOP_K];
 shared uint winner_ids[TOP_K];
+shared uint invalid_logits;
 
 void main() {
     uint token = gl_WorkGroupID.x;
     uint lid = gl_LocalInvocationID.x;
     if (token >= pc.tokens) return;
+    if (lid == 0u) invalid_logits = 0u;
+    barrier();
     for (uint segment = 0u; segment < 2u; segment++) {
         uint expert = lid + segment * 256u;
+        taken[expert] = 0u;
         values[expert] = expert < pc.experts ?
             logits[token * pc.experts + expert] : -1.0 / 0.0;
+        if (isnan(values[expert]) || (isinf(values[expert]) && values[expert] > 0.0))
+            atomicOr(invalid_logits, 1u);
     }
     barrier();
+    if (invalid_logits != 0u) {
+        if (lid < TOP_K) {
+            selected[token * TOP_K + lid] = 0xffffffffu;
+            gates[token * TOP_K + lid] = 0.0;
+        }
+        return;
+    }
 
     for (uint slot = 0u; slot < TOP_K; slot++) {
         for (uint segment = 0u; segment < 2u; segment++) {
             uint expert = lid + segment * 256u;
             reduced_values[expert] = values[expert];
-            reduced_ids[expert] = expert;
+            reduced_ids[expert] = taken[expert] != 0u ? 0xffffffffu : expert;
         }
         barrier();
         for (uint stride = 256u; stride > 0u; stride >>= 1u) {
@@ -52,6 +66,7 @@ void main() {
         if (lid == 0u) {
             winner_ids[slot] = reduced_ids[0];
             winners[slot] = reduced_values[0];
+            taken[reduced_ids[0]] = 1u;
             values[reduced_ids[0]] = -1.0 / 0.0;
         }
         barrier();

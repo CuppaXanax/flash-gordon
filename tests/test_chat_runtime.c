@@ -14,7 +14,7 @@ struct fg_runtime {
 };
 
 const char *fg_execution_mode_name(fg_execution_mode mode){
-    return mode==FG_EXECUTION_PIPELINE?"pipeline":"expert-parallel";
+    return mode==FG_EXECUTION_EXPERT_PARALLEL?"expert-parallel":"unsupported";
 }
 
 #include "../src/chat.c"

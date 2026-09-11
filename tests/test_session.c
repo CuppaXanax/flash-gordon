@@ -4,14 +4,13 @@
 #include "fg_runtime.h"
 #include "fg_session.h"
 #include "fg_sha256.h"
+#include "fg_topology.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-#include "pipeline_manifest_fixture.h"
 
 static int failures;
 #define CHECK(expression) do{if(!(expression)){fprintf(stderr,"FAIL %s:%d: %s\n",__FILE__,__LINE__,#expression);failures++;}}while(0)
@@ -110,236 +109,10 @@ static void test_manifest_v5_compatibility(void){
         CHECK(decoded->stage_count==0u&&decoded->slot_count==0u);
         CHECK(fg_manifest_validate_compatibility(decoded,FG_PROTOCOL_VERSION,
                                                   FG_POSITION_TEXT,&error)==FG_OK);
-        CHECK(fg_manifest_validate_compatibility(decoded,FG_PIPELINE_PROTOCOL_VERSION,
-                                                  FG_POSITION_TEXT,&error)==FG_ERR_MISMATCH);
+        CHECK(fg_manifest_validate_compatibility(decoded,7u,
+                                                  FG_POSITION_TEXT,&error)==FG_ERR_ARGUMENT);
     }
     free(decoded);free(manifest);unlink(path);
-}
-
-static void test_pipeline_profile_contract(void){
-    char path[96];snprintf(path,sizeof(path),"test-session-pipeline-%ld.fgm",(long)getpid());
-    unlink(path);fg_manifest *manifest=malloc(sizeof(*manifest)),*sealed=malloc(sizeof(*sealed));
-    CHECK(manifest&&sealed);fg_error error={0};
-    if(manifest&&sealed){
-        fg_manifest_init(manifest);manifest->flags=FG_MANIFEST_COMPONENTS_TEXT_REQUIRED;
-        CHECK(fg_runtime_profile_apply(
-                  manifest,FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K,&error)==FG_OK);
-        CHECK(manifest->execution_mode==FG_EXECUTION_PIPELINE);
-        CHECK(manifest->stage_count==FG_PIPELINE_STAGE_COUNT);
-        CHECK(manifest->slot_count==FG_PIPELINE_DEFAULT_SLOT_COUNT);
-        CHECK(manifest->prefill_microbatch==128u);
-        CHECK(fg_manifest_write(path,manifest,&error)==FG_OK);
-        CHECK(fg_manifest_read(path,sealed,&error)==FG_OK);
-        CHECK(sealed->format_version==FG_MANIFEST_FORMAT_VERSION);
-        CHECK(sealed->protocol_version==FG_PIPELINE_PROTOCOL_VERSION);
-        CHECK(sealed->session.minimum_protocol_version==FG_PIPELINE_PROTOCOL_VERSION);
-        CHECK(fg_manifest_validate_compatibility(
-                  sealed,FG_PIPELINE_PROTOCOL_VERSION,FG_POSITION_TEXT,&error)==FG_OK);
-        CHECK(fg_manifest_validate_compatibility(
-                  sealed,FG_PROTOCOL_VERSION,FG_POSITION_TEXT,&error)==FG_ERR_MISMATCH);
-        CHECK(fg_manifest_validate_deployment(sealed,&error)==FG_ERR_MISMATCH);
-        fg_runtime_options requested={.prefill_microbatch=64u,.prefill_window=3u,
-            .specified=FG_RUNTIME_OPTION_PREFILL_MICROBATCH|
-                FG_RUNTIME_OPTION_PREFILL_WINDOW};
-        fg_runtime_options resolved={0};
-        CHECK(fg_runtime_options_resolve(&resolved,sealed,&requested,&error)==
-              FG_ERR_MISMATCH);
-        uint32_t parsed=FG_RUNTIME_PROFILE_NONE;
-        CHECK(fg_runtime_profile_parse(FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K_NAME,
-                                       &parsed,&error)==FG_OK);
-        CHECK(parsed==FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K);
-    }
-    free(sealed);free(manifest);unlink(path);
-}
-
-static fg_status reseal_manifest(const char *path,fg_manifest *source,
-                                 fg_manifest *sealed,fg_error *error){
-    fg_status status=fg_manifest_write(path,source,error);
-    return status==FG_OK?fg_manifest_read(path,sealed,error):status;
-}
-
-static void test_pipeline_deployment_admission(void){
-    char valid_path[96],invalid_path[96];
-    snprintf(valid_path,sizeof(valid_path),
-             "test-pipeline-deployment-%ld.fgm",(long)getpid());
-    snprintf(invalid_path,sizeof(invalid_path),
-             "test-pipeline-invalid-%ld.fgm",(long)getpid());
-    unlink(valid_path);unlink(invalid_path);
-    fg_manifest *manifest=malloc(sizeof(*manifest));
-    fg_manifest *sealed=malloc(sizeof(*sealed));
-    fg_manifest *candidate=malloc(sizeof(*candidate));
-    fg_manifest *checked=malloc(sizeof(*checked));
-    CHECK(manifest&&sealed&&candidate&&checked);
-    fg_error error={0};
-    uint8_t digest[32];fill_digest(digest,71u);
-    if(manifest&&sealed&&candidate&&checked){
-        CHECK(build_pipeline_deployment_fixture(
-                  manifest,digest,&error));
-        CHECK(fg_manifest_write(valid_path,manifest,&error)==FG_OK);
-        CHECK(fg_manifest_read(valid_path,sealed,&error)==FG_OK);
-        CHECK(sealed->host_resident_bytes[sealed->stage_ranks[0]]==
-              UINT64_C(675430400));
-        for(uint32_t rank=1u;rank<FG_RANK_COUNT;rank++)
-            CHECK(sealed->host_resident_bytes[rank]==
-                  FG_PIPELINE_NGRAM_CACHE_BYTES);
-        CHECK(fg_manifest_validate_deployment(sealed,&error)==FG_OK);
-        uint64_t worst_margin=UINT64_MAX,worst_persistent=UINT64_MAX;
-        uint32_t worst_rank=UINT32_MAX,worst_persistent_rank=UINT32_MAX;
-        for(uint32_t rank=0u;rank<FG_RANK_COUNT;rank++){
-            uint64_t resident=0u;
-            CHECK(fg_q38_rank_residency_bytes(
-                sealed,rank,&resident,&error)==FG_OK);
-            uint64_t margin=sealed->residency_cap_bytes-resident;
-            if(margin<worst_margin){worst_margin=margin;worst_rank=rank;}
-            uint64_t persistent=sealed->persistent_cap_bytes-
-                sealed->ranks[rank].persistent_bytes;
-            if(persistent<worst_persistent){
-                worst_persistent=persistent;worst_persistent_rank=rank;
-            }
-        }
-        CHECK(worst_persistent_rank==7u);
-        CHECK(worst_persistent==UINT64_C(536246681));
-        CHECK(worst_rank==7u);
-        CHECK(worst_margin==UINT64_C(713220096));
-
-        *candidate=*sealed;
-        candidate->protocol_version=FG_PROTOCOL_VERSION;
-        CHECK(fg_manifest_validate_deployment(candidate,&error)==
-              FG_ERR_MISMATCH);
-
-        *candidate=*sealed;
-        candidate->host_resident_bytes[candidate->stage_ranks[0]]--;
-        CHECK(reseal_manifest(invalid_path,candidate,checked,&error)==FG_OK);
-        CHECK(fg_manifest_validate_deployment(checked,&error)==
-              FG_ERR_MISMATCH);
-
-        *candidate=*sealed;
-        candidate->host_resident_bytes[1u]--;
-        CHECK(reseal_manifest(invalid_path,candidate,checked,&error)==FG_OK);
-        CHECK(fg_manifest_validate_deployment(checked,&error)==
-              FG_ERR_MISMATCH);
-
-        *candidate=*sealed;
-        candidate->persistent_cap_bytes++;
-        CHECK(reseal_manifest(invalid_path,candidate,checked,&error)==FG_OK);
-        CHECK(fg_manifest_validate_deployment(checked,&error)==
-              FG_ERR_MISMATCH);
-
-        *candidate=*sealed;
-        candidate->residency_cap_bytes++;
-        CHECK(reseal_manifest(invalid_path,candidate,checked,&error)==FG_OK);
-        CHECK(fg_manifest_validate_deployment(checked,&error)==
-              FG_ERR_MISMATCH);
-
-        *candidate=*sealed;
-        candidate->ranks[0].transient_bytes=
-            FG_PACK_RANK_TRANSIENT_BYTES-1u;
-        CHECK(reseal_manifest(invalid_path,candidate,checked,&error)==FG_OK);
-        CHECK(fg_manifest_validate_deployment(checked,&error)==FG_ERR_LIMIT);
-
-        *candidate=*sealed;
-        candidate->ranks[0].driver_reserve_bytes=
-            FG_PACK_DRIVER_RESERVE_BYTES-1u;
-        CHECK(reseal_manifest(invalid_path,candidate,checked,&error)==FG_OK);
-        CHECK(fg_manifest_validate_deployment(checked,&error)==FG_ERR_LIMIT);
-
-        *candidate=*sealed;
-        candidate->ranks[0].transient_bytes=
-            FG_PACK_RANK_TRANSIENT_BYTES+1u;
-        CHECK(reseal_manifest(invalid_path,candidate,checked,&error)==FG_OK);
-        CHECK(fg_manifest_validate_deployment(checked,&error)==
-              FG_ERR_MISMATCH);
-
-        *candidate=*sealed;
-        candidate->session.host_page_cache_bytes=UINT64_C(32)<<20u;
-        CHECK(reseal_manifest(invalid_path,candidate,checked,&error)==FG_OK);
-        CHECK(fg_manifest_validate_deployment(checked,&error)==
-              FG_ERR_MISMATCH);
-
-        *candidate=*sealed;
-        candidate->tensor_count--;
-        CHECK(reseal_manifest(invalid_path,candidate,checked,&error)==FG_OK);
-        CHECK(fg_manifest_validate_deployment(checked,&error)==
-              FG_ERR_MISMATCH);
-
-        *candidate=*sealed;
-        candidate->topology_sha256[0]^=1u;
-        CHECK(fg_manifest_validate_deployment(candidate,&error)==
-              FG_ERR_MISMATCH);
-
-        *candidate=*sealed;
-        candidate->ranks[0].scratch_bytes=0u;
-        CHECK(fg_manifest_validate_deployment(candidate,&error)==
-              FG_ERR_LIMIT);
-
-        *candidate=*sealed;
-        const fg_tensor_record *common=fg_q38_find_tensor(
-            candidate,"output.weight",
-            candidate->stage_ranks[candidate->stage_count-1u]);
-        CHECK(common!=NULL);
-        if(common){
-            uint32_t index=(uint32_t)(common-candidate->tensors);
-            memset(candidate->tensors[index].sha256,0,32u);
-            CHECK(reseal_manifest(
-                      invalid_path,candidate,checked,&error)==FG_OK);
-            CHECK(fg_manifest_validate_deployment(checked,&error)==
-                  FG_ERR_MISMATCH);
-        }
-
-        *candidate=*sealed;
-        const fg_tensor_record *tokenizer=fg_q38_find_tensor(
-            candidate,"tokenizer/tokenizer.fgt",UINT32_MAX);
-        CHECK(tokenizer!=NULL);
-        if(tokenizer){
-            uint32_t index=(uint32_t)(tokenizer-candidate->tensors);
-            memset(candidate->tensors[index].sha256,0,32u);
-            CHECK(reseal_manifest(
-                      invalid_path,candidate,checked,&error)==FG_OK);
-            CHECK(fg_manifest_validate_deployment(checked,&error)==
-                  FG_ERR_MISMATCH);
-        }
-
-        *candidate=*sealed;
-        const fg_tensor_record *embedding=fg_q38_find_tensor(
-            candidate,"token_embd.weight",candidate->stage_ranks[0]);
-        CHECK(embedding!=NULL);
-        if(embedding){
-            uint32_t index=(uint32_t)(embedding-candidate->tensors);
-            memset(candidate->tensors[index].sha256,0,32u);
-            CHECK(reseal_manifest(
-                      invalid_path,candidate,checked,&error)==FG_OK);
-            CHECK(fg_manifest_validate_deployment(checked,&error)==
-                  FG_ERR_MISMATCH);
-        }
-
-        *candidate=*sealed;
-        embedding=fg_q38_find_tensor(
-            candidate,"token_embd.weight",candidate->stage_ranks[0]);
-        CHECK(embedding!=NULL);
-        if(embedding){
-            uint32_t index=(uint32_t)(embedding-candidate->tensors);
-            candidate->tensors[index].shape[2]=1u;
-            CHECK(reseal_manifest(
-                      invalid_path,candidate,checked,&error)==FG_OK);
-            CHECK(fg_manifest_validate_deployment(checked,&error)==
-                  FG_ERR_MISMATCH);
-        }
-
-        *candidate=*sealed;
-        embedding=fg_q38_find_tensor(
-            candidate,"token_embd.weight",candidate->stage_ranks[0]);
-        CHECK(embedding!=NULL);
-        if(embedding){
-            uint32_t index=(uint32_t)(embedding-candidate->tensors);
-            candidate->tensors[index].expert=0u;
-            CHECK(reseal_manifest(
-                      invalid_path,candidate,checked,&error)==FG_OK);
-            CHECK(fg_manifest_validate_deployment(checked,&error)==
-                  FG_ERR_MISMATCH);
-        }
-    }
-    free(checked);free(candidate);free(sealed);free(manifest);
-    unlink(invalid_path);unlink(valid_path);
 }
 
 static void test_expert_parallel_deployment_regression(void){
@@ -480,7 +253,7 @@ static void test_manifest_upgrade(void){
                   FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_128,&error)==FG_OK);
         CHECK(fg_manifest_upgrade_with_profile(
                   legacy_path,pipeline_path,
-                  FG_RUNTIME_PROFILE_PIPELINE_8STAGE_262K,&error)==FG_ERR_UNAVAILABLE);
+                  2u,&error)==FG_ERR_ARGUMENT);
         CHECK(access(pipeline_path,F_OK)!=0);
         CHECK(fg_manifest_read(profile_path,profiled,&error)==FG_OK);
         CHECK(profiled->format_version==FG_MANIFEST_FORMAT_VERSION);
@@ -1142,9 +915,33 @@ static void test_qsa_page_owner_contract(void){
     free(manifest);unlink(path);
 }
 
+static void test_retired_pipeline_rejected(void){
+    fg_manifest *manifest=malloc(sizeof(*manifest));
+    CHECK(manifest!=NULL);
+    if(!manifest)return;
+    fg_error error={0};
+    fg_manifest_init(manifest);
+    manifest->execution_mode=1u; /* Retired on-disk pipeline value. */
+    CHECK(fg_topology_validate(manifest,&error)==FG_ERR_MISMATCH);
+    CHECK(strstr(error.message,"repack for expert-parallel")!=NULL);
+    fg_manifest_init(manifest);
+    manifest->stage_count=8u;
+    CHECK(fg_topology_validate(manifest,&error)==FG_ERR_FORMAT);
+    uint32_t profile=0u;
+    CHECK(fg_runtime_profile_parse("pipeline-8stage-262k",&profile,&error)==FG_ERR_ARGUMENT);
+    CHECK(!fg_protocol_version_supported(7u));
+    fg_frame_header frame;
+    for(uint16_t type=34u;type<=39u;type++){
+        CHECK(fg_frame_encode_version(&frame,FG_PROTOCOL_VERSION,
+            (fg_message_type)type,1u,0u,0u,NULL,0u,&error)==FG_ERR_ARGUMENT);
+    }
+    free(manifest);
+}
+
 int main(void){
+    test_retired_pipeline_rejected();
     test_manifest_evolution();test_manifest_v5_compatibility();
-    test_pipeline_profile_contract();test_pipeline_deployment_admission();
+
     test_expert_parallel_deployment_regression();
     test_manifest_upgrade();test_deployment_admission();
     test_legacy_identity_roundtrip();

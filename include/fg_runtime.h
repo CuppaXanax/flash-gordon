@@ -60,10 +60,8 @@ typedef struct fg_generation_stats {
     bool exact_frontier;
     fg_prefix_reset_reason reset_reason;
     fg_execution_mode execution_mode;
-    uint32_t stage_count;
     double prefill_seconds;
     double decode_seconds;
-    double stage_seconds[FG_PIPELINE_STAGE_COUNT];
 } fg_generation_stats;
 typedef fg_status (*fg_token_callback)(void *context,uint32_t token,const char *text,
                                       size_t bytes,fg_error *err);

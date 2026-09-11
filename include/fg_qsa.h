@@ -19,6 +19,14 @@ fg_status fg_qsa_submit_host_reads(fg_vk_context *vk,fg_error *err);
 #define FG_QSA_TOPK_BLOCK_GROUP 4096u
 #define FG_QSA_TOPK_CANDIDATES 512u
 #define FG_QSA_SELECTED_TOKENS (FG_Q38_INDEX_BUDGET+FG_Q38_QSA_COMPRESS_RATIO-1u)
+#define FG_QSA_PREFILL_QUERY_TILE 4u
+/* Selected records live beside projections and residual inputs in the shared
+ * attention arena. Scale the query tile with its sealed microbatch capacity. */
+static inline uint32_t fg_qsa_query_tile_size(uint32_t batch_size){
+    uint32_t queries=batch_size/32u;
+    if(!queries)queries=1u;
+    return queries<FG_QSA_PREFILL_QUERY_TILE?queries:FG_QSA_PREFILL_QUERY_TILE;
+}
 
 uint32_t fg_qsa_index_segment_count(uint32_t logical_context);
 uint32_t fg_qsa_index_segment_first(uint32_t logical_context,uint32_t segment);
@@ -51,8 +59,8 @@ static inline uint64_t fg_qsa_attention_scratch_bytes(uint32_t batch_size){
                    FG_Q38_QSA_INDEX_KEY_BYTES);
 }
 
-static inline uint64_t fg_gdn_pipeline_prefill_scratch_bytes(uint32_t batch_size){
-    if(!batch_size||batch_size>FG_VK_GDN_PIPELINE_PREFILL_MAX_TOKENS)
+static inline uint64_t fg_gdn_chunked_prefill_scratch_bytes(uint32_t batch_size){
+    if(!batch_size||batch_size>FG_VK_GDN_CHUNKED_PREFILL_MAX_TOKENS)
         return UINT64_MAX;
     return (uint64_t)batch_size*(10240u+10240u+6144u+48u+48u+6144u+2560u)*4u;
 }
@@ -81,13 +89,14 @@ static inline uint64_t fg_qsa_selection_scratch_bytes(uint32_t logical_context,
        batch_size>FG_PREFILL_MAX_TOKENS)return UINT64_MAX;
     uint64_t blocks=((uint64_t)logical_context+FG_Q38_QSA_COMPRESS_RATIO-1u)/
                     FG_Q38_QSA_COMPRESS_RATIO;
-    uint64_t score_bytes=blocks*sizeof(uint32_t);
+    uint64_t queries=fg_qsa_query_tile_size(batch_size);
+    uint64_t score_bytes=queries*blocks*sizeof(uint32_t);
     uint64_t base=fg_align_up_u64(fg_qsa_attention_scratch_bytes(batch_size),
                                   FG_ALIGNMENT);
     uint64_t offset=base;
     for(uint32_t i=0;i<4u;i++)offset=fg_align_up_u64(offset+score_bytes,FG_ALIGNMENT);
     offset=fg_align_up_u64(offset+
-                           (uint64_t)FG_QSA_SELECTED_TOKENS*
+                           queries*FG_QSA_SELECTED_TOKENS*
                                FG_Q38_QSA_TOKEN_RECORD_BYTES,FG_ALIGNMENT);
     return offset-base;
 }
@@ -118,9 +127,6 @@ fg_status fg_qsa_session_open_mirror_with_scratch(
     fg_qsa_session **out,fg_model *model,uint32_t logical_context,uint32_t hot_tokens,
     uint32_t cache_pages,uint32_t batch_size,fg_vk_tensor *scratch,
     fg_qsa_page_fetch_fn fetch_pages,void *fetch_opaque,fg_error *err);
-fg_status fg_qsa_session_open_resident(fg_qsa_session **out,fg_model *model,
-                                       uint32_t batch_size,fg_vk_tensor *scratch,
-                                       fg_error *err);
 void fg_qsa_session_close(fg_qsa_session *session);
 fg_status fg_qsa_session_reset(fg_qsa_session *session,fg_error *err);
 fg_status fg_qsa_session_checkpoint(fg_qsa_session *session,fg_error *err);
@@ -130,21 +136,9 @@ uint64_t fg_qsa_session_host_bytes(const fg_qsa_session *session);
 fg_status fg_qsa_session_decode(fg_qsa_session *session,uint32_t layer,uint32_t token_index,
                                 const uint32_t position[3],const fg_vk_tensor *hidden,
                                 fg_vk_tensor **output,fg_error *err);
-/* Records resident T=1 QSA into an already-active pipeline stage batch. */
-fg_status fg_qsa_session_decode_pipeline(fg_qsa_session *session,uint32_t layer,
-                                        uint32_t token_index,
-                                        const uint32_t position[3],
-                                        const fg_vk_tensor *hidden,
-                                        fg_vk_tensor **output,fg_error *err);
 fg_status fg_qsa_session_prefill(fg_qsa_session *session,uint32_t layer,uint32_t first_token,
                                  const uint32_t *positions,uint32_t token_count,
                                  const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err);
-fg_status fg_qsa_session_prefill_pipeline(fg_qsa_session *session,uint32_t layer,
-                                          uint32_t first_token,
-                                          const uint32_t *positions,
-                                          uint32_t token_count,
-                                          const fg_vk_tensor *hidden,
-                                          fg_vk_tensor **output,fg_error *err);
 fg_status fg_qsa_session_page_records(const fg_qsa_session *session,uint32_t layer,
                                       uint32_t block,const uint8_t **records,fg_error *err);
 void fg_qsa_session_page_published(fg_qsa_session *session,uint32_t layer,uint32_t block);

@@ -18,10 +18,15 @@ typedef fg_status (*fg_owner_expert_fire_fn)(void *context,uint32_t layer,uint32
 typedef fg_status (*fg_owner_expert_collect_fn)(void *context,uint32_t layer,uint32_t token_index,
                                                 fg_expert_result results[FG_GROUP_SIZE],
                                                 uint32_t *result_count,fg_error *err);
+/* Dispatch calls shared_work once after sending remote routes and drains every
+ * issued result even if shared or local computation fails. */
+typedef fg_status (*fg_owner_prefill_shared_fn)(void *context,fg_error *err);
 typedef fg_status (*fg_owner_prefill_dispatch_fn)(void *context,uint32_t layer,
                                                    uint32_t first_token,uint16_t token_count,
                                                    const uint16_t *expert_ids,const float *gates,
                                                    const uint8_t *activations_q8k,
+                                                   fg_owner_prefill_shared_fn shared_work,
+                                                   void *shared_context,
                                                    fg_prefill_result results[FG_GROUP_SIZE],
                                                    uint32_t *result_count,fg_error *err);
 typedef fg_status (*fg_owner_qsa_decode_dispatch_fn)(void *context,uint32_t layer,
@@ -88,25 +93,13 @@ fg_status fg_owner_qsa_open_mirror(fg_owner_executor *executor,uint32_t logical_
                                    uint32_t hot_tokens,uint32_t cache_pages,uint32_t batch_size,
                                    fg_qsa_page_fetch_fn fetch_pages,void *fetch_opaque,
                                    fg_error *err);
-fg_status fg_owner_qsa_open_resident(fg_owner_executor *executor,fg_error *err);
 void fg_owner_qsa_set_tokens(fg_owner_executor *executor,uint32_t tokens);
 fg_status fg_owner_qsa_decode(fg_owner_executor *executor,uint32_t layer,uint32_t token_index,
                               const uint32_t position[3],const fg_vk_tensor *hidden,
                               fg_vk_tensor **output,fg_error *err);
-fg_status fg_owner_qsa_decode_pipeline(fg_owner_executor *executor,uint32_t layer,
-                                      uint32_t token_index,
-                                      const uint32_t position[3],
-                                      const fg_vk_tensor *hidden,
-                                      fg_vk_tensor **output,fg_error *err);
 fg_status fg_owner_qsa_prefill(fg_owner_executor *executor,uint32_t layer,uint32_t first_token,
                                const uint32_t *positions,uint32_t token_count,
                                const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err);
-fg_status fg_owner_qsa_prefill_pipeline(fg_owner_executor *executor,uint32_t layer,
-                                        uint32_t first_token,
-                                        const uint32_t *positions,
-                                        uint32_t token_count,
-                                        const fg_vk_tensor *hidden,
-                                        fg_vk_tensor **output,fg_error *err);
 fg_status fg_owner_qsa_page_records(const fg_owner_executor *executor,uint32_t layer,
                                     uint32_t block,const uint8_t **records,fg_error *err);
 void fg_owner_qsa_page_published(fg_owner_executor *executor,uint32_t layer,uint32_t block);
@@ -130,23 +123,5 @@ fg_status fg_owner_prefill_layer(fg_owner_executor *executor,uint32_t layer,
                                  fg_owner_qsa_prefill_dispatch_fn qsa_dispatch,
                                  void *qsa_context,
                                  fg_vk_tensor **output,fg_error *err);
-fg_status fg_owner_prefill_layer_pipeline(fg_owner_executor *executor,
-                                          fg_expert_executor *expert,
-                                          uint32_t layer,uint32_t first_token,
-                                          const uint32_t *positions,
-                                          uint16_t token_count,
-                                          const fg_vk_tensor *hyper_input,
-                                          const fg_vk_tensor *ngram_embeddings,
-                                          fg_owner_qsa_prefill_dispatch_fn qsa_dispatch,
-                                          void *qsa_context,
-                                          fg_vk_tensor **output,fg_error *err);
-/* Requires an active outer Vulkan batch owned by the pipeline stage. */
-fg_status fg_owner_decode_layer_pipeline(fg_owner_executor *executor,
-                                         fg_expert_executor *expert,
-                                         uint32_t layer,uint32_t token_index,
-                                         const uint32_t position[3],
-                                         const fg_vk_tensor *hyper_input,
-                                         const fg_vk_tensor *ngram_embedding,
-                                         fg_vk_tensor **output,fg_error *err);
 
 #endif

@@ -1,422 +1,366 @@
-# Flash Gordon Expert-Parallel Recovery PRD
-
-## Authority and status
-
-This is the authoritative architecture and delivery contract for Flash Gordon. It
-supersedes every earlier plan that permitted an eight-stage layer pipeline, stage-local
-decode or prefill, or a pipeline deployment profile.
-
-Flash Gordon is an expert-parallel inference appliance for Qwen3.8-Flash-Next on eight
-AMD BC250 blades. Pipeline parallelism is not a supported mode, fallback, experiment,
-qualification target, or future option in this repository.
-
-Recovery is forward-only from current `main` on `codex/expert-parallel-forward` in the
-root checkout. Recovery may add commits and merge reviewed branches. It may not rewrite
-history, revert commits, reset to an old tree, check out an old revision, cherry-pick an
-old implementation, or use worktrees.
-
-## Incident statement and evidence status
-
-The intended system kept the sequential common graph on the coordinator and fanned each
-layer's routed experts out to their owning blades. A separate pipeline runtime was later
-introduced. Pipeline-specific API, sampling, prefill, qualification, and promotion work
-was then presented as the production LKG even though the harness explicitly reported
-`execution_mode=pipeline`.
-
-That promotion violated the architecture. Its end-to-end throughput, TTFT, context-curve,
-and stage-service results are invalid as Flash Gordon qualification evidence. These labels
-may remain in immutable Git history but must be identified as invalidated experiments in
-the current tree:
-
-- `lkg-10.49tps-pipeline-decode`
-- `lkg-15.18tps-106.07prefill-p4`
-- Results derived from `/home/user/flash-gordon-pipeline-candidate`
-- Qualifications that required `execution_mode=pipeline`
-
-No historical tag will be deleted or moved. A forward commit will record the invalidation
-and prevent these artifacts from satisfying a current release gate. All prior fleet
-performance data is excluded from the new EP baseline. Component observations may inform
-test design, but every number used for prioritization, release, or public claims must be
-remeasured by the EP-only harness.
-
-## Product objective
-
-Deliver one Qwen3.8-Flash-Next runtime that:
-
-- Runs the complete ordered 48-layer common graph on the coordinator.
-- Routes every layer's top-10 experts to their sealed owners.
-- Executes routed experts concurrently across participating blades.
-- Overlaps the coordinator's shared expert with routed experts where dependencies allow.
-- Validates and reduces all routed results before advancing to the next layer.
-- Supports batched prefill and raw decode through the native 262,144-token context.
-- Supports nonzero temperature, `top_k`, `top_p`, presence/frequency penalties, and
-  repetition penalty without full-vocabulary CPU readback.
-- Provides an OpenAI-compatible API suitable for Pi coding sessions, including tools,
-  structured content, transcript reuse, and context-sized completion budgets.
-- Fails closed on invalid topology, routing, protocol, artifacts, context, and sampling.
-- Measures the real EP critical path and cannot qualify another architecture through a
-  manifest, command switch, or benchmark wrapper.
-
-Flash Gordon is a creative-studio appliance, not a generic inference-provider platform.
-Generic model abstractions, multi-tenant scheduling, and benchmark-only execution modes
-are out of scope unless they directly improve this model's correctness or single-session
-performance.
-
-## Required architecture
-
-### Coordinator common graph
-
-Rank 0 owns and executes all 48 ordered transformer layers:
-
-1. Token embedding and PLE/n-gram injection.
-2. Hyperconnection attention read.
-3. GDN or QSA attention-family work.
-4. Hyperconnection attention write.
-5. Hyperconnection FFN read.
-6. Router logits and deterministic top-10 selection.
-7. Shared expert.
-8. Expert fan-out, collection, weighted reduction, and FFN write.
-9. Final norm and output sampling, whether the sealed output bundle remains on a helper
-   rank or becomes coordinator-resident in a later measured change.
-
-Layer dependencies remain sequential. The coordinator never sends a generic hidden-state
-boundary to another blade so that blade can execute a contiguous layer range.
-
-### Expert workers
-
-Ranks 1 through 7, plus rank 0 where sealed ownership requires it, provide expert service
-rather than transformer-stage service. At every layer:
-
-- The top-10 route is partitioned by the manifest's `(layer, expert) -> owner` map.
-- One bounded request per participating owner contains only the required activation and
-  selected expert slots.
-- Independent owners execute concurrently.
-- Responses identify request, session, token/prefill range, layer, experts, slots,
-  quantization contract, and payload length.
-- The coordinator rejects missing, duplicate, stale, misrouted, truncated, or non-finite
-  results before advancing.
-- Every routed expert is reduced exactly once using its model-defined gate.
-
-Workers must not own contiguous transformer layers, execute attention as stages, receive
-stage credits, or forward hidden states to another worker.
-
-### Placement
-
-The packer seals one owner for every `(layer, expert)` pair while respecting persistent
-and transient memory limits. Placement is prompt-independent. Oracle maps learned from a
-qualification prompt are diagnostic-only and can never qualify or ship.
-
-The initial recovery retains balanced rotating ownership unless an EP trace proves a
-better prompt-independent map. A placement change requires identical routing semantics,
-a complete memory ledger, representative-corpus evidence, and no context or route-shape
-regression.
-
-### QSA and native context
-
-QSA is part of the coordinator's ordered common graph. Durable records may be stored or
-served by designated blades, but those blades are page owners, not transformer stages.
-Page fetch, cache, selection, and attention must be causally correct and measured.
-
-Native context means 262,144 real accumulated tokens with all required records and
-positions. It may not mean a smaller hidden resident window, repeated filler, skipped
-records, undeclared approximate selection, or precomputed state.
-
-### Prefill
-
-Prefill is a true token-batched EP graph:
-
-- The coordinator executes common projections in token tiles.
-- Router selection is computed for every token.
-- Routed `(token, expert)` pairs are grouped by owner and expert.
-- Owners process grouped expert batches concurrently.
-- Results return in bounded grouped payloads and reduce in token order.
-- GDN scans, QSA commits, n-gram injection, and hyperconnections preserve causality.
-
-Prefill must not run decode once per prompt token. It must not distribute contiguous
-layers across blades to manufacture aggregate throughput.
-
-### Decode
-
-Decode carries one autoregressive token through the coordinator's complete common graph.
-At each MoE layer, otherwise-idle blades become useful through concurrent expert fan-out.
-The critical path is common-graph time plus the maximum participating owner time, not the
-sum of eight transformer stages. MTP/speculation is out of scope until raw EP decode clears
-its gate.
-
-## Pipeline-parallel removal contract
-
-Pipeline parallelism is removed, not hidden behind a feature flag.
-
-### Runtime and public surface
-
-The forward implementation removes:
-
-- `FG_EXECUTION_PIPELINE` and every runtime branch selected by it.
-- `fg_pipeline_*`, `fg_pipeline_runtime_*`, and `fg_stage_*` model orchestration APIs.
-- Contiguous layer-owner execution as a deployment mode.
-- Pipeline activation, credit, result, drain, drained, and abort messages.
-- Pipeline slots, frontiers, admission, stage state, and terminal forwarding.
-- Pipeline CLI profiles, pack modes, API branches, tests, and fleet targets.
-
-The expected deletion inventory, subject to a dependency audit, is:
-
-- `include/fg_pipeline.h`, `include/fg_pipeline_runtime.h`, `include/fg_stage.h`
-- `src/pipeline.c`, `src/pipeline_runtime.c`, `src/stage.c`
-- `tests/test_pipeline.c`, `tests/test_stage.c`, `tests/pipeline_manifest_fixture.h`
-- `tools/pipeline-canonical-dry-run.sh`
-
-The build must stop compiling or exposing these components.
-
-### Manifest and protocol migration
-
-New manifests encode one fixed architecture identity: Expert Parallel. They offer no
-execution-mode choice. The reader may retain the minimum code needed to identify an old
-pipeline manifest, but must reject it with a stable error such as `retired pipeline
-manifest is unsupported; repack for expert-parallel`. It must never reinterpret old
-weight placement.
-
-Retired message numbers remain reserved and produce a protocol error if received. Their
-payload types, codecs, and handlers are deleted.
-
-### Kernel salvage
-
-A mathematically useful GPU kernel is not deleted solely because it arrived with pipeline
-work. Each is classified:
-
-- Keep and rename it if it serves EP model math, has a reference oracle, and contains no
-  stage or contiguous-layer assumption.
-- Adapt it to EP when it improves coordinator token tiling or grouped expert service.
-- Delete it if its only consumer is stage transport, ownership, credit, or termination.
-
-No dead shader, public function, or compatibility wrapper remains. Every retained kernel
-has an EP-oriented name, caller, and test.
-
-### Static anti-regression gate
-
-A source-tree test fails if production/build/tool/test code reintroduces the removed
-files, `FG_EXECUTION_PIPELINE`, `FG_MSG_PIPELINE_*`, model-execution `fg_pipeline_*` or
-`fg_stage_*` symbols, or a contiguous-layer pack profile. Incident documents may name the
-retired design, and manifest parsing may contain one stable rejection message. Generic
-Vulkan compute-pipeline terminology is allowed.
-
-## User-visible feature preservation
-
-The EP runtime must own and test:
-
-- GPU-bounded vocabulary selection and temperature-zero greedy generation.
-- Finite positive temperature, `top_k`, `top_p`, and their interaction order.
-- Presence, frequency, and repetition penalties over accepted history.
-- Deterministic seeded tests and bounded production RNG.
-- Supported string/structured content and system/developer/user/assistant/tool roles.
-- Assistant tool calls, tool-call IDs, and tool results.
-- Prefix reuse without divergent or unevaluated transcript acceptance.
-- Completion budgets up to remaining native capacity.
-- OpenAI-compatible validation errors.
-
-Tests must instantiate an EP manifest/runtime fixture. A mode-neutral parser test does not
-prove that a feature reaches EP inference.
-
-## Correctness contract
-
-Qwen's architecture and processor behavior are semantic authority. llama.cpp's Qwen code
-is prior art and an oracle, not permission to alter semantics.
-
-Required parity evidence includes exact tokenizer IDs; checkpoints at layers 0, 1, 3, 7,
-8, 15, 31, 40, and 47; GDN/QSA state transitions; router logits and ordered top-10 routes;
-per-expert outputs; reduced MoE output; final logits; sampled-distribution checks; prefix
-reuse/full recompute equivalence; and cold/append prefill equivalence. Tolerances are
-specified per operation. Text similarity alone is not a gate.
-
-## Observability and EP conformance
-
-Every request has a stable correlation ID. Measured records include coordinator GPU time
-by layer/family, routing, fan-out timestamps, anonymous route counts, worker queue/GPU/
-response time, shared/routed overlap, collection/reduction, QSA selection/cache/page
-traffic, n-gram work, sampling, correlated fabric bytes, TTFT, prefill TPS, and raw decode
-TPS.
-
-An EP conformance trace proves:
-
-- Rank 0 enters and exits all 48 ordered layers.
-- Every routed slot has exactly one sealed owner and returned result.
-- Independent owners overlap when a route spans owners.
-- Shared/routed work overlaps when enabled.
-- Workers execute experts and never transformer stages.
-- No retired message type appears.
-
-Crashes leave request ID, last completed layer, outstanding owners, transport state,
-Vulkan result, and exit signal in durable logs. Core dumps supplement structured logs.
-
-## Measurement and anti-reward-hacking rules
-
-No throughput is valid until EP conformance passes. Representative coding/chat corpora and
-append-only sessions are required. Repeated filler, prompt-trained placement, cached
-answers, skipped operations, reduced dimensions/expert count, truncated attention, hidden
-context caps, state snapshots, and synthetic-only product evidence are prohibited.
-
-Kernel benchmarks are labeled component measurements and never model TPS, fleet TPS, TTFT,
-or release results. Every performance report includes commit/dirty state, artifact and EP
-identity, eight device identities/CUs, corpus and token counts, all repetitions, median,
-p95, failures, tokenizer/prefill/TTFT/decode separation, useful-work/idle accounting, and
-all context points: empty, 2K, 4K, 8K, 16K, 32K, 64K, 128K, 192K, 256K, and 262K.
-
-Discontinuities trigger investigation and are never excluded from an average. No public
-claim comes from an unmerged branch, an instrumented run represented as uninstrumented,
-or a candidate failing semantic gates.
-
-## Performance requirements
-
-These are requirements, not present claims:
-
-| Workload | Minimum | Directional target |
-|---|---:|---:|
-| 4K cold graph prefill | 250 tok/s | 600 tok/s |
-| Raw single-stream 4K decode before MTP | 50 tok/s | 100 tok/s |
-| Native 262K prefill | Complete and maximize | Derive from EP roofline |
-| Decode context curve | No unexplained cliff | Smooth decline through 262K |
-| OpenAI/Pi session | Representative coding session completes | Daily-driver stability |
-
-A lower engineering baseline may be recorded honestly but cannot replace these gates.
-Before optimization, construct a first-principles budget from sustainable bandwidth,
-quantized matrix throughput, bytes/operations for common and selected-expert work, maximum
-concurrent owner time, correlated fabric cost, QSA context work, and required submissions.
-Comparisons with llama.cpp validate ambition but do not define the fleet ceiling.
-
-## Forward recovery plan and commit boundaries
-
-Every leg is a reviewable forward commit that compiles and passes relevant local tests.
-There is no fleet computation or deployment during R0-R5.
-
-### R0 — Specification and evidence invalidation
-
-- Install this PRD as the single architecture authority.
-- Add an invalid-results ledger and README warning.
-- Separate last verified EP evidence from invalid pipeline evidence.
-- Change no runtime behavior.
-
-Exit: the current tree cannot plausibly describe pipeline mode as a product objective.
-
-### R1 — Architecture lock and manifest migration
-
-- Make EP the sole new-manifest architecture.
-- Remove pipeline profile creation/selection.
-- Reject historical pipeline manifests without reinterpretation.
-- Make architecture reporting constant and explicit.
-- Add manifest and CLI regression tests.
-
-Exit: no command creates or launches a new pipeline deployment.
-
-### R2 — Remove transport and orchestration
-
-- Delete stage/pipeline runtime files, public headers, tests, and build targets.
-- Remove retired protocol codecs/handlers while reserving numeric IDs.
-- Remove contiguous layer-owner branches and pipeline-only repository tools.
-- Add the anti-regression scan.
-
-Exit: the tree builds with no pipeline execution implementation or selectable path.
-
-### R3 — EP runtime closure
-
-- Repair ownership assumptions exposed by R2.
-- Make coordinator/worker construction unconditionally EP-shaped.
-- Verify top-10 fan-out, concurrent owners, shared overlap, and exact reduction.
-- Salvage useful tiled/grouped kernels behind EP-oriented interfaces.
-- Add eight-process synthetic EP success and failure tests.
-
-Exit: local integration proves EP is the sole topology.
-
-### R4 — EP OpenAI and sampler closure
-
-- Bind API, chat, tool, history, budget, and sampling tests to EP fixtures.
-- Add a Pi-shaped multi-turn/tool transcript integration test.
-- Verify GPU sampling against a CPU reference without full-vocabulary readback.
-
-Exit: every user-visible feature previously exercised on the wrong runtime is proven on EP.
-
-### R5 — EP measurement suite
-
-- Add correlated EP critical-path tracing and representative context collectors.
-- Assert architecture/routing conformance before recording throughput.
-- Emit raw machine-readable records and deterministic summaries.
-- Keep measurement and promotion as separate operations.
-
-Exit: the suite attributes coordinator, expert, QSA, n-gram, fabric, and synchronization
-cost without deploying or mutating the operational service.
-
-### Mandatory manual pause
-
-After R0-R5, stop for user review of the complete diff and local test output. Code review
-does not authorize fleet action.
-
-### R6 — Isolated manual fleet correctness
-
-Only with explicit direction: build the exact commit on all blades in an isolated location,
-leave the operational pack untouched until the test window, start one EP coordinator and
-seven workers, prove conformance before evaluation, run bounded parity/API/Pi checks,
-collect failure evidence, stop the candidate, and restore normal service manually.
-
-### R7 — Valid EP baseline
-
-In a separate approved window: run bounded 4K prefill and short decode, then the context
-curve only after correctness and tracing pass. Produce the first valid EP baseline and
-first-principles budget. Select one bottleneck from evidence.
-
-### R8+ — Evidence-driven optimization
-
-Possible families are tiled coordinator projections, grouped EP prefill, QSA selection and
-locality, expert kernels, fabric overlap, and submission reduction. Their order is not
-fixed before R7. Each commit requires reference parity, EP conformance, affected curve
-non-regression, median/p95 improvement, and no workload or semantic change.
-
-## Local test matrix
-
-The recovery branch covers:
-
-1. Clean warnings-as-errors build and shader registration.
-2. EP manifest creation/load and old-pipeline rejection/corruption/truncation.
-3. EP protocol and retired-message rejection.
-4. Complete `(layer, expert)` ownership and top-10/gate parity.
-5. Expert success, timeout, duplicate, stale, wrong-owner, and partial failure.
-6. Concurrent fan-out and deterministic reduction.
-7. GDN, QSA, hyperconnection, PLE, MoE prefill/decode parity.
-8. Sampling, penalties, OpenAI messages/streaming/tools/history/errors.
-9. EP trace validation, anti-pipeline scan, and injected crash-report completeness.
-
-CPU references, software Vulkan, loopback processes, and small fixtures are allowed for
-local correctness. Their timings are never fleet evidence.
-
-## Deployment and promotion policy
-
-Fleet actions are manual and user-observed. Promotion requires one evidence bundle with a
-clean identical commit on all blades, EP artifact identity, complete conformance trace,
-numerical/API parity, representative 4K prefill and raw decode, the context curve required
-for the claim, per-rank memory/health, zero unexplained failures, and explicit user approval.
-
-The promotion tool independently validates evidence instead of trusting a filename or
-mutable summary. It refuses every retired pipeline artifact.
-
-## Multimodal and MTP boundary
-
-Vision/video and MTP do not begin until text EP is the sole architecture, passes Pi-shaped
-sessions, and has a trustworthy curve. Multimodal extends the EP contract and cannot
-reintroduce contiguous stages. MTP always reports raw base decode separately.
-
-## Definition of done
-
-Recovery is complete only when:
-
-- This architecture contract is merged into current `main`.
-- Pipeline/stage runtime, profiles, protocol handlers, tests, and tools are absent.
-- Old pipeline manifests fail closed and cannot promote.
-- The anti-regression gate prevents reintroduction.
-- The sole runtime executes all common layers on rank 0 and concurrently fans experts to
-  sealed owners.
-- Sampling, OpenAI tools/history, and native context are proven on EP locally and on fleet.
-- A representative Pi coding session completes without workaround.
-- The first valid EP context curve and critical-path budget are archived.
-- Reports use only EP-conformant evidence and retain every curve point.
-- The user manually approves candidate, merge, and promotion.
-
-Correctness below required performance is an honest intermediate milestone, not completion.
-Meeting a TPS number with the wrong architecture, reduced work, or selective harness is
-failure.
+# Flash Gordon: product and implementation design
+
+## Product
+
+Build a readable, model-specific Qwen3.8-Flash-Next inference appliance on **eight
+BC-250 blades**, currently 24 CUs with 40 CUs planned. Four additional blades are
+reserved for smaller or diffusion models. Twelve-blade support is outside scope.
+
+Serve one active coding/creative session well: Q4-class weights, fast cold and
+append prefill, native 262,144-token context, image/video input, trained MTP,
+sampling, tool calls and exact transcript reuse. This document supersedes the
+earlier recovery checklist and amendments. It describes the chosen implementation,
+not completed work. Initial findings are in AUDIT_2026-09-07.md.
+
+## Architecture
+
+Rank 0 executes all 48 common layers in order: embeddings/n-grams, gated residual
+operations, GDN/QSA, routing, shared experts and routed reduction. Workers execute
+selected experts and serve stored data. Keep the existing output helper.
+
+Remove pipeline parallelism from orchestration, manifests, profiles and protocols.
+Workers never execute contiguous transformer stages. Salvage useful math kernels
+under operation-specific names, without preserving stage ownership assumptions.
+
+| Area | Decision | Reason |
+|---|---|---|
+| Placement | Keep eight ranks and rotating four-owner groups initially | Wider fan-out trades compute for communication; existing evidence does not justify repacking |
+| Decode experts | Keep cooked layouts and fixed command graphs | Retained EP results support them and document failed alternatives |
+| Fabric | Keep TCP/direct send/receive and validation | Existing traces do not justify a transport rewrite |
+| Decode n-grams | Keep resident worker shards | Already removes per-token NVMe lookup from decode |
+| Prefill dense math | Integrate token-tiled cooked kernels | Generic calls miss weight reuse across tokens |
+| Prefill experts | Adapt grouped cooked kernels to local shards | Cooked EP currently schedules individual token/expert pairs |
+| Prefill scheduling | Separate routing, dispatch, shared/local work and collection | Shared computation currently finishes before remote dispatch |
+| QSA | Keep EP index/page machinery; batch queries and fetches | EP attention loops per token despite batched projections |
+| Measurement tools | Reuse | New qualification infrastructure does not repair inference |
+
+Keep the actual mixed Q4_K_XL formats initially: routed Q4_K/Q5_K and Q5_1 with
+higher-precision common tensors and state. Record source revision, hashes and
+formats using existing metadata. No silent requantization or uniform-Q4 claim.
+
+## Canonical build and execution
+
+There is one canonical product implementation on main. A normal `make` with the
+repository's default release configuration must build the complete, optimized,
+correct runtime end to end. Required correctness and performance improvements
+become the default implementation, not optional features users must discover.
+
+- Delete pipeline-parallel codepaths, orchestration, profiles, build targets and
+  feature switches. Do not retain them behind compile-time guards, environment
+  variables, runtime branches or experimental launch scripts. Minimal detection
+  that rejects a retired artifact is allowed; executing it is not.
+- When replacing an incorrect implementation, remove the superseded production
+  path and its selector. A reference implementation may remain in tests when it
+  provides a useful independent oracle, not as a selectable product fallback.
+- Minimize bespoke compiler, Clang/developer and experimental build configurations.
+  No special compiler invocation, preprocessor define, environment variable or
+  wrapper script may be required to obtain correct routing, full supported
+  context, real batched prefill, supported sampling, multimodal or MTP behavior.
+- Keep necessary device/pack configuration and explicit user choices distinct
+  from implementation switches. Artifact availability and hardware capabilities
+  must be validated clearly, not used to silently choose an incorrect path.
+- Debug symbols, sanitizers, diagnostic tracing and test-only fault injection
+  may remain where useful. They must not enable otherwise-missing product
+  semantics or be required for the optimized production path.
+- Validate and report the default build and ordinary launch path. A result that
+  depends on an undocumented build variant or a special feature-enabling recipe
+  does not establish product completion.
+
+Implementation branches are temporary delivery work. They do not define alternate
+supported products. As each change lands on main, its intended behavior is the
+ordinary build's behavior. Review includes deleting obsolete flags, wrappers and
+branches, rather than accumulating compatibility with mistaken requirements.
+
+## Real prefill
+
+Use the existing 128-token native profile initially, with partial-chunk support.
+Each chunk traverses all common layers on rank 0, distributing its expert work.
+
+1. Execute compatible common projections with existing token-tiled cooked Q8
+   kernels. Preserve correct paths for other formats, tiny shapes and single-token
+   decode. Preserve causal GDN recurrence and gated residual semantics.
+2. Prepare router logits, exact top-10 IDs/gates and packed activations together.
+   Reuse the GPU router after matching the CPU oracle. Read compact routing
+   metadata and packed activations for transport.
+3. Send remote requests promptly, before waiting for shared or local experts.
+   Keep activation storage valid until sends finish.
+4. Execute shared and local experts while remote owners work. These jobs share
+   the coordinator GPU; asynchronous requests do not create independent compute.
+5. Collect ready responses, validate every slot exactly once, reduce in stable
+   order (routing slot within each shard, then fixed binary-tree child order), and write the residual.
+   Prefill replies contain preweighted per-token shard sums and complete route
+   metadata; regrouping FP32 sums is tolerance-tested against the scalar oracle. Drain or invalidate outstanding work
+   before reusing buffers after failure.
+
+Split fg_owner_moe_prepare_batch into named routing/packing/shared operations.
+Give prefill a start/finish dispatch interface like existing EP decode. A generic
+task scheduler, transport thread pool or extra architecture mode is unnecessary.
+
+Replace the cooked one-pair schedule in fg_expert_prefill with expert-major
+16-pair tiles consumed by existing grouped cooked kernels. Translate global IDs
+to shard-local indices and preserve token/route slots. Remove the stage-local
+512-expert restriction from the mathematical helper; validate actual tensor
+counts. Cover partial tiles, noncontiguous tokens and supported down formats.
+Group with histogram/prefix offsets rather than rescanning pairs for every expert.
+Allocate bounded schedules once. Keep decode's proven fixed expert graph.
+
+## Native-context QSA
+
+EP already scores blocks in parallel and selects hierarchically through
+score_index_segments/select_blocks in src/qsa.c. The separate resident selector
+scores 4,096 blocks serially per workgroup. Do not transplant it into EP or
+attribute its latency to EP. The EP reducer still sorts padded 4,096-entry groups;
+retain it initially as an exact reference while fixing per-query scheduling.
+
+Keep full index coverage and bounded record cache on rank 0, with complete records
+on page owners. Page owners serve bytes, never attention. No hidden sliding window
+or approximate selection is allowed.
+
+Implement QSA prefill in bounded query tiles:
+
+- Project/prepare the chunk once and make its records available.
+- Score across queries and blocks, masking every query to its own visible prefix
+  with correct partial-block behavior.
+- Preserve exact top-512 selection and ties using bounded scratch, not a full
+  prompt-by-context score matrix.
+- Deduplicate selected pages across a tile, group owner fetches and pin pages
+  until consumers finish. If the union exceeds cache capacity, split the work
+  or gather into bounded scratch; never evict in-use pages or truncate selection.
+- Attend with per-query selected IDs and causal tails, then run the tiled output
+  projection. Commit progress only after successful execution.
+
+Decode uses the same state and rules with one query. Page-fetch readbacks remain
+real dependency boundaries; fuse GPU work between them. Remove unconditional
+cache-miss logging from ordinary execution and retain existing opt-in diagnostics.
+
+Current records use 1,236 bytes/token/QSA layer, about 3.62 GiB across twelve QSA
+layers at native context before padding, duplicate indexes and caches. Full
+coordinator record residency is therefore not the initial design. Native context
+counts prompt/media/output tokens; reserve output room when testing generation.
+
+## Memory and storage
+
+Keep expert weights resident. NVMe supports cold data and capacity; adding reads
+to already-resident expert decode is not an optimization.
+
+Update the existing ledger as allocations change: common/local expert weights,
+cooked layouts, recurrent state, full QSA index, bounded cache, prefill buffers,
+transport and OS/driver reserve. Reuse scratch only across documented disjoint
+lifetimes. Avoid duplicate decoded weights or permanent old/replacement arenas.
+Aggregate fleet memory does not establish rank-0 fit.
+
+Preserve resident distributed n-gram decode and source verification. EP prefill
+uses the local NVMe store; retain it during compute repairs. Known prompt rows
+permit batching/prefetch without prediction. Reuse io_uring block deduplication
+and cache. Historical evidence already found network overhead could defeat
+storage-only sharding; do not repeat that approach.
+
+N-gram hashing uses only the current token and two predecessors. Prefill validates
+and hashes the new chunk plus those two predecessors; resident decode uses the
+same bounded lookup. EOS boundaries outside that window cannot affect the hash.
+No cached boundary state is needed, so divergence, rollback and reset cannot
+leave it stale. Earlier tokens were validated when the runtime processed them.
+Grouped resident prefill lookup remains a possible small protocol extension if
+the remaining storage cost warrants it.
+
+Publish QSA records before evicting their only current copy. Distinguish visible
+records from durable checkpoints using existing append/barrier semantics. Abort
+or reconstruct after failure. Do not add per-token forced durability requirements.
+
+Publication releases cache pins only after the replica queue accepts copied
+pages. Fetch drains coordinator sends on the ordered bulk channel and the owner
+drains its writer before reading pages. Session rotation waits for owner barriers.
+These barriers establish live read visibility, not a power-loss-safe model-state
+checkpoint; ordinary restart reconstructs state from conversation tokens. A
+poisoned transport requires reopening the runtime rather than reusing its state.
+
+## Decode and API
+
+Keep asynchronous EP dispatch and deferred residual writes. Remove unused
+alternative orchestration after callers migrate. Compact GPU routing still needs
+host synchronization for networking. Preserve proven shape-specific decode kernels.
+
+Keep output-helper GPU vocabulary selection, temperature/top-k/top-p, penalties,
+seeded sampling, tool calls, structured text, streaming and exact prefix reuse.
+Bind existing tests to EP execution where they currently use mocks or pipeline
+fixtures. Numerical parity uses the same quantized reference; text similarity is
+insufficient. Quality relative to source precision is a separate check.
+
+## Multimodal and MTP
+
+Both are required and do not wait for raw 50 TPS.
+
+Implement image/video preprocessing, vision encoder and projection from the pinned
+Qwen processor/model contract. Feed embeddings into rank 0's ordinary prefill with
+correct multimodal positions and token accounting. Chunk vision work and reuse
+temporary memory outside text-layer execution. Persistent vision weight placement
+is a pack decision based on actual inventory and free memory; the four supporting
+blades are not an implicit dependency.
+
+Add the trained MTP head after base state transitions are correct. Start with one
+proposal step and target verification through repaired batched EP. Separate
+committed/speculative frontiers. Snapshot or reconstruct GDN/convolution state at
+the proposal boundary, isolate uncommitted QSA records and restore n-gram/history/
+penalty state on rejection. Replay an accepted prefix from the boundary when
+necessary; never retain recurrent state from rejected tokens.
+
+Use exact speculative acceptance/residual sampling with actual draft and target
+distributions after sampling transformations. Greedy tests do not establish
+stochastic correctness. Report accepted output TPS, raw TPS, acceptance and
+draft/verification cost separately. A trained head does not guarantee speedup.
+
+## Implementation order and ownership
+
+Current checkout: step 1 is implemented. The default release build includes
+shaders and automatically selects supported cooked weight layouts. Local core,
+session, API, storage, model-placement and eight-process fabric checks pass;
+Vulkan checks here use llvmpipe, not the BC-250 fleet. This is a source cleanup
+and correctness checkpoint, not a new performance result.
+
+Step 2 now uses the GPU top-10 router for prefill and reads compact IDs/gates.
+Cooked shard-local experts use 16-pair tiles, launch only populated tiles and
+submit gate/up, SwiGLU and down projection together. Global-to-local mapping and
+schedule construction are linear in expert count plus routed pairs. Remote work
+is sent before shared/local expert computation; all issued replies are drained
+on failure. These are ordinary runtime behavior, without new feature switches.
+Local tests cover grouped/decode parity, non-default placement, partial tiles,
+single-token tails, routing edge cases, dispatch order and failure cleanup.
+Common Q8 projections now automatically use size-preserving cooked layouts and
+the existing token-tiled kernels through the ordinary dense API for multi-token
+calls (64 output rows by 32 tokens per workgroup). GDN prefill uses the
+column-parallel recurrence with state kept in registers across the chunk.
+Prefill expert results are reduced on the GPU in bounded tiles, preserving
+routing-slot order; staging reuses dead attention scratch and stops before live
+outputs. Single-token decode retains its existing dispatch. PLE residuals use protected
+ping-pong storage through the following GR/attention operations.
+QSA prefill commits a chunk's projected records,
+scores queries in bounded causal tiles, reduces each query to its exact top-512
+complete blocks, and deduplicates cold-page fetches across the tile. Cache hits
+are gathered into private query slices before eviction; partial pages expose
+only the query's visible tokens. New pages remain pinned until owner publication.
+The native 128-token chunk uses four-query tiles within the existing attention
+scratch arena; smaller chunks use proportionally smaller tiles. No feature flag
+enables this behavior. Selection scratch is included in sealed allocation sizing.
+Local checks cover scalar-selection parity across the 128k index boundary, causal
+attention with precommitted future records, partial query tiles, deduplicated
+fetches, cache exhaustion/eviction and scratch lifetimes. Step 3 now
+uses bounded n-gram suffix lookup for both prefill and resident decode. The
+storage review tightened cache-pin release to follow successful queue commit;
+failure-injection checks cover that boundary. Default packing now seals native
+262,144-token context, a 16 MiB record cache and 128-token chunks without a
+profile switch. Existing packs retain their sealed budgets until explicitly
+upgraded. Step 4 and actual fleet usability remain outstanding. No fleet TPS
+result is claimed from these local tests.
+
+1. **One EP runtime:** salvage math helpers, delete stage/pipeline orchestration,
+   reject retired packs, reserve retired message IDs, remove profiles and update
+   README. Preserve source tensor compatibility.
+2. **Real prefill:** tiled common projections, grouped shard-local experts,
+   compact routing and shared/remote overlap. Refactor touched long functions
+   into named operations with explicit buffer lifetimes.
+3. **Native context:** tiled causal QSA, grouped fetches, incremental history and
+   complete allocation accounting.
+4. **Product completion:** EP API coverage, vision/video and trained MTP rollback.
+   Record actual performance after working changes.
+
+Each change builds and receives focused existing reference/integration checks for
+affected behavior: route mapping, grouped parity, chunk composition, causality,
+failure cleanup or session state. No new benchmark framework, tuning matrix or
+mandatory context sweep per commit. New measurements answer a specific unresolved
+question or check completed work; public TPS claims require actual results.
+
+The agent owns implementation, technical review and result interpretation. The
+user chooses product tradeoffs and need not review Vulkan code. Fleet operations
+remain manual and explicitly authorized. Work forward in the current checkout:
+no historical reset/revert, cherry-pick or parallel worktree. Do not move tags.
+Pipeline throughput cannot qualify EP; useful component evidence remains available
+with its limitations. Keep diagnostics concise and remove benchmark-specific
+token-number behavior from normal execution. Avoid unnecessary environment switches.
+
+## Performance and completion
+
+The first interactive-usability checkpoint includes a representative 131,072-token
+conversation: cold filling, continuing an existing conversation with prefix reuse,
+and sustained generation at that history length. Short prompts are smoke tests;
+they cannot qualify the user's normal workload. Finish the required causal QSA
+and history path before that checkpoint. Native 262,144-token support remains the
+product requirement. Use the completed harness for this check; do not introduce a
+separate benchmark framework or an open-ended tuning campaign.
+
+Retain requested 250/600 tok/s prefill and 50/100 raw-decode targets as ambitions,
+not demonstrated ceilings or feature prerequisites. At 50 TPS the whole token has
+20 ms; at 100 TPS it has 10 ms. Coordinator work, networking and storage do not
+scale with aggregate fleet bandwidth or CU count. No silent target reduction or
+unsupported speedup claim is acceptable.
+
+Completion means the sole EP runtime serves representative text/image/video
+sessions through native context with sampling/tools/prefix reuse and correct MTP,
+within eight-blade memory limits. Report achieved cold/append prefill, TTFT, raw
+and speculative output rates with context length and CU configuration. Explain
+remaining costs when targets are missed instead of changing the workload. The
+million-token extension is separate work requiring official scaling and validation.
+
+## Prior art and evidence
+
+- [Qwen model contract](https://huggingface.co/Qwen/Qwen3.8-Flash-Next): semantic
+  authority; pin model and processor revisions during implementation.
+- [DeepEP](https://github.com/deepseek-ai/DeepEP): dispatch/combine and expert
+  layout reference. CUDA/NVLink/RDMA code is not a BC-250 dependency, and its
+  throughput does not transfer to this fleet.
+- [FlashInfer attention interfaces](https://docs.flashinfer.ai/api/attention.html):
+  prefill/decode and paged-cache patterns, while preserving Qwen sparse semantics.
+- PERFORMANCE_TRACE_10_035TPS.md and PERFORMANCE_20TPS.md: existing EP operation
+  ordering, cooked-kernel evidence and failed approaches. Instrumented slices
+  guide choices but are not additive runtime forecasts.
+
+### 2026-09-09 fleet prefill checkpoint
+
+The ordinary eight-rank release now dispatches token-tiled common projections,
+column-parallel GDN prefill and bounded GPU expert-result reduction by default.
+The same 244-token correctness prompt improved from 8.65 to 13.15 prefill tok/s
+(28.22 to 18.55 seconds); arithmetic, prefix reuse and Paris smoke checks pass.
+Decode remains approximately 9–10 tok/s. These short-context measurements do not
+qualify 128k usability or the requested performance targets.
+
+A pre-reduction-fix profile measured 7.71 seconds in expert dispatch/collection
+and 4.29 seconds in CPU reduction per 128 tokens, versus 2.06 seconds of coordinator
+GPU time. The CPU reduction was moved onto the GPU. Further prefill work must
+address communication volume: rank zero's observed link is 1 Gb/s, and the current
+protocol returns one 2560-element FP32 vector for every routed expert selection.
+At a representative 7/8 remote share this is about 4.30 MB per prompt token,
+bounding those result bytes alone to approximately 29 tok/s at ideal line rate.
+Shard-local/distributed reduction and an explicit communication budget are needed;
+200 end-to-end tok/s is not established by the existing compute microbenchmarks.
+Evidence: `results/prefill-integration/RESULT.md` and its saved response/trace files.
+
+### 2026-09-09 prefill communication repair
+
+The default expert prefill implementation now applies routing gates and reduces
+local expert outputs on each blade's GPU. Responses contain one FP32 sum per token
+per blade, together with every route slot for coverage validation. Each layer uses
+four blades; this reduces aggregate returned vector count from ten to at most four.
+The response version rejects the old per-expert format. The coordinator accumulates
+in fixed ascending rank order; scalar-oracle tests cover the FP32 regrouping.
+
+The same 244-token smoke prompt improved from 13.154880 to 21.441903 prefill TPS
+(18.548250 to 11.379587 seconds), returning `12`. Paris and prefix reuse also pass.
+Decode remains approximately 9–10 TPS. This is neither a 128k validation nor target
+attainment. Full evidence: results/shard-reduction/RESULT.md.
+
+Group broadcast and distributed reduction are now implemented in the default
+prefill path. The coordinator sends one activation/routing message to a binary
+tree of active remote ranks and receives a single stream of reduced token tiles.
+Parents validate exact subtree route coverage and merge cached host arrays before
+forwarding each 16-token tile. The coordinator's local experts overlap remote work.
+A failed subtree invalidates the mesh rather than allowing partial results to be
+reused. See results/collective/RESULT.md for validation and fleet results.
+
+### 2026-09-09 streamed collective fleet checkpoint
+
+The default broadcast/reduction tree reaches 23.272471 prefill TPS on the same
+244-token prompt, up from the preceding shard-local implementation's 21.441903 TPS.
+It returns `12`; Paris and prefix reuse also pass. Decode remains approximately
+9–10 TPS. The initial full-frame tree regressed and was replaced with streamed
+16-token replies and merges of cached host buffers; no alternate feature path is
+retained. End-to-end targets and long-context qualification remain outstanding.
+See results/collective/RESULT.md for exact timings, failure tests, and artifacts.
