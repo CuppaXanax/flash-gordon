@@ -370,6 +370,7 @@ static fg_status manifest_cmd(const char *command, int argc, char **argv, fg_err
 }
 
 int main(int argc, char **argv) {
+    setvbuf(stderr, NULL, _IONBF, 0);
     fg_error err = {0};
     if (argc < 2 || !strcmp(argv[1], "--help") || !strcmp(argv[1], "help")) {
         usage(stdout);

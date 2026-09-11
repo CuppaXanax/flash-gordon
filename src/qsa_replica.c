@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define FG_QSA_REPLICA_DEPTH 2u
+#define FG_QSA_REPLICA_DEPTH 8u
 
 typedef struct replica_slot {
     uint8_t *payload;

@@ -40,6 +40,16 @@ typedef fg_status (*fg_owner_qsa_prefill_dispatch_fn)(void *context,uint32_t lay
                                                       uint16_t token_count,
                                                       const fg_vk_tensor *hidden,
                                                       fg_vk_tensor **output,fg_error *err);
+/* Pipelined prefill: fire sends remote work and computes local experts; collect
+ * drains remote tiles.  Shared expert work stays on the owner between them. */
+typedef fg_status (*fg_owner_prefill_fire_fn)(void *context,uint32_t layer,
+                                              uint32_t first_token,uint16_t token_count,
+                                              const uint16_t *expert_ids,const float *gates,
+                                              const uint8_t *activations_q8k,fg_error *err);
+typedef fg_status (*fg_owner_prefill_collect_fn)(void *context,uint32_t layer,
+                                                 uint32_t first_token,uint16_t token_count,
+                                                 fg_prefill_result results[FG_GROUP_SIZE],
+                                                 uint32_t *result_count,fg_error *err);
 
 fg_status fg_owner_executor_create(fg_owner_executor **out,fg_model *model,fg_error *err);
 void fg_owner_executor_destroy(fg_owner_executor *executor);
@@ -133,5 +143,16 @@ fg_status fg_owner_prefill_layer(fg_owner_executor *executor,uint32_t layer,
                                  fg_owner_qsa_prefill_dispatch_fn qsa_dispatch,
                                  void *qsa_context,
                                  fg_vk_tensor **output,fg_error *err);
+fg_vk_tensor *fg_owner_prefill_input_slot(fg_owner_executor *executor,uint32_t slot);
+fg_status fg_owner_prefill_layer_begin(fg_owner_executor *executor,uint32_t slot,uint32_t layer,
+                                       uint32_t first_token,const uint32_t *positions,
+                                       uint16_t token_count,const fg_vk_tensor *hyper_input,
+                                       const fg_vk_tensor *ngram_embeddings,
+                                       fg_owner_prefill_fire_fn fire,void *fire_context,
+                                       fg_owner_qsa_prefill_dispatch_fn qsa_dispatch,
+                                       void *qsa_context,fg_error *err);
+fg_status fg_owner_prefill_layer_finish(fg_owner_executor *executor,uint32_t slot,
+                                        fg_owner_prefill_collect_fn collect,void *collect_context,
+                                        fg_vk_tensor **output,fg_error *err);
 
 #endif
