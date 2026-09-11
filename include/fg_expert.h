@@ -17,5 +17,12 @@ fg_status fg_expert_prefill(fg_expert_executor *executor,const fg_prefill_work *
                             fg_prefill_result *result,fg_prefill_result_pair *pair_storage,
                             uint32_t pair_capacity,float *output_storage,
                             uint64_t output_capacity_values,fg_error *err);
+fg_status fg_expert_prefill_enqueue(fg_expert_executor *executor,const fg_prefill_work *work,
+                                    fg_prefill_result *result,fg_prefill_result_pair *pair_storage,
+                                    uint32_t pair_capacity,float *output_storage,
+                                    uint64_t output_capacity_values,fg_error *err);
+fg_status fg_expert_prefill_finish(fg_expert_executor *executor,const fg_prefill_work *work,
+                                   fg_prefill_result *result,fg_prefill_result_pair *pair_storage,
+                                   float *output_storage,fg_error *err);
 
 #endif

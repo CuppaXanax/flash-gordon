@@ -13,8 +13,6 @@
 _Static_assert(FG_Q38_DECODE_TILE_WORDS==9u,
                "decode schedules use nine words per pair");
 
-static double expert_now_ms(void){struct timespec value;clock_gettime(CLOCK_MONOTONIC,&value);return (double)value.tv_sec*1000.0+(double)value.tv_nsec/1000000.0;}
-
 struct fg_expert_executor {
     fg_model *model;
     fg_vk_tensor *activation,*tiles,*gates;
@@ -296,10 +294,9 @@ fg_status fg_expert_decode(fg_expert_executor *executor,const fg_decode_work *wo
     memset(result,0,sizeof(*result));result->layer=work->layer;result->source_rank=(uint8_t)rank;result->destination_rank=work->source_rank;result->selected_count=1u;result->routing_slots[0]=0xFFu;result->position=work->position;memcpy(result->outputs[0],fg_vk_tensor_map(executor->reduced),FG_HIDDEN_SIZE*4u);return FG_OK;
 }
 
-fg_status fg_expert_prefill(fg_expert_executor *executor,const fg_prefill_work *work,fg_prefill_result *result,fg_prefill_result_pair *pair_storage,uint32_t pair_capacity,float *output_storage,uint64_t output_capacity_values,fg_error *err){
+fg_status fg_expert_prefill_enqueue(fg_expert_executor *executor,const fg_prefill_work *work,fg_prefill_result *result,fg_prefill_result_pair *pair_storage,uint32_t pair_capacity,float *output_storage,uint64_t output_capacity_values,fg_error *err){
     if(!executor||!work||!work->pairs||!work->activations_q8k||!result||!pair_storage||!output_storage){fg_error_set(err,FG_ERR_ARGUMENT,"invalid expert prefill arguments");return FG_ERR_ARGUMENT;}
     const fg_manifest *manifest=fg_model_manifest(executor->model);uint32_t rank=fg_model_rank(executor->model);
-    bool prof=getenv("FG_PREFILL_PROFILE")!=NULL;double t0=0.0,t_setup=0.0,t_sched=0.0,t_writes=0.0,t_gpu=0.0,t_copy=0.0;if(prof)t0=expert_now_ms();
     uint32_t local_count=fg_expert_local_count(manifest,work->layer,rank);
     if(work->layer>=FG_LAYER_COUNT||work->destination_rank!=rank||
        (work->source_rank!=0u&&work->source_rank!=manifest->layer_owner[work->layer])||
@@ -365,7 +362,6 @@ fg_status fg_expert_prefill(fg_expert_executor *executor,const fg_prefill_work *
     uint32_t width=grouped?FG_VK_PREFILL_PAIR_TILE:single_pair?1u:8u;
     uint32_t words=grouped?FG_Q38_PREFILL_TILE_WORDS:FG_Q38_DECODE_TILE_WORDS;
     uint32_t starts[FG_EXPERT_COUNT]={0},used[FG_EXPERT_COUNT]={0},tile_count=0u;
-    if(prof)t_setup=expert_now_ms();
     if(status==FG_OK){
         for(uint32_t local=0;local<local_count;local++){
             starts[local]=tile_count;
@@ -379,7 +375,6 @@ fg_status fg_expert_prefill(fg_expert_executor *executor,const fg_prefill_work *
             executor->schedule[tile*words+1u+index%width]=prefill_pair_id(&work->pairs[pair]);
         }
     }
-    if(prof)t_sched=expert_now_ms();
     fg_vk_context *vk=fg_model_vk(executor->model);uint32_t dense_pairs=(uint32_t)work->token_count*FG_TOP_K;
     if(status==FG_OK)status=fg_vk_tensor_write(executor->activation,0,work->activations_q8k,(uint64_t)work->token_count*FG_Q8K_ACTIVATION_BYTES,err);
     if(status==FG_OK)status=fg_vk_tensor_write(
@@ -390,7 +385,6 @@ fg_status fg_expert_prefill(fg_expert_executor *executor,const fg_prefill_work *
         memset(dense_gates,0,(size_t)dense_pairs*4u);
         for(uint32_t i=0;i<work->pair_count;i++)dense_gates[prefill_pair_id(&work->pairs[i])]=work->pairs[i].gate;
     }
-    if(prof)t_writes=expert_now_ms();
     if(status==FG_OK)status=fg_vk_begin(vk,err);
     if(grouped){
         if(status==FG_OK)status=fg_vk_moe_kquant_cooked_grouped(vk,
@@ -426,8 +420,19 @@ fg_status fg_expert_prefill(fg_expert_executor *executor,const fg_prefill_work *
     /* Gate projection storage is dead after SwiGLU and has room for token sums. */
     if(status==FG_OK)status=fg_vk_moe_prefill_shard_reduce(vk,executor->result_readback,
         executor->down,executor->gates,work->token_count,err);
-    if(status==FG_OK)status=fg_vk_end(vk,err);
-    if(prof)t_gpu=expert_now_ms();
+    if(status!=FG_OK&&fg_vk_batch_active(vk)){
+        fg_error ignored={0};
+        fg_vk_abort(vk,&ignored);
+    }
+    return status;
+}
+
+fg_status fg_expert_prefill_finish(fg_expert_executor *executor,const fg_prefill_work *work,
+    fg_prefill_result *result,fg_prefill_result_pair *pair_storage,float *output_storage,
+    fg_error *err){
+    if(!executor||!work||!result||!pair_storage||!output_storage){fg_error_set(err,FG_ERR_ARGUMENT,"invalid expert prefill finish arguments");return FG_ERR_ARGUMENT;}
+    fg_vk_context *vk=fg_model_vk(executor->model);uint32_t rank=fg_model_rank(executor->model);
+    fg_status status=fg_vk_end(vk,err);
     if(status!=FG_OK&&fg_vk_batch_active(vk)){
         fg_error ignored={0};
         fg_vk_abort(vk,&ignored);
@@ -435,7 +440,6 @@ fg_status fg_expert_prefill(fg_expert_executor *executor,const fg_prefill_work *
     if(status==FG_OK){
         memcpy(output_storage,fg_vk_tensor_const_map(executor->result_readback),
                (uint64_t)work->token_count*FG_HIDDEN_SIZE*4u);
-        if(prof)t_copy=expert_now_ms();
         memset(result,0,sizeof(*result));result->layer=work->layer;
         result->source_rank=(uint8_t)rank;result->destination_rank=work->source_rank;
         result->contributor_mask=(uint8_t)(1u<<rank);
@@ -447,6 +451,11 @@ fg_status fg_expert_prefill(fg_expert_executor *executor,const fg_prefill_work *
             pair_storage[i].routing_slot=work->pairs[i].routing_slot;
         }
     }
-    if(prof)fprintf(stderr,"EXPERT_PREFILL_PROFILE rank=%u layer=%u tokens=%u pairs=%u tiles=%u setup_ms=%.3f sched_ms=%.3f writes_ms=%.3f gpu_ms=%.3f copy_ms=%.3f total_ms=%.3f\n",rank,(unsigned)work->layer,(unsigned)work->token_count,(unsigned)work->pair_count,(unsigned)tile_count,t_setup-t0,t_sched-t_setup,t_writes-t_sched,t_gpu-t_writes,t_copy-t_gpu,(t_copy?t_copy:t_gpu)-t0);
+    return status;
+}
+
+fg_status fg_expert_prefill(fg_expert_executor *executor,const fg_prefill_work *work,fg_prefill_result *result,fg_prefill_result_pair *pair_storage,uint32_t pair_capacity,float *output_storage,uint64_t output_capacity_values,fg_error *err){
+    fg_status status=fg_expert_prefill_enqueue(executor,work,result,pair_storage,pair_capacity,output_storage,output_capacity_values,err);
+    if(status==FG_OK)status=fg_expert_prefill_finish(executor,work,result,pair_storage,output_storage,err);
     return status;
 }

@@ -503,13 +503,13 @@ static fg_status dispatch_prefill_experts(void *opaque,uint32_t layer,
     free(wire);
     if(prof)clock_gettime(CLOCK_MONOTONIC,&t_send);
     if(status==FG_OK)status=shared_work(shared_context,err);
-    uint32_t used_pairs=0,used_tokens=0;
+    uint32_t used_pairs=0,used_tokens=0;fg_prefill_work local={0};bool local_enqueued=false;
     for(uint32_t r=0;status==FG_OK&&r<route_count;r++)if(routes[r].destination_rank==context->self){
-        fg_prefill_work local=work;local.destination_rank=(uint8_t)context->self;
+        local=work;local.destination_rank=(uint8_t)context->self;
         local.pairs=routes[r].pairs;local.pair_count=routes[r].pair_count;
-        status=fg_expert_prefill(context->expert,&local,&results[0],buffers->result_pairs,
+        status=fg_expert_prefill_enqueue(context->expert,&local,&results[0],buffers->result_pairs,
             buffers->pair_capacity,buffers->outputs,(uint64_t)buffers->pair_capacity*FG_HIDDEN_SIZE,err);
-        if(status==FG_OK){used_pairs=results[0].pair_count;used_tokens=token_count;*result_count=1u;}
+        if(status==FG_OK){used_pairs=local.pair_count;used_tokens=token_count;*result_count=1u;local_enqueued=true;}
     }
     if(prof)clock_gettime(CLOCK_MONOTONIC,&t_local);
     if(sent){
@@ -555,6 +555,11 @@ static fg_status dispatch_prefill_experts(void *opaque,uint32_t layer,
             result->contributor_mask,result,&receive_error);
         if(received==FG_OK){transport_complete(context->transport_state);(*result_count)++;}
         else{transport_poison(context->transport_state);if(status==FG_OK){status=received;if(err)*err=receive_error;}}
+    }
+    if(local_enqueued){
+        fg_status local_status=fg_expert_prefill_finish(context->expert,&local,&results[0],
+            buffers->result_pairs,buffers->outputs,err);
+        if(status==FG_OK)status=local_status;
     }
     if(prof){clock_gettime(CLOCK_MONOTONIC,&t_recv);fprintf(stderr,"PREFILL_DISPATCH layer=%u tokens=%u remote=%u encode_send_ms=%.3f shared_local_ms=%.3f recv_ms=%.3f total_ms=%.3f\n",layer,token_count,count,elapsed_seconds(&t_begin,&t_send)*1000.0,elapsed_seconds(&t_send,&t_local)*1000.0,elapsed_seconds(&t_local,&t_recv)*1000.0,elapsed_seconds(&t_begin,&t_recv)*1000.0);}
     return status;
