@@ -850,21 +850,26 @@ static fg_status prefill_layer_begin_impl(fg_owner_executor *e,uint32_t slot,uin
     if(status==FG_OK&&layer==1u){fg_vk_tensor *ple_input=NULL;if(status==FG_OK)status=ple_prefill_into(e,hyper_input,ngram_embeddings,dslot->ping[0],dslot->ping[1],token_count,&ple_input,err);PREFILL_STEP("ple");if(status!=FG_OK){frame->active=false;return status;}layer_input=ple_input;}
     fg_vk_tensor *mixed=NULL,*injection=NULL,*block=NULL,*after_attention=NULL;const fg_vk_tensor *residual=NULL;
     if(status==FG_OK&&profiling)status=fg_vk_profile_set_scope(vk,"gr_attn_read_prefill",err);
+    if(status==FG_OK)status=fg_vk_begin(vk,err); /* fuse the common path into one submission */
     if(status==FG_OK)status=gr_read_batch_into(e,layer,false,layer_input,token_count,dslot->injection,&mixed,&residual,&injection,err);
     PREFILL_STEP("attn_read");
     if(status==FG_OK&&profiling)status=fg_vk_profile_set_scope(vk,(layer&3u)==3u?"qsa_prefill":"gdn_prefill",err);
-    if(status==FG_OK&&(layer&3u)==3u&&qsa_dispatch)
-        status=qsa_dispatch(qsa_context,layer,first_token,positions,token_count,mixed,&block,err);
-    else if(status==FG_OK&&(layer&3u)==3u)
-        status=fg_owner_qsa_prefill(e,layer,first_token,positions,token_count,mixed,&block,err);
-    else if(status==FG_OK)
-        status=fg_owner_gdn_prefill(e,layer,token_count,mixed,&block,err);
+    if(status==FG_OK&&(layer&3u)==3u&&qsa_dispatch){
+        status=finish_batch(vk,status,err);
+        if(status==FG_OK)status=qsa_dispatch(qsa_context,layer,first_token,positions,token_count,mixed,&block,err);
+        if(status==FG_OK)status=fg_vk_begin(vk,err);
+    }else if(status==FG_OK&&(layer&3u)==3u){
+        status=finish_batch(vk,status,err);
+        if(status==FG_OK)status=fg_owner_qsa_prefill(e,layer,first_token,positions,token_count,mixed,&block,err);
+        if(status==FG_OK)status=fg_vk_begin(vk,err);
+    }else if(status==FG_OK)status=fg_owner_gdn_prefill(e,layer,token_count,mixed,&block,err);
     PREFILL_STEP("attention");
     if(status==FG_OK&&profiling)status=fg_vk_profile_set_scope(vk,"gr_attn_write_prefill",err);
     if(status==FG_OK)status=gr_write_batch_into(e,residual,block,injection,token_count,dslot->ping[0],dslot->ping[1],&after_attention,err);
     PREFILL_STEP("attn_write");
     if(status==FG_OK&&profiling)status=fg_vk_profile_set_scope(vk,"gr_ffn_read_prefill",err);
     if(status==FG_OK)status=gr_read_batch_into(e,layer,true,after_attention,token_count,dslot->injection,&mixed,&residual,&injection,err);
+    status=finish_batch(vk,status,err);
     PREFILL_STEP("ffn_read");
     const uint8_t *activations=NULL;
     if(status==FG_OK&&profiling)status=fg_vk_profile_set_scope(vk,"router_prefill",err);
