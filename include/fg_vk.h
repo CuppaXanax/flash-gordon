@@ -9,7 +9,7 @@ typedef struct fg_vk_expert_graph fg_vk_expert_graph;
 
 #define FG_VK_PREFILL_PAIR_TILE 16u
 #define FG_VK_PREFILL_TILE_WORDS (1u+FG_VK_PREFILL_PAIR_TILE)
-#define FG_VK_GDN_CHUNKED_PREFILL_MAX_TOKENS 128u
+#define FG_VK_GDN_CHUNKED_PREFILL_MAX_TOKENS 256u
 #define FG_VK_GDN_CHUNKED_PREFILL_DISPATCHES 3u
 
 typedef enum fg_vk_tensor_format {

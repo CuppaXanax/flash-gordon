@@ -628,7 +628,8 @@ fg_status fg_manifest_add_tensor(fg_manifest *manifest,const fg_tensor_record *r
 void fg_manifest_print(const fg_manifest *manifest){
     const char *profile="default/custom";
     static const uint32_t profiles[]={
-        FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_128
+        FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_128,
+        FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_256
     };
     for(uint32_t i=0;i<sizeof(profiles)/sizeof(profiles[0]);i++){
         const fg_runtime_profile_definition *definition=

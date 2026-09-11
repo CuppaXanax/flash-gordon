@@ -16,6 +16,18 @@ static const fg_runtime_profile_definition runtime_profiles[]={
         FG_DEFAULT_WINDOW,
         FG_NATIVE_CONTEXT,
         FG_POSITION_TEXT
+    },
+    {
+        FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_256,
+        FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_256_NAME,
+        FG_NATIVE_CONTEXT,
+        FG_NATIVE_CONTEXT,
+        0u,
+        FG_RUNTIME_PROFILE_NATIVE_262K_PAGE_CACHE_BYTES,
+        256u,
+        FG_DEFAULT_WINDOW,
+        FG_NATIVE_CONTEXT,
+        FG_POSITION_TEXT
     }
 };
 
@@ -97,8 +109,16 @@ fg_status fg_runtime_profile_apply(fg_manifest *manifest,uint32_t profile,fg_err
                      definition->name,definition->prefill_window);
         return FG_ERR_MISMATCH;
     }
+    /* A sealed manifest may be re-profiled between the qualified microbatches;
+     * the weight layout is unchanged and upgrade-manifest exists for exactly
+     * this re-seal. */
+    bool qualified=manifest->prefill_microbatch==128u||
+        manifest->prefill_microbatch==256u||manifest->prefill_microbatch==512u;
+    bool profile_qualified=definition->prefill_microbatch==128u||
+        definition->prefill_microbatch==256u||definition->prefill_microbatch==512u;
     if(manifest->prefill_microbatch!=FG_DEFAULT_MICROBATCH&&
-       manifest->prefill_microbatch!=definition->prefill_microbatch){
+       manifest->prefill_microbatch!=definition->prefill_microbatch&&
+       !(qualified&&profile_qualified)){
         fg_error_set(err,FG_ERR_MISMATCH,
                      "runtime profile %s cannot replace prefill microbatch %u",
                      definition->name,manifest->prefill_microbatch);

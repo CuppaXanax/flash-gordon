@@ -305,8 +305,9 @@ static void test_qsa_scratch_geometry(void){
     CHECK(fg_qsa_attention_scratch_bytes(256u)==37144576u);
     CHECK(fg_qsa_gdn_scratch_bytes(256u)==36274176u);
     CHECK(fg_gdn_chunked_prefill_scratch_bytes(128u)==18137088u);
-    CHECK(fg_gdn_chunked_prefill_scratch_bytes(129u)==UINT64_MAX);
-    CHECK(FG_VK_GDN_CHUNKED_PREFILL_MAX_TOKENS==128u);
+    CHECK(fg_gdn_chunked_prefill_scratch_bytes(256u)==36274176u);
+    CHECK(fg_gdn_chunked_prefill_scratch_bytes(257u)==UINT64_MAX);
+    CHECK(FG_VK_GDN_CHUNKED_PREFILL_MAX_TOKENS==256u);
     CHECK(FG_VK_GDN_CHUNKED_PREFILL_DISPATCHES==3u);
     CHECK(fg_qsa_ple_scratch_bytes(256u)==76021760u);
     CHECK(fg_qsa_attention_family_scratch_bytes(256u)==76021760u);
