@@ -115,6 +115,16 @@ fg_status fg_owner_decode_layer_async(fg_owner_executor *executor,uint32_t layer
                                       void *dispatch_context,
                                       fg_owner_qsa_decode_dispatch_fn qsa_dispatch,
                                       void *qsa_context,fg_vk_tensor **output,fg_error *err);
+fg_status fg_owner_decode_layer_begin(fg_owner_executor *executor,uint32_t slot,uint32_t layer,
+                                      uint32_t token_index,const uint32_t position[3],
+                                      const fg_vk_tensor *hyper_input,
+                                      const fg_vk_tensor *ngram_embedding,
+                                      fg_owner_expert_fire_fn fire,fg_owner_expert_collect_fn collect,
+                                      void *dispatch_context,
+                                      fg_owner_qsa_decode_dispatch_fn qsa_dispatch,
+                                      void *qsa_context,fg_error *err);
+fg_status fg_owner_decode_layer_finish(fg_owner_executor *executor,uint32_t slot,
+                                       fg_vk_tensor **output,fg_error *err);
 fg_status fg_owner_prefill_layer(fg_owner_executor *executor,uint32_t layer,
                                  uint32_t first_token,const uint32_t *positions,
                                  uint16_t token_count,const fg_vk_tensor *hyper_input,

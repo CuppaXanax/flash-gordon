@@ -2009,9 +2009,9 @@ static fg_status coordinator_decode_token_local(fg_coordinator *coordinator,cons
         const fg_vk_tensor *layer_ngram=(layer==1u)?ngram:NULL;
         async_ctx.sequence=token_index*FG_LAYER_COUNT+layer;
         fg_vk_tensor *layer_out=NULL;
-        status=fg_owner_decode_layer_async(coordinator->owner,layer,token_index,position,current,
-            layer_ngram,fire_experts,collect_experts,&async_ctx,NULL,NULL,
-            &layer_out,err);
+        status=fg_owner_decode_layer_begin(coordinator->owner,0u,layer,token_index,position,current,
+            layer_ngram,fire_experts,collect_experts,&async_ctx,NULL,NULL,err);
+        if(status==FG_OK)status=fg_owner_decode_layer_finish(coordinator->owner,0u,&layer_out,err);
         if(status==FG_OK)current=layer_out;
     }
     double frame_layers=dispatch_ts();
