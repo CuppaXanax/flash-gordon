@@ -1968,7 +1968,10 @@ static fg_status coordinator_prefill_pipeline(fg_coordinator *coordinator,
         prefill_frame fb={.dispatch=&db,.buffers=&coordinator->prefill_expert[1],.slot=1u};
         fg_vk_tensor *cur_a=in_a,*cur_b=in_b;
         bool capture=status==FG_OK&&profiled&&!*profiled&&prefill_profile_requested();
+        const char *profile_chunk=getenv("FG_PREFILL_PROFILE_CHUNK");
+        if(capture&&profile_chunk&&*profile_chunk)capture=(base/microbatch)==(uint32_t)strtoul(profile_chunk,NULL,10);
         bool capture_active=false;struct timespec capture_start={0},capture_end={0};
+        struct timespec pair_start={0};if(frame_trace_enabled())clock_gettime(CLOCK_MONOTONIC,&pair_start);
         if(capture){status=fg_vk_profile_begin(vk,err);if(status==FG_OK){status=fg_vk_profile_set_scope(vk,"ngram_prefill",err);clock_gettime(CLOCK_MONOTONIC,&capture_start);capture_active=true;}}
         for(uint32_t i=0;status==FG_OK&&i<=FG_LAYER_COUNT;i++){
             if(i<FG_LAYER_COUNT){
@@ -2004,6 +2007,7 @@ static fg_status coordinator_prefill_pipeline(fg_coordinator *coordinator,
         }
         if(capture_active){fg_vk_profile capture_profile={0};fg_error profile_error={0};clock_gettime(CLOCK_MONOTONIC,&capture_end);fg_status profile_status=fg_vk_profile_end(vk,&capture_profile,status==FG_OK?err:&profile_error);(void)profile_status;*profiled=true;}
         fg_vk_tensor_destroy(ngram_b);ngram_b=NULL;
+        if(frame_trace_enabled()){struct timespec pair_end;clock_gettime(CLOCK_MONOTONIC,&pair_end);fprintf(stderr,"PREFILL_PAIR base=%u tokens=%u wall_ms=%.1f\n",base,ca+cb,elapsed_seconds(&pair_start,&pair_end)*1000.0);}
         if(status==FG_OK)status=coordinator_publish_qsa_pages(coordinator,first,ca,err);
         if(status==FG_OK&&cb)status=coordinator_publish_qsa_pages(coordinator,first+ca,cb,err);
         if(status==FG_OK)last=cb?cur_b:cur_a;
