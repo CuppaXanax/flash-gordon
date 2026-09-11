@@ -1,21 +1,27 @@
 #version 460
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
-layout(local_size_x=256,local_size_y=1,local_size_z=1)in;layout(set=0,binding=0)readonly buffer Records{uint records[];};layout(set=0,binding=1)readonly buffer Query{float query[];};layout(set=0,binding=2)readonly buffer Gate{float gate[];};layout(set=0,binding=3)writeonly buffer Output{float output_value[];};layout(push_constant)uniform Push{uint selected_count;}pc;shared float subgroup_sum[64];shared float shared_scale;shared float shared_weight;shared float shared_denominator;shared float shared_maximum;
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;layout(set=0,binding=0)readonly buffer Records{uint records[];};layout(set=0,binding=1)readonly buffer Query{float query[];};layout(set=0,binding=2)readonly buffer Gate{float gate[];};layout(set=0,binding=3)writeonly buffer Output{float output_value[];};layout(push_constant)uniform Push{uint selected_count;}pc;
 uint load_byte(uint byte_offset){return(records[byte_offset>>2u]>>((byte_offset&3u)*8u))&255u;}
 float load_half(uint byte_offset){uint bits=load_byte(byte_offset)|(load_byte(byte_offset+1u)<<8u);return unpackHalf2x16(bits).x;}
 float load_key(uint token,uint kv_head,uint element){uint base=token*1236u+kv_head*272u+(element>>5u)*34u;int q=int(load_byte(base+2u+(element&31u)));if(q>=128)q-=256;return load_half(base)*float(q);}
 float load_value(uint token,uint kv_head,uint element){uint base=token*1236u+544u+kv_head*272u+(element>>5u)*34u;int q=int(load_byte(base+2u+(element&31u)));if(q>=128)q-=256;return load_half(base)*float(q);}
-void main(){uint lane=gl_LocalInvocationID.x,head=gl_WorkGroupID.x;if(head>=24u||pc.selected_count==0u)return;uint kv_head=head/12u;float accumulator=0.0;
-    if(lane==0u){shared_maximum=-3.402823466e38;shared_denominator=0.0;}
-    barrier();
-    for(uint token=0u;token<pc.selected_count;token++){
-        float reduced=subgroupAdd(query[head*256u+lane]*load_key(token,kv_head,lane));
-        if(subgroupElect()&&gl_SubgroupID<64u)subgroup_sum[gl_SubgroupID]=reduced;
-        barrier();
-        if(lane==0u){float score=0.0;for(uint s=0u;s<gl_NumSubgroups;s++)score+=subgroup_sum[s];score*=0.0625;float new_max=max(shared_maximum,score);shared_scale=shared_maximum<-3.0e38?0.0:exp(shared_maximum-new_max);shared_weight=exp(score-new_max);shared_denominator=shared_denominator*shared_scale+shared_weight;shared_maximum=new_max;}
-        barrier();
-        accumulator=accumulator*shared_scale+load_value(token,kv_head,lane)*shared_weight;
-        barrier();
+/* Subgroup-per-token: a subgroup owns one token at a time, scores it with a
+ * subgroup reduction, and keeps the online-softmax state replicated on every
+ * lane.  Element ownership is dynamic over gl_SubgroupSize so wave32 and
+ * wave64 both stay correct.  No shared memory and no barriers. */
+void main(){uint head=gl_WorkGroupID.x;if(head>=24u||pc.selected_count==0u)return;uint sgid=gl_SubgroupID,sub=gl_SubgroupInvocationID,size=gl_SubgroupSize,kv_head=head/12u;float acc[8];for(uint i=0u;i<8u;i++)acc[i]=0.0;float maximum=-3.402823466e38,denominator=0.0;
+    for(uint token=sgid;token<pc.selected_count;token+=gl_NumSubgroups){
+        float partial=0.0;
+        for(uint element=sub;element<256u;element+=size)partial=fma(query[head*256u+element],load_key(token,kv_head,element),partial);
+        float score=subgroupAdd(partial)*0.0625;
+        float new_max=max(maximum,score);
+        float scale=maximum<-3.0e38?0.0:exp(maximum-new_max);
+        float weight=exp(score-new_max);
+        denominator=denominator*scale+weight;maximum=new_max;
+        uint j=0u;
+        for(uint element=sub;element<256u;element+=size){acc[j]=fma(weight,load_value(token,kv_head,element),acc[j]*scale);j++;}
     }
-    float sigmoid_gate=1.0/(1.0+exp(-gate[head*256u+lane]));output_value[head*256u+lane]=accumulator/shared_denominator*sigmoid_gate;}
+    uint j=0u;
+    for(uint element=sub;element<256u;element+=size){float sigmoid_gate=1.0/(1.0+exp(-gate[head*256u+element]));output_value[head*256u+element]=acc[j]/denominator*sigmoid_gate;j++;}
+}
