@@ -181,9 +181,9 @@ static bool cook_expert_data(const fg_gguf_tensor *tensor,fg_tensor_layout layou
 
 static fg_status process_cooked_expert(FILE *source,const fg_gguf_tensor *tensor,uint64_t offset,uint64_t bytes,fg_tensor_layout layout,pack_output *output,fg_sha256 *hash,fg_error *err){if(!output->file){uint64_t descriptor[3]={offset,bytes,layout};fg_sha256_update(hash,descriptor,sizeof(descriptor));output->offset+=bytes;return FG_OK;}uint8_t *packed=malloc((size_t)bytes),*cooked=malloc((size_t)bytes);if(!packed||!cooked){free(cooked);free(packed);fg_error_set(err,FG_ERR_OOM,"allocate cooked expert buffers");return FG_ERR_OOM;}if(fseeko(source,(off_t)offset,SEEK_SET)!=0||fread(packed,1,(size_t)bytes,source)!=(size_t)bytes){free(cooked);free(packed);fg_error_set(err,FG_ERR_IO,"read expert tensor %s: %s",tensor->name,ferror(source)?"unexpected end of source":strerror(errno));return FG_ERR_IO;}bool converted=layout==FG_TENSOR_LAYOUT_K_QUANT_EXPERT_COOKED?fg_cook_k_quant_rows(packed,cooked,bytes,(uint32_t)tensor->shape[0],(uint32_t)tensor->shape[1],tensor->type):layout==FG_TENSOR_LAYOUT_Q5_1_EXPERT_COOKED?fg_cook_q5_1_rows(packed,cooked,bytes,(uint32_t)tensor->shape[0],(uint32_t)tensor->shape[1]):false;if(!converted||fwrite(cooked,1,(size_t)bytes,output->file)!=(size_t)bytes){free(cooked);free(packed);fg_error_set(err,FG_ERR_IO,"cook expert tensor %s: %s",tensor->name,converted?strerror(errno):"invalid layout");return FG_ERR_IO;}fg_sha256_update(hash,cooked,(size_t)bytes);output->offset+=bytes;free(cooked);free(packed);return FG_OK;}
 
-static uint32_t common_owner(const fg_gguf_tensor *tensor,int layer){
+static uint32_t common_owner(const fg_manifest *m,const fg_gguf_tensor *tensor,int layer){
 
-    if(layer>=0)return (uint32_t)layer%FG_RANK_COUNT;
+    if(layer>=0)return m->layer_owner[layer];
     if(strcmp(tensor->name,"token_embd.weight")==0)return 0u;
     if(strcmp(tensor->name,"output.weight")==0||
        strncmp(tensor->name,"output_hc_",10u)==0)return 4u;
@@ -195,7 +195,7 @@ static fg_status pack_common(const fg_gguf_tensor *t,FILE *src,fg_manifest *m,
                              fg_error *err){
     fg_tensor_kind kind=fg_gguf_tensor_kind(t->name);
 
-    int layer=fg_gguf_tensor_layer(t->name);uint32_t owner=common_owner(t,layer);
+    int layer=fg_gguf_tensor_layer(t->name);uint32_t owner=common_owner(m,t,layer);
     pack_output *out=kind==FG_TENSOR_NGRAM?ngram:&rank[owner];
     uint64_t start=fg_align_up_u64(out->offset,FG_ALIGNMENT);
     fg_status rc=pad_to(out,start,err);if(rc!=FG_OK)return rc;
