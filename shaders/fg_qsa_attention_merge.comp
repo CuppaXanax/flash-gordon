@@ -1,0 +1,24 @@
+#version 460
+/* Split-K QSA attention, stage 2: combine the partial softmax states
+ * deterministically in split order and apply the output gate. */
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Partials{float partials[];};
+layout(set=0,binding=1)readonly buffer Gate{float gate[];};
+layout(set=0,binding=2)writeonly buffer Output{float output_value[];};
+layout(push_constant)uniform Push{uint splits;}pc;
+void main(){
+    uint head=gl_WorkGroupID.x,lane=gl_LocalInvocationID.x;
+    if(head>=24u||pc.splits==0u)return;
+    float maximum=-3.402823466e38;
+    for(uint split=0u;split<pc.splits;split++)
+        maximum=max(maximum,partials[(head*pc.splits+split)*258u+256u]);
+    float numerator=0.0,denominator=0.0;
+    for(uint split=0u;split<pc.splits;split++){
+        uint base=(head*pc.splits+split)*258u;
+        float weight=partials[base+257u]>0.0?exp(partials[base+256u]-maximum):0.0;
+        numerator=fma(weight,partials[base+lane],numerator);
+        denominator=fma(weight,partials[base+257u],denominator);
+    }
+    float sigmoid_gate=1.0/(1.0+exp(-gate[head*256u+lane]));
+    output_value[head*256u+lane]=numerator/denominator*sigmoid_gate;
+}

@@ -1,0 +1,44 @@
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+/* Split-K QSA attention, stage 1: each workgroup owns one (head, token range)
+ * pair and emits its online-softmax partial state.  Layout per split:
+ *   partials[((head*splits)+split)*258 + 0..255] = weighted value accumulator
+ *   partials[... + 256] = running maximum
+ *   partials[... + 257] = running denominator
+ * The companion merge shader combines the splits deterministically. */
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Records{uint records[];};
+layout(set=0,binding=1)readonly buffer Query{float query[];};
+layout(set=0,binding=2)buffer Partials{float partials[];};
+layout(push_constant)uniform Push{uint selected_count;uint splits;uint split_index;}pc;
+shared float subgroup_sum[64];
+shared float shared_scale;
+shared float shared_weight;
+shared float shared_denominator;
+shared float shared_maximum;
+uint load_byte(uint byte_offset){return(records[byte_offset>>2u]>>((byte_offset&3u)*8u))&255u;}
+float load_half(uint byte_offset){uint bits=load_byte(byte_offset)|(load_byte(byte_offset+1u)<<8u);return unpackHalf2x16(bits).x;}
+float load_key(uint token,uint kv_head,uint element){uint base=token*1236u+kv_head*272u+(element>>5u)*34u;int q=int(load_byte(base+2u+(element&31u)));if(q>=128)q-=256;return load_half(base)*float(q);}
+float load_value(uint token,uint kv_head,uint element){uint base=token*1236u+544u+kv_head*272u+(element>>5u)*34u;int q=int(load_byte(base+2u+(element&31u)));if(q>=128)q-=256;return load_half(base)*float(q);}
+void main(){
+    uint lane=gl_LocalInvocationID.x,head=gl_WorkGroupID.x,split=gl_WorkGroupID.y;
+    if(head>=24u||pc.splits==0u||split>=pc.splits||pc.selected_count==0u)return;
+    uint kv_head=head/12u;
+    uint first=(pc.selected_count*split)/pc.splits,last=(pc.selected_count*(split+1u))/pc.splits;
+    float accumulator=0.0;
+    if(lane==0u){shared_maximum=-3.402823466e38;shared_denominator=0.0;}
+    barrier();
+    for(uint token=first;token<last;token++){
+        float reduced=subgroupAdd(query[head*256u+lane]*load_key(token,kv_head,lane));
+        if(subgroupElect()&&gl_SubgroupID<64u)subgroup_sum[gl_SubgroupID]=reduced;
+        barrier();
+        if(lane==0u){float score=0.0;for(uint s=0u;s<gl_NumSubgroups;s++)score+=subgroup_sum[s];score*=0.0625;float new_max=max(shared_maximum,score);shared_scale=shared_maximum<-3.0e38?0.0:exp(shared_maximum-new_max);shared_weight=exp(score-new_max);shared_denominator=shared_denominator*shared_scale+shared_weight;shared_maximum=new_max;}
+        barrier();
+        accumulator=accumulator*shared_scale+load_value(token,kv_head,lane)*shared_weight;
+        barrier();
+    }
+    uint base=(head*pc.splits+split)*258u;
+    partials[base+lane]=accumulator;
+    if(lane==0u){partials[base+256u]=shared_maximum;partials[base+257u]=shared_denominator;}
+}
