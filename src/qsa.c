@@ -849,11 +849,13 @@ static fg_status select_prefill_tile(fg_qsa_session *s,uint32_t slot,
         uint32_t complete=(first_token+first_query+q+1u)/4u;
         counts[q]=complete<FG_QSA_MAX_SELECTED_BLOCKS?complete:FG_QSA_MAX_SELECTED_BLOCKS;
     }
+    fg_vk_context *vk=fg_model_vk(s->model);
     if(blocks<=FG_QSA_MAX_SELECTED_BLOCKS){
         for(uint32_t q=0;q<queries;q++)for(uint32_t i=0;i<counts[q];i++)selected[q][i]=i;
-        return FG_OK;
+        /* Establish the invariant that no GPU work is pending once selection
+         * returns; gather relies on it for its host writes. */
+        return fg_qsa_submit_host_reads(vk,err);
     }
-    fg_vk_context *vk=fg_model_vk(s->model);
     fg_vk_tensor *norm=layer_weight(s,s->layers[slot],"indexer.k_norm.weight",err);
     if(!norm)return FG_ERR_MISMATCH;
     fg_status status=fg_vk_tensor_view_rebind(s->index_query_view,s->index_query,
@@ -929,8 +931,12 @@ static fg_status gather_prefill_tile(fg_qsa_session *s,uint32_t slot,
         if(status==FG_OK)status=fg_vk_qsa_record_gather(vk,s->tile_records[q],s->cache_records,
             s->tile_ids[q][0],0u,s->cache_pages*4u,counts[q],tail_slot*4u,tail,err);
     }
-    if(status==FG_OK)status=fg_qsa_submit_host_reads(vk,err);
-    if(status!=FG_OK||!missing_count)return status;
+    if(status!=FG_OK)return status;
+    /* A hit-only gather stays in the shared batch; the next selection fence
+     * consumes it before any host write touches the same staging buffers. */
+    if(!missing_count)return status;
+    status=fg_qsa_submit_host_reads(vk,err);
+    if(status!=FG_OK)return status;
     if(!s->fetch_pages){
         fg_error_set(err,FG_ERR_UNAVAILABLE,"QSA cold page miss has no owner fetch service");
         return FG_ERR_UNAVAILABLE;
@@ -987,8 +993,10 @@ static fg_status attend_prefill_tiles(fg_qsa_session *s,uint32_t slot,
             if(status==FG_OK)status=fg_vk_qsa_attention(vk,s->attention_view,s->tile_records[q],
                 s->query_view,s->gate_view,counts[q]*4u+(first_token+first+q+1u)%4u,err);
         }
-        if(status==FG_OK)status=fg_qsa_submit_host_reads(vk,err);
     }
+    /* One fence per layer; the per-tile gathers and attentions share the batch
+     * and dispatch() orders them with compute-to-compute barriers. */
+    if(status==FG_OK)status=fg_qsa_submit_host_reads(vk,err);
     return status;
 }
 
