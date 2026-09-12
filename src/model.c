@@ -17,6 +17,7 @@
 struct fg_model {
     fg_vk_context *vk;
     fg_vk_tensor *arena;
+    fg_vk_tensor *expert_arena;
     fg_vk_tensor **tensor;
     uint32_t *tensor_lookup;
     uint32_t tensor_lookup_capacity;
@@ -91,7 +92,7 @@ fg_status fg_model_open(fg_model **out,const fg_manifest *manifest,const char *p
     if(status!=FG_OK){fg_model_close(model);return status;}*out=model;return FG_OK;
 }
 
-void fg_model_close(fg_model *model){if(!model)return;if(model->tensor){for(uint32_t i=0;i<model->manifest->tensor_count;i++)fg_vk_tensor_destroy(model->tensor[i]);}free(model->tensor_lookup);free(model->tensor);fg_vk_tensor_destroy(model->arena);fg_vk_close(model->vk);free(model);}
+void fg_model_close(fg_model *model){if(!model)return;if(model->tensor){for(uint32_t i=0;i<model->manifest->tensor_count;i++)fg_vk_tensor_destroy(model->tensor[i]);}free(model->tensor_lookup);free(model->tensor);fg_vk_tensor_destroy(model->expert_arena);fg_vk_tensor_destroy(model->arena);fg_vk_close(model->vk);free(model);}
 
 /* Expert-parallel model loading: loads ALL shared weights from ALL rank files,
    plus this rank's expert weights, into a single combined arena.  Every rank
@@ -102,7 +103,7 @@ static fg_status model_open_replicated(fg_model **out,const fg_manifest *manifes
     /* Phase 1: compute combined arena layout.  Walk all tensors and assign new
        offsets in the combined arena, keeping shared tensors from every rank and
        expert tensors only from this rank. */
-    uint64_t cursor=0;
+    uint64_t cursor=0,expert_cursor=0;
     uint64_t *remap=calloc(manifest->tensor_count,sizeof(*remap));
     bool *included=calloc(manifest->tensor_count,sizeof(*included));
     if(!remap||!included){free(included);free(remap);fg_error_set(err,FG_ERR_OOM,"allocate replicated remap table");return FG_ERR_OOM;}
@@ -111,21 +112,27 @@ static fg_status model_open_replicated(fg_model **out,const fg_manifest *manifes
         bool is_shared=t->kind==FG_TENSOR_COMMON&&(include_qsa||!qsa_service_weight(t));
         bool is_my_expert=(t->kind==FG_TENSOR_ROUTED_EXPERT&&t->rank==rank);
         if(is_shared||is_my_expert){
-            remap[i]=fg_align_up_u64(cursor,FG_ALIGNMENT);
-            cursor=remap[i]+fg_align_up_u64(t->bytes,FG_ALIGNMENT);
+            uint64_t *active=is_my_expert?&expert_cursor:&cursor;
+            remap[i]=fg_align_up_u64(*active,FG_ALIGNMENT);
+            *active=remap[i]+fg_align_up_u64(t->bytes,FG_ALIGNMENT);
             included[i]=true;
         }
     }
-    if(!cursor){free(included);free(remap);fg_error_set(err,FG_ERR_MISMATCH,"replicated layout produced an empty arena");return FG_ERR_MISMATCH;}
+    if(!cursor&&!expert_cursor){free(included);free(remap);fg_error_set(err,FG_ERR_MISMATCH,"replicated layout produced an empty arena");return FG_ERR_MISMATCH;}
+    {uint32_t probe_count=0;for(uint32_t i=0;i<manifest->tensor_count;i++)if(included[i])probe_count++;
+     fprintf(stderr,"REPLICATED_PROBE shared=%llu experts=%llu included=%u rank=%u\n",(unsigned long long)cursor,(unsigned long long)expert_cursor,probe_count,rank);}
     /* Phase 2: allocate model + arena */
     fg_model *model=calloc(1,sizeof(*model));if(!model){free(included);free(remap);fg_error_set(err,FG_ERR_OOM,"allocate replicated model");return FG_ERR_OOM;}
-    model->manifest=manifest;model->rank=rank;model->weight_bytes=cursor;
+    model->manifest=manifest;model->rank=rank;model->weight_bytes=cursor+expert_cursor;
     model->tensor=calloc(manifest->tensor_count,sizeof(*model->tensor));
     if(!model->tensor){fg_model_close(model);free(included);free(remap);fg_error_set(err,FG_ERR_OOM,"allocate replicated tensor index");return FG_ERR_OOM;}
     fg_status status=fg_vk_open(&model->vk,err);
-    if(status==FG_OK)status=fg_vk_tensor_create(model->vk,cursor,&model->arena,err);
-    void *mapped=status==FG_OK?fg_vk_tensor_map(model->arena):NULL;
-    if(status==FG_OK&&(!mapped||!fg_is_aligned_u64((uintptr_t)mapped,FG_ALIGNMENT))){fg_error_set(err,FG_ERR_UNAVAILABLE,"replicated arena is not 4 KiB aligned");status=FG_ERR_UNAVAILABLE;}
+    if(status==FG_OK&&cursor)status=fg_vk_tensor_create(model->vk,cursor,&model->arena,err);
+    if(status==FG_OK&&expert_cursor)status=fg_vk_tensor_create(model->vk,expert_cursor,&model->expert_arena,err);
+    void *mapped=status==FG_OK&&model->arena?fg_vk_tensor_map(model->arena):NULL;
+    void *mapped_expert=status==FG_OK&&model->expert_arena?fg_vk_tensor_map(model->expert_arena):NULL;
+    if(status==FG_OK&&((cursor&&(!mapped||!fg_is_aligned_u64((uintptr_t)mapped,FG_ALIGNMENT)))||
+       (expert_cursor&&(!mapped_expert||!fg_is_aligned_u64((uintptr_t)mapped_expert,FG_ALIGNMENT))))){fg_error_set(err,FG_ERR_UNAVAILABLE,"replicated arena is not 4 KiB aligned");status=FG_ERR_UNAVAILABLE;}
     /* Phase 3: load weights — read each tensor directly from its source rank file
        using a small bounce buffer instead of loading entire rank files. */
     const uint32_t chunk=8u*1024u*1024u;
@@ -141,12 +148,13 @@ static fg_status model_open_replicated(fg_model **out,const fg_manifest *manifes
         for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++){
             if(!included[i]||manifest->tensors[i].rank!=src)continue;
             const fg_tensor_record *t=&manifest->tensors[i];
+            uint8_t *dst=(uint8_t *)(t->kind==FG_TENSOR_ROUTED_EXPERT?mapped_expert:mapped);
             /* Copy tensor from rank file to arena via small bounce */
             for(uint64_t off=0;status==FG_OK&&off<t->bytes;off+=chunk){
                 uint32_t n=(uint32_t)((t->bytes-off)>chunk?chunk:t->bytes-off);
                 ssize_t got=pread(fd,bounce,n,(off_t)(t->offset+off));
                 if(got!=(ssize_t)n){fg_error_set(err,FG_ERR_IO,"pread rank %u tensor %.48s: %s",src,t->name,got<0?strerror(errno):"short read");status=FG_ERR_IO;}
-                else memcpy((uint8_t *)mapped+remap[i]+off,bounce,n);
+                else memcpy(dst+remap[i]+off,bounce,n);
             }
         }
         close(fd);
@@ -156,12 +164,14 @@ static fg_status model_open_replicated(fg_model **out,const fg_manifest *manifes
     for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++){
         if(!included[i])continue;
         const fg_tensor_record *record=&manifest->tensors[i];fg_tensor_layout layout=runtime_layout(record);
-        if(layout!=(fg_tensor_layout)record->layout)status=cook_runtime_tensor(record,(uint8_t *)mapped+remap[i],layout,err);
+        uint8_t *dst=(uint8_t *)(record->kind==FG_TENSOR_ROUTED_EXPERT?mapped_expert:mapped);
+        if(layout!=(fg_tensor_layout)record->layout)status=cook_runtime_tensor(record,dst+remap[i],layout,err);
     }
     /* Phase 4: create tensor views at remapped offsets */
     for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++){
         if(!included[i])continue;
-        status=fg_vk_tensor_view(model->arena,remap[i],manifest->tensors[i].bytes,&model->tensor[i],err);
+        fg_vk_tensor *parent=manifest->tensors[i].kind==FG_TENSOR_ROUTED_EXPERT?model->expert_arena:model->arena;
+        status=fg_vk_tensor_view(parent,remap[i],manifest->tensors[i].bytes,&model->tensor[i],err);
         if(status==FG_OK)fg_vk_tensor_set_format(model->tensor[i],tensor_format(runtime_layout(&manifest->tensors[i])));
     }
     if(status==FG_OK)status=build_tensor_lookup(model,err);
