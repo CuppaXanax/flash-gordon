@@ -345,8 +345,12 @@ static fg_status dense_prefill(fg_owner_executor *executor,fg_vk_tensor *output,
                                uint32_t output_width,uint32_t tokens,
                                float scale,fg_error *err){
 
-    return fg_vk_dense_q8_0_f32(fg_model_vk(executor->model),output,weights,
-                                input,input_width,output_width,tokens,scale,err);
+    fg_vk_context *vk=fg_model_vk(executor->model);
+    if(fg_vk_tensor_get_format(weights)==FG_VK_TENSOR_FORMAT_Q8_0_COOKED)
+        return fg_vk_dense_q8_0_cooked(vk,output,weights,input,input_width,
+                                       output_width,tokens,scale,err);
+    return fg_vk_dense_q8_0_f32(vk,output,weights,input,input_width,output_width,
+                                tokens,scale,err);
 }
 bool fg_owner_owns_layer(const fg_owner_executor *executor,uint32_t layer){if(!executor)return false;if(executor->replicated)return layer<FG_LAYER_COUNT;const fg_manifest *manifest=fg_model_manifest(executor->model);return layer<FG_LAYER_COUNT&&manifest->layer_owner[layer]==fg_model_rank(executor->model);}
 static bool owns_layer(const fg_owner_executor *executor,uint32_t layer){

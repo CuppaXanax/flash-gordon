@@ -1954,7 +1954,7 @@ static fg_status coordinator_prefill_pipeline(fg_coordinator *coordinator,
         uint32_t first=first_token+base;
         fg_vk_tensor *ngram_all=NULL,*ngram_views[FG_PREFILL_FRAMES]={NULL,NULL,NULL};
         status=fg_ngram_store_lookup_prefill(coordinator->ngram,history,history_count,
-            first,counts[0]+counts[1]+counts[2],&ngram_all,err);
+            first,consumed,&ngram_all,err);
         if(status==FG_OK)ngram_views[0]=ngram_all;
         for(uint32_t f=1;status==FG_OK&&f<FG_PREFILL_FRAMES;f++)
             if(counts[f])status=fg_vk_tensor_view(ngram_all,
@@ -1977,7 +1977,8 @@ static fg_status coordinator_prefill_pipeline(fg_coordinator *coordinator,
                 .buffers=&coordinator->prefill_expert[f],.transport_state=&coordinator->transport_state};
             frames[f]=(prefill_frame){.dispatch=&contexts[f],.buffers=&coordinator->prefill_expert[f],.slot=f};
         }
-        fg_vk_tensor *cur[FG_PREFILL_FRAMES]={inputs[0],inputs[1],inputs[2]};
+        fg_vk_tensor *cur[FG_PREFILL_FRAMES];
+        for(uint32_t f=0;f<FG_PREFILL_FRAMES;f++)cur[f]=inputs[f];
         bool capture=status==FG_OK&&profiled&&!*profiled&&prefill_profile_requested();
         const char *profile_chunk=getenv("FG_PREFILL_PROFILE_CHUNK");
         if(capture&&profile_chunk&&*profile_chunk)capture=(base/microbatch)==(uint32_t)strtoul(profile_chunk,NULL,10);
@@ -2025,11 +2026,11 @@ static fg_status coordinator_prefill_pipeline(fg_coordinator *coordinator,
         }
         if(capture_active){fg_vk_profile capture_profile={0};fg_error profile_error={0};clock_gettime(CLOCK_MONOTONIC,&capture_end);fg_status profile_status=fg_vk_profile_end(vk,&capture_profile,status==FG_OK?err:&profile_error);(void)profile_status;*profiled=true;}
         for(uint32_t f=1;f<FG_PREFILL_FRAMES;f++){fg_vk_tensor_destroy(ngram_views[f]);ngram_views[f]=NULL;}
-        if(frame_trace_enabled()){struct timespec pair_end;clock_gettime(CLOCK_MONOTONIC,&pair_end);fprintf(stderr,"PREFILL_PAIR base=%u tokens=%u wall_ms=%.1f\n",base,counts[0]+counts[1]+counts[2],elapsed_seconds(&pair_start,&pair_end)*1000.0);}
+        if(frame_trace_enabled()){struct timespec pair_end;clock_gettime(CLOCK_MONOTONIC,&pair_end);fprintf(stderr,"PREFILL_PAIR base=%u tokens=%u wall_ms=%.1f\n",base,consumed,elapsed_seconds(&pair_start,&pair_end)*1000.0);}
         if(status==FG_OK)status=coordinator_publish_qsa_pages(coordinator,first,counts[0],err);
         for(uint32_t f=1;status==FG_OK&&f<FG_PREFILL_FRAMES;f++)
             if(counts[f])status=coordinator_publish_qsa_pages(coordinator,first+offsets[f],counts[f],err);
-        if(status==FG_OK)last=counts[2]?cur[2]:(counts[1]?cur[1]:cur[0]);
+        if(status==FG_OK){for(uint32_t f=0;f<FG_PREFILL_FRAMES;f++)if(counts[f])last=cur[f];}
     }
     if(status==FG_OK)*output=last;
     return status;
