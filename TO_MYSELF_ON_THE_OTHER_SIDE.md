@@ -42,6 +42,20 @@ on .42 only. Rebalanced contiguous ownership map
   run `fg-swap-contig.sh` (change its `contig=` path to `q38-contig2`), then restart
   rank 0 first, wait for `ss -ltn` to show 19100/19101, then workers.
 
+  **DO NOT DEPLOY contig2 ON THE CURRENT BINARY.** Contiguous blocks put QSA layers
+  (3, 7, 11, ... 47) on all eight ranks (1-2 each). The runtime hardcodes QSA
+  ownership to ranks {3,7} with exactly 6 layers each:
+  - `qsa_owner_runtime_create` (`src/runtime.c:842`) errors unless a rank owns
+    exactly `FG_QSA_OWNER_LAYER_COUNT` (6) QSA layers — every worker would exit
+    at startup on contig2.
+  - `qsa_owner_index` (`src/runtime.c:1217`) maps only 3→0, 7→1; is used by
+    `coordinator_publish_qsa_pages` (1614), `coordinator_fetch_qsa_pages` (1676)
+    and `coordinator_qsa_barrier` (1737) — rank 0 would hard-error at the first
+    chunk ("QSA page owner is not rank 3 or 7").
+  Section 4D must land before contig2 can boot. Also commit the working-tree
+  `src/pack.c` + `src/q38_schema.c` change first: contig2 was packed with
+  `token_embd` on rank 7 and HEAD's validator rejects that manifest.
+
 Disk on .42: 179 GB free. Do **not** delete `/home/user/flash-gordon-pipeline-candidate`
 (131 GB, the ceiling harness's protected LKG pack). `q38-single` (104 GB) stays until
 contig2 has served production for a while.
@@ -90,9 +104,13 @@ positions (3*N u32), hyper (N*10240 f32), optional ngram embeddings
 **B. Worker: owner executor + layer handler.**
 - `fg_rank_main` (`src/runtime.c:1160`) currently creates `fg_model` (non-replicated),
   an expert executor, and for rank 4 an output executor. Add an owner executor:
-  `fg_owner_executor_create(&owner, model, err)` — it already owns exactly this rank's
-  six layers (common + experts live in its `rank-XX.fgw`). Keep the existing expert
-  executor; it is the local expert path.
+  `fg_owner_executor_create(&owner, model, err)`. **Caveat:** that constructor
+  hardcodes `executor->replicated=true` (`src/owner.c:216`), so `owns_layer` claims
+  all 48 layers and `gdn_state` allocates for all 36 GDN layers (~120 MB wasted).
+  Add a `replicated` parameter (coordinator passes true, workers false) and scale
+  the gdn_state/ple_state allocation to owned layers. Keep the existing expert
+  executor; the owner's fire/collect uses the local expert path (no tree, all 512
+  experts of the block's layers are local).
 - `rank_worker_loop` (`src/runtime.c:1149`) handles bulk messages at ~1156. Add:
   on `FG_MSG_PREFILL_LAYER_WORK`, decode with a reusable buffer sized
   `FG_PREFILL_LAYER_WORK_MAX_BYTES`, write hyper+positions into the owner's prefill
@@ -121,24 +139,35 @@ positions (3*N u32), hyper (N*10240 f32), optional ngram embeddings
 - Keep the local path for rank 0's own block (6-11) exactly as today.
 - Preserve `coordinator_publish_qsa_pages` ordering per chunk.
 
-**D. QSA state for all ranks (the hard part; blocks C).**
-Every block contains one or two QSA layers (3,7,11,...47), so each rank's owner
-executor needs a QSA session for its layers. Today only rank 0 runs QSA layers and the
-page transport feeds two replica owners (ranks 3/7): `qsa_page_transport`,
-`qsa_owner_index` (`src/runtime.c:1217`), `qsa_replica_*`. Extend to all ranks:
-- On each rank, open a QSA session mirror like the coordinator does
-  (`fg_owner_qsa_open_mirror`, runtime.c:2290 area) for its own QSA layers.
-- Generalize the page fan-out: each rank needs pages only for its own QSA layers
-  (~1-2 layers x 32 blocks x 3.6 KB ≈ 230 KB per chunk ≈ 3 MB total per chunk) —
-  cheap. Watch the two backpressure rings: replica depth 64 (fine), owner writer
-  depth must stay **8** (raising it thrashed I/O and regressed to 3.4 TPS once).
-- Ordering: a rank may not run a QSA layer beyond its committed frontier. Commit
-  pages per chunk after the layers that generated them.
-- Gate before enabling: correctness 12/Paris and no decode regression. If QSA state
-  proves too large per rank (index ~411 MiB each; residency margins are 1.8 GB on
-  the tightest ranks), implement section 3's chain for GDN layers first (star is not
-  worth it: 2 transfers per layer ≈ 40 TPS ceiling) and keep QSA layers local to
-  rank 0 until D lands.
+**D. QSA state for all ranks (the hard part; blocks B and C).**
+In the ring each block owner *computes* its own 1-2 QSA layers, so it must hold the
+authoritative session + state file for those layers, and decode's cold-fetch must
+route per layer instead of to ranks {3,7}. Changes, all in `src/runtime.c` plus a
+small session open on the worker:
+- `qsa_owner_runtime_create` (runtime.c:834): drop the
+  `layer_count==FG_QSA_OWNER_LAYER_COUNT` requirement; size the layer array to the
+  rank's actual ownership (0-2 for contiguous blocks); ranks with zero QSA layers
+  keep `enabled=false`.
+- `qsa_owner_index` (1217): replace with `manifest->layer_owner[layer]` everywhere
+  (publish 1614, fetch 1676, barrier 1737). Barrier loops over owners {3,7} —
+  generalize to the distinct set of QSA owners (or barrier only owners that
+  received appends this session).
+- Publish becomes owner-local: the block owner commits its own QSA pages during
+  its block via its existing `qsa_owner_writer_enqueue` (runtime.c:790) — bypass
+  the `peer==0` guard (handle_qsa_page_append 937, fetch 982, barrier 962) or call
+  the writer directly. Rank 0 keeps publishing only its own block's layers.
+- Rank 0 decode still runs all 12 QSA layers via its mirror. Its hot cache must be
+  fed: either have each owner attach its page records for the block to the layer
+  result message (a few KB), or accept cold-fetching the context from the eight
+  owners on the first decode token (`coordinator_fetch_qsa_pages` generalized per
+  above). Prefer the sidecar at first; cold fallback must be tested.
+- Worker session: on the worker, open the QSA session for the block's layers in
+  the owner executor (authoritative, `fg_owner_qsa_open`/`open_decode` in owner.c
+  with a local state path) or mirror with a local fetch callback. Residency cost:
+  index ~34 MiB/layer + selection scratch; the tightest ranks have ~1.4-1.8 GB
+  headroom, so validate against the pack ledgers before enabling.
+- Keep writer depth **8**; raise replica depth only after correctness gates pass.
+- Gate: correctness 12/Paris, decode unchanged (9.9 short), then battery.
 
 **E. Frames.** After C+D, re-test 5-8 frames. Keep `FG_PREFILL_FRAMES=4`,
 `FG_OWNER_SLOT_COUNT=4`, replica depth 64 as the known-good baseline.
@@ -182,13 +211,23 @@ regress: ring work is prefill-only until decode gets its own plan.
 
 ## 8. First actions, in order
 
-1. Deploy contig2 (section 1) and verify the fleet boots at ~49-51 TPS on contiguous
-   ownership with gates green. This is the ring's foundation.
-2. Implement B (worker owner executor + layer handler) with a one-chunk round trip to
-   the next block and back, under a flag, and gate on 12/Paris.
-3. Implement C (async chain for all blocks, frames issued without waiting).
-   Gate: 4K >= 100 TPS.
-4. Implement D (QSA fan-out). Gate: 4K >= 150 TPS, decode unchanged.
+0. **Measure before building.** The ring math assumes a block owner serves 6 layers x
+   128 tokens in ~300-400 ms (derived from rank 0's 2.51 s per 128-token chunk at
+   50.9 TPS scaled by 48/6 layers). Verify on the current fleet without touching
+   QSA: the `PREFILL_DISPATCH`/`PREFILL_WORKER` instrumentation already times each
+   layer's owner-side expert service + transfer; a single profile run gives the
+   per-layer service time. If 6 layers projects above ~700 ms, stop and re-plan
+   (frames/expert kernels are then the levers, not the ring).
+1. Do **not** deploy contig2 until section 4D lands (section 1 warning). Keep the
+   single-owner fleet healthy; commit the pack.c/q38_schema.c fix.
+2. Implement B (worker owner executor with non-replicated create + layer handler +
+   worker buffers) with a one-chunk round trip to the next block and back, under a
+   flag, and gate on 12/Paris.
+3. Implement C (chain driver in `coordinator_prefill_pipeline`, frames issued
+   without waiting) using the current single-owner pack as a *correctness-only*
+   fallback where each hop stays local. Gate: 4K >= 100 TPS once D+contig2 land.
+4. Implement D (QSA authority per block owner, per-layer cold fetch, page sidecar).
+   Then deploy contig2 and gate: 4K >= 150 TPS, decode unchanged.
 5. Tune frames (5-6) and re-measure. Target: **200-300 TPS at 4K**, decode >= 9.9 short
    until MTP is unfrozen.
 
