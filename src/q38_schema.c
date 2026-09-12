@@ -3,6 +3,7 @@
 #include "fg_qsa.h"
 #include "fg_quant.h"
 #include "fg_ngram.h"
+#include "fg_topology.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -507,7 +508,14 @@ fg_status fg_q38_validate_packed_manifest(const fg_manifest *m,fg_error *err){
     fg_status storage_status=fg_manifest_validate_tensor_storage(m,err);
     if(storage_status!=FG_OK)return storage_status;
 
-    uint32_t packed_model_tensors=SOURCE_TENSORS+FG_LAYER_COUNT*EXPERT_FAMILIES*(FG_GROUP_SIZE-1u);
+    uint32_t expert_extra=0u;
+    for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){
+        uint32_t participants=0u;
+        for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)
+            if(fg_topology_layer_rank_experts(m,layer,rank))participants++;
+        if(participants>1u)expert_extra+=EXPERT_FAMILIES*(participants-1u);
+    }
+    uint32_t packed_model_tensors=SOURCE_TENSORS+expert_extra;
     uint32_t model_tensors=0,tokenizer_tensors=0,vision_tensors=0,mtp_tensors=0;
     for(uint32_t i=0;i<m->tensor_count;i++)switch(m->tensors[i].kind){
         case FG_TENSOR_COMMON:case FG_TENSOR_ROUTED_EXPERT:case FG_TENSOR_NGRAM:
@@ -556,7 +564,8 @@ fg_status fg_q38_validate_packed_manifest(const fg_manifest *m,fg_error *err){
             for(uint32_t gi=0;gi<FG_GROUP_SIZE;gi++){
                 uint32_t rank=m->layer_groups[l][gi];char packed[FG_TENSOR_NAME_MAX+16u];snprintf(packed,sizeof(packed),"%s.rank%u",base,rank);
                 const fg_tensor_record *r=fg_q38_find_tensor(m,packed,rank);
-                if(!r||r->kind!=FG_TENSOR_ROUTED_EXPERT||r->layer!=l||r->dims!=3||r->shape[2]!=FG_EXPERTS_PER_RANK){
+                uint32_t expected_shape=fg_topology_layer_rank_experts(m,l,rank);
+                if(!r||!expected_shape||r->kind!=FG_TENSOR_ROUTED_EXPERT||r->layer!=l||r->dims!=3||r->shape[2]!=expected_shape){
                     free(names);free(synthetic.tensors);fg_error_set(err,FG_ERR_MISMATCH,"invalid local expert tensor %s",packed);return FG_ERR_MISMATCH;
                 }
                 if(representative&&(r->ggml_type!=representative->ggml_type||r->shape[0]!=representative->shape[0]||r->shape[1]!=representative->shape[1])){

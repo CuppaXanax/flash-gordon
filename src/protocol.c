@@ -914,7 +914,7 @@ fg_status fg_partition_route(const fg_manifest *m,uint32_t layer,const uint16_t 
         if(ri==*route_count){if(*route_count>=FG_GROUP_SIZE){fg_error_set(err,FG_ERR_LIMIT,"route exceeds layer group");return FG_ERR_LIMIT;}routes[ri].destination_rank=(uint8_t)rank;(*route_count)++;}
         fg_expert_route *route=&routes[ri];uint32_t j=route->selected_count;if(j>=FG_TOP_K){fg_error_set(err,FG_ERR_LIMIT,"too many destination routes");return FG_ERR_LIMIT;}
         uint32_t local=0;for(uint32_t e=0;e<expert;e++)if(m->expert_rank[layer][e]==rank)local++;
-        if(local>=FG_EXPERTS_PER_RANK){fg_error_set(err,FG_ERR_MISMATCH,"expert %u local index exceeds rank shard",expert);return FG_ERR_MISMATCH;}
+        if(local>=FG_EXPERT_COUNT){fg_error_set(err,FG_ERR_MISMATCH,"expert %u local index exceeds rank shard",expert);return FG_ERR_MISMATCH;}
         route->global_expert_ids[j]=(uint16_t)expert;route->local_expert_ids[j]=(uint16_t)local;route->routing_slots[j]=(uint8_t)slot;route->gates[j]=gates[slot];route->selected_count++;
     }
     return FG_OK;

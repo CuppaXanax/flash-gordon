@@ -223,9 +223,11 @@ static fg_status pack_common(const fg_gguf_tensor *t,FILE *src,fg_manifest *m,
 static fg_status pack_expert_tensor(const fg_gguf *g,const fg_gguf_tensor *t,FILE *src,fg_manifest *m,pack_output rank[FG_RANK_COUNT],fg_error *err){
     (void)g;int layer=fg_gguf_tensor_layer(t->name);if(layer<0||t->shape[t->dims-1]!=FG_EXPERT_COUNT||t->bytes%FG_EXPERT_COUNT){fg_error_set(err,FG_ERR_FORMAT,"routed tensor %s is not a 512-expert layer tensor",t->name);return FG_ERR_FORMAT;}uint64_t expert_bytes=t->bytes/FG_EXPERT_COUNT;fg_tensor_layout layout=expert_layout(t);
 
-    for(uint32_t gi=0;gi<FG_GROUP_SIZE;gi++){uint32_t r=m->layer_groups[layer][gi];pack_output *out=&rank[r];uint64_t start=fg_align_up_u64(out->offset,FG_ALIGNMENT);fg_status rc=pad_to(out,start,err);if(rc!=FG_OK)return rc;fg_sha256 hash;fg_sha256_init(&hash);uint32_t copied=0;
+    uint16_t processed=0u;
+    for(uint32_t gi=0;gi<FG_GROUP_SIZE;gi++){uint32_t r=m->layer_groups[layer][gi];if(processed&(1u<<r))continue;processed|=(uint16_t)(1u<<r);pack_output *out=&rank[r];uint64_t start=fg_align_up_u64(out->offset,FG_ALIGNMENT);fg_status rc=pad_to(out,start,err);if(rc!=FG_OK)return rc;fg_sha256 hash;fg_sha256_init(&hash);uint32_t copied=0;
         for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)if(m->expert_rank[layer][e]==r){uint64_t offset=t->offset+(uint64_t)e*expert_bytes;rc=layout==FG_TENSOR_LAYOUT_GGML?copy_range(src,offset,expert_bytes,out,&hash,err):process_cooked_expert(src,t,offset,expert_bytes,layout,out,&hash,err);if(rc!=FG_OK)return rc;copied++;}
-        if(copied!=FG_EXPERTS_PER_RANK){fg_error_set(err,FG_ERR_FORMAT,"layer %d rank %u selected %u experts",layer,r,copied);return FG_ERR_FORMAT;}char name[FG_TENSOR_NAME_MAX];snprintf(name,sizeof(name),"%.80s.rank%u",t->name,r);rc=record_segment(m,t,name,start,expert_bytes*copied,r,(uint32_t)layer,UINT32_MAX,FG_TENSOR_ROUTED_EXPERT,layout,FG_EXPERTS_PER_RANK,&hash,err);if(rc!=FG_OK)return rc;
+        uint32_t expected=fg_topology_layer_rank_experts(m,(uint32_t)layer,r);
+        if(copied!=expected){fg_error_set(err,FG_ERR_FORMAT,"layer %d rank %u selected %u experts",layer,r,copied);return FG_ERR_FORMAT;}char name[FG_TENSOR_NAME_MAX];snprintf(name,sizeof(name),"%.80s.rank%u",t->name,r);rc=record_segment(m,t,name,start,expert_bytes*copied,r,(uint32_t)layer,UINT32_MAX,FG_TENSOR_ROUTED_EXPERT,layout,expected,&hash,err);if(rc!=FG_OK)return rc;
     }return FG_OK;
 }
 
@@ -602,7 +604,6 @@ fg_status fg_pack_verify(const fg_verify_options *o,fg_error *err){
 
         char gguf_name[FG_TENSOR_NAME_MAX];
         uint32_t rank=t->rank;
-        uint32_t local_experts=FG_EXPERTS_PER_RANK;
 
             const char *rank_suffix=strstr(t->name,".rank");
             if(!rank_suffix){printf("  FAIL expert %.80s: cannot parse rank suffix\n",t->name);efail++;continue;}
@@ -613,6 +614,8 @@ fg_status fg_pack_verify(const fg_verify_options *o,fg_error *err){
 
         int layer=fg_gguf_tensor_layer(gguf_name);
         if(layer<0||rank>=FG_RANK_COUNT){printf("  FAIL expert %.80s: bad layer/rank\n",t->name);efail++;continue;}
+        uint32_t local_experts=fg_topology_layer_rank_experts(m,(uint32_t)layer,rank);
+        if(!local_experts){printf("  FAIL expert %.80s: rank is not an owner in the sealed topology\n",t->name);efail++;continue;}
 
         const fg_gguf_tensor *gt=find_gguf_tensor(&g,gguf_name);
         if(!gt){printf("  FAIL expert %.80s: GGUF tensor %s not found\n",t->name,gguf_name);efail++;continue;}

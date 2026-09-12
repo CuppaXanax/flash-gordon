@@ -112,7 +112,7 @@ static fg_status expert_binding(fg_expert_executor *executor,uint32_t layer,
     *weight=fg_model_tensor(executor->model,name);
     *record=fg_model_tensor_record(executor->model,name);
     *local_count=fg_expert_local_count(manifest,layer,rank);
-    uint32_t expected=FG_EXPERTS_PER_RANK;
+    uint32_t expected=*local_count;
     if(!*weight||!*record||*local_count!=expected||
        (*record)->dims!=3u||(*record)->shape[2]!=*local_count||
        (*record)->bytes%*local_count||

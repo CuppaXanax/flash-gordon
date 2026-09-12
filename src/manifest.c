@@ -345,7 +345,8 @@ fg_status fg_manifest_validate(const fg_manifest *manifest,fg_error *err){
                 return FG_ERR_FORMAT;
             }
         }
-        uint32_t shard_experts=FG_EXPERTS_PER_RANK;
+        uint32_t shard_experts=(tensor->layer<FG_LAYER_COUNT&&tensor->rank<FG_RANK_COUNT)?
+            fg_topology_layer_rank_experts(manifest,tensor->layer,tensor->rank):0u;
 
         if(tensor->layout==FG_TENSOR_LAYOUT_K_QUANT_EXPERT_COOKED){
             uint64_t matrix=tensor->shape[0]<=UINT32_MAX&&tensor->shape[1]<=UINT32_MAX?

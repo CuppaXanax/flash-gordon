@@ -68,6 +68,24 @@ bool fg_topology_rank_in_layer(const fg_manifest *m,uint32_t layer,uint32_t rank
     return false;
 }
 
+uint32_t fg_topology_layer_rank_experts(const fg_manifest *m,uint32_t layer,uint32_t rank){
+    if(!m||layer>=FG_LAYER_COUNT||rank>=FG_RANK_COUNT)return 0u;
+    uint32_t count=0u;
+    for(uint32_t expert=0;expert<FG_EXPERT_COUNT;expert++)
+        if(m->expert_rank[layer][expert]==rank)count++;
+    return count;
+}
+
+static uint32_t layer_distinct_ranks(const fg_manifest *m,uint32_t layer,uint32_t out[FG_GROUP_SIZE]){
+    uint32_t count=0u;
+    for(uint32_t g=0;g<FG_GROUP_SIZE;g++){
+        uint32_t rank=m->layer_groups[layer][g];bool seen=false;
+        for(uint32_t i=0;i<count;i++)if(out[i]==rank)seen=true;
+        if(!seen)out[count++]=rank;
+    }
+    return count;
+}
+
 fg_status fg_topology_assign_round_robin(fg_manifest *m,fg_error *err){
     (void)err;
     for(uint32_t l=0;l<FG_LAYER_COUNT;l++)for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)
@@ -100,15 +118,25 @@ fg_status fg_topology_assign_profile(fg_manifest *m,const double frequency[FG_LA
 fg_status fg_topology_assign_map(fg_manifest *m,const uint16_t expert_rank[FG_LAYER_COUNT][FG_EXPERT_COUNT],fg_error *err){
     if(!m||!expert_rank){fg_error_set(err,FG_ERR_ARGUMENT,"expert map is null");return FG_ERR_ARGUMENT;}
     for(uint32_t l=0;l<FG_LAYER_COUNT;l++){
-        uint16_t count[FG_RANK_COUNT]={0};
+        uint16_t count[FG_RANK_COUNT]={0};uint32_t distinct[FG_GROUP_SIZE];uint32_t participants=0u;
         for(uint32_t e=0;e<FG_EXPERT_COUNT;e++){
             uint32_t rank=expert_rank[l][e];
-            if(rank>=FG_RANK_COUNT||!fg_topology_rank_in_layer(m,l,rank)){fg_error_set(err,FG_ERR_FORMAT,"layer %u expert %u assigned to rank %u outside its group",l,e,rank);return FG_ERR_FORMAT;}
+            if(rank>=FG_RANK_COUNT){fg_error_set(err,FG_ERR_FORMAT,"layer %u expert %u assigned to rank %u outside the fleet",l,e,rank);return FG_ERR_FORMAT;}
+            if(!count[rank])distinct[participants++]=rank;
             count[rank]++;
         }
-        for(uint32_t g=0;g<FG_GROUP_SIZE;g++){
-            uint32_t rank=m->layer_groups[l][g];
-            if(count[rank]!=FG_EXPERTS_PER_RANK){fg_error_set(err,FG_ERR_FORMAT,"layer %u rank %u owns %u experts, expected %u",l,rank,count[rank],FG_EXPERTS_PER_RANK);return FG_ERR_FORMAT;}
+        if(participants==1u){
+            uint32_t rank=distinct[0];
+            if(count[rank]!=FG_EXPERT_COUNT){fg_error_set(err,FG_ERR_FORMAT,"layer %u rank %u owns %u experts, expected %u",l,rank,count[rank],FG_EXPERT_COUNT);return FG_ERR_FORMAT;}
+            for(uint32_t g=0;g<FG_GROUP_SIZE;g++)m->layer_groups[l][g]=(uint8_t)rank;
+        }else{
+            if(participants!=FG_GROUP_SIZE){fg_error_set(err,FG_ERR_FORMAT,"layer %u spans %u ranks, expected %u or a single owner",l,participants,FG_GROUP_SIZE);return FG_ERR_FORMAT;}
+            for(uint32_t i=0;i<participants;i++)
+                if(!fg_topology_rank_in_layer(m,l,distinct[i])){fg_error_set(err,FG_ERR_FORMAT,"layer %u expert assigned to rank %u outside its group",l,distinct[i]);return FG_ERR_FORMAT;}
+            for(uint32_t g=0;g<FG_GROUP_SIZE;g++){
+                uint32_t rank=m->layer_groups[l][g];
+                if(count[rank]!=FG_EXPERTS_PER_RANK){fg_error_set(err,FG_ERR_FORMAT,"layer %u rank %u owns %u experts, expected %u",l,rank,count[rank],FG_EXPERTS_PER_RANK);return FG_ERR_FORMAT;}
+            }
         }
     }
     memcpy(m->expert_rank,expert_rank,sizeof(m->expert_rank));
@@ -147,7 +175,22 @@ fg_status fg_topology_validate(const fg_manifest *m,fg_error *err){
             fg_error_set(err,FG_ERR_FORMAT,"layer %u owner mismatch",layer);
             return FG_ERR_FORMAT;
         }
-        uint16_t counts[FG_RANK_COUNT]={0};uint16_t groups=0u;
+        uint32_t distinct[FG_GROUP_SIZE];uint32_t participants=layer_distinct_ranks(m,layer,distinct);
+        uint16_t counts[FG_RANK_COUNT]={0};
+        if(participants==1u){
+            uint32_t rank=distinct[0];
+            if(rank>=FG_RANK_COUNT){
+                fg_error_set(err,FG_ERR_FORMAT,"layer %u group topology mismatch",layer);
+                return FG_ERR_FORMAT;
+            }
+            for(uint32_t expert=0;expert<FG_EXPERT_COUNT;expert++)
+                if(m->expert_rank[layer][expert]!=rank){
+                    fg_error_set(err,FG_ERR_FORMAT,"layer %u expert %u assigned outside its single owner",layer,expert);
+                    return FG_ERR_FORMAT;
+                }
+            continue;
+        }
+        uint16_t groups=0u;
         for(uint32_t group=0;group<FG_GROUP_SIZE;group++){
             uint32_t rank=m->layer_groups[layer][group];
             uint32_t expected=(layer+ep_delta[group])%FG_RANK_COUNT;
