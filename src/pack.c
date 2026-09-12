@@ -184,7 +184,7 @@ static fg_status process_cooked_expert(FILE *source,const fg_gguf_tensor *tensor
 static uint32_t common_owner(const fg_manifest *m,const fg_gguf_tensor *tensor,int layer){
 
     if(layer>=0)return m->layer_owner[layer];
-    if(strcmp(tensor->name,"token_embd.weight")==0)return 0u;
+    if(strcmp(tensor->name,"token_embd.weight")==0)return FG_RANK_COUNT-1u;
     if(strcmp(tensor->name,"output.weight")==0||
        strncmp(tensor->name,"output_hc_",10u)==0)return 4u;
     return 0u;

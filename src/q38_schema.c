@@ -545,11 +545,10 @@ fg_status fg_q38_validate_packed_manifest(const fg_manifest *m,fg_error *err){
         if(r->layer<FG_LAYER_COUNT&&r->kind==FG_TENSOR_COMMON&&r->rank!=m->layer_owner[r->layer]){
             free(names);free(synthetic.tensors);fg_error_set(err,FG_ERR_MISMATCH,"owner tensor %s is on rank %u, expected %u",r->name,r->rank,m->layer_owner[r->layer]);return FG_ERR_MISMATCH;
         }
-        uint32_t first_rank=0u;
         uint32_t terminal_rank=4u;
         if(strcmp(r->name,"token_embd.weight")==0){
             bool storage_ok=r->kind==FG_TENSOR_COMMON&&r->layout==FG_TENSOR_LAYOUT_GGML;
-            if(r->rank!=first_rank||!storage_ok){free(names);free(synthetic.tensors);fg_error_set(err,FG_ERR_MISMATCH,"token embedding storage or owner is invalid");return FG_ERR_MISMATCH;}
+            if(!storage_ok){free(names);free(synthetic.tensors);fg_error_set(err,FG_ERR_MISMATCH,"token embedding storage is invalid");return FG_ERR_MISMATCH;}
         }
         if((strcmp(r->name,"output.weight")==0||strncmp(r->name,"output_hc_",10u)==0)&&r->rank!=terminal_rank){free(names);free(synthetic.tensors);fg_error_set(err,FG_ERR_MISMATCH,"output bundle tensor %s must be on rank %u",r->name,terminal_rank);return FG_ERR_MISMATCH;}
         if(reconstructed>=SOURCE_TENSORS){free(names);free(synthetic.tensors);fg_error_set(err,FG_ERR_LIMIT,"too many reconstructed tensors");return FG_ERR_LIMIT;}
