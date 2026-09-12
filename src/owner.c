@@ -33,7 +33,7 @@ _Static_assert(FG_Q38_PREFILL_TILE_WORDS==FG_VK_PREFILL_TILE_WORDS,
  * that many frames can be in flight one layer apart.  Only the state consumed
  * after the routed fire is duplicated: the front-half transients are dead for
  * a frame once its begin returns. */
-#define FG_OWNER_SLOT_COUNT 3u
+#define FG_OWNER_SLOT_COUNT 4u
 typedef struct fg_owner_pending_write {bool active;uint32_t layer,token;const fg_vk_tensor *hyper,*block,*injection;fg_vk_tensor *output;} fg_owner_pending_write;
 
 typedef struct fg_owner_prefill_slot {

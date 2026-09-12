@@ -1272,7 +1272,7 @@ static fg_status qsa_page_transport_ensure(qsa_page_transport *transport,fg_erro
     return status;
 }
 
-#define FG_PREFILL_FRAMES 3u
+#define FG_PREFILL_FRAMES 4u
 typedef struct fg_coordinator {const fg_manifest *manifest;fg_runtime_options options;fg_session_identity identity;fg_model *model;fg_expert_executor *expert;fg_owner_executor *owner;fg_fabric *fabric;fg_ngram_store *ngram;fg_tokenizer *tokenizer;prefill_worker_buffers prefill_expert[FG_PREFILL_FRAMES];prefill_layer_buffers prefill_layer[FG_PREFILL_FRAMES];qsa_page_transport qsa_pages;uint64_t session_id;uint8_t *async_recv_payloads[FG_GROUP_SIZE];const char *directory;atomic_uint transport_state;fg_sampler_config sampler;fg_sampler_state sampler_state;} fg_coordinator;
 
 static uint64_t coordinator_prefill_host_bytes(const prefill_worker_buffers *buffers){
