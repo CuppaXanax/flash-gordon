@@ -60,6 +60,60 @@ done:fg_vk_tensor_destroy(candidate);fg_vk_tensor_destroy(generic);fg_vk_tensor_
 
 static int test_q8_cooked_benchmark(void){if(!getenv("FG_BENCH_Q8_COOKED"))return 1;struct{uint32_t input,output,iterations;const char *name;}shapes[]={{2560u,FG_Q38_VOCAB_SIZE,3u,"output_vocab"},{10240u,320u,12u,"hc_down"},{320u,10240u,12u,"hc_up"},{2560u,12288u,12u,"qsa_qg"},{2560u,10240u,12u,"gdn_qkv_ple"},{2560u,6144u,12u,"gdn_z"},{2560u,2560u,16u,"ple_value"},{6144u,2560u,16u,"attention_out"},{640u,2560u,20u,"shared_down"},{2560u,640u,20u,"shared_gate"},{2560u,512u,20u,"qsa_kv"}};int ok=1;for(uint32_t i=0;ok&&i<sizeof(shapes)/sizeof(shapes[0]);i++)ok=bench_q8_cooked_shape(shapes[i].input,shapes[i].output,shapes[i].iterations,shapes[i].name);return ok;}
 
+static int test_q8_cooked_prefill_parity(void){
+    enum{INPUT=320,OUTPUT=320,TOKENS=33};
+    uint32_t blocks=INPUT/32u,source_row=blocks*FG_Q8_0_BLOCK_BYTES;
+    uint64_t source_bytes=(uint64_t)OUTPUT*source_row,cooked_bytes=fg_q8_0_cooked_matrix_bytes(INPUT,OUTPUT);
+    uint8_t *source=malloc((size_t)source_bytes),*cooked=malloc((size_t)cooked_bytes);
+    float *input=malloc((size_t)INPUT*TOKENS*4u),*candidate=malloc((size_t)OUTPUT*TOKENS*4u),*reference=malloc((size_t)OUTPUT*4u);
+    if(!source||!cooked||!input||!candidate||!reference){free(reference);free(candidate);free(input);free(cooked);free(source);return 0;}
+    for(uint32_t row=0;row<OUTPUT;row++)for(uint32_t block=0;block<blocks;block++){uint8_t *value=source+((uint64_t)row*blocks+block)*FG_Q8_0_BLOCK_BYTES;uint16_t delta=fg_f32_to_f16(0.001f+(float)((row+block)%7u)*0.0001f);memcpy(value,&delta,sizeof(delta));for(uint32_t i=0;i<FG_QK8_0;i++)value[2u+i]=(uint8_t)(row*13u+block*31u+i*7u);}
+    for(uint32_t i=0;i<INPUT*TOKENS;i++)input[i]=sinf((float)(i+3u)*0.013f)+0.1f*cosf((float)i*0.007f);
+    int ok=fg_cook_q8_0_rows(source,cooked,cooked_bytes,INPUT,OUTPUT);
+    fg_vk_tensor *w=ok?tensor(cooked,cooked_bytes):NULL,*x=ok?tensor(input,(uint64_t)INPUT*TOKENS*4u):NULL,*y=ok?tensor(NULL,(uint64_t)OUTPUT*TOKENS*4u):NULL,*x1=tensor(NULL,(uint64_t)INPUT*4u),*y1=tensor(NULL,(uint64_t)OUTPUT*4u);
+    if(w)fg_vk_tensor_set_format(w,FG_VK_TENSOR_FORMAT_Q8_0_COOKED);
+    ok=ok&&w&&x&&y&&x1&&y1;
+    if(ok)ok=fg_vk_dense_q8_0_cooked_prefill(context,y,w,x,INPUT,OUTPUT,TOKENS,1.0f,&error)==FG_OK&&fg_vk_tensor_read(y,0,candidate,(uint64_t)OUTPUT*TOKENS*4u,&error)==FG_OK;
+    for(uint32_t token=0;ok&&token<TOKENS;token++){
+        ok=fg_vk_tensor_write(x1,0,input+(uint64_t)token*INPUT,(uint64_t)INPUT*4u,&error)==FG_OK&&fg_vk_dense_q8_0_f32(context,y1,w,x1,INPUT,OUTPUT,1u,1.0f,&error)==FG_OK&&fg_vk_tensor_read(y1,0,reference,(uint64_t)OUTPUT*4u,&error)==FG_OK;
+        for(uint32_t row=0;ok&&row<OUTPUT;row++){double difference=fabs((double)candidate[(uint64_t)token*OUTPUT+row]-(double)reference[row]),relative=difference/fmax(1.0,fabs((double)reference[row]));if(relative>2e-4){fprintf(stderr,"prefill cooked parity token=%u row=%u GPU=%g ref=%g\n",token,row,candidate[(uint64_t)token*OUTPUT+row],reference[row]);ok=0;break;}}
+    }
+    fg_vk_tensor_destroy(y1);fg_vk_tensor_destroy(x1);fg_vk_tensor_destroy(y);fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);
+    free(reference);free(candidate);free(input);free(cooked);free(source);return ok;
+}
+
+static int bench_prefill_shape(uint32_t input_width,uint32_t output_width,uint32_t tokens,uint32_t iterations,const char *name){
+    uint32_t blocks=input_width/32u;
+    uint64_t source_bytes=(uint64_t)output_width*blocks*FG_Q8_0_BLOCK_BYTES,cooked_bytes=fg_q8_0_cooked_matrix_bytes(input_width,output_width);
+    uint8_t *source=malloc((size_t)source_bytes),*cooked=malloc((size_t)cooked_bytes);
+    if(!source||!cooked){free(cooked);free(source);return 0;}
+    memset(source,1,(size_t)source_bytes);
+    for(uint32_t row=0;row<output_width;row++)for(uint32_t block=0;block<blocks;block++){uint16_t delta=fg_f32_to_f16(0.001f+(float)((row+block)%7u)*0.0001f);memcpy(source+((uint64_t)row*blocks+block)*FG_Q8_0_BLOCK_BYTES,&delta,sizeof(delta));}
+    int ok=fg_cook_q8_0_rows(source,cooked,cooked_bytes,input_width,output_width);
+    fg_vk_tensor *w=ok?tensor(cooked,cooked_bytes):NULL,*x=ok?tensor(NULL,(uint64_t)input_width*tokens*4u):NULL,*y=ok?tensor(NULL,(uint64_t)output_width*tokens*4u):NULL;
+    if(w)fg_vk_tensor_set_format(w,FG_VK_TENSOR_FORMAT_Q8_0_COOKED);
+    ok=ok&&w&&x&&y;
+    fg_vk_profile profile={0};
+    if(ok)ok=fg_vk_profile_begin(context,&error)==FG_OK&&fg_vk_begin(context,&error)==FG_OK;
+    for(uint32_t i=0;ok&&i<iterations;i++)ok=fg_vk_dense_q8_0_cooked_prefill(context,y,w,x,input_width,output_width,tokens,1.0f,&error)==FG_OK;
+    if(ok)ok=fg_vk_end(context,&error)==FG_OK&&fg_vk_profile_end(context,&profile,&error)==FG_OK;
+    if(ok){double gpu_ms=profile.kernel_ms/(double)iterations;fprintf(stderr,"PREFILL_SWEEP shape=%s in=%u out=%u tokens=%u iterations=%u gpu_us=%.3f us_per_token=%.3f tflops=%.3f\n",name,input_width,output_width,tokens,iterations,gpu_ms*1000.0,gpu_ms*1000.0/(double)tokens,2.0*(double)input_width*(double)output_width*(double)tokens/(gpu_ms*1e9));}
+    else fprintf(stderr,"PREFILL_SWEEP shape=%s in=%u out=%u tokens=%u failed: %s\n",name,input_width,output_width,tokens,error.message);
+    fg_vk_tensor_destroy(y);fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);free(cooked);free(source);return ok;
+}
+
+static int test_q8_cooked_prefill_sweep(void){
+    if(!getenv("FG_BENCH_PREFILL_SHAPES"))return 1;
+    static const struct{uint32_t input,output;const char *name;}shapes[]={{2560u,10240u,"gdn_qkv_ple"},{2560u,6144u,"gdn_z"},{2560u,12288u,"qsa_qg"},{2560u,2560u,"ple_value"},{6144u,2560u,"attention_out"},{640u,2560u,"shared_down"},{2560u,640u,"shared_gate"},{2560u,512u,"qsa_kv"},{10240u,320u,"hc_down"}};
+    static const uint32_t token_counts[]={16u,32u,64u,96u,128u,192u,256u};
+    int ok=1;
+    for(uint32_t i=0;ok&&i<sizeof(shapes)/sizeof(shapes[0]);i++){
+        uint32_t iterations=shapes[i].output>=6144u?4u:8u;
+        for(uint32_t t=0;ok&&t<sizeof(token_counts)/sizeof(token_counts[0]);t++)ok=bench_prefill_shape(shapes[i].input,shapes[i].output,token_counts[t],iterations,shapes[i].name);
+    }
+    return ok;
+}
+
 static int test_q8_embedding(void){
     enum{ROWS=3,WIDTH=2560,COPIES=4};
     const uint64_t row_bytes=(uint64_t)(WIDTH/32u)*FG_Q8_0_BLOCK_BYTES;
@@ -2221,6 +2275,8 @@ ok=run_test("q8_dense_subgroup",test_q8_dense_subgroup)&&ok;
 ok=run_test("q8_dense_cooked",test_q8_dense_cooked)&&ok;
 ok=run_test("q8_subgroup_benchmark",test_q8_subgroup_benchmark)&&ok;
 ok=run_test("q8_cooked_benchmark",test_q8_cooked_benchmark)&&ok;
+ok=run_test("q8_cooked_prefill_parity",test_q8_cooked_prefill_parity)&&ok;
+ok=run_test("q8_cooked_prefill_sweep",test_q8_cooked_prefill_sweep)&&ok;
 ok=run_test("q8_embedding",test_q8_embedding)&&ok;
 ok=run_test("hc_finalize",test_hc_finalize)&&ok;
 ok=run_test("q8_k_quant",test_q8_k_quant)&&ok;

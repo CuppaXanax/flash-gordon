@@ -27,12 +27,14 @@ void main() {
     uint tid = gl_LocalInvocationID.x;
     uint row0 = gl_WorkGroupID.x * ROWS;
     uint token0 = gl_WorkGroupID.y * TOKEN_TILE;
-    uint token_lane = tid & 31u;
-    uint row_lane = tid >> 5u;
+    uint token_group = tid & 15u;
+    uint row_group = tid >> 4u;
     uint in_dim = pc.blocks * K_TILE;
     uint quant_offset = (ROW_TILE * pc.blocks * 2u + 63u) & ~63u;
-    float sum[8];
-    for (uint i = 0u; i < 8u; i++) sum[i] = 0.0;
+    float sum[4][2];
+    for (uint i = 0u; i < 4u; i++)
+        for (uint j = 0u; j < 2u; j++)
+            sum[i][j] = 0.0;
 
     for (uint block = 0u; block < pc.blocks; block++) {
         uint staged_row = tid >> 2u;
@@ -78,18 +80,31 @@ void main() {
         barrier();
 
         for (uint k = 0u; k < K_TILE; k++) {
-            float value = inputs[k][token_lane];
-            for (uint i = 0u; i < 8u; i++)
-                sum[i] = fma(weights[k][row_lane + 8u * i], value, sum[i]);
+            float v0 = inputs[k][token_group];
+            float v1 = inputs[k][token_group + 16u];
+            float w0 = weights[k][row_group];
+            float w1 = weights[k][row_group + 16u];
+            float w2 = weights[k][row_group + 32u];
+            float w3 = weights[k][row_group + 48u];
+            sum[0][0] = fma(w0, v0, sum[0][0]);
+            sum[0][1] = fma(w0, v1, sum[0][1]);
+            sum[1][0] = fma(w1, v0, sum[1][0]);
+            sum[1][1] = fma(w1, v1, sum[1][1]);
+            sum[2][0] = fma(w2, v0, sum[2][0]);
+            sum[2][1] = fma(w2, v1, sum[2][1]);
+            sum[3][0] = fma(w3, v0, sum[3][0]);
+            sum[3][1] = fma(w3, v1, sum[3][1]);
         }
         barrier();
     }
 
-    uint token = token0 + token_lane;
-    if (token >= pc.tokens) return;
-    for (uint i = 0u; i < 8u; i++) {
-        uint row = row0 + row_lane + 8u * i;
-        if (row < pc.out_dim)
-            y[token * pc.out_dim + row] = sum[i] * pc.scale;
+    for (uint i = 0u; i < 4u; i++) {
+        uint row = row0 + row_group + 16u * i;
+        if (row >= pc.out_dim) continue;
+        for (uint j = 0u; j < 2u; j++) {
+            uint token = token0 + token_group + 16u * j;
+            if (token < pc.tokens)
+                y[token * pc.out_dim + row] = sum[i][j] * pc.scale;
+        }
     }
 }
