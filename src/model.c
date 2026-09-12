@@ -121,6 +121,11 @@ static fg_status model_open_replicated(fg_model **out,const fg_manifest *manifes
     if(!cursor&&!expert_cursor){free(included);free(remap);fg_error_set(err,FG_ERR_MISMATCH,"replicated layout produced an empty arena");return FG_ERR_MISMATCH;}
     {uint32_t probe_count=0;for(uint32_t i=0;i<manifest->tensor_count;i++)if(included[i])probe_count++;
      fprintf(stderr,"REPLICATED_PROBE shared=%llu experts=%llu included=%u rank=%u\n",(unsigned long long)cursor,(unsigned long long)expert_cursor,probe_count,rank);}
+    {uint64_t layer_experts[FG_LAYER_COUNT]={0};
+     for(uint32_t i=0;i<manifest->tensor_count;i++){const fg_tensor_record *t=&manifest->tensors[i];if(t->kind==FG_TENSOR_ROUTED_EXPERT&&t->layer<FG_LAYER_COUNT)layer_experts[t->layer]+=fg_align_up_u64(t->bytes,FG_ALIGNMENT);}
+     fprintf(stderr,"EXPERT_LAYER_SUMS");
+     for(uint32_t l=0;l<FG_LAYER_COUNT;l++)fprintf(stderr," %u:%llu",l,(unsigned long long)layer_experts[l]);
+     fprintf(stderr,"\n");}
     /* Phase 2: allocate model + arena */
     fg_model *model=calloc(1,sizeof(*model));if(!model){free(included);free(remap);fg_error_set(err,FG_ERR_OOM,"allocate replicated model");return FG_ERR_OOM;}
     model->manifest=manifest;model->rank=rank;model->weight_bytes=cursor+expert_cursor;
