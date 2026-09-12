@@ -20,6 +20,7 @@ fg_status fg_qsa_submit_host_reads(fg_vk_context *vk,fg_error *err);
 #define FG_QSA_TOPK_CANDIDATES 512u
 #define FG_QSA_SELECTED_TOKENS (FG_Q38_INDEX_BUDGET+FG_Q38_QSA_COMPRESS_RATIO-1u)
 #define FG_QSA_PREFILL_QUERY_TILE 4u
+#define FG_QSA_ATTENTION_SPLITS 8u
 /* Selected records live beside projections and residual inputs in the shared
  * attention arena. Scale the query tile with its sealed microbatch capacity. */
 static inline uint32_t fg_qsa_query_tile_size(uint32_t batch_size){

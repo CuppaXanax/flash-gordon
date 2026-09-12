@@ -291,6 +291,12 @@ fg_status fg_vk_qsa_record_gather(fg_vk_context *context,fg_vk_tensor *output,
 fg_status fg_vk_qsa_attention(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *records,
                               const fg_vk_tensor *query,const fg_vk_tensor *gate,
                               uint32_t selected_count,fg_error *err);
+fg_status fg_vk_qsa_attention_split(fg_vk_context *context,fg_vk_tensor *partials,
+                                    const fg_vk_tensor *records,const fg_vk_tensor *query,
+                                    uint32_t selected_count,uint32_t splits,fg_error *err);
+fg_status fg_vk_qsa_attention_merge(fg_vk_context *context,fg_vk_tensor *output,
+                                    const fg_vk_tensor *partials,const fg_vk_tensor *gate,
+                                    uint32_t splits,fg_error *err);
 fg_status fg_vk_qsa_resident_record_commit(
     fg_vk_context *context,fg_vk_tensor *record_segment_0,
     fg_vk_tensor *record_segment_1,fg_vk_tensor *index_segment_0,

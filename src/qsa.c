@@ -34,6 +34,7 @@ struct fg_qsa_session {
     fg_vk_tensor *tile_scores[FG_QSA_PREFILL_QUERY_TILE][2];
     fg_vk_tensor *tile_ids[FG_QSA_PREFILL_QUERY_TILE][2];
     fg_vk_tensor *tile_records[FG_QSA_PREFILL_QUERY_TILE];
+    fg_vk_tensor *attn_partials;
     fg_vk_tensor *position_view,*token_position_view,*index_query_view,*query_view,*gate_view;
     fg_vk_tensor *attention_view,*key_q8_view,*value_q4_view,*index_key_q8_view;
     uint8_t *read_records;
@@ -501,6 +502,7 @@ static fg_status open_decode_config(fg_qsa_session **out,fg_model *model,const c
     if(status==FG_OK)status=create_reusable_views(s,err);
     if(status==FG_OK&&state_path)status=ensure_read_records(s,err);
     if(status==FG_OK)status=create_tile_views(s,batch_size,err);
+    if(status==FG_OK)status=make_tensor(s,(uint64_t)FG_QSA_ATTENTION_SPLITS*24u*258u*4u,&s->attn_partials,err);
     fg_vk_memory_stats memory_stats={0};fg_vk_get_memory_stats(fg_model_vk(model),&memory_stats);
     fprintf(stderr,"[rank %u] QSA decode session: %u logical, %u cache pages, %u layers, "
                    "%.1f MiB index, %.1f MiB record cache\n",rank,logical_context,
@@ -561,7 +563,7 @@ fg_status fg_qsa_session_open_mirror_with_scratch(
                               scratch,fetch_pages,fetch_opaque,err);
 }
 
-void fg_qsa_session_close(fg_qsa_session *s){if(!s)return;for(uint32_t q=0;q<FG_QSA_PREFILL_QUERY_TILE;q++){fg_vk_tensor_destroy(s->tile_records[q]);for(uint32_t side=0;side<2u;side++){fg_vk_tensor_destroy(s->tile_scores[q][side]);fg_vk_tensor_destroy(s->tile_ids[q][side]);}}fg_qsa_locality_destroy(s->locality,"close");fg_qsa_page_cache_destroy(s->cache);free(s->read_records);fg_vk_tensor_destroy(s->index_key_q8_view);fg_vk_tensor_destroy(s->value_q4_view);fg_vk_tensor_destroy(s->key_q8_view);fg_vk_tensor_destroy(s->attention_view);fg_vk_tensor_destroy(s->gate_view);fg_vk_tensor_destroy(s->query_view);fg_vk_tensor_destroy(s->index_query_view);fg_vk_tensor_destroy(s->token_position_view);fg_vk_tensor_destroy(s->position_view);fg_vk_tensor_destroy(s->output);fg_vk_tensor_destroy(s->attention);fg_vk_tensor_destroy(s->selected_records);for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(s->ids[i]);fg_vk_tensor_destroy(s->scores[i]);}fg_vk_tensor_destroy(s->index_key_q8);fg_vk_tensor_destroy(s->value_q4);fg_vk_tensor_destroy(s->key_q8);fg_vk_tensor_destroy(s->index_query);fg_vk_tensor_destroy(s->raw_index_key);fg_vk_tensor_destroy(s->raw_index_query);fg_vk_tensor_destroy(s->key);fg_vk_tensor_destroy(s->gate);fg_vk_tensor_destroy(s->query);fg_vk_tensor_destroy(s->raw_value);fg_vk_tensor_destroy(s->raw_key);fg_vk_tensor_destroy(s->raw_query_gate);for(uint32_t i=0;i<FG_QSA_MAX_LAYERS;i++)for(uint32_t segment=0;segment<FG_QSA_INDEX_MAX_SEGMENTS;segment++){fg_vk_tensor_destroy(s->records[i][segment]);fg_vk_tensor_destroy(s->index_keys[i][segment]);}fg_vk_tensor_destroy(s->cache_records);fg_vk_tensor_destroy(s->positions);fg_qsa_state_close(s->state);free(s);}
+void fg_qsa_session_close(fg_qsa_session *s){if(!s)return;fg_vk_tensor_destroy(s->attn_partials);for(uint32_t q=0;q<FG_QSA_PREFILL_QUERY_TILE;q++){fg_vk_tensor_destroy(s->tile_records[q]);for(uint32_t side=0;side<2u;side++){fg_vk_tensor_destroy(s->tile_scores[q][side]);fg_vk_tensor_destroy(s->tile_ids[q][side]);}}fg_qsa_locality_destroy(s->locality,"close");fg_qsa_page_cache_destroy(s->cache);free(s->read_records);fg_vk_tensor_destroy(s->index_key_q8_view);fg_vk_tensor_destroy(s->value_q4_view);fg_vk_tensor_destroy(s->key_q8_view);fg_vk_tensor_destroy(s->attention_view);fg_vk_tensor_destroy(s->gate_view);fg_vk_tensor_destroy(s->query_view);fg_vk_tensor_destroy(s->index_query_view);fg_vk_tensor_destroy(s->token_position_view);fg_vk_tensor_destroy(s->position_view);fg_vk_tensor_destroy(s->output);fg_vk_tensor_destroy(s->attention);fg_vk_tensor_destroy(s->selected_records);for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(s->ids[i]);fg_vk_tensor_destroy(s->scores[i]);}fg_vk_tensor_destroy(s->index_key_q8);fg_vk_tensor_destroy(s->value_q4);fg_vk_tensor_destroy(s->key_q8);fg_vk_tensor_destroy(s->index_query);fg_vk_tensor_destroy(s->raw_index_key);fg_vk_tensor_destroy(s->raw_index_query);fg_vk_tensor_destroy(s->key);fg_vk_tensor_destroy(s->gate);fg_vk_tensor_destroy(s->query);fg_vk_tensor_destroy(s->raw_value);fg_vk_tensor_destroy(s->raw_key);fg_vk_tensor_destroy(s->raw_query_gate);for(uint32_t i=0;i<FG_QSA_MAX_LAYERS;i++)for(uint32_t segment=0;segment<FG_QSA_INDEX_MAX_SEGMENTS;segment++){fg_vk_tensor_destroy(s->records[i][segment]);fg_vk_tensor_destroy(s->index_keys[i][segment]);}fg_vk_tensor_destroy(s->cache_records);fg_vk_tensor_destroy(s->positions);fg_qsa_state_close(s->state);free(s);}
 
 fg_status fg_qsa_session_reset(fg_qsa_session *s,fg_error *err){if(!s){fg_error_set(err,FG_ERR_ARGUMENT,"QSA session reset is null");return FG_ERR_ARGUMENT;}fg_qsa_locality_reset(s->locality,"reset");memset(s->committed,0,sizeof(s->committed));memset(s->partial,0,sizeof(s->partial));fg_qsa_page_cache_reset(s->cache);return s->state?fg_qsa_state_reset(s->state,err):FG_OK;}
 
@@ -990,8 +992,7 @@ static fg_status attend_prefill_tiles(fg_qsa_session *s,uint32_t slot,
             status=fg_vk_tensor_view_rebind(s->query_view,s->query,offset,6144u*4u,err);
             if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->gate_view,s->gate,offset,6144u*4u,err);
             if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->attention_view,s->attention,offset,6144u*4u,err);
-            if(status==FG_OK)status=fg_vk_qsa_attention(vk,s->attention_view,s->tile_records[q],
-                s->query_view,s->gate_view,counts[q]*4u+(first_token+first+q+1u)%4u,err);
+            if(status==FG_OK){uint32_t selected=counts[q]*4u+(first_token+first+q+1u)%4u;status=fg_vk_qsa_attention_split(vk,s->attn_partials,s->tile_records[q],s->query_view,selected,FG_QSA_ATTENTION_SPLITS,err);if(status==FG_OK)status=fg_vk_qsa_attention_merge(vk,s->attention_view,s->attn_partials,s->gate_view,FG_QSA_ATTENTION_SPLITS,err);}
         }
     }
     /* One fence per layer; the per-tile gathers and attentions share the batch
