@@ -1,5 +1,9 @@
 #version 460
-#extension GL_EXT_integer_dot_product : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_integer_dot_product : enable
+#ifdef GL_EXT_integer_dot_product
+#define FG_INTEGER_DOT 1
+#endif
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
@@ -27,7 +31,6 @@ const uint Q8K_WORDS = 74u;
 shared uint metadata[32];
 shared uint pair_ids[PAIR_TILE];
 shared float sums[PAIR_TILE][64];
-shared float minimum_sums[PAIR_TILE][64];
 
 uint metadata_byte(uint row_slot, uint offset) {
     uint word = metadata[row_slot * 4u + 1u + (offset >> 2u)];
@@ -52,19 +55,19 @@ int signed_half(uint packed, uint upper) {
     return value >= 32768u ? int(value) - 65536 : int(value);
 }
 
-uint quant_value(uint packed, uint high, uint group, uint item) {
-    uint byte_value = (packed >> (item * 8u)) & 255u;
-    uint low = (group & 1u) == 0u ? byte_value & 15u : byte_value >> 4u;
-    if (pc.type == Q4_K) return low;
-    uint high_byte = (high >> (item * 8u)) & 255u;
-    return low | (((high_byte >> group) & 1u) << 4u);
+uint packed_quant_word(uint packed, uint high, uint group) {
+    return ((packed >> ((group & 1u) * 4u)) & 0x0f0f0f0fu) |
+        (((high >> group) & 0x01010101u) << 4u);
 }
 
-uint packed_quant_word(uint packed, uint high, uint group) {
-    return quant_value(packed, high, group, 0u) |
-        (quant_value(packed, high, group, 1u) << 8u) |
-        (quant_value(packed, high, group, 2u) << 16u) |
-        (quant_value(packed, high, group, 3u) << 24u);
+int group_dot4(uint weight_word, uint activation_word) {
+#ifdef FG_INTEGER_DOT
+    return dotPacked4x8EXT(floatBitsToInt(uintBitsToFloat(weight_word)),
+                           floatBitsToInt(uintBitsToFloat(activation_word)));
+#else
+    return int(dot(vec4(unpack8(int(weight_word))),
+                   vec4(unpack8(int(activation_word)))));
+#endif
 }
 
 void main() {
@@ -80,11 +83,8 @@ void main() {
     uint tile_row = row & 7u;
     bool row_live = row < pc.out_dim;
     float accumulators[PAIR_TILE];
-    float minima[PAIR_TILE];
-    for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++) {
+    for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++)
         accumulators[pair_slot] = 0.0;
-        minima[pair_slot] = 0.0;
-    }
     barrier();
 
     for (uint block = 0u; block < pc.blocks; block++) {
@@ -104,52 +104,61 @@ void main() {
             uint high = pc.type == Q5_K ?
                 wb[(block_base + 128u + tile_row * 32u + lane * 4u) >> 2u] : 0u;
             uint quant_base = block_base + (pc.type == Q5_K ? 384u : 128u) +
-                tile_row * 128u;
-            for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++) {
-                uint pair = pair_ids[pair_slot];
-                if (pair == INVALID) continue;
-                uint activation_base = (pair / TOP_K) * pc.blocks * Q8K_WORDS +
-                    block * Q8K_WORDS;
-                float activation_delta = uintBitsToFloat(q8[activation_base]);
-                int integer_dot = 0;
-                for (uint group = 0u; group < 8u; group++) {
-                    uint packed_quant = wb[(quant_base + (group >> 1u) * 32u +
-                        lane * 4u) >> 2u];
-                    uint packed_activation = q8[activation_base + 2u + group * 8u + lane];
-                    uint scale_value;
-                    uint minimum_value;
-                    scale_min(row_slot, group, scale_value, minimum_value);
-                    integer_dot += int(scale_value) *
-                        dotPacked4x8EXT(floatBitsToInt(uintBitsToFloat(packed_quant_word(packed_quant, high, group))),
-                                        floatBitsToInt(uintBitsToFloat(packed_activation)));
+                tile_row * 128u + lane * 4u;
+
+            for (uint group = 0u; group < 8u; group++) {
+                uint scale_value;
+                uint minimum_value;
+                scale_min(row_slot, group, scale_value, minimum_value);
+                uint packed_quant = wb[(quant_base + (group >> 1u) * 32u) >> 2u];
+                uint weight_word = pc.type == Q5_K ?
+                    packed_quant_word(packed_quant, high, group) :
+                    (packed_quant >> ((group & 1u) * 4u)) & 0x0f0f0f0fu;
+                for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++) {
+                    uint pair = pair_ids[pair_slot];
+                    if (pair == INVALID) break;
+                    uint activation_base = (pair / TOP_K) * pc.blocks * Q8K_WORDS +
+                        block * Q8K_WORDS;
+                    uint packed_activation =
+                        q8[activation_base + 2u + group * 8u + lane];
+                    float activation_delta = uintBitsToFloat(q8[activation_base]);
+                    int group_dot = group_dot4(weight_word, packed_activation);
+                    accumulators[pair_slot] = fma(
+                        delta_min.x * activation_delta,
+                        float(int(scale_value) * group_dot),
+                        accumulators[pair_slot]);
                 }
-                accumulators[pair_slot] = fma(delta_min.x * activation_delta,
-                    float(integer_dot), accumulators[pair_slot]);
-                if ((pc.type == Q5_K && lane == 0u) ||
-                    (pc.type == Q4_K && lane < 4u)) {
+            }
+
+            if ((pc.type == Q5_K && lane == 0u) ||
+                (pc.type == Q4_K && lane < 4u)) {
+                uint begin = pc.type == Q5_K ? 0u : lane * 2u;
+                uint end = pc.type == Q5_K ? 8u : begin + 2u;
+                for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++) {
+                    uint pair = pair_ids[pair_slot];
+                    if (pair == INVALID) break;
+                    uint activation_base = (pair / TOP_K) * pc.blocks * Q8K_WORDS +
+                        block * Q8K_WORDS;
+                    float activation_delta = uintBitsToFloat(q8[activation_base]);
                     int minimum_dot = 0;
-                    uint begin = pc.type == Q5_K ? 0u : lane * 2u;
-                    uint end = pc.type == Q5_K ? 8u : begin + 2u;
                     for (uint group = begin; group < end; group++) {
                         uint scale_value;
                         uint minimum_value;
                         scale_min(row_slot, group, scale_value, minimum_value);
                         uint packed_sums = q8[activation_base + 66u + group];
                         minimum_dot += int(minimum_value) *
-                            (int(packed_sums & 65535u) + int(packed_sums >> 16u));
+                            (signed_half(packed_sums, 0u) + signed_half(packed_sums, 1u));
                     }
-                    minima[pair_slot] = fma(-delta_min.y * activation_delta,
-                        float(minimum_dot), minima[pair_slot]);
+                    accumulators[pair_slot] = fma(-delta_min.y * activation_delta,
+                        float(minimum_dot), accumulators[pair_slot]);
                 }
             }
         }
         barrier();
     }
 
-    for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++) {
+    for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++)
         sums[pair_slot][local_id] = accumulators[pair_slot];
-        minimum_sums[pair_slot][local_id] = minima[pair_slot];
-    }
     barrier();
     if (row_live && lane == 0u) {
         uint offset = row_slot * 8u;
@@ -161,9 +170,6 @@ void main() {
                  (sums[pair_slot][offset + 2u] + sums[pair_slot][offset + 6u])) +
                 ((sums[pair_slot][offset + 1u] + sums[pair_slot][offset + 5u]) +
                  (sums[pair_slot][offset + 3u] + sums[pair_slot][offset + 7u]));
-            if (pc.type == Q5_K) value += minimum_sums[pair_slot][offset];
-            else for (uint i = 0u; i < 4u; i++)
-                value += minimum_sums[pair_slot][offset + i];
             y[pair * pc.out_dim + row] = value;
         }
     }
