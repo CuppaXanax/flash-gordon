@@ -412,9 +412,11 @@ static fg_status open_decode_config(fg_qsa_session **out,fg_model *model,const c
     fg_status status=FG_OK;bool created_state=false;
     uint64_t index_requested=0,index_allocated=0,index_touched=0;
     if(state_path){
+        /* The owner runtime creates the worker state at SESSION_BEGIN; the
+         * session attaches to the existing file rather than recreating it. */
         status=fg_qsa_state_open(&s->state,state_path,s->layers,s->layer_count,
-                                 logical_context,true,err);
-        created_state=status==FG_OK;
+                                 logical_context,false,err);
+        created_state=false;
     }
     if(status==FG_OK)status=make_tensor(s,(uint64_t)logical_context*
                                         FG_Q38_QSA_POSITION_BYTES,&s->positions,err);
