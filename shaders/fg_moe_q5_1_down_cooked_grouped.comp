@@ -22,9 +22,10 @@ const uint TILE_WORDS = 17u;
 const uint INVALID = 0xffffffffu;
 const uint COOK_ROWS = 16u;
 const uint BLOCK_TILE_BYTES = 384u;
-shared uint scale_words[8];
-shared uint high_words[8];
-shared uint quant_words[32];
+const uint BLOCKS_PER_CHUNK = 4u;
+shared uint scale_words[8u * BLOCKS_PER_CHUNK];
+shared uint high_words[8u * BLOCKS_PER_CHUNK];
+shared uint quant_words[32u * BLOCKS_PER_CHUNK];
 shared uint pair_ids[PAIR_TILE];
 shared float sums[PAIR_TILE][64];
 
@@ -34,6 +35,56 @@ uint quant_value(uint packed, uint high, uint lane, uint item) {
     uint bit = (high >> (lane * 4u + item)) & 1u;
     return low | (bit << 4u);
 }
+
+vec4 block_weight(uint row_slot, uint lane, uint slot) {
+    vec2 scale_min = unpackHalf2x16(scale_words[row_slot * BLOCKS_PER_CHUNK + slot]);
+    uint packed = quant_words[(row_slot * BLOCKS_PER_CHUNK + slot) * 4u + (lane & 3u)];
+    uint high = high_words[row_slot * BLOCKS_PER_CHUNK + slot];
+    return vec4(
+        fma(scale_min.x, float(quant_value(packed, high, lane, 0u)), scale_min.y),
+        fma(scale_min.x, float(quant_value(packed, high, lane, 1u)), scale_min.y),
+        fma(scale_min.x, float(quant_value(packed, high, lane, 2u)), scale_min.y),
+        fma(scale_min.x, float(quant_value(packed, high, lane, 3u)), scale_min.y));
+}
+
+/* The live pair slots are packed from slot zero by expert.c; the unrolled
+   steps keep every accumulator in a register and use the single-block and
+   four-block operand sets as they are chunked. */
+#define FG_DOWN_PAIR1(PS, ACC) { \
+    uint pair_id = pair_ids[PS]; \
+    if (pair_id != INVALID) { \
+        vec4 input_value = x4[pair_id * (pc.in_dim >> 2u) + chunk * 8u + lane]; \
+        ACC = fma(weight0.x, input_value.x, ACC); \
+        ACC = fma(weight0.y, input_value.y, ACC); \
+        ACC = fma(weight0.z, input_value.z, ACC); \
+        ACC = fma(weight0.w, input_value.w, ACC); \
+    } }
+
+#define FG_DOWN_PAIR4(PS, ACC) { \
+    uint pair_id = pair_ids[PS]; \
+    if (pair_id != INVALID) { \
+        uint input_base = pair_id * (pc.in_dim >> 2u) + chunk * 8u + lane; \
+        vec4 in0 = x4[input_base]; \
+        vec4 in1 = x4[input_base + 8u]; \
+        vec4 in2 = x4[input_base + 16u]; \
+        vec4 in3 = x4[input_base + 24u]; \
+        ACC = fma(weight0.x, in0.x, ACC); \
+        ACC = fma(weight0.y, in0.y, ACC); \
+        ACC = fma(weight0.z, in0.z, ACC); \
+        ACC = fma(weight0.w, in0.w, ACC); \
+        ACC = fma(weight1.x, in1.x, ACC); \
+        ACC = fma(weight1.y, in1.y, ACC); \
+        ACC = fma(weight1.z, in1.z, ACC); \
+        ACC = fma(weight1.w, in1.w, ACC); \
+        ACC = fma(weight2.x, in2.x, ACC); \
+        ACC = fma(weight2.y, in2.y, ACC); \
+        ACC = fma(weight2.z, in2.z, ACC); \
+        ACC = fma(weight2.w, in2.w, ACC); \
+        ACC = fma(weight3.x, in3.x, ACC); \
+        ACC = fma(weight3.y, in3.y, ACC); \
+        ACC = fma(weight3.z, in3.z, ACC); \
+        ACC = fma(weight3.w, in3.w, ACC); \
+    } }
 
 void main() {
     uint local_id = gl_LocalInvocationID.x;
@@ -47,46 +98,107 @@ void main() {
     uint row_tile = row >> 4u;
     uint tile_row = row & 15u;
     bool row_live = row < pc.out_dim;
-    float accumulators[PAIR_TILE];
-    for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++)
-        accumulators[pair_slot] = 0.0;
+    float acc0 = 0.0, acc1 = 0.0, acc2 = 0.0, acc3 = 0.0;
+    float acc4 = 0.0, acc5 = 0.0, acc6 = 0.0, acc7 = 0.0;
+    float acc8 = 0.0, acc9 = 0.0, acc10 = 0.0, acc11 = 0.0;
+    float acc12 = 0.0, acc13 = 0.0, acc14 = 0.0, acc15 = 0.0;
     barrier();
 
-    for (uint block = 0u; block < pc.blocks; block++) {
-        uint block_base = expert * pc.expert_stride + row_tile * pc.tile_bytes +
-            block * BLOCK_TILE_BYTES;
-        if (lane == 0u) {
-            scale_words[row_slot] = row_live ?
-                wb[(block_base + tile_row * 4u) >> 2u] : 0u;
-            high_words[row_slot] = row_live ?
-                wb[(block_base + 64u + tile_row * 4u) >> 2u] : 0u;
-        }
-        if (lane < 4u)
-            quant_words[row_slot * 4u + lane] = row_live ?
-                wb[(block_base + 128u + tile_row * 16u + lane * 4u) >> 2u] : 0u;
-        barrier();
-        if (row_live) {
-            vec2 scale_min = unpackHalf2x16(scale_words[row_slot]);
-            uint packed = quant_words[row_slot * 4u + (lane & 3u)];
-            uint high = high_words[row_slot];
-            float weight0 = fma(scale_min.x, float(quant_value(packed, high, lane, 0u)), scale_min.y);
-            float weight1 = fma(scale_min.x, float(quant_value(packed, high, lane, 1u)), scale_min.y);
-            float weight2 = fma(scale_min.x, float(quant_value(packed, high, lane, 2u)), scale_min.y);
-            float weight3 = fma(scale_min.x, float(quant_value(packed, high, lane, 3u)), scale_min.y);
-            for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++) {
-                uint pair = pair_ids[pair_slot];
-                if (pair == INVALID) continue;
-                vec4 input_value = x4[pair * (pc.in_dim >> 2u) + block * 8u + lane];
-                accumulators[pair_slot] = fma(weight0, input_value.x, accumulators[pair_slot]);
-                accumulators[pair_slot] = fma(weight1, input_value.y, accumulators[pair_slot]);
-                accumulators[pair_slot] = fma(weight2, input_value.z, accumulators[pair_slot]);
-                accumulators[pair_slot] = fma(weight3, input_value.w, accumulators[pair_slot]);
+    uint chunk = 0u;
+    for (; chunk + BLOCKS_PER_CHUNK <= pc.blocks; chunk += BLOCKS_PER_CHUNK) {
+        uint base = expert * pc.expert_stride + row_tile * pc.tile_bytes +
+            chunk * BLOCK_TILE_BYTES;
+        if (lane == 0u)
+            for (uint b = 0u; b < BLOCKS_PER_CHUNK; b++) {
+                uint block_base = base + b * BLOCK_TILE_BYTES;
+                scale_words[row_slot * BLOCKS_PER_CHUNK + b] = row_live ?
+                    wb[(block_base + tile_row * 4u) >> 2u] : 0u;
+                high_words[row_slot * BLOCKS_PER_CHUNK + b] = row_live ?
+                    wb[(block_base + 64u + tile_row * 4u) >> 2u] : 0u;
             }
+        if (lane < 4u)
+            for (uint b = 0u; b < BLOCKS_PER_CHUNK; b++)
+                quant_words[(row_slot * BLOCKS_PER_CHUNK + b) * 4u + lane] =
+                    row_live ? wb[(base + b * BLOCK_TILE_BYTES + 128u +
+                        tile_row * 16u + lane * 4u) >> 2u] : 0u;
+        barrier();
+
+        if (row_live) {
+            vec4 weight0 = block_weight(row_slot, lane, 0u);
+            vec4 weight1 = block_weight(row_slot, lane, 1u);
+            vec4 weight2 = block_weight(row_slot, lane, 2u);
+            vec4 weight3 = block_weight(row_slot, lane, 3u);
+            FG_DOWN_PAIR4(0, acc0)
+            FG_DOWN_PAIR4(1, acc1)
+            FG_DOWN_PAIR4(2, acc2)
+            FG_DOWN_PAIR4(3, acc3)
+            FG_DOWN_PAIR4(4, acc4)
+            FG_DOWN_PAIR4(5, acc5)
+            FG_DOWN_PAIR4(6, acc6)
+            FG_DOWN_PAIR4(7, acc7)
+            FG_DOWN_PAIR4(8, acc8)
+            FG_DOWN_PAIR4(9, acc9)
+            FG_DOWN_PAIR4(10, acc10)
+            FG_DOWN_PAIR4(11, acc11)
+            FG_DOWN_PAIR4(12, acc12)
+            FG_DOWN_PAIR4(13, acc13)
+            FG_DOWN_PAIR4(14, acc14)
+            FG_DOWN_PAIR4(15, acc15)
         }
         barrier();
     }
-    for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++)
-        sums[pair_slot][local_id] = accumulators[pair_slot];
+
+    for (; chunk < pc.blocks; chunk++) {
+        uint block_base = expert * pc.expert_stride + row_tile * pc.tile_bytes +
+            chunk * BLOCK_TILE_BYTES;
+        if (lane == 0u) {
+            scale_words[row_slot * BLOCKS_PER_CHUNK] = row_live ?
+                wb[(block_base + tile_row * 4u) >> 2u] : 0u;
+            high_words[row_slot * BLOCKS_PER_CHUNK] = row_live ?
+                wb[(block_base + 64u + tile_row * 4u) >> 2u] : 0u;
+        }
+        if (lane < 4u)
+            quant_words[row_slot * BLOCKS_PER_CHUNK * 4u + lane] = row_live ?
+                wb[(block_base + 128u + tile_row * 16u + lane * 4u) >> 2u] : 0u;
+        barrier();
+        if (row_live) {
+            vec4 weight0 = block_weight(row_slot, lane, 0u);
+            FG_DOWN_PAIR1(0, acc0)
+            FG_DOWN_PAIR1(1, acc1)
+            FG_DOWN_PAIR1(2, acc2)
+            FG_DOWN_PAIR1(3, acc3)
+            FG_DOWN_PAIR1(4, acc4)
+            FG_DOWN_PAIR1(5, acc5)
+            FG_DOWN_PAIR1(6, acc6)
+            FG_DOWN_PAIR1(7, acc7)
+            FG_DOWN_PAIR1(8, acc8)
+            FG_DOWN_PAIR1(9, acc9)
+            FG_DOWN_PAIR1(10, acc10)
+            FG_DOWN_PAIR1(11, acc11)
+            FG_DOWN_PAIR1(12, acc12)
+            FG_DOWN_PAIR1(13, acc13)
+            FG_DOWN_PAIR1(14, acc14)
+            FG_DOWN_PAIR1(15, acc15)
+        }
+        barrier();
+    }
+
+    sums[0][local_id] = acc0;
+    sums[1][local_id] = acc1;
+    sums[2][local_id] = acc2;
+    sums[3][local_id] = acc3;
+    sums[4][local_id] = acc4;
+    sums[5][local_id] = acc5;
+    sums[6][local_id] = acc6;
+    sums[7][local_id] = acc7;
+    sums[8][local_id] = acc8;
+    sums[9][local_id] = acc9;
+    sums[10][local_id] = acc10;
+    sums[11][local_id] = acc11;
+    sums[12][local_id] = acc12;
+    sums[13][local_id] = acc13;
+    sums[14][local_id] = acc14;
+    sums[15][local_id] = acc15;
     barrier();
     if (row_live && lane == 0u) {
         uint offset = row_slot * 8u;

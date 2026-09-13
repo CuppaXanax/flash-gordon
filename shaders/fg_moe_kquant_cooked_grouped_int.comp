@@ -70,6 +70,36 @@ int group_dot4(uint weight_word, uint activation_word) {
 #endif
 }
 
+#define FG_DOT_PAIR(PS, ACC) { \
+    uint pair_id = pair_ids[PS]; \
+    if (pair_id != INVALID) { \
+        uint activation_base = (pair_id / TOP_K) * pc.blocks * Q8K_WORDS + \
+            block * Q8K_WORDS; \
+        float activation_delta = uintBitsToFloat(q8[activation_base]); \
+        uint packed_activation = q8[activation_base + 2u + group * 8u + lane]; \
+        int group_dot = group_dot4(weight_word, packed_activation); \
+        ACC = fma(delta_min.x * activation_delta, \
+            float(int(scale_value) * group_dot), ACC); \
+    } }
+
+#define FG_MIN_PAIR(PS, ACC) { \
+    uint pair_id = pair_ids[PS]; \
+    if (pair_id != INVALID) { \
+        uint activation_base = (pair_id / TOP_K) * pc.blocks * Q8K_WORDS + \
+            block * Q8K_WORDS; \
+        float activation_delta = uintBitsToFloat(q8[activation_base]); \
+        int minimum_dot = 0; \
+        for (uint group = begin; group < end; group++) { \
+            uint scale_value; \
+            uint minimum_value; \
+            scale_min(row_slot, group, scale_value, minimum_value); \
+            uint packed_sums = q8[activation_base + 66u + group]; \
+            minimum_dot += int(minimum_value) * \
+                (signed_half(packed_sums, 0u) + signed_half(packed_sums, 1u)); \
+        } \
+        ACC = fma(-delta_min.y * activation_delta, float(minimum_dot), ACC); \
+    } }
+
 void main() {
     uint local_id = gl_LocalInvocationID.x;
     uint row_slot = local_id >> 3u;
@@ -82,9 +112,10 @@ void main() {
     uint row_tile = row >> 3u;
     uint tile_row = row & 7u;
     bool row_live = row < pc.out_dim;
-    float accumulators[PAIR_TILE];
-    for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++)
-        accumulators[pair_slot] = 0.0;
+    float acc0 = 0.0, acc1 = 0.0, acc2 = 0.0, acc3 = 0.0;
+    float acc4 = 0.0, acc5 = 0.0, acc6 = 0.0, acc7 = 0.0;
+    float acc8 = 0.0, acc9 = 0.0, acc10 = 0.0, acc11 = 0.0;
+    float acc12 = 0.0, acc13 = 0.0, acc14 = 0.0, acc15 = 0.0;
     barrier();
 
     for (uint block = 0u; block < pc.blocks; block++) {
@@ -114,51 +145,65 @@ void main() {
                 uint weight_word = pc.type == Q5_K ?
                     packed_quant_word(packed_quant, high, group) :
                     (packed_quant >> ((group & 1u) * 4u)) & 0x0f0f0f0fu;
-                for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++) {
-                    uint pair = pair_ids[pair_slot];
-                    if (pair == INVALID) break;
-                    uint activation_base = (pair / TOP_K) * pc.blocks * Q8K_WORDS +
-                        block * Q8K_WORDS;
-                    uint packed_activation =
-                        q8[activation_base + 2u + group * 8u + lane];
-                    float activation_delta = uintBitsToFloat(q8[activation_base]);
-                    int group_dot = group_dot4(weight_word, packed_activation);
-                    accumulators[pair_slot] = fma(
-                        delta_min.x * activation_delta,
-                        float(int(scale_value) * group_dot),
-                        accumulators[pair_slot]);
-                }
+                FG_DOT_PAIR(0, acc0)
+                FG_DOT_PAIR(1, acc1)
+                FG_DOT_PAIR(2, acc2)
+                FG_DOT_PAIR(3, acc3)
+                FG_DOT_PAIR(4, acc4)
+                FG_DOT_PAIR(5, acc5)
+                FG_DOT_PAIR(6, acc6)
+                FG_DOT_PAIR(7, acc7)
+                FG_DOT_PAIR(8, acc8)
+                FG_DOT_PAIR(9, acc9)
+                FG_DOT_PAIR(10, acc10)
+                FG_DOT_PAIR(11, acc11)
+                FG_DOT_PAIR(12, acc12)
+                FG_DOT_PAIR(13, acc13)
+                FG_DOT_PAIR(14, acc14)
+                FG_DOT_PAIR(15, acc15)
             }
 
             if ((pc.type == Q5_K && lane == 0u) ||
                 (pc.type == Q4_K && lane < 4u)) {
                 uint begin = pc.type == Q5_K ? 0u : lane * 2u;
                 uint end = pc.type == Q5_K ? 8u : begin + 2u;
-                for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++) {
-                    uint pair = pair_ids[pair_slot];
-                    if (pair == INVALID) break;
-                    uint activation_base = (pair / TOP_K) * pc.blocks * Q8K_WORDS +
-                        block * Q8K_WORDS;
-                    float activation_delta = uintBitsToFloat(q8[activation_base]);
-                    int minimum_dot = 0;
-                    for (uint group = begin; group < end; group++) {
-                        uint scale_value;
-                        uint minimum_value;
-                        scale_min(row_slot, group, scale_value, minimum_value);
-                        uint packed_sums = q8[activation_base + 66u + group];
-                        minimum_dot += int(minimum_value) *
-                            (signed_half(packed_sums, 0u) + signed_half(packed_sums, 1u));
-                    }
-                    accumulators[pair_slot] = fma(-delta_min.y * activation_delta,
-                        float(minimum_dot), accumulators[pair_slot]);
-                }
+                FG_MIN_PAIR(0, acc0)
+                FG_MIN_PAIR(1, acc1)
+                FG_MIN_PAIR(2, acc2)
+                FG_MIN_PAIR(3, acc3)
+                FG_MIN_PAIR(4, acc4)
+                FG_MIN_PAIR(5, acc5)
+                FG_MIN_PAIR(6, acc6)
+                FG_MIN_PAIR(7, acc7)
+                FG_MIN_PAIR(8, acc8)
+                FG_MIN_PAIR(9, acc9)
+                FG_MIN_PAIR(10, acc10)
+                FG_MIN_PAIR(11, acc11)
+                FG_MIN_PAIR(12, acc12)
+                FG_MIN_PAIR(13, acc13)
+                FG_MIN_PAIR(14, acc14)
+                FG_MIN_PAIR(15, acc15)
             }
         }
         barrier();
     }
 
-    for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++)
-        sums[pair_slot][local_id] = accumulators[pair_slot];
+    sums[0][local_id] = acc0;
+    sums[1][local_id] = acc1;
+    sums[2][local_id] = acc2;
+    sums[3][local_id] = acc3;
+    sums[4][local_id] = acc4;
+    sums[5][local_id] = acc5;
+    sums[6][local_id] = acc6;
+    sums[7][local_id] = acc7;
+    sums[8][local_id] = acc8;
+    sums[9][local_id] = acc9;
+    sums[10][local_id] = acc10;
+    sums[11][local_id] = acc11;
+    sums[12][local_id] = acc12;
+    sums[13][local_id] = acc13;
+    sums[14][local_id] = acc14;
+    sums[15][local_id] = acc15;
     barrier();
     if (row_live && lane == 0u) {
         uint offset = row_slot * 8u;
