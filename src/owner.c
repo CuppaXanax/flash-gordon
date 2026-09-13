@@ -32,7 +32,8 @@ _Static_assert(FG_Q38_PREFILL_TILE_WORDS==FG_VK_PREFILL_TILE_WORDS,
  * transient tensors; slots 1..FG_OWNER_SLOT_COUNT-1 own dedicated storage so
  * that many frames can be in flight one layer apart.  Only the state consumed
  * after the routed fire is duplicated: the front-half transients are dead for
- * a frame once its begin returns. */
+ * a frame once its begin returns.  Worker owners only ever execute their own
+ * block on slot 0, so their extra slots are not allocated. */
 #define FG_OWNER_SLOT_COUNT 4u
 typedef struct fg_owner_pending_write {bool active;uint32_t layer,token;const fg_vk_tensor *hyper,*block,*injection;fg_vk_tensor *output;} fg_owner_pending_write;
 
@@ -198,7 +199,8 @@ static fg_status create_decode_slots(fg_owner_executor *executor,fg_error *err){
     slot0->ping[0]=executor->hyper_output;slot0->ping[1]=executor->hyper_output_b;
     fg_vk_context *vk=fg_model_vk(executor->model);uint32_t tokens=executor->max_tokens;
     fg_status status=FG_OK;
-    for(uint32_t slot=1u;status==FG_OK&&slot<FG_OWNER_SLOT_COUNT;slot++){
+    uint32_t slot_count=executor->replicated?FG_OWNER_SLOT_COUNT:1u;
+    for(uint32_t slot=1u;status==FG_OK&&slot<slot_count;slot++){
         fg_owner_decode_slot *frame=&executor->decode_slots[slot];
         status=fg_vk_tensor_create(vk,(uint64_t)tokens*FG_GROUP_SIZE*4u,&frame->injection,err);
         if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)tokens*FG_HIDDEN_SIZE*4u,&frame->shared_output,err);

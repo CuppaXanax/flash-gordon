@@ -38,6 +38,7 @@ struct fg_qsa_session {
     fg_vk_tensor *position_view,*token_position_view,*index_query_view,*query_view,*gate_view;
     fg_vk_tensor *attention_view,*key_q8_view,*value_q4_view,*index_key_q8_view;
     uint8_t *read_records,*position_written;
+    uint32_t state_committed[FG_QSA_MAX_SELECTED_BLOCKS];
     fg_qsa_page_cache *cache;
     fg_qsa_page_fetch_fn fetch_pages;
     void *fetch_opaque;
@@ -223,6 +224,28 @@ static fg_status ensure_read_records(fg_qsa_session *s,fg_error *err){
     }
 
     return FG_OK;
+}
+
+/* A state-backed owner serves its own cold pages from its state file. The
+ * page cache is a compute shortcut, not the authority: every gather miss is
+ * satisfied here after the block has been persisted. */
+static fg_status state_fetch_pages(void *opaque,uint32_t layer,
+                                   const uint32_t *blocks,uint32_t block_count,
+                                   uint8_t *records,fg_error *err){
+    fg_qsa_session *s=opaque;
+    int signed_slot=s?layer_slot(s,layer):-1;
+    if(!s||signed_slot<0||!s->state){
+        fg_error_set(err,FG_ERR_MISMATCH,"QSA state fetch is not on a state-backed session");
+        return FG_ERR_MISMATCH;
+    }
+    fg_status status=fg_qsa_state_read_blocks(s->state,(uint32_t)signed_slot,blocks,
+        block_count,records,s->state_committed,err);
+    for(uint32_t i=0;status==FG_OK&&i<block_count;i++)
+        if(s->state_committed[i]!=FG_Q38_QSA_COMPRESS_RATIO){
+            fg_error_set(err,FG_ERR_MISMATCH,"QSA state fetch returned an incomplete page");
+            status=FG_ERR_MISMATCH;
+        }
+    return status;
 }
 
 static fg_status ensure_page_cache(fg_qsa_session *s,fg_error *err){
@@ -458,7 +481,7 @@ static fg_status open_decode_config(fg_qsa_session **out,fg_model *model,const c
                                     (size_t)fg_vk_tensor_bytes(s->index_keys[slot][segment]));
         }
     s->cache_pages=cache_pages;
-    if(status==FG_OK&&!state_path)status=ensure_page_cache(s,err);
+    if(status==FG_OK)status=ensure_page_cache(s,err);
     if(status==FG_OK&&index_requested)
         fprintf(stderr,"[rank %u] QSA Vulkan index canary: segments=%u max_segment=%llu "
                        "requested=%llu allocated=%llu touched=%llu bytes\n",rank,
@@ -507,6 +530,9 @@ static fg_status open_decode_config(fg_qsa_session **out,fg_model *model,const c
         status=make_tensor(s,(uint64_t)batch_size*2560u*4u,&s->output,err);
     if(status==FG_OK)status=create_reusable_views(s,err);
     if(status==FG_OK&&state_path)status=ensure_read_records(s,err);
+    if(status==FG_OK&&state_path&&!s->fetch_pages){
+        s->fetch_pages=state_fetch_pages;s->fetch_opaque=s;
+    }
     if(status==FG_OK)status=create_tile_views(s,batch_size,err);
     if(status==FG_OK)status=make_tensor(s,(uint64_t)FG_QSA_ATTENTION_SPLITS*24u*258u*4u,&s->attn_partials,err);
     fg_vk_memory_stats memory_stats={0};fg_vk_get_memory_stats(fg_model_vk(model),&memory_stats);
@@ -996,18 +1022,31 @@ static fg_status gather_prefill_tile(fg_qsa_session *s,uint32_t slot,
     return status;
 }
 
+static bool qsa_prefill_profile_enabled(void){
+    const char *value=getenv("FG_PREFILL_PROFILE");
+    return value&&*value&&strcmp(value,"0")!=0;
+}
+
 static fg_status attend_prefill_tiles(fg_qsa_session *s,uint32_t slot,
     uint32_t first_token,uint32_t token_count,fg_error *err){
     fg_vk_context *vk=fg_model_vk(s->model);
+    bool profile=qsa_prefill_profile_enabled();
+    double t_begin=0,t_commit=0,t_select=0,t_gather=0,t_attend=0;
+    double select_ms=0.0,gather_ms=0.0,attend_ms=0.0;
+    if(profile)t_begin=qsa_now_ms();
     fg_status status=commit_prefill_records(s,slot,first_token,token_count,err);
+    if(profile)t_commit=qsa_now_ms();
     uint32_t tile_size=fg_qsa_query_tile_size(s->max_tokens);
     for(uint32_t first=0;status==FG_OK&&first<token_count;first+=tile_size){
         uint32_t queries=token_count-first;if(queries>tile_size)queries=tile_size;
         uint32_t selected[FG_QSA_PREFILL_QUERY_TILE][FG_QSA_MAX_SELECTED_BLOCKS];
         uint32_t counts[FG_QSA_PREFILL_QUERY_TILE];
+        if(profile)t_select=qsa_now_ms();
         status=select_prefill_tile(s,slot,first_token,first,queries,selected,counts,err);
+        if(profile)t_gather=qsa_now_ms();
         if(status==FG_OK)status=gather_prefill_tile(s,slot,first_token+first+1u,
             queries,selected,counts,err);
+        if(profile)t_attend=qsa_now_ms();
         if(status==FG_OK)status=fg_vk_begin(vk,err);
         for(uint32_t q=0;status==FG_OK&&q<queries;q++){
             uint64_t offset=(uint64_t)(first+q)*6144u*4u;
@@ -1016,10 +1055,85 @@ static fg_status attend_prefill_tiles(fg_qsa_session *s,uint32_t slot,
             if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->attention_view,s->attention,offset,6144u*4u,err);
             if(status==FG_OK){uint32_t selected=counts[q]*4u+(first_token+first+q+1u)%4u;status=fg_vk_qsa_attention_split(vk,s->attn_partials,s->tile_records[q],s->query_view,selected,FG_QSA_ATTENTION_SPLITS,err);if(status==FG_OK)status=fg_vk_qsa_attention_merge(vk,s->attention_view,s->attn_partials,s->gate_view,FG_QSA_ATTENTION_SPLITS,err);}
         }
+        if(profile)select_ms+=t_gather-t_select,gather_ms+=t_attend-t_gather,
+            attend_ms+=qsa_now_ms()-t_attend;
     }
     /* One fence per layer; the per-tile gathers and attentions share the batch
      * and dispatch() orders them with compute-to-compute barriers. */
     if(status==FG_OK)status=fg_qsa_submit_host_reads(vk,err);
+    if(profile){double t_end=qsa_now_ms();
+        fprintf(stderr,"QSA_PREFILL_TRACE layer=%u first=%u tokens=%u commit_ms=%.1f "
+            "select_ms=%.1f gather_ms=%.1f attend_ms=%.1f total_ms=%.1f\n",
+            s->layers[slot],first_token,token_count,t_commit-t_begin,
+            select_ms,gather_ms,attend_ms,t_end-t_begin);}
+    return status;
+}
+
+/* The ring's state-backed owner computes prefill through the page cache, then
+ * persists newly completed pages once per layer instead of once per token.
+ * Page order is contiguous from the layer frontier, so complete runs go out as
+ * one batched uring write; only the boundary pages need a single-page write. */
+static fg_status persist_prefill_state(fg_qsa_session *s,uint32_t slot,
+    uint32_t first_token,uint32_t token_count,fg_error *err){
+    if(!s->cache||!s->state)return FG_OK;
+    uint32_t layer=s->layers[slot],end=first_token+token_count;
+    const uint8_t *cache=(const uint8_t *)fg_vk_tensor_map(s->cache_records);
+    if(!cache){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"QSA record cache is not host-mapped");
+        return FG_ERR_UNAVAILABLE;
+    }
+    fg_status status=FG_OK;
+    uint32_t block=first_token/FG_Q38_QSA_COMPRESS_RATIO;
+    uint32_t leading=first_token%FG_Q38_QSA_COMPRESS_RATIO;
+    if(leading){
+        uint32_t committed=end-block*FG_Q38_QSA_COMPRESS_RATIO;
+        if(committed>FG_Q38_QSA_COMPRESS_RATIO)committed=FG_Q38_QSA_COMPRESS_RATIO;
+        uint32_t cache_slot=0;
+        if(!fg_qsa_page_cache_lookup(s->cache,layer,block,&cache_slot)){
+            fg_error_set(err,FG_ERR_MISMATCH,"QSA persist lost the leading cache page");
+            return FG_ERR_MISMATCH;
+        }
+        status=fg_qsa_state_write_block(s->state,slot,block,
+            cache+(uint64_t)cache_slot*FG_QSA_PAGE_RECORD_BYTES,committed,err);
+        fg_qsa_session_page_published(s,layer,block);
+        if(status!=FG_OK||committed<FG_Q38_QSA_COMPRESS_RATIO)return status;
+        block++;
+    }
+    uint32_t complete=end/FG_Q38_QSA_COMPRESS_RATIO;
+    if(complete>block){
+        uint32_t count=complete-block;
+        if(count>FG_QSA_MAX_SELECTED_BLOCKS){
+            fg_error_set(err,FG_ERR_LIMIT,"QSA persist batch exceeds staging capacity");
+            return FG_ERR_LIMIT;
+        }
+        uint32_t blocks[FG_QSA_MAX_SELECTED_BLOCKS];
+        for(uint32_t i=0;i<count;i++){
+            uint32_t cache_slot=0;
+            if(!fg_qsa_page_cache_lookup(s->cache,layer,block+i,&cache_slot)){
+                fg_error_set(err,FG_ERR_MISMATCH,"QSA persist lost a complete cache page");
+                return FG_ERR_MISMATCH;
+            }
+            memcpy(s->read_records+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,
+                cache+(uint64_t)cache_slot*FG_QSA_PAGE_RECORD_BYTES,
+                FG_QSA_PAGE_RECORD_BYTES);
+            blocks[i]=block+i;
+        }
+        status=fg_qsa_state_write_blocks(s->state,slot,blocks,count,s->read_records,err);
+        for(uint32_t i=0;i<count;i++)fg_qsa_session_page_published(s,layer,block+i);
+        if(status!=FG_OK)return status;
+        block+=count;
+    }
+    uint32_t tail=end%FG_Q38_QSA_COMPRESS_RATIO;
+    if(tail){
+        uint32_t cache_slot=0;
+        if(!fg_qsa_page_cache_lookup(s->cache,layer,block,&cache_slot)){
+            fg_error_set(err,FG_ERR_MISMATCH,"QSA persist lost the trailing cache page");
+            return FG_ERR_MISMATCH;
+        }
+        status=fg_qsa_state_write_block(s->state,slot,block,
+            cache+(uint64_t)cache_slot*FG_QSA_PAGE_RECORD_BYTES,tail,err);
+        fg_qsa_session_page_published(s,layer,block);
+    }
     return status;
 }
 
@@ -1059,6 +1173,7 @@ fg_status fg_qsa_session_prefill(fg_qsa_session *s,uint32_t layer,uint32_t first
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,s->output,ow,s->attention,6144u,FG_HIDDEN_SIZE,token_count,1.0f,err);
     if(status==FG_OK)status=fg_qsa_submit_host_reads(vk,err);
     else if(fg_vk_batch_active(vk)){fg_error ignored={0};fg_vk_abort(vk,&ignored);}
+    if(status==FG_OK)status=persist_prefill_state(s,slot,first_token,token_count,err);
     if(status==FG_OK){s->committed[slot]=first_token+token_count;*output=s->output;}
     return status;
 }

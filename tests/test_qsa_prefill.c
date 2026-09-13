@@ -47,7 +47,7 @@ static int setup(fg_qsa_session *s,fg_model *m,fg_vk_tensor **scratch){
 }
 
 static int selection_parity(fg_qsa_session *s,uint32_t first){
-    uint32_t selected[4][512],counts[4],reference[512],count=0;
+    uint32_t selected[FG_QSA_PREFILL_QUERY_TILE][512],counts[4],reference[512],count=0;
     /* Nonzero query offset catches incorrect row strides in the score tile. */
     REQUIRE(select_prefill_tile(s,0u,first,3u,4u,selected,counts,&error)==FG_OK);
     for(uint32_t q=0;q<4u;q++){
@@ -91,7 +91,7 @@ static int gather_eviction(fg_qsa_session *s,bool pin_all){
             f.pages[resident[i]],FG_QSA_PAGE_RECORD_BYTES,&error)==FG_OK);
         if(pin_all||i==1u)REQUIRE(fg_qsa_page_cache_pin(s->cache,3u,resident[i],&error)==FG_OK);
     }
-    uint32_t selected[4][512]={{0u,1u,2u},{2u,0u,3u},{1u,3u,4u},{4u,2u,0u}};
+    uint32_t selected[FG_QSA_PREFILL_QUERY_TILE][512]={{0u,1u,2u},{2u,0u,3u},{1u,3u,4u},{4u,2u,0u}};
     uint32_t counts[4]={3u,3u,3u,3u};
     REQUIRE(gather_prefill_tile(s,0u,21u,4u,selected,counts,&error)==FG_OK);
     REQUIRE(f.calls==1u&&f.pages_read==4u);
