@@ -79,6 +79,13 @@ static void test_decode_layer_protocol(void){
             FG_DECODE_LAYER_RESULT_BYTES,&err)==FG_OK);
         CHECK(memcmp(result,result_decoded,sizeof(*result))==0);
     }
+    fg_frame_header header;uint32_t frame_bytes=0;
+    CHECK(fg_frame_encode_version(&header,FG_PROTOCOL_VERSION,FG_MSG_DECODE_LAYER_WORK,
+        1u,2u,0u,wire,bytes,&err)==FG_OK);
+    CHECK(fg_frame_validate(&header,wire,&frame_bytes,&err)==FG_OK&&frame_bytes==bytes);
+    CHECK(fg_frame_encode_version(&header,FG_PROTOCOL_VERSION,FG_MSG_DECODE_LAYER_RESULT,
+        1u,2u,0u,result_wire,FG_DECODE_LAYER_RESULT_BYTES,&err)==FG_OK);
+    CHECK(fg_frame_validate(&header,result_wire,&frame_bytes,&err)==FG_OK);
     free(result_wire);free(result_decoded);free(result);free(wire);free(decoded);free(work);
 }
 
