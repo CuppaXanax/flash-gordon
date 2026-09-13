@@ -8,6 +8,13 @@
 
 #define FG_OUTPUT_TOPK_CAPACITY (((FG_Q38_VOCAB_SIZE+4095u)/4096u)*512u)
 
+/* The per-token greedy trace was an unbuffered stderr write on rank 4's output
+ * critical path.  Keep it available for A/B logs behind an env switch. */
+static bool output_trace_enabled(void){
+    const char *enabled=getenv("FG_OUTPUT_TRACE");
+    return enabled&&*enabled&&strcmp(enabled,"0")!=0;
+}
+
 struct fg_output_executor {
     fg_model *model;
     fg_vk_tensor *normalized;
@@ -95,8 +102,10 @@ fg_status fg_output_greedy(fg_output_executor *executor,const fg_vk_tensor *hype
     if(status!=FG_OK)return status;
     const float *values=fg_vk_tensor_map((fg_vk_tensor *)scores);const uint32_t *indices=fg_vk_tensor_map((fg_vk_tensor *)ids);uint32_t best=indices[0];float best_value=values[0];
     if(best>=FG_Q38_VOCAB_SIZE||!isfinite(best_value)){fg_error_set(err,FG_ERR_MISMATCH,"invalid output finalist at token %u",best);return FG_ERR_MISMATCH;}
-    const float *hyper_raw=fg_vk_tensor_map((fg_vk_tensor *)hyper);const float *hidden_raw=fg_vk_tensor_map(executor->hidden);
-    fprintf(stderr,"greedy: best %u=%.4f hyper[0:4]=%.4f,%.4f,%.4f,%.4f hidden[0:4]=%.4f,%.4f,%.4f,%.4f\n",best,best_value,hyper_raw[0],hyper_raw[1],hyper_raw[2],hyper_raw[3],hidden_raw[0],hidden_raw[1],hidden_raw[2],hidden_raw[3]);
+    if(output_trace_enabled()){
+        const float *hyper_raw=fg_vk_tensor_map((fg_vk_tensor *)hyper);const float *hidden_raw=fg_vk_tensor_map(executor->hidden);
+        fprintf(stderr,"greedy: best %u=%.4f hyper[0:4]=%.4f,%.4f,%.4f,%.4f hidden[0:4]=%.4f,%.4f,%.4f,%.4f\n",best,best_value,hyper_raw[0],hyper_raw[1],hyper_raw[2],hyper_raw[3],hidden_raw[0],hidden_raw[1],hidden_raw[2],hidden_raw[3]);
+    }
     *token=best;if(logit)*logit=best_value;return FG_OK;
 }
 

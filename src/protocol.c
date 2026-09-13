@@ -24,7 +24,7 @@ static bool message_type_supported(uint16_t version,fg_message_type type){
     if(version>=6u&&type>=FG_MSG_QSA_PAGE_APPEND&&type<=FG_MSG_QSA_PAGE_RESULT)return true;
     if(version>=6u&&type>=FG_MSG_OUTPUT_HISTORY&&
        type<=FG_MSG_OUTPUT_HISTORY_ACK)return true;
-    if(version>=6u&&type>=FG_MSG_GDN_STATE_FETCH&&type<=FG_MSG_DECODE_LAYER_RESULT)return true;
+    if(version>=6u&&type>=FG_MSG_GDN_STATE_FETCH&&type<=FG_MSG_OUTPUT_HIDDEN)return true;
     return version>=6u&&type>=FG_MSG_SESSION_PREPARE&&type<=FG_MSG_SESSION_RESTORED;
 }
 
@@ -837,6 +837,52 @@ static fg_status validate_output_work(const fg_output_work *work,fg_error *err){
 fg_status fg_output_work_encode(uint8_t output[FG_OUTPUT_WORK_BYTES],const fg_output_work *work,fg_error *err){if(!output){fg_error_set(err,FG_ERR_ARGUMENT,"output work buffer is null");return FG_ERR_ARGUMENT;}fg_status status=validate_output_work(work,err);if(status!=FG_OK)return status;output[0]=work->source_rank;output[1]=work->destination_rank;output[2]=0;output[3]=0;put_u32_be(output+4u,work->token_index);put_f32_be(output+8u,work->sampler.temperature);put_f32_be(output+12u,work->sampler.top_p);put_u32_be(output+16u,work->sampler.top_k);put_f32_be(output+20u,work->uniform);put_f32_be(output+24u,work->sampler.presence_penalty);put_f32_be(output+28u,work->sampler.frequency_penalty);put_f32_be(output+32u,work->sampler.repetition_penalty);put_f32_be(output+36u,work->sampler.min_p);for(uint32_t i=0,offset=FG_OUTPUT_WORK_HEADER_BYTES;i<FG_HYPER_WIDTH;i++,offset+=4u)put_f32_be(output+offset,work->hyper[i]);return FG_OK;}
 
 fg_status fg_output_work_decode(fg_output_work *work,const uint8_t *payload,uint32_t bytes,fg_error *err){if(!work||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output work input");return FG_ERR_ARGUMENT;}if(bytes!=FG_OUTPUT_WORK_BYTES||payload[2]||payload[3]){fg_error_set(err,FG_ERR_FORMAT,"invalid output work size or reserved bytes");return FG_ERR_FORMAT;}memset(work,0,sizeof(*work));work->source_rank=payload[0];work->destination_rank=payload[1];work->token_index=get_u32_be(payload+4u);work->sampler.temperature=get_f32_be(payload+8u);work->sampler.top_p=get_f32_be(payload+12u);work->sampler.top_k=get_u32_be(payload+16u);work->uniform=get_f32_be(payload+20u);work->sampler.presence_penalty=get_f32_be(payload+24u);work->sampler.frequency_penalty=get_f32_be(payload+28u);work->sampler.repetition_penalty=get_f32_be(payload+32u);work->sampler.min_p=get_f32_be(payload+36u);for(uint32_t i=0,offset=FG_OUTPUT_WORK_HEADER_BYTES;i<FG_HYPER_WIDTH;i++,offset+=4u)work->hyper[i]=get_f32_be(payload+offset);return validate_output_work(work,err);}
+
+static fg_status validate_output_config(const fg_output_config *config,fg_error *err){if(!config||config->source_rank>=FG_RANK_COUNT||config->destination_rank!=4u){fg_error_set(err,FG_ERR_FORMAT,"invalid output config route");return FG_ERR_FORMAT;}if((config->sampler.temperature!=0.0f||config->sampler.top_p!=0.0f||config->sampler.top_k!=0u||config->sampler.presence_penalty!=0.0f||config->sampler.frequency_penalty!=0.0f||config->sampler.repetition_penalty!=0.0f||config->sampler.min_p!=0.0f)&&fg_sampler_config_validate(&config->sampler,err)!=FG_OK)return FG_ERR_FORMAT;if(!isfinite(config->uniform)||config->uniform<0.0f||config->uniform>=1.0f){fg_error_set(err,FG_ERR_FORMAT,"invalid output config sampler draw");return FG_ERR_FORMAT;}return FG_OK;}
+
+fg_status fg_output_config_encode(uint8_t output[FG_OUTPUT_CONFIG_BYTES],const fg_output_config *config,fg_error *err){if(!output){fg_error_set(err,FG_ERR_ARGUMENT,"output config buffer is null");return FG_ERR_ARGUMENT;}fg_status status=validate_output_config(config,err);if(status!=FG_OK)return status;output[0]=config->source_rank;output[1]=config->destination_rank;output[2]=0;output[3]=0;put_u32_be(output+4u,config->token_index);put_f32_be(output+8u,config->sampler.temperature);put_f32_be(output+12u,config->sampler.top_p);put_u32_be(output+16u,config->sampler.top_k);put_f32_be(output+20u,config->uniform);put_f32_be(output+24u,config->sampler.presence_penalty);put_f32_be(output+28u,config->sampler.frequency_penalty);put_f32_be(output+32u,config->sampler.repetition_penalty);put_f32_be(output+36u,config->sampler.min_p);return FG_OK;}
+
+fg_status fg_output_config_decode(fg_output_config *config,const uint8_t *payload,uint32_t bytes,fg_error *err){if(!config||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output config input");return FG_ERR_ARGUMENT;}if(bytes!=FG_OUTPUT_CONFIG_BYTES||payload[2]||payload[3]){fg_error_set(err,FG_ERR_FORMAT,"invalid output config size or reserved bytes");return FG_ERR_FORMAT;}memset(config,0,sizeof(*config));config->source_rank=payload[0];config->destination_rank=payload[1];config->token_index=get_u32_be(payload+4u);config->sampler.temperature=get_f32_be(payload+8u);config->sampler.top_p=get_f32_be(payload+12u);config->sampler.top_k=get_u32_be(payload+16u);config->uniform=get_f32_be(payload+20u);config->sampler.presence_penalty=get_f32_be(payload+24u);config->sampler.frequency_penalty=get_f32_be(payload+28u);config->sampler.repetition_penalty=get_f32_be(payload+32u);config->sampler.min_p=get_f32_be(payload+36u);return validate_output_config(config,err);}
+
+void fg_output_handoff_reset(fg_output_handoff *state){if(state)memset(state,0,sizeof(*state));}
+
+fg_status fg_output_handoff_config(fg_output_handoff *state,const fg_output_config *config,fg_error *err){
+    if(!state||!config){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output handoff config");return FG_ERR_ARGUMENT;}
+    if(state->have_config&&config->token_index==state->config.token_index){
+        state->config=*config;
+        return FG_OK;
+    }
+    if(state->have_config&&config->token_index<state->config.token_index)return FG_OK;
+    if(state->have_hidden&&config->token_index<state->hidden.token_index)return FG_OK;
+    if(state->have_hidden&&config->token_index>state->hidden.token_index)state->have_hidden=false;
+    state->config=*config;state->have_config=true;
+    return FG_OK;
+}
+
+fg_status fg_output_handoff_hidden(fg_output_handoff *state,const fg_layer_result *hidden,fg_error *err){
+    if(!state||!hidden){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output handoff hidden");return FG_ERR_ARGUMENT;}
+    if(state->have_hidden&&hidden->token_index==state->hidden.token_index){
+        state->hidden=*hidden;
+        return FG_OK;
+    }
+    if(state->have_hidden&&hidden->token_index<state->hidden.token_index)return FG_OK;
+    if(state->have_config&&hidden->token_index<state->config.token_index)return FG_OK;
+    if(state->have_config&&hidden->token_index>state->config.token_index)state->have_config=false;
+    state->hidden=*hidden;state->have_hidden=true;
+    return FG_OK;
+}
+
+bool fg_output_handoff_ready(const fg_output_handoff *state){
+    return state&&state->have_config&&state->have_hidden&&
+        state->config.token_index==state->hidden.token_index;
+}
+
+void fg_output_handoff_take(fg_output_handoff *state,fg_output_config *config,fg_layer_result *hidden){
+    if(!state)return;
+    if(config)*config=state->config;
+    if(hidden)*hidden=state->hidden;
+    state->have_config=false;state->have_hidden=false;
+}
 
 static fg_status validate_output_result(const fg_output_result *result,fg_error *err){if(!result||result->source_rank!=4u||result->destination_rank>=FG_RANK_COUNT||result->token>=FG_Q38_VOCAB_SIZE||!isfinite(result->logit)){fg_error_set(err,FG_ERR_FORMAT,"invalid output result");return FG_ERR_FORMAT;}return FG_OK;}
 

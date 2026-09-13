@@ -151,6 +151,160 @@ static fg_status decode_layer_chain_roundtrip(fg_fabric *fabric,uint32_t rank,ui
     free(ngram);free(hyper);free(result_wire);free(wire);return status;
 }
 
-static int child_main(const fg_manifest *manifest,uint32_t rank){fg_error error={0};fg_fabric *fabric=NULL;fg_status status=fg_fabric_open(&fabric,manifest,rank,&error);if(status==FG_ERR_UNAVAILABLE)return 77;if(status!=FG_OK){fprintf(stderr,"rank %u fabric open: %s\n",rank,error.message);return 1;}uint64_t request=UINT64_C(0x1122334455667788);for(uint32_t peer=0;status==FG_OK&&peer<FG_RANK_COUNT;peer++)if(peer!=rank)status=fg_fabric_send(fabric,peer,FG_FABRIC_CONTROL,FG_MSG_READY,request,rank,0,NULL,0,&error);bool seen[FG_RANK_COUNT]={0};for(uint32_t received=0;status==FG_OK&&received<FG_RANK_COUNT-1u;received++){uint32_t peer=0,bytes=0;fg_frame_header header;status=fg_fabric_recv_any(fabric,FG_FABRIC_CONTROL,&peer,&header,NULL,0,&bytes,&error);if(status==FG_OK&&(peer==rank||seen[peer]||bytes||fg_frame_type(&header)!=FG_MSG_READY||fg_frame_request_id(&header)!=request||fg_frame_sequence(&header)!=peer)){fprintf(stderr,"rank %u invalid READY from %u\n",rank,peer);status=FG_ERR_MISMATCH;}seen[peer]=true;}if(status==FG_OK)status=batch_send_roundtrip(fabric,rank,request,&error);if(status==FG_OK)status=prefill_bulk_roundtrip(fabric,rank,request,&error);if(status==FG_OK)status=delayed_bulk_ngram_control_roundtrip(fabric,rank,request,&error);if(status==FG_OK)status=prefill_layer_chain_roundtrip(fabric,rank,request,&error);if(status==FG_OK)status=decode_layer_chain_roundtrip(fabric,rank,request,&error);fg_fabric_close(fabric);if(status!=FG_OK){fprintf(stderr,"rank %u fabric exchange: %s\n",rank,error.message);return 1;}return 0;}
+static void protocol_output_handoff_selfcheck(void){
+    fg_error error={0};
+    fg_output_config config={.source_rank=0u,.destination_rank=4u,.token_index=17u,
+        .uniform=0.25f};
+    uint8_t wire[FG_OUTPUT_CONFIG_BYTES];
+    PROTOCOL_CHECK(fg_output_config_encode(wire,&config,&error)==FG_OK);
+    fg_output_config decoded={0};
+    PROTOCOL_CHECK(fg_output_config_decode(&decoded,wire,sizeof(wire),&error)==FG_OK);
+    PROTOCOL_CHECK(decoded.source_rank==0u&&decoded.destination_rank==4u&&
+        decoded.token_index==17u&&decoded.uniform==0.25f);
+    uint8_t bad[FG_OUTPUT_CONFIG_BYTES];
+    memcpy(bad,wire,sizeof(bad));bad[2]=1u;
+    PROTOCOL_CHECK(fg_output_config_decode(&decoded,bad,sizeof(bad),&error)!=FG_OK);
+    fg_output_config wrong=config;wrong.destination_rank=5u;
+    PROTOCOL_CHECK(fg_output_config_encode(wire,&wrong,&error)!=FG_OK);
+    /* the new handoff message ids must pass frame validation on protocol 6 */
+    fg_frame_header frame;uint32_t frame_bytes=0;
+    PROTOCOL_CHECK(fg_output_config_encode(wire,&config,&error)==FG_OK);
+    PROTOCOL_CHECK(fg_frame_encode(&frame,FG_MSG_OUTPUT_CONFIG,1u,2u,0u,wire,
+        sizeof(wire),&error)==FG_OK);
+    PROTOCOL_CHECK(fg_frame_validate(&frame,wire,&frame_bytes,&error)==FG_OK&&
+        frame_bytes==sizeof(wire)&&fg_frame_type(&frame)==FG_MSG_OUTPUT_CONFIG);
+    PROTOCOL_CHECK(fg_frame_encode(&frame,FG_MSG_OUTPUT_HIDDEN,1u,2u,0u,wire,
+        sizeof(wire),&error)==FG_OK);
+    PROTOCOL_CHECK(fg_frame_validate(&frame,wire,&frame_bytes,&error)==FG_OK&&
+        fg_frame_type(&frame)==FG_MSG_OUTPUT_HIDDEN);
 
-int main(void){if(protocol_failures)return 1;fg_manifest manifest;fg_manifest_init(&manifest);manifest.protocol_version=FG_PROTOCOL_VERSION;uint32_t base=24000u+(uint32_t)(getpid()%5000u)*2u;for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)snprintf(manifest.ranks[rank].endpoint,sizeof(manifest.ranks[rank].endpoint),"127.0.0.1:%u",base+rank*2u);for(uint32_t i=0;i<32u;i++)manifest.manifest_sha256[i]=(uint8_t)(i*7u+3u);pid_t children[FG_RANK_COUNT];for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){children[rank]=fork();if(children[rank]<0){perror("fork");return 1;}if(children[rank]==0)_exit(child_main(&manifest,rank));}uint32_t passed=0,skipped=0;for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){int status;if(waitpid(children[rank],&status,0)<0){perror("waitpid");return 1;}if(WIFEXITED(status)&&WEXITSTATUS(status)==0)passed++;else if(WIFEXITED(status)&&WEXITSTATUS(status)==77)skipped++;else{fprintf(stderr,"fabric rank %u exited abnormally\n",rank);return 1;}}if(skipped==FG_RANK_COUNT){fprintf(stderr,"SKIP eight-process fabric: io_uring unavailable\n");return 77;}if(passed!=FG_RANK_COUNT||skipped){fprintf(stderr,"inconsistent fabric qualification: %u pass %u skip\n",passed,skipped);return 1;}puts("Flash Gordon protocol 6 and eight-process dual-channel mesh: PASS");return 0;}
+    fg_layer_result hidden={.layer=FG_LAYER_COUNT-1u,.source_rank=7u,
+        .destination_rank=4u,.token_index=17u};
+    hidden.hyper[0]=1.5f;hidden.hyper[FG_HYPER_WIDTH-1u]=-2.5f;
+    fg_output_handoff state;
+    fg_output_handoff_reset(&state);
+    PROTOCOL_CHECK(!fg_output_handoff_ready(&state));
+    /* config-first order */
+    PROTOCOL_CHECK(fg_output_handoff_config(&state,&config,&error)==FG_OK);
+    PROTOCOL_CHECK(!fg_output_handoff_ready(&state));
+    PROTOCOL_CHECK(fg_output_handoff_hidden(&state,&hidden,&error)==FG_OK);
+    PROTOCOL_CHECK(fg_output_handoff_ready(&state));
+    fg_output_config taken_config;fg_layer_result taken_hidden;
+    fg_output_handoff_take(&state,&taken_config,&taken_hidden);
+    PROTOCOL_CHECK(taken_config.token_index==17u&&taken_hidden.hyper[0]==1.5f&&
+        taken_hidden.hyper[FG_HYPER_WIDTH-1u]==-2.5f);
+    PROTOCOL_CHECK(!fg_output_handoff_ready(&state));
+    /* hidden-first order */
+    fg_output_handoff_reset(&state);
+    PROTOCOL_CHECK(fg_output_handoff_hidden(&state,&hidden,&error)==FG_OK);
+    PROTOCOL_CHECK(!fg_output_handoff_ready(&state));
+    PROTOCOL_CHECK(fg_output_handoff_config(&state,&config,&error)==FG_OK);
+    PROTOCOL_CHECK(fg_output_handoff_ready(&state));
+    /* stale halves are dropped and a newer token replaces the pending pair */
+    fg_output_handoff_reset(&state);
+    fg_output_config older={.source_rank=0u,.destination_rank=4u,.token_index=16u,
+        .uniform=0.0f};
+    PROTOCOL_CHECK(fg_output_handoff_config(&state,&config,&error)==FG_OK);
+    PROTOCOL_CHECK(fg_output_handoff_config(&state,&older,&error)==FG_OK);
+    PROTOCOL_CHECK(state.config.token_index==17u);
+    fg_layer_result stale=hidden;stale.token_index=16u;
+    PROTOCOL_CHECK(fg_output_handoff_hidden(&state,&stale,&error)==FG_OK);
+    PROTOCOL_CHECK(!state.have_hidden);
+    fg_layer_result newer=hidden;newer.token_index=18u;newer.hyper[0]=7.0f;
+    PROTOCOL_CHECK(fg_output_handoff_hidden(&state,&newer,&error)==FG_OK);
+    PROTOCOL_CHECK(!state.have_config&&state.have_hidden&&state.hidden.hyper[0]==7.0f);
+    fg_output_config next={.source_rank=0u,.destination_rank=4u,.token_index=18u,
+        .uniform=0.0f};
+    PROTOCOL_CHECK(fg_output_handoff_config(&state,&next,&error)==FG_OK);
+    PROTOCOL_CHECK(fg_output_handoff_ready(&state));
+    /* duplicates refresh in place */
+    newer.hyper[0]=8.0f;
+    PROTOCOL_CHECK(fg_output_handoff_hidden(&state,&newer,&error)==FG_OK);
+    PROTOCOL_CHECK(state.hidden.hyper[0]==8.0f);
+    fg_output_handoff_reset(&state);
+    PROTOCOL_CHECK(!state.have_config&&!state.have_hidden);
+}
+
+static fg_status output_handoff_roundtrip(fg_fabric *fabric,uint32_t rank,uint64_t request,fg_error *error){
+    enum{TOKEN_INDEX=77u,RESULT_TOKEN=123u};
+    uint8_t wire[FG_OUTPUT_WORK_BYTES];
+    if(rank!=0u&&rank!=4u&&rank!=7u)return FG_OK;
+    if(rank==0u){
+        fg_output_config config={.source_rank=0u,.destination_rank=4u,
+            .token_index=TOKEN_INDEX,.uniform=0.5f};
+        fg_status status=fg_output_config_encode(wire,&config,error);
+        if(status==FG_OK)status=fg_fabric_send(fabric,4u,FG_FABRIC_CONTROL,
+            FG_MSG_OUTPUT_CONFIG,request,TOKEN_INDEX*FG_LAYER_COUNT+FG_LAYER_COUNT,
+            0,wire,FG_OUTPUT_CONFIG_BYTES,error);
+        fg_frame_header header;uint32_t recv_bytes=0;
+        if(status==FG_OK)status=fg_fabric_recv(fabric,4u,FG_FABRIC_BULK,&header,wire,
+            sizeof(wire),&recv_bytes,error);
+        fg_output_result result;
+        if(status==FG_OK&&(fg_frame_type(&header)!=FG_MSG_OUTPUT_RESULT||
+           fg_frame_request_id(&header)!=request||
+           fg_frame_sequence(&header)!=TOKEN_INDEX*FG_LAYER_COUNT+FG_LAYER_COUNT)){
+            fg_error_set(error,FG_ERR_MISMATCH,"invalid direct output result frame");
+            status=FG_ERR_MISMATCH;
+        }
+        if(status==FG_OK)status=fg_output_result_decode(&result,wire,recv_bytes,error);
+        if(status==FG_OK&&(result.source_rank!=4u||result.destination_rank!=0u||
+           result.token_index!=TOKEN_INDEX||result.token!=RESULT_TOKEN)){
+            fg_error_set(error,FG_ERR_MISMATCH,"invalid direct output result payload");
+            status=FG_ERR_MISMATCH;
+        }
+        return status;
+    }
+    if(rank==7u){
+        fg_layer_result hidden={.layer=FG_LAYER_COUNT-1u,.source_rank=7u,
+            .destination_rank=4u,.token_index=TOKEN_INDEX};
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)hidden.hyper[i]=(float)(i%17u)*0.25f;
+        fg_status status=fg_decode_layer_result_encode(wire,&hidden,error);
+        if(status==FG_OK)status=fg_fabric_send(fabric,4u,FG_FABRIC_BULK,
+            FG_MSG_OUTPUT_HIDDEN,request,
+            TOKEN_INDEX*FG_LAYER_COUNT+FG_LAYER_COUNT-1u,0,wire,
+            FG_DECODE_LAYER_RESULT_BYTES,error);
+        return status;
+    }
+    /* rank 4: the hidden arrives first, then the config completes the pair */
+    fg_output_handoff state;
+    fg_output_handoff_reset(&state);
+    fg_frame_header header;uint32_t bytes=0;
+    fg_status status=fg_fabric_recv(fabric,7u,FG_FABRIC_BULK,&header,wire,sizeof(wire),
+        &bytes,error);
+    if(status==FG_OK&&(fg_frame_type(&header)!=FG_MSG_OUTPUT_HIDDEN||
+       fg_frame_request_id(&header)!=request||
+       fg_frame_sequence(&header)!=TOKEN_INDEX*FG_LAYER_COUNT+FG_LAYER_COUNT-1u)){
+        fg_error_set(error,FG_ERR_MISMATCH,"invalid direct output hidden frame");
+        status=FG_ERR_MISMATCH;
+    }
+    fg_layer_result hidden;
+    if(status==FG_OK)status=fg_decode_layer_result_decode(&hidden,wire,bytes,error);
+    if(status==FG_OK)status=fg_output_handoff_hidden(&state,&hidden,error);
+    if(status==FG_OK)status=fg_fabric_recv(fabric,0u,FG_FABRIC_CONTROL,&header,wire,
+        sizeof(wire),&bytes,error);
+    fg_output_config config;
+    if(status==FG_OK&&(fg_frame_type(&header)!=FG_MSG_OUTPUT_CONFIG||
+       fg_frame_request_id(&header)!=request||
+       fg_frame_sequence(&header)!=TOKEN_INDEX*FG_LAYER_COUNT+FG_LAYER_COUNT)){
+        fg_error_set(error,FG_ERR_MISMATCH,"invalid direct output config frame");
+        status=FG_ERR_MISMATCH;
+    }
+    if(status==FG_OK)status=fg_output_config_decode(&config,wire,bytes,error);
+    if(status==FG_OK)status=fg_output_handoff_config(&state,&config,error);
+    if(status!=FG_OK)return status;
+    if(!fg_output_handoff_ready(&state)){
+        fg_error_set(error,FG_ERR_MISMATCH,"output handoff pair did not match");
+        return FG_ERR_MISMATCH;
+    }
+    fg_output_result result={.source_rank=4u,.destination_rank=0u,
+        .token_index=TOKEN_INDEX,.token=RESULT_TOKEN,.logit=4.5f};
+    status=fg_output_result_encode(wire,&result,error);
+    if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,FG_MSG_OUTPUT_RESULT,
+        request,TOKEN_INDEX*FG_LAYER_COUNT+FG_LAYER_COUNT,0,wire,FG_OUTPUT_RESULT_BYTES,
+        error);
+    return status;
+}
+
+static int child_main(const fg_manifest *manifest,uint32_t rank){fg_error error={0};fg_fabric *fabric=NULL;fg_status status=fg_fabric_open(&fabric,manifest,rank,&error);if(status==FG_ERR_UNAVAILABLE)return 77;if(status!=FG_OK){fprintf(stderr,"rank %u fabric open: %s\n",rank,error.message);return 1;}uint64_t request=UINT64_C(0x1122334455667788);for(uint32_t peer=0;status==FG_OK&&peer<FG_RANK_COUNT;peer++)if(peer!=rank)status=fg_fabric_send(fabric,peer,FG_FABRIC_CONTROL,FG_MSG_READY,request,rank,0,NULL,0,&error);bool seen[FG_RANK_COUNT]={0};for(uint32_t received=0;status==FG_OK&&received<FG_RANK_COUNT-1u;received++){uint32_t peer=0,bytes=0;fg_frame_header header;status=fg_fabric_recv_any(fabric,FG_FABRIC_CONTROL,&peer,&header,NULL,0,&bytes,&error);if(status==FG_OK&&(peer==rank||seen[peer]||bytes||fg_frame_type(&header)!=FG_MSG_READY||fg_frame_request_id(&header)!=request||fg_frame_sequence(&header)!=peer)){fprintf(stderr,"rank %u invalid READY from %u\n",rank,peer);status=FG_ERR_MISMATCH;}seen[peer]=true;}if(status==FG_OK)status=batch_send_roundtrip(fabric,rank,request,&error);if(status==FG_OK)status=prefill_bulk_roundtrip(fabric,rank,request,&error);if(status==FG_OK)status=delayed_bulk_ngram_control_roundtrip(fabric,rank,request,&error);if(status==FG_OK)status=prefill_layer_chain_roundtrip(fabric,rank,request,&error);if(status==FG_OK)status=decode_layer_chain_roundtrip(fabric,rank,request,&error);if(status==FG_OK)status=output_handoff_roundtrip(fabric,rank,request,&error);fg_fabric_close(fabric);if(status!=FG_OK){fprintf(stderr,"rank %u fabric exchange: %s\n",rank,error.message);return 1;}return 0;}
+
+int main(void){protocol_output_handoff_selfcheck();if(protocol_failures)return 1;fg_manifest manifest;fg_manifest_init(&manifest);manifest.protocol_version=FG_PROTOCOL_VERSION;uint32_t base=24000u+(uint32_t)(getpid()%5000u)*2u;for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)snprintf(manifest.ranks[rank].endpoint,sizeof(manifest.ranks[rank].endpoint),"127.0.0.1:%u",base+rank*2u);for(uint32_t i=0;i<32u;i++)manifest.manifest_sha256[i]=(uint8_t)(i*7u+3u);pid_t children[FG_RANK_COUNT];for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){children[rank]=fork();if(children[rank]<0){perror("fork");return 1;}if(children[rank]==0)_exit(child_main(&manifest,rank));}uint32_t passed=0,skipped=0;for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){int status;if(waitpid(children[rank],&status,0)<0){perror("waitpid");return 1;}if(WIFEXITED(status)&&WEXITSTATUS(status)==0)passed++;else if(WIFEXITED(status)&&WEXITSTATUS(status)==77)skipped++;else{fprintf(stderr,"fabric rank %u exited abnormally\n",rank);return 1;}}if(skipped==FG_RANK_COUNT){fprintf(stderr,"SKIP eight-process fabric: io_uring unavailable\n");return 77;}if(passed!=FG_RANK_COUNT||skipped){fprintf(stderr,"inconsistent fabric qualification: %u pass %u skip\n",passed,skipped);return 1;}puts("Flash Gordon protocol 6 and eight-process dual-channel mesh: PASS");return 0;}

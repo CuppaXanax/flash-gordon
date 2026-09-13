@@ -29,6 +29,11 @@
 #define FG_OUTPUT_WORK_HEADER_BYTES 40u
 #define FG_OUTPUT_WORK_BYTES (FG_OUTPUT_WORK_HEADER_BYTES+FG_HYPER_WIDTH*4u)
 #define FG_OUTPUT_RESULT_BYTES 16u
+/* Sampler-only preamble for the direct final-block -> output-owner handoff:
+ * the output owner runs the head as soon as the matching 40 KiB hidden message
+ * arrives, so the sampler route rides the control channel and the bulk hop
+ * never touches rank 0. */
+#define FG_OUTPUT_CONFIG_BYTES FG_OUTPUT_WORK_HEADER_BYTES
 #define FG_OUTPUT_HISTORY_HEADER_BYTES 8u
 #define FG_OUTPUT_HISTORY_MAX_BYTES (FG_OUTPUT_HISTORY_HEADER_BYTES+FG_NATIVE_CONTEXT*4u)
 #define FG_LAYER_WORK_HAS_NGRAM 1u
@@ -130,7 +135,14 @@ typedef enum fg_message_type {
      * The payload reuses the single-token fg_layer_work/fg_layer_result wire
      * contract (40 KiB hyper plus optional layer-1 n-gram embedding). */
     FG_MSG_DECODE_LAYER_WORK = 44,
-    FG_MSG_DECODE_LAYER_RESULT = 45
+    FG_MSG_DECODE_LAYER_RESULT = 45,
+    /* Direct output handoff: rank 0 ships only the sampler config for a decode
+     * token on the control channel, and the final block owner ships the 40 KiB
+     * hyper state straight to the output owner under FG_MSG_OUTPUT_HIDDEN.
+     * Both sides must agree, so the direct route is selected from the manifest
+     * (final owner != output owner) plus the FG_DECODE_DIRECT_OUTPUT env. */
+    FG_MSG_OUTPUT_CONFIG = 46,
+    FG_MSG_OUTPUT_HIDDEN = 47
 } fg_message_type;
 
 typedef struct fg_gdn_state_fetch {
@@ -388,6 +400,35 @@ typedef struct fg_output_result {
     float logit;
 } fg_output_result;
 
+typedef struct fg_output_config {
+    uint8_t source_rank;
+    uint8_t destination_rank;
+    uint32_t token_index;
+    fg_sampler_config sampler;
+    float uniform;
+} fg_output_config;
+
+/* One-deep matcher for the direct output handoff.  Rank 0 emits exactly one
+ * config per decode token and the final block owner emits exactly one hidden
+ * result; either can be the first to arrive.  Newer token indexes replace
+ * older pending ones, duplicates refresh in place, and stale arrivals are
+ * dropped without error so a late frame from an aborted token cannot poison
+ * the next one.  Ready means both halves name the same token. */
+typedef struct fg_output_handoff {
+    bool have_config;
+    bool have_hidden;
+    fg_output_config config;
+    fg_layer_result hidden;
+} fg_output_handoff;
+void fg_output_handoff_reset(fg_output_handoff *state);
+fg_status fg_output_handoff_config(fg_output_handoff *state,
+                                   const fg_output_config *config,fg_error *err);
+fg_status fg_output_handoff_hidden(fg_output_handoff *state,
+                                   const fg_layer_result *hidden,fg_error *err);
+bool fg_output_handoff_ready(const fg_output_handoff *state);
+void fg_output_handoff_take(fg_output_handoff *state,fg_output_config *config,
+                            fg_layer_result *hidden);
+
 typedef struct fg_output_history {
     const uint32_t *tokens;
     uint32_t count;
@@ -552,6 +593,10 @@ fg_status fg_output_work_encode(uint8_t output[FG_OUTPUT_WORK_BYTES],const fg_ou
                                 fg_error *err);
 fg_status fg_output_work_decode(fg_output_work *work,const uint8_t *payload,uint32_t bytes,
                                 fg_error *err);
+fg_status fg_output_config_encode(uint8_t output[FG_OUTPUT_CONFIG_BYTES],
+                                  const fg_output_config *config,fg_error *err);
+fg_status fg_output_config_decode(fg_output_config *config,const uint8_t *payload,
+                                  uint32_t bytes,fg_error *err);
 fg_status fg_output_result_encode(uint8_t output[FG_OUTPUT_RESULT_BYTES],const fg_output_result *result,
                                   fg_error *err);
 fg_status fg_output_result_decode(fg_output_result *result,const uint8_t *payload,uint32_t bytes,
