@@ -40,6 +40,26 @@ which should take 4K decode from 2.06 toward short-decode speed. After that,
 ring decode (per-token chain with 40 KB hops, owners using their own QSA/GDN
 state) is the remaining architecture piece.
 
+## 0z. UPDATE 2026-09-13 LATE-LATE (binary 0dd3deda, ring pack)
+
+**Blank short answers fixed.** The API never set `think_mode`, so `/no_think`
+was plain text; the model spent ~29 tokens thinking, the stripper moved it to
+reasoning, and content was empty while finish=stop. `src/api.c` now detects a
+leading `/no_think` in user messages, strips the directive, sets THINK_OFF,
+and parses generation as non-thinking. Measured: max_tokens 1/2/4 return
+`1`/`12`/`12`; gates [12]/[Paris]; battery 4K prefill 237.6 TPS, short decode
+10.72, 4K single decode 8.18.
+
+Also integrated since 0a: the ring-decode architecture (`FG_DECODE_RING=1`,
+default off; correct per gates but no speedup yet - the chain serializes the
+same compute the legacy path overlapped with the expert wait; 8 ranks would
+need ~2x faster expert kernels to clear 15 TPS; 4K ring request killed rank0
+once and the transport is not reusable after a second ring request - both open)
+and the vector-tiled batch-1 expert pair (short decode 10.0 -> 10.7, covers
+raw-Q8_0 downs so layers 2/4/30/46/47 use the 2-dispatch path without a repack).
+Repack plan for q8 experts is documented in the edec agent report: source shards
+live on the pack producer host, not this machine.
+
 ## 0a. FINAL NUMBERS 2026-09-13 LATE (binary 7e47ddae, ring pack)
 
 Validated on my own deploy, gates then battery, back to back:
