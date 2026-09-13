@@ -13,6 +13,8 @@ uint32_t fg_expert_local_index(const fg_manifest *manifest,uint32_t layer,
 fg_status fg_expert_executor_create(fg_expert_executor **out,fg_model *model,fg_error *err);
 void fg_expert_executor_destroy(fg_expert_executor *executor);
 fg_status fg_expert_decode(fg_expert_executor *executor,const fg_decode_work *work,fg_expert_result *result,fg_error *err);
+fg_status fg_expert_decode_submit(fg_expert_executor *executor,const fg_decode_work *work,fg_expert_result *result,fg_error *err);
+fg_status fg_expert_decode_finish(fg_expert_executor *executor,fg_expert_result *result,fg_error *err);
 fg_status fg_expert_prefill(fg_expert_executor *executor,const fg_prefill_work *work,
                             fg_prefill_result *result,fg_prefill_result_pair *pair_storage,
                             uint32_t pair_capacity,float *output_storage,

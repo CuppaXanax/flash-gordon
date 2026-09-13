@@ -198,7 +198,11 @@ static uint32_t prefill_pair_id(const fg_prefill_pair *pair){
 }
 
 
-fg_status fg_expert_decode(fg_expert_executor *executor,const fg_decode_work *work,fg_expert_result *result,fg_error *err){
+/* Stage the routed work and dispatch the fixed expert graph on the async
+ * fence.  The decode block fast path enqueues the shared expert batch behind
+ * this submission on the same queue, so the graph executes back to back with
+ * it and the result readback moves off the critical path into collect. */
+fg_status fg_expert_decode_submit(fg_expert_executor *executor,const fg_decode_work *work,fg_expert_result *result,fg_error *err){
     if(!executor||!work||!result){fg_error_set(err,FG_ERR_ARGUMENT,"invalid expert decode arguments");return FG_ERR_ARGUMENT;}
     const fg_manifest *manifest=fg_model_manifest(executor->model);
     uint32_t rank=fg_model_rank(executor->model);
@@ -239,7 +243,7 @@ fg_status fg_expert_decode(fg_expert_executor *executor,const fg_decode_work *wo
                          "rank has no fixed expert graph for layer %u",
                          work->layer);
             status=FG_ERR_MISMATCH;
-        }else status=fg_vk_expert_graph_execute(
+        }else status=fg_vk_expert_graph_submit(
             executor->decode_graph[work->layer],err);
     }else if(status==FG_OK){
         fg_vk_tensor *gate_weight=NULL,*up_weight=NULL,*down_weight=NULL;
@@ -306,7 +310,21 @@ fg_status fg_expert_decode(fg_expert_executor *executor,const fg_decode_work *wo
         }
     }
     if(status!=FG_OK)return status;
-    memset(result,0,sizeof(*result));result->layer=work->layer;result->source_rank=(uint8_t)rank;result->destination_rank=work->source_rank;result->selected_count=1u;result->routing_slots[0]=0xFFu;result->position=work->position;memcpy(result->outputs[0],fg_vk_tensor_map(executor->reduced),FG_HIDDEN_SIZE*4u);return FG_OK;
+    memset(result,0,sizeof(*result));result->layer=work->layer;result->source_rank=(uint8_t)rank;result->destination_rank=work->source_rank;result->selected_count=1u;result->routing_slots[0]=0xFFu;result->position=work->position;return FG_OK;
+}
+
+fg_status fg_expert_decode_finish(fg_expert_executor *executor,fg_expert_result *result,fg_error *err){
+    if(!executor||!result){fg_error_set(err,FG_ERR_ARGUMENT,"invalid expert decode finish");return FG_ERR_ARGUMENT;}
+    fg_status status=fg_vk_expert_graph_wait(fg_model_vk(executor->model),err);
+    if(status==FG_OK)
+        memcpy(result->outputs[0],fg_vk_tensor_map(executor->reduced),FG_HIDDEN_SIZE*4u);
+    return status;
+}
+
+fg_status fg_expert_decode(fg_expert_executor *executor,const fg_decode_work *work,fg_expert_result *result,fg_error *err){
+    fg_status status=fg_expert_decode_submit(executor,work,result,err);
+    if(status==FG_OK)status=fg_expert_decode_finish(executor,result,err);
+    return status;
 }
 
 fg_status fg_expert_prefill_enqueue(fg_expert_executor *executor,const fg_prefill_work *work,fg_prefill_result *result,fg_prefill_result_pair *pair_storage,uint32_t pair_capacity,float *output_storage,uint64_t output_capacity_values,fg_error *err){

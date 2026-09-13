@@ -38,6 +38,7 @@ static bool prefill_profile_requested(void){const char *enabled=getenv("FG_PREFI
 static bool prefill_ring_requested(void){const char *enabled=getenv("FG_PREFILL_RING");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool decode_ring_requested(void){const char *enabled=getenv("FG_DECODE_RING");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool decode_ring_trace_enabled(void){const char *enabled=getenv("FG_DECODE_RING_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
+static bool decode_profile_enabled(void){const char *enabled=getenv("FG_DECODE_PROFILE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool frame_trace_enabled(void){const char *enabled=getenv("FG_FRAME_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool route_trace_enabled(void){const char *enabled=getenv("FG_TRACE_ROUTES");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool expert_batch_send_enabled(void){const char *enabled=getenv("FG_EXPERT_BATCH_SEND");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
@@ -429,6 +430,7 @@ typedef struct worker_decode_dispatch {
     uint32_t self;
     fg_expert_result *results;
     uint32_t result_count;
+    bool expert_pending;
 } worker_decode_dispatch;
 
 static fg_status worker_decode_experts(void *opaque,uint32_t layer,uint32_t token,
@@ -455,15 +457,25 @@ static fg_status worker_decode_experts(void *opaque,uint32_t layer,uint32_t toke
             work.gates[i]=routes[r].gates[i];
         }
         memcpy(work.activation_q8k,activation,FG_Q8K_ACTIVATION_BYTES);
-        status=fg_expert_decode(context->expert,&work,&context->results[context->result_count],err);
-        if(status==FG_OK)context->result_count++;
+        if(route_count==1u&&!context->expert_pending){
+            /* Single-owner blocks (the ring layout) defer the readback until
+             * collect, after the shared expert batch has synced. */
+            status=fg_expert_decode_submit(context->expert,&work,
+                &context->results[0],err);
+            if(status==FG_OK){context->result_count=1u;context->expert_pending=true;}
+        }else{
+            status=fg_expert_decode(context->expert,&work,
+                &context->results[context->result_count],err);
+            if(status==FG_OK)context->result_count++;
+        }
     }
     return status;
 }
 
 /* Local fire/collect pair for the owner async decode machine: the sealed block
  * owns every routed expert, so compute completes in fire and collect just
- * hands the canonical results to the shared reduce. */
+ * hands the canonical results to the shared reduce.  A deferred expert graph
+ * is collected here once the shared expert batch has already synced. */
 static fg_status worker_decode_fire(void *opaque,uint32_t layer,uint32_t token,
     const uint16_t expert_ids[FG_TOP_K],const float gates[FG_TOP_K],
     const uint8_t *activation,fg_error *err){
@@ -472,12 +484,19 @@ static fg_status worker_decode_fire(void *opaque,uint32_t layer,uint32_t token,
 
 static fg_status worker_decode_collect(void *opaque,uint32_t layer,uint32_t token,
     fg_expert_result results[FG_GROUP_SIZE],uint32_t *result_count,fg_error *err){
-    (void)layer;(void)token;(void)err;
+    (void)layer;(void)token;
     worker_decode_dispatch *context=opaque;
-    for(uint32_t i=0;i<context->result_count;i++)results[i]=context->results[i];
-    *result_count=context->result_count;
+    fg_status status=FG_OK;
+    if(context->expert_pending){
+        status=fg_expert_decode_finish(context->expert,&context->results[0],err);
+        context->expert_pending=false;
+    }
+    if(status==FG_OK){
+        for(uint32_t i=0;i<context->result_count;i++)results[i]=context->results[i];
+        *result_count=context->result_count;
+    }else *result_count=0;
     context->result_count=0;
-    return FG_OK;
+    return status;
 }
 
 typedef struct layer_work_context {
@@ -706,6 +725,7 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
     }
     if(status==FG_OK)status=fg_vk_tensor_write(input,0,work->hyper,
         (uint64_t)FG_HYPER_WIDTH*4u,err);
+    struct timespec t_written={0};if(trace)clock_gettime(CLOCK_MONOTONIC,&t_written);
     numerics_trace_host("FB_IN",self,work->layer,work->token_index,1u,work->hyper);
     if(status==FG_OK&&has_ngram)status=fg_vk_tensor_write(context->ngram_tensor,0,
         work->ngram_embedding,(uint64_t)FG_NGRAM_EMBED_VALUES*4u,err);
@@ -734,14 +754,40 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
     uint32_t last=work->layer;
     while(status==FG_OK&&last+1u<FG_LAYER_COUNT&&manifest->layer_owner[last+1u]==self)last++;
     fg_vk_tensor *current=NULL;
+    bool decode_profile=decode_profile_enabled();
+    if(status==FG_OK&&decode_profile){
+        fg_error profile_error={0};
+        if(fg_vk_profile_begin(context->vk,&profile_error)!=FG_OK)decode_profile=false;
+    }
     if(status==FG_OK)status=fg_owner_decode_block(owner,work->layer,last,work->token_index,
         work->position,input,has_ngram?context->ngram_tensor:NULL,worker_decode_fire,
         worker_decode_collect,&context->decode_dispatch,&current,err);
+    if(decode_profile){
+        fg_vk_profile profile={0};fg_error profile_error={0};
+        fg_status profile_status=fg_vk_profile_end(context->vk,&profile,
+            status==FG_OK?err:&profile_error);
+        if(profile_status==FG_OK){
+            fprintf(stderr,"DECODE_PROFILE rank=%u token=%u layers=%u..%u gpu_ms=%.3f "
+                "kernel_ms=%.3f submissions=%llu dispatches=%llu\n",self,
+                work->token_index,(unsigned)work->layer,last,profile.gpu_ms,
+                profile.kernel_ms,(unsigned long long)profile.submissions,
+                (unsigned long long)profile.dispatches);
+            for(uint32_t k=0;k<profile.kernel_count;k++)
+                fprintf(stderr,"DECODE_PROFILE_KERNEL rank=%u scope=%s kernel=%s "
+                    "calls=%llu gpu_ms=%.3f\n",self,profile.kernels[k].scope,
+                    profile.kernels[k].name,
+                    (unsigned long long)profile.kernels[k].invocations,
+                    profile.kernels[k].gpu_ms);
+        }
+    }
+    struct timespec t_block={0};if(trace)clock_gettime(CLOCK_MONOTONIC,&t_block);
     if(status==FG_OK)status=fg_vk_tensor_read(current,0,context->hyper_out,
         (uint64_t)FG_HYPER_WIDTH*4u,err);
+    struct timespec t_read={0};if(trace)clock_gettime(CLOCK_MONOTONIC,&t_read);
     numerics_trace_host("FB_OUT",self,last,work->token_index,1u,context->hyper_out);
     if(status==FG_OK)status=worker_publish_qsa_pages(context->qsa_owner,owner,self,
         work->token_index,1u,err);
+    struct timespec t_publish={0};if(trace)clock_gettime(CLOCK_MONOTONIC,&t_publish);
     if(status==FG_OK&&last+1u<FG_LAYER_COUNT){
         fg_layer_work next={.layer=(uint8_t)(last+1u),.source_rank=(uint8_t)self,
             .destination_rank=manifest->layer_owner[last+1u],
@@ -767,8 +813,14 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
             FG_DECODE_LAYER_RESULT_BYTES,err);
     }
     if(trace&&status==FG_OK){struct timespec t_end;clock_gettime(CLOCK_MONOTONIC,&t_end);
-        fprintf(stderr,"RING_DECODE_BLOCK rank=%u token=%u layers=%u..%u ms=%.3f\n",
+        fprintf(stderr,"RING_DECODE_BLOCK rank=%u token=%u layers=%u..%u write_ms=%.3f "
+            "block_ms=%.3f read_ms=%.3f publish_ms=%.3f egress_ms=%.3f total_ms=%.3f\n",
             self,work->token_index,(unsigned)work->layer,last,
+            elapsed_seconds(&t_begin,&t_written)*1000.0,
+            elapsed_seconds(&t_written,&t_block)*1000.0,
+            elapsed_seconds(&t_block,&t_read)*1000.0,
+            elapsed_seconds(&t_read,&t_publish)*1000.0,
+            elapsed_seconds(&t_publish,&t_end)*1000.0,
             elapsed_seconds(&t_begin,&t_end)*1000.0);}
     return status;
 }
@@ -2498,14 +2550,14 @@ static fg_status coordinator_warm_qsa_result(fg_coordinator *coordinator,uint32_
                                              const uint8_t *wire,uint32_t bytes,
                                              fg_error *err){
     qsa_page_transport *transport=&coordinator->qsa_pages;
-    if(!transport->warm_outstanding){
-        fg_error_set(err,FG_ERR_MISMATCH,"unsolicited QSA mirror warm result");
-        return FG_ERR_MISMATCH;
-    }
-    if(fg_frame_request_id(header)!=coordinator->session_id){
-        fg_error_set(err,FG_ERR_MISMATCH,"stale QSA mirror warm result");
-        return FG_ERR_MISMATCH;
-    }
+    /* A warm fetch that was issued by an earlier session can still be in the
+     * fabric when the next request starts its barrier; dropping it here keeps
+     * the stale frame from aborting the new session.  An unsolicited result
+     * inside the current session is also dropped: every issue increments
+     * warm_outstanding before the result can arrive. */
+    if(!transport->warm_outstanding||
+       fg_frame_request_id(header)!=coordinator->session_id)
+        return FG_OK;
     fg_qsa_page_batch result={0};
     fg_status status=fg_qsa_page_result_decode(&result,transport->result_pages,
         FG_QSA_PAGE_FETCH_MAX_PAGES,wire,bytes,err);
@@ -2583,9 +2635,15 @@ static fg_status coordinator_qsa_barrier(fg_coordinator *coordinator,fg_error *e
     }
     for(uint32_t owner=1u;owner<FG_RANK_COUNT;owner++){
         if(!(owner_mask&(1u<<owner)))continue;
-        uint32_t bytes=0;fg_frame_header header;
-        fg_status status=fg_fabric_recv(coordinator->fabric,owner,FG_FABRIC_BULK,&header,
-            wire[owner],sizeof(wire[owner]),&bytes,err);
+        uint32_t bytes=0;fg_frame_header header;fg_status status=FG_OK;
+        /* The owner's channel may still carry a mirror-warm result from the
+         * previous session; discard anything that is not this barrier ack. */
+        for(;;){
+            status=fg_fabric_recv(coordinator->fabric,owner,FG_FABRIC_BULK,&header,
+                wire[owner],sizeof(wire[owner]),&bytes,err);
+            if(status!=FG_OK)break;
+            if(fg_frame_type(&header)!=FG_MSG_QSA_PAGE_RESULT)break;
+        }
         fg_qsa_page_barrier ack={0};
         if(status==FG_OK&&(fg_frame_type(&header)!=FG_MSG_QSA_PAGE_BARRIER_ACK||
            fg_frame_request_id(&header)!=coordinator->session_id||
@@ -3502,7 +3560,7 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
         .manifest=manifest,.self=0u,
         .results=fg_owner_decode_results(coordinator->owner)};
     bool have_result=false;
-    double t_own_recv=0.0,t_own_end=0.0,t_final=0.0;
+    double t_own_recv=0.0,t_own_end=0.0,t_final=0.0,t_own_run=0.0,t_own_read=0.0;
     uint32_t own_first=0u,own_last=0u;
     while(status==FG_OK&&!have_result){
         uint32_t peer=0,bytes=0;fg_frame_header header;
@@ -3538,8 +3596,10 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
             if(status==FG_OK)status=fg_owner_decode_block(coordinator->owner,own_first,last,
                 work->token_index,work->position,input,NULL,worker_decode_fire,
                 worker_decode_collect,&dispatch,&current,err);
+            if(trace)t_own_run=dispatch_ts();
             if(status==FG_OK)status=fg_vk_tensor_read(current,0,work->hyper,
                 (uint64_t)FG_HYPER_WIDTH*4u,err);
+            if(trace)t_own_read=dispatch_ts();
             numerics_trace_host("FB_OUT",0u,last,work->token_index,1u,work->hyper);
             if(trace)t_own_end=dispatch_ts();
             if(status==FG_OK&&last+1u<FG_LAYER_COUNT){
@@ -3605,9 +3665,11 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
         logit,err);
     if(trace){t_output=dispatch_ts();
         fprintf(stderr,"RING_DECODE token=%u embed_ms=%.3f first_hop_ms=%.3f "
-            "own_layers=%u..%u own_ms=%.3f tail_ms=%.3f output_ms=%.3f total_ms=%.3f\n",
+            "own_layers=%u..%u own_ms=%.3f own_run_ms=%.3f own_read_ms=%.3f "
+            "tail_ms=%.3f output_ms=%.3f total_ms=%.3f\n",
             token_index,t_sent-t0,t_own_recv-t_sent,own_first,own_last,
-            t_own_end-t_own_recv,t_final-t_own_end,t_output-t_final,t_output-t0);}
+            t_own_end-t_own_recv,t_own_run-t_own_recv,t_own_read-t_own_run,
+            t_final-t_own_end,t_output-t_final,t_output-t0);}
     return status;
 }
 
@@ -3689,6 +3751,19 @@ static fg_status runtime_reset_state(fg_runtime *runtime,fg_prefix_reset_reason 
                                      fg_error *err){
     fg_status status=FG_OK;
 
+    if(!transport_ready(&runtime->coordinator.transport_state)&&
+       runtime->coordinator.qsa_pages.warm_outstanding){
+        fg_error drain_error={0};
+        /* Ring prefill can complete with mirror-warm fetches still in flight if
+         * a request aborted before its drain; collect them so the next session
+         * does not inherit a pending transport. */
+        status=coordinator_warm_qsa_drain(&runtime->coordinator,&drain_error);
+        if(status!=FG_OK){
+            runtime->state_ready=false;
+            if(err)*err=drain_error;
+            return status;
+        }
+    }
     if(!transport_ready(&runtime->coordinator.transport_state)){
         runtime->state_ready=false;
         fg_error_set(err,FG_ERR_UNAVAILABLE,

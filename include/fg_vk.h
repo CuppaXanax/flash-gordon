@@ -82,6 +82,8 @@ fg_status fg_vk_expert_graph_create(fg_vk_context *context,fg_vk_expert_graph **
                                      uint32_t weight_experts,uint32_t slots,fg_error *err);
 void fg_vk_expert_graph_destroy(fg_vk_expert_graph *graph);
 fg_status fg_vk_expert_graph_execute(fg_vk_expert_graph *graph,fg_error *err);
+fg_status fg_vk_expert_graph_submit(fg_vk_expert_graph *graph,fg_error *err);
+fg_status fg_vk_expert_graph_wait(fg_vk_context *context,fg_error *err);
 bool fg_vk_decode_experts_fusable(const fg_vk_tensor *gate_weights,
                                   const fg_vk_tensor *up_weights,
                                   const fg_vk_tensor *down_weights,

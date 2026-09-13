@@ -14,6 +14,7 @@ static double ts_ms(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);re
 static uint64_t wall_ns(void){struct timespec value;clock_gettime(CLOCK_REALTIME,&value);return (uint64_t)value.tv_sec*UINT64_C(1000000000)+(uint64_t)value.tv_nsec;}
 static bool gdn_diag_enabled(void){const char *value=getenv("FG_GDN_DIAG");return value&&*value&&strcmp(value,"0")!=0;}
 static bool frame_trace_enabled(void){const char *value=getenv("FG_FRAME_TRACE");return value&&*value&&strcmp(value,"0")!=0;}
+static bool decode_ms_enabled(void){const char *value=getenv("FG_DECODE_MS");return value&&*value&&strcmp(value,"0")!=0;}
 static bool numerics_trace_enabled(void){const char *value=getenv("FG_NUMERICS_TRACE");return value&&*value&&strcmp(value,"0")!=0;}
 static uint64_t numerics_hash_bytes(const void *data,size_t bytes){
     const uint8_t *p=data;uint64_t hash=UINT64_C(1469598103934665603);
@@ -97,7 +98,7 @@ typedef struct fg_owner_decode_slot {
     fg_owner_pending_write pending_write;
     fg_owner_expert_collect_fn collect;
     void *dispatch_context;
-    double t_begin,t_sync1,t_fire,t_sync2;
+    double t_begin,t_sync1,t_fire,t_sync2,t_topk,t_write;
     uint64_t trace_start,trace_sync1,trace_fire,trace_sync2;
     fg_vk_counters counters_before;
 } fg_owner_decode_slot;
@@ -934,6 +935,7 @@ static fg_status decode_layer_begin_impl(fg_owner_executor *e,uint32_t slot,uint
             fg_vk_tensor_map(frame->injection),FG_GROUP_SIZE);
     }
     if(status==FG_OK){float router_local[FG_EXPERT_COUNT];memcpy(router_local,fg_vk_tensor_map(e->router_logits),sizeof(router_local));uint32_t ids[FG_TOP_K];status=fg_q38_router_topk(router_local,FG_EXPERT_COUNT,FG_TOP_K,ids,frame->gates,err);for(uint32_t s=0;status==FG_OK&&s<FG_TOP_K;s++)frame->expert_ids[s]=(uint16_t)ids[s];}
+    double t_topk=ts_ms();
     if(status==FG_OK&&layer<=1u&&numerics_trace_enabled())
         numerics_trace_values_local("SYNC1_GATES",fg_model_rank(e->model),layer,
             frame->gates,FG_TOP_K);
@@ -950,7 +952,7 @@ static fg_status decode_layer_begin_impl(fg_owner_executor *e,uint32_t slot,uint
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,frame->shared_output,down_w,e->shared_mid,640u,FG_HIDDEN_SIZE,1u,1.0f,err);
     if(status==FG_OK)status=fg_vk_dense_f32(vk,frame->shared_scalar,shared_gate_w,mixed,FG_HIDDEN_SIZE,1u,1u,err);
     status=finish_batch(vk,status,err);
-    frame->residual=residual;frame->t_sync1=t_sync1;frame->trace_sync1=trace_sync1;frame->t_fire=t_fire;frame->trace_fire=trace_fire;frame->t_sync2=ts_ms();frame->trace_sync2=ep_trace?wall_ns():0;
+    frame->residual=residual;frame->t_sync1=t_sync1;frame->trace_sync1=trace_sync1;frame->t_topk=t_topk;frame->t_fire=t_fire;frame->trace_fire=trace_fire;frame->t_sync2=ts_ms();frame->trace_sync2=ep_trace?wall_ns():0;
     if(status!=FG_OK){
         if(frame->fire_called){fg_expert_result drain[FG_GROUP_SIZE];uint32_t drain_count=0;fg_error ignored={0};fg_status drained=collect(dispatch_context,layer,token,drain,&drain_count,&ignored);(void)drained;}
         frame->active=false;
@@ -998,6 +1000,7 @@ static fg_status decode_layer_finish_impl(fg_owner_executor *e,uint32_t slot,fg_
     frame->active=false;
     if(frame->ep_trace){fg_vk_counters counters_after={0};fg_vk_get_counters(vk,&counters_after);fprintf(stderr,"EP_LAYER_TRACE token=%u layer=%u status=%d total_ms=%.3f sync1_ms=%.3f fire_ms=%.3f shared_ms=%.3f collect_ms=%.3f finish_ms=%.3f submissions=%llu dispatches=%llu start_ns=%llu router_ready_ns=%llu fire_end_ns=%llu shared_end_ns=%llu collect_end_ns=%llu finish_end_ns=%llu\n",frame->token,frame->layer,(int)status,t_end-frame->t_begin,frame->t_sync1-frame->t_begin,frame->t_fire-frame->t_sync1,frame->t_sync2-frame->t_fire,t_collect-frame->t_sync2,t_end-t_collect,(unsigned long long)(counters_after.submissions-frame->counters_before.submissions),(unsigned long long)(counters_after.dispatches-frame->counters_before.dispatches),(unsigned long long)frame->trace_start,(unsigned long long)frame->trace_sync1,(unsigned long long)frame->trace_fire,(unsigned long long)frame->trace_sync2,(unsigned long long)trace_collect,(unsigned long long)trace_end);}
     if(frame_trace_enabled()||(frame->token>=26u&&frame->token<32u)){fprintf(stderr,"OVERLAP_TIMING layer[%u] t=%u total=%.1f sync1=%.1f fire=%.1f shared=%.1f collect=%.1f reduce+grw=%.1f\n",frame->layer,frame->token,t_end-frame->t_begin,frame->t_sync1-frame->t_begin,frame->t_fire-frame->t_sync1,frame->t_sync2-frame->t_fire,t_collect-frame->t_sync2,t_end-t_collect);}
+    if(decode_ms_enabled())fprintf(stderr,"DECODE_MS rank=%u token=%u layer=%u batch1_ms=%.3f topk_ms=%.3f fire_ms=%.3f shared_ms=%.3f collect_ms=%.3f reduce_ms=%.3f total_ms=%.3f\n",fg_model_rank(e->model),frame->token,frame->layer,frame->t_sync1-frame->t_begin,frame->t_topk-frame->t_sync1,frame->t_fire-frame->t_topk,frame->t_sync2-frame->t_fire,t_collect-frame->t_sync2,t_end-t_collect,t_end-frame->t_begin);
     return status;
 }
 
