@@ -251,6 +251,21 @@ guard and mirror allow one-or-two owned QSA layers; per-token position map inste
 of slot-zero writes; committed frontier advanced after ring prefill; cold fetches
 read from the owner's authoritative session.
 
+**DECODE EXPERIMENT 2026-09-13 (failed, reverted).** Ported the prefill grouped
+pair-tile kernels into `fg_expert_decode` for batch-1 (`3c17717`). Measured:
+worker expert GPU **0.77 ms -> 1.49 ms** per layer (sel=10) - a 16-pair tile with
+one pair wastes lanes; the fixed per-slot graph is better at batch 1. Reverted in
+`1198fb0`; binary hash restored to `0b91ca9c...`; fleet gates green at 9.1 TPS
+decode. Baseline decode budget per token (48 layers, rank-0 log): total ~101 ms =
+sync1 ~40 ms + collect ~48 ms + fire/shared/reduce ~13 ms. Worker expert GPU
+0.77 ms for ~50 MB = 65 GB/s vs 350 GB/s roofline; rank-0 common path ~144 GB/s
+vs roofline. Both are kernel-efficiency problems, not topology.
+Next decode lever: a purpose-built batch-1 expert kernel (all 10 experts in one
+X-flattened dispatch, vectorized loads), or MTP/spec after.
+Bench caveat: `FG_BLOCK_BENCH` skips QSA layers, so an in-ring QSA stage time has
+never been measured; extend the bench (open a state-backed session for the rank's
+QSA layer) before tuning ring stage depth.
+
 Remaining defects, in order:
 1. **FIXED 2026-09-13**: `invalid QSA complete-page lookup` — worker fetches now read
    the session state directly (`fg_qsa_session_state_records`); no fetch errors, two
