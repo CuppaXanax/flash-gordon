@@ -26,10 +26,27 @@ void main(){
     for(uint stride=64u;stride>0u;stride>>=1u){if(lane<stride)dot_qk[lane]+=dot_qk[lane+stride];barrier();}
     float decay=exp(a_decay[head]*softplus(alpha[head]+dt_bias[head])),mix=1.0/(1.0+exp(-beta[head]));
     uint state_base=head*pc.head_dim*pc.head_dim;float memory=0.0,prior_result=0.0;
-    for(uint index=0u;index<pc.head_dim;index++){float old=recurrent[state_base+index*pc.head_dim+lane],decayed=old*decay;memory=fma(decayed,key[index],memory);prior_result=fma(decayed,query[index],prior_result);}
+    uint index=0u;
+    for(;index+4u<=pc.head_dim;index+=4u){
+        uint base0=state_base+index*pc.head_dim+lane,stride=pc.head_dim;
+        float old0=recurrent[base0],old1=recurrent[base0+stride],old2=recurrent[base0+2u*stride],old3=recurrent[base0+3u*stride];
+        float decayed0=old0*decay,decayed1=old1*decay,decayed2=old2*decay,decayed3=old3*decay;
+        memory=fma(decayed0,key[index],memory);memory=fma(decayed1,key[index+1u],memory);memory=fma(decayed2,key[index+2u],memory);memory=fma(decayed3,key[index+3u],memory);
+        prior_result=fma(decayed0,query[index],prior_result);prior_result=fma(decayed1,query[index+1u],prior_result);prior_result=fma(decayed2,query[index+2u],prior_result);prior_result=fma(decayed3,query[index+3u],prior_result);
+    }
+    for(;index<pc.head_dim;index++){float old=recurrent[state_base+index*pc.head_dim+lane],decayed=old*decay;memory=fma(decayed,key[index],memory);prior_result=fma(decayed,query[index],prior_result);}
     delta[lane]=(value-memory)*mix;
     barrier();
-    for(uint index=0u;index<pc.head_dim;index++){uint state_index=state_base+index*pc.head_dim+lane;recurrent[state_index]=recurrent[state_index]*decay+key[index]*delta[lane];}
+    index=0u;
+    for(;index+4u<=pc.head_dim;index+=4u){
+        uint base0=state_base+index*pc.head_dim+lane,stride=pc.head_dim;
+        float old0=recurrent[base0],old1=recurrent[base0+stride],old2=recurrent[base0+2u*stride],old3=recurrent[base0+3u*stride];
+        recurrent[base0]=old0*decay+key[index]*delta[lane];
+        recurrent[base0+stride]=old1*decay+key[index+1u]*delta[lane];
+        recurrent[base0+2u*stride]=old2*decay+key[index+2u]*delta[lane];
+        recurrent[base0+3u*stride]=old3*decay+key[index+3u]*delta[lane];
+    }
+    for(;index<pc.head_dim;index++){uint state_index=state_base+index*pc.head_dim+lane;recurrent[state_index]=recurrent[state_index]*decay+key[index]*delta[lane];}
     float result=fma(delta[lane],dot_qk[0],prior_result);attention[lane]=result;sum_out[lane]=result*result;
     barrier();
     for(uint stride=64u;stride>0u;stride>>=1u){if(lane<stride)sum_out[lane]+=sum_out[lane+stride];barrier();}
