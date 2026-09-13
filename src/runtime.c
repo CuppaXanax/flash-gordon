@@ -422,14 +422,16 @@ typedef struct worker_decode_dispatch {
     fg_expert_executor *expert;
     const fg_manifest *manifest;
     uint32_t self;
+    fg_expert_result *results;
+    uint32_t result_count;
 } worker_decode_dispatch;
 
 static fg_status worker_decode_experts(void *opaque,uint32_t layer,uint32_t token,
     const uint16_t expert_ids[FG_TOP_K],const float gates[FG_TOP_K],
-    const uint8_t *activation,fg_expert_result results[FG_GROUP_SIZE],
-    uint32_t *result_count,fg_error *err){
-    worker_decode_dispatch *context=opaque;*result_count=0;
+    const uint8_t *activation,fg_error *err){
+    worker_decode_dispatch *context=opaque;
     fg_expert_route routes[FG_GROUP_SIZE];uint32_t route_count=0;
+    context->result_count=0;
     fg_status status=fg_partition_route(context->manifest,layer,expert_ids,gates,
         routes,&route_count,err);
     for(uint32_t r=0;status==FG_OK&&r<route_count;r++){
@@ -448,10 +450,29 @@ static fg_status worker_decode_experts(void *opaque,uint32_t layer,uint32_t toke
             work.gates[i]=routes[r].gates[i];
         }
         memcpy(work.activation_q8k,activation,FG_Q8K_ACTIVATION_BYTES);
-        status=fg_expert_decode(context->expert,&work,&results[*result_count],err);
-        if(status==FG_OK)(*result_count)++;
+        status=fg_expert_decode(context->expert,&work,&context->results[context->result_count],err);
+        if(status==FG_OK)context->result_count++;
     }
     return status;
+}
+
+/* Local fire/collect pair for the owner async decode machine: the sealed block
+ * owns every routed expert, so compute completes in fire and collect just
+ * hands the canonical results to the shared reduce. */
+static fg_status worker_decode_fire(void *opaque,uint32_t layer,uint32_t token,
+    const uint16_t expert_ids[FG_TOP_K],const float gates[FG_TOP_K],
+    const uint8_t *activation,fg_error *err){
+    return worker_decode_experts(opaque,layer,token,expert_ids,gates,activation,err);
+}
+
+static fg_status worker_decode_collect(void *opaque,uint32_t layer,uint32_t token,
+    fg_expert_result results[FG_GROUP_SIZE],uint32_t *result_count,fg_error *err){
+    (void)layer;(void)token;(void)err;
+    worker_decode_dispatch *context=opaque;
+    for(uint32_t i=0;i<context->result_count;i++)results[i]=context->results[i];
+    *result_count=context->result_count;
+    context->result_count=0;
+    return FG_OK;
 }
 
 typedef struct layer_work_context {
@@ -477,8 +498,8 @@ static void layer_work_context_destroy(layer_work_context *context){
 }
 
 static fg_status layer_work_context_create(layer_work_context *context,fg_model *model,
-    const fg_manifest *manifest,fg_expert_executor *expert,prefill_worker_buffers *buffers,
-    fg_error *err){
+    fg_owner_executor *owner,const fg_manifest *manifest,fg_expert_executor *expert,
+    prefill_worker_buffers *buffers,fg_error *err){
     memset(context,0,sizeof(*context));
     uint32_t tokens=manifest->prefill_microbatch;
     context->tokens=tokens;
@@ -508,6 +529,12 @@ static fg_status layer_work_context_create(layer_work_context *context,fg_model 
     context->dispatch.buffers=buffers;context->dispatch.self=fg_model_rank(model);
     context->decode_dispatch.expert=expert;context->decode_dispatch.manifest=manifest;
     context->decode_dispatch.self=fg_model_rank(model);
+    context->decode_dispatch.results=fg_owner_decode_results(owner);
+    if(!context->decode_dispatch.results){
+        layer_work_context_destroy(context);
+        fg_error_set(err,FG_ERR_ARGUMENT,"worker decode result arena is unavailable");
+        return FG_ERR_ARGUMENT;
+    }
     context->vk=fg_model_vk(model);
     return FG_OK;
 }
@@ -678,14 +705,10 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
         work->ngram_embedding,(uint64_t)FG_NGRAM_EMBED_VALUES*4u,err);
     uint32_t last=work->layer;
     while(status==FG_OK&&last+1u<FG_LAYER_COUNT&&manifest->layer_owner[last+1u]==self)last++;
-    fg_vk_tensor *current=input;
-    for(uint32_t layer=work->layer;status==FG_OK&&layer<=last;layer++){
-        const fg_vk_tensor *ngram=layer==1u?context->ngram_tensor:NULL;
-        fg_vk_tensor *layer_out=NULL;
-        status=fg_owner_decode_layer(owner,layer,work->token_index,work->position,current,
-            ngram,worker_decode_experts,&context->decode_dispatch,&layer_out,err);
-        if(status==FG_OK)current=layer_out;
-    }
+    fg_vk_tensor *current=NULL;
+    if(status==FG_OK)status=fg_owner_decode_block(owner,work->layer,last,work->token_index,
+        work->position,input,has_ngram?context->ngram_tensor:NULL,worker_decode_fire,
+        worker_decode_collect,&context->decode_dispatch,&current,err);
     if(status==FG_OK)status=fg_vk_tensor_read(current,0,context->hyper_out,
         (uint64_t)FG_HYPER_WIDTH*4u,err);
     if(status==FG_OK)status=worker_publish_qsa_pages(context->qsa_owner,owner,self,
@@ -1735,7 +1758,7 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_
     fg_expert_result *ew_result=malloc(sizeof(*ew_result));uint8_t *ew_wire=malloc(FG_EXPERT_RESULT_SINGLE_BYTES);
     if(!control||!ew_result||!ew_wire){free(ew_wire);free(ew_result);free(control);fg_error_set(err,FG_ERR_OOM,"allocate rank worker buffers");return FG_ERR_OOM;}
     fg_status status=prefill_worker_buffers_create(&prefill,manifest->prefill_microbatch,
-                                                   false,err);if(status==FG_OK)status=qsa_owner_runtime_create(&qsa,manifest,self,err);if(status==FG_OK&&owner)status=layer_work_context_create(&layer_work,model,manifest,expert,&prefill,err);if(status==FG_OK)layer_work.qsa_owner=&qsa;
+                                                   false,err);if(status==FG_OK)status=qsa_owner_runtime_create(&qsa,manifest,self,err);if(status==FG_OK&&owner)status=layer_work_context_create(&layer_work,model,owner,manifest,expert,&prefill,err);if(status==FG_OK)layer_work.qsa_owner=&qsa;
     uint32_t worker_qsa_layers=owned_qsa_layers(manifest,self);
     (void)worker_qsa_layers;
     if(status==FG_OK&&output)status=fg_vk_tensor_create(fg_model_vk(model),FG_HYPER_WIDTH*4u,&hyper,err);
@@ -3411,7 +3434,8 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
         token_index*FG_LAYER_COUNT+0u,0,coordinator->decode_work_wire,wire_bytes,err);
     double t_sent=trace?dispatch_ts():0.0;
     worker_decode_dispatch dispatch={.expert=coordinator->expert,
-        .manifest=manifest,.self=0u};
+        .manifest=manifest,.self=0u,
+        .results=fg_owner_decode_results(coordinator->owner)};
     bool have_result=false;
     double t_own_recv=0.0,t_own_end=0.0,t_final=0.0;
     uint32_t own_first=0u,own_last=0u;
@@ -3444,14 +3468,10 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
             /* The coordinator executes its own block inline on the base owner
              * slot; the block state was advanced by this rank in ring prefill. */
             status=fg_vk_tensor_write(input,0,work->hyper,(uint64_t)FG_HYPER_WIDTH*4u,err);
-            fg_vk_tensor *current=input;
-            for(uint32_t layer=own_first;status==FG_OK&&layer<=last;layer++){
-                fg_vk_tensor *layer_out=NULL;
-                status=fg_owner_decode_layer(coordinator->owner,layer,work->token_index,
-                    work->position,current,NULL,worker_decode_experts,&dispatch,
-                    &layer_out,err);
-                if(status==FG_OK)current=layer_out;
-            }
+            fg_vk_tensor *current=NULL;
+            if(status==FG_OK)status=fg_owner_decode_block(coordinator->owner,own_first,last,
+                work->token_index,work->position,input,NULL,worker_decode_fire,
+                worker_decode_collect,&dispatch,&current,err);
             if(status==FG_OK)status=fg_vk_tensor_read(current,0,work->hyper,
                 (uint64_t)FG_HYPER_WIDTH*4u,err);
             if(trace)t_own_end=dispatch_ts();

@@ -121,6 +121,9 @@ uint32_t fg_owner_gdn_layers(const fg_owner_executor *executor,uint8_t *layers,
 fg_status fg_owner_qsa_decode(fg_owner_executor *executor,uint32_t layer,uint32_t token_index,
                               const uint32_t position[3],const fg_vk_tensor *hidden,
                               fg_vk_tensor **output,fg_error *err);
+/* Canonical routed-expert result arena; the sealed block owner fills it during
+ * the decode fire callback and hands it to the shared reduce on collect. */
+fg_expert_result *fg_owner_decode_results(fg_owner_executor *executor);
 fg_status fg_owner_qsa_prefill(fg_owner_executor *executor,uint32_t layer,uint32_t first_token,
                                const uint32_t *positions,uint32_t token_count,
                                const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err);
@@ -153,6 +156,15 @@ fg_status fg_owner_decode_layer_begin(fg_owner_executor *executor,uint32_t slot,
                                       void *dispatch_context,
                                       fg_owner_qsa_decode_dispatch_fn qsa_dispatch,
                                       void *qsa_context,fg_error *err);
+/* Ring decode block: run layers [first,last] of one token from the owner's
+ * authoritative state, including a mid-model block start with no local
+ * predecessor. */
+fg_status fg_owner_decode_block(fg_owner_executor *executor,uint32_t first_layer,
+                                uint32_t last_layer,uint32_t token_index,
+                                const uint32_t position[3],const fg_vk_tensor *hyper_input,
+                                const fg_vk_tensor *ngram_embedding,
+                                fg_owner_expert_fire_fn fire,fg_owner_expert_collect_fn collect,
+                                void *dispatch_context,fg_vk_tensor **output,fg_error *err);
 fg_status fg_owner_decode_layer_finish(fg_owner_executor *executor,uint32_t slot,
                                        fg_vk_tensor **output,fg_error *err);
 fg_status fg_owner_prefill_layer(fg_owner_executor *executor,uint32_t layer,
