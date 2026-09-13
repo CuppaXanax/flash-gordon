@@ -30,6 +30,32 @@ static int setup(fg_qsa_session *s,fg_model *m,fg_vk_tensor **scratch){
     for(uint32_t i=0;i<128u;i++)norm[i]=1.0f+0.1f*sinf((float)i);
     uint32_t *positions=fg_vk_tensor_map(s->positions);
     for(uint32_t t=0;t<s->max_context;t++)for(uint32_t a=0;a<3u;a++)positions[t*3u+a]=t+a;
+    /* Segment 0 is eager; later segments stay lazy until first use. */
+    REQUIRE(s->index_keys[0][0]!=NULL);
+    for(uint32_t seg=1;seg<s->index_segment_count;seg++)
+        REQUIRE(s->index_keys[0][seg]==NULL);
+    float *query=fg_vk_tensor_map(s->index_query);
+    for(uint32_t q=0;q<128u;q++)for(uint32_t i=0;i<512u;i++)
+        query[q*512u+i]=cosf((float)(q+1u)*(float)(i+1u)*0.023f);
+    return 1;
+}
+
+/* The batched selector must materialize a lazy segment the first time the
+ * visible range crosses into it, and must not reallocate it afterwards. */
+static int lazy_index_segment(fg_qsa_session *s){
+    REQUIRE(s->index_segment_count>1u);
+    REQUIRE(s->index_keys[0][1]==NULL);
+    uint32_t selected[4][512],counts[4];
+    REQUIRE(select_prefill_batch(s,0u,131075u,0u,4u,&selected[0][0],512u,
+                                 counts,&error)==FG_OK);
+    REQUIRE(s->index_keys[0][1]!=NULL);
+    fg_vk_tensor *tensor=s->index_keys[0][1];
+    REQUIRE(ensure_index_segment(s,0u,1u,&error)==FG_OK);
+    REQUIRE(s->index_keys[0][1]==tensor);
+    return 1;
+}
+
+static int fill_index_rows(fg_qsa_session *s){
     /* Repeated quantized rows are inexpensive to build; MRoPE makes block scores distinct. */
     uint8_t rows[64][136];float raw[128];
     for(uint32_t r=0;r<64u;r++){
@@ -37,12 +63,10 @@ static int setup(fg_qsa_session *s,fg_model *m,fg_vk_tensor **scratch){
         fg_quantize_q8_0(raw,rows[r],128u);
     }
     for(uint32_t seg=0;seg<s->index_segment_count;seg++){
+        REQUIRE(ensure_index_segment(s,0u,seg,&error)==FG_OK);
         uint8_t *keys=fg_vk_tensor_map(s->index_keys[0][seg]);
         for(uint32_t t=0;t<s->index_segment_tokens[seg];t++)memcpy(keys+(uint64_t)t*136u,rows[t%64u],136u);
     }
-    float *query=fg_vk_tensor_map(s->index_query);
-    for(uint32_t q=0;q<128u;q++)for(uint32_t i=0;i<512u;i++)
-        query[q*512u+i]=cosf((float)(q+1u)*(float)(i+1u)*0.023f);
     return 1;
 }
 
@@ -327,6 +351,7 @@ int main(void){
     fg_status status=fg_vk_open(&model->vk,&error);
     if(status==FG_ERR_UNAVAILABLE){free(session);free(model);return 77;}
     int ok=status==FG_OK&&setup(session,model,&scratch);
+    if(ok)ok=lazy_index_segment(session)&&fill_index_rows(session);
     if(ok)ok=selection_parity(session,131071u)&&selection_parity(session,2045u);
     if(ok)ok=causal_attention(session)&&causal_attention_weighted(session)&&gather_eviction(session,false)&&gather_eviction(session,true);
     if(ok)ok=split_merge_selected(session,5u,8u)&&split_merge_selected(session,100u,1u)&&
