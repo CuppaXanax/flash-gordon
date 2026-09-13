@@ -2535,6 +2535,10 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
         can_issue=true;
     }
     if(status==FG_OK)*output=last_output;
+    /* Decode on rank 0 attaches to owners' committed state; the mirror did not
+     * compute most QSA layers, so advance its committed counters to the
+     * prefilled context before decoding. */
+    if(status==FG_OK)fg_owner_qsa_set_tokens(coordinator->owner,first_token+token_count);
     free(positions_scratch);free(positions);free(ngram_host);free(hyper_host);
     free(result_wire);free(work_wire);free(receive_wire);
     return status;
