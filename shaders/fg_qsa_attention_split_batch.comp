@@ -1,0 +1,78 @@
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+/* Batched split-K QSA attention, stage 1: each workgroup owns one
+ * (head, split, query group of four) triple.  The online-softmax math is
+ * identical to fg_qsa_attention_split, but the four queries of the group
+ * share the per-token barrier rounds and dispatch.  Queries keep their own
+ * causal selected-token ranges, so split boundaries match the single-query
+ * kernel exactly.  Layout per query/head/split:
+ *   partials[((query*24+head)*splits+split)*258 + 0..255] = weighted values
+ *   partials[... + 256] = running maximum
+ *   partials[... + 257] = running denominator */
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Records{uint records[];};
+layout(set=0,binding=1)readonly buffer Query{float query[];};
+layout(set=0,binding=2)buffer Partials{float partials[];};
+layout(set=0,binding=3)readonly buffer Counts{uint selected_counts[];};
+layout(push_constant)uniform Push{uint splits;uint query_count;uint record_stride;uint query_stride;}pc;
+const uint QPG=4u;
+shared float subgroup_sum[256];
+shared float shared_scale[QPG];
+shared float shared_weight[QPG];
+shared float shared_denominator[QPG];
+shared float shared_maximum[QPG];
+uint load_byte(uint byte_offset){return(records[byte_offset>>2u]>>((byte_offset&3u)*8u))&255u;}
+float load_half(uint byte_offset){uint bits=load_byte(byte_offset)|(load_byte(byte_offset+1u)<<8u);return unpackHalf2x16(bits).x;}
+float load_key(uint base,uint kv_head,uint element){uint at=base+kv_head*272u+(element>>5u)*34u;int q=int(load_byte(at+2u+(element&31u)));if(q>=128)q-=256;return load_half(at)*float(q);}
+float load_value(uint base,uint kv_head,uint element){uint at=base+544u+kv_head*272u+(element>>5u)*34u;int q=int(load_byte(at+2u+(element&31u)));if(q>=128)q-=256;return load_half(at)*float(q);}
+void main(){
+    uint lane=gl_LocalInvocationID.x,head=gl_WorkGroupID.x,split=gl_WorkGroupID.y;
+    uint q0=gl_WorkGroupID.z*QPG;
+    if(head>=24u||pc.splits==0u||split>=pc.splits||q0>=pc.query_count)return;
+    uint kv_head=head/12u;
+    uint group_queries=pc.query_count-q0;if(group_queries>QPG)group_queries=QPG;
+    float accumulator[QPG];float qval[QPG];uint first[QPG],span[QPG];
+    uint max_span=0u;
+    for(uint j=0u;j<QPG;j++){
+        accumulator[j]=0.0;qval[j]=0.0;first[j]=0u;span[j]=0u;
+        if(j<group_queries){
+            uint q=q0+j;
+            qval[j]=query[q*pc.query_stride+head*256u+lane];
+            uint selected=selected_counts[q];
+            uint begin=(selected*split)/pc.splits,end=(selected*(split+1u))/pc.splits;
+            first[j]=begin;span[j]=end-begin;
+            if(span[j]>max_span)max_span=span[j];
+        }
+    }
+    if(lane<QPG){shared_maximum[lane]=-3.402823466e38;shared_denominator[lane]=0.0;}
+    barrier();
+    for(uint t=0u;t<max_span;t++){
+        for(uint j=0u;j<QPG;j++)if(t<span[j]){
+            uint base=(q0+j)*pc.record_stride*1236u+(first[j]+t)*1236u;
+            float reduced=subgroupAdd(qval[j]*load_key(base,kv_head,lane));
+            if(subgroupElect()&&gl_SubgroupID<64u)subgroup_sum[gl_SubgroupID*QPG+j]=reduced;
+        }
+        barrier();
+        if(lane<QPG&&lane<group_queries&&t<span[lane]){
+            float score=0.0;for(uint s=0u;s<gl_NumSubgroups;s++)score+=subgroup_sum[s*QPG+lane];
+            score*=0.0625;
+            float previous=shared_maximum[lane],next=max(previous,score);
+            shared_scale[lane]=previous<-3.0e38?0.0:exp(previous-next);
+            shared_weight[lane]=exp(score-next);
+            shared_denominator[lane]=shared_denominator[lane]*shared_scale[lane]+shared_weight[lane];
+            shared_maximum[lane]=next;
+        }
+        barrier();
+        for(uint j=0u;j<QPG;j++)if(t<span[j]){
+            uint base=(q0+j)*pc.record_stride*1236u+(first[j]+t)*1236u;
+            accumulator[j]=accumulator[j]*shared_scale[j]+load_value(base,kv_head,lane)*shared_weight[j];
+        }
+        barrier();
+    }
+    for(uint j=0u;j<QPG;j++)if(j<group_queries){
+        uint q=q0+j,base=((q*24u+head)*pc.splits+split)*258u;
+        partials[base+lane]=accumulator[j];
+        if(lane==0u){partials[base+256u]=shared_maximum[j];partials[base+257u]=shared_denominator[j];}
+    }
+}

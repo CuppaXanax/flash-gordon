@@ -1,0 +1,23 @@
+#version 460
+/* Batched page-cache record gather: every query owns one contiguous record
+ * slice in the output arena.  The host resolves each selected block rank to
+ * a page-cache slot and pads non-resident ranks with 0xffffffff; missing
+ * records and the causal tail are staged by the host at the same addresses. */
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Records{uint records[];};
+layout(set=0,binding=1)readonly buffer Slots{uint slots[];};
+layout(set=0,binding=2)writeonly buffer Output{uint output_records[];};
+layout(push_constant)uniform Push{uint capacity;uint query_count;uint slot_stride;uint record_stride;uint record_words;}pc;
+void main(){
+    uint word=gl_GlobalInvocationID.x,q=gl_WorkGroupID.y;
+    if(q>=pc.query_count)return;
+    uint output_token=word/pc.record_words;
+    if(output_token>=pc.record_stride)return;
+    uint record_word=word-output_token*pc.record_words;
+    uint block=output_token>>2u;
+    if(block>=pc.slot_stride)return;
+    uint slot=slots[q*pc.slot_stride+block];
+    if(slot==0xffffffffu||slot>=pc.capacity/4u)return;
+    uint source=(slot*4u+(output_token&3u))*pc.record_words+record_word;
+    output_records[(q*pc.record_stride+output_token)*pc.record_words+record_word]=records[source];
+}

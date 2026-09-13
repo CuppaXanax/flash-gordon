@@ -297,6 +297,29 @@ fg_status fg_vk_qsa_attention_split(fg_vk_context *context,fg_vk_tensor *partial
 fg_status fg_vk_qsa_attention_merge(fg_vk_context *context,fg_vk_tensor *output,
                                     const fg_vk_tensor *partials,const fg_vk_tensor *gate,
                                     uint32_t splits,fg_error *err);
+fg_status fg_vk_qsa_attention_split_batch(fg_vk_context *context,fg_vk_tensor *partials,
+                                          const fg_vk_tensor *records,const fg_vk_tensor *query,
+                                          const fg_vk_tensor *counts,uint32_t query_count,
+                                          uint32_t record_stride,uint32_t query_stride,
+                                          uint32_t splits,fg_error *err);
+fg_status fg_vk_qsa_attention_merge_batch(fg_vk_context *context,fg_vk_tensor *output,
+                                          const fg_vk_tensor *partials,
+                                          const fg_vk_tensor *gate,uint32_t query_count,
+                                          uint32_t query_stride,uint32_t splits,fg_error *err);
+fg_status fg_vk_qsa_record_gather_batch(fg_vk_context *context,fg_vk_tensor *output,
+                                        const fg_vk_tensor *records,
+                                        const fg_vk_tensor *slots,uint32_t query_count,
+                                        uint32_t slot_stride,uint32_t record_stride,
+                                        uint32_t capacity,fg_error *err);
+/* Reduce per-query candidate rows (count entries, input_stride apart) to the
+   top 512 ids in result_ids using fg_qsa_resident_topk_merge.  The two score
+   buffers are scratch sides; the final merge writes ids into result_ids with
+   a 512-id stride. */
+fg_status fg_vk_qsa_select_merge(fg_vk_context *context,fg_vk_tensor *scores_0,
+                                 fg_vk_tensor *ids_0,fg_vk_tensor *scores_1,
+                                 fg_vk_tensor *ids_1,fg_vk_tensor *result_ids,
+                                 uint32_t count,uint32_t input_stride,uint32_t query_count,
+                                 fg_error *err);
 fg_status fg_vk_qsa_resident_record_commit(
     fg_vk_context *context,fg_vk_tensor *record_segment_0,
     fg_vk_tensor *record_segment_1,fg_vk_tensor *index_segment_0,

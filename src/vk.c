@@ -2,6 +2,9 @@
 #include "fg_quant.h"
 #include "fg_q38_schema.h"
 
+#define FG_VK_QSA_SELECTED_BLOCKS (FG_Q38_INDEX_BUDGET/FG_Q38_QSA_COMPRESS_RATIO)
+#define FG_VK_QSA_SELECTED_TOKENS (FG_Q38_INDEX_BUDGET+FG_Q38_QSA_COMPRESS_RATIO-1u)
+
 #include <vulkan/vulkan.h>
 #include <math.h>
 #include <stdio.h>
@@ -36,7 +39,7 @@ struct fg_vk_context {
     fg_vk_counters counters;
     fg_vk_memory_stats memory_stats;
     fg_vk_profile_dispatch profile_dispatches[FG_VK_PROFILE_MAX_DISPATCHES];fg_vk_profile profile;
-    fg_vk_kernel quant_q8k,quant_q8,quant_q4,dequant_iq4nl,embedding,embedding_batch,swiglu,silu_scaled,dense,dense_f32,dense_bf16,rms,gr,hc_inject_partial,gr_partial,hc_finalize,gr_write,ple_gate,ple_gate_prefill,ple_conv,ple_conv_prefill,add,apply_penalties,gdn_conv,gdn_conv_prefill,gdn_recurrent,gdn_recurrent_algebraic,gdn_recurrent_prefill,gdn_prefill_qk_norm,gdn_prefill_recurrence,gdn_prefill_output,qsa_prepare,qsa_prepare_prefill,qsa_index_prepare,qsa_index_prepare_prefill,qsa_record_commit,qsa_record_gather,qsa_score,qsa_attention,qsa_attention_split,qsa_attention_merge,qsa_resident_commit,qsa_resident_select,qsa_resident_merge,qsa_resident_attention,topk,topk_select,topk_select_fallback,moe_q5_1,moe_q5_1_cooked,moe_q8_0,moe_reduce,kquant,kquant_cooked;
+    fg_vk_kernel quant_q8k,quant_q8,quant_q4,dequant_iq4nl,embedding,embedding_batch,swiglu,silu_scaled,dense,dense_f32,dense_bf16,rms,gr,hc_inject_partial,gr_partial,hc_finalize,gr_write,ple_gate,ple_gate_prefill,ple_conv,ple_conv_prefill,add,apply_penalties,gdn_conv,gdn_conv_prefill,gdn_recurrent,gdn_recurrent_algebraic,gdn_recurrent_prefill,gdn_prefill_qk_norm,gdn_prefill_recurrence,gdn_prefill_output,qsa_prepare,qsa_prepare_prefill,qsa_index_prepare,qsa_index_prepare_prefill,qsa_record_commit,qsa_record_gather,qsa_score,qsa_attention,qsa_attention_split,qsa_attention_merge,qsa_attention_split_batch,qsa_attention_merge_batch,qsa_record_gather_batch,qsa_resident_commit,qsa_resident_select,qsa_resident_merge,qsa_resident_attention,topk,topk_select,topk_select_fallback,moe_q5_1,moe_q5_1_cooked,moe_q8_0,moe_reduce,kquant,kquant_cooked;
     fg_vk_kernel argmax,dense_subgroup,dense_cooked,dense_cooked_r8;
     /* Decomposition benchmark kernels */
     fg_vk_kernel bench_stream,bench_dequant,bench_dot_nored;
@@ -176,13 +179,13 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
     c->moe_prefill_shard_reduce=(fg_vk_kernel){.file="fg_moe_prefill_shard_reduce.spv",.bindings=3,.push_bytes=8};
     c->moe_prefill_reduce=(fg_vk_kernel){.file="fg_moe_prefill_reduce.spv",.bindings=5,.push_bytes=8};
     c->apply_penalties=(fg_vk_kernel){.file="fg_apply_penalties.spv",.bindings=2,.push_bytes=16};
-    c->qsa_prepare=(fg_vk_kernel){.file="fg_qsa_prepare.spv",.bindings=8,.push_bytes=0};c->qsa_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_prepare_prefill.spv",.bindings=8,.push_bytes=4};c->qsa_index_prepare=(fg_vk_kernel){.file="fg_qsa_index_prepare.spv",.bindings=4,.push_bytes=0};c->qsa_index_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_index_prepare_prefill.spv",.bindings=4,.push_bytes=4};c->qsa_record_commit=(fg_vk_kernel){.file="fg_qsa_record_commit.spv",.bindings=6,.push_bytes=24};c->qsa_record_gather=(fg_vk_kernel){.file="fg_qsa_record_gather.spv",.bindings=3,.push_bytes=20};c->qsa_score=(fg_vk_kernel){.file="fg_qsa_index_score.spv",.bindings=6,.push_bytes=28};c->qsa_attention=(fg_vk_kernel){.file="fg_qsa_attention.spv",.bindings=4,.push_bytes=4};c->qsa_attention_split=(fg_vk_kernel){.file="fg_qsa_attention_split.spv",.bindings=3,.push_bytes=12};c->qsa_attention_merge=(fg_vk_kernel){.file="fg_qsa_attention_merge.spv",.bindings=3,.push_bytes=4};c->qsa_resident_commit=(fg_vk_kernel){.file="fg_qsa_resident_record_commit.spv",.bindings=8,.push_bytes=16};c->qsa_resident_select=(fg_vk_kernel){.file="fg_qsa_resident_select.spv",.bindings=7,.push_bytes=20};c->qsa_resident_merge=(fg_vk_kernel){.file="fg_qsa_resident_topk_merge.spv",.bindings=4,.push_bytes=16};c->qsa_resident_attention=(fg_vk_kernel){.file="fg_qsa_resident_attention.spv",.bindings=6,.push_bytes=20};c->topk=(fg_vk_kernel){.file="fg_topk_reduce.spv",.bindings=4,.push_bytes=4};
+    c->qsa_prepare=(fg_vk_kernel){.file="fg_qsa_prepare.spv",.bindings=8,.push_bytes=0};c->qsa_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_prepare_prefill.spv",.bindings=8,.push_bytes=4};c->qsa_index_prepare=(fg_vk_kernel){.file="fg_qsa_index_prepare.spv",.bindings=4,.push_bytes=0};c->qsa_index_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_index_prepare_prefill.spv",.bindings=4,.push_bytes=4};c->qsa_record_commit=(fg_vk_kernel){.file="fg_qsa_record_commit.spv",.bindings=6,.push_bytes=24};c->qsa_record_gather=(fg_vk_kernel){.file="fg_qsa_record_gather.spv",.bindings=3,.push_bytes=20};c->qsa_score=(fg_vk_kernel){.file="fg_qsa_index_score.spv",.bindings=6,.push_bytes=28};c->qsa_attention=(fg_vk_kernel){.file="fg_qsa_attention.spv",.bindings=4,.push_bytes=4};c->qsa_attention_split=(fg_vk_kernel){.file="fg_qsa_attention_split.spv",.bindings=3,.push_bytes=12};c->qsa_attention_merge=(fg_vk_kernel){.file="fg_qsa_attention_merge.spv",.bindings=3,.push_bytes=4};c->qsa_attention_split_batch=(fg_vk_kernel){.file="fg_qsa_attention_split_batch.spv",.bindings=4,.push_bytes=16};c->qsa_attention_merge_batch=(fg_vk_kernel){.file="fg_qsa_attention_merge_batch.spv",.bindings=3,.push_bytes=12};c->qsa_record_gather_batch=(fg_vk_kernel){.file="fg_qsa_record_gather_batch.spv",.bindings=3,.push_bytes=20};c->qsa_resident_commit=(fg_vk_kernel){.file="fg_qsa_resident_record_commit.spv",.bindings=8,.push_bytes=16};c->qsa_resident_select=(fg_vk_kernel){.file="fg_qsa_resident_select.spv",.bindings=7,.push_bytes=20};c->qsa_resident_merge=(fg_vk_kernel){.file="fg_qsa_resident_topk_merge.spv",.bindings=4,.push_bytes=16};c->qsa_resident_attention=(fg_vk_kernel){.file="fg_qsa_resident_attention.spv",.bindings=6,.push_bytes=20};c->topk=(fg_vk_kernel){.file="fg_topk_reduce.spv",.bindings=4,.push_bytes=4};
     c->topk_select=(fg_vk_kernel){.file="fg_topk_select.spv",.bindings=4,.push_bytes=8};
     c->topk_select_fallback=(fg_vk_kernel){.file="fg_topk_select_fallback.spv",.bindings=4,.push_bytes=8};
     *out=c;return FG_OK;
 }
 
-void fg_vk_close(fg_vk_context *c){if(!c)return;if(c->device)vkDeviceWaitIdle(c->device);destroy_kernel(c,&c->moe_prefill_shard_reduce);destroy_kernel(c,&c->moe_prefill_reduce);destroy_kernel(c,&c->q8_0_grouped);destroy_kernel(c,&c->q5_1_cooked_grouped);destroy_kernel(c,&c->kquant_cooked_grouped_int);destroy_kernel(c,&c->kquant_cooked_grouped);destroy_kernel(c,&c->decode_tile_schedule);destroy_kernel(c,&c->expert_major_pack);destroy_kernel(c,&c->router_top10);destroy_kernel(c,&c->dense_cooked_tile);destroy_kernel(c,&c->bench_stream_vec);destroy_kernel(c,&c->bench_stream_wide);destroy_kernel(c,&c->bench_dot_nored);destroy_kernel(c,&c->bench_dequant);destroy_kernel(c,&c->bench_stream);destroy_kernel(c,&c->kquant);destroy_kernel(c,&c->moe_reduce);destroy_kernel(c,&c->moe_q8_0);destroy_kernel(c,&c->moe_q5_1);destroy_kernel(c,&c->topk);destroy_kernel(c,&c->apply_penalties);destroy_kernel(c,&c->qsa_resident_attention);destroy_kernel(c,&c->qsa_resident_merge);destroy_kernel(c,&c->qsa_resident_select);destroy_kernel(c,&c->qsa_resident_commit);destroy_kernel(c,&c->qsa_attention_split);destroy_kernel(c,&c->qsa_attention_merge);destroy_kernel(c,&c->qsa_attention);destroy_kernel(c,&c->qsa_score);destroy_kernel(c,&c->qsa_record_gather);destroy_kernel(c,&c->qsa_record_commit);destroy_kernel(c,&c->qsa_index_prepare_prefill);destroy_kernel(c,&c->qsa_index_prepare);destroy_kernel(c,&c->qsa_prepare_prefill);destroy_kernel(c,&c->qsa_prepare);destroy_kernel(c,&c->gdn_prefill_output);destroy_kernel(c,&c->gdn_prefill_recurrence);destroy_kernel(c,&c->gdn_prefill_qk_norm);destroy_kernel(c,&c->gdn_recurrent_prefill);destroy_kernel(c,&c->gdn_recurrent_algebraic);destroy_kernel(c,&c->gdn_recurrent);destroy_kernel(c,&c->gdn_conv_prefill);destroy_kernel(c,&c->gdn_conv);destroy_kernel(c,&c->add);destroy_kernel(c,&c->ple_conv_prefill);destroy_kernel(c,&c->ple_conv);destroy_kernel(c,&c->ple_gate_prefill);destroy_kernel(c,&c->ple_gate);destroy_kernel(c,&c->gr_write);destroy_kernel(c,&c->hc_finalize);destroy_kernel(c,&c->gr_partial);destroy_kernel(c,&c->hc_inject_partial);destroy_kernel(c,&c->gr);destroy_kernel(c,&c->rms);destroy_kernel(c,&c->dense_cooked);destroy_kernel(c,&c->dense_subgroup);destroy_kernel(c,&c->dense_bf16);destroy_kernel(c,&c->dense_f32);destroy_kernel(c,&c->dense);destroy_kernel(c,&c->silu_scaled);destroy_kernel(c,&c->swiglu);destroy_kernel(c,&c->embedding_batch);destroy_kernel(c,&c->embedding);destroy_kernel(c,&c->dequant_iq4nl);destroy_kernel(c,&c->quant_q4);destroy_kernel(c,&c->quant_q8);destroy_kernel(c,&c->quant_q8k);if(c->profile_query_pool)vkDestroyQueryPool(c->device,c->profile_query_pool,NULL);if(c->pipeline_cache)vkDestroyPipelineCache(c->device,c->pipeline_cache,NULL);if(c->descriptor_pool)vkDestroyDescriptorPool(c->device,c->descriptor_pool,NULL);if(c->descriptor_set_layout)vkDestroyDescriptorSetLayout(c->device,c->descriptor_set_layout,NULL);if(c->fence)vkDestroyFence(c->device,c->fence,NULL);if(c->command_pool)vkDestroyCommandPool(c->device,c->command_pool,NULL);if(c->device)vkDestroyDevice(c->device,NULL);if(c->instance)vkDestroyInstance(c->instance,NULL);free(c);}
+void fg_vk_close(fg_vk_context *c){if(!c)return;if(c->device)vkDeviceWaitIdle(c->device);destroy_kernel(c,&c->moe_prefill_shard_reduce);destroy_kernel(c,&c->moe_prefill_reduce);destroy_kernel(c,&c->q8_0_grouped);destroy_kernel(c,&c->q5_1_cooked_grouped);destroy_kernel(c,&c->kquant_cooked_grouped_int);destroy_kernel(c,&c->kquant_cooked_grouped);destroy_kernel(c,&c->decode_tile_schedule);destroy_kernel(c,&c->expert_major_pack);destroy_kernel(c,&c->router_top10);destroy_kernel(c,&c->dense_cooked_tile);destroy_kernel(c,&c->bench_stream_vec);destroy_kernel(c,&c->bench_stream_wide);destroy_kernel(c,&c->bench_dot_nored);destroy_kernel(c,&c->bench_dequant);destroy_kernel(c,&c->bench_stream);destroy_kernel(c,&c->kquant);destroy_kernel(c,&c->moe_reduce);destroy_kernel(c,&c->moe_q8_0);destroy_kernel(c,&c->moe_q5_1);destroy_kernel(c,&c->topk);destroy_kernel(c,&c->apply_penalties);destroy_kernel(c,&c->qsa_resident_attention);destroy_kernel(c,&c->qsa_resident_merge);destroy_kernel(c,&c->qsa_resident_select);destroy_kernel(c,&c->qsa_resident_commit);destroy_kernel(c,&c->qsa_attention_split);destroy_kernel(c,&c->qsa_attention_merge);destroy_kernel(c,&c->qsa_attention_split_batch);destroy_kernel(c,&c->qsa_attention_merge_batch);destroy_kernel(c,&c->qsa_record_gather_batch);destroy_kernel(c,&c->qsa_attention);destroy_kernel(c,&c->qsa_score);destroy_kernel(c,&c->qsa_record_gather);destroy_kernel(c,&c->qsa_record_commit);destroy_kernel(c,&c->qsa_index_prepare_prefill);destroy_kernel(c,&c->qsa_index_prepare);destroy_kernel(c,&c->qsa_prepare_prefill);destroy_kernel(c,&c->qsa_prepare);destroy_kernel(c,&c->gdn_prefill_output);destroy_kernel(c,&c->gdn_prefill_recurrence);destroy_kernel(c,&c->gdn_prefill_qk_norm);destroy_kernel(c,&c->gdn_recurrent_prefill);destroy_kernel(c,&c->gdn_recurrent_algebraic);destroy_kernel(c,&c->gdn_recurrent);destroy_kernel(c,&c->gdn_conv_prefill);destroy_kernel(c,&c->gdn_conv);destroy_kernel(c,&c->add);destroy_kernel(c,&c->ple_conv_prefill);destroy_kernel(c,&c->ple_conv);destroy_kernel(c,&c->ple_gate_prefill);destroy_kernel(c,&c->ple_gate);destroy_kernel(c,&c->gr_write);destroy_kernel(c,&c->hc_finalize);destroy_kernel(c,&c->gr_partial);destroy_kernel(c,&c->hc_inject_partial);destroy_kernel(c,&c->gr);destroy_kernel(c,&c->rms);destroy_kernel(c,&c->dense_cooked);destroy_kernel(c,&c->dense_subgroup);destroy_kernel(c,&c->dense_bf16);destroy_kernel(c,&c->dense_f32);destroy_kernel(c,&c->dense);destroy_kernel(c,&c->silu_scaled);destroy_kernel(c,&c->swiglu);destroy_kernel(c,&c->embedding_batch);destroy_kernel(c,&c->embedding);destroy_kernel(c,&c->dequant_iq4nl);destroy_kernel(c,&c->quant_q4);destroy_kernel(c,&c->quant_q8);destroy_kernel(c,&c->quant_q8k);if(c->profile_query_pool)vkDestroyQueryPool(c->device,c->profile_query_pool,NULL);if(c->pipeline_cache)vkDestroyPipelineCache(c->device,c->pipeline_cache,NULL);if(c->descriptor_pool)vkDestroyDescriptorPool(c->device,c->descriptor_pool,NULL);if(c->descriptor_set_layout)vkDestroyDescriptorSetLayout(c->device,c->descriptor_set_layout,NULL);if(c->fence)vkDestroyFence(c->device,c->fence,NULL);if(c->command_pool)vkDestroyCommandPool(c->device,c->command_pool,NULL);if(c->device)vkDestroyDevice(c->device,NULL);if(c->instance)vkDestroyInstance(c->instance,NULL);free(c);}
 const char *fg_vk_device_name(const fg_vk_context *c){return c?c->device_name:"";}
 bool fg_vk_integer_dot_product_enabled(const fg_vk_context *c){return c&&c->integer_dot_product;}
 
@@ -770,6 +773,73 @@ fg_status fg_vk_qsa_index_score(
 fg_status fg_vk_qsa_attention(fg_vk_context *c,fg_vk_tensor *output,const fg_vk_tensor *records,const fg_vk_tensor *query,const fg_vk_tensor *gate,uint32_t selected_count,fg_error *err){if(!c||!selected_count||selected_count>2051u||!tensor_range(records,0,(uint64_t)selected_count*FG_Q38_QSA_TOKEN_RECORD_BYTES)||!tensor_range(query,0,6144u*4u)||!tensor_range(gate,0,6144u*4u)||!tensor_range(output,0,6144u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA attention dispatch");return FG_ERR_ARGUMENT;}const fg_vk_tensor *bindings[]={records,query,gate,output};return dispatch(c,&c->qsa_attention,bindings,&selected_count,24u,1,1,err);}
 fg_status fg_vk_qsa_attention_split(fg_vk_context *c,fg_vk_tensor *partials,const fg_vk_tensor *records,const fg_vk_tensor *query,uint32_t selected_count,uint32_t splits,fg_error *err){if(!c||!selected_count||selected_count>2051u||!splits||splits>8u||!partials||!tensor_range(records,0,(uint64_t)selected_count*FG_Q38_QSA_TOKEN_RECORD_BYTES)||!tensor_range(query,0,6144u*4u)||!tensor_range(partials,0,(uint64_t)splits*24u*258u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid split QSA attention dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t selected_count,splits,split_index;}push={selected_count,splits,0u};const fg_vk_tensor *bindings[]={records,query,partials};return dispatch(c,&c->qsa_attention_split,bindings,&push,24u,splits,1u,err);}
 fg_status fg_vk_qsa_attention_merge(fg_vk_context *c,fg_vk_tensor *output,const fg_vk_tensor *partials,const fg_vk_tensor *gate,uint32_t splits,fg_error *err){if(!c||!output||!splits||splits>8u||!tensor_range(gate,0,6144u*4u)||!tensor_range(output,0,6144u*4u)||!tensor_range(partials,0,(uint64_t)splits*24u*258u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid merge QSA attention dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t splits;}push={splits};const fg_vk_tensor *bindings[]={partials,gate,output};return dispatch(c,&c->qsa_attention_merge,bindings,&push,24u,1u,1u,err);}
+fg_status fg_vk_qsa_attention_split_batch(fg_vk_context *c,fg_vk_tensor *partials,const fg_vk_tensor *records,const fg_vk_tensor *query,const fg_vk_tensor *counts,uint32_t query_count,uint32_t record_stride,uint32_t query_stride,uint32_t splits,fg_error *err){
+    if(!c||!query_count||query_count>512u||!splits||splits>8u||
+       !record_stride||record_stride>FG_VK_QSA_SELECTED_TOKENS||
+       !query_stride||
+       !tensor_range(partials,0,(uint64_t)query_count*24u*splits*258u*4u)||
+       !tensor_range(records,0,(uint64_t)query_count*record_stride*FG_Q38_QSA_TOKEN_RECORD_BYTES)||
+       !tensor_range(query,0,(uint64_t)query_count*query_stride*4u)||
+       !tensor_range(counts,0,(uint64_t)query_count*4u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid batched split QSA attention dispatch");
+        return FG_ERR_ARGUMENT;
+    }
+    struct{uint32_t splits,query_count,record_stride,query_stride;}push={splits,query_count,record_stride,query_stride};
+    const fg_vk_tensor *bindings[]={records,query,partials,counts};
+    return dispatch(c,&c->qsa_attention_split_batch,bindings,&push,24u,splits,(query_count+3u)/4u,err);
+}
+fg_status fg_vk_qsa_attention_merge_batch(fg_vk_context *c,fg_vk_tensor *output,const fg_vk_tensor *partials,const fg_vk_tensor *gate,uint32_t query_count,uint32_t query_stride,uint32_t splits,fg_error *err){
+    if(!c||!query_count||query_count>512u||!splits||splits>8u||
+       !query_stride||
+       !tensor_range(partials,0,(uint64_t)query_count*24u*splits*258u*4u)||
+       !tensor_range(gate,0,(uint64_t)query_count*query_stride*4u)||
+       !tensor_range(output,0,(uint64_t)query_count*query_stride*4u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid batched merge QSA attention dispatch");
+        return FG_ERR_ARGUMENT;
+    }
+    struct{uint32_t splits,query_count,query_stride;}push={splits,query_count,query_stride};
+    const fg_vk_tensor *bindings[]={partials,gate,output};
+    return dispatch(c,&c->qsa_attention_merge_batch,bindings,&push,24u,query_count,1u,err);
+}
+fg_status fg_vk_qsa_record_gather_batch(fg_vk_context *c,fg_vk_tensor *output,const fg_vk_tensor *records,const fg_vk_tensor *slots,uint32_t query_count,uint32_t slot_stride,uint32_t record_stride,uint32_t capacity,fg_error *err){
+    const uint32_t record_words=FG_Q38_QSA_TOKEN_RECORD_BYTES/sizeof(uint32_t);
+    uint64_t words=(uint64_t)record_stride*record_words;
+    if(!c||!query_count||query_count>512u||!slot_stride||
+       slot_stride>FG_VK_QSA_SELECTED_BLOCKS||!record_stride||
+       record_stride>FG_VK_QSA_SELECTED_TOKENS||!capacity||capacity%FG_Q38_QSA_COMPRESS_RATIO||
+       !tensor_range(records,0,(uint64_t)capacity*FG_Q38_QSA_TOKEN_RECORD_BYTES)||
+       !tensor_range(slots,0,(uint64_t)query_count*slot_stride*4u)||
+       !tensor_range(output,0,(uint64_t)query_count*record_stride*FG_Q38_QSA_TOKEN_RECORD_BYTES)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid batched QSA record gather dispatch");
+        return FG_ERR_ARGUMENT;
+    }
+    struct{uint32_t capacity,query_count,slot_stride,record_stride,record_words;}push={capacity,query_count,slot_stride,record_stride,record_words};
+    const fg_vk_tensor *bindings[]={records,slots,output};
+    return dispatch(c,&c->qsa_record_gather_batch,bindings,&push,(uint32_t)((words+255u)/256u),query_count,1u,err);
+}
+fg_status fg_vk_qsa_select_merge(fg_vk_context *c,fg_vk_tensor *scores_0,fg_vk_tensor *ids_0,fg_vk_tensor *scores_1,fg_vk_tensor *ids_1,fg_vk_tensor *result_ids,uint32_t count,uint32_t input_stride,uint32_t query_count,fg_error *err){
+    if(!c||count<1u||count>input_stride||!query_count||query_count>512u||
+       !tensor_range(scores_0,0,(uint64_t)query_count*input_stride*4u)||
+       !tensor_range(ids_0,0,(uint64_t)query_count*input_stride*4u)||
+       !tensor_range(scores_1,0,(uint64_t)query_count*input_stride*4u)||
+       !tensor_range(ids_1,0,(uint64_t)query_count*input_stride*4u)||
+       !tensor_range(result_ids,0,(uint64_t)query_count*FG_VK_QSA_SELECTED_BLOCKS*4u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid batched QSA top-k merge dispatch");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_vk_tensor *scores[2]={scores_0,scores_1},*ids[2]={ids_0,ids_1};
+    uint32_t side=0u,stride=input_stride;
+    while(count>FG_VK_QSA_SELECTED_BLOCKS){
+        uint32_t groups=(count+4095u)/4096u,produced=groups*512u;
+        bool last=count<=4096u;
+        const fg_vk_tensor *bindings[]={scores[side],ids[side],scores[side^1u],last?result_ids:ids[side^1u]};
+        struct{uint32_t count,input_stride,output_stride,query_tokens;}push={count,stride,last?512u:produced,query_count};
+        fg_status status=dispatch(c,&c->qsa_resident_merge,bindings,&push,groups,query_count,1u,err);
+        if(status!=FG_OK)return status;
+        side^=1u;count=produced;stride=produced;
+    }
+    return FG_OK;
+}
 
 static bool qsa_resident_segment_ranges(
     uint32_t capacity,uint32_t segment_capacity,const fg_vk_tensor *segment_0,
