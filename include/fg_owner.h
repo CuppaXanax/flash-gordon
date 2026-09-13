@@ -106,6 +106,10 @@ fg_status fg_owner_qsa_open_mirror(fg_owner_executor *executor,uint32_t logical_
                                    uint32_t hot_tokens,uint32_t cache_pages,uint32_t batch_size,
                                    fg_qsa_page_fetch_fn fetch_pages,void *fetch_opaque,
                                    fg_error *err);
+fg_status fg_owner_qsa_open_state(fg_owner_executor *executor,const char *state_path,
+                                  uint32_t logical_context,uint32_t hot_tokens,
+                                  uint32_t cache_pages,uint32_t batch_size,fg_error *err);
+bool fg_owner_qsa_ready(const fg_owner_executor *executor);
 void fg_owner_qsa_set_tokens(fg_owner_executor *executor,uint32_t tokens);
 fg_status fg_owner_qsa_decode(fg_owner_executor *executor,uint32_t layer,uint32_t token_index,
                               const uint32_t position[3],const fg_vk_tensor *hidden,

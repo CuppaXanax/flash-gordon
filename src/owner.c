@@ -646,6 +646,15 @@ fg_status fg_owner_qsa_open_decode(fg_owner_executor *executor,const char *state
     if(executor->qsa){fg_error_set(err,FG_ERR_MISMATCH,"owner QSA session is already open");return FG_ERR_MISMATCH;}
     return fg_qsa_session_open_decode(&executor->qsa,executor->model,state_path,resident_tokens,batch_size,err);
 }
+fg_status fg_owner_qsa_open_state(fg_owner_executor *executor,const char *state_path,
+                                  uint32_t logical_context,uint32_t hot_tokens,
+                                  uint32_t cache_pages,uint32_t batch_size,fg_error *err){
+    if(!executor||!state_path){fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner QSA state open arguments");return FG_ERR_ARGUMENT;}
+    if(executor->qsa){fg_error_set(err,FG_ERR_MISMATCH,"owner QSA session is already open");return FG_ERR_MISMATCH;}
+    return fg_qsa_session_open_state(&executor->qsa,executor->model,state_path,
+                                     logical_context,hot_tokens,cache_pages,batch_size,err);
+}
+bool fg_owner_qsa_ready(const fg_owner_executor *executor){return executor&&executor->qsa;}
 fg_status fg_owner_qsa_open_mirror(fg_owner_executor *executor,uint32_t logical_context,
                                    uint32_t hot_tokens,uint32_t cache_pages,uint32_t batch_size,
                                    fg_qsa_page_fetch_fn fetch_pages,void *fetch_opaque,

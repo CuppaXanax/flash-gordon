@@ -119,6 +119,10 @@ fg_status fg_qsa_session_open(fg_qsa_session **out,fg_model *model,const char *s
                               bool create,fg_error *err);
 fg_status fg_qsa_session_open_decode(fg_qsa_session **out,fg_model *model,const char *state_path,
                                      uint32_t resident_tokens,uint32_t batch_size,fg_error *err);
+fg_status fg_qsa_session_open_state(fg_qsa_session **out,fg_model *model,
+                                    const char *state_path,uint32_t logical_context,
+                                    uint32_t hot_tokens,uint32_t cache_pages,
+                                    uint32_t batch_size,fg_error *err);
 fg_status fg_qsa_session_open_mirror(fg_qsa_session **out,fg_model *model,
                                      uint32_t logical_context,uint32_t hot_tokens,
                                      uint32_t cache_pages,uint32_t batch_size,

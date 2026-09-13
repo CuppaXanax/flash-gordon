@@ -534,6 +534,22 @@ fg_status fg_qsa_session_open_decode(fg_qsa_session **out,fg_model *model,const 
                               NULL,NULL,NULL,err);
 }
 
+/* State-backed worker session: the owner computes its QSA layers and persists
+ * every completed block into its own state file; selected blocks are read back
+ * from the same state, so no page-fetch callback or network transport is
+ * required inside the ring. */
+fg_status fg_qsa_session_open_state(fg_qsa_session **out,fg_model *model,
+                                    const char *state_path,uint32_t logical_context,
+                                    uint32_t hot_tokens,uint32_t cache_pages,
+                                    uint32_t batch_size,fg_error *err){
+    if(!state_path){
+        fg_error_set(err,FG_ERR_ARGUMENT,"QSA state session path is null");
+        return FG_ERR_ARGUMENT;
+    }
+    return open_decode_config(out,model,state_path,logical_context,hot_tokens,
+                              cache_pages,batch_size,NULL,NULL,NULL,err);
+}
+
 fg_status fg_qsa_session_open_mirror(fg_qsa_session **out,fg_model *model,
                                      uint32_t logical_context,uint32_t hot_tokens,
                                      uint32_t cache_pages,uint32_t batch_size,

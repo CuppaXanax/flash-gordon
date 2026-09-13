@@ -1238,68 +1238,27 @@ static uint32_t owned_qsa_layers(const fg_manifest *manifest,uint32_t rank){
     return count;
 }
 
-/* The block owner is authoritative for its QSA layers; cold pages come from its
- * own state file, not the network. */
-static fg_status worker_fetch_qsa_pages(void *opaque,uint32_t layer,const uint32_t *blocks,
-    uint32_t block_count,uint8_t *records,fg_error *err){
-    qsa_owner_runtime *runtime=opaque;
-    if(!runtime||!runtime->enabled||!runtime->state){
-        fg_error_set(err,FG_ERR_UNAVAILABLE,"worker QSA cold fetch has no local state");
-        return FG_ERR_UNAVAILABLE;
+static fg_status worker_open_qsa_state(fg_owner_executor *owner,qsa_owner_runtime *runtime,
+    const fg_manifest *manifest,const char *directory,uint32_t self,uint32_t logical,
+    fg_error *err){
+    if(!owner||!runtime->enabled||fg_owner_qsa_ready(owner))return FG_OK;
+    char path[1200];
+    if(snprintf(path,sizeof(path),"%s/qsa-owner-rank-%02u.state",directory,self)>=
+       (int)sizeof(path)){
+        fg_error_set(err,FG_ERR_LIMIT,"worker QSA state path overflow");
+        return FG_ERR_LIMIT;
     }
-    int slot=qsa_owner_layer_slot(runtime,layer);
-    if(slot<0||block_count>FG_QSA_PAGE_FETCH_MAX_PAGES){
-        fg_error_set(err,FG_ERR_MISMATCH,"worker QSA cold fetch layer or batch is invalid");
-        return FG_ERR_MISMATCH;
-    }
-    fg_status status=fg_qsa_state_read_blocks(runtime->state,(uint32_t)slot,blocks,
-        block_count,runtime->read_records,runtime->committed,err);
-    for(uint32_t i=0;status==FG_OK&&i<block_count;i++){
-        if(runtime->committed[i]!=FG_Q38_QSA_COMPRESS_RATIO){
-            fg_error_set(err,FG_ERR_MISMATCH,"worker QSA local page is incomplete");
-            status=FG_ERR_MISMATCH;
-        }else{
-            memcpy(records+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,
-                   runtime->read_records+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,
-                   FG_QSA_PAGE_RECORD_BYTES);
-        }
-    }
-    return status;
+    uint32_t layers=owned_qsa_layers(manifest,self);
+    uint32_t cache_pages=(logical/FG_Q38_QSA_COMPRESS_RATIO)*layers;
+    return fg_owner_qsa_open_state(owner,path,logical,0u,cache_pages,
+                                   manifest->prefill_microbatch,err);
 }
 
-/* Commit the pages this block produced for the owning rank's own layers. */
+/* The block owner's state-backed QSA session persists every completed block,
+ * so ring workers commit through their session, not the page transport. */
 static fg_status worker_publish_qsa_pages(void *opaque,fg_owner_executor *owner,
     uint32_t self,uint32_t first_token,uint16_t token_count,fg_error *err){
-    qsa_owner_runtime *runtime=opaque;
-    if(!runtime||!runtime->enabled)return FG_OK;
-    if(!runtime->state){
-        fg_error_set(err,FG_ERR_UNAVAILABLE,"worker QSA publish has no local state");
-        return FG_ERR_UNAVAILABLE;
-    }
-    uint32_t first_block=0,block_count=0;
-    fg_status status=fg_qsa_completed_page_range(first_token,token_count,
-        &first_block,&block_count,err);
-    if(status!=FG_OK)return status;
-    for(uint32_t offset=0;offset<block_count;offset++){
-        uint32_t block=first_block+offset,page_count=0;
-        for(uint32_t slot=0;slot<runtime->layer_count;slot++){
-            const uint8_t *records=NULL;
-            status=fg_owner_qsa_page_records(owner,runtime->layers[slot],block,&records,err);
-            if(status!=FG_OK)return status;
-            if(page_count>=FG_QSA_PAGE_APPEND_MAX_PAGES){
-                fg_error_set(err,FG_ERR_LIMIT,"worker QSA page publish overflow");
-                return FG_ERR_LIMIT;
-            }
-            runtime->pages[page_count++]=(fg_qsa_page){
-                .layer=runtime->layers[slot],.block=block,.records=records};
-        }
-        if(page_count){
-            fg_qsa_page_batch batch={.source_rank=(uint8_t)self,.destination_rank=0u,
-                .batch_id=0u,.page_count=(uint16_t)page_count,.pages=runtime->pages};
-            status=qsa_owner_writer_enqueue(runtime,&batch,err);
-            if(status!=FG_OK)return status;
-        }
-    }
+    (void)opaque;(void)owner;(void)self;(void)first_token;(void)token_count;(void)err;
     return FG_OK;
 }
 
@@ -1406,6 +1365,8 @@ static fg_status begin_session(fg_fabric *fabric,const fg_manifest *manifest,
         if(status==FG_OK&&bytes){fg_error_set(err,FG_ERR_FORMAT,"legacy session begin payload must be empty");status=FG_ERR_FORMAT;}
         if(status==FG_OK)status=qsa_owner_open_session(qsa,manifest,directory,&identity,
                                                        request,NULL,err);
+        if(status==FG_OK)status=worker_open_qsa_state(owner,qsa,manifest,directory,self,
+                                                      manifest->session.logical_context_tokens,err);
         if(status==FG_OK&&owner)status=fg_owner_reset_state(owner,err);
         if(status==FG_OK)status=fg_fabric_send(fabric,peer,FG_FABRIC_CONTROL,
                                                FG_MSG_SESSION_READY,request,0,0,NULL,0,err);
@@ -1426,6 +1387,8 @@ static fg_status begin_session(fg_fabric *fabric,const fg_manifest *manifest,
     }
     if(status==FG_OK)status=qsa_owner_open_session(qsa,manifest,directory,&identity,
                                                    request,&control,err);
+    if(status==FG_OK)status=worker_open_qsa_state(owner,qsa,manifest,directory,self,
+                                                  control.logical_context_tokens,err);
     if(status==FG_OK&&owner)status=fg_owner_reset_state(owner,err);
     if(status==FG_OK&&output)status=fg_output_history_reset(output,NULL,0u,err);
     uint8_t wire[FG_OWNER_SESSION_CONTROL_BYTES];
@@ -1530,12 +1493,7 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_
     fg_status status=prefill_worker_buffers_create(&prefill,manifest->prefill_microbatch,
                                                    false,err);if(status==FG_OK)status=qsa_owner_runtime_create(&qsa,manifest,self,err);if(status==FG_OK&&owner)status=layer_work_context_create(&layer_work,model,manifest,expert,&prefill,err);if(status==FG_OK)layer_work.qsa_owner=&qsa;
     uint32_t worker_qsa_layers=owned_qsa_layers(manifest,self);
-    if(status==FG_OK&&owner&&worker_qsa_layers){
-        uint32_t logical=manifest->session.logical_context_tokens;
-        uint32_t cache_pages=(logical/FG_Q38_QSA_COMPRESS_RATIO)*worker_qsa_layers;
-        status=fg_owner_qsa_open_mirror(owner,logical,0u,cache_pages,
-            manifest->prefill_microbatch,worker_fetch_qsa_pages,&qsa,err);
-    }
+    (void)worker_qsa_layers;
     if(status==FG_OK&&output)status=fg_vk_tensor_create(fg_model_vk(model),FG_HYPER_WIDTH*4u,&hyper,err);
     if(status==FG_OK)status=token_profile_prepare(fg_model_vk(model),err);
     uint8_t *bulk_receive=prefill.receive;uint32_t bulk_capacity=prefill.receive_capacity;if(qsa.enabled&&qsa.receive_capacity>bulk_capacity){bulk_receive=qsa.receive_wire;bulk_capacity=qsa.receive_capacity;}if(layer_work.work_capacity>bulk_capacity){bulk_receive=layer_work.work_wire;bulk_capacity=layer_work.work_capacity;}uint64_t session_id=0;
