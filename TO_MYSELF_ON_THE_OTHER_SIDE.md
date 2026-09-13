@@ -92,6 +92,36 @@ six-layer stage ~350ms → pipeline bound ~350+ TPS.
   scratch ledger (64 MiB alignment) in `fg_q38_runtime_scratch_bytes`; the
   manifest cannot be repacked cheaply. Reverted.
 
+**KERNEL ROUNDS 1-2 (2026-09-13, commits 2125ed0/562b7ad/2c69599 + 98ff525/2a2b693):
+4K battery prefill 150.2 -> 169.3 -> 254.7 TPS, short decode 9.84, 4K decode
+2.06.** Per-kernel at 4K, rank 3/5, after round 2 (PREFILL_LAYER_PROFILE):
+
+| kernel | before | after |
+|---|---|---|
+| qsa topk_reduce (slow path) | 31.7 ms | 1.9 ms (`resident_topk_merge`) |
+| qsa attention (split_batch) | 35.1 ms | 20.3 ms |
+| moe gate_up | 29-31 ms | 21.2-22.3 ms |
+| moe down | 9-12 ms | 6.4-10.1 ms |
+| QSA layer GPU total | ~110 ms | 77-80 ms |
+| GDN layer GPU total | ~58 ms | 46-49 ms |
+| six-layer stage GPU | ~455 ms | ~343 ms |
+
+Round-2 changes: expert grouped kernels moved to 4-pair tiles with 32-row
+workgroups, activation hoisting, folded K-quant min, no shared staging in the
+float path (dp4a is not available on GFX1013 - RADV excludes it and RDNA1 has
+no dot4; documented at the selection site); QSA prefill attention rewritten to
+workgroup=(query, KV head, split) with head blocking so the 12 heads sharing a
+KV head decode each record once (wave64 fast path).
+
+Deploy note: the first kernel deploy OOM-killed rank 0 at the first slow-path
+chunk (the lazy batch scratch needed ~54 MiB on a mirror with ~167 MB free).
+Fixes: batch 8->4 queries, selection sides 8->4 MiB, mirror
+`--qsa-page-cache-mib 32`. Even so rank 0 lives with ~25-60 MB available;
+`sync; echo 1 | sudo tee /proc/sys/vm/drop_caches` before heavy test phases
+prevents the global OOM killer from picking flash-gordon. A real fix is on the
+numerics/memory workstream (mirror index keys are 408 MB, the largest reducible
+item).
+
 **Fleet state left behind:** ring pack `/home/user/fg-ring-pack`, workers
 `start-workers-ringprof.sh` (FG_PREFILL_PROFILE=1) on .43-.49, rank 0
 `start-rank0-ring.sh` (FG_RING_TRACE=1) on .42. Note the ringprof worker
