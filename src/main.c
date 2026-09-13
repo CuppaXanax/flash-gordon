@@ -6,6 +6,7 @@
 #include "fg_runtime.h"
 
 #include <errno.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -371,6 +372,9 @@ static fg_status manifest_cmd(const char *command, int argc, char **argv, fg_err
 
 int main(int argc, char **argv) {
     setvbuf(stderr, NULL, _IONBF, 0);
+    /* A closed fabric or HTTP peer must surface as EPIPE from the send call,
+     * not as a silent SIGPIPE death of a rank mid-request. */
+    signal(SIGPIPE, SIG_IGN);
     fg_error err = {0};
     if (argc < 2 || !strcmp(argv[1], "--help") || !strcmp(argv[1], "help")) {
         usage(stdout);
