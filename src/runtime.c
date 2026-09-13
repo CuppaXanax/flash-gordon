@@ -44,6 +44,13 @@ static bool decode_ring_requested(void){
     return !(disabled&&*disabled&&strcmp(disabled,"0")==0);
 }
 static bool decode_ring_trace_enabled(void){const char *enabled=getenv("FG_DECODE_RING_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
+/* Chained ring blocks are the default: one submission and one fence per block
+ * owner instead of a submit/fence/host-routing round trip per layer.  Set
+ * FG_DECODE_CHAIN=0 to fall back to the per-layer owner machine. */
+static bool decode_chain_requested(void){
+    const char *disabled=getenv("FG_DECODE_CHAIN");
+    return !(disabled&&*disabled&&strcmp(disabled,"0")==0);
+}
 static bool decode_profile_enabled(void){const char *enabled=getenv("FG_DECODE_PROFILE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool frame_trace_enabled(void){const char *enabled=getenv("FG_FRAME_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool route_trace_enabled(void){const char *enabled=getenv("FG_TRACE_ROUTES");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
@@ -488,6 +495,33 @@ static fg_status worker_decode_fire(void *opaque,uint32_t layer,uint32_t token,
     return worker_decode_experts(opaque,layer,token,expert_ids,gates,activation,err);
 }
 
+/* Inline expert hook for chained ring blocks: routing stays on the GPU, so
+ * there is no fire/collect pair and no per-layer expert fence. */
+static fg_status chained_decode_expert(void *opaque,uint32_t layer,
+    const fg_vk_tensor *activation,const fg_vk_tensor *router_logits,
+    fg_vk_tensor **expert_output,fg_error *err){
+    worker_decode_dispatch *context=opaque;
+    if(!context||!context->expert){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"chained decode has no expert executor");
+        return FG_ERR_UNAVAILABLE;
+    }
+    return fg_expert_decode_chain(context->expert,layer,activation,router_logits,
+        expert_output,err);
+}
+
+/* Chaining needs every layer's whole routed expert slab on this rank (the
+ * ring pack) and a fusable gate/up/down pair. */
+static bool decode_block_chain_eligible(fg_expert_executor *expert,
+    const fg_manifest *manifest,uint32_t rank,uint32_t first,uint32_t last){
+    if(!decode_chain_requested()||!expert)return false;
+    for(uint32_t layer=first;layer<=last;layer++){
+        if(fg_expert_local_count(manifest,layer,rank)!=FG_EXPERT_COUNT)return false;
+        fg_error probe={0};
+        if(fg_expert_decode_chain_ready(expert,layer,&probe)!=FG_OK)return false;
+    }
+    return true;
+}
+
 static fg_status worker_decode_collect(void *opaque,uint32_t layer,uint32_t token,
     fg_expert_result results[FG_GROUP_SIZE],uint32_t *result_count,fg_error *err){
     (void)layer;(void)token;
@@ -765,7 +799,12 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
         fg_error profile_error={0};
         if(fg_vk_profile_begin(context->vk,&profile_error)!=FG_OK)decode_profile=false;
     }
-    if(status==FG_OK)status=fg_owner_decode_block(owner,work->layer,last,work->token_index,
+    if(status==FG_OK&&decode_block_chain_eligible(context->decode_dispatch.expert,
+        manifest,self,work->layer,last)){
+        status=fg_owner_decode_block_chained(owner,work->layer,last,work->token_index,
+            work->position,input,has_ngram?context->ngram_tensor:NULL,
+            chained_decode_expert,&context->decode_dispatch,&current,err);
+    }else if(status==FG_OK)status=fg_owner_decode_block(owner,work->layer,last,work->token_index,
         work->position,input,has_ngram?context->ngram_tensor:NULL,worker_decode_fire,
         worker_decode_collect,&context->decode_dispatch,&current,err);
     if(decode_profile){
@@ -3599,7 +3638,12 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
              * slot; the block state was advanced by this rank in ring prefill. */
             status=fg_vk_tensor_write(input,0,work->hyper,(uint64_t)FG_HYPER_WIDTH*4u,err);
             fg_vk_tensor *current=NULL;
-            if(status==FG_OK)status=fg_owner_decode_block(coordinator->owner,own_first,last,
+            if(status==FG_OK&&decode_block_chain_eligible(dispatch.expert,manifest,0u,
+                own_first,last)){
+                status=fg_owner_decode_block_chained(coordinator->owner,own_first,last,
+                    work->token_index,work->position,input,NULL,chained_decode_expert,
+                    &dispatch,&current,err);
+            }else if(status==FG_OK)status=fg_owner_decode_block(coordinator->owner,own_first,last,
                 work->token_index,work->position,input,NULL,worker_decode_fire,
                 worker_decode_collect,&dispatch,&current,err);
             if(trace)t_own_run=dispatch_ts();

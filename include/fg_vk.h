@@ -100,6 +100,9 @@ fg_status fg_vk_moe_decode_down_reduce(fg_vk_context *context,fg_vk_tensor *out,
                                        uint32_t output_width,uint32_t input_width,
                                        uint32_t expert_stride,uint32_t slots,
                                        uint32_t down_type,fg_error *err);
+fg_status fg_vk_moe_decode_shared_add(fg_vk_context *context,fg_vk_tensor *out,
+                                      const fg_vk_tensor *reduced,const fg_vk_tensor *shared,
+                                      const fg_vk_tensor *scalar,uint32_t width,fg_error *err);
 
 fg_status fg_vk_tensor_create(fg_vk_context *context,uint64_t bytes,fg_vk_tensor **out,fg_error *err);
 fg_status fg_vk_tensor_create_cached(fg_vk_context *context,uint64_t bytes,fg_vk_tensor **out,fg_error *err);
