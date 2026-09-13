@@ -2117,6 +2117,23 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
         .tool_choice = request.tool_choice,
         .tool_choice_name = request.tool_choice_name,
     };
+    /* Honor the /no_think directive: render an already-closed think block and
+     * drop the directive from the user text, so short answers arrive without
+     * spending the completion budget on stripped reasoning tokens. */
+    for (size_t i = 0; i < request.message_count; i++) {
+        if (!request.messages[i].content ||
+            strcmp(request.messages[i].role, "user") != 0) continue;
+        char *content = (char *)request.messages[i].content;
+        size_t offset = 0;
+        while (content[offset] == ' ' || content[offset] == '\n' ||
+               content[offset] == '\t' || content[offset] == '\r') offset++;
+        if (strncmp(content + offset, "/no_think", 9u) != 0) continue;
+        render_options.think_mode = FG_CHAT_THINK_OFF;
+        size_t rest = offset + 9u;
+        while (content[rest] == ' ' || content[rest] == '\n' ||
+               content[rest] == '\t' || content[rest] == '\r') rest++;
+        memmove(content, content + rest, strlen(content + rest) + 1u);
+    }
     status = fg_chat_render(request.messages, request.message_count, &render_options,
                             &rendered, err);
     bool public_continuation=status==FG_OK&&
@@ -2142,6 +2159,7 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
         .model = fg_runtime_model_name(runtime),
         .created = time(NULL),
         .request = &request,
+        .think_closed = render_options.think_mode == FG_CHAT_THINK_OFF,
     };
     bool stream_started=false;
     if (status == FG_OK && request.stream) {
@@ -2176,7 +2194,8 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     fg_chat_generated generated={0};
     if(status==FG_OK)
         status=fg_chat_parse_generated(generation.content.data?generation.content.data:"",
-                                       true,&generated,err);
+                                       render_options.think_mode != FG_CHAT_THINK_OFF,
+                                       &generated,err);
     if(status==FG_OK)status=validate_generated_tools(&request,&generated,err);
     api_public_session pending_session={0};
     if(status==FG_OK)
