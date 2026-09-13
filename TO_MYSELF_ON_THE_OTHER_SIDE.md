@@ -3,7 +3,78 @@
 You are the post-compaction me. Read this top to bottom before touching anything.
 Everything here is measured, not hoped. The fleet is healthy right now; keep it that way.
 
-## 0. TL;DR — the one thing
+## 0. QSA RING STATUS 2026-09-13 (commit 1dc1bc0 — READ FIRST)
+
+**The QSA-in-block cost was the page cache never being created on state-backed
+worker sessions.** `fg_qsa_session_open_state` only made the page cache when
+`state_path==NULL` (the coordinator mirror), so every prefill token on a worker
+ran `fg_qsa_state_write_block` + `select_blocks` + `fg_qsa_state_read_blocks`
+with GPU syncs in between. Fixed in `1dc1bc0`:
+
+- bounded worker record cache (`FG_QSA_WORKER_CACHE_PAGES=4096/layer`) for
+  state sessions, gather misses served from the authoritative state file
+  (`state_fetch_pages`);
+- completed pages persist once per layer with a batched uring write
+  (`persist_prefill_state`), not once per token.
+
+Measured with the new `PREFILL_BLOCK_LAYER` / `QSA_PREFILL_TRACE` lines:
+
+| point | before | after |
+|---|---|---|
+| QSA layer @1.3K | 260-430 ms | 84-100 ms |
+| GDN layer @1.3K | 62-100 ms | unchanged |
+| rank1/3/5 block @1.3K | 676/797/873 ms | ~420-480 ms |
+| 4K battery prefill, depth 4 | 48.81 TPS | **95.14 TPS** |
+| 4K battery prefill, depth 8 | n/a | **150.25-152.17 TPS** |
+| 4K decode / short decode | 1.96 / 9.20 | 2.03-2.07 / 9.42-9.71 |
+
+Gates: both correctness requests complete, decode >= 9 (answers still empty —
+the distributed-prefill numerics defect in section 8 is unchanged and is still
+the merge blocker; this work is speed-only).
+
+**Depth 8 details.** `FG_PREFILL_FRAMES=8`. Worker owners allocate only owner
+slot 0 (`create_decode_slots`), the coordinator processes its own block inline
+on the shared base slot, and the final-result tensor is ping-ponged; rank 0's
+Vulkan budget is therefore unchanged from depth 4. 128 prefill 21.4-22.0 TPS.
+Deploy hash at this state: `a7f4134250c3dac5becdc0662baa42c23191ebe19a1f0ac5386f0f6a174501b4`.
+
+**Why it is not 200 yet (measured, not guessed).** At 4K the chain still runs
+in ~2.4 s / ~1.7 s waves; effective in-flight depth is ~6 of 8, and rank-0's
+own inline block measures **518 ms mean (max 620 ms)**, which alone caps the
+ring at ~171 TPS even with a perfect pipeline. QSA select is now the growth
+term: `select_ms` 29.8 ms/layer at first=1024 (all blocks selected, fast path)
+growing to 88-105 ms/layer at 4K where the top-512-of-1024 selection runs.
+
+**Next levers, in order (each needs a battery):**
+1. Pipeline rank-0's own block: use `fg_fabric_wait_ready` polling to
+   interleave owner `begin/finish` with the message loop (the non-ring
+   `coordinator_prefill_pipeline` already models begin/finish in flight).
+   Expected 170-200 TPS because the serial own-block cap disappears.
+2. Cut `select_prefill_tile`: 1.26 s of chain latency across the 14 QSA
+   layers at 4K. Keeping selection ids on the GPU (block==cache-slot when the
+   cache covers the context) removes the host read+fence per tile.
+3. More depth only after socket buffers grow. `FG_PREFILL_FRAMES=12`
+   regressed to **26.87 TPS** with 16 MiB SO_*BUF; the extra hops exceed the
+   buffers and the chain locks step. Raise `socket_configure` (fabric.c) and
+   the sysctl caps together, then re-test 10-12.
+
+**Dead ends already paid for (do not repeat):**
+- `FG_PREFILL_FRAMES=12` at 16 MiB buffers: 26.87 TPS, wave stalls.
+- Depth 8 with 8 owner slots + 8 ring-output tensors: rank-0 OOM within the
+  first 4K request (33 s first chunk, then fleet down). Slot-0 sharing +
+  ping-pong outputs fixed it.
+- Query tile 4 -> 8 (halve selection fences): select got *worse*
+  (88 -> 105 ms/layer), cost +28 MiB on rank 0 and tripped the frozen pack's
+  scratch ledger (64 MiB alignment) in `fg_q38_runtime_scratch_bytes`; the
+  manifest cannot be repacked cheaply. Reverted.
+
+**Fleet state left behind:** ring pack `/home/user/fg-ring-pack`, workers
+`start-workers-ringprof.sh` (FG_PREFILL_PROFILE=1) on .43-.49, rank 0
+`start-rank0-ring.sh` (FG_RING_TRACE=1) on .42. Note the ringprof worker
+script also starts a rank process if run on .42 — it killed the coordinator
+once; target .43-.49 only.
+
+## 0b. ORIGINAL TL;DR — the pre-ring plan (historical)
 
 **The 200 TPS lever is the layer ring nothing else.** Rank 0 currently executes the
 common path for all 48 layers; every other improvement is noise until that moves to
