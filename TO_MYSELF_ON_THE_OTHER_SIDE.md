@@ -40,6 +40,27 @@ which should take 4K decode from 2.06 toward short-decode speed. After that,
 ring decode (per-token chain with 40 KB hops, owners using their own QSA/GDN
 state) is the remaining architecture piece.
 
+## 0y. UPDATE 2026-09-13 NIGHT (binary c8a95258, ring pack)
+
+Ring decode round 2 (commits 31b17c2, 9338174): the block owner records all six
+layers into ONE submission - GR chain + attention + GPU top-10 routing + fused
+expert pair + GPU shared-scaled reduce + gr_write - one fence and 2-4 submits
+per block instead of 21-22, no host router/expert/shared readback. Rank 0
+fixed costs: single-row embedding gathered on the host straight from the
+mapped arena (1.2 -> 0.05 ms) and output.weight routed to the row-8 cooked PSO.
+
+Validated on the integrated binary: gates [12]/[Paris]; battery 4K prefill
+276.4 TPS, short decode 17.35, 128 decode 10.70, 4K single decode 9.84 (noisy
+single-token row); sustained 4K decode 15.3-16.1 TPS. Per-token 4K budget
+83.5 -> ~64-67 ms (embed 0.55 | rank1 8.8 | rank0 7.5 | ranks2-7 44.0 |
+output 3.4). Blocks are GPU-bound at 6-7 ms.
+
+Gap: 20 TPS needs ~1 ms/block from the expert pair / GDN projections /
+recurrent kernels; 100 TPS additionally needs cross-rank token pipelining and
+the output head folded into the chain (rank7 -> rank4 direct handoff; patch map
+in PERFORMANCE_RANK0_FIXED_COST_2026-09-13.md). PERFORMANCE_PERLAYER_CHAIN and
+PERFORMANCE_RANK0_FIXED_COST documents have the full budgets.
+
 ## 0z. UPDATE 2026-09-13 LATE-LATE (binary 0dd3deda, ring pack)
 
 **Blank short answers fixed.** The API never set `think_mode`, so `/no_think`
