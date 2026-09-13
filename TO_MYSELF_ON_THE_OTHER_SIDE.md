@@ -3,7 +3,44 @@
 You are the post-compaction me. Read this top to bottom before touching anything.
 Everything here is measured, not hoped. The fleet is healthy right now; keep it that way.
 
-## 0. QSA RING STATUS 2026-09-13 (commit 1dc1bc0 — READ FIRST)
+## 0. RING STATUS 2026-09-13 NIGHT (commit series 2125ed0..652d59d — READ FIRST)
+
+**The ring answers correctly now.** `correctness64.ps1` on the ring pack returns
+`answer=[12]` and `answer=[Paris]`, short decode 9.5-10.0 TPS, 4K battery
+prefill **243.7-254.7 TPS** (4322 tokens), 4K decode 2.06 TPS.
+Binary hash `81105d0d...`, fleet on `/home/user/fg-ring-pack`.
+
+**Root cause of the empty answers was decode state, not prefill numerics.**
+With `FG_NUMERICS_TRACE=1` every prefill layer's hyper digest in the ring was
+byte-identical to the single-owner reference (through layer 47, first sampled
+token matched). The first decode step then diverged: ring prefill advances the
+GDN conv/recurrent and PLE conv state on the block owners, but rank 0's decode
+replay used its own unadvanced state for every layer it did not execute. Fixed
+in `652d59d` with `FG_MSG_GDN_STATE_FETCH/RESULT` (protocol enum 42/43): owners
+serve one layer's conv+recurrent (~3 MiB) plus PLE state for layer 1, rank 0
+pipelines the fetches and writes them into its executor before decode; ring
+requests force a cold reset (prefix reuse disabled until state push-back
+exists). Cost: ~115 MB + ~36 messages per cold request (~1-2 s prefill; the
+4K battery went 254.7 -> 243.7 TPS).
+
+**Kernel rounds (commits 2125ed0/562b7ad/2c69599, 98ff525/2a2b693, 652d59d,
+cc299df).** Per-kernel at 4K after round 2 (FG_PREFILL_LAYER_PROFILE, ranks
+3/5): topk 31.7 -> 1.9 ms, QSA attention split_batch 35.1 -> 20.3 ms, moe
+gate_up 29-31 -> 21.2-22.3, moe down 9-12 -> 6.4-10.1, QSA layer 110 -> 77-80,
+GDN layer 58 -> 46-49, six-layer stage GPU 455 -> 343 ms. Batch-1 decode got a
+fused gate/up/SwiGLU + down/reduce pair (cc299df, 2 dispatches/layer instead of
+5; short decode 9.84 -> 10.00). Decode experts are still instruction-bound;
+QSA decode at 4K is dominated by mirror record-cache thrash (32 MiB cache vs a
+12-layer x 1024-block working set).
+
+**Next decode lever:** allocate the mirror's QSA index segments lazily (segment
+1 is 204 MB and unused below 131072 tokens) and use the freed rank-0 headroom
+for a larger `--qsa-page-cache-mib` (128 MiB holds a 4K context's 12288 pages),
+which should take 4K decode from 2.06 toward short-decode speed. After that,
+ring decode (per-token chain with 40 KB hops, owners using their own QSA/GDN
+state) is the remaining architecture piece.
+
+## 0b. QSA RING STATUS 2026-09-13 (commit 1dc1bc0 — historical)
 
 **The QSA-in-block cost was the page cache never being created on state-backed
 worker sessions.** `fg_qsa_session_open_state` only made the page cache when
@@ -128,7 +165,7 @@ item).
 script also starts a rank process if run on .42 — it killed the coordinator
 once; target .43-.49 only.
 
-## 0b. ORIGINAL TL;DR — the pre-ring plan (historical)
+## 0c. ORIGINAL TL;DR — the pre-ring plan (historical)
 
 **The 200 TPS lever is the layer ring nothing else.** Rank 0 currently executes the
 common path for all 48 layers; every other improvement is noise until that moves to
