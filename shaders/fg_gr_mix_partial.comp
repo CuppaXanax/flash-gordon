@@ -8,12 +8,15 @@ layout(set=0,binding=4)writeonly buffer Injection{float injection[];};
 layout(push_constant)uniform Push{uint hidden;uint groups;uint tokens;uint pieces;}pc;
 float sigmoid(float value){return 1.0/(1.0+exp(-value));}
 void main(){
-    uint lane=gl_LocalInvocationID.x,token=gl_WorkGroupID.x;
+    uint lane=gl_LocalInvocationID.x;
+    uint workers=(pc.hidden+255u)/256u;
+    uint token=gl_WorkGroupID.x/workers,chunk=gl_WorkGroupID.x-token*workers;
     if(token>=pc.tokens)return;
-    for(uint index=lane;index<pc.hidden;index+=256u){
+    uint index=chunk*256u+lane;
+    if(index<pc.hidden){
         float value=0.0;
         for(uint group=0u;group<pc.groups;group++){uint offset=(token*pc.groups+group)*pc.hidden+index;value=fma(sigmoid(up[offset]),normed[offset],value);}
         mixed[token*pc.hidden+index]=value/float(pc.groups);
     }
-    if(lane<pc.groups){float dot=0.0;for(uint piece=0u;piece<pc.pieces;piece++)dot+=partials[(token*pc.pieces+piece)*pc.groups+lane];injection[token*pc.groups+lane]=2.0*sigmoid(dot/float(pc.groups));}
+    if(chunk==0u&&lane<pc.groups){float dot=0.0;for(uint piece=0u;piece<pc.pieces;piece++)dot+=partials[(token*pc.pieces+piece)*pc.groups+lane];injection[token*pc.groups+lane]=2.0*sigmoid(dot/float(pc.groups));}
 }
