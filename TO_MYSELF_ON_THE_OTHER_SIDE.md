@@ -28,6 +28,14 @@ Fleet tool: `D:\workspace\bc-250-dbg\Invoke-BC250Fleet.ps1` (creds in its `.env`
 on .42 and each worker's own file in its `q38-single` dir. Manifests backed up in
 `q38-cooked` as `.bak-singleowner` and `.bak-contig2-failed`.
 
+**Live binary (ring audit, 2026-09-12):** sha256
+`032137d39b2cd8371f29748987b72933bb312007554e57fe9404ebe93c9c5043`, built from commits
+through `5468c0b`. Fleet gates green, 4K 50.89, 128 prefill 24.25, short decode 9.79.
+Worker instrument: `FG_BLOCK_BENCH=1` (bench mode, exits after printing BLOCK_BENCH
+lines; rank 4 is the ideal subject: 6 GDN layers, no PLE/QSA). `FG_WORKER_OWNER=1`
+enables the worker owner executor in the live loop (off by default; QSA layers need
+section 4D before enabling in production).
+
 **Staged pack (ring layout, NOT distributed):** `/home/user/flash-gordon-q38-contig2`
 on .42 only. Rebalanced contiguous ownership map
 (`/home/user/contiguous2.expert-map`):
@@ -140,6 +148,14 @@ positions (3*N u32), hyper (N*10240 f32), optional ngram embeddings
 - Preserve `coordinator_publish_qsa_pages` ordering per chunk.
 
 **D. QSA state for all ranks (the hard part; blocks B and C).**
+Status 2026-09-12: the owner generalization is implemented and live-parity verified
+(dynamic owners from `layer_owner` in publish/fetch/barrier, per-rank sequences,
+replica commit accepts any rank, `qsa_owner_runtime` accepts up to 6 owned layers;
+fleet on the new binary measures 4K 50.89, gates green). Remaining for contig2:
+worker QSA session/mirror for its 1-2 layers, owner-local page publish during the
+block (local `qsa_owner_writer_enqueue`, bypass the `peer==0` append path), and rank
+0's decode mirror page sidecar (or verified cold-fetch). Worker layer-work handler,
+block bench, and non-replicated owner executor are in (`5468c0b`).
 In the ring each block owner *computes* its own 1-2 QSA layers, so it must hold the
 authoritative session + state file for those layers, and decode's cold-fetch must
 route per layer instead of to ranks {3,7}. Changes, all in `src/runtime.c` plus a
@@ -206,18 +222,23 @@ regress: ring work is prefill-only until decode gets its own plan.
   Do not restart the fleet into profiling mode without a soak test.
 - Disk: delete a pack only after confirming nothing references it; `pipeline-candidate`
   is the harness's; keep one recovery pack (`q38-single`) while trying a new layout.
+- **Never build on a serving blade.** `make -j8` on .42 next to live rank 0 caused an
+  OOM livelock: SSH command execution stalled for ~20 min, rank 0 was OOM-killed, and
+  the box only recovered after that. Quiesce all ranks first (`.42` free: 14.5 GiB).
+- **The fleet tool's 15 s socket read timeout does not kill the remote command** — it
+  keeps running detached from the client. Never run builds/packs in the foreground
+  through it: `nohup <cmd> > /tmp/x.log 2>&1 &`, then poll with a short script.
 - The 16 GB "blade" is 15.56 GB system RAM minus ~0.6 GB OS; the driver accepts ~15.5 GB
   total but a single allocation above ~15.5 GB fails with Vulkan result -2.
 
 ## 8. First actions, in order
 
-0. **Measure before building.** The ring math assumes a block owner serves 6 layers x
-   128 tokens in ~300-400 ms (derived from rank 0's 2.51 s per 128-token chunk at
-   50.9 TPS scaled by 48/6 layers). Verify on the current fleet without touching
-   QSA: the `PREFILL_DISPATCH`/`PREFILL_WORKER` instrumentation already times each
-   layer's owner-side expert service + transfer; a single profile run gives the
-   per-layer service time. If 6 layers projects above ~700 ms, stop and re-plan
-   (frames/expert kernels are then the levers, not the ring).
+0. **Measurement gate — PASSED (2026-09-12).** `FG_BLOCK_BENCH=1` on worker rank 4
+   (new binary, single-owner shard, local experts): tokens=128, 6 GDN layers,
+   **mean block 400.42 ms (min 388.46, max 442.94), ~66-68 ms/layer.** Ring model
+   `128 / (T_block + hop)` ≈ **260-300 TPS** at 4 frames; ~5.1-5.6x the current
+   50.89. Proceed with the ring. Re-run the bench on a QSA-containing block before
+   trusting QSA-layer service time.
 1. Do **not** deploy contig2 until section 4D lands (section 1 warning). Keep the
    single-owner fleet healthy; commit the pack.c/q38_schema.c fix.
 2. Implement B (worker owner executor with non-replicated create + layer handler +
