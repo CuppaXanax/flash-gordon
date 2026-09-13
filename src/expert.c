@@ -317,7 +317,8 @@ fg_status fg_expert_decode_finish(fg_expert_executor *executor,fg_expert_result 
     if(!executor||!result){fg_error_set(err,FG_ERR_ARGUMENT,"invalid expert decode finish");return FG_ERR_ARGUMENT;}
     fg_status status=fg_vk_expert_graph_wait(fg_model_vk(executor->model),err);
     if(status==FG_OK)
-        memcpy(result->outputs[0],fg_vk_tensor_map(executor->reduced),FG_HIDDEN_SIZE*4u);
+        status=fg_vk_tensor_read(executor->reduced,0,result->outputs[0],
+                                 FG_HIDDEN_SIZE*4u,err);
     return status;
 }
 
