@@ -44,6 +44,16 @@ static void numerics_trace_tensor(const char *phase,uint32_t rank,uint32_t layer
     }
     free(buffer);
 }
+static void numerics_trace_values_local(const char *phase,uint32_t rank,uint32_t layer,
+    const float *values,uint64_t count){
+    if(!numerics_trace_enabled()||!values||!count)return;
+    double sum=0.0;float min=values[0],max=values[0];
+    for(uint64_t i=0;i<count;i++){float v=values[i];sum+=v;if(v<min)min=v;if(v>max)max=v;}
+    fprintf(stderr,"FG_NUMERICS rank=%u layer=%u phase=%s first=0 tokens=%llu hash=%016llx "
+        "sum=%.6f min=%.6g max=%.6g f0=%.6g fl=%.6g\n",rank,layer,phase,
+        (unsigned long long)count,(unsigned long long)numerics_hash_bytes(values,count*4u),
+        sum,min,max,values[0],values[count-1u]);
+}
 static fg_status finish_batch(fg_vk_context *vk,fg_status status,fg_error *err){
     if(status==FG_OK)status=fg_vk_end(vk,err);
     if(status!=FG_OK&&fg_vk_batch_active(vk)){
@@ -399,7 +409,17 @@ static bool owns_layer(const fg_owner_executor *executor,uint32_t layer){
 }
 
 static fg_status gr_read_batch_into(fg_owner_executor *e,uint32_t layer,bool ffn,const fg_vk_tensor *hyper_input,uint32_t token_count,fg_vk_tensor *injection_tensor,fg_vk_tensor **mixed,const fg_vk_tensor **residual,fg_vk_tensor **injection,fg_error *err){
-    if(!e||!hyper_input||!injection_tensor||!mixed||!residual||!injection||!token_count||token_count>e->max_tokens||!owns_layer(e,layer)){fg_error_set(err,FG_ERR_MISMATCH,"gated residual batch is not on the layer owner or exceeds the sealed microbatch");return FG_ERR_MISMATCH;}const char *prefix=ffn?"hc_ffn":"hc_attn";char suffix[48];fg_vk_tensor *norm_weight,*down_weight,*up_weight,*inject_weight;snprintf(suffix,sizeof(suffix),"%s_norm.weight",prefix);norm_weight=weight(e,layer,suffix,err);snprintf(suffix,sizeof(suffix),"%s_down.weight",prefix);down_weight=weight(e,layer,suffix,err);snprintf(suffix,sizeof(suffix),"%s_up.weight",prefix);up_weight=weight(e,layer,suffix,err);snprintf(suffix,sizeof(suffix),"%s_inject.weight",prefix);inject_weight=weight(e,layer,suffix,err);if(!norm_weight||!down_weight||!up_weight||!inject_weight)return FG_ERR_MISMATCH;fg_vk_context *vk=fg_model_vk(e->model);fg_status status=fg_vk_begin(vk,err);if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->hyper_norm,hyper_input,norm_weight,FG_HIDDEN_SIZE,4u,token_count,1e-6f,err);if(status==FG_OK&&token_count==1u&&fg_vk_tensor_get_format(down_weight)==FG_VK_TENSOR_FORMAT_Q8_0_COOKED)status=fg_vk_dense_q8_0_cooked_split(vk,e->low,e->hc_down_partials,down_weight,e->hyper_norm,10240u,320u,1u,FG_HC_DOWN_SPLITS,1.0f,err);else if(status==FG_OK)status=dense_prefill(e,e->low,down_weight,e->hyper_norm,10240u,320u,token_count,1.0f,err);if(status==FG_OK)status=fg_vk_hc_inject_partial(vk,e->inject_partials,e->hyper_norm,inject_weight,FG_HIDDEN_SIZE,4u,token_count,FG_HC_INJECT_PIECES,err);if(status==FG_OK)status=fg_vk_silu_scaled(vk,e->low_active,e->low,token_count*320u,0.25f,err);if(status==FG_OK)status=dense_prefill(e,e->up_logits,up_weight,e->low_active,320u,10240u,token_count,1.0f,err);if(status==FG_OK)status=fg_vk_gr_mix_partial(vk,e->mixed,injection_tensor,e->hyper_norm,e->up_logits,e->inject_partials,FG_HIDDEN_SIZE,4u,token_count,FG_HC_INJECT_PIECES,err);status=finish_batch(vk,status,err);if(status==FG_OK){*mixed=e->mixed;*residual=hyper_input;*injection=injection_tensor;}return status;
+    if(!e||!hyper_input||!injection_tensor||!mixed||!residual||!injection||!token_count||token_count>e->max_tokens||!owns_layer(e,layer)){fg_error_set(err,FG_ERR_MISMATCH,"gated residual batch is not on the layer owner or exceeds the sealed microbatch");return FG_ERR_MISMATCH;}const char *prefix=ffn?"hc_ffn":"hc_attn";char suffix[48];fg_vk_tensor *norm_weight,*down_weight,*up_weight,*inject_weight;snprintf(suffix,sizeof(suffix),"%s_norm.weight",prefix);norm_weight=weight(e,layer,suffix,err);snprintf(suffix,sizeof(suffix),"%s_down.weight",prefix);down_weight=weight(e,layer,suffix,err);snprintf(suffix,sizeof(suffix),"%s_up.weight",prefix);up_weight=weight(e,layer,suffix,err);snprintf(suffix,sizeof(suffix),"%s_inject.weight",prefix);inject_weight=weight(e,layer,suffix,err);if(!norm_weight||!down_weight||!up_weight||!inject_weight)return FG_ERR_MISMATCH;fg_vk_context *vk=fg_model_vk(e->model);    if(layer<=1u&&numerics_trace_enabled()){
+        uint32_t rank=fg_model_rank(e->model);
+        numerics_trace_values_local("W_HC_NORM",rank,layer,fg_vk_tensor_map((fg_vk_tensor *)norm_weight),fg_vk_tensor_bytes(norm_weight)/4u);
+        numerics_trace_values_local("W_HC_DOWN",rank,layer,fg_vk_tensor_map((fg_vk_tensor *)down_weight),fg_vk_tensor_bytes(down_weight)/4u);
+        numerics_trace_values_local("W_HC_UP",rank,layer,fg_vk_tensor_map((fg_vk_tensor *)up_weight),fg_vk_tensor_bytes(up_weight)/4u);
+        numerics_trace_values_local("W_HC_INJ",rank,layer,fg_vk_tensor_map((fg_vk_tensor *)inject_weight),fg_vk_tensor_bytes(inject_weight)/4u);
+        fprintf(stderr,"FG_NUMERICS_FMT rank=%u layer=%u hc_down_fmt=%u hc_up_fmt=%u attn_read_tokens=%u\n",
+            rank,layer,(unsigned)fg_vk_tensor_get_format(down_weight),
+            (unsigned)fg_vk_tensor_get_format(up_weight),(unsigned)token_count);
+    }
+    fg_status status=fg_vk_begin(vk,err);if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->hyper_norm,hyper_input,norm_weight,FG_HIDDEN_SIZE,4u,token_count,1e-6f,err);if(status==FG_OK&&token_count==1u&&fg_vk_tensor_get_format(down_weight)==FG_VK_TENSOR_FORMAT_Q8_0_COOKED)status=fg_vk_dense_q8_0_cooked_split(vk,e->low,e->hc_down_partials,down_weight,e->hyper_norm,10240u,320u,1u,FG_HC_DOWN_SPLITS,1.0f,err);else if(status==FG_OK)status=dense_prefill(e,e->low,down_weight,e->hyper_norm,10240u,320u,token_count,1.0f,err);if(status==FG_OK)status=fg_vk_hc_inject_partial(vk,e->inject_partials,e->hyper_norm,inject_weight,FG_HIDDEN_SIZE,4u,token_count,FG_HC_INJECT_PIECES,err);if(status==FG_OK)status=fg_vk_silu_scaled(vk,e->low_active,e->low,token_count*320u,0.25f,err);if(status==FG_OK)status=dense_prefill(e,e->up_logits,up_weight,e->low_active,320u,10240u,token_count,1.0f,err);if(status==FG_OK)status=fg_vk_gr_mix_partial(vk,e->mixed,injection_tensor,e->hyper_norm,e->up_logits,e->inject_partials,FG_HIDDEN_SIZE,4u,token_count,FG_HC_INJECT_PIECES,err);status=finish_batch(vk,status,err);if(status==FG_OK){*mixed=e->mixed;*residual=hyper_input;*injection=injection_tensor;}return status;
 }
 fg_status fg_owner_gr_read_batch(fg_owner_executor *e,uint32_t layer,bool ffn,const fg_vk_tensor *hyper_input,uint32_t token_count,fg_vk_tensor **mixed,const fg_vk_tensor **residual,fg_vk_tensor **injection,fg_error *err){return gr_read_batch_into(e,layer,ffn,hyper_input,token_count,e?e->injection:NULL,mixed,residual,injection,err);}
 
@@ -595,6 +615,23 @@ fg_status fg_owner_gdn_decode(fg_owner_executor *executor,uint32_t layer,const f
     if(!executor||!hidden||!output||!owns_layer(executor,layer)||(layer&3u)==3u||!executor->gdn_state[layer].conv_state||!executor->gdn_state[layer].recurrent_state){fg_error_set(err,FG_ERR_MISMATCH,"GDN decode is not on an owned linear-attention layer");return FG_ERR_MISMATCH;}
     fg_vk_tensor *qkv_weight=weight(executor,layer,"attn_qkv.weight",err),*z_weight=weight(executor,layer,"attn_gate.weight",err),*alpha_weight=weight(executor,layer,"ssm_alpha.weight",err),*beta_weight=weight(executor,layer,"ssm_beta.weight",err),*conv_weight=weight(executor,layer,"ssm_conv1d.weight",err),*a_decay=weight(executor,layer,"ssm_a",err),*dt_bias=weight(executor,layer,"ssm_dt.bias",err),*norm_weight=weight(executor,layer,"ssm_norm.weight",err),*out_weight=weight(executor,layer,"ssm_out.weight",err);if(!qkv_weight||!z_weight||!alpha_weight||!beta_weight||!conv_weight||!a_decay||!dt_bias||!norm_weight||!out_weight)return FG_ERR_MISMATCH;
     fg_vk_context *vk=fg_model_vk(executor->model);
+    if(layer<=1u&&numerics_trace_enabled()){
+        uint32_t rank=fg_model_rank(executor->model);
+        numerics_trace_values_local("W_GDN_QKV",rank,layer,fg_vk_tensor_map(qkv_weight),fg_vk_tensor_bytes(qkv_weight)/4u);
+        numerics_trace_values_local("W_GDN_GATE",rank,layer,fg_vk_tensor_map(z_weight),fg_vk_tensor_bytes(z_weight)/4u);
+        numerics_trace_values_local("W_GDN_CONV",rank,layer,fg_vk_tensor_map(conv_weight),fg_vk_tensor_bytes(conv_weight)/4u);
+        numerics_trace_values_local("W_GDN_OUT",rank,layer,fg_vk_tensor_map(out_weight),fg_vk_tensor_bytes(out_weight)/4u);
+        numerics_trace_values_local("W_GDN_ALPHA",rank,layer,fg_vk_tensor_map(alpha_weight),fg_vk_tensor_bytes(alpha_weight)/4u);
+        numerics_trace_values_local("W_GDN_BETA",rank,layer,fg_vk_tensor_map(beta_weight),fg_vk_tensor_bytes(beta_weight)/4u);
+        numerics_trace_values_local("W_GDN_A",rank,layer,fg_vk_tensor_map(a_decay),fg_vk_tensor_bytes(a_decay)/4u);
+        numerics_trace_values_local("W_GDN_DT",rank,layer,fg_vk_tensor_map(dt_bias),fg_vk_tensor_bytes(dt_bias)/4u);
+        numerics_trace_values_local("W_GDN_NORM",rank,layer,fg_vk_tensor_map(norm_weight),fg_vk_tensor_bytes(norm_weight)/4u);
+        fprintf(stderr,"FG_NUMERICS_FMT rank=%u layer=%u qkv_fmt=%u gate_fmt=%u\n",
+            rank,layer,(unsigned)fg_vk_tensor_get_format(qkv_weight),
+            (unsigned)fg_vk_tensor_get_format(z_weight));
+    }
+    if(layer==0u)numerics_trace_values_local("GDN_IN",fg_model_rank(executor->model),
+        layer,fg_vk_tensor_map((fg_vk_tensor *)hidden),FG_HIDDEN_SIZE);
     bool diagnostics=gdn_diag_enabled()&&!fg_vk_batch_active(vk);
     static atomic_int gdn_diag_done=0;
     if(diagnostics&&!gdn_diag_done){gdn_diag_done=1;const float *a_vals=fg_vk_tensor_map(a_decay),*dt_vals=fg_vk_tensor_map(dt_bias);fprintf(stderr,"GDN_DIAG layer=%u ssm_a[0..7]=%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f dt_bias[0..3]=%.4f,%.4f,%.4f,%.4f\n",layer,a_vals[0],a_vals[1],a_vals[2],a_vals[3],a_vals[4],a_vals[5],a_vals[6],a_vals[7],dt_vals[0],dt_vals[1],dt_vals[2],dt_vals[3]);}
@@ -605,9 +642,17 @@ fg_status fg_owner_gdn_decode(fg_owner_executor *executor,uint32_t layer,const f
     if(status==FG_OK)status=fg_vk_gdn_conv_decode(vk,executor->gdn_conv_output,executor->gdn_state[layer].conv_state,executor->gdn_qkv,conv_weight,10240u,err);
     if(status==FG_OK)status=fg_vk_gdn_recurrent_algebraic(vk,executor->gdn_core,executor->gdn_state[layer].recurrent_state,executor->gdn_conv_output,executor->gdn_z,executor->gdn_alpha,executor->gdn_beta,a_decay,dt_bias,norm_weight,48u,16u,128u,1e-6f,err);
     status=finish_batch(vk,status,err);
+    if(status==FG_OK&&layer==0u&&numerics_trace_enabled()){
+        numerics_trace_values_local("GDN_QKV",fg_model_rank(executor->model),layer,
+            fg_vk_tensor_map(executor->gdn_qkv),10240u);
+        numerics_trace_values_local("GDN_CONV",fg_model_rank(executor->model),layer,
+            fg_vk_tensor_map(executor->gdn_conv_output),10240u);
+        numerics_trace_values_local("GDN_CORE",fg_model_rank(executor->model),layer,
+            fg_vk_tensor_map(executor->gdn_core),6144u);
+    }
     if(status==FG_OK&&layer==0u&&diagnostics){const float *alpha_vals=fg_vk_tensor_map(executor->gdn_alpha),*a_vals2=fg_vk_tensor_map(a_decay),*dt_vals2=fg_vk_tensor_map(dt_bias);float sp0=alpha_vals[0]+dt_vals2[0];sp0=sp0>0.0f?sp0+logf(1.0f+expf(-sp0)):logf(1.0f+expf(sp0));float example_decay=expf(a_vals2[0]*sp0);fprintf(stderr,"GDN_DECAY layer=0 alpha[0]=%.4f softplus=%.4f a[0]=%.4f decay[0]=%.6f\n",alpha_vals[0],sp0,a_vals2[0],example_decay);}
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gdn_output",err);
-    if(status==FG_OK){status=fg_vk_begin(vk,err);if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,executor->gdn_output,out_weight,executor->gdn_core,6144u,2560u,1u,1.0f,err);status=finish_batch(vk,status,err);}if(status==FG_OK){*output=executor->gdn_output;}return status;
+    if(status==FG_OK){status=fg_vk_begin(vk,err);if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,executor->gdn_output,out_weight,executor->gdn_core,6144u,2560u,1u,1.0f,err);status=finish_batch(vk,status,err);}if(status==FG_OK&&layer==0u)numerics_trace_values_local("GDN_OUT",fg_model_rank(executor->model),layer,fg_vk_tensor_map(executor->gdn_output),FG_HIDDEN_SIZE);if(status==FG_OK){*output=executor->gdn_output;}return status;
 }
 
 static fg_status owner_gdn_prefill(fg_owner_executor *executor,uint32_t layer,
@@ -826,11 +871,32 @@ static fg_status decode_layer_begin_impl(fg_owner_executor *e,uint32_t slot,uint
     if(status==FG_OK&&layer>1u)status=flush_gr_write(e,pending,err);
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_attn_read",err);
     if(status==FG_OK){status=gr_read_batch_into(e,layer,false,layer_input,1u,frame->injection,&mixed,&residual,&injection,err);}
+    bool dbg_flush=layer==0u&&numerics_trace_enabled();
+    if(status==FG_OK&&dbg_flush){
+        status=finish_batch(vk,status,err);
+        if(status==FG_OK)status=fg_vk_begin(vk,err);
+        uint32_t rank=fg_model_rank(e->model);
+        numerics_trace_values_local("A_NORM",rank,layer,fg_vk_tensor_map(e->hyper_norm),10240u);
+        numerics_trace_values_local("A_LOW",rank,layer,fg_vk_tensor_map(e->low),320u);
+        numerics_trace_values_local("A_UP",rank,layer,fg_vk_tensor_map(e->up_logits),10240u);
+        numerics_trace_values_local("A_PART",rank,layer,fg_vk_tensor_map(e->inject_partials),FG_HC_INJECT_PIECES*4u);
+        numerics_trace_values_local("A_MIX",rank,layer,fg_vk_tensor_map(mixed),FG_HIDDEN_SIZE);
+        numerics_trace_values_local("A_INJ",rank,layer,fg_vk_tensor_map(injection),FG_GROUP_SIZE);
+    }
     bool remote_qsa=(layer&3u)==3u&&qsa_dispatch;
     if(status==FG_OK&&remote_qsa){status=finish_batch(vk,status,err);if(status==FG_OK)status=qsa_dispatch(qsa_context,layer,token,position,mixed,&block,err);if(status==FG_OK)status=fg_vk_begin(vk,err);}
     else     if(status==FG_OK&&(layer&3u)==3u){
         status=fg_owner_qsa_decode(e,layer,token,position,mixed,&block,err);
     }else if(status==FG_OK)status=fg_owner_gdn_decode(e,layer,mixed,&block,err);
+    if(status==FG_OK&&dbg_flush){
+        status=finish_batch(vk,status,err);
+        if(status==FG_OK)status=fg_vk_begin(vk,err);
+        uint32_t rank=fg_model_rank(e->model);
+        numerics_trace_values_local("B_QKV",rank,layer,fg_vk_tensor_map(e->gdn_qkv),10240u);
+        numerics_trace_values_local("B_CONV",rank,layer,fg_vk_tensor_map(e->gdn_conv_output),10240u);
+        numerics_trace_values_local("B_CORE",rank,layer,fg_vk_tensor_map(e->gdn_core),6144u);
+        numerics_trace_values_local("B_OUT",rank,layer,fg_vk_tensor_map(e->gdn_output),FG_HIDDEN_SIZE);
+    }
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_attn_write",err);
     if(status==FG_OK){status=gr_write_batch_into(e,residual,block,injection,1u,frame->ping[0],frame->ping[1],&after_attention,err);}
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_ffn_read",err);
@@ -843,7 +909,34 @@ static fg_status decode_layer_begin_impl(fg_owner_executor *e,uint32_t slot,uint
     if(status==FG_OK)status=fg_vk_quantize_q8_k(vk,e->activation_q8k,mixed,FG_HIDDEN_SIZE,1u,err);
     status=finish_batch(vk,status,err); /* SYNC 1: router + activation */
     double t_sync1=ts_ms();uint64_t trace_sync1=ep_trace?wall_ns():0;
+    if(status==FG_OK&&layer<=1u&&numerics_trace_enabled()){
+        numerics_trace_values_local("SYNC1_NORM",fg_model_rank(e->model),layer,
+            fg_vk_tensor_map(e->hyper_norm),FG_HIDDEN_SIZE*4u);
+        numerics_trace_values_local("SYNC1_LOW",fg_model_rank(e->model),layer,
+            fg_vk_tensor_map(e->low),320u);
+        numerics_trace_values_local("SYNC1_UP",fg_model_rank(e->model),layer,
+            fg_vk_tensor_map(e->up_logits),FG_HIDDEN_SIZE*4u);
+        numerics_trace_values_local("SYNC1_PART",fg_model_rank(e->model),layer,
+            fg_vk_tensor_map(e->inject_partials),FG_HC_INJECT_PIECES*4u);
+        numerics_trace_values_local("SYNC1_QKV",fg_model_rank(e->model),layer,
+            fg_vk_tensor_map(e->gdn_qkv),10240u);
+        numerics_trace_values_local("SYNC1_CONV",fg_model_rank(e->model),layer,
+            fg_vk_tensor_map(e->gdn_conv_output),10240u);
+        numerics_trace_values_local("SYNC1_CORE",fg_model_rank(e->model),layer,
+            fg_vk_tensor_map(e->gdn_core),6144u);
+        numerics_trace_values_local("SYNC1_GDNOUT",fg_model_rank(e->model),layer,
+            fg_vk_tensor_map(e->gdn_output),FG_HIDDEN_SIZE);
+        numerics_trace_values_local("SYNC1_ATTN",fg_model_rank(e->model),layer,
+            fg_vk_tensor_map((fg_vk_tensor *)after_attention),FG_HYPER_WIDTH);
+        numerics_trace_values_local("SYNC1_MIX",fg_model_rank(e->model),layer,
+            fg_vk_tensor_map(mixed),FG_HIDDEN_SIZE);
+        numerics_trace_values_local("SYNC1_INJ",fg_model_rank(e->model),layer,
+            fg_vk_tensor_map(frame->injection),FG_GROUP_SIZE);
+    }
     if(status==FG_OK){float router_local[FG_EXPERT_COUNT];memcpy(router_local,fg_vk_tensor_map(e->router_logits),sizeof(router_local));uint32_t ids[FG_TOP_K];status=fg_q38_router_topk(router_local,FG_EXPERT_COUNT,FG_TOP_K,ids,frame->gates,err);for(uint32_t s=0;status==FG_OK&&s<FG_TOP_K;s++)frame->expert_ids[s]=(uint16_t)ids[s];}
+    if(status==FG_OK&&layer<=1u&&numerics_trace_enabled())
+        numerics_trace_values_local("SYNC1_GATES",fg_model_rank(e->model),layer,
+            frame->gates,FG_TOP_K);
     const uint8_t *activation=status==FG_OK?fg_vk_tensor_map(e->activation_q8k):NULL;
     fg_vk_tensor *shared_gate_w=NULL,*gate_w=NULL,*up_w=NULL,*down_w=NULL;
     if(status==FG_OK){shared_gate_w=weight(e,layer,"ffn_gate_inp_shexp.weight",err);gate_w=weight(e,layer,"ffn_gate_shexp.weight",err);up_w=weight(e,layer,"ffn_up_shexp.weight",err);down_w=weight(e,layer,"ffn_down_shexp.weight",err);if(!shared_gate_w||!gate_w||!up_w||!down_w)status=FG_ERR_MISMATCH;}
@@ -862,6 +955,22 @@ static fg_status decode_layer_begin_impl(fg_owner_executor *e,uint32_t slot,uint
         if(frame->fire_called){fg_expert_result drain[FG_GROUP_SIZE];uint32_t drain_count=0;fg_error ignored={0};fg_status drained=collect(dispatch_context,layer,token,drain,&drain_count,&ignored);(void)drained;}
         frame->active=false;
         return status;
+    }
+    /* The shared-expert batch is drained by now, so the predecessor output that
+     * this begin flushed into hyper_input is materialized for a valid digest. */
+    numerics_trace_tensor(layer==0u?"BIN":"DOUT_PREV",fg_model_rank(e->model),
+        layer==0u?0u:layer-1u,token,1u,hyper_input,err);
+    if(layer==1u&&numerics_trace_enabled()){
+        numerics_trace_values_local("PLE_OUT",fg_model_rank(e->model),layer,
+            fg_vk_tensor_map((fg_vk_tensor *)layer_input),FG_HYPER_WIDTH);
+    }
+    if(layer<=1u&&numerics_trace_enabled()){
+        numerics_trace_values_local("SYNC2_MIX",fg_model_rank(e->model),layer,
+            fg_vk_tensor_map(mixed),FG_HIDDEN_SIZE);
+        numerics_trace_values_local("SYNC2_SHARED",fg_model_rank(e->model),layer,
+            fg_vk_tensor_map(frame->shared_output),FG_HIDDEN_SIZE);
+        numerics_trace_values_local("SYNC2_SCALAR",fg_model_rank(e->model),layer,
+            fg_vk_tensor_map(frame->shared_scalar),1u);
     }
     return FG_OK;
 }

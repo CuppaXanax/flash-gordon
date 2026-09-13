@@ -71,7 +71,9 @@
 /* Ring decode-state handoff: GDN conv/recurrent state plus the layer-1 PLE
  * convolution state, fetched per layer from the block owner after ring prefill
  * so rank 0's local decode executor starts from the distributed frontier. */
-#define FG_GDN_STATE_CONV_BYTES (FG_HYPER_WIDTH*4u)
+/* The GDN convolution state is four taps per channel over the full 10240-wide
+ * qkv projection: FG_HYPER_WIDTH floats per tap. */
+#define FG_GDN_STATE_CONV_BYTES (FG_HYPER_WIDTH*4u*4u)
 #define FG_GDN_STATE_RECURRENT_BYTES (48u*128u*128u*4u)
 #define FG_GDN_STATE_PLE_BYTES (FG_HYPER_WIDTH*9u*4u)
 #define FG_GDN_STATE_FETCH_BYTES 8u

@@ -43,17 +43,22 @@ static bool route_trace_enabled(void){const char *enabled=getenv("FG_TRACE_ROUTE
 static bool expert_batch_send_enabled(void){const char *enabled=getenv("FG_EXPERT_BATCH_SEND");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool prefix_trace_enabled(void){const char *enabled=getenv("FG_PREFIX_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool numerics_trace_enabled(void){const char *enabled=getenv("FG_NUMERICS_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
+static void numerics_trace_values(const char *phase,uint32_t rank,uint32_t layer,
+    uint32_t first_token,const float *values,uint64_t count){
+    if(!numerics_trace_enabled()||!values||!count)return;
+    const uint8_t *bytes=(const uint8_t *)values;uint64_t hash=UINT64_C(1469598103934665603);
+    for(uint64_t i=0;i<count*4u;i++){hash^=bytes[i];hash*=UINT64_C(1099511628211);}
+    double sum=0.0;float min=values[0],max=values[0];
+    for(uint64_t i=0;i<count;i++){float v=values[i];sum+=v;if(v<min)min=v;if(v>max)max=v;}
+    fprintf(stderr,"FG_NUMERICS rank=%u layer=%u phase=%s first=%u tokens=%llu hash=%016llx "
+        "sum=%.6f min=%.6g max=%.6g f0=%.6g fl=%.6g\n",rank,layer,phase,first_token,
+        (unsigned long long)count,(unsigned long long)hash,sum,min,max,values[0],
+        values[count-1u]);
+}
 static void numerics_trace_host(const char *phase,uint32_t rank,uint32_t layer,
     uint32_t first_token,uint32_t tokens,const float *hyper){
-    if(!numerics_trace_enabled()||!hyper||!tokens)return;
-    uint64_t count=(uint64_t)tokens*FG_HYPER_WIDTH;
-    const uint8_t *bytes=(const uint8_t *)hyper;uint64_t hash=UINT64_C(1469598103934665603);
-    for(uint64_t i=0;i<count*4u;i++){hash^=bytes[i];hash*=UINT64_C(1099511628211);}
-    double sum=0.0;float min=hyper[0],max=hyper[0];
-    for(uint64_t i=0;i<count;i++){float v=hyper[i];sum+=v;if(v<min)min=v;if(v>max)max=v;}
-    fprintf(stderr,"FG_NUMERICS rank=%u layer=%u phase=%s first=%u tokens=%u hash=%016llx "
-        "sum=%.6f min=%.6g max=%.6g f0=%.6g fl=%.6g\n",rank,layer,phase,first_token,tokens,
-        (unsigned long long)hash,sum,min,max,hyper[0],hyper[count-1u]);
+    numerics_trace_values(phase,rank,layer,first_token,hyper,
+        (uint64_t)tokens*FG_HYPER_WIDTH);
 }
 static uint64_t critical_ns(void){struct timespec value;clock_gettime(CLOCK_REALTIME,&value);return (uint64_t)value.tv_sec*UINT64_C(1000000000)+(uint64_t)value.tv_nsec;}
 _Static_assert(FG_NGRAM_ROW_BYTES==FG_NGRAM_WIRE_ROW_BYTES,"n-gram row wire size mismatch");
@@ -701,8 +706,31 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
     }
     if(status==FG_OK)status=fg_vk_tensor_write(input,0,work->hyper,
         (uint64_t)FG_HYPER_WIDTH*4u,err);
+    numerics_trace_host("FB_IN",self,work->layer,work->token_index,1u,work->hyper);
     if(status==FG_OK&&has_ngram)status=fg_vk_tensor_write(context->ngram_tensor,0,
         work->ngram_embedding,(uint64_t)FG_NGRAM_EMBED_VALUES*4u,err);
+    if(status==FG_OK&&numerics_trace_enabled()&&work->layer==0u){
+        fg_vk_tensor *ple=fg_owner_ple_state_tensor(owner);
+        float *ple_host=ple?malloc(FG_GDN_STATE_PLE_BYTES):NULL;
+        if(ple_host){
+            if(fg_vk_tensor_read(ple,0,ple_host,FG_GDN_STATE_PLE_BYTES,err)==FG_OK)
+                numerics_trace_values("PLE_STATE_LOCAL",self,1u,work->token_index,
+                    ple_host,(uint64_t)FG_HYPER_WIDTH*9u);
+            free(ple_host);
+        }
+        for(uint32_t dl=0u;dl<=1u;dl++){
+            fg_vk_tensor *conv=fg_owner_gdn_state_tensor(owner,dl,0u);
+            fg_vk_tensor *recurrent=fg_owner_gdn_state_tensor(owner,dl,1u);
+            if(conv){
+                const float *map=fg_vk_tensor_map(conv);
+                for(uint32_t q=0;q<4u;q++)
+                    numerics_trace_values("STATE_LOCAL_CONV",self,dl,work->token_index,
+                        map+(uint64_t)q*FG_HYPER_WIDTH,(uint64_t)FG_HYPER_WIDTH);
+            }
+            if(recurrent)numerics_trace_values("STATE_LOCAL_RECUR",self,dl,work->token_index,
+                fg_vk_tensor_map(recurrent),(uint64_t)48u*128u*128u);
+        }
+    }
     uint32_t last=work->layer;
     while(status==FG_OK&&last+1u<FG_LAYER_COUNT&&manifest->layer_owner[last+1u]==self)last++;
     fg_vk_tensor *current=NULL;
@@ -711,6 +739,7 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
         worker_decode_collect,&context->decode_dispatch,&current,err);
     if(status==FG_OK)status=fg_vk_tensor_read(current,0,context->hyper_out,
         (uint64_t)FG_HYPER_WIDTH*4u,err);
+    numerics_trace_host("FB_OUT",self,last,work->token_index,1u,context->hyper_out);
     if(status==FG_OK)status=worker_publish_qsa_pages(context->qsa_owner,owner,self,
         work->token_index,1u,err);
     if(status==FG_OK&&last+1u<FG_LAYER_COUNT){
@@ -775,6 +804,19 @@ static fg_status handle_gdn_state_fetch(fg_fabric *fabric,fg_owner_executor *own
                 .frontier=fetch.frontier,.conv=fg_vk_tensor_map(conv),
                 .recurrent=fg_vk_tensor_map(recurrent),
                 .ple=ple?fg_vk_tensor_map(ple):NULL};
+            if(fetch.layer<=1u&&numerics_trace_enabled()){
+                if(fetch.layer==0u)
+                    fprintf(stderr,"FG_NUMERICS_SIZE rank=%u conv_bytes=%llu recurrent_bytes=%llu conv_const=%u\n",
+                        self,(unsigned long long)fg_vk_tensor_bytes(conv),
+                        (unsigned long long)fg_vk_tensor_bytes(recurrent),
+                        (unsigned)FG_GDN_STATE_CONV_BYTES);
+                const float *conv_map=fg_vk_tensor_map(conv);
+                for(uint32_t q=0;q<4u;q++)
+                    numerics_trace_values("STATE_SEND_CONV",self,(uint32_t)fetch.layer,fetch.frontier,
+                        conv_map+(uint64_t)q*FG_HYPER_WIDTH,(uint64_t)FG_HYPER_WIDTH);
+                numerics_trace_values("STATE_SEND_RECUR",self,(uint32_t)fetch.layer,fetch.frontier,
+                    result.recurrent,(uint64_t)48u*128u*128u);
+            }
             uint32_t result_bytes=0;
             status=fg_gdn_state_result_encode(wire,FG_GDN_STATE_RESULT_MAX_BYTES,
                 &result_bytes,&result,err);
@@ -2808,6 +2850,25 @@ static fg_status coordinator_sync_gdn_state(fg_coordinator *coordinator,
                 fg_error_set(err,FG_ERR_MISMATCH,"rank 0 has no local PLE state slot");
                 status=FG_ERR_MISMATCH;
             }else status=fg_vk_tensor_write(ple,0,result.ple,FG_GDN_STATE_PLE_BYTES,err);
+            if(status==FG_OK&&numerics_trace_enabled()){
+                float *ple_host=malloc(FG_GDN_STATE_PLE_BYTES);
+                if(ple_host){
+                    if(fg_vk_tensor_read(ple,0,ple_host,FG_GDN_STATE_PLE_BYTES,err)==FG_OK)
+                        numerics_trace_values("PLE_STATE_IMPORT",0u,1u,frontier,ple_host,
+                            (uint64_t)FG_HYPER_WIDTH*9u);
+                    free(ple_host);
+                }
+            }
+        }
+        if(status==FG_OK&&result.layer<=1u&&numerics_trace_enabled()){
+            float *full=malloc((uint64_t)FG_HYPER_WIDTH*4u*4u);
+            if(full){
+                if(fg_vk_tensor_read(conv,0,full,(uint64_t)FG_HYPER_WIDTH*4u*4u,err)==FG_OK)
+                    for(uint32_t q=0;q<4u;q++)
+                        numerics_trace_values("STATE_GOT_CONV",0u,result.layer,frontier,
+                            full+(uint64_t)q*FG_HYPER_WIDTH,(uint64_t)FG_HYPER_WIDTH);
+                free(full);
+            }
         }
     }
     free(result_wire);
@@ -3424,8 +3485,12 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
     for(uint32_t axis=0;axis<3u;axis++)work->position[axis]=token_index;
     if(status==FG_OK)status=fg_vk_tensor_read(input,0,work->hyper,
         (uint64_t)FG_HYPER_WIDTH*4u,err);
-    if(status==FG_OK&&ngram_view)status=fg_vk_tensor_read(ngram_view,0,
-        work->ngram_embedding,(uint64_t)FG_NGRAM_EMBED_VALUES*4u,err);
+    if(status==FG_OK&&ngram_view){
+        status=fg_vk_tensor_read(ngram_view,0,work->ngram_embedding,
+            (uint64_t)FG_NGRAM_EMBED_VALUES*4u,err);
+        numerics_trace_values("NGRAM_DECODE",0u,1u,token_index,work->ngram_embedding,
+            FG_NGRAM_EMBED_VALUES);
+    }
     uint32_t wire_bytes=0;
     if(status==FG_OK)status=fg_decode_layer_work_encode(coordinator->decode_work_wire,
         FG_DECODE_LAYER_WORK_MAX_BYTES,&wire_bytes,manifest->protocol_version,work,err);
@@ -3461,6 +3526,7 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
                 break;
             }
             if(trace)t_own_recv=dispatch_ts();
+            numerics_trace_host("FB_IN",0u,work->layer,work->token_index,1u,work->hyper);
             own_first=work->layer;
             uint32_t last=work->layer;
             while(last+1u<FG_LAYER_COUNT&&manifest->layer_owner[last+1u]==0u)last++;
@@ -3474,12 +3540,14 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
                 worker_decode_collect,&dispatch,&current,err);
             if(status==FG_OK)status=fg_vk_tensor_read(current,0,work->hyper,
                 (uint64_t)FG_HYPER_WIDTH*4u,err);
+            numerics_trace_host("FB_OUT",0u,last,work->token_index,1u,work->hyper);
             if(trace)t_own_end=dispatch_ts();
             if(status==FG_OK&&last+1u<FG_LAYER_COUNT){
                 fg_layer_work next={.layer=(uint8_t)(last+1u),.source_rank=0u,
                     .destination_rank=manifest->layer_owner[last+1u],
                     .token_index=work->token_index,.position_mode=FG_POSITION_TEXT};
                 for(uint32_t axis=0;axis<3u;axis++)next.position[axis]=work->position[axis];
+                memcpy(next.hyper,work->hyper,(uint64_t)FG_HYPER_WIDTH*4u);
                 uint32_t next_bytes=0;
                 status=fg_decode_layer_work_encode(coordinator->decode_work_wire,
                     FG_DECODE_LAYER_WORK_MAX_BYTES,&next_bytes,
@@ -3555,6 +3623,12 @@ static fg_status coordinator_decode_token_local(fg_coordinator *coordinator,cons
     double frame_embedding=dispatch_ts();
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"ngram",err);
     fg_vk_tensor *ngram=NULL;if(status==FG_OK)status=coordinator_ngram_resident(coordinator,history,history_count,token_index,&ngram,err);
+    if(status==FG_OK&&ngram&&numerics_trace_enabled()){
+        float ngram_host[FG_NGRAM_EMBED_VALUES];
+        if(fg_vk_tensor_read(ngram,0,ngram_host,sizeof(ngram_host),err)==FG_OK)
+            numerics_trace_values("NGRAM_DECODE",0u,1u,token_index,ngram_host,
+                FG_NGRAM_EMBED_VALUES);
+    }
     double frame_ngram=dispatch_ts();
     uint32_t position[3]={token_index,token_index,token_index};
     fg_vk_tensor *current=decode_input;
