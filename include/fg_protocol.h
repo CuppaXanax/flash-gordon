@@ -123,7 +123,12 @@ typedef enum fg_message_type {
     FG_MSG_OUTPUT_HISTORY = 40,
     FG_MSG_OUTPUT_HISTORY_ACK = 41,
     FG_MSG_GDN_STATE_FETCH = 42,
-    FG_MSG_GDN_STATE_RESULT = 43
+    FG_MSG_GDN_STATE_RESULT = 43,
+    /* Ring decode: one token's hyper state is handed along the block chain.
+     * The payload reuses the single-token fg_layer_work/fg_layer_result wire
+     * contract (40 KiB hyper plus optional layer-1 n-gram embedding). */
+    FG_MSG_DECODE_LAYER_WORK = 44,
+    FG_MSG_DECODE_LAYER_RESULT = 45
 } fg_message_type;
 
 typedef struct fg_gdn_state_fetch {
@@ -479,6 +484,19 @@ fg_status fg_layer_result_encode(uint8_t output[FG_LAYER_RESULT_BYTES],const fg_
                                  fg_error *err);
 fg_status fg_layer_result_decode(fg_layer_result *result,const uint8_t *payload,uint32_t bytes,
                                  fg_error *err);
+/* Ring decode uses the single-token layer work/result wire contract under its
+ * own message ids; the work carries the first layer of the receiving block. */
+#define FG_DECODE_LAYER_WORK_MAX_BYTES FG_LAYER_WORK_MAX_BYTES
+#define FG_DECODE_LAYER_RESULT_BYTES FG_LAYER_RESULT_BYTES
+fg_status fg_decode_layer_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                      uint16_t protocol_version,const fg_layer_work *work,
+                                      fg_error *err);
+fg_status fg_decode_layer_work_decode(fg_layer_work *work,uint16_t protocol_version,
+                                      const uint8_t *payload,uint32_t bytes,fg_error *err);
+fg_status fg_decode_layer_result_encode(uint8_t output[FG_DECODE_LAYER_RESULT_BYTES],
+                                        const fg_layer_result *result,fg_error *err);
+fg_status fg_decode_layer_result_decode(fg_layer_result *result,const uint8_t *payload,
+                                        uint32_t bytes,fg_error *err);
 fg_status fg_qsa_block_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
                                    uint16_t protocol_version,const fg_qsa_block_work *work,
                                    fg_error *err);
