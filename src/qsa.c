@@ -912,7 +912,9 @@ static fg_status ensure_select_scratch(fg_qsa_session *s,fg_error *err){
     fg_vk_tensor_destroy(s->sel_result_ids);s->sel_result_ids=NULL;
     free(s->select_ids);s->select_ids=NULL;
     uint64_t stride=(uint64_t)s->max_blocks*4u;
-    uint64_t budget=UINT64_C(8)*1024u*1024u;
+    /* Rank 0's mirror has only ~150 MB of headroom; keep the lazy selection
+     * scratch at 4 MiB per side. */
+    uint64_t budget=UINT64_C(4)*1024u*1024u;
     uint64_t chunk=stride?budget/stride:1u;
     if(chunk>s->max_tokens)chunk=s->max_tokens;
     if(!chunk)chunk=1u;

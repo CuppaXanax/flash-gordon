@@ -22,7 +22,7 @@ fg_status fg_qsa_submit_host_reads(fg_vk_context *vk,fg_error *err);
 #define FG_QSA_PREFILL_QUERY_TILE 4u
 /* Batched prefill attention tile.  A tile's selected records are staged into
  * a private arena, so the union of selected pages may exceed cache capacity. */
-#define FG_QSA_PREFILL_BATCH_QUERIES 8u
+#define FG_QSA_PREFILL_BATCH_QUERIES 4u
 /* Largest block window in one index-score dispatch (device workgroup limits). */
 #define FG_QSA_SELECT_WINDOW_BLOCKS 16384u
 #define FG_QSA_ATTENTION_SPLITS 8u
