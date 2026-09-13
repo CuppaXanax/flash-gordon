@@ -14,6 +14,36 @@ static double ts_ms(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);re
 static uint64_t wall_ns(void){struct timespec value;clock_gettime(CLOCK_REALTIME,&value);return (uint64_t)value.tv_sec*UINT64_C(1000000000)+(uint64_t)value.tv_nsec;}
 static bool gdn_diag_enabled(void){const char *value=getenv("FG_GDN_DIAG");return value&&*value&&strcmp(value,"0")!=0;}
 static bool frame_trace_enabled(void){const char *value=getenv("FG_FRAME_TRACE");return value&&*value&&strcmp(value,"0")!=0;}
+static bool numerics_trace_enabled(void){const char *value=getenv("FG_NUMERICS_TRACE");return value&&*value&&strcmp(value,"0")!=0;}
+static uint64_t numerics_hash_bytes(const void *data,size_t bytes){
+    const uint8_t *p=data;uint64_t hash=UINT64_C(1469598103934665603);
+    for(size_t i=0;i<bytes;i++){hash^=p[i];hash*=UINT64_C(1099511628211);}
+    return hash;
+}
+/* Env-gated per-layer hyper-state digest used to bisect the ring numerics
+ * defect against the single-owner reference: identical inputs must produce
+ * identical OUT hashes on every rank for both topologies. */
+static void numerics_trace_tensor(const char *phase,uint32_t rank,uint32_t layer,
+    uint32_t first_token,uint16_t token_count,const fg_vk_tensor *tensor,fg_error *err){
+    (void)err;
+    if(!numerics_trace_enabled()||!tensor)return;
+    uint64_t values=(uint64_t)token_count*FG_HYPER_WIDTH,bytes=values*4u;
+    if(bytes>fg_vk_tensor_bytes(tensor))bytes=fg_vk_tensor_bytes(tensor);
+    if(!bytes)return;
+    float *buffer=malloc((size_t)bytes);
+    if(!buffer)return;
+    fg_error local={0};
+    if(fg_vk_tensor_read(tensor,0,buffer,bytes,&local)==FG_OK){
+        const float *f=buffer;double sum=0.0;float min=f[0],max=f[0];
+        uint64_t count=bytes/4u;
+        for(uint64_t i=0;i<count;i++){float v=f[i];sum+=v;if(v<min)min=v;if(v>max)max=v;}
+        fprintf(stderr,"FG_NUMERICS rank=%u layer=%u phase=%s first=%u tokens=%u hash=%016llx "
+            "sum=%.6f min=%.6g max=%.6g f0=%.6g fl=%.6g\n",rank,layer,phase,first_token,
+            (unsigned)token_count,(unsigned long long)numerics_hash_bytes(buffer,(size_t)bytes),
+            sum,min,max,f[0],f[count-1u]);
+    }
+    free(buffer);
+}
 static fg_status finish_batch(fg_vk_context *vk,fg_status status,fg_error *err){
     if(status==FG_OK)status=fg_vk_end(vk,err);
     if(status!=FG_OK&&fg_vk_batch_active(vk)){
@@ -668,6 +698,29 @@ fg_status fg_owner_qsa_open_mirror(fg_owner_executor *executor,uint32_t logical_
         executor->attention_family_scratch,fetch_pages,fetch_opaque,err);
 }
 void fg_owner_qsa_set_tokens(fg_owner_executor *executor,uint32_t tokens){if(executor&&executor->qsa)fg_qsa_session_set_tokens(executor->qsa,tokens);}
+fg_vk_tensor *fg_owner_gdn_state_tensor(fg_owner_executor *executor,uint32_t layer,
+                                        uint32_t slot){
+    if(!executor||layer>=FG_LAYER_COUNT||slot>1u)return NULL;
+    return slot==0u?executor->gdn_state[layer].conv_state:
+                    executor->gdn_state[layer].recurrent_state;
+}
+fg_vk_tensor *fg_owner_ple_state_tensor(fg_owner_executor *executor){
+    return executor?executor->ple_state:NULL;
+}
+uint32_t fg_owner_gdn_layers(const fg_owner_executor *executor,uint8_t *layers,
+                             uint32_t capacity,fg_error *err){
+    if(!executor||!layers){fg_error_set(err,FG_ERR_ARGUMENT,"invalid GDN layer query");return 0u;}
+    uint32_t count=0;
+    for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){
+        if((layer&3u)==3u||!executor->gdn_state[layer].conv_state)continue;
+        if(count>=capacity){
+            fg_error_set(err,FG_ERR_LIMIT,"GDN layer list exceeds capacity");
+            return 0u;
+        }
+        layers[count++]=(uint8_t)layer;
+    }
+    return count;
+}
 
 fg_status fg_owner_qsa_decode(fg_owner_executor *executor,uint32_t layer,uint32_t token,const uint32_t position[3],const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err){
     if(!executor||!executor->qsa||!owns_layer(executor,layer)||(layer&3u)!=3u){fg_error_set(err,FG_ERR_MISMATCH,"QSA decode is not on an initialized QSA layer owner");return FG_ERR_MISMATCH;}
@@ -881,6 +934,7 @@ static fg_status prefill_layer_begin_impl(fg_owner_executor *e,uint32_t slot,uin
     if(!e||slot>=FG_OWNER_SLOT_COUNT||!positions||!token_count||token_count>e->max_tokens||!hyper_input||!fire||!owns_layer(e,layer)){fg_error_set(err,FG_ERR_MISMATCH,"text layer prefill is not on its owner or exceeds the sealed microbatch");return FG_ERR_MISMATCH;}if((layer==1u)!=(ngram_embeddings!=NULL)){fg_error_set(err,FG_ERR_MISMATCH,"layer-1 batched PLE embedding presence mismatch");return FG_ERR_MISMATCH;}
     fg_owner_decode_slot *dslot=&e->decode_slots[slot];fg_owner_prefill_slot *frame=&e->prefill_slots[slot];
     if(frame->active){fg_error_set(err,FG_ERR_MISMATCH,"prefill layer begin slot is already active");return FG_ERR_MISMATCH;}
+    numerics_trace_tensor("IN",fg_model_rank(e->model),layer,first_token,token_count,hyper_input,err);
     frame->active=true;frame->layer=layer;frame->first_token=first_token;frame->token_count=token_count;frame->residual=NULL;
     fg_vk_context *vk=fg_model_vk(e->model);bool profiling=fg_vk_profile_active(vk);const fg_vk_tensor *layer_input=hyper_input;
     bool step_trace=frame_trace_enabled();
@@ -935,6 +989,8 @@ static fg_status prefill_layer_finish_impl(fg_owner_executor *e,uint32_t slot,fg
     fg_vk_tensor *block=NULL;
     if(status==FG_OK)status=moe_reduce_batch_into(e,frame->layer,frame->first_token,frame->token_count,frame->expert_ids,frame->gates,results,result_count,dslot->shared_output,dslot->shared_scalar,dslot->reduced,&block,err);
     if(status==FG_OK)status=gr_write_batch_into(e,frame->residual,block,dslot->injection,frame->token_count,dslot->ping[0],dslot->ping[1],output,err);
+    if(status==FG_OK)numerics_trace_tensor("OUT",fg_model_rank(e->model),frame->layer,
+        frame->first_token,frame->token_count,*output,err);
     frame->active=false;
     return status;
 }

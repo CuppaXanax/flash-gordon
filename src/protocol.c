@@ -24,6 +24,7 @@ static bool message_type_supported(uint16_t version,fg_message_type type){
     if(version>=6u&&type>=FG_MSG_QSA_PAGE_APPEND&&type<=FG_MSG_QSA_PAGE_RESULT)return true;
     if(version>=6u&&type>=FG_MSG_OUTPUT_HISTORY&&
        type<=FG_MSG_OUTPUT_HISTORY_ACK)return true;
+    if(version>=6u&&type>=FG_MSG_GDN_STATE_FETCH&&type<=FG_MSG_GDN_STATE_RESULT)return true;
     return version>=6u&&type>=FG_MSG_SESSION_PREPARE&&type<=FG_MSG_SESSION_RESTORED;
 }
 
@@ -704,6 +705,80 @@ fg_status fg_qsa_page_result_decode(fg_qsa_page_batch *batch,fg_qsa_page *page_s
     if(status==FG_OK)status=decode_qsa_page_entries(batch,page_storage,page_capacity,payload,
         FG_QSA_PAGE_ENTRY_BYTES,true,FG_QSA_PAGE_FETCH_MAX_PAGES,err);
     return status;
+}
+
+/* Ring decode-state handoff. The conv/recurrent/PLE payload is host-endian
+ * bulk data (same-architecture fleet), like the QSA page records. */
+fg_status fg_gdn_state_fetch_encode(uint8_t output[FG_GDN_STATE_FETCH_BYTES],
+                                    const fg_gdn_state_fetch *fetch,fg_error *err){
+    if(!output||!fetch||fetch->layer>=FG_LAYER_COUNT){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid GDN state fetch");return FG_ERR_ARGUMENT;
+    }
+    memset(output,0,FG_GDN_STATE_FETCH_BYTES);
+    put_u32_be(output,fetch->layer);put_u32_be(output+4u,fetch->frontier);
+    return FG_OK;
+}
+
+fg_status fg_gdn_state_fetch_decode(fg_gdn_state_fetch *fetch,const uint8_t *payload,
+                                    uint32_t bytes,fg_error *err){
+    if(!fetch||!payload||bytes!=FG_GDN_STATE_FETCH_BYTES){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid GDN state fetch size");return FG_ERR_FORMAT;
+    }
+    fetch->layer=get_u32_be(payload);fetch->frontier=get_u32_be(payload+4u);
+    if(fetch->layer>=FG_LAYER_COUNT){
+        fg_error_set(err,FG_ERR_FORMAT,"GDN state fetch layer is out of range");
+        return FG_ERR_FORMAT;
+    }
+    return FG_OK;
+}
+
+fg_status fg_gdn_state_result_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                     const fg_gdn_state_result *result,fg_error *err){
+    if(!output||!bytes||!result||result->source_rank>=FG_RANK_COUNT||
+       result->layer>=FG_LAYER_COUNT||!result->conv||!result->recurrent){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid GDN state result");return FG_ERR_ARGUMENT;
+    }
+    bool ple=result->ple!=NULL;
+    uint32_t required=FG_GDN_STATE_RESULT_BASE_BYTES+(ple?FG_GDN_STATE_PLE_BYTES:0u);
+    if(required>capacity||required>FG_MAX_FRAME_BYTES){
+        fg_error_set(err,FG_ERR_LIMIT,"GDN state result buffer is too small");
+        return FG_ERR_LIMIT;
+    }
+    memset(output,0,16u);
+    output[0]=result->source_rank;output[1]=(uint8_t)result->layer;
+    output[2]=(uint8_t)(ple?FG_GDN_STATE_RESULT_HAS_PLE:0u);
+    put_u32_be(output+4u,result->frontier);
+    memcpy(output+16u,result->conv,FG_GDN_STATE_CONV_BYTES);
+    memcpy(output+16u+FG_GDN_STATE_CONV_BYTES,result->recurrent,
+           FG_GDN_STATE_RECURRENT_BYTES);
+    if(ple)memcpy(output+FG_GDN_STATE_RESULT_BASE_BYTES,result->ple,FG_GDN_STATE_PLE_BYTES);
+    *bytes=required;return FG_OK;
+}
+
+fg_status fg_gdn_state_result_decode(fg_gdn_state_result *result,const uint8_t *payload,
+                                     uint32_t bytes,fg_error *err){
+    if(!result||!payload||bytes<FG_GDN_STATE_RESULT_BASE_BYTES){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid GDN state result size");return FG_ERR_FORMAT;
+    }
+    uint8_t flags=payload[2];
+    uint32_t required=FG_GDN_STATE_RESULT_BASE_BYTES+
+        ((flags&FG_GDN_STATE_RESULT_HAS_PLE)?FG_GDN_STATE_PLE_BYTES:0u);
+    if((flags&~(uint8_t)FG_GDN_STATE_RESULT_HAS_PLE)||payload[3]||
+       get_u32_be(payload+8u)||required!=bytes||bytes>FG_GDN_STATE_RESULT_MAX_BYTES){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid GDN state result header");return FG_ERR_FORMAT;
+    }
+    memset(result,0,sizeof(*result));
+    result->source_rank=payload[0];result->layer=payload[1];
+    result->frontier=get_u32_be(payload+4u);
+    result->conv=(const float *)(payload+16u);
+    result->recurrent=(const float *)(payload+16u+FG_GDN_STATE_CONV_BYTES);
+    if(flags&FG_GDN_STATE_RESULT_HAS_PLE)
+        result->ple=(const float *)(payload+FG_GDN_STATE_RESULT_BASE_BYTES);
+    if(result->source_rank>=FG_RANK_COUNT||result->layer>=FG_LAYER_COUNT){
+        fg_error_set(err,FG_ERR_FORMAT,"GDN state result route is invalid");
+        return FG_ERR_FORMAT;
+    }
+    return FG_OK;
 }
 
 fg_status fg_qsa_page_barrier_encode(uint8_t output[FG_QSA_PAGE_BARRIER_BYTES],

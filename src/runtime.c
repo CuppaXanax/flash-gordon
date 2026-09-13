@@ -40,6 +40,19 @@ static bool frame_trace_enabled(void){const char *enabled=getenv("FG_FRAME_TRACE
 static bool route_trace_enabled(void){const char *enabled=getenv("FG_TRACE_ROUTES");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool expert_batch_send_enabled(void){const char *enabled=getenv("FG_EXPERT_BATCH_SEND");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool prefix_trace_enabled(void){const char *enabled=getenv("FG_PREFIX_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
+static bool numerics_trace_enabled(void){const char *enabled=getenv("FG_NUMERICS_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
+static void numerics_trace_host(const char *phase,uint32_t rank,uint32_t layer,
+    uint32_t first_token,uint32_t tokens,const float *hyper){
+    if(!numerics_trace_enabled()||!hyper||!tokens)return;
+    uint64_t count=(uint64_t)tokens*FG_HYPER_WIDTH;
+    const uint8_t *bytes=(const uint8_t *)hyper;uint64_t hash=UINT64_C(1469598103934665603);
+    for(uint64_t i=0;i<count*4u;i++){hash^=bytes[i];hash*=UINT64_C(1099511628211);}
+    double sum=0.0;float min=hyper[0],max=hyper[0];
+    for(uint64_t i=0;i<count;i++){float v=hyper[i];sum+=v;if(v<min)min=v;if(v>max)max=v;}
+    fprintf(stderr,"FG_NUMERICS rank=%u layer=%u phase=%s first=%u tokens=%u hash=%016llx "
+        "sum=%.6f min=%.6g max=%.6g f0=%.6g fl=%.6g\n",rank,layer,phase,first_token,tokens,
+        (unsigned long long)hash,sum,min,max,hyper[0],hyper[count-1u]);
+}
 static uint64_t critical_ns(void){struct timespec value;clock_gettime(CLOCK_REALTIME,&value);return (uint64_t)value.tv_sec*UINT64_C(1000000000)+(uint64_t)value.tv_nsec;}
 _Static_assert(FG_NGRAM_ROW_BYTES==FG_NGRAM_WIRE_ROW_BYTES,"n-gram row wire size mismatch");
 static uint64_t coordinator_prefill_work_wire_bytes(uint32_t tokens);
@@ -481,6 +494,8 @@ static fg_status handle_prefill_layer_work(fg_fabric *fabric,fg_owner_executor *
         fg_error_set(err,FG_ERR_MISMATCH,"prefill layer work does not start a block");
         status=FG_ERR_MISMATCH;
     }
+    if(status==FG_OK)numerics_trace_host("RECV_WORK",self,work.layer,work.first_token,
+        work.token_count,context->hyper_in);
     uint32_t last=work.layer;
     while(status==FG_OK&&last+1u<FG_LAYER_COUNT&&manifest->layer_owner[last+1u]==self)last++;
     bool profiling=prefill_profile_requested();struct timespec t_begin={0};
@@ -539,6 +554,8 @@ static fg_status handle_prefill_layer_work(fg_fabric *fabric,fg_owner_executor *
         work.first_token,work.token_count,err);
     if(status==FG_OK)status=fg_vk_tensor_read(current,0,context->hyper_out,
         (uint64_t)work.token_count*FG_HYPER_WIDTH*4u,err);
+    if(status==FG_OK)numerics_trace_host(last+1u<FG_LAYER_COUNT?"SEND_NEXT":"SEND_RESULT",
+        self,last,work.first_token,work.token_count,context->hyper_out);
     if(status==FG_OK&&last+1u<FG_LAYER_COUNT){
         uint32_t next_layer=last+1u,next_rank=manifest->layer_owner[next_layer];
         fg_prefill_layer_work next={.layer=(uint8_t)next_layer,.source_rank=(uint8_t)self,
@@ -566,6 +583,49 @@ static fg_status handle_prefill_layer_work(fg_fabric *fabric,fg_owner_executor *
         fprintf(stderr,"PREFILL_LAYER_WORK rank=%u layer=%u last=%u tokens=%u forward=%u total_ms=%.3f\n",
             self,(unsigned)work.layer,last,(unsigned)work.token_count,
             last+1u<FG_LAYER_COUNT?1u:0u,elapsed_seconds(&t_begin,&t_end)*1000.0);}
+    return status;
+}
+
+/* Ring prefill leaves each block owner's GDN/PLE state at the prefill frontier
+ * while rank 0 decodes all 48 layers locally.  Serve rank 0 one layer's state
+ * on demand so its decode executor starts from the distributed frontier. */
+static fg_status handle_gdn_state_fetch(fg_fabric *fabric,fg_owner_executor *owner,
+    const fg_manifest *manifest,uint32_t self,uint64_t session_id,uint32_t peer,
+    const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,fg_error *err){
+    if(!owner||peer!=0u||fg_frame_request_id(header)!=session_id){
+        fg_error_set(err,FG_ERR_MISMATCH,"stale or misrouted GDN state fetch");
+        return FG_ERR_MISMATCH;
+    }
+    fg_gdn_state_fetch fetch={0};
+    fg_status status=fg_gdn_state_fetch_decode(&fetch,payload,bytes,err);
+    if(status==FG_OK&&(fetch.layer>=FG_LAYER_COUNT||(fetch.layer&3u)==3u||
+       manifest->layer_owner[fetch.layer]!=self)){
+        fg_error_set(err,FG_ERR_MISMATCH,"GDN state fetch layer is not owned by rank %u",self);
+        status=FG_ERR_MISMATCH;
+    }
+    uint8_t *wire=status==FG_OK?malloc(FG_GDN_STATE_RESULT_MAX_BYTES):NULL;
+    if(status==FG_OK&&!wire){fg_error_set(err,FG_ERR_OOM,"allocate GDN state result wire");status=FG_ERR_OOM;}
+    if(status==FG_OK){
+        fg_vk_tensor *conv=fg_owner_gdn_state_tensor(owner,fetch.layer,0u);
+        fg_vk_tensor *recurrent=fg_owner_gdn_state_tensor(owner,fetch.layer,1u);
+        if(!conv||!recurrent){
+            fg_error_set(err,FG_ERR_MISMATCH,"rank %u has no GDN state for layer %u",self,fetch.layer);
+            status=FG_ERR_MISMATCH;
+        }else{
+            fg_vk_tensor *ple=fetch.layer==1u?fg_owner_ple_state_tensor(owner):NULL;
+            fg_gdn_state_result result={.source_rank=(uint8_t)self,.layer=fetch.layer,
+                .frontier=fetch.frontier,.conv=fg_vk_tensor_map(conv),
+                .recurrent=fg_vk_tensor_map(recurrent),
+                .ple=ple?fg_vk_tensor_map(ple):NULL};
+            uint32_t result_bytes=0;
+            status=fg_gdn_state_result_encode(wire,FG_GDN_STATE_RESULT_MAX_BYTES,
+                &result_bytes,&result,err);
+            if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,
+                FG_MSG_GDN_STATE_RESULT,fg_frame_request_id(header),fetch.layer,0,
+                wire,result_bytes,err);
+        }
+    }
+    free(wire);
     return status;
 }
 
@@ -1546,7 +1606,7 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_
     if(status==FG_OK&&output)status=fg_vk_tensor_create(fg_model_vk(model),FG_HYPER_WIDTH*4u,&hyper,err);
     if(status==FG_OK)status=token_profile_prepare(fg_model_vk(model),err);
     uint8_t *bulk_receive=prefill.receive;uint32_t bulk_capacity=prefill.receive_capacity;if(qsa.enabled&&qsa.receive_capacity>bulk_capacity){bulk_receive=qsa.receive_wire;bulk_capacity=qsa.receive_capacity;}if(layer_work.work_capacity>bulk_capacity){bulk_receive=layer_work.work_wire;bulk_capacity=layer_work.work_capacity;}uint64_t session_id=0;
-    while(status==FG_OK){uint32_t peer=0,bytes=0;fg_frame_header header;fg_fabric_class ready_class;fg_fabric_recv_timing receive_timing={0};receive_timing.poll_start_ns=critical_ns();status=fg_fabric_wait_ready(fabric,3u,&peer,&ready_class,err);receive_timing.ready_ns=critical_ns();if(status!=FG_OK)break;if(ready_class==FG_FABRIC_BULK){status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_BULK,&header,bulk_receive,bulk_capacity,&bytes,&receive_timing,err);fg_message_type type=status==FG_OK?fg_frame_type(&header):0;if(status==FG_OK&&type==FG_MSG_PREFILL_LAYER_WORK)status=handle_prefill_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_PREFILL_WORK)status=handle_prefill_expert_work(fabric,expert,manifest,self,session_id,peer,&header,bulk_receive,bytes,&prefill,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_APPEND)status=handle_qsa_page_append(&qsa,manifest,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_BARRIER)status=handle_qsa_page_barrier(fabric,&qsa,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_FETCH)status=handle_qsa_page_fetch(fabric,&qsa,owner,manifest,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported bulk message %u",self,type);status=FG_ERR_FORMAT;}continue;}status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_CONTROL,&header,control,control_capacity,&bytes,&receive_timing,err);if(status!=FG_OK)break;fg_message_type type=fg_frame_type(&header);if(type==FG_MSG_DECODE_WORK){if(!session_id||fg_frame_request_id(&header)!=session_id){fg_error_set(err,FG_ERR_MISMATCH,"stale expert work request");status=FG_ERR_MISMATCH;}else status=handle_expert_work(fabric,expert,fg_model_vk(model),self,peer,&header,control,bytes,&receive_timing,ew_result,ew_wire,err);    }else if(type==FG_MSG_NGRAM_WORK)status=handle_ngram_work(fabric,ngram,FG_FABRIC_BULK,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_SESSION_BEGIN)status=begin_session(fabric,manifest,directory,&qsa,owner,self,peer,&header,control,bytes,&session_id,output,err);else if(type==FG_MSG_OUTPUT_HISTORY)status=handle_output_history(fabric,output,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_OUTPUT_WORK)status=handle_output_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,err);else{fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported control message %u",self,type);status=FG_ERR_FORMAT;}}
+    while(status==FG_OK){uint32_t peer=0,bytes=0;fg_frame_header header;fg_fabric_class ready_class;fg_fabric_recv_timing receive_timing={0};receive_timing.poll_start_ns=critical_ns();status=fg_fabric_wait_ready(fabric,3u,&peer,&ready_class,err);receive_timing.ready_ns=critical_ns();if(status!=FG_OK)break;if(ready_class==FG_FABRIC_BULK){status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_BULK,&header,bulk_receive,bulk_capacity,&bytes,&receive_timing,err);fg_message_type type=status==FG_OK?fg_frame_type(&header):0;if(status==FG_OK&&type==FG_MSG_PREFILL_LAYER_WORK)status=handle_prefill_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_PREFILL_WORK)status=handle_prefill_expert_work(fabric,expert,manifest,self,session_id,peer,&header,bulk_receive,bytes,&prefill,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_APPEND)status=handle_qsa_page_append(&qsa,manifest,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_BARRIER)status=handle_qsa_page_barrier(fabric,&qsa,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_FETCH)status=handle_qsa_page_fetch(fabric,&qsa,owner,manifest,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_GDN_STATE_FETCH)status=handle_gdn_state_fetch(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported bulk message %u",self,type);status=FG_ERR_FORMAT;}continue;}status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_CONTROL,&header,control,control_capacity,&bytes,&receive_timing,err);if(status!=FG_OK)break;fg_message_type type=fg_frame_type(&header);if(type==FG_MSG_DECODE_WORK){if(!session_id||fg_frame_request_id(&header)!=session_id){fg_error_set(err,FG_ERR_MISMATCH,"stale expert work request");status=FG_ERR_MISMATCH;}else status=handle_expert_work(fabric,expert,fg_model_vk(model),self,peer,&header,control,bytes,&receive_timing,ew_result,ew_wire,err);    }else if(type==FG_MSG_NGRAM_WORK)status=handle_ngram_work(fabric,ngram,FG_FABRIC_BULK,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_SESSION_BEGIN)status=begin_session(fabric,manifest,directory,&qsa,owner,self,peer,&header,control,bytes,&session_id,output,err);else if(type==FG_MSG_OUTPUT_HISTORY)status=handle_output_history(fabric,output,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_OUTPUT_WORK)status=handle_output_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,err);else{fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported control message %u",self,type);status=FG_ERR_FORMAT;}}
     fg_vk_tensor_destroy(hyper);layer_work_context_destroy(&layer_work);qsa_owner_runtime_destroy(&qsa);
     prefill_worker_buffers_destroy(&prefill);free(ew_wire);free(ew_result);free(control);return status;
 }
@@ -2382,6 +2442,73 @@ static fg_status ring_send_block_work(fg_fabric *fabric,const fg_manifest *manif
     return status;
 }
 
+/* Pull every remote block owner's GDN/PLE state for the layers this rank 0
+ * decode executor will replay locally.  Requests are issued layer by layer
+ * (round trip bounded by a single layer payload) and then drained in arrival
+ * order so the fabric pipelines across owners. */
+static fg_status coordinator_sync_gdn_state(fg_coordinator *coordinator,
+    uint32_t frontier,fg_error *err){
+    const fg_manifest *manifest=coordinator->manifest;
+    uint8_t *result_wire=malloc(FG_GDN_STATE_RESULT_MAX_BYTES);
+    if(!result_wire){fg_error_set(err,FG_ERR_OOM,"allocate GDN state receive wire");return FG_ERR_OOM;}
+    uint32_t requested=0;fg_status status=FG_OK;
+    uint8_t fetch_wire[FG_GDN_STATE_FETCH_BYTES];
+    for(uint32_t layer=0;status==FG_OK&&layer<FG_LAYER_COUNT;layer++){
+        if((layer&3u)==3u)continue;
+        uint32_t owner=manifest->layer_owner[layer];
+        if(owner==0u)continue;
+        fg_gdn_state_fetch fetch={.layer=layer,.frontier=frontier};
+        status=fg_gdn_state_fetch_encode(fetch_wire,&fetch,err);
+        if(status!=FG_OK)break;
+        status=fg_fabric_send(coordinator->fabric,owner,FG_FABRIC_BULK,
+            FG_MSG_GDN_STATE_FETCH,coordinator->session_id,layer,0,
+            fetch_wire,sizeof(fetch_wire),err);
+        if(status!=FG_OK)break;
+        requested++;
+    }
+    for(uint32_t received=0;status==FG_OK&&received<requested;received++){
+        uint32_t peer=0,bytes=0;fg_frame_header header;
+        status=fg_fabric_recv_any(coordinator->fabric,FG_FABRIC_BULK,&peer,&header,
+            result_wire,FG_GDN_STATE_RESULT_MAX_BYTES,&bytes,err);
+        if(status!=FG_OK)break;
+        fg_gdn_state_result result={0};
+        if(fg_frame_type(&header)!=FG_MSG_GDN_STATE_RESULT||
+           fg_frame_request_id(&header)!=coordinator->session_id){
+            fg_error_set(err,FG_ERR_MISMATCH,"stale GDN state result");
+            status=FG_ERR_MISMATCH;
+            break;
+        }
+        status=fg_gdn_state_result_decode(&result,result_wire,bytes,err);
+        if(status!=FG_OK)break;
+        if(result.source_rank!=peer||result.frontier!=frontier||
+           manifest->layer_owner[result.layer]!=peer||(result.layer&3u)==3u){
+            fg_error_set(err,FG_ERR_MISMATCH,"misrouted GDN state result");
+            status=FG_ERR_MISMATCH;
+            break;
+        }
+        fg_vk_tensor *conv=fg_owner_gdn_state_tensor(coordinator->owner,result.layer,0u);
+        fg_vk_tensor *recurrent=fg_owner_gdn_state_tensor(coordinator->owner,result.layer,1u);
+        if(!conv||!recurrent){
+            fg_error_set(err,FG_ERR_MISMATCH,"rank 0 has no local GDN slot for layer %u",
+                         result.layer);
+            status=FG_ERR_MISMATCH;
+            break;
+        }
+        status=fg_vk_tensor_write(conv,0,result.conv,FG_GDN_STATE_CONV_BYTES,err);
+        if(status==FG_OK)status=fg_vk_tensor_write(recurrent,0,result.recurrent,
+            FG_GDN_STATE_RECURRENT_BYTES,err);
+        if(status==FG_OK&&result.ple){
+            fg_vk_tensor *ple=fg_owner_ple_state_tensor(coordinator->owner);
+            if(!ple){
+                fg_error_set(err,FG_ERR_MISMATCH,"rank 0 has no local PLE state slot");
+                status=FG_ERR_MISMATCH;
+            }else status=fg_vk_tensor_write(ple,0,result.ple,FG_GDN_STATE_PLE_BYTES,err);
+        }
+    }
+    free(result_wire);
+    return status;
+}
+
 /* Layer-ring prefill.  Rank 0 embeds each chunk and ships it to the first
  * block owner; every block owner runs its layers and forwards the hyper state
  * along the chain.  Rank 0 executes its own block when the chain reaches it
@@ -2483,6 +2610,7 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
                 history,history_count,chunk_first,chunk_tokens,&ngram_view,err);
             if(status==FG_OK)status=fg_vk_tensor_read(input,0,hyper_host,
                 (uint64_t)chunk_tokens*FG_HYPER_WIDTH*4u,err);
+            if(status==FG_OK)numerics_trace_host("ISSUE",0u,0u,chunk_first,chunk_tokens,hyper_host);
             if(status==FG_OK&&ngram_view)status=fg_vk_tensor_read(ngram_view,0,ngram_host,
                 (uint64_t)chunk_tokens*FG_NGRAM_EMBED_VALUES*4u,err);
             if(status==FG_OK)status=ring_send_block_work(coordinator->fabric,manifest,0u,
@@ -2521,6 +2649,8 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
                 status=FG_ERR_MISMATCH;
                 break;
             }
+            numerics_trace_host("RECV_WORK",0u,work.layer,work.first_token,
+                work.token_count,hyper_host);
             uint32_t chunk=(work.first_token-first_token)/microbatch,f=chunk%FG_PREFILL_FRAMES;
             ring_slot *slot=&slots[f];
             if(!slot->active||slot->chunk_index!=chunk||
@@ -2587,6 +2717,8 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
                 status=FG_ERR_MISMATCH;
                 break;
             }
+            numerics_trace_host("RECV_RESULT",0u,FG_LAYER_COUNT-1u,result.first_token,
+                result.token_count,hyper_host);
             uint32_t chunk=(result.first_token-first_token)/microbatch,f=chunk%FG_PREFILL_FRAMES;
             ring_slot *slot=&slots[f];
             if(!slot->active||slot->chunk_index!=chunk||
@@ -2620,6 +2752,10 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
      * compute most QSA layers, so advance its committed counters to the
      * prefilled context before decoding. */
     if(status==FG_OK)fg_owner_qsa_set_tokens(coordinator->owner,first_token+token_count);
+    /* Decode runs all 48 layers on rank 0, so import every owner's stateful
+     * layer state that ring prefill advanced remotely. */
+    if(status==FG_OK)status=coordinator_sync_gdn_state(coordinator,
+        first_token+token_count,err);
     free(positions_scratch);free(positions);free(ngram_host);free(hyper_host);
     free(result_wire);free(work_wire);free(receive_wire);
     return status;
@@ -3141,6 +3277,14 @@ static fg_status runtime_generate_tokens(
     if(status==FG_OK)status=fg_prefix_plan_tokens(
         runtime->history,runtime->history_count,runtime->next_token_valid,
         prompt->data,prompt->count,runtime->empty_reason,&plan,err);
+    /* Ring prefill advances GDN/PLE state on the block owners, not on rank 0;
+     * a reused prefix would resume those owners from a stale frontier.  Until
+     * state push-back lands, ring requests always prefill from a cold reset. */
+    if(status==FG_OK&&runtime->coordinator.ring_prefill&&plan.hit){
+        plan.hit=false;plan.exact_frontier=false;plan.reused_tokens=0;
+        plan.prefill_offset=0;plan.prefill_tokens=prompt->count;
+        plan.reset_reason=FG_PREFIX_RESET_COLD_START;
+    }
     if(status==FG_OK&&require_prefix_hit&&!plan.hit){
         if(prefix_miss)*prefix_miss=true;
         fg_error_set(err,FG_ERR_UNAVAILABLE,
