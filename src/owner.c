@@ -210,18 +210,21 @@ static fg_status create_decode_slots(fg_owner_executor *executor,fg_error *err){
     return status;
 }
 
-fg_status fg_owner_executor_create(fg_owner_executor **out,fg_model *model,fg_error *err){
+static fg_status owner_executor_create_impl(fg_owner_executor **out,fg_model *model,
+                                            bool replicated,fg_error *err){
     if(!out||!model){fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner executor arguments");return FG_ERR_ARGUMENT;}*out=NULL;
     fg_owner_executor *executor=calloc(1,sizeof(*executor));if(!executor){fg_error_set(err,FG_ERR_OOM,"allocate owner executor");return FG_ERR_OOM;}executor->model=model;fg_vk_context *vk=fg_model_vk(model);
-    const fg_manifest *manifest=fg_model_manifest(model);executor->max_tokens=manifest->prefill_microbatch;executor->replicated=true;if(!executor->max_tokens||executor->max_tokens>FG_PREFILL_MAX_TOKENS){fg_owner_executor_destroy(executor);fg_error_set(err,FG_ERR_MISMATCH,"manifest prefill microbatch exceeds owner executor limit");return FG_ERR_MISMATCH;}uint64_t tokens=executor->max_tokens;
+    const fg_manifest *manifest=fg_model_manifest(model);executor->max_tokens=manifest->prefill_microbatch;executor->replicated=replicated;if(!executor->max_tokens||executor->max_tokens>FG_PREFILL_MAX_TOKENS){fg_owner_executor_destroy(executor);fg_error_set(err,FG_ERR_MISMATCH,"manifest prefill microbatch exceeds owner executor limit");return FG_ERR_MISMATCH;}uint64_t tokens=executor->max_tokens;
     fg_status status=fg_vk_tensor_create(vk,(uint64_t)10240u*tokens*4u,&executor->hyper_output,err);
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)10240u*tokens*4u,
                                                   &executor->hyper_output_b,err);
     if(status==FG_OK)status=fg_vk_tensor_create(vk,tokens*FG_Q8K_ACTIVATION_BYTES,
                                                   &executor->activation_q8k,err);
-    if(status==FG_OK&&executor->replicated)status=fg_vk_tensor_create(
+    /* Prefill routing scratch is needed on every executor: worker owners run
+     * their own prefill blocks with local routers. */
+    if(status==FG_OK)status=fg_vk_tensor_create(
         vk,tokens*FG_TOP_K*4u,&executor->prefill_experts,err);
-    if(status==FG_OK&&executor->replicated)status=fg_vk_tensor_create(
+    if(status==FG_OK)status=fg_vk_tensor_create(
         vk,tokens*FG_TOP_K*4u,&executor->prefill_gates,err);
     if(status==FG_OK)status=fg_vk_tensor_create(
         vk,fg_qsa_attention_family_scratch_bytes(executor->max_tokens),
@@ -260,6 +263,12 @@ fg_status fg_owner_executor_create(fg_owner_executor **out,fg_model *model,fg_er
         }
     }
     if(status!=FG_OK){fg_owner_executor_destroy(executor);return status;}*out=executor;return FG_OK;
+}
+fg_status fg_owner_executor_create(fg_owner_executor **out,fg_model *model,fg_error *err){
+    return owner_executor_create_impl(out,model,true,err);
+}
+fg_status fg_owner_executor_create_worker(fg_owner_executor **out,fg_model *model,fg_error *err){
+    return owner_executor_create_impl(out,model,false,err);
 }
 fg_vk_tensor *fg_owner_prefill_input(fg_owner_executor *executor){
     /*

@@ -18,7 +18,7 @@ typedef struct fg_qsa_replica_item {
 fg_status fg_qsa_replica_create(fg_qsa_replica **out,fg_qsa_replica_send_fn send,
                                 void *context,fg_error *err);
 fg_status fg_qsa_replica_reserve(fg_qsa_replica *replica,uint32_t count,
-                                 uint8_t *buffers[2],fg_error *err);
+                                 uint8_t *buffers[FG_RANK_COUNT],fg_error *err);
 fg_status fg_qsa_replica_commit(fg_qsa_replica *replica,
                                 const fg_qsa_replica_item *items,uint32_t count,
                                 fg_error *err);

@@ -105,7 +105,7 @@ fg_status fg_qsa_replica_create(fg_qsa_replica **out,fg_qsa_replica_send_fn send
 }
 
 fg_status fg_qsa_replica_reserve(fg_qsa_replica *replica,uint32_t count,
-                                 uint8_t *buffers[2],fg_error *err){
+                                 uint8_t *buffers[FG_RANK_COUNT],fg_error *err){
     if(!replica||!buffers||!count||count>FG_QSA_REPLICA_DEPTH){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA replica reservation");
         return FG_ERR_ARGUMENT;
@@ -148,7 +148,7 @@ fg_status fg_qsa_replica_commit(fg_qsa_replica *replica,
         return FG_ERR_MISMATCH;
     }
     for(uint32_t i=0;i<count;i++){
-        if((items[i].owner!=3u&&items[i].owner!=7u)||!items[i].session_id||
+        if(items[i].owner==0u||items[i].owner>=FG_RANK_COUNT||!items[i].session_id||
            !items[i].bytes||items[i].bytes>FG_QSA_PAGE_APPEND_MAX_BYTES){
             replica->reserved=0;pthread_mutex_unlock(&replica->mutex);
             fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA replica item");

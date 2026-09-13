@@ -52,6 +52,9 @@ typedef fg_status (*fg_owner_prefill_collect_fn)(void *context,uint32_t layer,
                                                  uint32_t *result_count,fg_error *err);
 
 fg_status fg_owner_executor_create(fg_owner_executor **out,fg_model *model,fg_error *err);
+/* Sealed single-owner worker: owns only this rank's layers (manifest
+ * layer_owner), allocates per-layer state for owned layers only. */
+fg_status fg_owner_executor_create_worker(fg_owner_executor **out,fg_model *model,fg_error *err);
 void fg_owner_executor_destroy(fg_owner_executor *executor);
 bool fg_owner_owns_layer(const fg_owner_executor *executor,uint32_t layer);
 fg_vk_tensor *fg_owner_prefill_input(fg_owner_executor *executor);

@@ -399,7 +399,7 @@ static void test_qsa_replica_queue(void){
     CHECK(pthread_cond_init(&probe.ready,NULL)==0);fg_error err={0};
     fg_qsa_replica *replica=NULL;
     CHECK(fg_qsa_replica_create(&replica,replica_probe_send,&probe,&err)==FG_OK);
-    uint8_t *buffers[2]={0};
+    uint8_t *buffers[FG_RANK_COUNT]={0};
     CHECK(fg_qsa_replica_reserve(replica,2u,buffers,&err)==FG_OK);
     buffers[0][0]=1u;buffers[1][0]=2u;
     fg_qsa_replica_item items[2]={
@@ -410,7 +410,11 @@ static void test_qsa_replica_queue(void){
     pthread_mutex_lock(&probe.mutex);
     while(!probe.entered)pthread_cond_wait(&probe.ready,&probe.mutex);
     pthread_mutex_unlock(&probe.mutex);
-    CHECK(fg_qsa_replica_reserve(replica,1u,buffers,&err)==FG_ERR_LIMIT);
+    fg_status stale_reserve=fg_qsa_replica_reserve(replica,1u,buffers,&err);
+    CHECK(stale_reserve==FG_ERR_LIMIT);
+    /* Depth is 64 in production; a successful reservation here must not keep
+       the drain below waiting on an uncommitted reservation. */
+    if(stale_reserve==FG_OK)fg_qsa_replica_cancel(replica);
     pthread_mutex_lock(&probe.mutex);probe.release=true;
     pthread_cond_broadcast(&probe.ready);pthread_mutex_unlock(&probe.mutex);
     CHECK(fg_qsa_replica_drain(replica,&err)==FG_OK);CHECK(probe.calls==2u);
