@@ -56,10 +56,12 @@ own `decode_direct_output_eligible` is false. Documented fallback: set
 
 Removed per token: rank-0 `fg_vk_tensor_read` of the 40 KiB hyper, the 40 KiB
 big-endian encode (26.2 us measured locally on 10,240 values), the 40 KiB
-control send, the 7->0 bulk hop and its rank-0 receive; rank 4's decode cost is
-unchanged (it decodes 40 KiB either way). One 40 KiB hop remains (7->4) instead
-of two. The prior patch map estimated **0.3-0.6 ms/token** for exactly this cut;
-the local encode alone is 26 us and the hop is expected to dominate.
+control send, the 7->0 bulk hop and its rank-0 receive. Rank 4 still decodes
+40 KiB (hidden instead of output work) and pays one extra 41 KiB host copy into
+the pending state (~5 us), far below the relay cost it removes. One 40 KiB hop
+remains (7->4) instead of two. The prior patch map estimated **0.3-0.6
+ms/token** for exactly this cut; the local encode alone is 26 us and the hop is
+expected to dominate.
 
 ## 2. Output head (rank 4)
 
@@ -80,6 +82,19 @@ The GEMM is DRAM-bound on 675 MB and cannot be reduced from `src/output.c`
 without kernel fusion or splitting the vocabulary; the HC passes are ~7 MB of
 traffic and the argmax ~1 MB, both already minimal. Direct handoff, not
 `src/output.c`, is what removes rank-0 fixed cost.
+
+## Expected savings per item
+
+| Item | Expected | Basis |
+|---|---|---|
+| Direct 7->4 handoff (default on) | **0.25-0.6 ms/token** | removes one 40 KiB hop, rank-0 `tensor_read` + encode + 40 KiB send; local encode alone is 26 us; prior patch-map estimate 0.3-0.6 ms |
+| Greedy trace gate | **0.02-0.05 ms/token** | one unbuffered stderr write syscall + two tensor maps per token removed from rank 4 |
+| Output head non-GEMM | **~0 ms further** | 2.625 ms projection is DRAM-bound; HC passes ~7 MB (~0.06-0.1 ms), argmax already 0.020 ms, one submit/fence |
+| **Total** | **~0.3-0.65 ms/token** | 0.5-1.0% of the 64.2-67.3 ms chained ring budget |
+
+Verified while writing this: the greedy path performs **no full logits
+readback** (`fg_output_greedy` runs the two-pass hierarchical argmax on the GPU
+and maps only the final 8-byte pair), so there is no host copy to remove there.
 
 ## 3. Stretch: per-token pipelining across the chain (analysis only, no code)
 
