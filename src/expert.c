@@ -261,26 +261,39 @@ fg_status fg_expert_decode(fg_expert_executor *executor,const fg_decode_work *wo
         }
         if(status==FG_OK)status=fg_vk_begin(vk,err);
         uint32_t tiles=work->selected_count;
-        if(status==FG_OK)status=fg_vk_profile_set_scope(vk,"expert_gate",err);
-        if(status==FG_OK)status=fg_vk_moe_kquant(vk,executor->gate,gate_weight,
-            executor->activation,executor->tiles,gate_record->ggml_type,640u,
-            FG_HIDDEN_SIZE,gate_stride,FG_TOP_K,FG_TOP_K,false,tiles,err);
-        if(status==FG_OK)status=fg_vk_profile_set_scope(vk,"expert_up",err);
-        if(status==FG_OK)status=fg_vk_moe_kquant(vk,executor->up,up_weight,
-            executor->activation,executor->tiles,up_record->ggml_type,640u,
-            FG_HIDDEN_SIZE,up_stride,FG_TOP_K,FG_TOP_K,false,tiles,err);
-        if(status==FG_OK)status=fg_vk_profile_set_scope(
-            vk,"expert_activation",err);
-        if(status==FG_OK)status=fg_vk_swiglu(vk,executor->mid,executor->gate,
-            executor->up,FG_EXPERT_MID_VALUES,err);
-        if(status==FG_OK)status=fg_vk_profile_set_scope(vk,"expert_down",err);
-        if(status==FG_OK)status=project_down(vk,executor->down,down_weight,
-            executor->tiles,executor->mid,down_record,down_stride,FG_TOP_K,
-            tiles,err);
-        if(status==FG_OK)status=fg_vk_profile_set_scope(vk,"expert_reduce",err);
-        if(status==FG_OK)status=fg_vk_moe_reduce(vk,executor->reduced,
-            executor->down,executor->gates,executor->tiles,FG_HIDDEN_SIZE,
-            work->selected_count,FG_TOP_K,err);
+        bool fused=fg_vk_decode_experts_fusable(gate_weight,up_weight,down_weight);
+        if(fused){
+            if(status==FG_OK)status=fg_vk_profile_set_scope(vk,"expert_gate_up",err);
+            if(status==FG_OK)status=fg_vk_moe_decode_gate_up(vk,executor->mid,
+                gate_weight,up_weight,executor->activation,executor->tiles,640u,
+                FG_HIDDEN_SIZE,gate_stride,up_stride,gate_record->ggml_type,
+                up_record->ggml_type,FG_TOP_K,err);
+            if(status==FG_OK)status=fg_vk_profile_set_scope(vk,"expert_down_reduce",err);
+            if(status==FG_OK)status=fg_vk_moe_decode_down_reduce(vk,
+                executor->reduced,down_weight,executor->tiles,executor->mid,
+                executor->gates,FG_HIDDEN_SIZE,640u,down_stride,FG_TOP_K,err);
+        }else{
+            if(status==FG_OK)status=fg_vk_profile_set_scope(vk,"expert_gate",err);
+            if(status==FG_OK)status=fg_vk_moe_kquant(vk,executor->gate,gate_weight,
+                executor->activation,executor->tiles,gate_record->ggml_type,640u,
+                FG_HIDDEN_SIZE,gate_stride,FG_TOP_K,FG_TOP_K,false,tiles,err);
+            if(status==FG_OK)status=fg_vk_profile_set_scope(vk,"expert_up",err);
+            if(status==FG_OK)status=fg_vk_moe_kquant(vk,executor->up,up_weight,
+                executor->activation,executor->tiles,up_record->ggml_type,640u,
+                FG_HIDDEN_SIZE,up_stride,FG_TOP_K,FG_TOP_K,false,tiles,err);
+            if(status==FG_OK)status=fg_vk_profile_set_scope(
+                vk,"expert_activation",err);
+            if(status==FG_OK)status=fg_vk_swiglu(vk,executor->mid,
+                executor->gate,executor->up,FG_EXPERT_MID_VALUES,err);
+            if(status==FG_OK)status=fg_vk_profile_set_scope(vk,"expert_down",err);
+            if(status==FG_OK)status=project_down(vk,executor->down,down_weight,
+                executor->tiles,executor->mid,down_record,down_stride,FG_TOP_K,
+                tiles,err);
+            if(status==FG_OK)status=fg_vk_profile_set_scope(vk,"expert_reduce",err);
+            if(status==FG_OK)status=fg_vk_moe_reduce(vk,executor->reduced,
+                executor->down,executor->gates,executor->tiles,FG_HIDDEN_SIZE,
+                work->selected_count,FG_TOP_K,err);
+        }
         if(status==FG_OK){
             fg_status end_status=fg_vk_end(vk,err);
             if(end_status!=FG_OK)status=end_status;

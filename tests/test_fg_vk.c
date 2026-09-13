@@ -1663,6 +1663,86 @@ static int test_expert_graph_replay(void){
     fg_vk_expert_graph_destroy(graph);fg_vk_tensor_destroy(reduced);fg_vk_tensor_destroy(down);fg_vk_tensor_destroy(mid);fg_vk_tensor_destroy(up);fg_vk_tensor_destroy(gate);fg_vk_tensor_destroy(gates);fg_vk_tensor_destroy(tiles);fg_vk_tensor_destroy(activation);fg_vk_tensor_destroy(dw);fg_vk_tensor_destroy(uw);fg_vk_tensor_destroy(gw);free(down_source);free(down_weights);free(up_weights);free(gate_weights);return ok;
 }
 
+/* The batch-1 fused pair (gate+up+SwiGLU, then cooked Q5_1 down+reduce) must
+   match the five legacy decode dispatches at every routing slot. */
+static int test_expert_decode_fused(int gate_type){
+    enum{HIDDEN=256,MID=64,SLOTS=4,EXPERTS=2};
+    uint32_t up_type=gate_type==12u?13u:12u;
+    uint32_t gate_block=gate_type==13u?176u:144u,up_block=up_type==13u?176u:144u;
+    uint64_t gate_stride=fg_k_quant_cooked_matrix_bytes(HIDDEN,MID,(uint32_t)gate_type);
+    uint64_t up_stride=fg_k_quant_cooked_matrix_bytes(HIDDEN,MID,up_type);
+    uint64_t down_stride=fg_q5_1_cooked_matrix_bytes(MID,HIDDEN);
+    uint64_t gate_raw=(uint64_t)(HIDDEN/256u)*gate_block*MID;
+    uint64_t up_raw=(uint64_t)(HIDDEN/256u)*up_block*MID;
+    uint64_t down_raw=(uint64_t)(MID/32u)*FG_Q5_1_BLOCK_BYTES*HIDDEN;
+    uint8_t *gate_source=malloc(gate_raw*EXPERTS),*up_source=malloc(up_raw*EXPERTS),*down_source=malloc(down_raw*EXPERTS);
+    uint8_t *gate_cooked=malloc(gate_stride*EXPERTS),*up_cooked=malloc(up_stride*EXPERTS),*down_cooked=malloc(down_stride*EXPERTS);
+    float input[HIDDEN],expected[HIDDEN],got[HIDDEN],gates[SLOTS];
+    uint8_t q8[FG_Q8_K_BLOCK_BYTES];
+    uint32_t schedule[SLOTS*9u];
+    if(!gate_source||!up_source||!down_source||!gate_cooked||!up_cooked||!down_cooked)return 0;
+    for(uint32_t expert=0;expert<EXPERTS;expert++){
+        for(uint32_t row=0;row<MID;row++)
+            make_k_row(gate_source+((uint64_t)expert*MID+row)*(HIDDEN/256u)*gate_block,gate_type==13u,expert*13u+row);
+        for(uint32_t row=0;row<MID;row++)
+            make_k_row(up_source+((uint64_t)expert*MID+row)*(HIDDEN/256u)*up_block,up_type==13u,expert*17u+row);
+        for(uint32_t row=0;row<HIDDEN;row++)
+            make_q5_1_row(down_source+((uint64_t)expert*HIDDEN+row)*(MID/32u)*FG_Q5_1_BLOCK_BYTES,MID,expert*31u+row);
+    }
+    for(uint32_t expert=0;expert<EXPERTS;expert++){
+        if(!fg_cook_k_quant_rows(gate_source+(uint64_t)expert*gate_stride,gate_cooked+(uint64_t)expert*gate_stride,gate_stride,HIDDEN,MID,(uint32_t)gate_type))return 0;
+        if(!fg_cook_k_quant_rows(up_source+(uint64_t)expert*up_stride,up_cooked+(uint64_t)expert*up_stride,up_stride,HIDDEN,MID,up_type))return 0;
+        if(!fg_cook_q5_1_rows(down_source+(uint64_t)expert*down_stride,down_cooked+(uint64_t)expert*down_stride,down_stride,MID,HIDDEN))return 0;
+    }
+    for(uint32_t i=0;i<HIDDEN;i++)input[i]=sinf((float)(i+3u)*0.013f)+0.1f*cosf((float)i*0.007f);
+    fg_quantize_q8_k(input,q8,HIDDEN);
+    for(uint32_t i=0;i<SLOTS*9u;i++)schedule[i]=UINT32_MAX;
+    for(uint32_t slot=0;slot<SLOTS;slot++){
+        schedule[slot*9u]=(slot+1u)%EXPERTS;      /* local expert, not identity */
+        schedule[slot*9u+1u]=(slot*3u+1u)%SLOTS;  /* routing slot, permuted */
+        gates[slot]=0.6f-(float)slot*0.25f;
+    }
+    fg_vk_tensor *gw=NULL,*uw=NULL,*dw=NULL;
+    fg_vk_tensor *activation=tensor(q8,sizeof(q8)),*tiles=tensor(schedule,sizeof(schedule)),*gate_values=tensor(gates,sizeof(gates));
+    fg_vk_tensor *gate=tensor(NULL,(uint64_t)SLOTS*MID*4u),*up=tensor(NULL,(uint64_t)SLOTS*MID*4u),*mid=tensor(NULL,(uint64_t)SLOTS*MID*4u);
+    fg_vk_tensor *down=tensor(NULL,(uint64_t)SLOTS*HIDDEN*4u),*reference=tensor(NULL,(uint64_t)HIDDEN*4u),*fused=tensor(NULL,(uint64_t)HIDDEN*4u);
+    int ok=activation&&tiles&&gate_values&&gate&&up&&mid&&down&&reference&&fused;
+    if(ok)ok=fg_vk_tensor_create(context,gate_stride*FG_EXPERTS_PER_RANK,&gw,&error)==FG_OK&&
+        fg_vk_tensor_create(context,up_stride*FG_EXPERTS_PER_RANK,&uw,&error)==FG_OK&&
+        fg_vk_tensor_create(context,down_stride*FG_EXPERTS_PER_RANK,&dw,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_write(gw,0,gate_cooked,gate_stride*EXPERTS,&error)==FG_OK&&
+        fg_vk_tensor_write(uw,0,up_cooked,up_stride*EXPERTS,&error)==FG_OK&&
+        fg_vk_tensor_write(dw,0,down_cooked,down_stride*EXPERTS,&error)==FG_OK;
+    if(ok)fg_vk_tensor_set_format(gw,FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED);
+    if(ok)fg_vk_tensor_set_format(uw,FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED);
+    if(ok)fg_vk_tensor_set_format(dw,FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED);
+    if(ok)ok=fg_vk_begin(context,&error)==FG_OK&&
+        fg_vk_moe_kquant_cooked_pairs(context,gate,gw,activation,tiles,(uint32_t)gate_type,MID,HIDDEN,(uint32_t)gate_stride,SLOTS,SLOTS,false,SLOTS,&error)==FG_OK&&
+        fg_vk_moe_kquant_cooked_pairs(context,up,uw,activation,tiles,up_type,MID,HIDDEN,(uint32_t)up_stride,SLOTS,SLOTS,false,SLOTS,&error)==FG_OK&&
+        fg_vk_swiglu(context,mid,gate,up,SLOTS*MID,&error)==FG_OK&&
+        fg_vk_moe_q5_1_down_cooked_pairs(context,down,dw,tiles,mid,HIDDEN,MID,(uint32_t)down_stride,SLOTS,false,SLOTS,&error)==FG_OK&&
+        fg_vk_moe_reduce(context,reference,down,gate_values,tiles,HIDDEN,SLOTS,SLOTS,&error)==FG_OK&&
+        fg_vk_end(context,&error)==FG_OK&&
+        fg_vk_tensor_read(reference,0,expected,sizeof(expected),&error)==FG_OK;
+    if(ok)ok=fg_vk_begin(context,&error)==FG_OK&&
+        fg_vk_moe_decode_gate_up(context,mid,gw,uw,activation,tiles,MID,HIDDEN,(uint32_t)gate_stride,(uint32_t)up_stride,(uint32_t)gate_type,up_type,SLOTS,&error)==FG_OK&&
+        fg_vk_moe_decode_down_reduce(context,fused,dw,tiles,mid,gate_values,HIDDEN,MID,(uint32_t)down_stride,SLOTS,&error)==FG_OK&&
+        fg_vk_end(context,&error)==FG_OK&&
+        fg_vk_tensor_read(fused,0,got,sizeof(got),&error)==FG_OK;
+    for(uint32_t i=0;ok&&i<HIDDEN;i++)
+        if(fabsf(got[i]-expected[i])>3e-4f*fmaxf(1.0f,fabsf(expected[i]))){
+            fprintf(stderr,"expert_decode_fused type=%d row %u fused=%g legacy=%g err=%s\n",(int)gate_type,i,got[i],expected[i],error.message);
+            ok=0;
+        }
+    fg_vk_tensor_destroy(fused);fg_vk_tensor_destroy(reference);fg_vk_tensor_destroy(down);
+    fg_vk_tensor_destroy(mid);fg_vk_tensor_destroy(up);fg_vk_tensor_destroy(gate);
+    fg_vk_tensor_destroy(gate_values);fg_vk_tensor_destroy(tiles);fg_vk_tensor_destroy(activation);
+    fg_vk_tensor_destroy(dw);fg_vk_tensor_destroy(uw);fg_vk_tensor_destroy(gw);
+    free(down_cooked);free(up_cooked);free(gate_cooked);
+    free(down_source);free(up_source);free(gate_source);
+    return ok;
+}
+
 static int test_expert_graph_rejects_overlap(void){
     enum{HIDDEN=256,MID=32,SLOTS=4,EXPERTS=2};
     uint32_t gate_stride=MID*144u,up_stride=MID*176u;
@@ -2328,6 +2408,8 @@ ok=run_test_i("grouped_kquant_prefill",test_grouped_kquant_prefill,13)&&ok;
 ok=run_test("grouped_down_prefill",test_grouped_down_prefill)&&ok;
 ok=run_test("moe_prefill_scatter_reduce",test_moe_prefill_scatter_reduce)&&ok;
 ok=run_test("expert_graph_replay",test_expert_graph_replay)&&ok;
+ok=run_test_i("expert_decode_fused",test_expert_decode_fused,12)&&ok;
+ok=run_test_i("expert_decode_fused",test_expert_decode_fused,13)&&ok;
 ok=run_test("expert_graph_rejects_overlap",test_expert_graph_rejects_overlap)&&ok;
 ok=run_test("gdn_project_cooked",test_gdn_project_cooked)&&ok;
 ok=run_test("gdn_decode",test_gdn_decode)&&ok;

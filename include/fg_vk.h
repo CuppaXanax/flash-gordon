@@ -82,6 +82,20 @@ fg_status fg_vk_expert_graph_create(fg_vk_context *context,fg_vk_expert_graph **
                                      uint32_t weight_experts,uint32_t slots,fg_error *err);
 void fg_vk_expert_graph_destroy(fg_vk_expert_graph *graph);
 fg_status fg_vk_expert_graph_execute(fg_vk_expert_graph *graph,fg_error *err);
+bool fg_vk_decode_experts_fusable(const fg_vk_tensor *gate_weights,
+                                  const fg_vk_tensor *up_weights,
+                                  const fg_vk_tensor *down_weights);
+fg_status fg_vk_moe_decode_gate_up(fg_vk_context *context,fg_vk_tensor *mid,
+                                   const fg_vk_tensor *gate_weights,const fg_vk_tensor *up_weights,
+                                   const fg_vk_tensor *activation,const fg_vk_tensor *tiles,
+                                   uint32_t output_width,uint32_t input_width,
+                                   uint32_t gate_stride,uint32_t up_stride,
+                                   uint32_t gate_type,uint32_t up_type,uint32_t slots,fg_error *err);
+fg_status fg_vk_moe_decode_down_reduce(fg_vk_context *context,fg_vk_tensor *out,
+                                       const fg_vk_tensor *down_weights,const fg_vk_tensor *tiles,
+                                       const fg_vk_tensor *input,const fg_vk_tensor *gates,
+                                       uint32_t output_width,uint32_t input_width,
+                                       uint32_t expert_stride,uint32_t slots,fg_error *err);
 
 fg_status fg_vk_tensor_create(fg_vk_context *context,uint64_t bytes,fg_vk_tensor **out,fg_error *err);
 fg_status fg_vk_tensor_create_cached(fg_vk_context *context,uint64_t bytes,fg_vk_tensor **out,fg_error *err);

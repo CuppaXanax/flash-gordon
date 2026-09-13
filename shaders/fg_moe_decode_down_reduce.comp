@@ -1,0 +1,93 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+
+/* Batch-1 decode, one dispatch for all routed experts: the cooked Q5_1 down
+   projection with the gate-weighted reduction folded in.  A workgroup owns 32
+   rows and each row is covered by two lanes, one for values 0-15 (low
+   nibbles) and one for values 16-31 (high nibbles); both read the row block's
+   16 quant bytes as a single uint4, so the quant stream costs one vector load
+   per 32 values instead of eight scalar word loads.  The loop walks every
+   routing slot of the token, so no pair tile is wasted and the per-slot down
+   buffer never round-trips through global memory: rows leave already
+   reduced. */
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Weights { uint wb[]; };
+layout(set = 0, binding = 0) readonly buffer WeightsVector { uvec4 wv[]; };
+layout(set = 0, binding = 1) readonly buffer Tiles { uint tiles[]; };
+layout(set = 0, binding = 2) readonly buffer Input { vec4 x4[]; };
+layout(set = 0, binding = 3) readonly buffer Gates { float gates[]; };
+layout(set = 0, binding = 4) writeonly buffer Output { float y[]; };
+
+layout(push_constant) uniform Push {
+    uint out_dim;
+    uint in_dim;
+    uint blocks;
+    uint tile_bytes;
+    uint expert_stride;
+    uint slots;
+} pc;
+
+const uint TILE_WORDS = 9u;
+const uint INVALID = 0xffffffffu;
+const uint BLOCK_TILE_BYTES = 384u;
+const uint ROWS_PER_WORKGROUP = 32u;
+
+shared float partial[64];
+
+/* Spread four 5th bits (one per packed byte) into the high nibble of each
+   byte so a single unpack8 yields four signed five-bit values. */
+uint high_nibbles(uint bits) {
+    return ((bits & 1u) << 4u) | ((bits & 2u) << 11u) |
+        ((bits & 4u) << 18u) | ((bits & 8u) << 25u);
+}
+
+void main() {
+    uint local_id = gl_LocalInvocationID.x;
+    uint part = local_id & 1u;
+    uint row_slot = local_id >> 1u;
+    uint row = gl_WorkGroupID.x * ROWS_PER_WORKGROUP + row_slot;
+    bool row_live = row < pc.out_dim;
+    uint row_tile = row >> 4u;
+    uint tile_row = row & 15u;
+
+    vec4 accumulator = vec4(0.0);
+    for (uint slot = 0u; slot < pc.slots; slot++) {
+        uint tile_base = slot * TILE_WORDS;
+        uint expert = tiles[tile_base];
+        if (expert == INVALID) continue;
+        uint pair = tiles[tile_base + 1u];
+        if (pair == INVALID) continue;
+
+        float gate = gates[slot];
+        uint expert_base = expert * pc.expert_stride;
+        uint input_base = pair * (pc.in_dim >> 2u) + part * 4u;
+        if (row_live) {
+            for (uint block = 0u; block < pc.blocks; block++) {
+                uint block_base = expert_base + row_tile * pc.tile_bytes +
+                    block * BLOCK_TILE_BYTES;
+                vec2 scale_min = unpackHalf2x16(wb[(block_base + tile_row * 4u) >> 2u]);
+                uint high_word = wb[(block_base + 64u + tile_row * 4u) >> 2u];
+                uvec4 quant = wv[(block_base + 128u + tile_row * 16u) >> 4u];
+                float delta = gate * scale_min.x;
+                float minimum = gate * scale_min.y;
+                for (uint word = 0u; word < 4u; word++) {
+                    uint low = (quant[word] >> (part * 4u)) & 0x0f0f0f0fu;
+                    uint bits = (high_word >> (part * 16u + word * 4u)) & 15u;
+                    vec4 weight = fma(vec4(delta),
+                        vec4(unpack8(int(low | high_nibbles(bits)))),
+                        vec4(minimum));
+                    vec4 input_value = x4[input_base + block * 8u + word];
+                    accumulator = fma(weight, input_value, accumulator);
+                }
+            }
+        }
+    }
+
+    partial[local_id] = (accumulator.x + accumulator.y) +
+        (accumulator.z + accumulator.w);
+    barrier();
+    if (row_live && part == 0u)
+        y[row] = partial[row_slot * 2u] + partial[row_slot * 2u + 1u];
+}
