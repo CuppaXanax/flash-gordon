@@ -13,6 +13,6 @@ while [ "$#" -gt 0 ]; do
     esac
     shift
 done
-set -- -V -Os -w -S comp
+set -- -V -Os -S comp
 if [ -n "$target" ]; then set -- "$@" --target-env "$target"; fi
 exec glslangValidator "$@" $defs -o "$out" "$src"
