@@ -739,6 +739,19 @@ fg_status fg_owner_qsa_page_records(const fg_owner_executor *executor,uint32_t l
     }
     return fg_qsa_session_page_records(executor->qsa,layer,block,records,err);
 }
+fg_status fg_owner_qsa_warm_pages(fg_owner_executor *executor,uint32_t layer,
+                                  const uint32_t *blocks,const uint8_t *records,
+                                  uint32_t page_count,fg_error *err){
+    if(!executor||!executor->qsa){
+        fg_error_set(err,FG_ERR_ARGUMENT,"owner QSA mirror warm is unavailable");
+        return FG_ERR_ARGUMENT;
+    }
+    return fg_qsa_session_warm_pages(executor->qsa,layer,blocks,records,page_count,err);
+}
+bool fg_owner_qsa_page_cached(fg_owner_executor *executor,uint32_t layer,uint32_t block){
+    if(!executor||!executor->qsa)return false;
+    return fg_qsa_session_page_cached(executor->qsa,layer,block);
+}
 void fg_owner_qsa_page_published(fg_owner_executor *executor,uint32_t layer,uint32_t block){
     if(executor)fg_qsa_session_page_published(executor->qsa,layer,block);
 }

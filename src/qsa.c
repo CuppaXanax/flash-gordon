@@ -1489,6 +1489,38 @@ void fg_qsa_session_page_published(fg_qsa_session *s,uint32_t layer,uint32_t blo
     if(s&&s->cache)fg_qsa_page_cache_unpin(s->cache,layer,block);
 }
 
+/* Mirror warm insertion: host-write fetched complete pages into the record
+ * cache.  Called between Vulkan batches from the coordinator loop, so no
+ * gather may be reading cache_records at the same time. */
+fg_status fg_qsa_session_warm_pages(fg_qsa_session *s,uint32_t layer,
+                                    const uint32_t *blocks,const uint8_t *records,
+                                    uint32_t page_count,fg_error *err){
+    int signed_slot=s?layer_slot(s,layer):-1;
+    if(!s||signed_slot<0||!blocks||!records||!page_count){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA mirror warm request");
+        return FG_ERR_ARGUMENT;
+    }
+    if(!s->cache||!s->cache_records){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"QSA mirror warm requires a record cache");
+        return FG_ERR_UNAVAILABLE;
+    }
+    fg_status status=FG_OK;
+    for(uint32_t i=0;status==FG_OK&&i<page_count;i++){
+        uint32_t cache_slot=0;bool hit=false;
+        status=fg_qsa_page_cache_acquire(s->cache,layer,blocks[i],&cache_slot,&hit,err);
+        if(status==FG_OK)status=fg_vk_tensor_write(s->cache_records,
+            (uint64_t)cache_slot*FG_QSA_PAGE_RECORD_BYTES,
+            records+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,FG_QSA_PAGE_RECORD_BYTES,err);
+    }
+    return status;
+}
+
+bool fg_qsa_session_page_cached(fg_qsa_session *s,uint32_t layer,uint32_t block){
+    uint32_t cache_slot=0;
+    return s&&s->cache&&layer_slot(s,layer)>=0&&
+        fg_qsa_page_cache_lookup(s->cache,layer,block,&cache_slot);
+}
+
 /* Authoritative read for state-backed sessions: the block records come from
  * the session's own state file rather than a pinned page-cache entry. */
 fg_status fg_qsa_session_state_records(fg_qsa_session *s,uint32_t layer,uint32_t block,

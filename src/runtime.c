@@ -1679,6 +1679,7 @@ typedef struct qsa_page_transport {
     atomic_uint *transport_state;
     uint32_t append_sequence[FG_RANK_COUNT],fetch_sequence[FG_RANK_COUNT],
              append_count[FG_RANK_COUNT],append_owner_mask;
+    uint32_t warm_outstanding;
 } qsa_page_transport;
 
 static void qsa_page_transport_destroy(qsa_page_transport *transport){
@@ -2213,6 +2214,148 @@ static fg_status coordinator_fetch_qsa_pages(void *opaque,uint32_t layer,
     return status;
 }
 
+static bool qsa_warm_trace_enabled(void){
+    const char *value=getenv("FG_QSA_WARM_TRACE");
+    return value&&*value&&strcmp(value,"0")!=0;
+}
+
+static void coordinator_trace_qsa_cache(fg_coordinator *coordinator,const char *tag,
+                                        uint32_t complete_blocks){
+    if(!coordinator||!coordinator->owner||!qsa_warm_trace_enabled())return;
+    for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u){
+        uint32_t resident=0;
+        for(uint32_t block=0;block<complete_blocks;block++)
+            if(fg_owner_qsa_page_cached(coordinator->owner,layer,block))resident++;
+        fprintf(stderr,"QSA_CACHE_TRACE tag=%s layer=%u owner=%u resident=%u of=%u\n",
+            tag,layer,(unsigned)coordinator->manifest->layer_owner[layer],
+            resident,complete_blocks);
+    }
+}
+
+static void coordinator_warm_qsa_block_range(uint32_t first_token,uint32_t token_count,
+                                             uint32_t *first_block,uint32_t *block_count){
+    uint64_t begin=((uint64_t)first_token+FG_Q38_QSA_COMPRESS_RATIO-1u)/
+        FG_Q38_QSA_COMPRESS_RATIO;
+    uint64_t end=((uint64_t)first_token+token_count)/FG_Q38_QSA_COMPRESS_RATIO;
+    if(end<begin)end=begin;
+    *first_block=(uint32_t)begin;
+    *block_count=(uint32_t)(end-begin);
+}
+
+/* Mirror warm: request every worker-owned QSA layer's newly committed complete
+ * pages as ring chunks retire.  Requests are fire-and-forget, so the network
+ * fetches overlap the remaining chain instead of serializing on the first
+ * decode token; results are handled inline by the ring receive loop. */
+static fg_status coordinator_warm_qsa_issue(fg_coordinator *coordinator,
+                                            uint32_t first_token,uint32_t token_count,
+                                            fg_error *err){
+    if(!coordinator->ring_prefill||!token_count)return FG_OK;
+    qsa_page_transport *transport=&coordinator->qsa_pages;
+    fg_status status=qsa_page_transport_ensure(transport,err);
+    if(status!=FG_OK)return status;
+    uint32_t first_block=0,block_count=0;
+    coordinator_warm_qsa_block_range(first_token,token_count,&first_block,&block_count);
+    if(!block_count)return FG_OK;
+    for(uint32_t layer=3u;status==FG_OK&&layer<FG_LAYER_COUNT;layer+=4u){
+        uint32_t owner=coordinator->manifest->layer_owner[layer];
+        if(owner==0u)continue; /* rank-0 pages stay in the local mirror session */
+        if(owner>=FG_RANK_COUNT){
+            fg_error_set(err,FG_ERR_MISMATCH,"QSA warm layer %u has an invalid owner",layer);
+            return FG_ERR_MISMATCH;
+        }
+        for(uint32_t offset=0;status==FG_OK&&offset<block_count;){
+            uint32_t count=block_count-offset;
+            if(count>FG_QSA_PAGE_FETCH_MAX_PAGES)count=FG_QSA_PAGE_FETCH_MAX_PAGES;
+            for(uint32_t i=0;i<count;i++)
+                transport->fetch_pages[i]=(fg_qsa_page){
+                    .layer=(uint8_t)layer,.block=first_block+offset+i,.records=NULL};
+            fg_qsa_page_batch request={.source_rank=0u,.destination_rank=(uint8_t)owner,
+                .batch_id=transport->fetch_sequence[owner],.page_count=(uint16_t)count,
+                .pages=transport->fetch_pages};
+            uint32_t bytes=0;
+            status=fg_qsa_page_fetch_encode(transport->fetch_wire,
+                FG_QSA_PAGE_FETCH_MAX_BYTES,&bytes,&request,err);
+            if(status==FG_OK)status=fg_fabric_send(coordinator->fabric,owner,FG_FABRIC_BULK,
+                FG_MSG_QSA_PAGE_FETCH,coordinator->session_id,request.batch_id,0,
+                transport->fetch_wire,bytes,err);
+            if(status==FG_OK){
+                transport_pending(&coordinator->transport_state);
+                transport->fetch_sequence[owner]++;
+                transport->warm_outstanding++;
+            }else transport_poison(&coordinator->transport_state);
+            offset+=count;
+        }
+    }
+    if(status==FG_OK&&qsa_warm_trace_enabled())
+        fprintf(stderr,"QSA_WARM_ISSUE first=%u tokens=%u blocks=%u..%u outstanding=%u t=%.3f\n",
+            first_token,token_count,first_block,first_block+block_count-1u,
+            transport->warm_outstanding,dispatch_ts());
+    return status;
+}
+
+static fg_status coordinator_warm_qsa_result(fg_coordinator *coordinator,uint32_t peer,
+                                             const fg_frame_header *header,
+                                             const uint8_t *wire,uint32_t bytes,
+                                             fg_error *err){
+    qsa_page_transport *transport=&coordinator->qsa_pages;
+    if(!transport->warm_outstanding){
+        fg_error_set(err,FG_ERR_MISMATCH,"unsolicited QSA mirror warm result");
+        return FG_ERR_MISMATCH;
+    }
+    if(fg_frame_request_id(header)!=coordinator->session_id){
+        fg_error_set(err,FG_ERR_MISMATCH,"stale QSA mirror warm result");
+        return FG_ERR_MISMATCH;
+    }
+    fg_qsa_page_batch result={0};
+    fg_status status=fg_qsa_page_result_decode(&result,transport->result_pages,
+        FG_QSA_PAGE_FETCH_MAX_PAGES,wire,bytes,err);
+    if(status==FG_OK&&(result.source_rank!=peer||result.destination_rank!=0u||
+       !result.page_count)){
+        fg_error_set(err,FG_ERR_MISMATCH,"misrouted QSA mirror warm result");
+        status=FG_ERR_MISMATCH;
+    }
+    for(uint32_t i=0;status==FG_OK&&i<result.page_count;i++){
+        const fg_qsa_page *page=&result.pages[i];
+        if(page->layer>=FG_LAYER_COUNT||(page->layer&3u)!=3u||
+           coordinator->manifest->layer_owner[page->layer]!=peer){
+            fg_error_set(err,FG_ERR_MISMATCH,"QSA mirror warm result has the wrong owner");
+            status=FG_ERR_MISMATCH;
+            break;
+        }
+        status=fg_owner_qsa_warm_pages(coordinator->owner,page->layer,&page->block,
+                                       page->records,1u,err);
+    }
+    if(status==FG_OK){
+        transport->warm_outstanding--;
+        transport_complete(&coordinator->transport_state);
+        if(qsa_warm_trace_enabled())
+            fprintf(stderr,"QSA_WARM_RESULT peer=%u pages=%u outstanding=%u t=%.3f\n",
+                peer,result.page_count,transport->warm_outstanding,dispatch_ts());
+    }else if(!transport_ready(&coordinator->transport_state))
+        transport_poison(&coordinator->transport_state);
+    return status;
+}
+
+static fg_status coordinator_warm_qsa_drain(fg_coordinator *coordinator,fg_error *err){
+    qsa_page_transport *transport=&coordinator->qsa_pages;
+    while(transport->warm_outstanding){
+        uint32_t peer=0,bytes=0;fg_frame_header header;
+        fg_status status=fg_fabric_recv_any(coordinator->fabric,FG_FABRIC_BULK,&peer,&header,
+            transport->result_wire,FG_QSA_PAGE_RESULT_MAX_BYTES,&bytes,err);
+        if(status!=FG_OK)return status;
+        if(fg_frame_type(&header)!=FG_MSG_QSA_PAGE_RESULT){
+            fg_error_set(err,FG_ERR_MISMATCH,
+                         "unexpected message %u while draining QSA mirror warm",
+                         fg_frame_type(&header));
+            return FG_ERR_MISMATCH;
+        }
+        status=coordinator_warm_qsa_result(coordinator,peer,&header,
+                                           transport->result_wire,bytes,err);
+        if(status!=FG_OK)return status;
+    }
+    return FG_OK;
+}
+
 static fg_status coordinator_qsa_barrier(fg_coordinator *coordinator,fg_error *err){
     if(!coordinator->session_id)return FG_OK;
     fg_status drain_status=fg_qsa_replica_drain_if_present(
@@ -2373,6 +2516,7 @@ static fg_status coordinator_begin_session(fg_coordinator *coordinator,fg_error 
     memset(coordinator->qsa_pages.fetch_sequence,0,
            sizeof(coordinator->qsa_pages.fetch_sequence));
     coordinator->qsa_pages.append_owner_mask=0u;
+    coordinator->qsa_pages.warm_outstanding=0u;
     transport_complete(&coordinator->transport_state);
     return FG_OK;
 }
@@ -2701,6 +2845,8 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
                     if(final)last_output=slot->output;
                     if(status==FG_OK)status=coordinator_publish_qsa_pages(coordinator,
                         work.first_token,(uint16_t)work.token_count,err);
+                    if(status==FG_OK)status=coordinator_warm_qsa_issue(coordinator,
+                        work.first_token,(uint16_t)work.token_count,err);
                 }
             }
             if(ring_trace){struct timespec own_end;clock_gettime(CLOCK_MONOTONIC,&own_end);
@@ -2739,22 +2885,30 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
             if(final)last_output=slot->output;
             if(status==FG_OK)status=coordinator_publish_qsa_pages(coordinator,
                 result.first_token,result.token_count,err);
+            if(status==FG_OK)status=coordinator_warm_qsa_issue(coordinator,
+                result.first_token,result.token_count,err);
             if(ring_trace){struct timespec result_end;clock_gettime(CLOCK_MONOTONIC,&result_end);
                 fprintf(stderr,
                 "RING_DONE chunk=%u in_flight=%u completed=%u handle_ms=%.1f t=%.3f\n",
                 chunk,in_flight,completed,
                 elapsed_seconds(&result_start,&result_end)*1000.0,dispatch_ts()-ring_t0);}
+        }else if(type==FG_MSG_QSA_PAGE_RESULT){
+            status=coordinator_warm_qsa_result(coordinator,peer,&header,receive_wire,bytes,err);
         }else{
             fg_error_set(err,FG_ERR_MISMATCH,"unexpected ring message type %u",type);
             status=FG_ERR_MISMATCH;
             break;
         }
     }
+    if(status==FG_OK)status=coordinator_warm_qsa_drain(coordinator,err);
     if(status==FG_OK)*output=last_output;
     /* Decode on rank 0 attaches to owners' committed state; the mirror did not
      * compute most QSA layers, so advance its committed counters to the
      * prefilled context before decoding. */
     if(status==FG_OK)fg_owner_qsa_set_tokens(coordinator->owner,first_token+token_count);
+    if(status==FG_OK&&qsa_warm_trace_enabled())
+        coordinator_trace_qsa_cache(coordinator,"prefill_end",
+            (first_token+token_count)/FG_Q38_QSA_COMPRESS_RATIO);
     /* Decode runs all 48 layers on rank 0, so import every owner's stateful
      * layer state that ring prefill advanced remotely. */
     if(status==FG_OK)status=coordinator_sync_gdn_state(coordinator,

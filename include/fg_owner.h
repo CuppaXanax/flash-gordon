@@ -126,6 +126,10 @@ fg_status fg_owner_qsa_prefill(fg_owner_executor *executor,uint32_t layer,uint32
                                const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err);
 fg_status fg_owner_qsa_page_records(const fg_owner_executor *executor,uint32_t layer,
                                     uint32_t block,const uint8_t **records,fg_error *err);
+fg_status fg_owner_qsa_warm_pages(fg_owner_executor *executor,uint32_t layer,
+                                  const uint32_t *blocks,const uint8_t *records,
+                                  uint32_t page_count,fg_error *err);
+bool fg_owner_qsa_page_cached(fg_owner_executor *executor,uint32_t layer,uint32_t block);
 void fg_owner_qsa_page_published(fg_owner_executor *executor,uint32_t layer,uint32_t block);
 fg_status fg_owner_qsa_state_records(fg_owner_executor *executor,uint32_t layer,
                                      uint32_t block,uint8_t *records,fg_error *err);
