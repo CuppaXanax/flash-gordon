@@ -234,91 +234,13 @@ fg_status fg_expert_decode(fg_expert_executor *executor,const fg_decode_work *wo
     if(status==FG_OK)status=fg_vk_tensor_write(executor->gates,0,work->gates,
         (uint64_t)work->selected_count*4u,err);
     if(status==FG_OK&&!fg_vk_profile_active(vk)){
-        /* Grouped dispatch: batch-1 decode can run every selected expert in a
-         * single pair-tile pass instead of a dispatch chain per expert. */
-        fg_vk_tensor *gw=NULL,*uw=NULL,*dw=NULL;
-        const fg_tensor_record *gr=NULL,*ur=NULL,*dr=NULL;
-        uint32_t gc=0u,uc=0u,dc=0u,gs=0u,us=0u,ds=0u;
-        fg_status bind_status=expert_binding(executor,work->layer,"ffn_gate_exps",
-                                             &gw,&gr,&gc,&gs,err);
-        if(bind_status==FG_OK)bind_status=expert_binding(executor,work->layer,
-                                                         "ffn_up_exps",&uw,&ur,&uc,&us,err);
-        if(bind_status==FG_OK)bind_status=expert_binding(executor,work->layer,
-                                                         "ffn_down_exps",&dw,&dr,&dc,&ds,err);
-        bool grouped=bind_status==FG_OK&&
-            fg_vk_tensor_get_format(gw)==FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED&&
-            fg_vk_tensor_get_format(uw)==FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED&&
-            (fg_vk_tensor_get_format(dw)==FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED||
-             (dr->ggml_type==8u&&fg_vk_tensor_get_format(dw)==FG_VK_TENSOR_FORMAT_DEFAULT));
-        if(!grouped){
-            /* Not grouped-capable: keep the fixed graph, and surface binding
-             * failures only when a fallback cannot serve the layer. */
-            if(!executor->decode_graph[work->layer]){
-                fg_error_set(err,FG_ERR_MISMATCH,
-                             "rank has no fixed expert graph for layer %u",
-                             work->layer);
-                status=FG_ERR_MISMATCH;
-            }else status=fg_vk_expert_graph_execute(
-                executor->decode_graph[work->layer],err);
-        }else{
-            uint32_t counts[FG_EXPERT_COUNT]={0},starts[FG_EXPERT_COUNT]={0};
-            uint32_t used[FG_EXPERT_COUNT]={0},tile_count=0u;
-            for(uint32_t i=0;i<work->selected_count;i++){
-                uint32_t local=fg_expert_local_index(manifest,work->layer,rank,
-                                                     work->expert_ids[i]);
-                executor->locals[i]=(uint16_t)local;
-                counts[local]++;
-            }
-            for(uint32_t local=0;local<local_count;local++){
-                starts[local]=tile_count;
-                tile_count+=(counts[local]+FG_VK_PREFILL_PAIR_TILE-1u)/
-                    FG_VK_PREFILL_PAIR_TILE;
-            }
-            for(uint32_t i=0;i<tile_count*FG_VK_PREFILL_TILE_WORDS;i++)
-                executor->schedule[i]=UINT32_MAX;
-            for(uint32_t i=0;i<work->selected_count;i++){
-                uint32_t local=executor->locals[i],index=used[local]++;
-                uint32_t tile=starts[local]+index/FG_VK_PREFILL_PAIR_TILE;
-                executor->schedule[tile*FG_VK_PREFILL_TILE_WORDS]=local;
-                executor->schedule[tile*FG_VK_PREFILL_TILE_WORDS+1u+
-                    index%FG_VK_PREFILL_PAIR_TILE]=(uint32_t)work->routing_slots[i];
-            }
-            status=fg_vk_tensor_write(executor->tiles,0,executor->schedule,
-                (uint64_t)tile_count*FG_VK_PREFILL_TILE_WORDS*4u,err);
-            if(status==FG_OK){
-                float *gates=fg_vk_tensor_map(executor->gates);
-                memset(gates,0,(size_t)FG_TOP_K*4u);
-                for(uint32_t i=0;i<work->selected_count;i++)
-                    gates[work->routing_slots[i]]=work->gates[i];
-            }
-            if(status==FG_OK)status=fg_vk_begin(vk,err);
-            if(status==FG_OK)status=fg_vk_moe_kquant_cooked_grouped(vk,
-                executor->gate,gw,executor->activation,executor->tiles,
-                gr->ggml_type,640u,FG_HIDDEN_SIZE,gs,local_count,1u,tile_count,err);
-            if(status==FG_OK)status=fg_vk_moe_kquant_cooked_grouped(vk,
-                executor->up,uw,executor->activation,executor->tiles,
-                ur->ggml_type,640u,FG_HIDDEN_SIZE,us,local_count,1u,tile_count,err);
-            if(status==FG_OK)status=fg_vk_swiglu(vk,executor->mid,
-                executor->gate,executor->up,(uint32_t)work->selected_count*640u,err);
-            if(status==FG_OK&&dr->ggml_type==7u)
-                status=fg_vk_moe_q5_1_down_cooked_grouped(vk,executor->down,dw,
-                    executor->tiles,executor->mid,FG_HIDDEN_SIZE,640u,ds,
-                    local_count,1u,tile_count,err);
-            else if(status==FG_OK)
-                status=fg_vk_moe_q8_0_down_grouped(vk,executor->down,dw,
-                    executor->tiles,executor->mid,FG_HIDDEN_SIZE,640u,ds,
-                    local_count,1u,tile_count,err);
-            if(status==FG_OK)status=fg_vk_moe_prefill_shard_reduce(vk,
-                executor->reduced,executor->down,executor->gates,1u,err);
-            if(status==FG_OK){
-                fg_status end_status=fg_vk_end(vk,err);
-                if(end_status!=FG_OK)status=end_status;
-            }
-            if(status!=FG_OK&&fg_vk_batch_active(vk)){
-                fg_error ignored={0};
-                fg_vk_abort(vk,&ignored);
-            }
-        }
+        if(!executor->decode_graph[work->layer]){
+            fg_error_set(err,FG_ERR_MISMATCH,
+                         "rank has no fixed expert graph for layer %u",
+                         work->layer);
+            status=FG_ERR_MISMATCH;
+        }else status=fg_vk_expert_graph_execute(
+            executor->decode_graph[work->layer],err);
     }else if(status==FG_OK){
         fg_vk_tensor *gate_weight=NULL,*up_weight=NULL,*down_weight=NULL;
         const fg_tensor_record *gate_record=NULL,*up_record=NULL,*down_record=NULL;
