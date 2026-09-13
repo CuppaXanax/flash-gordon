@@ -58,6 +58,30 @@ growing to 88-105 ms/layer at 4K where the top-512-of-1024 selection runs.
    buffers and the chain locks step. Raise `socket_configure` (fabric.c) and
    the sysctl caps together, then re-test 10-12.
 
+**Per-kernel GPU budget 2026-09-13 (new `PREFILL_LAYER_PROFILE` /
+`PREFILL_LAYER_KERNEL`, FG_PREFILL_PROFILE=1 on workers, 4K battery, ranks
+1/3/5). Kernel rewrite is authorized; this is the hit list.**
+
+GDN layer ~58ms GPU: expert grouped GEMMs 40ms
+(`fg_moe_kquant_cooked_grouped` 29-31 + `fg_moe_q5_1_down_cooked_grouped`
+9-12), `dense_q8_0_cooked_tile` 2.8, `gdn_prefill_recurrence` 3.0, all other
+kernels <1ms each.
+QSA layer ~110ms GPU: `fg_qsa_attention_split` 35.1, `fg_topk_reduce` 31.7
+(slow path only: 32 queries tiles/fences per layer), experts 37,
+`qsa_index_score` 1.3, `qsa_record_gather` 1.6, `qsa_attention_merge` 0.7.
+
+Per six-layer stage: GPU 455ms of ~650ms wall. Experts are 51% of GPU; QSA
+attention+topk 29%. Utilization: expert GEMMs ~28% of the 1.47 TFLOPS prefill
+primitive; QSA prefill attention ~6% (it is a batch-1 decode kernel called
+per query). llama.cpp on a same-lineage 35B MoE (2 blades) is the control that
+this silicon can do ~450 prefill TPS with real kernels.
+
+Rewrite priority: (1) expert grouped GEMM (kquant gate_up + down) — biggest
+term on every layer; (2) one batched QSA prefill attention dispatch for all
+128 queries (replace split+merge per query) plus fused batched top-k with ids
+left on GPU; (3) `dense_q8_0_cooked_tile` tiling. Target after (1)+(2):
+six-layer stage ~350ms → pipeline bound ~350+ TPS.
+
 **Dead ends already paid for (do not repeat):**
 - `FG_PREFILL_FRAMES=12` at 16 MiB buffers: 26.87 TPS, wave stalls.
 - Depth 8 with 8 owner slots + 8 ring-output tensors: rank-0 OOM within the

@@ -403,6 +403,7 @@ typedef struct layer_work_context {
     uint32_t *positions;
     float *hyper_in,*hyper_out,*ngram;
     fg_vk_tensor *ngram_tensor;
+    fg_vk_context *vk;
     worker_prefill_dispatch dispatch;
     void *qsa_owner;
 } layer_work_context;
@@ -445,6 +446,7 @@ static fg_status layer_work_context_create(layer_work_context *context,fg_model 
     }
     context->dispatch.expert=expert;context->dispatch.manifest=manifest;
     context->dispatch.buffers=buffers;context->dispatch.self=fg_model_rank(model);
+    context->vk=fg_model_vk(model);
     return FG_OK;
 }
 
@@ -505,6 +507,9 @@ static fg_status handle_prefill_layer_work(fg_fabric *fabric,fg_owner_executor *
                 (uint64_t)work.token_count*FG_NGRAM_EMBED_VALUES*4u,err);
             if(status!=FG_OK)break;
         }
+        bool capture=profiling&&context->vk&&!fg_vk_batch_active(context->vk);
+        if(capture){fg_error profile_error={0};
+            if(fg_vk_profile_begin(context->vk,&profile_error)!=FG_OK)capture=false;}
         status=fg_owner_prefill_layer_begin(owner,0u,layer,work.first_token,
             context->positions,(uint16_t)work.token_count,current,ngram,
             worker_prefill_fire,&context->dispatch,NULL,NULL,err);
@@ -513,6 +518,22 @@ static fg_status handle_prefill_layer_work(fg_fabric *fabric,fg_owner_executor *
         if(profiling){clock_gettime(CLOCK_MONOTONIC,&t_layer_end);
             fprintf(stderr,"PREFILL_BLOCK_LAYER rank=%u layer=%u ms=%.1f\n",
                 self,layer,elapsed_seconds(&t_layer_begin,&t_layer_end)*1000.0);}
+        if(capture){fg_vk_profile layer_profile={0};fg_error profile_error={0};
+            if(fg_vk_profile_end(context->vk,&layer_profile,
+                    status==FG_OK?err:&profile_error)==FG_OK){
+                fprintf(stderr,"PREFILL_LAYER_PROFILE rank=%u layer=%u gpu_ms=%.3f "
+                    "kernel_ms=%.3f submissions=%llu dispatches=%llu\n",self,layer,
+                    layer_profile.gpu_ms,layer_profile.kernel_ms,
+                    (unsigned long long)layer_profile.submissions,
+                    (unsigned long long)layer_profile.dispatches);
+                for(uint32_t k=0;k<layer_profile.kernel_count;k++)
+                    fprintf(stderr,"PREFILL_LAYER_KERNEL rank=%u layer=%u scope=%s "
+                        "kernel=%s calls=%llu gpu_ms=%.3f\n",self,layer,
+                        layer_profile.kernels[k].scope,layer_profile.kernels[k].name,
+                        (unsigned long long)layer_profile.kernels[k].invocations,
+                        layer_profile.kernels[k].gpu_ms);
+            }
+        }
     }
     if(status==FG_OK)status=worker_publish_qsa_pages(context->qsa_owner,owner,self,
         work.first_token,work.token_count,err);
