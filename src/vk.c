@@ -776,7 +776,7 @@ fg_status fg_vk_qsa_attention_merge(fg_vk_context *c,fg_vk_tensor *output,const 
 fg_status fg_vk_qsa_attention_split_batch(fg_vk_context *c,fg_vk_tensor *partials,const fg_vk_tensor *records,const fg_vk_tensor *query,const fg_vk_tensor *counts,uint32_t query_count,uint32_t record_stride,uint32_t query_stride,uint32_t splits,fg_error *err){
     if(!c||!query_count||query_count>512u||!splits||splits>8u||
        !record_stride||record_stride>FG_VK_QSA_SELECTED_TOKENS||
-       !query_stride||
+       query_stride<24u*FG_Q38_ATTN_HEAD_WIDTH||
        !tensor_range(partials,0,(uint64_t)query_count*24u*splits*258u*4u)||
        !tensor_range(records,0,(uint64_t)query_count*record_stride*FG_Q38_QSA_TOKEN_RECORD_BYTES)||
        !tensor_range(query,0,(uint64_t)query_count*query_stride*4u)||
@@ -786,7 +786,9 @@ fg_status fg_vk_qsa_attention_split_batch(fg_vk_context *c,fg_vk_tensor *partial
     }
     struct{uint32_t splits,query_count,record_stride,query_stride;}push={splits,query_count,record_stride,query_stride};
     const fg_vk_tensor *bindings[]={records,query,partials,counts};
-    return dispatch(c,&c->qsa_attention_split_batch,bindings,&push,24u,splits,(query_count+3u)/4u,err);
+    /* One workgroup per (query, KV head, split): its subgroups cover the twelve
+     * query heads of the KV head and share one decoded record tile. */
+    return dispatch(c,&c->qsa_attention_split_batch,bindings,&push,query_count,2u,splits,err);
 }
 fg_status fg_vk_qsa_attention_merge_batch(fg_vk_context *c,fg_vk_tensor *output,const fg_vk_tensor *partials,const fg_vk_tensor *gate,uint32_t query_count,uint32_t query_stride,uint32_t splits,fg_error *err){
     if(!c||!query_count||query_count>512u||!splits||splits>8u||

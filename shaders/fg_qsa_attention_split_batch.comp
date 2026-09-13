@@ -1,78 +1,230 @@
 #version 460
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
-/* Batched split-K QSA attention, stage 1: each workgroup owns one
- * (head, split, query group of four) triple.  The online-softmax math is
- * identical to fg_qsa_attention_split, but the four queries of the group
- * share the per-token barrier rounds and dispatch.  Queries keep their own
- * causal selected-token ranges, so split boundaries match the single-query
- * kernel exactly.  Layout per query/head/split:
+/* Batched split-K QSA attention, stage 1: head-blocked record decode.
+ *
+ * One workgroup owns (query, kv head, split).  Its 768 threads form up to 96
+ * subgroups; subgroup s with s < 12 owns query head kv_head*12+s, so the
+ * twelve heads that share a KV head reuse one shared-memory copy of the
+ * decoded key/value records instead of re-decoding them per head (the old
+ * per-head kernel decoded each record 12x).  Eight records are decoded from
+ * q8_0 to fp32 in shared memory per tile by the whole workgroup; the online
+ * softmax then runs entirely inside a subgroup, so the only barriers are the
+ * two staging barriers per tile.
+ *
+ * Lane ownership inside a subgroup is strided vec4 blocks
+ *   { lane + i*subgroup_size | i < 64/subgroup_size }
+ * which covers the 256-wide head for any subgroup size 8/16/32/64.  The
+ * 64-lane path (BC-250 RADV default) keeps the accumulators in registers;
+ * smaller subgroup sizes (lavapipe reports 8) take a dynamic-index path.
+ *
+ * Layout per (query, head, split) is unchanged from the previous kernel:
  *   partials[((query*24+head)*splits+split)*258 + 0..255] = weighted values
  *   partials[... + 256] = running maximum
  *   partials[... + 257] = running denominator */
-layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+
+layout(local_size_x=768,local_size_y=1,local_size_z=1)in;
 layout(set=0,binding=0)readonly buffer Records{uint records[];};
-layout(set=0,binding=1)readonly buffer Query{float query[];};
+layout(set=0,binding=1)readonly buffer Query{vec4 query4[];};
 layout(set=0,binding=2)buffer Partials{float partials[];};
 layout(set=0,binding=3)readonly buffer Counts{uint selected_counts[];};
 layout(push_constant)uniform Push{uint splits;uint query_count;uint record_stride;uint query_stride;}pc;
-const uint QPG=4u;
-shared float subgroup_sum[256];
-shared float shared_scale[QPG];
-shared float shared_weight[QPG];
-shared float shared_denominator[QPG];
-shared float shared_maximum[QPG];
-uint load_byte(uint byte_offset){return(records[byte_offset>>2u]>>((byte_offset&3u)*8u))&255u;}
-float load_half(uint byte_offset){uint bits=load_byte(byte_offset)|(load_byte(byte_offset+1u)<<8u);return unpackHalf2x16(bits).x;}
-float load_key(uint base,uint kv_head,uint element){uint at=base+kv_head*272u+(element>>5u)*34u;int q=int(load_byte(at+2u+(element&31u)));if(q>=128)q-=256;return load_half(at)*float(q);}
-float load_value(uint base,uint kv_head,uint element){uint at=base+544u+kv_head*272u+(element>>5u)*34u;int q=int(load_byte(at+2u+(element&31u)));if(q>=128)q-=256;return load_half(at)*float(q);}
+
+const uint RECORD_BYTES=1236u;
+const uint TILE=8u;
+const uint TILE_GROUPS=TILE*128u;
+const uint HEADS_PER_KV=12u;
+const float L2E=1.4426950408889634;
+const float NEG_INF=-3.402823466e38;
+
+shared vec4 key_tile[TILE*64u];
+shared vec4 value_tile[TILE*64u];
+shared vec4 query_tile[HEADS_PER_KV*64u];
+
+/* Decode one vec4 of q8_0 data (4 consecutive quantized elements).  The q8
+ * block scale is the half at the block start; the four bytes may straddle two
+ * words because 34-byte blocks alternate 2/0 mod 4. */
+void decode_group(uint group,uint tile_token,uint query_id,uint kv_head,uint end_token){
+    uint record=group>>7u;
+    uint within=group&127u;
+    uint slot=within&63u;
+    uint block=slot>>3u;
+    uint sub=slot&7u;
+    uint token=tile_token+record;
+    vec4 decoded=vec4(0.0);
+    if(token<end_token){
+        uint base=(query_id*pc.record_stride+token)*RECORD_BYTES;
+        uint offset=(within<64u?0u:544u)+kv_head*272u+block*34u;
+        uint scale_at=base+offset;
+        uint packed_at=scale_at+2u+sub*4u;
+        uint lo=records[packed_at>>2u];
+        uint hi=records[(packed_at>>2u)+1u];
+        uint shift=(packed_at&3u)*8u;
+        uint packed=(lo>>shift)|((hi<<((32u-shift)&31u))&(shift==0u?0u:0xffffffffu));
+        float scale=unpackHalf2x16(records[scale_at>>2u]>>((scale_at&3u)*8u)).x;
+        decoded=unpackSnorm4x8(packed)*(scale*127.0);
+    }
+    if(within<64u)key_tile[record*64u+slot]=decoded;
+    else value_tile[record*64u+slot]=decoded;
+}
+
 void main(){
-    uint lane=gl_LocalInvocationID.x,head=gl_WorkGroupID.x,split=gl_WorkGroupID.y;
-    uint q0=gl_WorkGroupID.z*QPG;
-    if(head>=24u||pc.splits==0u||split>=pc.splits||q0>=pc.query_count)return;
-    uint kv_head=head/12u;
-    uint group_queries=pc.query_count-q0;if(group_queries>QPG)group_queries=QPG;
-    float accumulator[QPG];float qval[QPG];uint first[QPG],span[QPG];
-    uint max_span=0u;
-    for(uint j=0u;j<QPG;j++){
-        accumulator[j]=0.0;qval[j]=0.0;first[j]=0u;span[j]=0u;
-        if(j<group_queries){
-            uint q=q0+j;
-            qval[j]=query[q*pc.query_stride+head*256u+lane];
-            uint selected=selected_counts[q];
-            uint begin=(selected*split)/pc.splits,end=(selected*(split+1u))/pc.splits;
-            first[j]=begin;span[j]=end-begin;
-            if(span[j]>max_span)max_span=span[j];
-        }
-    }
-    if(lane<QPG){shared_maximum[lane]=-3.402823466e38;shared_denominator[lane]=0.0;}
+    uint query_id=gl_WorkGroupID.x,kv_head=gl_WorkGroupID.y,split=gl_WorkGroupID.z;
+    if(query_id>=pc.query_count||pc.splits==0u||split>=pc.splits)return;
+    uint local=gl_LocalInvocationIndex;
+    uint subgroup=gl_SubgroupID,lane=gl_SubgroupInvocationID,lanes=gl_SubgroupSize;
+    bool owns_head=subgroup<HEADS_PER_KV;
+    /* The twelve query heads of this KV head are exactly the workgroup's 768
+     * query rows, so the staging copy is a straight one-to-one global load. */
+    query_tile[local]=query4[query_id*(pc.query_stride>>2u)+kv_head*(HEADS_PER_KV*64u)+local];
+    uint selected=selected_counts[query_id];
+    uint begin=(selected*split)/pc.splits,end=(selected*(split+1u))/pc.splits;
+    uint head=kv_head*HEADS_PER_KV+subgroup;
+    uint partial_base=((query_id*24u+head)*pc.splits+split)*258u;
     barrier();
-    for(uint t=0u;t<max_span;t++){
-        for(uint j=0u;j<QPG;j++)if(t<span[j]){
-            uint base=(q0+j)*pc.record_stride*1236u+(first[j]+t)*1236u;
-            float reduced=subgroupAdd(qval[j]*load_key(base,kv_head,lane));
-            if(subgroupElect()&&gl_SubgroupID<64u)subgroup_sum[gl_SubgroupID*QPG+j]=reduced;
+
+    float running_max=NEG_INF,running_den=0.0;
+    if(lanes==64u){
+        /* BC-250 / RADV wave64: one vec4 of the head per lane, query row and
+         * all state in registers, scores unrolled so no local array is needed. */
+        vec4 accumulator=vec4(0.0);
+        vec4 query_value=query_tile[subgroup*64u+lane];
+        for(uint tile=begin;tile<end;tile+=TILE){
+            uint span=end-tile;if(span>TILE)span=TILE;
+            barrier();
+            for(uint round=0u;round<2u;round++){
+                uint group=local+round*768u;
+                if(group<TILE_GROUPS)decode_group(group,tile,query_id,kv_head,end);
+            }
+            barrier();
+            if(owns_head){
+                float s0=NEG_INF,s1=NEG_INF,s2=NEG_INF,s3=NEG_INF;
+                float s4=NEG_INF,s5=NEG_INF,s6=NEG_INF,s7=NEG_INF;
+                if(0u<span)s0=subgroupAdd(dot(query_value,key_tile[0u*64u+lane]))*0.0625;
+                if(1u<span)s1=subgroupAdd(dot(query_value,key_tile[1u*64u+lane]))*0.0625;
+                if(2u<span)s2=subgroupAdd(dot(query_value,key_tile[2u*64u+lane]))*0.0625;
+                if(3u<span)s3=subgroupAdd(dot(query_value,key_tile[3u*64u+lane]))*0.0625;
+                if(4u<span)s4=subgroupAdd(dot(query_value,key_tile[4u*64u+lane]))*0.0625;
+                if(5u<span)s5=subgroupAdd(dot(query_value,key_tile[5u*64u+lane]))*0.0625;
+                if(6u<span)s6=subgroupAdd(dot(query_value,key_tile[6u*64u+lane]))*0.0625;
+                if(7u<span)s7=subgroupAdd(dot(query_value,key_tile[7u*64u+lane]))*0.0625;
+                float tile_max=max(max(max(s0,s1),max(s2,s3)),
+                                   max(max(s4,s5),max(s6,s7)));
+                float next_max=max(running_max,tile_max);
+                float scale=running_max<-3.0e38?0.0:exp2((running_max-next_max)*L2E);
+                accumulator*=scale;
+                float denominator=running_den*scale;
+                {
+                    float weight=exp2((s0-next_max)*L2E);
+                    denominator+=weight;
+                    accumulator=fma(vec4(weight),value_tile[0u*64u+lane],accumulator);
+                }
+                {
+                    float weight=exp2((s1-next_max)*L2E);
+                    denominator+=weight;
+                    accumulator=fma(vec4(weight),value_tile[1u*64u+lane],accumulator);
+                }
+                {
+                    float weight=exp2((s2-next_max)*L2E);
+                    denominator+=weight;
+                    accumulator=fma(vec4(weight),value_tile[2u*64u+lane],accumulator);
+                }
+                {
+                    float weight=exp2((s3-next_max)*L2E);
+                    denominator+=weight;
+                    accumulator=fma(vec4(weight),value_tile[3u*64u+lane],accumulator);
+                }
+                {
+                    float weight=exp2((s4-next_max)*L2E);
+                    denominator+=weight;
+                    accumulator=fma(vec4(weight),value_tile[4u*64u+lane],accumulator);
+                }
+                {
+                    float weight=exp2((s5-next_max)*L2E);
+                    denominator+=weight;
+                    accumulator=fma(vec4(weight),value_tile[5u*64u+lane],accumulator);
+                }
+                {
+                    float weight=exp2((s6-next_max)*L2E);
+                    denominator+=weight;
+                    accumulator=fma(vec4(weight),value_tile[6u*64u+lane],accumulator);
+                }
+                {
+                    float weight=exp2((s7-next_max)*L2E);
+                    denominator+=weight;
+                    accumulator=fma(vec4(weight),value_tile[7u*64u+lane],accumulator);
+                }
+                running_max=next_max;
+                running_den=denominator;
+            }
         }
-        barrier();
-        if(lane<QPG&&lane<group_queries&&t<span[lane]){
-            float score=0.0;for(uint s=0u;s<gl_NumSubgroups;s++)score+=subgroup_sum[s*QPG+lane];
-            score*=0.0625;
-            float previous=shared_maximum[lane],next=max(previous,score);
-            shared_scale[lane]=previous<-3.0e38?0.0:exp(previous-next);
-            shared_weight[lane]=exp(score-next);
-            shared_denominator[lane]=shared_denominator[lane]*shared_scale[lane]+shared_weight[lane];
-            shared_maximum[lane]=next;
+        if(owns_head){
+            partials[partial_base+4u*lane+0u]=accumulator.x;
+            partials[partial_base+4u*lane+1u]=accumulator.y;
+            partials[partial_base+4u*lane+2u]=accumulator.z;
+            partials[partial_base+4u*lane+3u]=accumulator.w;
+            if(lane==0u){
+                partials[partial_base+256u]=running_max;
+                partials[partial_base+257u]=running_den;
+            }
         }
-        barrier();
-        for(uint j=0u;j<QPG;j++)if(t<span[j]){
-            uint base=(q0+j)*pc.record_stride*1236u+(first[j]+t)*1236u;
-            accumulator[j]=accumulator[j]*shared_scale[j]+load_value(base,kv_head,lane)*shared_weight[j];
+    }else{
+        /* Generic subgroup size (lavapipe uses 8): lane owns several strided
+         * vec4 blocks; dynamic loops keep the code size bounded. */
+        uint v4=64u/lanes;
+        uint query_row=subgroup*64u+lane;
+        vec4 accumulator[8];
+        for(uint i=0u;i<8u;i++)accumulator[i]=vec4(0.0);
+        for(uint tile=begin;tile<end;tile+=TILE){
+            uint span=end-tile;if(span>TILE)span=TILE;
+            barrier();
+            for(uint round=0u;round<2u;round++){
+                uint group=local+round*768u;
+                if(group<TILE_GROUPS)decode_group(group,tile,query_id,kv_head,end);
+            }
+            barrier();
+            if(owns_head){
+                float scores[TILE];
+                float tile_max=NEG_INF;
+                for(uint record=0u;record<TILE;record++){
+                    float score=NEG_INF;
+                    if(record<span){
+                        float partial=0.0;
+                        for(uint i=0u;i<v4;i++){
+                            uint at=query_row+i*lanes;
+                            partial+=dot(query_tile[at],key_tile[record*64u+lane+i*lanes]);
+                        }
+                        score=subgroupAdd(partial)*0.0625;
+                    }
+                    scores[record]=score;
+                    tile_max=max(tile_max,score);
+                }
+                float next_max=max(running_max,tile_max);
+                float scale=running_max<-3.0e38?0.0:exp2((running_max-next_max)*L2E);
+                float denominator=running_den*scale;
+                for(uint i=0u;i<v4;i++)accumulator[i]*=scale;
+                for(uint record=0u;record<TILE;record++){
+                    float weight=exp2((scores[record]-next_max)*L2E);
+                    denominator+=weight;
+                    for(uint i=0u;i<v4;i++)
+                        accumulator[i]=fma(vec4(weight),value_tile[record*64u+lane+i*lanes],accumulator[i]);
+                }
+                running_max=next_max;
+                running_den=denominator;
+            }
         }
-        barrier();
-    }
-    for(uint j=0u;j<QPG;j++)if(j<group_queries){
-        uint q=q0+j,base=((q*24u+head)*pc.splits+split)*258u;
-        partials[base+lane]=accumulator[j];
-        if(lane==0u){partials[base+256u]=shared_maximum[j];partials[base+257u]=shared_denominator[j];}
+        if(owns_head){
+            for(uint i=0u;i<v4;i++){
+                uint at=4u*(lane+i*lanes);
+                partials[partial_base+at+0u]=accumulator[i].x;
+                partials[partial_base+at+1u]=accumulator[i].y;
+                partials[partial_base+at+2u]=accumulator[i].z;
+                partials[partial_base+at+3u]=accumulator[i].w;
+            }
+            if(lane==0u){
+                partials[partial_base+256u]=running_max;
+                partials[partial_base+257u]=running_den;
+            }
+        }
     }
 }

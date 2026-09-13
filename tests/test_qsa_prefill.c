@@ -155,6 +155,171 @@ static int causal_attention(fg_qsa_session *s){
     return 1;
 }
 
+/* Nonzero queries and gates exercise the whole split/merge chain against a
+ * CPU softmax oracle.  The uniform test above cannot catch a broken score
+ * reduction because every score stays zero when the query is zero. */
+static int causal_attention_weighted(fg_qsa_session *s){
+    fg_qsa_page_cache_reset(s->cache);
+    s->committed[0]=1u;
+    uint8_t records[6][FG_Q38_QSA_TOKEN_RECORD_BYTES];
+    float key[512],value[512],index[128]={0},query[5u*6144u],gate[5u*6144u];
+    float decoded_key[6][2][256],decoded_value[6][2][256];
+    for(uint32_t t=0;t<6u;t++){
+        for(uint32_t i=0;i<512u;i++){
+            key[i]=0.9f*sinf((float)(t+1u)*(float)(i+1u)*0.013f);
+            value[i]=cosf((float)(t+1u)*(float)(i+1u)*0.007f)+0.25f*sinf((float)(i+1u));
+        }
+        uint32_t position[]={t,t,t};
+        fg_qsa_encode_full_token_record(key,value,index,position,records[t]);
+        for(uint32_t kv=0;kv<2u;kv++){
+            fg_dequantize_q8_0(records[t]+kv*272u,decoded_key[t][kv],256u);
+            fg_dequantize_q8_0(records[t]+FG_Q38_QSA_KEY_BYTES+kv*272u,decoded_value[t][kv],256u);
+        }
+        if(!t)continue;
+        REQUIRE(fg_vk_tensor_write(s->key_q8,(t-1u)*FG_Q38_QSA_KEY_BYTES,
+            records[t],FG_Q38_QSA_KEY_BYTES,&error)==FG_OK);
+        REQUIRE(fg_vk_tensor_write(s->value_q4,(t-1u)*FG_Q38_QSA_VALUE_BYTES,
+            records[t]+FG_Q38_QSA_KEY_BYTES,FG_Q38_QSA_VALUE_BYTES,&error)==FG_OK);
+        REQUIRE(fg_vk_tensor_write(s->index_key_q8,(t-1u)*FG_Q38_QSA_INDEX_KEY_BYTES,
+            records[t]+FG_Q38_QSA_KEY_BYTES+FG_Q38_QSA_VALUE_BYTES,
+            FG_Q38_QSA_INDEX_KEY_BYTES,&error)==FG_OK);
+    }
+    uint32_t slot=0;bool hit=false;
+    REQUIRE(fg_qsa_page_cache_acquire(s->cache,3u,0u,&slot,&hit,&error)==FG_OK);
+    REQUIRE(fg_vk_tensor_write(s->cache_records,(uint64_t)slot*FG_QSA_PAGE_RECORD_BYTES,
+        records[0],FG_Q38_QSA_TOKEN_RECORD_BYTES,&error)==FG_OK);
+    for(uint32_t q=0;q<5u;q++)for(uint32_t h=0;h<24u;h++)for(uint32_t d=0;d<256u;d++){
+        query[q*6144u+h*256u+d]=0.5f*cosf((float)(q+1u)*(float)(h*256u+d+1u)*0.0011f);
+        gate[q*6144u+h*256u+d]=1.2f*sinf((float)(q+1u)*(float)(h+1u)*(float)(d+1u)*0.003f);
+    }
+    memcpy(fg_vk_tensor_map(s->query),query,sizeof(query));
+    memcpy(fg_vk_tensor_map(s->gate),gate,sizeof(gate));
+    memset(fg_vk_tensor_map(s->attention),0,(size_t)fg_vk_tensor_bytes(s->attention));
+    REQUIRE(attend_prefill_tiles(s,0u,1u,5u,&error)==FG_OK);
+    const float *got=fg_vk_tensor_map(s->attention);
+    for(uint32_t q=0;q<5u;q++){
+        uint32_t visible=q+2u; /* query slot q sees tokens 0..q+1 */
+        for(uint32_t h=0;h<24u;h++){
+            uint32_t kv=h/12u;
+            float scores[6],maximum=-3.402823466e38f,sum=0.0f;
+            for(uint32_t t=0;t<visible;t++){
+                float dot=0.0f;
+                for(uint32_t d=0;d<256u;d++)
+                    dot+=query[q*6144u+h*256u+d]*decoded_key[t][kv][d];
+                scores[t]=dot*0.0625f;
+                maximum=fmaxf(maximum,scores[t]);
+            }
+            for(uint32_t t=0;t<visible;t++){scores[t]=expf(scores[t]-maximum);sum+=scores[t];}
+            for(uint32_t d=0;d<256u;d++){
+                float weighted=0.0f;
+                for(uint32_t t=0;t<visible;t++)
+                    weighted+=scores[t]/sum*decoded_value[t][kv][d];
+                float expected=weighted/(1.0f+expf(-gate[q*6144u+h*256u+d]));
+                float observed=got[q*6144u+h*256u+d];
+                if(fabsf(observed-expected)>2e-4f*fmaxf(1.0f,fabsf(expected))){
+                    fprintf(stderr,"line %d: weighted attention q=%u head=%u dim=%u GPU=%g CPU=%g\n",
+                        __LINE__,q,h,d,observed,expected);
+                    return 0;
+                }
+            }
+        }
+    }
+    s->committed[0]=0u;
+    return 1;
+}
+
+/* Directly drive the split/merge kernels at record counts that force multiple
+ * eight-record online-softmax tiles and unbalanced (sometimes empty) splits.
+ * The merge oracle is an exact full-softmax, which holds for any split
+ * partition. */
+static int split_merge_selected(fg_qsa_session *s,uint32_t selected,uint32_t splits){
+    fg_vk_context *vk=fg_model_vk(s->model);
+    if(fg_vk_batch_active(vk))REQUIRE(fg_vk_abort(vk,&error)==FG_OK);
+    uint8_t *arena=malloc((size_t)selected*FG_Q38_QSA_TOKEN_RECORD_BYTES);
+    float key[512],value[512],index[128]={0},query[6144],gate[6144];
+    float *decoded_key=malloc((size_t)2u*selected*256u*sizeof(float));
+    float *decoded_value=malloc((size_t)2u*selected*256u*sizeof(float));
+    float *scores=malloc((size_t)selected*sizeof(float));
+    if(!arena||!decoded_key||!decoded_value||!scores){
+        free(arena);free(decoded_key);free(decoded_value);free(scores);
+        return 0;
+    }
+    for(uint32_t t=0;t<selected;t++){
+        for(uint32_t i=0;i<512u;i++){
+            key[i]=0.8f*sinf((float)(t+1u)*(float)(i+1u)*0.0023f);
+            value[i]=cosf((float)(t+1u)*(float)(i+1u)*0.0031f);
+        }
+        uint32_t position[]={t,t,t};
+        fg_qsa_encode_full_token_record(key,value,index,position,
+            arena+(uint64_t)t*FG_Q38_QSA_TOKEN_RECORD_BYTES);
+        for(uint32_t kv=0;kv<2u;kv++){
+            fg_dequantize_q8_0(arena+(uint64_t)t*FG_Q38_QSA_TOKEN_RECORD_BYTES+kv*272u,
+                decoded_key+(uint64_t)(kv*selected+t)*256u,256u);
+            fg_dequantize_q8_0(arena+(uint64_t)t*FG_Q38_QSA_TOKEN_RECORD_BYTES+
+                FG_Q38_QSA_KEY_BYTES+kv*272u,
+                decoded_value+(uint64_t)(kv*selected+t)*256u,256u);
+        }
+    }
+    for(uint32_t h=0;h<24u;h++)for(uint32_t d=0;d<256u;d++){
+        query[h*256u+d]=0.6f*sinf((float)(h+1u)*(float)(d+1u)*0.0053f);
+        gate[h*256u+d]=1.5f*cosf((float)(h+1u)*(float)(d+1u)*0.0017f);
+    }
+    fg_vk_tensor *records=NULL,*query_tensor=NULL,*gate_tensor=NULL;
+    fg_vk_tensor *counts=NULL,*partials=NULL,*output=NULL;
+    uint32_t count=selected;
+    bool ok=make_tensor(s,(uint64_t)selected*FG_Q38_QSA_TOKEN_RECORD_BYTES,
+            &records,&error)==FG_OK&&
+        make_tensor(s,sizeof(query),&query_tensor,&error)==FG_OK&&
+        make_tensor(s,sizeof(gate),&gate_tensor,&error)==FG_OK&&
+        make_tensor(s,4u,&counts,&error)==FG_OK&&
+        make_tensor(s,24u*splits*258u*4u,&partials,&error)==FG_OK&&
+        make_tensor(s,sizeof(query),&output,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_write(records,0,arena,
+        (uint64_t)selected*FG_Q38_QSA_TOKEN_RECORD_BYTES,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_write(query_tensor,0,query,sizeof(query),&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_write(gate_tensor,0,gate,sizeof(gate),&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_write(counts,0,&count,4u,&error)==FG_OK;
+    if(ok)ok=fg_vk_begin(vk,&error)==FG_OK;
+    if(ok)ok=fg_vk_qsa_attention_split_batch(vk,partials,records,query_tensor,counts,
+        1u,selected,6144u,splits,&error)==FG_OK;
+    if(ok)ok=fg_vk_qsa_attention_merge_batch(vk,output,partials,gate_tensor,
+        1u,6144u,splits,&error)==FG_OK;
+    if(ok)ok=fg_qsa_submit_host_reads(vk,&error)==FG_OK;
+    if(ok){
+        const float *got=fg_vk_tensor_map(output);
+        for(uint32_t h=0;ok&&h<24u;h++){
+            uint32_t kv=h/12u;
+            float maximum=-3.402823466e38f,sum=0.0f;
+            for(uint32_t t=0;t<selected;t++){
+                const float *krow=decoded_key+(uint64_t)(kv*selected+t)*256u;
+                float dot=0.0f;
+                for(uint32_t d=0;d<256u;d++)dot+=query[h*256u+d]*krow[d];
+                scores[t]=dot*0.0625f;
+                maximum=fmaxf(maximum,scores[t]);
+            }
+            for(uint32_t t=0;t<selected;t++){scores[t]=expf(scores[t]-maximum);sum+=scores[t];}
+            for(uint32_t d=0;d<256u;d++){
+                float weighted=0.0f;
+                for(uint32_t t=0;t<selected;t++)
+                    weighted+=scores[t]/sum*
+                        decoded_value[(uint64_t)(kv*selected+t)*256u+d];
+                float expected=weighted/(1.0f+expf(-gate[h*256u+d]));
+                float observed=got[h*256u+d];
+                if(fabsf(observed-expected)>2e-4f*fmaxf(1.0f,fabsf(expected))){
+                    fprintf(stderr,"line %d: split/merge selected=%u splits=%u head=%u "
+                        "dim=%u GPU=%g CPU=%g\n",__LINE__,selected,splits,h,d,observed,expected);
+                    ok=0;break;
+                }
+            }
+        }
+    }
+    fg_vk_tensor_destroy(output);fg_vk_tensor_destroy(partials);fg_vk_tensor_destroy(counts);
+    fg_vk_tensor_destroy(gate_tensor);fg_vk_tensor_destroy(query_tensor);
+    fg_vk_tensor_destroy(records);
+    free(arena);free(decoded_key);free(decoded_value);free(scores);
+    return ok;
+}
+
 int main(void){
     fg_model *model=calloc(1,sizeof(*model));
     fg_qsa_session *session=calloc(1,sizeof(*session));fg_vk_tensor *scratch=NULL;
@@ -163,7 +328,9 @@ int main(void){
     if(status==FG_ERR_UNAVAILABLE){free(session);free(model);return 77;}
     int ok=status==FG_OK&&setup(session,model,&scratch);
     if(ok)ok=selection_parity(session,131071u)&&selection_parity(session,2045u);
-    if(ok)ok=causal_attention(session)&&gather_eviction(session,false)&&gather_eviction(session,true);
+    if(ok)ok=causal_attention(session)&&causal_attention_weighted(session)&&gather_eviction(session,false)&&gather_eviction(session,true);
+    if(ok)ok=split_merge_selected(session,5u,8u)&&split_merge_selected(session,100u,1u)&&
+        split_merge_selected(session,2051u,8u);
     if(fg_vk_batch_active(model->vk))fg_vk_abort(model->vk,&error);
     fg_qsa_session_close(session);fg_vk_tensor_destroy(scratch);
     fg_vk_tensor_destroy(model->norm);fg_vk_close(model->vk);free(model);
