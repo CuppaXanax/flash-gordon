@@ -40,6 +40,45 @@ which should take 4K decode from 2.06 toward short-decode speed. After that,
 ring decode (per-token chain with 40 KB hops, owners using their own QSA/GDN
 state) is the remaining architecture piece.
 
+## 0a. FINAL NUMBERS 2026-09-13 LATE (binary 7e47ddae, ring pack)
+
+Validated on my own deploy, gates then battery, back to back:
+
+| metric | mission start | final |
+|---|---|---|
+| gates 12/Paris | empty answers | **[12] / [Paris]** |
+| 4K battery prefill | 48.81 / 47.4 | **236.2 TPS** (band 234-257) |
+| short decode (32 tok) | 9.20 | **10.06 TPS** |
+| 4K single decode row | 1.96 | **7.78 fresh proc / 9.5-9.8 warm** |
+| 4K sustained decode (32 tok) | ~2 | **9.08-9.14 TPS** |
+
+Same-night workstreams: kernel rounds 1-2 (prefill 150->255), numerics root
+cause + GDN/PLE state handoff (`652d59d`), fused batch-1 expert pair
+(`cc299df`), lazy index segments + 128 MiB mirror cache (`170f8f7`), overlapped
+mirror warming during ring prefill (`9233146`), QSA decode split attention +
+bounded top-k + descriptor reuse (`b9329ea`, `87e34ce`).
+
+Remaining, in priority order:
+1. **Short decode is ~10 TPS** (~100 ms/token): rank-0 GPU 39 ms, remote-expert
+   wait 35 ms (worker expert kernels at 0.6 ms/layer, ~50 GB/s for cooked
+   q5_1 - a pack re-cook or a better 4-bit kernel is needed), CPU/submission
+   ~20 ms. Rank-0 common path hot spots: gdn projection/recurrent 12 ms, gr
+   reads 9.4 ms, shared 4.2 ms, router 2.1 ms. Successive decode rounds took
+   short 9.2 -> 10.1 and 4K 2.06 -> 9.1; reaching 20+ short needs the worker
+   expert format/kernels or a ring decode architecture (token walks the 8
+   blocks with 40 KB hops; owners use their own QSA/GDN state - no mirror).
+2. **Layers 2/4/30/46/47 take the slow non-fused expert path** (0.97 vs 0.60
+   ms) - needs a repack to make them fusable.
+3. First 4K decode after a fresh process pays a ~90-100 ms lazy pipeline-compile
+   for the new split/merge kernels; prewarm pipelines at session open.
+4. A custom 4K prompt reportedly crashed rank 0 during ring prefill in the
+   decode agent's testing (not reproduced here: a 2.2K and a 4K custom prompt
+   both completed, rank 0 alive). If it reappears, capture the exact prompt and
+   the rank-0 tail.
+5. Prefix reuse stays disabled under ring until GDN/PLE state push-back exists
+   (correctness > reuse).
+6. rank 0 lives on ~25-90 MB available; drop_caches before heavy phases.
+
 ## 0b. QSA RING STATUS 2026-09-13 (commit 1dc1bc0 — historical)
 
 **The QSA-in-block cost was the page cache never being created on state-backed
