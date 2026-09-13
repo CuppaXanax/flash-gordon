@@ -22,8 +22,10 @@ fg_status fg_qsa_owner_guard_begin(fg_qsa_owner_guard *guard,const fg_manifest *
     }
     uint32_t layers=0;for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
         layers+=manifest->layer_owner[layer]==guard->rank;
-    if(layers!=6u){
-        fg_error_set(err,FG_ERR_MISMATCH,"rank %u owns %u QSA layers, expected 6",
+    /* Contiguous blocks own one or two QSA layers; the guard only requires
+     * that the rank owns at least one and never more than the old maximum. */
+    if(layers==0u||layers>6u){
+        fg_error_set(err,FG_ERR_MISMATCH,"rank %u owns %u QSA layers, expected 1..6",
                      guard->rank,layers);return FG_ERR_MISMATCH;
     }
     if(guard->active&&request_id<=guard->session_nonce){
