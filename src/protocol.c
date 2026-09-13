@@ -286,6 +286,29 @@ fg_status fg_layer_result_encode(uint8_t output[FG_LAYER_RESULT_BYTES],const fg_
 
 fg_status fg_layer_result_decode(fg_layer_result *result,const uint8_t *payload,uint32_t bytes,fg_error *err){if(!result||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid layer result input");return FG_ERR_ARGUMENT;}if(bytes!=FG_LAYER_RESULT_BYTES||payload[3]){fg_error_set(err,FG_ERR_FORMAT,"invalid layer result payload size or reserved byte");return FG_ERR_FORMAT;}memset(result,0,sizeof(*result));result->layer=payload[0];result->source_rank=payload[1];result->destination_rank=payload[2];result->token_index=get_u32_be(payload+4u);for(uint32_t i=0,offset=8u;i<FG_HYPER_WIDTH;i++,offset+=4u)result->hyper[i]=get_f32_be(payload+offset);return validate_layer_result(result,err);}
 
+/* Ring decode rides on the proven single-token layer work contract so the
+ * chain never invents a second hyper-state encoding. */
+fg_status fg_decode_layer_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                      uint16_t protocol_version,const fg_layer_work *work,
+                                      fg_error *err){
+    return fg_layer_work_encode(output,capacity,bytes,protocol_version,work,err);
+}
+
+fg_status fg_decode_layer_work_decode(fg_layer_work *work,uint16_t protocol_version,
+                                      const uint8_t *payload,uint32_t bytes,fg_error *err){
+    return fg_layer_work_decode(work,protocol_version,payload,bytes,err);
+}
+
+fg_status fg_decode_layer_result_encode(uint8_t output[FG_DECODE_LAYER_RESULT_BYTES],
+                                        const fg_layer_result *result,fg_error *err){
+    return fg_layer_result_encode(output,result,err);
+}
+
+fg_status fg_decode_layer_result_decode(fg_layer_result *result,const uint8_t *payload,
+                                        uint32_t bytes,fg_error *err){
+    return fg_layer_result_decode(result,payload,bytes,err);
+}
+
 static fg_status validate_qsa_block_route(uint8_t layer,uint8_t source_rank,
                                           uint8_t destination_rank,
                                           fg_position_mode position_mode,

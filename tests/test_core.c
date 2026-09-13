@@ -46,6 +46,42 @@ static void test_native_262k_profile_geometry(void){fg_manifest *m=malloc(sizeof
 static void test_protocol(void){const char p[]="expert payload";fg_frame_header h;fg_error err={0};CHECK(fg_crc32c(NULL,0)==0u);CHECK(fg_crc32c("123456789",9)==UINT32_C(0xe3069283));CHECK(fg_frame_encode(&h,FG_MSG_EXPERT_RESULT,0x123456789abcdef0ull,7,0,p,sizeof(p),&err)==FG_OK);uint32_t n=0;CHECK(fg_frame_validate(&h,p,&n,&err)==FG_OK);CHECK(n==sizeof(p));char broken[sizeof(p)];memcpy(broken,p,sizeof(p));broken[0]^=1;CHECK(fg_frame_validate(&h,broken,NULL,&err)==FG_ERR_MISMATCH);int32_t tok[]={1,2,3};CHECK(fg_token_hash_update(0,tok,3)==fg_token_hash_update(fg_token_hash_update(0,tok,1),tok+1,2));}
 static void test_layer_protocol(void){fg_layer_work *work=calloc(1,sizeof(*work)),*decoded=calloc(1,sizeof(*decoded));uint8_t *wire=malloc(FG_LAYER_WORK_MAX_BYTES);CHECK(work&&decoded&&wire);if(!work||!decoded||!wire){free(wire);free(decoded);free(work);return;}work->layer=1;work->source_rank=0;work->destination_rank=1;work->flags=FG_LAYER_WORK_HAS_NGRAM;work->token_index=123;work->position[0]=17;work->position[1]=23;work->position[2]=31;for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)work->hyper[i]=(float)i*0.001f;for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++)work->ngram_embedding[i]=-(float)i*0.002f;uint32_t bytes=0;fg_error err={0};CHECK(fg_layer_work_encode(wire,FG_LAYER_WORK_MAX_BYTES,&bytes,FG_PROTOCOL_VERSION,work,&err)==FG_OK);CHECK(bytes==FG_LAYER_WORK_TEXT_MAX_BYTES);CHECK(fg_layer_work_decode(decoded,FG_PROTOCOL_VERSION,wire,bytes,&err)==FG_OK);CHECK(memcmp(work,decoded,sizeof(*work))==0);wire[3]=0;CHECK(fg_layer_work_decode(decoded,FG_PROTOCOL_VERSION,wire,bytes,&err)==FG_ERR_FORMAT);fg_layer_result *result=calloc(1,sizeof(*result)),*result_decoded=calloc(1,sizeof(*result_decoded));uint8_t *result_wire=malloc(FG_LAYER_RESULT_BYTES);CHECK(result&&result_decoded&&result_wire);if(result&&result_decoded&&result_wire){result->layer=7;result->source_rank=7;result->destination_rank=0;result->token_index=123;for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)result->hyper[i]=(float)i*0.003f;CHECK(fg_layer_result_encode(result_wire,result,&err)==FG_OK);CHECK(fg_layer_result_decode(result_decoded,result_wire,FG_LAYER_RESULT_BYTES,&err)==FG_OK);CHECK(memcmp(result,result_decoded,sizeof(*result))==0);result_wire[3]=1;CHECK(fg_layer_result_decode(result_decoded,result_wire,FG_LAYER_RESULT_BYTES,&err)==FG_ERR_FORMAT);}free(result_wire);free(result_decoded);free(result);free(wire);free(decoded);free(work);}
 
+static void test_decode_layer_protocol(void){
+    CHECK(FG_MSG_DECODE_LAYER_WORK==44&&FG_MSG_DECODE_LAYER_RESULT==45);
+    fg_layer_work *work=calloc(1,sizeof(*work)),*decoded=calloc(1,sizeof(*decoded));
+    uint8_t *wire=malloc(FG_DECODE_LAYER_WORK_MAX_BYTES);
+    CHECK(work&&decoded&&wire);
+    if(!work||!decoded||!wire){free(wire);free(decoded);free(work);return;}
+    work->layer=0;work->source_rank=0;work->destination_rank=1;
+    work->flags=FG_LAYER_WORK_HAS_NGRAM;work->position_mode=FG_POSITION_TEXT;
+    work->token_index=4321u;
+    work->position[0]=4321u;work->position[1]=4321u;work->position[2]=4321u;
+    for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)work->hyper[i]=(float)(i%97)*0.01f;
+    for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++)work->ngram_embedding[i]=(float)(i%89)*-0.01f;
+    uint32_t bytes=0;fg_error err={0};
+    CHECK(fg_decode_layer_work_encode(wire,FG_DECODE_LAYER_WORK_MAX_BYTES,&bytes,
+        FG_PROTOCOL_VERSION,work,&err)==FG_OK);
+    CHECK(bytes==FG_LAYER_WORK_TEXT_MAX_BYTES);
+    CHECK(fg_decode_layer_work_decode(decoded,FG_PROTOCOL_VERSION,wire,bytes,&err)==FG_OK);
+    CHECK(memcmp(work,decoded,sizeof(*work))==0);
+    decoded->layer=3u;
+    CHECK(fg_decode_layer_work_encode(wire,FG_DECODE_LAYER_WORK_MAX_BYTES,&bytes,
+        FG_PROTOCOL_VERSION,decoded,&err)==FG_ERR_FORMAT);
+    fg_layer_result *result=calloc(1,sizeof(*result)),*result_decoded=calloc(1,sizeof(*result_decoded));
+    uint8_t *result_wire=malloc(FG_DECODE_LAYER_RESULT_BYTES);
+    CHECK(result&&result_decoded&&result_wire);
+    if(result&&result_decoded&&result_wire){
+        result->layer=47;result->source_rank=7;result->destination_rank=0;
+        result->token_index=4321u;
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)result->hyper[i]=(float)(i%53)*0.02f;
+        CHECK(fg_decode_layer_result_encode(result_wire,result,&err)==FG_OK);
+        CHECK(fg_decode_layer_result_decode(result_decoded,result_wire,
+            FG_DECODE_LAYER_RESULT_BYTES,&err)==FG_OK);
+        CHECK(memcmp(result,result_decoded,sizeof(*result))==0);
+    }
+    free(result_wire);free(result_decoded);free(result);free(wire);free(decoded);free(work);
+}
+
 static void test_qsa_block_protocol(void){
     enum{TOKENS=2};fg_error err={0};float *hidden=malloc((size_t)TOKENS*FG_HIDDEN_SIZE*4u),*decoded=malloc((size_t)TOKENS*FG_HIDDEN_SIZE*4u);uint32_t positions[TOKENS*3u]={17u,17u,17u,18u,18u,18u},decoded_positions[TOKENS*3u];uint8_t *work_wire=malloc(FG_QSA_BLOCK_PREFILL_WORK_MAX_BYTES),*result_wire=malloc(FG_QSA_BLOCK_PREFILL_RESULT_MAX_BYTES);CHECK(hidden&&decoded&&work_wire&&result_wire);if(hidden&&decoded&&work_wire&&result_wire){for(uint32_t i=0;i<TOKENS*FG_HIDDEN_SIZE;i++)hidden[i]=sinf((float)i*0.001f);CHECK(FG_QSA_BLOCK_WORK_TEXT_BYTES==10264u);CHECK(FG_QSA_BLOCK_RESULT_BYTES==10248u);CHECK(12u*(FG_QSA_BLOCK_WORK_TEXT_BYTES+FG_QSA_BLOCK_RESULT_BYTES)==246144u);
         fg_qsa_block_work work={.layer=3u,.source_rank=0u,.destination_rank=3u,.position_mode=FG_POSITION_TEXT,.token_index=17u,.position={17u,17u,17u,0u},.hidden=hidden},decoded_work={0};uint32_t bytes=0;CHECK(fg_qsa_block_work_encode(work_wire,FG_QSA_BLOCK_WORK_MAX_BYTES,&bytes,FG_PROTOCOL_VERSION,&work,&err)==FG_OK);CHECK(bytes==FG_QSA_BLOCK_WORK_TEXT_BYTES);CHECK(fg_qsa_block_work_decode(&decoded_work,FG_PROTOCOL_VERSION,decoded,FG_HIDDEN_SIZE,work_wire,bytes,&err)==FG_OK);CHECK(decoded_work.token_index==17u&&memcmp(decoded,hidden,FG_HIDDEN_SIZE*4u)==0);CHECK(fg_qsa_block_work_decode(&decoded_work,FG_PROTOCOL_VERSION,decoded,FG_HIDDEN_SIZE,work_wire,bytes-1u,&err)==FG_ERR_FORMAT);work_wire[3]=1u;CHECK(fg_qsa_block_work_decode(&decoded_work,FG_PROTOCOL_VERSION,decoded,FG_HIDDEN_SIZE,work_wire,bytes,&err)==FG_ERR_FORMAT);work_wire[3]=0u;work_wire[FG_QSA_BLOCK_WORK_TEXT_HEADER_BYTES]=0x7fu;work_wire[FG_QSA_BLOCK_WORK_TEXT_HEADER_BYTES+1u]=0x80u;work_wire[FG_QSA_BLOCK_WORK_TEXT_HEADER_BYTES+2u]=0u;work_wire[FG_QSA_BLOCK_WORK_TEXT_HEADER_BYTES+3u]=0u;CHECK(fg_qsa_block_work_decode(&decoded_work,FG_PROTOCOL_VERSION,decoded,FG_HIDDEN_SIZE,work_wire,bytes,&err)==FG_ERR_FORMAT);CHECK(fg_qsa_block_work_encode(work_wire,FG_QSA_BLOCK_WORK_MAX_BYTES,&bytes,FG_PROTOCOL_MIN_VERSION,&work,&err)==FG_OK);CHECK(bytes==FG_QSA_BLOCK_WORK_LEGACY_HEADER_BYTES+FG_HIDDEN_SIZE*4u);CHECK(fg_qsa_block_work_decode(&decoded_work,FG_PROTOCOL_MIN_VERSION,decoded,FG_HIDDEN_SIZE,work_wire,bytes,&err)==FG_OK);
@@ -677,4 +713,4 @@ static void test_output_history_protocol(void){
     CHECK(fg_output_history_decode(&decoded,storage,8u,wire,bytes,&err)==FG_ERR_FORMAT);
 }
 
-int main(void){test_sha();test_topology();test_profile();test_expert_map();test_expert_map_file();test_expert_map_single();test_expert_map_owners();test_sealed_expert_map();test_deployment_profile();test_native_262k_profile_geometry();test_protocol();test_layer_protocol();test_qsa_block_protocol();test_qsa_page_protocol();test_prefill_chunk_frontiers();test_qsa_locality_metrics();test_output_protocol();test_output_history_protocol();test_ngram_protocol();test_ngram();test_ngram_suffix();test_ngram_planner_batch_capacity();test_qsa_scratch_geometry();test_qsa_state();test_qsa_state_failed_create_cleanup();test_qsa_state_batch();test_qsa_state_write_batch();test_qsa_replica_queue();test_lazy_qsa_clear_barrier();test_prefill_storage_geometry();test_qsa_page_cache();test_q38_math();test_cooked_q8();test_pack_cooked_q8();test_pack_cooked_experts();test_decode_protocol();test_prefill_protocol();test_pack();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}
+int main(void){test_sha();test_topology();test_profile();test_expert_map();test_expert_map_file();test_expert_map_single();test_expert_map_owners();test_sealed_expert_map();test_deployment_profile();test_native_262k_profile_geometry();test_protocol();test_layer_protocol();test_decode_layer_protocol();test_qsa_block_protocol();test_qsa_page_protocol();test_prefill_chunk_frontiers();test_qsa_locality_metrics();test_output_protocol();test_output_history_protocol();test_ngram_protocol();test_ngram();test_ngram_suffix();test_ngram_planner_batch_capacity();test_qsa_scratch_geometry();test_qsa_state();test_qsa_state_failed_create_cleanup();test_qsa_state_batch();test_qsa_state_write_batch();test_qsa_replica_queue();test_lazy_qsa_clear_barrier();test_prefill_storage_geometry();test_qsa_page_cache();test_q38_math();test_cooked_q8();test_pack_cooked_q8();test_pack_cooked_experts();test_decode_protocol();test_prefill_protocol();test_pack();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}
