@@ -111,6 +111,13 @@ fg_status fg_owner_qsa_open_state(fg_owner_executor *executor,const char *state_
                                   uint32_t cache_pages,uint32_t batch_size,fg_error *err);
 bool fg_owner_qsa_ready(const fg_owner_executor *executor);
 void fg_owner_qsa_set_tokens(fg_owner_executor *executor,uint32_t tokens);
+/* Ring decode-state handoff accessors: slot 0 is the GDN conv state, slot 1 the
+ * recurrent state; layer 1 additionally carries the PLE convolution state. */
+fg_vk_tensor *fg_owner_gdn_state_tensor(fg_owner_executor *executor,uint32_t layer,
+                                        uint32_t slot);
+fg_vk_tensor *fg_owner_ple_state_tensor(fg_owner_executor *executor);
+uint32_t fg_owner_gdn_layers(const fg_owner_executor *executor,uint8_t *layers,
+                             uint32_t capacity,fg_error *err);
 fg_status fg_owner_qsa_decode(fg_owner_executor *executor,uint32_t layer,uint32_t token_index,
                               const uint32_t position[3],const fg_vk_tensor *hidden,
                               fg_vk_tensor **output,fg_error *err);

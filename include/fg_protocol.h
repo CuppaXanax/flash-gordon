@@ -68,6 +68,16 @@
 #define FG_QSA_PAGE_FETCH_MAX_BYTES (FG_QSA_PAGE_BATCH_HEADER_BYTES+FG_QSA_PAGE_FETCH_MAX_PAGES*FG_QSA_PAGE_ENTRY_HEADER_BYTES)
 #define FG_QSA_PAGE_RESULT_MAX_BYTES (FG_QSA_PAGE_BATCH_HEADER_BYTES+FG_QSA_PAGE_FETCH_MAX_PAGES*FG_QSA_PAGE_ENTRY_BYTES)
 #define FG_QSA_PAGE_BARRIER_BYTES 8u
+/* Ring decode-state handoff: GDN conv/recurrent state plus the layer-1 PLE
+ * convolution state, fetched per layer from the block owner after ring prefill
+ * so rank 0's local decode executor starts from the distributed frontier. */
+#define FG_GDN_STATE_CONV_BYTES (FG_HYPER_WIDTH*4u)
+#define FG_GDN_STATE_RECURRENT_BYTES (48u*128u*128u*4u)
+#define FG_GDN_STATE_PLE_BYTES (FG_HYPER_WIDTH*9u*4u)
+#define FG_GDN_STATE_FETCH_BYTES 8u
+#define FG_GDN_STATE_RESULT_BASE_BYTES (16u+FG_GDN_STATE_CONV_BYTES+FG_GDN_STATE_RECURRENT_BYTES)
+#define FG_GDN_STATE_RESULT_MAX_BYTES (FG_GDN_STATE_RESULT_BASE_BYTES+FG_GDN_STATE_PLE_BYTES)
+#define FG_GDN_STATE_RESULT_HAS_PLE 1u
 #define FG_NGRAM_SHARD_MAX_ITEMS FG_NGRAM_HEAD_COUNT
 #define FG_NGRAM_WIRE_ROW_BYTES 90u
 #define FG_NGRAM_WORK_MAX_BYTES (8u+FG_NGRAM_SHARD_MAX_ITEMS*9u)
@@ -111,8 +121,33 @@ typedef enum fg_message_type {
     FG_MSG_QSA_PAGE_RESULT = 33,
     /* IDs 34–39 are retired and must not be reused. */
     FG_MSG_OUTPUT_HISTORY = 40,
-    FG_MSG_OUTPUT_HISTORY_ACK = 41
+    FG_MSG_OUTPUT_HISTORY_ACK = 41,
+    FG_MSG_GDN_STATE_FETCH = 42,
+    FG_MSG_GDN_STATE_RESULT = 43
 } fg_message_type;
+
+typedef struct fg_gdn_state_fetch {
+    uint32_t layer;
+    uint32_t frontier;
+} fg_gdn_state_fetch;
+
+typedef struct fg_gdn_state_result {
+    uint8_t source_rank;
+    uint32_t layer;
+    uint32_t frontier;
+    const float *conv;
+    const float *recurrent;
+    const float *ple;
+} fg_gdn_state_result;
+
+fg_status fg_gdn_state_fetch_encode(uint8_t output[FG_GDN_STATE_FETCH_BYTES],
+                                    const fg_gdn_state_fetch *fetch,fg_error *err);
+fg_status fg_gdn_state_fetch_decode(fg_gdn_state_fetch *fetch,const uint8_t *payload,
+                                    uint32_t bytes,fg_error *err);
+fg_status fg_gdn_state_result_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                     const fg_gdn_state_result *result,fg_error *err);
+fg_status fg_gdn_state_result_decode(fg_gdn_state_result *result,const uint8_t *payload,
+                                     uint32_t bytes,fg_error *err);
 
 typedef enum fg_owner_session_operation {
     FG_OWNER_SESSION_BEGIN = 1,
