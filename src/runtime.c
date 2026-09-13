@@ -36,7 +36,13 @@ static double elapsed_seconds(const struct timespec *start,const struct timespec
 static bool token_profile_requested(uint32_t token){const char *requested=getenv("FG_PROFILE_TOKEN");char value[16];if(!requested||!*requested)return false;snprintf(value,sizeof(value),"%u",token);return strcmp(requested,value)==0;}
 static bool prefill_profile_requested(void){const char *enabled=getenv("FG_PREFILL_PROFILE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool prefill_ring_requested(void){const char *enabled=getenv("FG_PREFILL_RING");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
-static bool decode_ring_requested(void){const char *enabled=getenv("FG_DECODE_RING");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
+/* Ring decode is the default whenever ring prefill is active: it beats the
+ * legacy expert-parallel decode on sustained 4K and short prompts.  Set
+ * FG_DECODE_RING=0 to opt back into the legacy replay. */
+static bool decode_ring_requested(void){
+    const char *disabled=getenv("FG_DECODE_RING");
+    return !(disabled&&*disabled&&strcmp(disabled,"0")==0);
+}
 static bool decode_ring_trace_enabled(void){const char *enabled=getenv("FG_DECODE_RING_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool decode_profile_enabled(void){const char *enabled=getenv("FG_DECODE_PROFILE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool frame_trace_enabled(void){const char *enabled=getenv("FG_FRAME_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
