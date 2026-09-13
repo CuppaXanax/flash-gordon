@@ -703,13 +703,18 @@ int main(void){
     fg_vk_memory_stats memory_large={0};fg_vk_get_memory_stats(fg_model_vk(coordinator),
                                                                &memory_large);
     fg_vk_get_counters(fg_model_vk(coordinator),&canary_after);
-    uint64_t expected_index=UINT64_C(262144)*12u*FG_Q38_QSA_INDEX_KEY_BYTES;
+    /* Only the first 128k-token segment is eager; segment 1 stays lazy until
+     * the committed context crosses 131072 tokens. */
+    uint64_t eager_index=UINT64_C(131072)*12u*FG_Q38_QSA_INDEX_KEY_BYTES;
+    uint64_t full_index=UINT64_C(262144)*12u*FG_Q38_QSA_INDEX_KEY_BYTES;
     if(ok)ok=memory_large.requested_live_bytes>=
-             memory_before.requested_live_bytes+expected_index;
+             memory_before.requested_live_bytes+eager_index;
+    if(ok)ok=memory_large.requested_live_bytes<
+             memory_before.requested_live_bytes+full_index;
     if(ok)ok=memory_large.live_allocations>=
-             memory_before.live_allocations+12u*FG_QSA_INDEX_MAX_SEGMENTS;
+             memory_before.live_allocations+12u;
     if(ok)ok=canary_after.residency_canary_calls==
-             canary_before.residency_canary_calls+12u*FG_QSA_INDEX_MAX_SEGMENTS;
+             canary_before.residency_canary_calls+12u;
     fg_qsa_session_close(mirror);mirror=NULL;
     fg_vk_get_memory_stats(fg_model_vk(coordinator),&memory_after);
     if(ok)ok=memory_after.requested_live_bytes==memory_before.requested_live_bytes&&

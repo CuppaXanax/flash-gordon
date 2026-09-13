@@ -1888,7 +1888,10 @@ static void coordinator_memory_report(const fg_coordinator *coordinator){
     uint64_t physical=coordinator_physical_memory_bytes();
     uint64_t logical=coordinator->options.logical_context_tokens;
     uint32_t cache_page_count=coordinator_qsa_cache_pages(&coordinator->options);
-    uint64_t index=(uint64_t)logical*12u*FG_Q38_QSA_INDEX_KEY_BYTES;
+    /* Index segments after the first are lazy, so the startup ledger counts
+     * only the eager first segment per QSA layer. */
+    uint64_t index=(uint64_t)fg_qsa_index_segment_tokens(logical,0u)*12u*
+        FG_Q38_QSA_INDEX_KEY_BYTES;
     uint64_t record_cache=(uint64_t)cache_page_count*FG_QSA_PAGE_RECORD_BYTES;
     uint32_t ngram_store_tokens=coordinator->manifest->prefill_microbatch<=FG_NGRAM_PREFILL_MAX_TOKENS/FG_PREFILL_FRAMES?FG_PREFILL_FRAMES*coordinator->manifest->prefill_microbatch:FG_NGRAM_PREFILL_MAX_TOKENS;
     uint64_t ngram_vk_capacity=(uint64_t)ngram_store_tokens*
@@ -1908,8 +1911,8 @@ static void coordinator_memory_report(const fg_coordinator *coordinator){
         FG_Q8K_ACTIVATION_BYTES;
     uint64_t expert_activation=owner_activation;
     uint64_t qsa_positions=logical*FG_Q38_QSA_POSITION_BYTES;
-    uint64_t qsa_index=(uint64_t)logical*(FG_LAYER_COUNT/4u)*
-        FG_Q38_QSA_INDEX_KEY_BYTES;
+    uint64_t qsa_index=(uint64_t)fg_qsa_index_segment_tokens(logical,0u)*
+        (FG_LAYER_COUNT/4u)*FG_Q38_QSA_INDEX_KEY_BYTES;
     uint64_t qsa_record_cache=record_cache;
     uint64_t prefill_token=(uint64_t)coordinator->prefill_layer[0].tokens*
         sizeof(uint32_t)*FG_PREFILL_FRAMES;
