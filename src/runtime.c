@@ -1346,14 +1346,11 @@ static fg_status handle_qsa_page_fetch(fg_fabric *fabric,qsa_owner_runtime *runt
     }
     if(status==FG_OK&&owner&&fg_owner_qsa_ready(owner)){
         /* The state-backed ring session is authoritative: read its records
-         * directly instead of a second, stale state handle. */
-        for(uint32_t i=0;status==FG_OK&&i<batch.page_count;i++){
-            const uint8_t *records=NULL;
-            status=fg_owner_qsa_page_records(owner,batch.pages[i].layer,
-                                             batch.pages[i].block,&records,err);
-            if(status==FG_OK)memcpy(runtime->read_records+
-                (uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,records,FG_QSA_PAGE_RECORD_BYTES);
-        }
+         * directly instead of a second, stale state handle or a cache entry. */
+        for(uint32_t i=0;status==FG_OK&&i<batch.page_count;i++)
+            status=fg_owner_qsa_state_records(owner,batch.pages[i].layer,
+                batch.pages[i].block,runtime->read_records+
+                    (uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,err);
     }else if(status==FG_OK){
         status=fg_qsa_state_read_blocks(runtime->state,(uint32_t)slot,
             runtime->blocks,batch.page_count,runtime->read_records,runtime->committed,err);

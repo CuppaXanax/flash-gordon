@@ -120,6 +120,8 @@ fg_status fg_owner_qsa_prefill(fg_owner_executor *executor,uint32_t layer,uint32
 fg_status fg_owner_qsa_page_records(const fg_owner_executor *executor,uint32_t layer,
                                     uint32_t block,const uint8_t **records,fg_error *err);
 void fg_owner_qsa_page_published(fg_owner_executor *executor,uint32_t layer,uint32_t block);
+fg_status fg_owner_qsa_state_records(fg_owner_executor *executor,uint32_t layer,
+                                     uint32_t block,uint8_t *records,fg_error *err);
 fg_status fg_owner_decode_layer(fg_owner_executor *executor,uint32_t layer,uint32_t token_index,
                                 const uint32_t position[3],const fg_vk_tensor *hyper_input,
                                 const fg_vk_tensor *ngram_embedding,

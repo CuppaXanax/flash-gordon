@@ -1095,3 +1095,22 @@ fg_status fg_qsa_session_page_records(const fg_qsa_session *s,uint32_t layer,
 void fg_qsa_session_page_published(fg_qsa_session *s,uint32_t layer,uint32_t block){
     if(s&&s->cache)fg_qsa_page_cache_unpin(s->cache,layer,block);
 }
+
+/* Authoritative read for state-backed sessions: the block records come from
+ * the session's own state file rather than a pinned page-cache entry. */
+fg_status fg_qsa_session_state_records(fg_qsa_session *s,uint32_t layer,uint32_t block,
+                                       uint8_t *records,fg_error *err){
+    int signed_slot=s?layer_slot(s,layer):-1;
+    if(!s||signed_slot<0||!records||!s->state){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA state page lookup");
+        return FG_ERR_ARGUMENT;
+    }
+    uint32_t committed=0;
+    fg_status status=fg_qsa_state_read_block(s->state,(uint32_t)signed_slot,block,
+                                             records,&committed,err);
+    if(status==FG_OK&&committed!=FG_Q38_QSA_COMPRESS_RATIO){
+        fg_error_set(err,FG_ERR_MISMATCH,"QSA state page is incomplete");
+        status=FG_ERR_MISMATCH;
+    }
+    return status;
+}

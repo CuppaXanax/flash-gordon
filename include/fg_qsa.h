@@ -146,6 +146,8 @@ fg_status fg_qsa_session_prefill(fg_qsa_session *session,uint32_t layer,uint32_t
                                  const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err);
 fg_status fg_qsa_session_page_records(const fg_qsa_session *session,uint32_t layer,
                                       uint32_t block,const uint8_t **records,fg_error *err);
+fg_status fg_qsa_session_state_records(fg_qsa_session *session,uint32_t layer,
+                                       uint32_t block,uint8_t *records,fg_error *err);
 void fg_qsa_session_page_published(fg_qsa_session *session,uint32_t layer,uint32_t block);
 
 #endif
