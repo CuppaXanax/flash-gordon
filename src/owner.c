@@ -549,13 +549,17 @@ static fg_status moe_reduce_into(fg_owner_executor *e,uint32_t layer,uint32_t po
        reduce in L1, then write result back.  The WC mapping makes scattered reads
        ~20x slower than cached DRAM; this copy+reduce pattern eliminates that. */
     float shared_local[FG_HIDDEN_SIZE],result_local[FG_HIDDEN_SIZE];
-    memcpy(shared_local,fg_vk_tensor_map(shared_output),FG_HIDDEN_SIZE*sizeof(float));
+    fg_status read_status=fg_vk_tensor_read(shared_output,0,shared_local,
+        FG_HIDDEN_SIZE*sizeof(float),err);
+    if(read_status!=FG_OK)return read_status;
     for(uint32_t element=0;element<FG_HIDDEN_SIZE;element++)result_local[element]=shared_scale*shared_local[element];
     if(has_prereduced){for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)if(prereduced[rank])for(uint32_t element=0;element<FG_HIDDEN_SIZE;element++)result_local[element]+=prereduced[rank][element];
     /* Add any non-pre-reduced slot outputs (e.g., local experts on coordinator) */
     for(uint32_t slot=0;slot<FG_TOP_K;slot++){if(slot_output[slot]){float g=gates[slot];const float *out=slot_output[slot];for(uint32_t element=0;element<FG_HIDDEN_SIZE;element++)result_local[element]=fmaf(g,out[element],result_local[element]);}}
     }else{for(uint32_t slot=0;slot<FG_TOP_K;slot++){float g=gates[slot];const float *out=slot_output[slot];for(uint32_t element=0;element<FG_HIDDEN_SIZE;element++)result_local[element]=fmaf(g,out[element],result_local[element]);}}
-    memcpy(fg_vk_tensor_map(reduced),result_local,FG_HIDDEN_SIZE*sizeof(float));
+    fg_status write_status=fg_vk_tensor_write(reduced,0,result_local,
+        FG_HIDDEN_SIZE*sizeof(float),err);
+    if(write_status!=FG_OK)return write_status;
     *output=reduced;return FG_OK;
 }
 fg_status fg_owner_moe_reduce(fg_owner_executor *e,uint32_t layer,uint32_t position,const uint16_t expert_ids[FG_TOP_K],const float gates[FG_TOP_K],const fg_expert_result *results,uint32_t result_count,fg_vk_tensor **output,fg_error *err){return moe_reduce_into(e,layer,position,expert_ids,gates,results,result_count,e?e->shared_output:NULL,e?e->shared_scalar:NULL,e?e->reduced:NULL,output,err);}
@@ -934,7 +938,9 @@ static fg_status decode_layer_begin_impl(fg_owner_executor *e,uint32_t slot,uint
         numerics_trace_values_local("SYNC1_INJ",fg_model_rank(e->model),layer,
             fg_vk_tensor_map(frame->injection),FG_GROUP_SIZE);
     }
-    if(status==FG_OK){float router_local[FG_EXPERT_COUNT];memcpy(router_local,fg_vk_tensor_map(e->router_logits),sizeof(router_local));uint32_t ids[FG_TOP_K];status=fg_q38_router_topk(router_local,FG_EXPERT_COUNT,FG_TOP_K,ids,frame->gates,err);for(uint32_t s=0;status==FG_OK&&s<FG_TOP_K;s++)frame->expert_ids[s]=(uint16_t)ids[s];}
+    float router_local[FG_EXPERT_COUNT];
+    if(status==FG_OK){fg_status read_status=fg_vk_tensor_read(e->router_logits,0,router_local,sizeof(router_local),err);if(read_status!=FG_OK)status=read_status;}
+    if(status==FG_OK){uint32_t ids[FG_TOP_K];status=fg_q38_router_topk(router_local,FG_EXPERT_COUNT,FG_TOP_K,ids,frame->gates,err);for(uint32_t s=0;status==FG_OK&&s<FG_TOP_K;s++)frame->expert_ids[s]=(uint16_t)ids[s];}
     double t_topk=ts_ms();
     if(status==FG_OK&&layer<=1u&&numerics_trace_enabled())
         numerics_trace_values_local("SYNC1_GATES",fg_model_rank(e->model),layer,
