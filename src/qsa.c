@@ -972,7 +972,9 @@ static fg_status ensure_select_scratch(fg_qsa_session *s,fg_error *err){
         fg_vk_tensor_destroy(s->sel_ids[i]);s->sel_ids[i]=NULL;
     }
     fg_vk_tensor_destroy(s->sel_result_ids);s->sel_result_ids=NULL;
-    free(s->select_ids);s->select_ids=NULL;
+    /* select_ids is host staging whose size only depends on max_tokens; the
+     * selection callers hold a pointer to it across this initialization, so
+     * it must never be freed here. */
     uint64_t stride=(uint64_t)s->max_blocks*4u;
     /* Rank 0's mirror has only ~150 MB of headroom; keep the lazy selection
      * scratch at 4 MiB per side. */
@@ -1002,7 +1004,8 @@ static fg_status ensure_prefill_batch(fg_qsa_session *s,fg_error *err){
     fg_vk_tensor_destroy(s->batch_partials);s->batch_partials=NULL;
     fg_vk_tensor_destroy(s->batch_slots);s->batch_slots=NULL;
     fg_vk_tensor_destroy(s->batch_counts);s->batch_counts=NULL;
-    free(s->select_ids);s->select_ids=NULL;
+    /* select_ids is deliberately preserved: callers capture it before the
+     * scratch tensors above are (re)created and it never depends on them. */
     const uint32_t tile=FG_QSA_PREFILL_BATCH_QUERIES;
     fg_status status=make_tensor(s,(uint64_t)tile*FG_QSA_SELECTED_TOKENS*
         FG_Q38_QSA_TOKEN_RECORD_BYTES,&s->batch_records,err);
