@@ -1254,11 +1254,20 @@ static fg_status worker_open_qsa_state(fg_owner_executor *owner,qsa_owner_runtim
                                    manifest->prefill_microbatch,err);
 }
 
-/* The block owner's state-backed QSA session persists every completed block,
- * so ring workers commit through their session, not the page transport. */
+/* The block owner's state-backed QSA session persists every completed block.
+ * Advance the runtime guard frontier so decode cold fetches from rank 0 are
+ * accepted for the tokens this block produced. */
 static fg_status worker_publish_qsa_pages(void *opaque,fg_owner_executor *owner,
     uint32_t self,uint32_t first_token,uint16_t token_count,fg_error *err){
-    (void)opaque;(void)owner;(void)self;(void)first_token;(void)token_count;(void)err;
+    (void)owner;(void)self;(void)err;
+    qsa_owner_runtime *runtime=opaque;
+    if(!runtime||!runtime->enabled)return FG_OK;
+    uint32_t frontier=first_token+token_count;
+    for(uint32_t slot=0;slot<runtime->layer_count;slot++){
+        uint32_t layer=runtime->layers[slot];
+        if(frontier>runtime->guard.next_token[layer])
+            runtime->guard.next_token[layer]=frontier;
+    }
     return FG_OK;
 }
 
