@@ -2413,9 +2413,10 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
     uint32_t total_chunks=(token_count+microbatch-1u)/microbatch;
     uint32_t next_chunk=0,in_flight=0,completed=0;
     fg_vk_tensor *last_output=NULL;
-    bool can_issue=true;
+    bool ring_trace=getenv("FG_RING_TRACE")!=NULL;
+    double ring_t0=dispatch_ts();
     while(status==FG_OK&&completed<total_chunks){
-        if(can_issue&&next_chunk<total_chunks&&in_flight<FG_PREFILL_FRAMES){
+        if(next_chunk<total_chunks&&in_flight<FG_PREFILL_FRAMES){
             uint32_t chunk=next_chunk,f=chunk%FG_PREFILL_FRAMES;
             ring_slot *slot=&slots[f];
             if(slot->active){
@@ -2454,7 +2455,12 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
                 coordinator->session_id,manifest->layer_owner[0u],0u,chunk_first,
                 (uint16_t)chunk_tokens,slot->positions,hyper_host,
                 ngram_view?ngram_host:NULL,work_wire,work_capacity,err);
-            if(status==FG_OK){next_chunk++;in_flight++;can_issue=false;}
+            if(status==FG_OK){
+                next_chunk++;in_flight++;
+                if(ring_trace)fprintf(stderr,
+                    "RING_ISSUE chunk=%u first=%u in_flight=%u t=%.3f\n",
+                    chunk,chunk_first,in_flight,dispatch_ts()-ring_t0);
+            }
             continue;
         }
         uint32_t peer=0,bytes=0;fg_frame_header header;
@@ -2487,6 +2493,9 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
                 status=FG_ERR_MISMATCH;
                 break;
             }
+            if(ring_trace)fprintf(stderr,
+                "RING_STAGE chunk=%u layer=%u in_flight=%u t=%.3f\n",
+                chunk,work.layer,in_flight,dispatch_ts()-ring_t0);
             memcpy(slot->positions,positions_scratch,(size_t)work.token_count*3u*4u);
             fg_vk_tensor *input=fg_owner_prefill_input_slot(coordinator->owner,f);
             status=fg_vk_tensor_write(input,0,hyper_host,
@@ -2544,6 +2553,9 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
             status=fg_vk_tensor_write(slot->output,0,result.hyper,
                 (uint64_t)result.token_count*FG_HYPER_WIDTH*4u,err);
             slot->active=false;in_flight--;completed++;last_output=slot->output;
+            if(ring_trace)fprintf(stderr,
+                "RING_DONE chunk=%u in_flight=%u completed=%u t=%.3f\n",
+                chunk,in_flight,completed,dispatch_ts()-ring_t0);
             if(status==FG_OK)status=coordinator_publish_qsa_pages(coordinator,
                 result.first_token,result.token_count,err);
         }else{
@@ -2551,7 +2563,6 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
             status=FG_ERR_MISMATCH;
             break;
         }
-        can_issue=true;
     }
     if(status==FG_OK)*output=last_output;
     /* Decode on rank 0 attaches to owners' committed state; the mirror did not
