@@ -20,187 +20,187 @@ layout(push_constant) uniform Push {
 const uint Q4_K = 12u;
 const uint Q5_K = 13u;
 const uint TOP_K = 10u;
-const uint PAIR_TILE = 16u;
-const uint TILE_WORDS = 17u;
+const uint PAIR_TILE = 4u;
+const uint TILE_WORDS = 5u;
 const uint INVALID = 0xffffffffu;
 const uint Q8K_WORDS = 74u;
-shared uint metadata[32];
-shared uint pair_ids[PAIR_TILE];
-shared float sums[PAIR_TILE][64];
+const uint ROWS = 4u;
+const uint SUMS_STRIDE = 9u;
+const uint ROWS_PER_WORKGROUP = 32u;
 
-uint metadata_byte(uint row_slot, uint offset) {
-    uint word = metadata[row_slot * 4u + 1u + (offset >> 2u)];
-    return (word >> ((offset & 3u) * 8u)) & 255u;
-}
+shared float sums[PAIR_TILE][ROWS_PER_WORKGROUP * SUMS_STRIDE];
 
-void scale_min(uint row_slot, uint group, out uint scale, out uint minimum) {
-    uint first = metadata_byte(row_slot, group);
+/* Six-bit scale/min pair for one 32-value K group, decoded from the three
+   packed metadata words that follow the d/dmin half pair. */
+vec2 scale_min(uint m0, uint m1, uint m2, uint group) {
     if (group < 4u) {
-        scale = first & 63u;
-        minimum = metadata_byte(row_slot, 4u + group) & 63u;
-    } else {
-        uint upper = metadata_byte(row_slot, 4u + group);
-        uint lower = metadata_byte(row_slot, group - 4u);
-        scale = (upper & 15u) | ((lower >> 6u) << 4u);
-        minimum = (upper >> 4u) | ((first >> 6u) << 4u);
+        uint shift = group * 8u;
+        return vec2(float((m0 >> shift) & 63u), float((m1 >> shift) & 63u));
     }
+    uint shift = (group - 4u) * 8u;
+    return vec2(float(((m2 >> shift) & 15u) | (((m0 >> (shift + 6u)) & 3u) << 4u)),
+                float(((m2 >> (shift + 4u)) & 15u) | (((m1 >> (shift + 6u)) & 3u) << 4u)));
 }
 
-int signed_half(uint packed, uint upper) {
-    uint value = upper == 0u ? packed & 65535u : packed >> 16u;
-    return value >= 32768u ? int(value) - 65536 : int(value);
+/* Dequantized weight vector for one row lane and one K group.  The minimum
+   term is folded into the vector so the pair dot needs no separate bsum
+   pass; quants stay integral and all products are exact in fp32. */
+vec4 weight_values(uint qword, uint high, uint group, vec2 dm,
+                   uint m0, uint m1, uint m2) {
+    uint word = (qword >> ((group & 1u) * 4u)) & 0x0f0f0f0fu;
+    word |= ((high >> group) & 0x01010101u) << 4u;
+    vec2 sm = scale_min(m0, m1, m2, group);
+    return fma(vec4(unpack8(int(word))), vec4(dm.x * sm.x), vec4(-(dm.y * sm.y)));
 }
 
-/* The live pair slots are packed from slot zero by expert.c; the unrolled
-   steps keep every accumulator in a register (no dynamic function-array
-   indexing) and skip the trailing empty slots with a uniform branch. */
-#define FG_DOT_PAIR(PS, ACC) { \
-    uint pair_id = pair_ids[PS]; \
-    if (pair_id != INVALID) { \
-        uint activation_base = (pair_id / TOP_K) * pc.blocks * Q8K_WORDS + \
-            block * Q8K_WORDS; \
-        float activation_delta = uintBitsToFloat(q8[activation_base]); \
-        uint packed_activation = q8[activation_base + 2u + group * 8u + lane]; \
-        ACC = fma(delta_min.x * activation_delta, \
-            dot(weight_value, vec4(unpack8(int(packed_activation)))), ACC); \
-    } }
-
-#define FG_MIN_PAIR(PS, ACC) { \
-    uint pair_id = pair_ids[PS]; \
-    if (pair_id != INVALID) { \
-        uint activation_base = (pair_id / TOP_K) * pc.blocks * Q8K_WORDS + \
-            block * Q8K_WORDS; \
-        float activation_delta = uintBitsToFloat(q8[activation_base]); \
-        int minimum_dot = 0; \
-        for (uint group = begin; group < end; group++) { \
-            uint scale_value; \
-            uint minimum_value; \
-            scale_min(row_slot, group, scale_value, minimum_value); \
-            uint packed_sums = q8[activation_base + 66u + group]; \
-            minimum_dot += int(minimum_value) * \
-                (signed_half(packed_sums, 0u) + signed_half(packed_sums, 1u)); \
-        } \
-        ACC = fma(-delta_min.y * activation_delta, float(minimum_dot), ACC); \
+/* One pair slot of the outer product: the four row weight vectors are
+   decoded once per group and the live flag is tested once for all rows.
+   Empty slots are packed after the live ones, so they cost a branch only. */
+#define FG_PAIR(P, AD, A, L) { \
+    if (L) { \
+        acc0##P = fma(AD, dot(w0, A), acc0##P); \
+        acc1##P = fma(AD, dot(w1, A), acc1##P); \
+        acc2##P = fma(AD, dot(w2, A), acc2##P); \
+        acc3##P = fma(AD, dot(w3, A), acc3##P); \
     } }
 
 void main() {
-    uint local_id = gl_LocalInvocationID.x;
-    uint row_slot = local_id >> 3u;
-    uint lane = local_id & 7u;
-    uint row = gl_WorkGroupID.x * 8u + row_slot;
+    uint lid = gl_LocalInvocationID.x;
+    uint lane = lid & 7u;
+    uint row_group = lid >> 3u;
+    uint row0 = gl_WorkGroupID.x * ROWS_PER_WORKGROUP + row_group * ROWS;
+
     uint tile_base = gl_WorkGroupID.y * TILE_WORDS;
     uint expert = tiles[tile_base];
     if (expert == INVALID) return;
-    if (local_id < PAIR_TILE) pair_ids[local_id] = tiles[tile_base + 1u + local_id];
-    uint row_tile = row >> 3u;
-    uint tile_row = row & 7u;
-    bool row_live = row < pc.out_dim;
-    float acc0 = 0.0, acc1 = 0.0, acc2 = 0.0, acc3 = 0.0;
-    float acc4 = 0.0, acc5 = 0.0, acc6 = 0.0, acc7 = 0.0;
-    float acc8 = 0.0, acc9 = 0.0, acc10 = 0.0, acc11 = 0.0;
-    float acc12 = 0.0, acc13 = 0.0, acc14 = 0.0, acc15 = 0.0;
-    barrier();
+
+    uint p0 = tiles[tile_base + 1u];
+    uint p1 = tiles[tile_base + 2u];
+    uint p2 = tiles[tile_base + 3u];
+    uint p3 = tiles[tile_base + 4u];
+
+    bool live0 = p0 != INVALID;
+    bool live1 = p1 != INVALID;
+    bool live2 = p2 != INVALID;
+    bool live3 = p3 != INVALID;
+    uint t0 = live0 ? (p0 / TOP_K) * (pc.blocks * Q8K_WORDS) : 0u;
+    uint t1 = live1 ? (p1 / TOP_K) * (pc.blocks * Q8K_WORDS) : 0u;
+    uint t2 = live2 ? (p2 / TOP_K) * (pc.blocks * Q8K_WORDS) : 0u;
+    uint t3 = live3 ? (p3 / TOP_K) * (pc.blocks * Q8K_WORDS) : 0u;
+
+    bool row_live0 = row0 < pc.out_dim;
+    bool row_live1 = row0 + 1u < pc.out_dim;
+    bool row_live2 = row0 + 2u < pc.out_dim;
+    bool row_live3 = row0 + 3u < pc.out_dim;
+
+    uint row_tile = row0 >> 3u;
+    uint tile_row = row0 & 7u;
+    uint wr = expert * pc.expert_stride + row_tile * pc.tile_bytes;
+    bool q5 = pc.type == Q5_K;
+    uint block_tile_bytes = q5 ? 1408u : 1152u;
+    uint quant_offset = q5 ? 384u : 128u;
+
+    float acc00 = 0.0, acc01 = 0.0, acc02 = 0.0, acc03 = 0.0;
+    float acc10 = 0.0, acc11 = 0.0, acc12 = 0.0, acc13 = 0.0;
+    float acc20 = 0.0, acc21 = 0.0, acc22 = 0.0, acc23 = 0.0;
+    float acc30 = 0.0, acc31 = 0.0, acc32 = 0.0, acc33 = 0.0;
 
     for (uint block = 0u; block < pc.blocks; block++) {
-        uint block_tile_bytes = pc.type == Q4_K ? 1152u : 1408u;
-        uint block_base = expert * pc.expert_stride + row_tile * pc.tile_bytes +
-            block * block_tile_bytes;
-        if (lane == 0u)
-            metadata[row_slot * 4u] = row_live ?
-                wb[(block_base + tile_row * 4u) >> 2u] : 0u;
-        if (lane < 3u)
-            metadata[row_slot * 4u + 1u + lane] = row_live ?
-                wb[(block_base + 32u + tile_row * 12u + lane * 4u) >> 2u] : 0u;
-        barrier();
+        uint bb = wr + block * block_tile_bytes;
+        uint db = bb + tile_row * 4u;
+        uint mb = bb + 32u + tile_row * 12u;
+        uint qb = bb + quant_offset + tile_row * 128u + lane * 4u;
+        uint hb = bb + 128u + tile_row * 32u + lane * 4u;
 
-        if (row_live) {
-            vec2 delta_min = unpackHalf2x16(metadata[row_slot * 4u]);
-            uint high = pc.type == Q5_K ?
-                wb[(block_base + 128u + tile_row * 32u + lane * 4u) >> 2u] : 0u;
-            uint quant_base = block_base + (pc.type == Q5_K ? 384u : 128u) +
-                tile_row * 128u + lane * 4u;
+        uint dw0 = row_live0 ? wb[db >> 2u] : 0u;
+        uint dw1 = row_live1 ? wb[(db + 4u) >> 2u] : 0u;
+        uint dw2 = row_live2 ? wb[(db + 8u) >> 2u] : 0u;
+        uint dw3 = row_live3 ? wb[(db + 12u) >> 2u] : 0u;
+        vec2 dm0 = unpackHalf2x16(dw0);
+        vec2 dm1 = unpackHalf2x16(dw1);
+        vec2 dm2 = unpackHalf2x16(dw2);
+        vec2 dm3 = unpackHalf2x16(dw3);
 
-            for (uint group = 0u; group < 8u; group++) {
-                uint scale_value;
-                uint minimum_value;
-                scale_min(row_slot, group, scale_value, minimum_value);
-                uint packed_quant = wb[(quant_base + (group >> 1u) * 32u) >> 2u];
-                uint quant_word = (packed_quant >> ((group & 1u) * 4u)) & 0x0f0f0f0fu;
-                if (pc.type == Q5_K)
-                    quant_word |= ((high >> group) & 0x01010101u) << 4u;
-                vec4 weight_value = vec4(unpack8(int(quant_word))) *
-                    float(scale_value);
-                FG_DOT_PAIR(0, acc0)
-                FG_DOT_PAIR(1, acc1)
-                FG_DOT_PAIR(2, acc2)
-                FG_DOT_PAIR(3, acc3)
-                FG_DOT_PAIR(4, acc4)
-                FG_DOT_PAIR(5, acc5)
-                FG_DOT_PAIR(6, acc6)
-                FG_DOT_PAIR(7, acc7)
-                FG_DOT_PAIR(8, acc8)
-                FG_DOT_PAIR(9, acc9)
-                FG_DOT_PAIR(10, acc10)
-                FG_DOT_PAIR(11, acc11)
-                FG_DOT_PAIR(12, acc12)
-                FG_DOT_PAIR(13, acc13)
-                FG_DOT_PAIR(14, acc14)
-                FG_DOT_PAIR(15, acc15)
-            }
+        uint s00 = row_live0 ? wb[mb >> 2u] : 0u;
+        uint s01 = row_live0 ? wb[(mb + 4u) >> 2u] : 0u;
+        uint s02 = row_live0 ? wb[(mb + 8u) >> 2u] : 0u;
+        uint s10 = row_live1 ? wb[(mb + 12u) >> 2u] : 0u;
+        uint s11 = row_live1 ? wb[(mb + 16u) >> 2u] : 0u;
+        uint s12 = row_live1 ? wb[(mb + 20u) >> 2u] : 0u;
+        uint s20 = row_live2 ? wb[(mb + 24u) >> 2u] : 0u;
+        uint s21 = row_live2 ? wb[(mb + 28u) >> 2u] : 0u;
+        uint s22 = row_live2 ? wb[(mb + 32u) >> 2u] : 0u;
+        uint s30 = row_live3 ? wb[(mb + 36u) >> 2u] : 0u;
+        uint s31 = row_live3 ? wb[(mb + 40u) >> 2u] : 0u;
+        uint s32 = row_live3 ? wb[(mb + 44u) >> 2u] : 0u;
 
-            if ((pc.type == Q5_K && lane == 0u) ||
-                (pc.type == Q4_K && lane < 4u)) {
-                uint begin = pc.type == Q5_K ? 0u : lane * 2u;
-                uint end = pc.type == Q5_K ? 8u : begin + 2u;
-                FG_MIN_PAIR(0, acc0)
-                FG_MIN_PAIR(1, acc1)
-                FG_MIN_PAIR(2, acc2)
-                FG_MIN_PAIR(3, acc3)
-                FG_MIN_PAIR(4, acc4)
-                FG_MIN_PAIR(5, acc5)
-                FG_MIN_PAIR(6, acc6)
-                FG_MIN_PAIR(7, acc7)
-                FG_MIN_PAIR(8, acc8)
-                FG_MIN_PAIR(9, acc9)
-                FG_MIN_PAIR(10, acc10)
-                FG_MIN_PAIR(11, acc11)
-                FG_MIN_PAIR(12, acc12)
-                FG_MIN_PAIR(13, acc13)
-                FG_MIN_PAIR(14, acc14)
-                FG_MIN_PAIR(15, acc15)
+        uint hw0 = (q5 && row_live0) ? wb[hb >> 2u] : 0u;
+        uint hw1 = (q5 && row_live1) ? wb[(hb + 32u) >> 2u] : 0u;
+        uint hw2 = (q5 && row_live2) ? wb[(hb + 64u) >> 2u] : 0u;
+        uint hw3 = (q5 && row_live3) ? wb[(hb + 96u) >> 2u] : 0u;
+
+        float ad0 = live0 ? uintBitsToFloat(q8[t0 + block * Q8K_WORDS]) : 0.0;
+        float ad1 = live1 ? uintBitsToFloat(q8[t1 + block * Q8K_WORDS]) : 0.0;
+        float ad2 = live2 ? uintBitsToFloat(q8[t2 + block * Q8K_WORDS]) : 0.0;
+        float ad3 = live3 ? uintBitsToFloat(q8[t3 + block * Q8K_WORDS]) : 0.0;
+
+        for (uint gp = 0u; gp < 4u; gp++) {
+            uint q0 = row_live0 ? wb[(qb + gp * 32u) >> 2u] : 0u;
+            uint q1 = row_live1 ? wb[(qb + 128u + gp * 32u) >> 2u] : 0u;
+            uint q2 = row_live2 ? wb[(qb + 256u + gp * 32u) >> 2u] : 0u;
+            uint q3 = row_live3 ? wb[(qb + 384u + gp * 32u) >> 2u] : 0u;
+            for (uint g2 = 0u; g2 < 2u; g2++) {
+                uint g = gp * 2u + g2;
+                vec4 a0 = live0 ? vec4(unpack8(int(q8[t0 + block * Q8K_WORDS + 2u + g * 8u + lane]))) : vec4(0.0);
+                vec4 a1 = live1 ? vec4(unpack8(int(q8[t1 + block * Q8K_WORDS + 2u + g * 8u + lane]))) : vec4(0.0);
+                vec4 a2 = live2 ? vec4(unpack8(int(q8[t2 + block * Q8K_WORDS + 2u + g * 8u + lane]))) : vec4(0.0);
+                vec4 a3 = live3 ? vec4(unpack8(int(q8[t3 + block * Q8K_WORDS + 2u + g * 8u + lane]))) : vec4(0.0);
+                vec4 w0 = weight_values(q0, hw0, g, dm0, s00, s01, s02);
+                vec4 w1 = weight_values(q1, hw1, g, dm1, s10, s11, s12);
+                vec4 w2 = weight_values(q2, hw2, g, dm2, s20, s21, s22);
+                vec4 w3 = weight_values(q3, hw3, g, dm3, s30, s31, s32);
+                FG_PAIR(0, ad0, a0, live0)
+                FG_PAIR(1, ad1, a1, live1)
+                FG_PAIR(2, ad2, a2, live2)
+                FG_PAIR(3, ad3, a3, live3)
             }
         }
-        barrier();
     }
 
-    sums[0][local_id] = acc0;
-    sums[1][local_id] = acc1;
-    sums[2][local_id] = acc2;
-    sums[3][local_id] = acc3;
-    sums[4][local_id] = acc4;
-    sums[5][local_id] = acc5;
-    sums[6][local_id] = acc6;
-    sums[7][local_id] = acc7;
-    sums[8][local_id] = acc8;
-    sums[9][local_id] = acc9;
-    sums[10][local_id] = acc10;
-    sums[11][local_id] = acc11;
-    sums[12][local_id] = acc12;
-    sums[13][local_id] = acc13;
-    sums[14][local_id] = acc14;
-    sums[15][local_id] = acc15;
+    uint row_local = row_group * ROWS;
+    sums[0][(row_local + 0u) * SUMS_STRIDE + lane] = acc00;
+    sums[1][(row_local + 0u) * SUMS_STRIDE + lane] = acc01;
+    sums[2][(row_local + 0u) * SUMS_STRIDE + lane] = acc02;
+    sums[3][(row_local + 0u) * SUMS_STRIDE + lane] = acc03;
+    sums[0][(row_local + 1u) * SUMS_STRIDE + lane] = acc10;
+    sums[1][(row_local + 1u) * SUMS_STRIDE + lane] = acc11;
+    sums[2][(row_local + 1u) * SUMS_STRIDE + lane] = acc12;
+    sums[3][(row_local + 1u) * SUMS_STRIDE + lane] = acc13;
+    sums[0][(row_local + 2u) * SUMS_STRIDE + lane] = acc20;
+    sums[1][(row_local + 2u) * SUMS_STRIDE + lane] = acc21;
+    sums[2][(row_local + 2u) * SUMS_STRIDE + lane] = acc22;
+    sums[3][(row_local + 2u) * SUMS_STRIDE + lane] = acc23;
+    sums[0][(row_local + 3u) * SUMS_STRIDE + lane] = acc30;
+    sums[1][(row_local + 3u) * SUMS_STRIDE + lane] = acc31;
+    sums[2][(row_local + 3u) * SUMS_STRIDE + lane] = acc32;
+    sums[3][(row_local + 3u) * SUMS_STRIDE + lane] = acc33;
     barrier();
-    if (row_live && lane == 0u) {
-        uint offset = row_slot * 8u;
-        for (uint pair_slot = 0u; pair_slot < PAIR_TILE; pair_slot++) {
-            uint pair = pair_ids[pair_slot];
+
+    if (lane == 0u) {
+        for (uint p = 0u; p < PAIR_TILE; p++) {
+            uint pair = p == 0u ? p0 : p == 1u ? p1 : p == 2u ? p2 : p3;
             if (pair == INVALID || pair >= pc.tokens * TOP_K) continue;
-            float value =
-                ((sums[pair_slot][offset] + sums[pair_slot][offset + 4u]) +
-                 (sums[pair_slot][offset + 2u] + sums[pair_slot][offset + 6u])) +
-                ((sums[pair_slot][offset + 1u] + sums[pair_slot][offset + 5u]) +
-                 (sums[pair_slot][offset + 3u] + sums[pair_slot][offset + 7u]));
-            y[pair * pc.out_dim + row] = value;
+            for (uint r = 0u; r < ROWS; r++) {
+                uint row = row0 + r;
+                if (row >= pc.out_dim) continue;
+                uint offset = (row_local + r) * SUMS_STRIDE;
+                float value =
+                    ((sums[p][offset] + sums[p][offset + 4u]) +
+                     (sums[p][offset + 2u] + sums[p][offset + 6u])) +
+                    ((sums[p][offset + 1u] + sums[p][offset + 5u]) +
+                     (sums[p][offset + 3u] + sums[p][offset + 7u]));
+                y[pair * pc.out_dim + row] = value;
+            }
         }
     }
 }

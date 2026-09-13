@@ -1030,11 +1030,20 @@ fg_status fg_vk_moe_kquant_cooked_grouped(fg_vk_context *c,fg_vk_tensor *out,
     }
     struct{uint32_t out_dim,blocks,tile_bytes,expert_stride,type,tokens;}push={output_width,input_width/FG_QK8_K,(uint32_t)tile_bytes,expert_stride,type,tokens};
     const fg_vk_tensor *bindings[]={weights,activation,tiles,out};
+    /* GFX1013 (BC-250) has no V_DOT4: RADV reports
+       integerDotProduct4x8BitPackedSignedAccelerated=false (ac_gpu_info.c
+       excludes CHIP_GFX1013) and the LLVM gfx1013 ISA feature set omits
+       Dot1Insts, so c->integer_dot_product stays false and the float kernel
+       runs.  Only pick the dp4a kernel where the property is actually
+       advertised. */
     fg_vk_kernel *kernel=c->integer_dot_product?&c->kquant_cooked_grouped_int:&c->kquant_cooked_grouped;
-    fg_status status=dispatch(c,kernel,bindings,&push,(output_width+FG_K_QUANT_COOK_ROWS-1u)/FG_K_QUANT_COOK_ROWS,tile_count,1u,err);
+    /* The int fallback still walks the legacy eight-row workgroup; the float
+       kernel uses the wider 32-row tile. */
+    uint32_t rows=kernel==&c->kquant_cooked_grouped?FG_VK_PREFILL_ROW_TILE:FG_K_QUANT_COOK_ROWS;
+    fg_status status=dispatch(c,kernel,bindings,&push,(output_width+rows-1u)/rows,tile_count,1u,err);
     if(status!=FG_OK&&kernel==&c->kquant_cooked_grouped_int){
         c->integer_dot_product=false;
-        status=dispatch(c,&c->kquant_cooked_grouped,bindings,&push,(output_width+FG_K_QUANT_COOK_ROWS-1u)/FG_K_QUANT_COOK_ROWS,tile_count,1u,err);
+        status=dispatch(c,&c->kquant_cooked_grouped,bindings,&push,(output_width+FG_VK_PREFILL_ROW_TILE-1u)/FG_VK_PREFILL_ROW_TILE,tile_count,1u,err);
     }
     return status;
 }
@@ -1059,7 +1068,7 @@ fg_status fg_vk_moe_q5_1_down_cooked_grouped(fg_vk_context *c,fg_vk_tensor *out,
     }
     struct{uint32_t out_dim,in_dim,blocks,tile_bytes,expert_stride,tokens;}push={output_width,input_width,input_width/FG_QK8_0,(uint32_t)tile_bytes,expert_stride,tokens};
     const fg_vk_tensor *bindings[]={weights,tiles,input,out};
-    return dispatch(c,&c->q5_1_cooked_grouped,bindings,&push,(output_width+7u)/8u,tile_count,1u,err);
+    return dispatch(c,&c->q5_1_cooked_grouped,bindings,&push,(output_width+FG_VK_PREFILL_ROW_TILE-1u)/FG_VK_PREFILL_ROW_TILE,tile_count,1u,err);
 }
 fg_status fg_vk_moe_q8_0_down_grouped(fg_vk_context *c,fg_vk_tensor *out,
     const fg_vk_tensor *weights,const fg_vk_tensor *tiles,
@@ -1083,7 +1092,7 @@ fg_status fg_vk_moe_q8_0_down_grouped(fg_vk_context *c,fg_vk_tensor *out,
     }
     struct{uint32_t out_dim,in_dim,row_bytes,expert_stride,tokens;}push={output_width,input_width,(uint32_t)row_bytes,expert_stride,tokens};
     const fg_vk_tensor *bindings[]={weights,tiles,input,out};
-    return dispatch(c,&c->q8_0_grouped,bindings,&push,(output_width+7u)/8u,tile_count,1u,err);
+    return dispatch(c,&c->q8_0_grouped,bindings,&push,(output_width+FG_VK_PREFILL_ROW_TILE-1u)/FG_VK_PREFILL_ROW_TILE,tile_count,1u,err);
 }
 fg_status fg_vk_moe_prefill_reduce(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *expert_output,const fg_vk_tensor *gates,const fg_vk_tensor *shared_output,const fg_vk_tensor *shared_logit,uint32_t width,uint32_t tokens,fg_error *err){uint64_t pairs=(uint64_t)tokens*FG_TOP_K;if(!c||!width||!tokens||!tensor_range(expert_output,0,pairs*width*4u)||!tensor_range(gates,0,pairs*4u)||!tensor_range(shared_output,0,(uint64_t)tokens*width*4u)||!tensor_range(shared_logit,0,(uint64_t)tokens*4u)||!tensor_range(out,0,(uint64_t)tokens*width*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid GPU prefill gated reduction");return FG_ERR_ARGUMENT;}struct{uint32_t width,tokens;}push={width,tokens};const fg_vk_tensor *bindings[]={expert_output,gates,shared_output,shared_logit,out};return dispatch(c,&c->moe_prefill_reduce,bindings,&push,(width+255u)/256u,tokens,1u,err);}
 

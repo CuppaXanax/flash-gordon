@@ -11,8 +11,8 @@ layout(push_constant) uniform Push {
     uint tile_capacity;
 } pc;
 
-const uint PAIR_TILE = 16u;
-const uint TILE_WORDS = 17u;
+const uint PAIR_TILE = 4u;
+const uint TILE_WORDS = 5u;
 const uint INVALID = 0xffffffffu;
 shared uint counts[512];
 shared uint offsets[512];

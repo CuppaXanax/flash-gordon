@@ -1,7 +1,10 @@
 #version 460
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
-#extension GL_EXT_integer_dot_product : enable
+/* Guard the extension directive: older glslang (15.1) does not know the
+   extension and warns on an unconditional enable, while newer toolchains
+   still predefine the macro and compile the dp4a path. */
 #ifdef GL_EXT_integer_dot_product
+#extension GL_EXT_integer_dot_product : enable
 #define FG_INTEGER_DOT 1
 #endif
 
@@ -24,8 +27,8 @@ layout(push_constant) uniform Push {
 const uint Q4_K = 12u;
 const uint Q5_K = 13u;
 const uint TOP_K = 10u;
-const uint PAIR_TILE = 16u;
-const uint TILE_WORDS = 17u;
+const uint PAIR_TILE = 4u;
+const uint TILE_WORDS = 5u;
 const uint INVALID = 0xffffffffu;
 const uint Q8K_WORDS = 74u;
 shared uint metadata[32];
@@ -113,9 +116,6 @@ void main() {
     uint tile_row = row & 7u;
     bool row_live = row < pc.out_dim;
     float acc0 = 0.0, acc1 = 0.0, acc2 = 0.0, acc3 = 0.0;
-    float acc4 = 0.0, acc5 = 0.0, acc6 = 0.0, acc7 = 0.0;
-    float acc8 = 0.0, acc9 = 0.0, acc10 = 0.0, acc11 = 0.0;
-    float acc12 = 0.0, acc13 = 0.0, acc14 = 0.0, acc15 = 0.0;
     barrier();
 
     for (uint block = 0u; block < pc.blocks; block++) {
@@ -149,18 +149,6 @@ void main() {
                 FG_DOT_PAIR(1, acc1)
                 FG_DOT_PAIR(2, acc2)
                 FG_DOT_PAIR(3, acc3)
-                FG_DOT_PAIR(4, acc4)
-                FG_DOT_PAIR(5, acc5)
-                FG_DOT_PAIR(6, acc6)
-                FG_DOT_PAIR(7, acc7)
-                FG_DOT_PAIR(8, acc8)
-                FG_DOT_PAIR(9, acc9)
-                FG_DOT_PAIR(10, acc10)
-                FG_DOT_PAIR(11, acc11)
-                FG_DOT_PAIR(12, acc12)
-                FG_DOT_PAIR(13, acc13)
-                FG_DOT_PAIR(14, acc14)
-                FG_DOT_PAIR(15, acc15)
             }
 
             if ((pc.type == Q5_K && lane == 0u) ||
@@ -171,18 +159,6 @@ void main() {
                 FG_MIN_PAIR(1, acc1)
                 FG_MIN_PAIR(2, acc2)
                 FG_MIN_PAIR(3, acc3)
-                FG_MIN_PAIR(4, acc4)
-                FG_MIN_PAIR(5, acc5)
-                FG_MIN_PAIR(6, acc6)
-                FG_MIN_PAIR(7, acc7)
-                FG_MIN_PAIR(8, acc8)
-                FG_MIN_PAIR(9, acc9)
-                FG_MIN_PAIR(10, acc10)
-                FG_MIN_PAIR(11, acc11)
-                FG_MIN_PAIR(12, acc12)
-                FG_MIN_PAIR(13, acc13)
-                FG_MIN_PAIR(14, acc14)
-                FG_MIN_PAIR(15, acc15)
             }
         }
         barrier();
@@ -192,18 +168,6 @@ void main() {
     sums[1][local_id] = acc1;
     sums[2][local_id] = acc2;
     sums[3][local_id] = acc3;
-    sums[4][local_id] = acc4;
-    sums[5][local_id] = acc5;
-    sums[6][local_id] = acc6;
-    sums[7][local_id] = acc7;
-    sums[8][local_id] = acc8;
-    sums[9][local_id] = acc9;
-    sums[10][local_id] = acc10;
-    sums[11][local_id] = acc11;
-    sums[12][local_id] = acc12;
-    sums[13][local_id] = acc13;
-    sums[14][local_id] = acc14;
-    sums[15][local_id] = acc15;
     barrier();
     if (row_live && lane == 0u) {
         uint offset = row_slot * 8u;

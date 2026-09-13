@@ -33,7 +33,7 @@
 #define FG_Q38_QSA_POSITION_BYTES 12u
 #define FG_Q38_QSA_TOKEN_RECORD_BYTES (FG_Q38_QSA_KEY_BYTES+FG_Q38_QSA_VALUE_BYTES+FG_Q38_QSA_INDEX_KEY_BYTES+FG_Q38_QSA_POSITION_BYTES)
 #define FG_Q38_DECODE_TILE_WORDS 9u
-#define FG_Q38_PREFILL_TILE_WORDS 17u
+#define FG_Q38_PREFILL_TILE_WORDS 5u
 fg_status fg_q38_validate_gguf(const fg_gguf *gguf, fg_error *err);
 fg_status fg_q38_validate_packed_manifest(const fg_manifest *manifest, fg_error *err);
 fg_status fg_tensor_record_expected_bytes(const fg_tensor_record *record,uint64_t *bytes,
