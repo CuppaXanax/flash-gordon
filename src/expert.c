@@ -261,7 +261,8 @@ fg_status fg_expert_decode(fg_expert_executor *executor,const fg_decode_work *wo
         }
         if(status==FG_OK)status=fg_vk_begin(vk,err);
         uint32_t tiles=work->selected_count;
-        bool fused=fg_vk_decode_experts_fusable(gate_weight,up_weight,down_weight);
+        bool fused=fg_vk_decode_experts_fusable(gate_weight,up_weight,down_weight,
+            down_record->ggml_type);
         if(fused){
             if(status==FG_OK)status=fg_vk_profile_set_scope(vk,"expert_gate_up",err);
             if(status==FG_OK)status=fg_vk_moe_decode_gate_up(vk,executor->mid,
@@ -271,7 +272,8 @@ fg_status fg_expert_decode(fg_expert_executor *executor,const fg_decode_work *wo
             if(status==FG_OK)status=fg_vk_profile_set_scope(vk,"expert_down_reduce",err);
             if(status==FG_OK)status=fg_vk_moe_decode_down_reduce(vk,
                 executor->reduced,down_weight,executor->tiles,executor->mid,
-                executor->gates,FG_HIDDEN_SIZE,640u,down_stride,FG_TOP_K,err);
+                executor->gates,FG_HIDDEN_SIZE,640u,down_stride,FG_TOP_K,
+                down_record->ggml_type,err);
         }else{
             if(status==FG_OK)status=fg_vk_profile_set_scope(vk,"expert_gate",err);
             if(status==FG_OK)status=fg_vk_moe_kquant(vk,executor->gate,gate_weight,

@@ -177,7 +177,7 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
     c->dense_cooked_split=(fg_vk_kernel){.file="fg_dense_q8_0_cooked_split.spv",.bindings=3,.push_bytes=24};
     c->dense_cooked_split_reduce=(fg_vk_kernel){.file="fg_dense_q8_0_cooked_split_reduce.spv",.bindings=2,.push_bytes=8};
     c->moe_q5_1=(fg_vk_kernel){.file="fg_moe_q5_1_down.spv",.bindings=4,.push_bytes=28};c->moe_q5_1_cooked=(fg_vk_kernel){.file="fg_moe_q5_1_down_cooked.spv",.bindings=4,.push_bytes=28};c->moe_q8_0=(fg_vk_kernel){.file="fg_moe_q8_0_down.spv",.bindings=4,.push_bytes=28};c->moe_reduce=(fg_vk_kernel){.file="fg_moe_reduce.spv",.bindings=4,.push_bytes=12};c->kquant=(fg_vk_kernel){.file="fg_moe_kquant.spv",.bindings=4,.push_bytes=36};c->kquant_cooked=(fg_vk_kernel){.file="fg_moe_kquant_cooked.spv",.bindings=4,.push_bytes=32};
-    c->moe_decode_gate_up=(fg_vk_kernel){.file="fg_moe_decode_gate_up.spv",.bindings=5,.push_bytes=32};c->moe_decode_down_reduce=(fg_vk_kernel){.file="fg_moe_decode_down_reduce.spv",.bindings=5,.push_bytes=24};
+    c->moe_decode_gate_up=(fg_vk_kernel){.file="fg_moe_decode_gate_up.spv",.bindings=5,.push_bytes=32};c->moe_decode_down_reduce=(fg_vk_kernel){.file="fg_moe_decode_down_reduce.spv",.bindings=5,.push_bytes=28};
     c->bench_stream=(fg_vk_kernel){.file="fg_bench_stream.spv",.bindings=3,.push_bytes=20};c->bench_dequant=(fg_vk_kernel){.file="fg_bench_dequant.spv",.bindings=3,.push_bytes=20};c->bench_dot_nored=(fg_vk_kernel){.file="fg_bench_dot_nored.spv",.bindings=3,.push_bytes=20};
     c->bench_stream_wide=(fg_vk_kernel){.file="fg_bench_stream_wide.spv",.bindings=3,.push_bytes=20};c->bench_stream_vec=(fg_vk_kernel){.file="fg_bench_stream_vec.spv",.bindings=3,.push_bytes=20};
     c->dense_cooked_tile=(fg_vk_kernel){.file="fg_dense_q8_0_cooked_tile.spv",.bindings=3,.push_bytes=20};
@@ -345,14 +345,14 @@ fg_status fg_vk_expert_graph_create(fg_vk_context *c,fg_vk_expert_graph **out,fg
     VkCommandBufferAllocateInfo command_allocate={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,.commandPool=c->command_pool,.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY,.commandBufferCount=1u};if((vr=vkAllocateCommandBuffers(c->device,&command_allocate,&graph->command))!=VK_SUCCESS){fg_vk_expert_graph_destroy(graph);return vk_error(err,"allocate expert graph command",vr);}VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};if((vr=vkBeginCommandBuffer(graph->command,&begin))!=VK_SUCCESS){fg_vk_expert_graph_destroy(graph);return vk_error(err,"begin expert graph command",vr);}
     VkMemoryBarrier host={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT,.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT};vkCmdPipelineBarrier(graph->command,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&host,0,NULL,0,NULL);
     struct{uint32_t out_dim,blocks,row_bytes,expert_stride,type,n_used,routed_pairs,packed_weights,reserved;}gate_push={mid_width,hidden_width/256u,(uint32_t)gate_row,gate_expert_stride,gate_type,slots,slots,0u,0u},up_push={mid_width,hidden_width/256u,(uint32_t)up_row,up_expert_stride,up_type,slots,slots,0u,0u};struct{uint32_t out_dim,blocks,tile_bytes,expert_stride,type,n_used,routed_pairs,packed_weights;}gate_cooked_push={mid_width,hidden_width/FG_QK8_K,(uint32_t)fg_k_quant_cooked_tile_bytes(hidden_width,gate_type),gate_expert_stride,gate_type,slots,slots,0u},up_cooked_push={mid_width,hidden_width/FG_QK8_K,(uint32_t)fg_k_quant_cooked_tile_bytes(hidden_width,up_type),up_expert_stride,up_type,slots,slots,0u};struct{uint32_t values;}swiglu_push={slots*mid_width};struct{uint32_t out_dim,in_dim,row_bytes,expert_stride,n_used,packed_weights,reserved;}down_push={hidden_width,mid_width,(uint32_t)down_row,down_expert_stride,slots,0u,0u};struct{uint32_t out_dim,in_dim,blocks,tile_bytes,expert_stride,routed_pairs,packed_weights;}down_cooked_push={hidden_width,mid_width,mid_width/FG_QK8_0,(uint32_t)fg_q5_1_cooked_tile_bytes(mid_width),down_expert_stride,slots,0u};struct{uint32_t width,selected_count,slot_count;}reduce_push={hidden_width,slots,slots};
-    bool fused=down_cooked&&fg_vk_decode_experts_fusable(gate_weights,up_weights,down_weights);
+    bool fused=fg_vk_decode_experts_fusable(gate_weights,up_weights,down_weights,down_type);
     fg_status status=FG_OK;
     if(fused){
         struct{uint32_t out_dim,blocks,gate_tile_bytes,up_tile_bytes,gate_stride,up_stride,gate_type,up_type;}gate_up_push={mid_width,hidden_width/FG_QK8_K,(uint32_t)fg_k_quant_cooked_tile_bytes(hidden_width,gate_type),(uint32_t)fg_k_quant_cooked_tile_bytes(hidden_width,up_type),gate_expert_stride,up_expert_stride,gate_type,up_type};
-        struct{uint32_t out_dim,in_dim,blocks,tile_bytes,expert_stride,slots;}down_reduce_push={hidden_width,mid_width,mid_width/FG_QK8_0,(uint32_t)fg_q5_1_cooked_tile_bytes(mid_width),down_expert_stride,slots};
+        struct{uint32_t out_dim,in_dim,blocks,tile_bytes,expert_stride,slots,down_type;}down_reduce_push={hidden_width,mid_width,mid_width/FG_QK8_0,down_type==7u?(uint32_t)fg_q5_1_cooked_tile_bytes(mid_width):0u,down_expert_stride,slots,down_type};
         const fg_vk_tensor *gate_up_bindings[]={gate_weights,up_weights,activation,tiles,mid},*down_reduce_bindings[]={down_weights,tiles,mid,gates,reduced};
         status=expert_graph_dispatch(graph,&c->moe_decode_gate_up,gate_up_bindings,&gate_up_push,(mid_width+7u)/8u,slots,1u,false,err);
-        if(status==FG_OK)status=expert_graph_dispatch(graph,&c->moe_decode_down_reduce,down_reduce_bindings,&down_reduce_push,(hidden_width+31u)/32u,1u,1u,true,err);
+        if(status==FG_OK)status=expert_graph_dispatch(graph,&c->moe_decode_down_reduce,down_reduce_bindings,&down_reduce_push,(hidden_width+15u)/16u,1u,1u,true,err);
     }else{
         const fg_vk_tensor *gate_bindings[]={gate_weights,activation,tiles,gate},*up_bindings[]={up_weights,activation,tiles,up},*swiglu_bindings[]={gate,up,mid},*down_bindings[]={down_weights,tiles,mid,down},*reduce_bindings[]={down,gates,tiles,reduced};fg_vk_kernel *gate_kernel=gate_cooked?&c->kquant_cooked:&c->kquant,*up_kernel=up_cooked?&c->kquant_cooked:&c->kquant,*down_kernel=down_cooked?&c->moe_q5_1_cooked:down_type==7u?&c->moe_q5_1:&c->moe_q8_0;const void *gate_parameters=gate_cooked?(const void *)&gate_cooked_push:(const void *)&gate_push,*up_parameters=up_cooked?(const void *)&up_cooked_push:(const void *)&up_push,*down_parameters=down_cooked?(const void *)&down_cooked_push:(const void *)&down_push;status=expert_graph_dispatch(graph,gate_kernel,gate_bindings,gate_parameters,(mid_width+7u)/8u,slots,1u,false,err);if(status==FG_OK)status=expert_graph_dispatch(graph,up_kernel,up_bindings,up_parameters,(mid_width+7u)/8u,slots,1u,false,err);if(status==FG_OK)status=expert_graph_dispatch(graph,&c->swiglu,swiglu_bindings,&swiglu_push,(slots*mid_width+255u)/256u,1u,1u,true,err);if(status==FG_OK)status=expert_graph_dispatch(graph,down_kernel,down_bindings,down_parameters,(hidden_width+7u)/8u,slots,1u,true,err);if(status==FG_OK)status=expert_graph_dispatch(graph,&c->moe_reduce,reduce_bindings,&reduce_push,(hidden_width+255u)/256u,1u,1u,true,err);
     }
@@ -1033,17 +1033,21 @@ fg_status fg_vk_moe_kquant(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor
 fg_status fg_vk_moe_kquant_cooked_pairs(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *weights,const fg_vk_tensor *activation,const fg_vk_tensor *tiles,uint32_t type,uint32_t output_width,uint32_t input_width,uint32_t expert_stride,uint32_t used_experts,uint32_t routed_pairs,bool packed,uint32_t tile_count,fg_error *err){uint64_t tile_bytes=fg_k_quant_cooked_tile_bytes(input_width,type),matrix_bytes=fg_k_quant_cooked_matrix_bytes(input_width,output_width,type),weight_bytes=(uint64_t)expert_stride*(packed?tile_count:FG_EXPERTS_PER_RANK),activation_bytes=(uint64_t)(input_width/FG_QK8_K)*FG_Q8_K_BLOCK_BYTES*((routed_pairs+used_experts-1u)/used_experts);if(!c||!matrix_bytes||tile_bytes>UINT32_MAX||!used_experts||!routed_pairs||!tile_count||expert_stride<matrix_bytes||!tensor_range(weights,0,weight_bytes)||!tensor_range(activation,0,activation_bytes)||!tensor_range(tiles,0,(uint64_t)tile_count*9u*4u)||!tensor_range(out,0,(uint64_t)routed_pairs*output_width*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid cooked Q4_K/Q5_K expert dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t out_dim,blocks,tile_bytes,expert_stride,type,n_used,routed_pairs,packed_weights;}push={output_width,input_width/FG_QK8_K,(uint32_t)tile_bytes,expert_stride,type,used_experts,routed_pairs,packed?1u:0u};const fg_vk_tensor *bindings[]={weights,activation,tiles,out};return dispatch(c,&c->kquant_cooked,bindings,&push,output_width/8u,tile_count,1,err);}
 fg_status fg_vk_moe_kquant_cooked(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *weights,const fg_vk_tensor *activation,const fg_vk_tensor *tiles,uint32_t type,uint32_t output_width,uint32_t input_width,uint32_t expert_stride,bool packed,uint32_t tile_count,fg_error *err){return fg_vk_moe_kquant_cooked_pairs(c,out,weights,activation,tiles,type,output_width,input_width,expert_stride,FG_TOP_K,FG_TOP_K,packed,tile_count,err);}
 /* Purpose-built batch-1 expert pair: gate+up+SwiGLU in one dispatch, then the
-   cooked Q5_1 down projection with the gate reduction folded in.  Used by the
-   fixed layer graph when every routed tensor is cooked; the legacy five
-   dispatches stay available behind FG_DECODE_EXPERT_LEGACY. */
+   down projection with the gate reduction folded in.  The down projection
+   accepts the cooked Q5_1 layout as well as raw row-major Q8_0, so layers
+   whose down tensor is Q8_0 no longer fall back to the five-dispatch path.
+   The legacy five dispatches stay available behind FG_DECODE_EXPERT_LEGACY. */
 bool fg_vk_decode_experts_fusable(const fg_vk_tensor *gate_weights,
-    const fg_vk_tensor *up_weights,const fg_vk_tensor *down_weights){
+    const fg_vk_tensor *up_weights,const fg_vk_tensor *down_weights,
+    uint32_t down_type){
     const char *legacy=getenv("FG_DECODE_EXPERT_LEGACY");
     if(legacy&&*legacy&&strcmp(legacy,"0")!=0)return false;
-    return gate_weights&&up_weights&&down_weights&&
+    bool down_ok=down_weights&&
+        (down_weights->format==FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED||
+         (down_weights->format==FG_VK_TENSOR_FORMAT_DEFAULT&&down_type==8u));
+    return gate_weights&&up_weights&&down_ok&&
         gate_weights->format==FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED&&
-        up_weights->format==FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED&&
-        down_weights->format==FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED;
+        up_weights->format==FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED;
 }
 
 fg_status fg_vk_moe_decode_gate_up(fg_vk_context *c,fg_vk_tensor *mid,
@@ -1077,11 +1081,16 @@ fg_status fg_vk_moe_decode_gate_up(fg_vk_context *c,fg_vk_tensor *mid,
 fg_status fg_vk_moe_decode_down_reduce(fg_vk_context *c,fg_vk_tensor *out,
     const fg_vk_tensor *down_weights,const fg_vk_tensor *tiles,const fg_vk_tensor *input,
     const fg_vk_tensor *gates,uint32_t output_width,uint32_t input_width,
-    uint32_t expert_stride,uint32_t slots,fg_error *err){
-    uint64_t tile_bytes=fg_q5_1_cooked_tile_bytes(input_width);
-    uint64_t matrix_bytes=fg_q5_1_cooked_matrix_bytes(input_width,output_width);
+    uint32_t expert_stride,uint32_t slots,uint32_t down_type,fg_error *err){
+    uint64_t tile_bytes=0u,matrix_bytes=0u;
+    if(down_type==7u){
+        tile_bytes=fg_q5_1_cooked_tile_bytes(input_width);
+        matrix_bytes=fg_q5_1_cooked_matrix_bytes(input_width,output_width);
+    }else if(down_type==8u){
+        matrix_bytes=(uint64_t)(input_width/FG_QK8_0)*FG_Q8_0_BLOCK_BYTES*output_width;
+    }
     if(!c||!output_width||!input_width||input_width%FG_QK8_0||!slots||
-       !tile_bytes||tile_bytes>UINT32_MAX||expert_stride<matrix_bytes||
+       !matrix_bytes||tile_bytes>UINT32_MAX||expert_stride<matrix_bytes||
        !tensor_on_context(c,out)||!tensor_on_context(c,down_weights)||
        !tensor_on_context(c,tiles)||!tensor_on_context(c,input)||
        !tensor_on_context(c,gates)||
@@ -1093,9 +1102,9 @@ fg_status fg_vk_moe_decode_down_reduce(fg_vk_context *c,fg_vk_tensor *out,
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid fused down/reduce decode dispatch");
         return FG_ERR_ARGUMENT;
     }
-    struct{uint32_t out_dim,in_dim,blocks,tile_bytes,expert_stride,slots;}push={output_width,input_width,input_width/FG_QK8_0,(uint32_t)tile_bytes,expert_stride,slots};
+    struct{uint32_t out_dim,in_dim,blocks,tile_bytes,expert_stride,slots,down_type;}push={output_width,input_width,input_width/FG_QK8_0,(uint32_t)tile_bytes,expert_stride,slots,down_type};
     const fg_vk_tensor *bindings[]={down_weights,tiles,input,gates,out};
-    return dispatch(c,&c->moe_decode_down_reduce,bindings,&push,(output_width+31u)/32u,1u,1u,err);
+    return dispatch(c,&c->moe_decode_down_reduce,bindings,&push,(output_width+15u)/16u,1u,1u,err);
 }
 
 fg_status fg_vk_moe_kquant_cooked_grouped(fg_vk_context *c,fg_vk_tensor *out,
