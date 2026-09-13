@@ -252,18 +252,29 @@ of slot-zero writes; committed frontier advanced after ring prefill; cold fetche
 read from the owner's authoritative session.
 
 Remaining defects, in order:
-1. `invalid QSA complete-page lookup` from `fg_qsa_session_page_records` when
-   rank 0 decodes a layer owned by a worker. The worker session persists blocks
-   during prefill; the lookup rejects them. Check whether blocks must be published
-   (`fg_qsa_session_page_published`) or whether the lookup must read `s->state`
-   directly.
-2. Decode output is wrong (empty/EOS at the first token) and the transport state
-   machine poisons after the first request (`distributed transport is not
-   reusable`). Find the unbalanced pending/complete/poison path in the QSA fetch
-   or n-gram lookup; ring paths must be transport-neutral or strictly paired.
-3. Only then run the ring battery and tune frames (5-6) toward 200+.
-4. Re-run `FG_BLOCK_BENCH` on a QSA-containing block; the 400 ms figure covers
-   GDN layers only.
+1. **FIXED 2026-09-13**: `invalid QSA complete-page lookup` — worker fetches now read
+   the session state directly (`fg_qsa_session_state_records`); no fetch errors, two
+   consecutive requests complete without poisoning the transport.
+2. **OPEN — numerics**: ring output is wrong (sampler picks control tokens 16/17,
+   empty text) although requests complete. Distributed prefill is the suspect, not
+   decode's expert path (unchanged). Isolate by comparing the ring's final prefill
+   hyper against the single-owner reference, or by dumping per-layer hyper at each
+   chain hop vs a local run.
+3. **RING BATTERY 2026-09-13 (new binary ringC, wrong output but valid timing):
+   128 prefill 21.40 TPS, 4K prefill 48.81 TPS (88.55 s), 4K decode 1.96 TPS,
+   short decode 9.20 TPS.** Single-owner reference: 4K 50.89 / 4K decode ~7.
+   So the ring currently gives **no prefill win and a 4x decode regression** — do
+   not tune frames until stage time is understood.
+4. **Why the benchmark block lied**: `FG_BLOCK_BENCH` skipped QSA layers. Real
+   blocks carry 1-2 QSA layers whose state-backed session does state I/O +
+   selection over a growing context every chunk; stage time is ~1.5-2.6 s, not
+   0.4 s. 4K decode fetches cold pages from workers per token (cache misses).
+5. **Path to 200, revised**: (a) fix numerics; (b) profile and kill QSA state I/O
+   on the hot path (record cache residency, avoid per-chunk state writes/reads,
+   confirm the selection path stays on GPU); (c) only then widen the chain to 6-8
+   frames (Little's law: depth x 128 / stage time). Target stage ~0.5 s at depth 8
+   ≈ 280 TPS; today's stage time is the blocker, not the topology.
+
 
 Ops notes: each binary cycle is build on .42 (detached) -> package ->
 download -> extract on 8 -> restart (~10 min). Keep the fleet quiesced while
