@@ -321,7 +321,7 @@ fg_status fg_qsa_session_open(fg_qsa_session **out,fg_model *model,const char *p
     }
     uint32_t expected_layers=coordinator?FG_QSA_MAX_LAYERS:
                 FG_QSA_OWNER_LAYERS;
-    if(!s->layer_count||s->layer_count!=expected_layers){fg_error_set(err,FG_ERR_MISMATCH,"rank %u has %u QSA layers, expected %u",rank,s->layer_count,expected_layers);fg_qsa_session_close(s);return FG_ERR_MISMATCH;}
+    if(!s->layer_count||s->layer_count>expected_layers){fg_error_set(err,FG_ERR_MISMATCH,"rank %u has %u QSA layers, expected %u",rank,s->layer_count,expected_layers);fg_qsa_session_close(s);return FG_ERR_MISMATCH;}
     fg_status status=fg_qsa_state_open(&s->state,path,s->layers,s->layer_count,
                                        s->max_context,create,err);
     bool created_state=status==FG_OK&&create;
@@ -404,7 +404,7 @@ static fg_status open_decode_config(fg_qsa_session **out,fg_model *model,const c
             s->layers[s->layer_count++]=(uint8_t)layer;
     uint32_t expected_layers=coordinator?FG_QSA_MAX_LAYERS:
                 FG_QSA_OWNER_LAYERS;
-    if(!s->layer_count||s->layer_count!=expected_layers){
+    if(!s->layer_count||s->layer_count>expected_layers){
         fg_error_set(err,FG_ERR_MISMATCH,"rank %u has %u QSA layers, expected %u",
                      rank,s->layer_count,expected_layers);
         fg_qsa_session_close(s);return FG_ERR_MISMATCH;

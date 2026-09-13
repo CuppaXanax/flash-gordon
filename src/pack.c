@@ -184,7 +184,17 @@ static fg_status process_cooked_expert(FILE *source,const fg_gguf_tensor *tensor
 static uint32_t common_owner(const fg_manifest *m,const fg_gguf_tensor *tensor,int layer){
 
     if(layer>=0)return m->layer_owner[layer];
-    if(strcmp(tensor->name,"token_embd.weight")==0)return FG_RANK_COUNT-1u;
+    if(strcmp(tensor->name,"token_embd.weight")==0){
+        /* The embedding is only read by the coordinator, which assembles every
+         * rank's common tensors; workers must not pay its ~0.7 GiB next to
+         * their n-gram shard. FG_PACK_EMBED_RANK overrides the default host. */
+        const char *override=getenv("FG_PACK_EMBED_RANK");
+        if(override&&*override){
+            char *end=NULL;unsigned long rank=strtoul(override,&end,10);
+            if(end&&!*end&&rank<FG_RANK_COUNT)return (uint32_t)rank;
+        }
+        return FG_RANK_COUNT-1u;
+    }
     if(strcmp(tensor->name,"output.weight")==0||
        strncmp(tensor->name,"output_hc_",10u)==0)return 4u;
     return 0u;
