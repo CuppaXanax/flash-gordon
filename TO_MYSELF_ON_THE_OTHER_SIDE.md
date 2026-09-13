@@ -233,6 +233,42 @@ regress: ring work is prefill-only until decode gets its own plan.
 
 ## 8. First actions, in order
 
+**RING STATUS 2026-09-13 (read this first).** The layer ring now boots, handshakes,
+runs a full chain prefill and decodes: first ring request = 29 tokens at 13.6 TPS
+prefill, 64-token generation at 9.0 TPS, unoptimized and not yet numerically
+correct. All eight ranks run the contig3 pack from `/home/user/fg-ring-pack`
+(rank 0 carries `token_embd` again so rank 7 fits next to its n-gram shard; that
+pack was built with `FG_PACK_EMBED_RANK=0`). Ring mode is gated: rank 0 needs
+`FG_PREFILL_RING=1`, workers need `FG_WORKER_OWNER=1` (scripts
+`start-rank0-ring.sh` / `start-workers-ring.sh`). Without the env gates the binary
+is live-parity and the fleet runs the single-owner pack at 4K 50.89 with gates
+green (current state after restore).
+
+Faults found and fixed getting this far: non-replicated worker owner executor;
+`HAS_NGRAM` allowed on a block-start work message; workers cannot open fileless
+mirrors, so QSA sessions are state-backed (`fg_qsa_session_open_state`); owner
+guard and mirror allow one-or-two owned QSA layers; per-token position map instead
+of slot-zero writes; committed frontier advanced after ring prefill; cold fetches
+read from the owner's authoritative session.
+
+Remaining defects, in order:
+1. `invalid QSA complete-page lookup` from `fg_qsa_session_page_records` when
+   rank 0 decodes a layer owned by a worker. The worker session persists blocks
+   during prefill; the lookup rejects them. Check whether blocks must be published
+   (`fg_qsa_session_page_published`) or whether the lookup must read `s->state`
+   directly.
+2. Decode output is wrong (empty/EOS at the first token) and the transport state
+   machine poisons after the first request (`distributed transport is not
+   reusable`). Find the unbalanced pending/complete/poison path in the QSA fetch
+   or n-gram lookup; ring paths must be transport-neutral or strictly paired.
+3. Only then run the ring battery and tune frames (5-6) toward 200+.
+4. Re-run `FG_BLOCK_BENCH` on a QSA-containing block; the 400 ms figure covers
+   GDN layers only.
+
+Ops notes: each binary cycle is build on .42 (detached) -> package ->
+download -> extract on 8 -> restart (~10 min). Keep the fleet quiesced while
+developing; the user approved eviction on demand.
+
 0. **Measurement gate — PASSED (2026-09-12).** `FG_BLOCK_BENCH=1` on worker rank 4
    (new binary, single-owner shard, local experts): tokens=128, 6 GDN layers,
    **mean block 400.42 ms (min 388.46, max 442.94), ~66-68 ms/layer.** Ring model
