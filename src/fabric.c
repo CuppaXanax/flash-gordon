@@ -100,7 +100,13 @@ static void fabric_profile_recv(const fg_fabric *f,uint32_t peer,
         (double)payload_ns/1000000.0,(double)validate_ns/1000000.0,(int)status);
     pthread_mutex_unlock(&fabric_profile_mutex);
 }
-static int socket_configure(int fd){int one=1;if(setsockopt(fd,IPPROTO_TCP,TCP_NODELAY,&one,sizeof(one))||setsockopt(fd,SOL_SOCKET,SO_KEEPALIVE,&one,sizeof(one)))return -1;return 0;}
+static int socket_configure(int fd){int one=1;if(setsockopt(fd,IPPROTO_TCP,TCP_NODELAY,&one,sizeof(one))||setsockopt(fd,SOL_SOCKET,SO_KEEPALIVE,&one,sizeof(one)))return -1;
+    /* Layer-ring hops are 5 MiB hyper-state messages in both directions.
+     * Large socket buffers keep a busy peer from stalling its upstream stage. */
+    int buffers=16*1024*1024;
+    setsockopt(fd,SOL_SOCKET,SO_SNDBUF,&buffers,sizeof(buffers));
+    setsockopt(fd,SOL_SOCKET,SO_RCVBUF,&buffers,sizeof(buffers));
+    return 0;}
 static bool parse_endpoint(const char *text,struct in_addr *addr,uint16_t *port){const char *colon=strrchr(text,':');if(!colon||colon==text)return false;char ip[64];size_t n=(size_t)(colon-text);if(n>=sizeof(ip))return false;memcpy(ip,text,n);ip[n]=0;char *end;unsigned long p=strtoul(colon+1,&end,10);if(*end||p<1024||p>65534||inet_pton(AF_INET,ip,addr)!=1)return false;*port=(uint16_t)p;return true;}
 static int make_listener(struct in_addr addr,uint16_t port){int fd=socket(AF_INET,SOCK_STREAM|SOCK_CLOEXEC,0);if(fd<0)return -1;int one=1;setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one));struct sockaddr_in sa={.sin_family=AF_INET,.sin_addr=addr,.sin_port=htons(port)};if(bind(fd,(struct sockaddr *)&sa,sizeof(sa))||listen(fd,FG_RANK_COUNT)){close(fd);return -1;}return fd;}
 static int connect_retry(struct in_addr addr,uint16_t port){struct sockaddr_in sa={.sin_family=AF_INET,.sin_addr=addr,.sin_port=htons(port)};struct timespec pause={.tv_sec=0,.tv_nsec=200000000};for(unsigned attempt=0;attempt<1800;attempt++){int fd=socket(AF_INET,SOCK_STREAM|SOCK_CLOEXEC,0);if(fd<0)return -1;if(connect(fd,(struct sockaddr *)&sa,sizeof(sa))==0){if(socket_configure(fd)==0)return fd;close(fd);return -1;}int saved=errno;close(fd);if(saved!=ECONNREFUSED&&saved!=EINTR&&saved!=ETIMEDOUT&&saved!=EHOSTUNREACH){errno=saved;return -1;}nanosleep(&pause,NULL);}errno=ETIMEDOUT;return -1;}
