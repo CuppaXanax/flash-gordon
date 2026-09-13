@@ -713,12 +713,15 @@ static fg_status select_blocks(fg_qsa_session *s,uint32_t slot,const fg_vk_tenso
     uint32_t count=tokens/4u;if(!count){*selected_count=0;return FG_OK;}
     fg_vk_context *vk=fg_model_vk(s->model);
     fg_status status=score_index_segments(s,slot,index_query,tokens,err);
-    uint32_t side=0;
+    uint32_t side=0;bool reduced=false;
     while(status==FG_OK&&count>512u){
         uint32_t next=0;status=fg_vk_topk_reduce(vk,s->scores[side^1u],s->ids[side^1u],
-            s->scores[side],s->ids[side],count,&next,err);count=next;side^=1u;
+            s->scores[side],s->ids[side],count,&next,err);count=next;side^=1u;reduced=true;
     }
-    if(status==FG_OK){
+    /* The reduction already emits a sorted top-512 once the window is trimmed,
+     * so re-sorting exactly 512 selected blocks would only rewrite the same
+     * values; short windows still need the single pass to keep selection order. */
+    if(status==FG_OK&&!(reduced&&count==512u)){
         uint32_t final_count=0;status=fg_vk_topk_reduce(vk,s->scores[side^1u],
             s->ids[side^1u],s->scores[side],s->ids[side],count,&final_count,err);
         count=final_count;side^=1u;
@@ -731,6 +734,29 @@ static fg_status select_blocks(fg_qsa_session *s,uint32_t slot,const fg_vk_tenso
         fg_qsa_locality_record_selection(s->locality,s->layers[slot],tokens,selected,count);
     if(status==FG_OK&&ended&&restart_batch)status=fg_vk_begin(vk,err);
     if(status==FG_OK)*selected_count=count;
+    return status;
+}
+
+/* Single-token decode attention: the serial kernel scans every selected
+ * record under a per-token workgroup barrier, so long contexts leave the GPU
+ * latency-bound.  Above a small window, split the record range across
+ * (head, split) workgroups and merge the partial online-softmax states with
+ * the deterministic merge kernel instead. */
+#define FG_QSA_DECODE_SPLIT_TOKENS 256u
+static fg_status decode_attention(fg_qsa_session *s,fg_vk_tensor *attention,
+                                  const fg_vk_tensor *query,const fg_vk_tensor *gate,
+                                  uint32_t selected_tokens,fg_error *err){
+    fg_vk_context *vk=fg_model_vk(s->model);
+    uint32_t splits=(selected_tokens+FG_QSA_DECODE_SPLIT_TOKENS-1u)/
+        FG_QSA_DECODE_SPLIT_TOKENS;
+    if(splits>FG_QSA_ATTENTION_SPLITS)splits=FG_QSA_ATTENTION_SPLITS;
+    if(splits<2u)
+        return fg_vk_qsa_attention(vk,attention,s->selected_records,query,gate,
+                                   selected_tokens,err);
+    fg_status status=fg_vk_qsa_attention_split(vk,s->attn_partials,
+        s->selected_records,query,selected_tokens,splits,err);
+    if(status==FG_OK)status=fg_vk_qsa_attention_merge(vk,attention,
+        s->attn_partials,gate,splits,err);
     return status;
 }
 
@@ -821,8 +847,8 @@ static fg_status attend_cache(fg_qsa_session *s,uint32_t slot,uint32_t tokens,
         s->cache_pages*FG_Q38_QSA_COMPRESS_RATIO,selected_count,tail_start,tail,err);
     if(trace)t_gather=qsa_now_ms();
     uint32_t selected_tokens=selected_count*FG_Q38_QSA_COMPRESS_RATIO+tail;
-    if(status==FG_OK)status=fg_vk_qsa_attention(
-        vk,attention,s->selected_records,query,gate,selected_tokens,err);
+    if(status==FG_OK)status=decode_attention(s,attention,query,gate,
+                                             selected_tokens,err);
     if(trace){double t_end=qsa_now_ms();fprintf(stderr,"QSA_ATTEND_TRACE layer=%u tokens=%u selected=%u missing=%u fetched=%u select_ms=%.3f lookup_ms=%.3f fetch_ms=%.3f gather_ms=%.3f attn_ms=%.3f total_ms=%.3f\n",s->layers[slot],tokens,selected_count,missing_count,fetched,t_select-t0,t_lookup-t_select,t_fetch-t_lookup,t_gather-t_fetch,t_end-t_gather,t_end-t0);}
     return status;
 }
@@ -860,7 +886,7 @@ static fg_status commit_and_attend(fg_qsa_session *s,uint32_t slot,uint32_t toke
     uint32_t inside=token%FG_Q38_QSA_COMPRESS_RATIO;if(!inside)memset(s->partial[slot],0,sizeof(s->partial[slot]));uint8_t *record=s->partial[slot]+(uint64_t)inside*FG_Q38_QSA_TOKEN_RECORD_BYTES;memcpy(record,key,FG_Q38_QSA_KEY_BYTES);memcpy(record+FG_Q38_QSA_KEY_BYTES,value,FG_Q38_QSA_VALUE_BYTES);memcpy(record+FG_Q38_QSA_KEY_BYTES+FG_Q38_QSA_VALUE_BYTES,index_key,FG_Q38_QSA_INDEX_KEY_BYTES);for(uint32_t axis=0;axis<3u;axis++)put_u32_le(record+FG_Q38_QSA_KEY_BYTES+FG_Q38_QSA_VALUE_BYTES+FG_Q38_QSA_INDEX_KEY_BYTES+axis*4u,position[axis]);
     uint32_t segment=0,offset=0;if(!fg_qsa_index_token_location(s->max_context,token,&segment,&offset)){fg_error_set(err,FG_ERR_LIMIT,"QSA token has no index segment");return FG_ERR_LIMIT;}fg_status status=ensure_index_segment(s,slot,segment,err);if(status!=FG_OK)return status;status=fg_qsa_state_write_block(s->state,slot,token/FG_Q38_QSA_COMPRESS_RATIO,s->partial[slot],inside+1u,err);if(status!=FG_OK)return status;s->committed[slot]=token+1u;memcpy((uint8_t *)fg_vk_tensor_map(s->index_keys[slot][segment])+(uint64_t)offset*FG_Q38_QSA_INDEX_KEY_BYTES,index_key,FG_Q38_QSA_INDEX_KEY_BYTES);
     uint32_t selected_blocks[FG_QSA_MAX_SELECTED_BLOCKS],block_count=0,tokens=token+1u;status=select_blocks(s,slot,index_query,tokens,selected_blocks,&block_count,true,err);uint32_t selected_tokens=0;if(status==FG_OK&&block_count){uint32_t committed[FG_QSA_MAX_SELECTED_BLOCKS];status=fg_qsa_state_read_blocks(s->state,slot,selected_blocks,block_count,s->read_records,committed,err);for(uint32_t i=0;status==FG_OK&&i<block_count;i++){if(committed[i]!=FG_Q38_QSA_COMPRESS_RATIO){fg_error_set(err,FG_ERR_MISMATCH,"selected QSA block is not complete");status=FG_ERR_MISMATCH;break;}memcpy((uint8_t *)fg_vk_tensor_map(s->selected_records)+(uint64_t)selected_tokens*FG_Q38_QSA_TOKEN_RECORD_BYTES,s->read_records+(uint64_t)i*FG_Q38_QSA_COMPRESS_RATIO*FG_Q38_QSA_TOKEN_RECORD_BYTES,(uint64_t)FG_Q38_QSA_COMPRESS_RATIO*FG_Q38_QSA_TOKEN_RECORD_BYTES);selected_tokens+=FG_Q38_QSA_COMPRESS_RATIO;}}
-    uint32_t tail=tokens%FG_Q38_QSA_COMPRESS_RATIO;if(status==FG_OK&&tail){memcpy((uint8_t *)fg_vk_tensor_map(s->selected_records)+(uint64_t)selected_tokens*FG_Q38_QSA_TOKEN_RECORD_BYTES,s->partial[slot],(uint64_t)tail*FG_Q38_QSA_TOKEN_RECORD_BYTES);selected_tokens+=tail;}if(status==FG_OK)status=fg_vk_qsa_attention(fg_model_vk(s->model),attention,s->selected_records,query,gate,selected_tokens,err);return status;
+    uint32_t tail=tokens%FG_Q38_QSA_COMPRESS_RATIO;if(status==FG_OK&&tail){memcpy((uint8_t *)fg_vk_tensor_map(s->selected_records)+(uint64_t)selected_tokens*FG_Q38_QSA_TOKEN_RECORD_BYTES,s->partial[slot],(uint64_t)tail*FG_Q38_QSA_TOKEN_RECORD_BYTES);selected_tokens+=tail;}if(status==FG_OK)status=decode_attention(s,attention,query,gate,selected_tokens,err);return status;
 }
 
 fg_status fg_qsa_session_decode(fg_qsa_session *s,uint32_t layer,uint32_t token,const uint32_t position[3],const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err){
