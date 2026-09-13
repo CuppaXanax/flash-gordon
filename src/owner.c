@@ -65,7 +65,7 @@ _Static_assert(FG_Q38_PREFILL_TILE_WORDS==FG_VK_PREFILL_TILE_WORDS,
  * a frame once its begin returns.  Worker owners only ever execute their own
  * block on slot 0, so their extra slots are not allocated. */
 #define FG_OWNER_SLOT_COUNT 4u
-typedef struct fg_owner_pending_write {bool active;uint32_t layer,token;const fg_vk_tensor *hyper,*block,*injection;fg_vk_tensor *output;} fg_owner_pending_write;
+typedef struct fg_owner_pending_write {bool active,skip;uint32_t layer,token;const fg_vk_tensor *hyper,*block,*injection;fg_vk_tensor *output;} fg_owner_pending_write;
 
 typedef struct fg_owner_prefill_slot {
     bool active;
@@ -589,7 +589,7 @@ fg_status fg_owner_gr_write(fg_owner_executor *executor,const fg_vk_tensor *hype
 
 static fg_status defer_gr_write(fg_owner_executor *executor,fg_owner_pending_write *pending,uint32_t layer,uint32_t token,const fg_vk_tensor *hyper_input,const fg_vk_tensor *block_output,const fg_vk_tensor *injection,fg_vk_tensor *ping_a,fg_vk_tensor *ping_b,fg_vk_tensor **output,fg_error *err){if(!executor||!pending||!hyper_input||!block_output||!injection||!output||pending->active){fg_error_set(err,FG_ERR_MISMATCH,"invalid or duplicate deferred residual write");return FG_ERR_MISMATCH;}fg_vk_tensor *destination=hyper_input!=ping_a?ping_a:ping_b;pending->active=true;pending->layer=layer;pending->token=token;pending->hyper=hyper_input;pending->block=block_output;pending->injection=injection;pending->output=destination;*output=destination;return FG_OK;}
 
-static fg_status flush_gr_write(fg_owner_executor *executor,fg_owner_pending_write *pending,fg_error *err){if(!executor||!pending||!pending->active){fg_error_set(err,FG_ERR_MISMATCH,"deferred residual write is unavailable");return FG_ERR_MISMATCH;}fg_status status=fg_vk_gr_write(fg_model_vk(executor->model),pending->output,pending->hyper,pending->block,pending->injection,FG_HIDDEN_SIZE,4u,1u,err);if(status==FG_OK)memset(pending,0,sizeof(*pending));return status;}
+static fg_status flush_gr_write(fg_owner_executor *executor,fg_owner_pending_write *pending,fg_error *err){if(!executor||!pending||!pending->active){fg_error_set(err,FG_ERR_MISMATCH,"deferred residual write is unavailable");return FG_ERR_MISMATCH;}fg_status status=FG_OK;if(!pending->skip){status=fg_vk_gr_write(fg_model_vk(executor->model),pending->output,pending->hyper,pending->block,pending->injection,FG_HIDDEN_SIZE,4u,1u,err);if(status==FG_OK)numerics_trace_tensor("DOUT_FLUSH",fg_model_rank(executor->model),pending->layer,pending->token,1u,pending->output,err);}if(status==FG_OK)memset(pending,0,sizeof(*pending));return status;}
 
 fg_status fg_owner_gdn_decode(fg_owner_executor *executor,uint32_t layer,const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err){
     if(!executor||!hidden||!output||!owns_layer(executor,layer)||(layer&3u)==3u||!executor->gdn_state[layer].conv_state||!executor->gdn_state[layer].recurrent_state){fg_error_set(err,FG_ERR_MISMATCH,"GDN decode is not on an owned linear-attention layer");return FG_ERR_MISMATCH;}
@@ -698,6 +698,9 @@ fg_status fg_owner_qsa_open_mirror(fg_owner_executor *executor,uint32_t logical_
         executor->attention_family_scratch,fetch_pages,fetch_opaque,err);
 }
 void fg_owner_qsa_set_tokens(fg_owner_executor *executor,uint32_t tokens){if(executor&&executor->qsa)fg_qsa_session_set_tokens(executor->qsa,tokens);}
+fg_expert_result *fg_owner_decode_results(fg_owner_executor *executor){
+    return executor?executor->decode_results:NULL;
+}
 fg_vk_tensor *fg_owner_gdn_state_tensor(fg_owner_executor *executor,uint32_t layer,
                                         uint32_t slot){
     if(!executor||layer>=FG_LAYER_COUNT||slot>1u)return NULL;
@@ -879,6 +882,9 @@ static fg_status decode_layer_finish_impl(fg_owner_executor *e,uint32_t slot,fg_
     if(status==FG_OK)status=moe_reduce_into(e,frame->layer,frame->token,frame->expert_ids,frame->gates,results,result_count,frame->shared_output,frame->shared_scalar,frame->reduced,&block,err);
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_ffn_write",err);
     if(status==FG_OK)status=frame->layer+1u<FG_LAYER_COUNT?defer_gr_write(e,&frame->pending_write,frame->layer,frame->token,frame->residual,block,frame->injection,frame->ping[0],frame->ping[1],output,err):gr_write_batch_into(e,frame->residual,block,frame->injection,1u,frame->ping[0],frame->ping[1],output,err);
+    if(status==FG_OK&&frame->layer+1u>=FG_LAYER_COUNT)
+        numerics_trace_tensor("DOUT",fg_model_rank(e->model),frame->layer,
+            frame->token,1u,*output,err);
     double t_end=ts_ms();uint64_t trace_end=frame->ep_trace?wall_ns():0;
     frame->active=false;
     if(frame->ep_trace){fg_vk_counters counters_after={0};fg_vk_get_counters(vk,&counters_after);fprintf(stderr,"EP_LAYER_TRACE token=%u layer=%u status=%d total_ms=%.3f sync1_ms=%.3f fire_ms=%.3f shared_ms=%.3f collect_ms=%.3f finish_ms=%.3f submissions=%llu dispatches=%llu start_ns=%llu router_ready_ns=%llu fire_end_ns=%llu shared_end_ns=%llu collect_end_ns=%llu finish_end_ns=%llu\n",frame->token,frame->layer,(int)status,t_end-frame->t_begin,frame->t_sync1-frame->t_begin,frame->t_fire-frame->t_sync1,frame->t_sync2-frame->t_fire,t_collect-frame->t_sync2,t_end-t_collect,(unsigned long long)(counters_after.submissions-frame->counters_before.submissions),(unsigned long long)(counters_after.dispatches-frame->counters_before.dispatches),(unsigned long long)frame->trace_start,(unsigned long long)frame->trace_sync1,(unsigned long long)frame->trace_fire,(unsigned long long)frame->trace_sync2,(unsigned long long)trace_collect,(unsigned long long)trace_end);}
@@ -899,6 +905,47 @@ fg_status fg_owner_decode_layer_async(fg_owner_executor *e,uint32_t layer,uint32
     fg_status status=decode_layer_begin_impl(e,0u,layer,token,position,hyper_input,ngram_embedding,fire,collect,dispatch_context,qsa_dispatch,qsa_context,err);
     if(status!=FG_OK)return status;
     return decode_layer_finish_impl(e,0u,output,err);
+}
+
+/* Execute a contiguous layer block of one decode token on its owner.  A
+ * mid-model block has no predecessor on this rank, so the deferred residual
+ * chain is seeded with a skip marker rather than flushed, and the final
+ * layer's deferred write is materialized before returning so the caller can
+ * read the block result.  Ring decode runs every block through this path. */
+fg_status fg_owner_decode_block(fg_owner_executor *e,uint32_t first_layer,
+    uint32_t last_layer,uint32_t token,const uint32_t position[3],
+    const fg_vk_tensor *hyper_input,const fg_vk_tensor *ngram_embedding,
+    fg_owner_expert_fire_fn fire,fg_owner_expert_collect_fn collect,
+    void *dispatch_context,fg_vk_tensor **output,fg_error *err){
+    if(!e||!position||!hyper_input||!fire||!collect||!output||
+       first_layer>last_layer||last_layer>=FG_LAYER_COUNT||
+       (first_layer<=1u)!=(ngram_embedding!=NULL)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner decode block arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_owner_pending_write *pending=&e->decode_slots[0].pending_write;
+    memset(pending,0,sizeof(*pending));
+    if(first_layer>0u){
+        pending->active=true;pending->skip=true;pending->layer=first_layer-1u;
+        pending->token=token;pending->hyper=hyper_input;pending->block=hyper_input;
+        pending->injection=hyper_input;pending->output=(fg_vk_tensor *)hyper_input;
+    }
+    fg_vk_tensor *current=(fg_vk_tensor *)hyper_input;
+    for(uint32_t layer=first_layer;layer<=last_layer;layer++){
+        fg_status status=decode_layer_begin_impl(e,0u,layer,token,position,current,
+            layer==1u?ngram_embedding:NULL,fire,collect,dispatch_context,NULL,NULL,err);
+        if(status!=FG_OK){memset(pending,0,sizeof(*pending));return status;}
+        status=decode_layer_finish_impl(e,0u,&current,err);
+        if(status!=FG_OK){memset(pending,0,sizeof(*pending));return status;}
+    }
+    if(pending->active){
+        fg_vk_tensor *materialized=pending->output;
+        fg_status status=flush_gr_write(e,pending,err);
+        if(status!=FG_OK)return status;
+        current=materialized;
+    }
+    *output=current;
+    return FG_OK;
 }
 
 fg_status fg_owner_prefill_layer(fg_owner_executor *e,uint32_t layer,uint32_t first_token,const uint32_t *positions,uint16_t token_count,const fg_vk_tensor *hyper_input,const fg_vk_tensor *ngram_embeddings,fg_owner_prefill_dispatch_fn dispatch,void *dispatch_context,fg_owner_qsa_prefill_dispatch_fn qsa_dispatch,void *qsa_context,fg_vk_tensor **output,fg_error *err){
