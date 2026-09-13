@@ -165,6 +165,19 @@ fg_status fg_owner_decode_block(fg_owner_executor *executor,uint32_t first_layer
                                 const fg_vk_tensor *ngram_embedding,
                                 fg_owner_expert_fire_fn fire,fg_owner_expert_collect_fn collect,
                                 void *dispatch_context,fg_vk_tensor **output,fg_error *err);
+/* Chained ring block: the common path, shared expert, GPU routing and fused
+ * expert pair for every layer are recorded into one submission so a block
+ * costs a single fence.  The expert callback runs inside the active batch and
+ * must leave its gate-weighted rank-local sum in an own tensor. */
+typedef fg_status (*fg_owner_expert_inline_fn)(void *context,uint32_t layer,
+    const fg_vk_tensor *activation_q8k,const fg_vk_tensor *router_logits,
+    fg_vk_tensor **expert_output,fg_error *err);
+fg_status fg_owner_decode_block_chained(fg_owner_executor *executor,uint32_t first_layer,
+                                        uint32_t last_layer,uint32_t token_index,
+                                        const uint32_t position[3],const fg_vk_tensor *hyper_input,
+                                        const fg_vk_tensor *ngram_embedding,
+                                        fg_owner_expert_inline_fn expert,void *expert_context,
+                                        fg_vk_tensor **output,fg_error *err);
 fg_status fg_owner_decode_layer_finish(fg_owner_executor *executor,uint32_t slot,
                                        fg_vk_tensor **output,fg_error *err);
 fg_status fg_owner_prefill_layer(fg_owner_executor *executor,uint32_t layer,

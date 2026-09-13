@@ -15,7 +15,7 @@ _Static_assert(FG_Q38_DECODE_TILE_WORDS==9u,
 
 struct fg_expert_executor {
     fg_model *model;
-    fg_vk_tensor *activation,*tiles,*gates;
+    fg_vk_tensor *activation,*tiles,*gates,*selected;
     fg_vk_tensor *gate,*up,*mid,*down,*reduced,*result_readback;
     fg_vk_expert_graph *decode_graph[FG_LAYER_COUNT];
     uint32_t max_tokens,max_pairs;
@@ -39,6 +39,7 @@ static fg_status create_scratch(fg_expert_executor *executor,fg_error *err){
         status=FG_ERR_MISMATCH;
     }
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*4u,&executor->gates,err);
+    if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)FG_TOP_K*4u,&executor->selected,err);
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*640u*4u,&executor->gate,err);
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*640u*4u,&executor->up,err);
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*640u*4u,&executor->mid,err);
@@ -65,7 +66,7 @@ static fg_status create_scratch(fg_expert_executor *executor,fg_error *err){
 }
 
 fg_status fg_expert_executor_create(fg_expert_executor **out,fg_model *model,fg_error *err){if(!out||!model){fg_error_set(err,FG_ERR_ARGUMENT,"invalid expert executor arguments");return FG_ERR_ARGUMENT;}*out=NULL;fg_expert_executor *executor=calloc(1,sizeof(*executor));if(!executor){fg_error_set(err,FG_ERR_OOM,"allocate expert executor");return FG_ERR_OOM;}executor->model=model;fg_status status=create_scratch(executor,err);if(status==FG_OK)status=create_decode_graphs(executor,err);if(status!=FG_OK){fg_expert_executor_destroy(executor);return status;}*out=executor;return FG_OK;}
-void fg_expert_executor_destroy(fg_expert_executor *executor){if(!executor)return;for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++)fg_vk_expert_graph_destroy(executor->decode_graph[layer]);free(executor->schedule);free(executor->locals);fg_vk_tensor_destroy(executor->result_readback);fg_vk_tensor_destroy(executor->reduced);fg_vk_tensor_destroy(executor->down);fg_vk_tensor_destroy(executor->mid);fg_vk_tensor_destroy(executor->up);fg_vk_tensor_destroy(executor->gate);fg_vk_tensor_destroy(executor->gates);fg_vk_tensor_destroy(executor->tiles);fg_vk_tensor_destroy(executor->activation);free(executor);}
+void fg_expert_executor_destroy(fg_expert_executor *executor){if(!executor)return;for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++)fg_vk_expert_graph_destroy(executor->decode_graph[layer]);free(executor->schedule);free(executor->locals);fg_vk_tensor_destroy(executor->result_readback);fg_vk_tensor_destroy(executor->reduced);fg_vk_tensor_destroy(executor->down);fg_vk_tensor_destroy(executor->mid);fg_vk_tensor_destroy(executor->up);fg_vk_tensor_destroy(executor->gate);fg_vk_tensor_destroy(executor->selected);fg_vk_tensor_destroy(executor->gates);fg_vk_tensor_destroy(executor->tiles);fg_vk_tensor_destroy(executor->activation);free(executor);}
 
 uint32_t fg_expert_local_count(const fg_manifest *manifest,uint32_t layer,
                                uint32_t rank){
@@ -325,6 +326,88 @@ fg_status fg_expert_decode_finish(fg_expert_executor *executor,fg_expert_result 
 fg_status fg_expert_decode(fg_expert_executor *executor,const fg_decode_work *work,fg_expert_result *result,fg_error *err){
     fg_status status=fg_expert_decode_submit(executor,work,result,err);
     if(status==FG_OK)status=fg_expert_decode_finish(executor,result,err);
+    return status;
+}
+
+/* Chained decode fast path: the router top-10 selection, the tile schedule,
+ * and the fused expert pair are recorded into the caller's active command
+ * buffer, so a block owner never submits or fences on a per-layer boundary and
+ * never round-trips the routed selection through the host.  The result is the
+ * gate-weighted rank-local expert sum in the executor's reduced tensor. */
+static fg_status chain_expert_layout(fg_expert_executor *executor,uint32_t layer,
+    fg_vk_tensor **gate_weight,fg_vk_tensor **up_weight,fg_vk_tensor **down_weight,
+    uint32_t *gate_stride,uint32_t *up_stride,uint32_t *down_stride,
+    uint32_t *gate_type,uint32_t *up_type,uint32_t *down_type,fg_error *err){
+    const fg_tensor_record *gate_record=NULL,*up_record=NULL,*down_record=NULL;
+    uint32_t gate_count=0u,up_count=0u,down_count=0u;
+    fg_status status=expert_binding(executor,layer,"ffn_gate_exps",
+        gate_weight,&gate_record,&gate_count,gate_stride,err);
+    if(status==FG_OK)status=expert_binding(executor,layer,"ffn_up_exps",
+        up_weight,&up_record,&up_count,up_stride,err);
+    if(status==FG_OK)status=expert_binding(executor,layer,"ffn_down_exps",
+        down_weight,&down_record,&down_count,down_stride,err);
+    if(status!=FG_OK)return status;
+    if(gate_count!=FG_EXPERT_COUNT||up_count!=FG_EXPERT_COUNT||
+       down_count!=FG_EXPERT_COUNT){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "chained decode layer %u is not a single-owner expert slab",layer);
+        return FG_ERR_MISMATCH;
+    }
+    *gate_type=gate_record->ggml_type;*up_type=up_record->ggml_type;
+    *down_type=down_record->ggml_type;
+    if(!fg_vk_decode_experts_fusable(*gate_weight,*up_weight,*down_weight,*down_type)){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "chained decode layer %u has no fusable expert pair",layer);
+        return FG_ERR_UNAVAILABLE;
+    }
+    return FG_OK;
+}
+
+fg_status fg_expert_decode_chain_ready(fg_expert_executor *executor,uint32_t layer,
+    fg_error *err){
+    if(!executor||layer>=FG_LAYER_COUNT){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid chained expert layer");return FG_ERR_ARGUMENT;
+    }
+    const fg_manifest *manifest=fg_model_manifest(executor->model);
+    uint32_t rank=fg_model_rank(executor->model);
+    if(fg_expert_local_count(manifest,layer,rank)!=FG_EXPERT_COUNT){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "chained decode requires a single-owner layer %u",layer);
+        return FG_ERR_UNAVAILABLE;
+    }
+    fg_vk_tensor *gate_weight=NULL,*up_weight=NULL,*down_weight=NULL;
+    uint32_t gate_stride=0u,up_stride=0u,down_stride=0u;
+    uint32_t gate_type=0u,up_type=0u,down_type=0u;
+    return chain_expert_layout(executor,layer,&gate_weight,&up_weight,&down_weight,
+        &gate_stride,&up_stride,&down_stride,&gate_type,&up_type,&down_type,err);
+}
+
+fg_status fg_expert_decode_chain(fg_expert_executor *executor,uint32_t layer,
+    const fg_vk_tensor *activation,const fg_vk_tensor *router_logits,
+    fg_vk_tensor **reduced,fg_error *err){
+    if(!executor||!activation||!router_logits||!reduced){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid chained expert arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_vk_tensor *gate_weight=NULL,*up_weight=NULL,*down_weight=NULL;
+    uint32_t gate_stride=0u,up_stride=0u,down_stride=0u;
+    uint32_t gate_type=0u,up_type=0u,down_type=0u;
+    fg_status status=chain_expert_layout(executor,layer,&gate_weight,&up_weight,
+        &down_weight,&gate_stride,&up_stride,&down_stride,&gate_type,&up_type,
+        &down_type,err);
+    if(status!=FG_OK)return status;
+    fg_vk_context *vk=fg_model_vk(executor->model);
+    status=fg_vk_router_top10(vk,executor->selected,executor->gates,router_logits,
+        FG_EXPERT_COUNT,1u,err);
+    if(status==FG_OK)status=fg_vk_decode_tile_schedule(vk,executor->tiles,
+        executor->selected,err);
+    if(status==FG_OK)status=fg_vk_moe_decode_gate_up(vk,executor->mid,gate_weight,
+        up_weight,activation,executor->tiles,640u,FG_HIDDEN_SIZE,gate_stride,
+        up_stride,gate_type,up_type,FG_TOP_K,err);
+    if(status==FG_OK)status=fg_vk_moe_decode_down_reduce(vk,executor->reduced,
+        down_weight,executor->tiles,executor->mid,executor->gates,FG_HIDDEN_SIZE,
+        640u,down_stride,FG_TOP_K,down_type,err);
+    if(status==FG_OK)*reduced=executor->reduced;
     return status;
 }
 
