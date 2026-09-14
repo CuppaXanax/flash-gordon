@@ -40,6 +40,25 @@ which should take 4K decode from 2.06 toward short-decode speed. After that,
 ring decode (per-token chain with 40 KB hops, owners using their own QSA/GDN
 state) is the remaining architecture piece.
 
+## 0w. PI SESSION + OOM LESSON + Q8 COOKED (2026-09-13)
+
+The endpoint passed a real Pi coding session: 3 turns, multi-K prefills at
+232 TPS, 71/169-token generations at 14-16 TPS, then rank0 was OOM-killed with
+`cc1 invoked oom-killer` - a compile was running on .42 while it served. With
+~90-190 MB headroom any build on the serving blade kills the model. Mitigation
+in the helper scripts: `start-rank0-ring.sh` sets oom_score_adj -500 and the
+worker scripts -300, so a stray compiler dies instead of the model. Do not
+compile on .42 while serving, even with the guard.
+
+`3a66f34` adds a size-neutral cooked Q8_0 expert layout: packer cooks type-8
+3-D experts with the existing `fg_cook_q8_0_rows` (same bytes), new
+fg_moe_q8_0_down_cooked(.grouped) kernels, fused-pair eligibility, and
+`runtime_layout()` auto-cooks old manifests in place at load - so the raw-Q8_0
+expert layers (2/4/30/46/47, ~37 GB/s) get cooked speed without a full repack.
+Local tests pass; fleet deploy pending (the user may be poking Pi). A full
+q8-requant repack (+53 GB, runbook in the packq8 agent report) remains the
+optional phase 2.
+
 ## 0x. UPDATE 2026-09-13 NIGHT-FINAL (binary 930a76ff, ring pack)
 
 Ring decode round 3 (commits 316ce5e, f19a180, a711e29): top-k bounded to its
