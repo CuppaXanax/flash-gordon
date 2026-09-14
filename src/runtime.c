@@ -3729,12 +3729,15 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
     }
     bool direct=decode_direct_output_eligible(manifest);
     bool trace=decode_ring_trace_enabled();double t0=trace?dispatch_ts():0.0;
+    double t_embed=0.0,t_ngram=0.0;
     fg_vk_tensor *ngram_view=NULL;
     if(status==FG_OK)status=fg_vk_embedding_q8_0(vk,input,embedding,
         (uint32_t)history[history_count-1u],FG_HIDDEN_SIZE,FG_Q38_VOCAB_SIZE,
         FG_Q38_HYPER_COUNT,err);
+    if(trace)t_embed=dispatch_ts();
     if(status==FG_OK)status=fg_ngram_store_lookup_prefill(coordinator->ngram,history,
         history_count,token_index,1u,&ngram_view,err);
+    if(trace)t_ngram=dispatch_ts();
     fg_layer_work *work=&coordinator->decode_work;
     memset(work,0,sizeof(*work));
     work->layer=0u;work->source_rank=0u;work->destination_rank=manifest->layer_owner[0u];
@@ -3907,10 +3910,11 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
         if(status==FG_OK&&last_hyper)*last_hyper=input;
     }
     if(trace){t_output=dispatch_ts();
-        fprintf(stderr,"RING_DECODE token=%u embed_ms=%.3f first_hop_ms=%.3f "
-            "own_layers=%u..%u own_ms=%.3f own_run_ms=%.3f own_read_ms=%.3f "
-            "tail_ms=%.3f output_ms=%.3f total_ms=%.3f handoff=%u\n",
-            token_index,t_sent-t0,t_own_recv-t_sent,own_first,own_last,
+        fprintf(stderr,"RING_DECODE token=%u embed_ms=%.3f ngram_ms=%.3f send_ms=%.3f "
+            "first_hop_ms=%.3f own_layers=%u..%u own_ms=%.3f own_run_ms=%.3f "
+            "own_read_ms=%.3f tail_ms=%.3f output_ms=%.3f total_ms=%.3f handoff=%u\n",
+            token_index,t_sent-t0,t_ngram-t_embed,t_sent-t_ngram,t_own_recv-t_sent,
+            own_first,own_last,
             t_own_end-t_own_recv,t_own_run-t_own_recv,t_own_read-t_own_run,
             t_final-t_own_end,t_output-t_final,t_output-t0,direct?1u:0u);}
     return status;
@@ -4359,8 +4363,13 @@ static fg_status runtime_generate_tokens(
     bool stopped_on_eos=false;
     size_t pending_boundary_bytes=0;
     uint32_t pending_eos=0;
+    bool generate_trace=getenv("FG_GENERATE_TRACE")!=NULL;
+    double gt_interrupt=0.0,gt_tokenizer=0.0,gt_callback=0.0,gt_render=0.0,gt_decode=0.0;
+    double gt_loop=generate_trace?dispatch_ts():0.0;
     while(status==FG_OK&&generated<max_tokens){
+        double t_mark=generate_trace?dispatch_ts():0.0;
         if(interrupted&&interrupted(interrupt_context))break;
+        if(generate_trace){gt_interrupt+=dispatch_ts()-t_mark;t_mark=dispatch_ts();}
         if(next==fg_tokenizer_eos(runtime->coordinator.tokenizer)){
             const char *eos_text=NULL;size_t eos_bytes=0;
             status=fg_tokenizer_token(runtime->coordinator.tokenizer,next,&eos_text,
@@ -4378,9 +4387,12 @@ static fg_status runtime_generate_tokens(
             break;
         }
         char decoded[4096];size_t bytes=0;status=fg_tokenizer_decode_token(runtime->coordinator.tokenizer,next,decoded,sizeof(decoded),&bytes,err);
+        if(generate_trace){gt_tokenizer+=dispatch_ts()-t_mark;t_mark=dispatch_ts();}
         if(status==FG_OK)status=callback(callback_context,next,decoded,bytes,err);
+        if(generate_trace){gt_callback+=dispatch_ts()-t_mark;t_mark=dispatch_ts();}
         if(status==FG_OK)status=runtime_render_append(&candidate,&candidate_length,
                                                       &candidate_capacity,decoded,bytes,err);
+        if(generate_trace){gt_render+=dispatch_ts()-t_mark;t_mark=dispatch_ts();}
         if(status!=FG_OK)break;
         runtime->history[runtime->history_count++]=(int32_t)next;generated++;
         state_mutated=true;
@@ -4389,6 +4401,7 @@ static fg_status runtime_generate_tokens(
             status=coordinator_decode_token(&runtime->coordinator,runtime->history,
                 runtime->history_count,(uint32_t)runtime->history_count-1u,&next,&logit,
                 runtime->mtp_enabled?&last_hyper:NULL,err);
+            if(generate_trace)gt_decode+=dispatch_ts()-t_mark;
             if(status==FG_OK&&runtime->mtp_enabled){
                 if(runtime->pending_draft_valid){
                     runtime->draft_proposed++;
@@ -4436,6 +4449,10 @@ static fg_status runtime_generate_tokens(
         runtime->next_token=old_next;
         runtime->next_logit=old_logit;
     }
+    if(generate_trace)fprintf(stderr,"GENERATE_TRACE tokens=%u interrupt_ms=%.3f "
+        "tokenizer_ms=%.3f callback_ms=%.3f render_ms=%.3f decode_ms=%.3f total_ms=%.3f\n",
+        generated,gt_interrupt,gt_tokenizer,gt_callback,gt_render,gt_decode,
+        dispatch_ts()-gt_loop);
     free(candidate);return status;
 }
 
