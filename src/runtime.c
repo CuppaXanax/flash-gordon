@@ -829,9 +829,10 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
             status==FG_OK?err:&profile_error);
         if(profile_status==FG_OK){
             fprintf(stderr,"DECODE_PROFILE rank=%u token=%u layers=%u..%u gpu_ms=%.3f "
-                "kernel_ms=%.3f submissions=%llu dispatches=%llu\n",self,
+                "kernel_ms=%.3f wait_ms=%.3f record_ms=%.3f submissions=%llu dispatches=%llu\n",self,
                 work->token_index,(unsigned)work->layer,last,profile.gpu_ms,
-                profile.kernel_ms,(unsigned long long)profile.submissions,
+                profile.kernel_ms,profile.wait_ms,profile.record_ms,
+                (unsigned long long)profile.submissions,
                 (unsigned long long)profile.dispatches);
             for(uint32_t k=0;k<profile.kernel_count;k++)
                 fprintf(stderr,"DECODE_PROFILE_KERNEL rank=%u scope=%s kernel=%s "
@@ -3812,8 +3813,9 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
                     status==FG_OK?err:&profile_error);
                 if(profile_status==FG_OK){
                     fprintf(stderr,"DECODE_PROFILE rank=0 token=%u layers=%u..%u gpu_ms=%.3f "
-                        "kernel_ms=%.3f submissions=%llu dispatches=%llu\n",
+                        "kernel_ms=%.3f wait_ms=%.3f record_ms=%.3f submissions=%llu dispatches=%llu\n",
                         work->token_index,own_first,last,profile.gpu_ms,profile.kernel_ms,
+                        profile.wait_ms,profile.record_ms,
                         (unsigned long long)profile.submissions,
                         (unsigned long long)profile.dispatches);
                     for(uint32_t k=0;k<profile.kernel_count;k++)

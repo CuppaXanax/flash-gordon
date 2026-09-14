@@ -923,8 +923,8 @@ static fg_status commit_and_attend(fg_qsa_session *s,uint32_t slot,uint32_t toke
 
 fg_status fg_qsa_session_decode(fg_qsa_session *s,uint32_t layer,uint32_t token,const uint32_t position[3],const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err){
     int signed_slot=s?layer_slot(s,layer):-1;if(!s||signed_slot<0||!position||!hidden||!output){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA decode arguments");return FG_ERR_ARGUMENT;}uint32_t slot=(uint32_t)signed_slot;if(token!=s->committed[slot]||token>=s->max_context){fg_error_set(err,FG_ERR_MISMATCH,"QSA token position does not match committed state");return FG_ERR_MISMATCH;}fg_vk_tensor *qw=layer_weight(s,layer,"attn_q.weight",err),*kw=layer_weight(s,layer,"attn_k.weight",err),*vw=layer_weight(s,layer,"attn_v.weight",err),*qn=layer_weight(s,layer,"attn_q_norm.weight",err),*kn=layer_weight(s,layer,"attn_k_norm.weight",err),*ow=layer_weight(s,layer,"attn_output.weight",err),*iqw=layer_weight(s,layer,"indexer.q_proj.weight",err),*ikw=layer_weight(s,layer,"indexer.k_proj.weight",err),*iqn=layer_weight(s,layer,"indexer.q_norm.weight",err);if(!qw||!kw||!vw||!qn||!kn||!ow||!iqw||!ikw||!iqn)return FG_ERR_MISMATCH;
-    bool trace=qsa_trace_enabled();double t0=0,t_proj=0,t_commit=0;if(trace)t0=qsa_now_ms();
-    fg_vk_context *vk=fg_model_vk(s->model);fg_status status=fg_qsa_submit_host_reads(vk,err);
+    bool trace=qsa_trace_enabled();double t0=0,t_proj=0,t_commit=0,t_flush=0;if(trace)t0=qsa_now_ms();
+    fg_vk_context *vk=fg_model_vk(s->model);double flush_begin=trace?qsa_now_ms():0.0;fg_status status=fg_qsa_submit_host_reads(vk,err);if(trace)t_flush+=qsa_now_ms()-flush_begin;
     /* Materialize the token's index segment before any batch records; the
      * residency canary cannot run under an active batch. */
     if(status==FG_OK)status=ensure_index_segments_for_range(s,slot,token,1u,err);
@@ -941,7 +941,7 @@ fg_status fg_qsa_session_decode(fg_qsa_session *s,uint32_t layer,uint32_t token,
     if(status==FG_OK)status=fg_vk_quantize_q8_0(vk,s->key_q8,s->key,512u,1u,err);
     if(status==FG_OK)status=fg_vk_quantize_q8_0(vk,s->value_q4,s->raw_value,512u,1u,err);
     if(status==FG_OK)status=fg_vk_quantize_q8_0(vk,s->index_key_q8,s->raw_index_key,128u,1u,err);
-    if(status==FG_OK)status=fg_qsa_submit_host_reads(vk,err);
+    if(status==FG_OK){flush_begin=trace?qsa_now_ms():0.0;status=fg_qsa_submit_host_reads(vk,err);if(trace)t_flush+=qsa_now_ms()-flush_begin;}
     else if(fg_vk_batch_active(vk)){fg_error ignored={0};fg_vk_abort(vk,&ignored);}
     if(status!=FG_OK)return status;
     if(trace)t_proj=qsa_now_ms();
@@ -953,7 +953,7 @@ fg_status fg_qsa_session_decode(fg_qsa_session *s,uint32_t layer,uint32_t token,
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"qsa_output",err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,s->output,ow,s->attention,6144u,2560u,1u,1.0f,err);
     if(status!=FG_OK&&fg_vk_batch_active(vk)){fg_error ignored={0};fg_vk_abort(vk,&ignored);}
-    if(trace)fprintf(stderr,"QSA_TRACE layer=%u token=%u status=%d proj_ms=%.3f commit_attend_ms=%.3f out_ms=%.3f total_ms=%.3f\n",layer,token,(int)status,t_proj-t0,t_commit-t_proj,qsa_now_ms()-t_commit,qsa_now_ms()-t0);
+    if(trace)fprintf(stderr,"QSA_TRACE layer=%u token=%u status=%d proj_ms=%.3f flush_ms=%.3f commit_attend_ms=%.3f out_ms=%.3f total_ms=%.3f\n",layer,token,(int)status,t_proj-t0,t_flush,t_commit-t_proj,qsa_now_ms()-t_commit,qsa_now_ms()-t0);
     if(status==FG_OK){*output=s->output;}return status;
 }
 
