@@ -2651,6 +2651,11 @@ static fg_status coordinator_warm_qsa_issue(fg_coordinator *coordinator,
                                             uint32_t first_token,uint32_t token_count,
                                             fg_error *err){
     if(!coordinator->ring_prefill||!token_count)return FG_OK;
+    /* Ring decode runs every QSA layer on its owner, so the rank-0 mirror is
+     * never read for remote-owned pages.  Warming it only pulls fabric traffic
+     * and evicts rank 0's own prefill pages, which decode then reads back from
+     * the state file. */
+    if(coordinator->ring_decode)return FG_OK;
     qsa_page_transport *transport=&coordinator->qsa_pages;
     fg_status status=qsa_page_transport_ensure(transport,err);
     if(status!=FG_OK)return status;
