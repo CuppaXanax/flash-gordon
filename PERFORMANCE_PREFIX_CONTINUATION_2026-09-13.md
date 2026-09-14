@@ -94,6 +94,21 @@ as a prefix hit (`reused 30, prefilled 30, reset none`).
   decode is unchanged within measurement noise (the change touches no decode
   kernel and no decode path).
 
+## Decode critical path (priority 2) status
+
+Not attempted this round. The listed levers (expert pair ~8.3 ms at ~150 GB/s,
+`dense_q8_0_cooked_r8` GR chain ~7.4 ms) live in `shaders/*.comp`, which the
+parallel `fg-work-pref6` agent owns for the duration of this work; the no-conflict
+constraint was explicit. Measured decode on the deployed ring binary is unchanged
+from baseline (short 20.8, 4K 20.0 TPS), so the continuation work is decode-neutral.
+Rank-0-local levers that remain open and are runtime-side only: split the 248 K
+vocab projection across rank 0 + rank 4 (rank 0 already carries all common tensors;
+~1.7 ms of the ~3.4 ms head), and remove host residual fences in the ring tail
+(~3 ms target, `coordinator_decode_token_ring` profile lines
+`RING_DECODE ... own_ms/tail_ms/output_ms`). Neither closes the 26-30 TPS gap alone;
+the expert/GR geometry work is the required multiplier and needs the shader lane
+back.
+
 ## Known limits
 
 - Greedy identity with a *fully cold* run is FP-level, not bit-level. Decode state
