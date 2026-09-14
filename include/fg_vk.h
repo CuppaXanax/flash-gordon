@@ -22,6 +22,9 @@ typedef enum fg_vk_tensor_format {
 } fg_vk_tensor_format;
 
 #define FG_VK_PROFILE_MAX_KERNELS 64u
+/* Pre-recorded token-invariant runs; each slot owns a private descriptor set
+ * window so a dynamic epoch reset can never rewrite its bindings. */
+#define FG_VK_STATIC_SLOTS 4u
 
 typedef struct fg_vk_profile_kernel {
     const char *scope;
@@ -71,6 +74,12 @@ void fg_vk_get_memory_stats(const fg_vk_context *context,fg_vk_memory_stats *sta
 fg_status fg_vk_begin(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_end(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_flush(fg_vk_context *context,fg_error *err);
+fg_status fg_vk_static_begin(fg_vk_context *context,uint32_t slot,fg_error *err);
+fg_status fg_vk_static_end(fg_vk_context *context,uint32_t slot,fg_error *err);
+fg_status fg_vk_static_submit(fg_vk_context *context,uint32_t slot,fg_error *err);
+fg_status fg_vk_static_wait(fg_vk_context *context,uint32_t slot,fg_error *err);
+fg_status fg_vk_static_drain(fg_vk_context *context,fg_error *err);
+bool fg_vk_static_recorded(const fg_vk_context *context,uint32_t slot);
 fg_status fg_vk_abort(fg_vk_context *context,fg_error *err);
 bool fg_vk_batch_active(const fg_vk_context *context);
 bool fg_vk_pipeline_enabled(void);

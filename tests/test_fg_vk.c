@@ -2563,6 +2563,46 @@ static int test_pipeline_flush_parity(void){
     fg_vk_tensor_destroy(fb);fg_vk_tensor_destroy(fa);fg_vk_tensor_destroy(bb);fg_vk_tensor_destroy(ba);fg_vk_tensor_destroy(sb);fg_vk_tensor_destroy(si);return ok;
 }
 
+static int test_static_batch_replay(void){
+    enum{VALUES=64,STEPS=4};float input[VALUES],bias[VALUES],got[VALUES];
+    for(uint32_t i=0;i<VALUES;i++){input[i]=(float)i*0.0625f-1.0f;bias[i]=(float)(i%3u)*0.25f-0.5f;}
+    fg_vk_tensor *si=tensor(input,sizeof(input)),*sb=tensor(bias,sizeof(bias)),*ya=tensor(NULL,sizeof(input)),*yb=tensor(NULL,sizeof(input));
+    fg_vk_tensor *za=tensor(NULL,sizeof(input)),*zb=tensor(NULL,sizeof(input));
+    int ok=si&&sb&&ya&&yb&&za&&zb;
+    fg_vk_counters before={0},after={0};const fg_vk_tensor *current=si;
+    if(ok)ok=fg_vk_static_begin(context,0,&error)==FG_OK;
+    for(uint32_t step=0;ok&&step<STEPS;step++){fg_vk_tensor *target=(step&1u)?yb:ya;ok=fg_vk_add_f32(context,target,current,sb,VALUES,&error)==FG_OK;current=target;}
+    if(ok)ok=fg_vk_static_end(context,0,&error)==FG_OK&&fg_vk_static_recorded(context,0);
+    if(ok)ok=fg_vk_static_submit(context,0,&error)==FG_OK&&fg_vk_static_wait(context,0,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_read(yb,0,got,sizeof(got),&error)==FG_OK;
+    for(uint32_t i=0;ok&&i<VALUES;i++)if(got[i]!=input[i]+(float)STEPS*bias[i])ok=0;
+    float replacement[VALUES];
+    for(uint32_t i=0;i<VALUES;i++)replacement[i]=0.5f-(float)i*0.125f;
+    if(ok)ok=fg_vk_tensor_write(si,0,replacement,sizeof(replacement),&error)==FG_OK;
+    if(ok)ok=fg_vk_static_submit(context,0,&error)==FG_OK&&fg_vk_static_wait(context,0,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_read(yb,0,got,sizeof(got),&error)==FG_OK;
+    for(uint32_t i=0;ok&&i<VALUES;i++)if(got[i]!=replacement[i]+(float)STEPS*bias[i])ok=0;
+    if(ok)ok=fg_vk_begin(context,&error)==FG_OK;
+    current=si;
+    for(uint32_t step=0;ok&&step<STEPS;step++){fg_vk_tensor *target=(step&1u)?zb:za;ok=fg_vk_add_f32(context,target,current,sb,VALUES,&error)==FG_OK;current=target;}
+    if(ok)ok=fg_vk_end(context,&error)==FG_OK;
+    fg_vk_get_counters(context,&before);
+    if(ok)ok=fg_vk_static_submit(context,0,&error)==FG_OK&&fg_vk_static_drain(context,&error)==FG_OK;
+    fg_vk_get_counters(context,&after);
+    if(ok)ok=after.submissions-before.submissions==1u;
+    if(ok)ok=fg_vk_tensor_read(yb,0,got,sizeof(got),&error)==FG_OK;
+    for(uint32_t i=0;ok&&i<VALUES;i++)if(got[i]!=replacement[i]+(float)STEPS*bias[i])ok=0;
+    if(ok)ok=fg_vk_static_begin(context,1,&error)==FG_OK;
+    current=si;
+    for(uint32_t step=0;ok&&step<STEPS;step++){fg_vk_tensor *target=(step&1u)?zb:za;ok=fg_vk_add_f32(context,target,current,sb,VALUES,&error)==FG_OK;current=target;}
+    if(ok)ok=fg_vk_static_end(context,1,&error)==FG_OK;
+    if(ok)ok=fg_vk_static_submit(context,0,&error)==FG_OK&&fg_vk_static_submit(context,1,&error)==FG_OK;
+    if(ok)ok=fg_vk_static_drain(context,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_read(zb,0,got,sizeof(got),&error)==FG_OK;
+    for(uint32_t i=0;ok&&i<VALUES;i++)if(got[i]!=replacement[i]+(float)STEPS*bias[i])ok=0;
+    fg_vk_tensor_destroy(zb);fg_vk_tensor_destroy(za);fg_vk_tensor_destroy(yb);fg_vk_tensor_destroy(ya);fg_vk_tensor_destroy(sb);fg_vk_tensor_destroy(si);return ok;
+}
+
 static const fg_vk_profile_kernel *find_profile_kernel(const fg_vk_profile *profile,const char *scope,const char *name){for(uint32_t i=0;i<profile->kernel_count;i++)if(strcmp(profile->kernels[i].scope,scope)==0&&strcmp(profile->kernels[i].name,name)==0)return &profile->kernels[i];return NULL;}
 static int test_gpu_profile(void){
     enum{VALUES=256};float left[VALUES],right[VALUES];for(uint32_t i=0;i<VALUES;i++){left[i]=sinf((float)i*0.031f);right[i]=cosf((float)i*0.017f);}fg_vk_tensor *l=tensor(left,sizeof(left)),*r=tensor(right,sizeof(right)),*sum=tensor(NULL,sizeof(left)),*out=tensor(NULL,sizeof(left));fg_vk_profile profile={0};fg_vk_counters before={0},after={0};fg_vk_get_counters(context,&before);int ok=l&&r&&sum&&out&&!fg_vk_batch_active(context)&&!fg_vk_profile_active(context)&&fg_vk_profile_begin(context,&error)==FG_OK&&fg_vk_profile_active(context)&&fg_vk_begin(context,&error)==FG_OK&&fg_vk_begin(context,&error)==FG_OK&&fg_vk_batch_active(context)&&fg_vk_profile_set_scope(context,"sum",&error)==FG_OK&&fg_vk_add_f32(context,sum,l,r,VALUES,&error)==FG_OK&&fg_vk_end(context,&error)==FG_OK&&fg_vk_batch_active(context)&&fg_vk_profile_set_scope(context,"activation",&error)==FG_OK&&fg_vk_silu_scaled(context,out,sum,VALUES,1.0f,&error)==FG_OK&&fg_vk_end(context,&error)==FG_OK&&!fg_vk_batch_active(context)&&fg_vk_profile_end(context,&profile,&error)==FG_OK&&!fg_vk_profile_active(context);fg_vk_get_counters(context,&after);const fg_vk_profile_kernel *add=ok?find_profile_kernel(&profile,"sum","fg_add_f32.spv"):NULL,*silu=ok?find_profile_kernel(&profile,"activation","fg_silu_scaled.spv"):NULL;ok=ok&&after.submissions-before.submissions==2u&&after.dispatches-before.dispatches==2u&&profile.submissions==1u&&profile.dispatches==2u&&profile.gpu_ms>0.0&&profile.kernel_ms>0.0&&profile.gpu_ms>=profile.kernel_ms&&add&&add->invocations==1u&&add->gpu_ms>0.0&&silu&&silu->invocations==1u&&silu->gpu_ms>0.0;fg_vk_tensor_destroy(out);fg_vk_tensor_destroy(sum);fg_vk_tensor_destroy(r);fg_vk_tensor_destroy(l);return ok;
@@ -2580,6 +2620,7 @@ ok=run_test("memory_telemetry_and_canary",test_memory_telemetry_and_canary)&&ok;
 ok=run_test("tensor_view_rebind",test_tensor_view_rebind)&&ok;
     ok=run_test("batch_submission_parity",test_batch_submission_parity)&&ok;
     ok=run_test("pipeline_flush_parity",test_pipeline_flush_parity)&&ok;
+    ok=run_test("static_batch_replay",test_static_batch_replay)&&ok;
 ok=run_test("gpu_profile",test_gpu_profile)&&ok;
 ok=run_test("q8_dense",test_q8_dense)&&ok;
 ok=run_test("q8_dense_subgroup",test_q8_dense_subgroup)&&ok;
