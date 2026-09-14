@@ -141,6 +141,10 @@ fg_status fg_qsa_session_open_mirror_with_scratch(
     fg_qsa_session **out,fg_model *model,uint32_t logical_context,uint32_t hot_tokens,
     uint32_t cache_pages,uint32_t batch_size,fg_vk_tensor *scratch,
     fg_qsa_page_fetch_fn fetch_pages,void *fetch_opaque,fg_error *err);
+fg_status fg_qsa_session_open_state_mirror_with_scratch(
+    fg_qsa_session **out,fg_model *model,const char *state_path,uint32_t logical_context,
+    uint32_t hot_tokens,uint32_t cache_pages,uint32_t batch_size,fg_vk_tensor *scratch,
+    fg_qsa_page_fetch_fn fetch_pages,void *fetch_opaque,fg_error *err);
 void fg_qsa_session_close(fg_qsa_session *session);
 fg_status fg_qsa_session_reset(fg_qsa_session *session,fg_error *err);
 fg_status fg_qsa_session_checkpoint(fg_qsa_session *session,fg_error *err);

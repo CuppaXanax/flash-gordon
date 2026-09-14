@@ -2542,13 +2542,22 @@ static fg_status coordinator_fetch_qsa_pages(void *opaque,uint32_t layer,
     if(status!=FG_OK)return status;
     uint32_t owner=coordinator->manifest->layer_owner[layer];
     if(owner==0u){
-        /* Rank 0 owns the block: its own mirror session is authoritative. */
+        /* Rank 0 owns the block: its own session is authoritative.  Prefer the
+         * record cache, but fall back to the state file once a page has been
+         * evicted so a self-owned layer is not pinned resident forever. */
         for(uint32_t i=0;i<block_count;i++){
             const uint8_t *page_records=NULL;
-            status=fg_owner_qsa_page_records(coordinator->owner,layer,blocks[i],&page_records,err);
+            fg_status cached=fg_owner_qsa_page_records(coordinator->owner,layer,
+                                                       blocks[i],&page_records,err);
+            if(cached==FG_OK){
+                memcpy(records+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,page_records,
+                       FG_QSA_PAGE_RECORD_BYTES);
+                continue;
+            }
+            fg_error state_error={0};
+            status=fg_owner_qsa_state_records(coordinator->owner,layer,blocks[i],
+                records+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,&state_error);
             if(status!=FG_OK)return status;
-            memcpy(records+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,page_records,
-                   FG_QSA_PAGE_RECORD_BYTES);
         }
         return FG_OK;
     }
@@ -4001,7 +4010,41 @@ static fg_status runtime_mtp_propose(fg_runtime *runtime,const fg_vk_tensor *las
 
 static void coordinator_close(fg_coordinator *coordinator){if(!coordinator)return;free(coordinator->decode_result_wire);free(coordinator->decode_work_wire);for(uint32_t i=0;i<FG_GROUP_SIZE;i++)free(coordinator->async_recv_payloads[i]);qsa_page_transport_destroy(&coordinator->qsa_pages);for(uint32_t slot=0;slot<FG_PREFILL_FRAMES;slot++){fg_vk_tensor_destroy(coordinator->ring_output[slot]);prefill_layer_buffers_destroy(&coordinator->prefill_layer[slot]);prefill_worker_buffers_destroy(&coordinator->prefill_expert[slot]);}fg_ngram_store_close(coordinator->ngram);fg_tokenizer_close(coordinator->tokenizer);fg_fabric_close(coordinator->fabric);fg_owner_executor_destroy(coordinator->owner);fg_expert_executor_destroy(coordinator->expert);fg_model_close(coordinator->model);memset(coordinator,0,sizeof(*coordinator));}
 
-static fg_status coordinator_open(fg_coordinator *coordinator,const fg_manifest *manifest,const char *directory,const fg_runtime_options *options,fg_error *err){memset(coordinator,0,sizeof(*coordinator));coordinator->manifest=manifest;coordinator->options=*options;fg_status status=fg_session_identity_from_manifest(manifest,&coordinator->identity,err);if(status==FG_OK&&manifest->protocol_version<6u){fg_error_set(err,FG_ERR_MISMATCH,"QSA page ownership requires protocol version 6");status=FG_ERR_MISMATCH;}if(status==FG_OK)status=fg_model_open_coordinator(&coordinator->model,manifest,directory,0u,err);if(status==FG_OK)status=fg_owner_executor_create(&coordinator->owner,coordinator->model,err);if(status==FG_OK)status=fg_expert_executor_create(&coordinator->expert,coordinator->model,err);uint32_t cache_page_count=coordinator_qsa_cache_pages(options);if(status==FG_OK&&!cache_page_count){fg_error_set(err,FG_ERR_LIMIT,"QSA record cache has no capacity");status=FG_ERR_LIMIT;}if(status==FG_OK)status=fg_owner_qsa_open_mirror(coordinator->owner,options->logical_context_tokens,options->qsa_hot_tokens,cache_page_count,manifest->prefill_microbatch,coordinator_fetch_qsa_pages,coordinator,err);if(status==FG_OK)status=fg_tokenizer_open(&coordinator->tokenizer,directory,manifest,err);if(status==FG_OK)status=fg_tokenizer_validate_qwen38(coordinator->tokenizer,err);const fg_tensor_record *ngram_record=NULL;for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++)if(manifest->tensors[i].kind==FG_TENSOR_NGRAM){if(ngram_record){fg_error_set(err,FG_ERR_MISMATCH,"multiple n-gram tensors in deployment manifest");status=FG_ERR_MISMATCH;}else ngram_record=&manifest->tensors[i];}char ngram_path[1200];if(status==FG_OK&&!ngram_record){fg_error_set(err,FG_ERR_MISMATCH,"deployment manifest has no n-gram tensor");status=FG_ERR_MISMATCH;}if(status==FG_OK&&snprintf(ngram_path,sizeof(ngram_path),"%s/ngram.iq4nl",directory)>=(int)sizeof(ngram_path)){fg_error_set(err,FG_ERR_LIMIT,"n-gram path is too long");status=FG_ERR_LIMIT;}uint32_t ngram_store_tokens=manifest->prefill_microbatch<=FG_NGRAM_PREFILL_MAX_TOKENS/FG_PREFILL_FRAMES?FG_PREFILL_FRAMES*manifest->prefill_microbatch:FG_NGRAM_PREFILL_MAX_TOKENS;if(status==FG_OK)status=fg_ngram_store_open(&coordinator->ngram,fg_model_vk(coordinator->model),ngram_path,ngram_record->bytes,ngram_store_tokens,err);
+/* The coordinator executes its own block's QSA layers in the ring.  A
+ * state-backed mirror keeps those pages recoverable after cache eviction
+ * instead of pinning them resident for the whole context. */
+static fg_status coordinator_open_qsa(fg_coordinator *coordinator,const char *directory,
+                                      uint32_t logical_context,uint32_t cache_pages,
+                                      fg_error *err){
+    const fg_manifest *manifest=coordinator->manifest;
+    bool owns_qsa=false;
+    for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
+        if(manifest->layer_owner[layer]==0u)owns_qsa=true;
+    if(!owns_qsa)
+        return fg_owner_qsa_open_mirror(coordinator->owner,logical_context,
+            coordinator->options.qsa_hot_tokens,cache_pages,manifest->prefill_microbatch,
+            coordinator_fetch_qsa_pages,coordinator,err);
+    char path[1200];
+    if(snprintf(path,sizeof(path),"%s/qsa-owner-rank-00.state",directory)>=
+       (int)sizeof(path)){
+        fg_error_set(err,FG_ERR_LIMIT,"QSA coordinator state path overflow");
+        return FG_ERR_LIMIT;
+    }
+    unlink(path);
+    uint8_t layers[FG_LAYER_COUNT/4u];uint32_t layer_count=0;
+    for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
+        layers[layer_count++]=(uint8_t)layer;
+    fg_qsa_state *state=NULL;
+    fg_status status=fg_qsa_state_open(&state,path,layers,layer_count,logical_context,
+                                       true,err);
+    fg_qsa_state_close(state);
+    if(status!=FG_OK)return status;
+    return fg_owner_qsa_open_state_mirror(coordinator->owner,path,logical_context,
+        coordinator->options.qsa_hot_tokens,cache_pages,manifest->prefill_microbatch,
+        coordinator_fetch_qsa_pages,coordinator,err);
+}
+
+static fg_status coordinator_open(fg_coordinator *coordinator,const fg_manifest *manifest,const char *directory,const fg_runtime_options *options,fg_error *err){memset(coordinator,0,sizeof(*coordinator));coordinator->manifest=manifest;coordinator->options=*options;fg_status status=fg_session_identity_from_manifest(manifest,&coordinator->identity,err);if(status==FG_OK&&manifest->protocol_version<6u){fg_error_set(err,FG_ERR_MISMATCH,"QSA page ownership requires protocol version 6");status=FG_ERR_MISMATCH;}if(status==FG_OK)status=fg_model_open_coordinator(&coordinator->model,manifest,directory,0u,err);if(status==FG_OK)status=fg_owner_executor_create(&coordinator->owner,coordinator->model,err);if(status==FG_OK)status=fg_expert_executor_create(&coordinator->expert,coordinator->model,err);uint32_t cache_page_count=coordinator_qsa_cache_pages(options);if(status==FG_OK&&!cache_page_count){fg_error_set(err,FG_ERR_LIMIT,"QSA record cache has no capacity");status=FG_ERR_LIMIT;}if(status==FG_OK)status=coordinator_open_qsa(coordinator,directory,options->logical_context_tokens,cache_page_count,err);if(status==FG_OK)status=fg_tokenizer_open(&coordinator->tokenizer,directory,manifest,err);if(status==FG_OK)status=fg_tokenizer_validate_qwen38(coordinator->tokenizer,err);const fg_tensor_record *ngram_record=NULL;for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++)if(manifest->tensors[i].kind==FG_TENSOR_NGRAM){if(ngram_record){fg_error_set(err,FG_ERR_MISMATCH,"multiple n-gram tensors in deployment manifest");status=FG_ERR_MISMATCH;}else ngram_record=&manifest->tensors[i];}char ngram_path[1200];if(status==FG_OK&&!ngram_record){fg_error_set(err,FG_ERR_MISMATCH,"deployment manifest has no n-gram tensor");status=FG_ERR_MISMATCH;}if(status==FG_OK&&snprintf(ngram_path,sizeof(ngram_path),"%s/ngram.iq4nl",directory)>=(int)sizeof(ngram_path)){fg_error_set(err,FG_ERR_LIMIT,"n-gram path is too long");status=FG_ERR_LIMIT;}uint32_t ngram_store_tokens=manifest->prefill_microbatch<=FG_NGRAM_PREFILL_MAX_TOKENS/FG_PREFILL_FRAMES?FG_PREFILL_FRAMES*manifest->prefill_microbatch:FG_NGRAM_PREFILL_MAX_TOKENS;if(status==FG_OK)status=fg_ngram_store_open(&coordinator->ngram,fg_model_vk(coordinator->model),ngram_path,ngram_record->bytes,ngram_store_tokens,err);
     /* Allocate only coordinator-side asynchronous receive payloads. */
     for(uint32_t i=0;status==FG_OK&&i<FG_GROUP_SIZE;i++){coordinator->async_recv_payloads[i]=malloc(FG_EXPERT_RESULT_SINGLE_BYTES);if(!coordinator->async_recv_payloads[i]){fg_error_set(err,FG_ERR_OOM,"allocate async expert recv buffer %u",i);status=FG_ERR_OOM;}}for(uint32_t slot=0;status==FG_OK&&slot<FG_PREFILL_FRAMES;slot++){status=prefill_worker_buffers_create(&coordinator->prefill_expert[slot],manifest->prefill_microbatch,true,err);if(status==FG_OK)status=prefill_layer_buffers_create(&coordinator->prefill_layer[slot],coordinator->model,manifest->prefill_microbatch,err);if(status==FG_OK&&slot<2u)status=fg_vk_tensor_create(fg_model_vk(coordinator->model),(uint64_t)manifest->prefill_microbatch*FG_HYPER_WIDTH*4u,&coordinator->ring_output[slot],err);}if(status==FG_OK)coordinator->ring_prefill=prefill_ring_requested();if(status==FG_OK)coordinator->ring_decode=coordinator->ring_prefill&&decode_ring_requested();if(status==FG_OK&&coordinator->ring_decode){coordinator->decode_work_wire=malloc(FG_DECODE_LAYER_WORK_MAX_BYTES);coordinator->decode_result_wire=malloc(FG_DECODE_LAYER_RESULT_BYTES);if(!coordinator->decode_work_wire||!coordinator->decode_result_wire){fg_error_set(err,FG_ERR_OOM,"allocate ring decode exchange buffers");status=FG_ERR_OOM;}}if(status==FG_OK)status=fg_fabric_open(&coordinator->fabric,manifest,0u,err);if(status==FG_OK)atomic_init(&coordinator->transport_state,FG_TRANSPORT_READY);if(status==FG_OK)status=qsa_page_transport_create(&coordinator->qsa_pages,coordinator->fabric,&coordinator->transport_state,err);if(status==FG_OK)status=rank_ready(coordinator->fabric,0u,err);if(status==FG_OK)status=token_profile_prepare(fg_model_vk(coordinator->model),err);if(status==FG_OK)status=coordinator_begin_session(coordinator,err);if(status==FG_OK)coordinator_memory_report(coordinator);if(status!=FG_OK)coordinator_close(coordinator);coordinator->directory=directory;return status;}
 
