@@ -40,6 +40,30 @@ which should take 4K decode from 2.06 toward short-decode speed. After that,
 ring decode (per-token chain with 40 KB hops, owners using their own QSA/GDN
 state) is the remaining architecture piece.
 
+## 0x. UPDATE 2026-09-13 NIGHT-FINAL (binary 930a76ff, ring pack)
+
+Ring decode round 3 (commits 316ce5e, f19a180, a711e29): top-k bounded to its
+real bitonic width, GR mix workgroups scaled, r8 scales per-lane, GDN
+recurrent unrolled x4, and the direct rank7 -> rank4 output handoff
+(`FG_DECODE_DIRECT_OUTPUT`, default on). Validated on the integrated binary:
+
+| metric | mission start | now |
+|---|---|---|
+| gates | empty answers | **[12] / [Paris]** |
+| 4K battery prefill | 47.4 | **279.1 TPS** |
+| short decode | 9.2 | **19.68 TPS** |
+| 4K sustained 40-token decode | ~2 | **16.62 TPS** |
+| 4K single decode row | 1.96 | 10.36 (cold-process row, noisy) |
+
+Remaining gap to 100 TPS (~54 ms/token): instruction/latency bound, not DRAM.
+Gate/up/down are nibble-unpack kernels with no dp4a on GFX1013; raw-Q8_0
+expert downs run at ~37 GB/s and need the cooked-layout repack (source GGUF is
+not on this machine - it lives on the pack producer host). QSA attention
+batching is the other measured lever (a 4-token batching experiment regressed
+and was reverted). Single-sequence pipelining is impossible without MTP
+(embed(T+1) depends on sample(T)); legal overlap is 2-sequence interleaving or
+vocabulary-split output (documented in PERFORMANCE_DIRECT_OUTPUT_HANDOFF).
+
 ## 0y. UPDATE 2026-09-13 NIGHT (binary c8a95258, ring pack)
 
 Ring decode round 2 (commits 31b17c2, 9338174): the block owner records all six
