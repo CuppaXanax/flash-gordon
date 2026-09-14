@@ -36,6 +36,8 @@ typedef struct fg_vk_profile {
     uint64_t dispatches;
     double gpu_ms;
     double kernel_ms;
+    double wait_ms;
+    double record_ms;
     fg_vk_profile_kernel kernels[FG_VK_PROFILE_MAX_KERNELS];
 } fg_vk_profile;
 
