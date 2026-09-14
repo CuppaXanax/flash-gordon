@@ -40,6 +40,40 @@ which should take 4K decode from 2.06 toward short-decode speed. After that,
 ring decode (per-token chain with 40 KB hops, owners using their own QSA/GDN
 state) is the remaining architecture piece.
 
+## 0v. DECODE ROUND 5 + PREFILL REVERT + SOAK GATE (2026-09-13/14)
+
+**Ring decode round 5** (`81f50b5`): QSA decode attention rewritten to a shared
+record tile across the 12 query heads of a KV head, subgroup online softmax,
+push-constant selected/splits - 0.43-0.51 -> 0.10-0.14 ms/QSA layer; QSA
+attention across the 12 layers ~5.7 -> ~1.4 ms/token. Measured: short decode
+21.14 TPS, 4K sustained 19.32-19.45, 4K prefill 285.4 before the prefill
+experiment. Explored but rejected: fp32 nibble-dot expert conversion (fleet
+neutral; the expert pair stays ~150 GB/s and needs a geometry rewrite).
+
+**Prefill shader round attempted and reverted** (`fc06ffb` then revert): the
+four-lane vec4-accumulator expert GEMM rewrite regressed the 4K battery
+prefill to 258.2/258.5 TPS vs the 277-304 control band; the ACO register
+pressure risk materialized. Reverted the three expert shaders, kept the QSA
+prefill register-query-staging change (shared 28->16 KiB). Final same-pack
+measurements: 4K prefill 277.5/277.7, short decode 20.8, 4K warm single decode
+20.2, sustained 4K ~19.5.
+
+**Soak gate installed** (`tools/pi-stability.ps1`, `00d0236`): 6 escalating
+contexts (131..16387), a 4-turn growing conversation, correctness [12]/[Paris]
+and per-rank liveness checks. Final run: 0 failures, 4K prefill 279.55.
+
+**MTP:** the current source GGUF has no mtp/draft tensors (schema check over
+all 4 shards, zero matches), so MTP is not implementable with this pack even if
+wanted. Scaffolding (`cb62f47`) is integrated but flag-off and default-false;
+leadership asked us not to ship/default it.
+
+**Gap to 100 TPS decode (no MTP, ~3.3GB/token floor = ~9.4 ms = ~106 TPS):**
+steady 4K token ~51 ms. Remaining budget: expert pair ~8.3 ms at ~150 GB/s
+(geometry-bound), GDN ~11 ms (roofline-adjacent), GR chains ~7.4 ms, rank-0
+fixed ~4-6 ms (output head 3.4 DRAM-bound), host ~3 ms. Next levers: expert
+tile geometry, GR chain fusion, output-head split. Prefill 1000 TPS remains
+the 1.47 TFLOPS roofline; realistic band 400-600 after more stage-kernel work.
+
 ## 0w. PI SESSION + OOM LESSON + Q8 COOKED (2026-09-13)
 
 The endpoint passed a real Pi coding session: 3 turns, multi-K prefills at
