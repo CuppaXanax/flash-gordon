@@ -1055,10 +1055,16 @@ static fg_status select_prefill_batch(fg_qsa_session *s,uint32_t slot,
         if(status==FG_OK)status=fg_vk_tensor_view(s->sel_ids[0],0,entries,&id_view,err);
         for(uint32_t segment=0;status==FG_OK&&segment<s->index_segment_count;segment++){
             uint32_t first=fg_qsa_index_segment_first(s->max_context,segment);
-            uint32_t visible=first_visible+queries-1u;
-            if(first>visible)break;
-            uint32_t count=visible-first+1u;
-            if(count>s->index_segment_tokens[segment])count=s->index_segment_tokens[segment];
+        uint32_t visible=first_visible+queries-1u;
+        if(first>visible)break;
+        /* visible is an exclusive count: it is the number of tokens the last
+         * query of the batch can see (first_visible already includes the
+         * first query's own token).  Adding one here used to score a fourth
+         * token of the block after the last visible one, so chunks whose
+         * endpoint landed on a block boundary requested blocks_end one past
+         * blocks_total and the score-tile validation rejected the dispatch. */
+        uint32_t count=visible-first;
+        if(count>s->index_segment_tokens[segment])count=s->index_segment_tokens[segment];
             if(count<FG_Q38_QSA_COMPRESS_RATIO)continue;
             uint32_t blocks_end=count/FG_Q38_QSA_COMPRESS_RATIO;
             status=ensure_index_segment(s,slot,segment,err);
