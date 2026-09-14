@@ -1629,3 +1629,27 @@ fg_status fg_qsa_session_state_records(fg_qsa_session *s,uint32_t layer,uint32_t
     }
     return status;
 }
+
+/* Batched form of the same read: one uring submission for up to
+ * FG_QSA_MAX_SELECTED_BLOCKS pages keeps a decode fetch off the per-page pread
+ * path. */
+fg_status fg_qsa_session_state_records_batch(fg_qsa_session *s,uint32_t layer,
+    const uint32_t *blocks,uint32_t page_count,uint8_t *records,fg_error *err){
+    int signed_slot=s?layer_slot(s,layer):-1;
+    if(!s||signed_slot<0||!blocks||!records||!page_count||!s->state){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA state page batch lookup");
+        return FG_ERR_ARGUMENT;
+    }
+    if(page_count>FG_QSA_MAX_SELECTED_BLOCKS){
+        fg_error_set(err,FG_ERR_LIMIT,"QSA state page batch exceeds staging capacity");
+        return FG_ERR_LIMIT;
+    }
+    fg_status status=fg_qsa_state_read_blocks(s->state,(uint32_t)signed_slot,blocks,
+        page_count,records,s->state_committed,err);
+    for(uint32_t i=0;status==FG_OK&&i<page_count;i++)
+        if(s->state_committed[i]!=FG_Q38_QSA_COMPRESS_RATIO){
+            fg_error_set(err,FG_ERR_MISMATCH,"QSA state page is incomplete");
+            status=FG_ERR_MISMATCH;
+        }
+    return status;
+}
