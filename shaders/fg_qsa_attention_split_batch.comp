@@ -9,8 +9,12 @@
  * decoded key/value records instead of re-decoding them per head (the old
  * per-head kernel decoded each record 12x).  Eight records are decoded from
  * q8_0 to fp32 in shared memory per tile by the whole workgroup; the online
- * softmax then runs entirely inside a subgroup, so the only barriers are the
- * two staging barriers per tile.
+ * softmax then runs entirely inside a subgroup.
+ *
+ * The query vectors now live in registers (they were staged through shared
+ * memory with no reuse), which cuts the workgroup shared footprint from 28 KiB
+ * to 16 KiB: the CU can keep three workgroups resident instead of two, and the
+ * 768 redundant staging stores plus 768 staged loads per workgroup disappear.
  *
  * Lane ownership inside a subgroup is strided vec4 blocks
  *   { lane + i*subgroup_size | i < 64/subgroup_size }
@@ -39,7 +43,6 @@ const float NEG_INF=-3.402823466e38;
 
 shared vec4 key_tile[TILE*64u];
 shared vec4 value_tile[TILE*64u];
-shared vec4 query_tile[HEADS_PER_KV*64u];
 
 /* Decode one vec4 of q8_0 data (4 consecutive quantized elements).  The q8
  * block scale is the half at the block start; the four bytes may straddle two
@@ -74,21 +77,24 @@ void main(){
     uint local=gl_LocalInvocationIndex;
     uint subgroup=gl_SubgroupID,lane=gl_SubgroupInvocationID,lanes=gl_SubgroupSize;
     bool owns_head=subgroup<HEADS_PER_KV;
-    /* The twelve query heads of this KV head are exactly the workgroup's 768
-     * query rows, so the staging copy is a straight one-to-one global load. */
-    query_tile[local]=query4[query_id*(pc.query_stride>>2u)+kv_head*(HEADS_PER_KV*64u)+local];
     uint selected=selected_counts[query_id];
     uint begin=(selected*split)/pc.splits,end=(selected*(split+1u))/pc.splits;
     uint head=kv_head*HEADS_PER_KV+subgroup;
     uint partial_base=((query_id*24u+head)*pc.splits+split)*258u;
-    barrier();
+    uint query_base=query_id*(pc.query_stride>>2u)+kv_head*(HEADS_PER_KV*64u);
+    uint v4=64u/lanes;
+    uint query_row=subgroup*64u+lane;
+    /* The twelve query rows of this KV head are the workgroup's 768 lanes;
+     * load them straight from the query tensor into registers. */
+    vec4 query_value[8];
+    for(uint i=0u;i<v4;i++)query_value[i]=query4[query_base+query_row+i*lanes];
 
     float running_max=NEG_INF,running_den=0.0;
     if(lanes==64u){
         /* BC-250 / RADV wave64: one vec4 of the head per lane, query row and
          * all state in registers, scores unrolled so no local array is needed. */
         vec4 accumulator=vec4(0.0);
-        vec4 query_value=query_tile[subgroup*64u+lane];
+        vec4 qv=query_value[0];
         for(uint tile=begin;tile<end;tile+=TILE){
             uint span=end-tile;if(span>TILE)span=TILE;
             barrier();
@@ -100,14 +106,14 @@ void main(){
             if(owns_head){
                 float s0=NEG_INF,s1=NEG_INF,s2=NEG_INF,s3=NEG_INF;
                 float s4=NEG_INF,s5=NEG_INF,s6=NEG_INF,s7=NEG_INF;
-                if(0u<span)s0=subgroupAdd(dot(query_value,key_tile[0u*64u+lane]))*0.0625;
-                if(1u<span)s1=subgroupAdd(dot(query_value,key_tile[1u*64u+lane]))*0.0625;
-                if(2u<span)s2=subgroupAdd(dot(query_value,key_tile[2u*64u+lane]))*0.0625;
-                if(3u<span)s3=subgroupAdd(dot(query_value,key_tile[3u*64u+lane]))*0.0625;
-                if(4u<span)s4=subgroupAdd(dot(query_value,key_tile[4u*64u+lane]))*0.0625;
-                if(5u<span)s5=subgroupAdd(dot(query_value,key_tile[5u*64u+lane]))*0.0625;
-                if(6u<span)s6=subgroupAdd(dot(query_value,key_tile[6u*64u+lane]))*0.0625;
-                if(7u<span)s7=subgroupAdd(dot(query_value,key_tile[7u*64u+lane]))*0.0625;
+                if(0u<span)s0=subgroupAdd(dot(qv,key_tile[0u*64u+lane]))*0.0625;
+                if(1u<span)s1=subgroupAdd(dot(qv,key_tile[1u*64u+lane]))*0.0625;
+                if(2u<span)s2=subgroupAdd(dot(qv,key_tile[2u*64u+lane]))*0.0625;
+                if(3u<span)s3=subgroupAdd(dot(qv,key_tile[3u*64u+lane]))*0.0625;
+                if(4u<span)s4=subgroupAdd(dot(qv,key_tile[4u*64u+lane]))*0.0625;
+                if(5u<span)s5=subgroupAdd(dot(qv,key_tile[5u*64u+lane]))*0.0625;
+                if(6u<span)s6=subgroupAdd(dot(qv,key_tile[6u*64u+lane]))*0.0625;
+                if(7u<span)s7=subgroupAdd(dot(qv,key_tile[7u*64u+lane]))*0.0625;
                 float tile_max=max(max(max(s0,s1),max(s2,s3)),
                                    max(max(s4,s5),max(s6,s7)));
                 float next_max=max(running_max,tile_max);
@@ -171,8 +177,6 @@ void main(){
     }else{
         /* Generic subgroup size (lavapipe uses 8): lane owns several strided
          * vec4 blocks; dynamic loops keep the code size bounded. */
-        uint v4=64u/lanes;
-        uint query_row=subgroup*64u+lane;
         vec4 accumulator[8];
         for(uint i=0u;i<8u;i++)accumulator[i]=vec4(0.0);
         for(uint tile=begin;tile<end;tile+=TILE){
@@ -190,10 +194,8 @@ void main(){
                     float score=NEG_INF;
                     if(record<span){
                         float partial=0.0;
-                        for(uint i=0u;i<v4;i++){
-                            uint at=query_row+i*lanes;
-                            partial+=dot(query_tile[at],key_tile[record*64u+lane+i*lanes]);
-                        }
+                        for(uint i=0u;i<v4;i++)
+                            partial+=dot(query_value[i],key_tile[record*64u+lane+i*lanes]);
                         score=subgroupAdd(partial)*0.0625;
                     }
                     scores[record]=score;
@@ -207,7 +209,8 @@ void main(){
                     float weight=exp2((scores[record]-next_max)*L2E);
                     denominator+=weight;
                     for(uint i=0u;i<v4;i++)
-                        accumulator[i]=fma(vec4(weight),value_tile[record*64u+lane+i*lanes],accumulator[i]);
+                        accumulator[i]=fma(vec4(weight),
+                            value_tile[record*64u+lane+i*lanes],accumulator[i]);
                 }
                 running_max=next_max;
                 running_den=denominator;
