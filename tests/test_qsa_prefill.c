@@ -70,6 +70,37 @@ static int fill_index_rows(fg_qsa_session *s){
     return 1;
 }
 
+/* Regression for the fleet's "invalid causal QSA score tile" death: the
+ * segment window counted one extra visible token, so a prefill chunk whose
+ * endpoint completed a four-token block (first_visible+queries == 0 mod 4)
+ * scored blocks_end one past blocks_total and the score dispatch rejected the
+ * tile.  Sweep the boundary with a full microbatch and every partial endpoint,
+ * over both fresh (first_token % 4 == 0) and continued (any residue) starts. */
+static int selection_window_boundary(fg_qsa_session *s){
+    static const uint32_t probes[]={128u,1u,2u,3u};
+    uint32_t counts[128];
+    for(uint32_t base=10240u;base<=13312u;base+=128u){
+        for(uint32_t residue=0u;residue<4u;residue++){
+            uint32_t first_visible=base+residue+1u;
+            for(uint32_t p=0;p<4u;p++){
+                uint32_t queries=probes[p];
+                REQUIRE(select_prefill_batch(s,0u,first_visible,0u,queries,
+                    s->select_ids,FG_QSA_MAX_SELECTED_BLOCKS,counts,&error)==FG_OK);
+                for(uint32_t q=0;q<queries;q++){
+                    uint32_t complete=(first_visible+q)/FG_Q38_QSA_COMPRESS_RATIO;
+                    uint32_t expected=complete<FG_QSA_MAX_SELECTED_BLOCKS?
+                        complete:FG_QSA_MAX_SELECTED_BLOCKS;
+                    REQUIRE(counts[q]==expected);
+                    for(uint32_t i=0;i<counts[q];i++)
+                        REQUIRE(s->select_ids[(uint64_t)q*
+                            FG_QSA_MAX_SELECTED_BLOCKS+i]<complete);
+                }
+            }
+        }
+    }
+    return 1;
+}
+
 static int selection_parity(fg_qsa_session *s,uint32_t first){
     uint32_t selected[FG_QSA_PREFILL_QUERY_TILE][512],counts[4],reference[512],count=0;
     /* Nonzero query offset catches incorrect row strides in the score tile. */
@@ -352,6 +383,7 @@ int main(void){
     if(status==FG_ERR_UNAVAILABLE){free(session);free(model);return 77;}
     int ok=status==FG_OK&&setup(session,model,&scratch);
     if(ok)ok=lazy_index_segment(session)&&fill_index_rows(session);
+    if(ok)ok=selection_window_boundary(session);
     if(ok)ok=selection_parity(session,131071u)&&selection_parity(session,2045u);
     if(ok)ok=causal_attention(session)&&causal_attention_weighted(session)&&gather_eviction(session,false)&&gather_eviction(session,true);
     if(ok)ok=split_merge_selected(session,5u,8u)&&split_merge_selected(session,100u,1u)&&
