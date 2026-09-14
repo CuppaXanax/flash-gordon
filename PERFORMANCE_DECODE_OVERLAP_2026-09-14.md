@@ -3,13 +3,14 @@
 Worktree `fg-work-overlap`, branch `perf/decode-overlap`, base `f224fe6`
 (main: context sweep harness on top of the validated decode-20.8 TPS state).
 Scope: ring decode wall time per token. No shader, pack, manifest, protocol or
-prefill-path change. Three commits:
+prefill-path change. Four commits:
 
 | commit | file(s) | what |
 |---|---|---|
 | `57b2248` | `include/fg_vk.h`, `src/vk.c`, `src/runtime.c`, `src/qsa.c` | instrumentation: `wait_ms` / `record_ms` in `DECODE_PROFILE`, `flush_ms` in `QSA_TRACE` |
 | `e4771ec` | `src/vk.c`, `include/fg_vk.h`, `src/owner.c`, `tests/test_fg_vk.c` | `fg_vk_flush`: async submit + command-buffer rotation + semaphore chain; chained decode block flushes after every layer |
 | `aecb1a2` | `src/qsa.c` | cache-backed QSA decode keeps the projection/commit recordings queued until the selection fence |
+| `b0d6301` | `src/vk.c` | wait the current slot fence before a standalone dispatch (robustness; not on the decode critical path) |
 
 Gate: `FG_DECODE_PIPELINE=0` disables both overlap paths (per-layer flush and
 QSA flush) and restores the previous submission geometry without a rebuild.
