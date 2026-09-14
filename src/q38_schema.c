@@ -56,6 +56,12 @@ fg_status fg_tensor_record_expected_bytes(const fg_tensor_record *record,uint64_
                 matrix=fg_q5_1_cooked_matrix_bytes(
                     (uint32_t)record->shape[0],(uint32_t)record->shape[1]);
             break;
+        case FG_TENSOR_LAYOUT_Q8_0_EXPERT_COOKED:
+            if(record->dims==3u&&record->ggml_type==8u&&
+               record->shape[0]<=UINT32_MAX&&record->shape[1]<=UINT32_MAX)
+                matrix=fg_q8_0_cooked_matrix_bytes(
+                    (uint32_t)record->shape[0],(uint32_t)record->shape[1]);
+            break;
         default:break;
     }
     if(!matrix){

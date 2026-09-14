@@ -311,7 +311,7 @@ fg_status fg_manifest_validate(const fg_manifest *manifest,fg_error *err){
             fg_error_set(err,FG_ERR_FORMAT,"tensor %u has an empty dimension",i);
             return FG_ERR_FORMAT;
         }
-        uint32_t maximum_layout=current?FG_TENSOR_LAYOUT_HOST_Q8_0:
+        uint32_t maximum_layout=current?FG_TENSOR_LAYOUT_Q8_0_EXPERT_COOKED:
             FG_TENSOR_LAYOUT_Q5_1_EXPERT_COOKED;
         if(tensor->layout>maximum_layout){
             fg_error_set(err,FG_ERR_FORMAT,"tensor %u has unknown storage layout %u",
@@ -372,6 +372,19 @@ fg_status fg_manifest_validate(const fg_manifest *manifest,fg_error *err){
                tensor->bytes!=matrix*tensor->shape[2]){
                 fg_error_set(err,FG_ERR_FORMAT,
                              "tensor %u has an invalid cooked Q5_1 expert layout",i);
+                return FG_ERR_FORMAT;
+            }
+        }
+        if(tensor->layout==FG_TENSOR_LAYOUT_Q8_0_EXPERT_COOKED){
+            uint64_t matrix=tensor->shape[0]<=UINT32_MAX&&tensor->shape[1]<=UINT32_MAX?
+                fg_q8_0_cooked_matrix_bytes((uint32_t)tensor->shape[0],
+                                            (uint32_t)tensor->shape[1]):0u;
+            if(tensor->kind!=FG_TENSOR_ROUTED_EXPERT||tensor->ggml_type!=8u||
+               tensor->dims!=3u||tensor->shape[2]!=shard_experts||!matrix||
+               matrix>UINT64_MAX/tensor->shape[2]||
+               tensor->bytes!=matrix*tensor->shape[2]){
+                fg_error_set(err,FG_ERR_FORMAT,
+                             "tensor %u has an invalid cooked Q8_0 expert layout",i);
                 return FG_ERR_FORMAT;
             }
         }
@@ -657,18 +670,19 @@ void fg_manifest_print(const fg_manifest *manifest){
            manifest->native_context,manifest->max_context,
            manifest->session.position_mode==FG_POSITION_FOUR_AXIS?"four-axis":"text");
 
-    uint32_t cooked_q8=0,cooked_k=0,cooked_q5=0,host_q8=0;uint64_t cooked_bytes=0;
+    uint32_t cooked_q8=0,cooked_q8e=0,cooked_k=0,cooked_q5=0,host_q8=0;uint64_t cooked_bytes=0;
     for(uint32_t i=0;i<manifest->tensor_count;i++){
         uint32_t layout=manifest->tensors[i].layout;
         if(layout==FG_TENSOR_LAYOUT_Q8_0_COOKED)cooked_q8++;
+        else if(layout==FG_TENSOR_LAYOUT_Q8_0_EXPERT_COOKED)cooked_q8e++;
         else if(layout==FG_TENSOR_LAYOUT_K_QUANT_EXPERT_COOKED)cooked_k++;
         else if(layout==FG_TENSOR_LAYOUT_Q5_1_EXPERT_COOKED)cooked_q5++;
         else if(layout==FG_TENSOR_LAYOUT_HOST_Q8_0)host_q8++;
         if(layout!=FG_TENSOR_LAYOUT_GGML)cooked_bytes+=manifest->tensors[i].bytes;
     }
-    printf("layouts ggml=%u cooked-q8=%u cooked-k=%u cooked-q5_1=%u host-q8=%u non-ggml-bytes=%.3f GiB\n",
-           manifest->tensor_count-cooked_q8-cooked_k-cooked_q5-host_q8,
-           cooked_q8,cooked_k,cooked_q5,host_q8,
+    printf("layouts ggml=%u cooked-q8=%u cooked-q8x=%u cooked-k=%u cooked-q5_1=%u host-q8=%u non-ggml-bytes=%.3f GiB\n",
+           manifest->tensor_count-cooked_q8-cooked_q8e-cooked_k-cooked_q5-host_q8,
+           cooked_q8,cooked_q8e,cooked_k,cooked_q5,host_q8,
            (double)cooked_bytes/(1ull<<30));
     for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){
         const fg_rank_record *record=&manifest->ranks[rank];

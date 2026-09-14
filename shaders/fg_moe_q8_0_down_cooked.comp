@@ -1,0 +1,80 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+
+/* Size-neutral cooked Q8_0 expert down projection for batch-1 decode.
+
+   The on-disk expert slice is the 16-row cooked tile produced by
+   fg_cook_q8_0_rows: per tile a run of f16 scales ordered [32-value block][row]
+   then an aligned run of int8 quants ordered [row][block].  One workgroup
+   covers eight output rows and each row is split across eight lanes: lane l
+   owns values l*4..l*4+3 of every 32-value block, so a block costs one aligned
+   word load for the quant payload and one halfword for the scale.  The input is
+   the fp32 mid activation, read as one vec4 per lane per block.  The scale run
+   of a tile is 32*blocks bytes and the quant run 32*blocks*32 bytes, so the
+   aligned quant offset is align64(blocks*32). */
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Weights { uint wb[]; };
+layout(set = 0, binding = 1) readonly buffer Tiles { uint tiles[]; };
+layout(set = 0, binding = 2) readonly buffer Input { vec4 x4[]; };
+layout(set = 0, binding = 3) writeonly buffer Output { float y[]; };
+
+layout(push_constant) uniform Push {
+    uint out_dim;
+    uint in_dim;
+    uint blocks;
+    uint tile_bytes;
+    uint expert_stride;
+    uint routed_pairs;
+    uint packed_weights;
+} pc;
+
+const uint TILE_WORDS = 9u;
+const uint INVALID_PAIR = 0xffffffffu;
+
+shared float partial[64];
+
+void main() {
+    uint local_id = gl_LocalInvocationID.x;
+    uint row_slot = local_id >> 3u;
+    uint lane = local_id & 7u;
+    uint row = gl_WorkGroupID.x * 8u + row_slot;
+    uint tile_base = gl_WorkGroupID.y * TILE_WORDS;
+    uint expert = tiles[tile_base];
+    if (expert == INVALID_PAIR) return;
+
+    uint pair = tiles[tile_base + 1u];
+    if (pair >= pc.routed_pairs) return;
+    uint weight_index = pc.packed_weights != 0u ? gl_WorkGroupID.y : expert;
+    uint expert_base = weight_index * pc.expert_stride;
+    uint row_tile = row >> 4u;
+    uint tile_row = row & 15u;
+    bool row_live = row < pc.out_dim;
+    uint quant_offset = (pc.blocks * 32u + 63u) & ~63u;
+    float accumulator = 0.0;
+
+    for (uint block = 0u; block < pc.blocks; block++) {
+        uint block_base = expert_base + row_tile * pc.tile_bytes;
+        uint scale_byte = block_base + (block * 16u + tile_row) * 2u;
+        vec2 scale = unpackHalf2x16(wb[scale_byte >> 2u]);
+        float delta = (scale_byte & 2u) == 0u ? scale.x : scale.y;
+        uint quant_byte = block_base + quant_offset +
+            (tile_row * pc.blocks + block) * 32u + lane * 4u;
+        uint packed = row_live ? wb[quant_byte >> 2u] : 0u;
+        vec4 weight = vec4(unpack8(int(packed))) * delta;
+        vec4 input_value = x4[pair * (pc.in_dim >> 2u) + block * 8u + lane];
+        accumulator += dot(weight, input_value);
+    }
+
+    partial[local_id] = accumulator;
+    barrier();
+    if (row_live && lane == 0u) {
+        uint offset = row_slot * 8u;
+        y[pair * pc.out_dim + row] =
+            ((partial[offset] + partial[offset + 4u]) +
+             (partial[offset + 2u] + partial[offset + 6u])) +
+            ((partial[offset + 1u] + partial[offset + 5u]) +
+             (partial[offset + 3u] + partial[offset + 7u]));
+    }
+}

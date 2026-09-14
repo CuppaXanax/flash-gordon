@@ -1,0 +1,151 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+
+/* Size-neutral cooked Q8_0 expert down projection for grouped prefill.
+
+   Four pair slots are gathered per tile word run and each thread owns four
+   consecutive output rows of one 16-row cooked tile.  A block costs one uvec2
+   of f16 scales (the four rows are 8 adjacent bytes of the [block][row] scale
+   run) and one aligned word of int8 quants per row, because a cooked tile
+   stores a row's 32-value block contiguously.  The activation vectors are
+   shared by the four rows. */
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Weights { uint wb[]; };
+layout(set = 0, binding = 1) readonly buffer Tiles { uint tiles[]; };
+layout(set = 0, binding = 2) readonly buffer Input { vec4 x4[]; };
+layout(set = 0, binding = 3) writeonly buffer Output { float y[]; };
+
+layout(push_constant) uniform Push {
+    uint out_dim;
+    uint in_dim;
+    uint blocks;
+    uint tile_bytes;
+    uint expert_stride;
+    uint tokens;
+} pc;
+
+const uint TOP_K = 10u;
+const uint PAIR_TILE = 4u;
+const uint TILE_WORDS = 5u;
+const uint INVALID = 0xffffffffu;
+const uint ROWS = 4u;
+const uint SUMS_STRIDE = 9u;
+const uint ROWS_PER_WORKGROUP = 32u;
+
+shared float sums[PAIR_TILE][ROWS_PER_WORKGROUP * SUMS_STRIDE];
+
+#define FG_PAIR(P, A, L) { \
+    if (L) { \
+        acc0##P += dot(w0, A); \
+        acc1##P += dot(w1, A); \
+        acc2##P += dot(w2, A); \
+        acc3##P += dot(w3, A); \
+    } }
+
+void main() {
+    uint lid = gl_LocalInvocationID.x;
+    uint lane = lid & 7u;
+    uint row_group = lid >> 3u;
+    uint row0 = gl_WorkGroupID.x * ROWS_PER_WORKGROUP + row_group * ROWS;
+
+    uint tile_base = gl_WorkGroupID.y * TILE_WORDS;
+    uint expert = tiles[tile_base];
+    if (expert == INVALID) return;
+
+    uint p0 = tiles[tile_base + 1u];
+    uint p1 = tiles[tile_base + 2u];
+    uint p2 = tiles[tile_base + 3u];
+    uint p3 = tiles[tile_base + 4u];
+
+    bool live0 = p0 != INVALID;
+    bool live1 = p1 != INVALID;
+    bool live2 = p2 != INVALID;
+    bool live3 = p3 != INVALID;
+
+    bool row_live0 = row0 < pc.out_dim;
+    bool row_live1 = row0 + 1u < pc.out_dim;
+    bool row_live2 = row0 + 2u < pc.out_dim;
+    bool row_live3 = row0 + 3u < pc.out_dim;
+
+    uint row_tile = row0 >> 4u;
+    uint tile_row = row0 & 15u;
+    uint wr = expert * pc.expert_stride + row_tile * pc.tile_bytes;
+    uint quant_offset = (pc.blocks * 32u + 63u) & ~63u;
+
+    float acc00 = 0.0, acc01 = 0.0, acc02 = 0.0, acc03 = 0.0;
+    float acc10 = 0.0, acc11 = 0.0, acc12 = 0.0, acc13 = 0.0;
+    float acc20 = 0.0, acc21 = 0.0, acc22 = 0.0, acc23 = 0.0;
+    float acc30 = 0.0, acc31 = 0.0, acc32 = 0.0, acc33 = 0.0;
+
+    for (uint block = 0u; block < pc.blocks; block++) {
+        uint block_base = wr + block * 32u;
+        uint scale_byte = block_base + tile_row * 2u;
+        uvec2 scale_words = uvec2(wb[scale_byte >> 2u], wb[(scale_byte >> 2u) + 1u]);
+        vec2 sm01 = unpackHalf2x16(scale_words.x);
+        vec2 sm23 = unpackHalf2x16(scale_words.y);
+        float d0 = sm01.x;
+        float d1 = sm01.y;
+        float d2 = sm23.x;
+        float d3 = sm23.y;
+
+        uint quant_base = wr + quant_offset + tile_row * pc.blocks * 32u +
+            block * 32u + lane * 4u;
+        uint qw0 = row_live0 ? quant_base : 0u;
+        uint qw1 = row_live1 ? quant_base + pc.blocks * 32u : 0u;
+        uint qw2 = row_live2 ? quant_base + 2u * pc.blocks * 32u : 0u;
+        uint qw3 = row_live3 ? quant_base + 3u * pc.blocks * 32u : 0u;
+        vec4 w0 = vec4(unpack8(int(row_live0 ? wb[qw0 >> 2u] : 0u))) * d0;
+        vec4 w1 = vec4(unpack8(int(row_live1 ? wb[qw1 >> 2u] : 0u))) * d1;
+        vec4 w2 = vec4(unpack8(int(row_live2 ? wb[qw2 >> 2u] : 0u))) * d2;
+        vec4 w3 = vec4(unpack8(int(row_live3 ? wb[qw3 >> 2u] : 0u))) * d3;
+
+        uint input_base = block * 8u + lane;
+        vec4 a0 = live0 ? x4[p0 * (pc.in_dim >> 2u) + input_base] : vec4(0.0);
+        vec4 a1 = live1 ? x4[p1 * (pc.in_dim >> 2u) + input_base] : vec4(0.0);
+        vec4 a2 = live2 ? x4[p2 * (pc.in_dim >> 2u) + input_base] : vec4(0.0);
+        vec4 a3 = live3 ? x4[p3 * (pc.in_dim >> 2u) + input_base] : vec4(0.0);
+        FG_PAIR(0, a0, live0)
+        FG_PAIR(1, a1, live1)
+        FG_PAIR(2, a2, live2)
+        FG_PAIR(3, a3, live3)
+    }
+
+    uint row_local = row_group * ROWS;
+    sums[0][(row_local + 0u) * SUMS_STRIDE + lane] = acc00;
+    sums[1][(row_local + 0u) * SUMS_STRIDE + lane] = acc01;
+    sums[2][(row_local + 0u) * SUMS_STRIDE + lane] = acc02;
+    sums[3][(row_local + 0u) * SUMS_STRIDE + lane] = acc03;
+    sums[0][(row_local + 1u) * SUMS_STRIDE + lane] = acc10;
+    sums[1][(row_local + 1u) * SUMS_STRIDE + lane] = acc11;
+    sums[2][(row_local + 1u) * SUMS_STRIDE + lane] = acc12;
+    sums[3][(row_local + 1u) * SUMS_STRIDE + lane] = acc13;
+    sums[0][(row_local + 2u) * SUMS_STRIDE + lane] = acc20;
+    sums[1][(row_local + 2u) * SUMS_STRIDE + lane] = acc21;
+    sums[2][(row_local + 2u) * SUMS_STRIDE + lane] = acc22;
+    sums[3][(row_local + 2u) * SUMS_STRIDE + lane] = acc23;
+    sums[0][(row_local + 3u) * SUMS_STRIDE + lane] = acc30;
+    sums[1][(row_local + 3u) * SUMS_STRIDE + lane] = acc31;
+    sums[2][(row_local + 3u) * SUMS_STRIDE + lane] = acc32;
+    sums[3][(row_local + 3u) * SUMS_STRIDE + lane] = acc33;
+    barrier();
+
+    if (lane == 0u) {
+        for (uint p = 0u; p < PAIR_TILE; p++) {
+            uint pair = p == 0u ? p0 : p == 1u ? p1 : p == 2u ? p2 : p3;
+            if (pair == INVALID || pair >= pc.tokens * TOP_K) continue;
+            for (uint r = 0u; r < ROWS; r++) {
+                uint row = row0 + r;
+                if (row >= pc.out_dim) continue;
+                uint offset = (row_local + r) * SUMS_STRIDE;
+                float value =
+                    ((sums[p][offset] + sums[p][offset + 4u]) +
+                     (sums[p][offset + 2u] + sums[p][offset + 6u])) +
+                    ((sums[p][offset + 1u] + sums[p][offset + 5u]) +
+                     (sums[p][offset + 3u] + sums[p][offset + 7u]));
+                y[pair * pc.out_dim + row] = value;
+            }
+        }
+    }
+}

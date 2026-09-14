@@ -1,4 +1,5 @@
 #version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
@@ -19,6 +20,7 @@ layout(push_constant) uniform Push {
 
 const uint Q4_K = 12u;
 const uint Q5_K = 13u;
+const uint Q8_0 = 8u;
 const uint TILE_WORDS = 9u;
 const uint INVALID_PAIR = 0xffffffffu;
 const uint Q8K_WORDS = 74u;
@@ -83,6 +85,10 @@ void main() {
     bool row_live = row < pc.out_dim;
     float accumulator = 0.0;
     float minimum_accumulator = 0.0;
+    uint q8_blocks = pc.blocks * 8u;
+    uint q8_quant_offset = (q8_blocks * 32u + 63u) & ~63u;
+    uint row_tile_q8 = row >> 4u;
+    uint tile_row_q8 = row & 15u;
 
     for (uint block = 0u; block < pc.blocks; block++) {
         uint block_tile_bytes = pc.type == Q4_K ? 1152u : 1408u;
@@ -102,6 +108,22 @@ void main() {
         barrier();
 
         if (row_live) {
+            if (pc.type == Q8_0) {
+                uint s_global = block * 8u + lane;
+                uint scale_byte = expert_base + row_tile_q8 * pc.tile_bytes +
+                    (s_global * 16u + tile_row_q8) * 2u;
+                vec2 scale = unpackHalf2x16(wb[scale_byte >> 2u]);
+                float delta = (scale_byte & 2u) == 0u ? scale.x : scale.y;
+                uint quant_byte = expert_base + row_tile_q8 * pc.tile_bytes +
+                    q8_quant_offset + (tile_row_q8 * q8_blocks + s_global) * 32u;
+                uint act_word = 1u + s_global * 8u;
+                float sub = 0.0;
+                for (uint i = 0u; i < 8u; i++)
+                    sub += dot(vec4(unpack8(int(wb[(quant_byte >> 2u) + i]))),
+                               vec4(unpack8(int(activation_words[act_word + i]))));
+                accumulator = fma(delta * uintBitsToFloat(activation_words[0]),
+                                  sub, accumulator);
+            } else {
             vec2 delta_min = unpackHalf2x16(metadata_words[row_slot * 4u]);
             float activation_delta = uintBitsToFloat(activation_words[0]);
             uint high = pc.type == Q5_K ?
@@ -136,6 +158,7 @@ void main() {
                 }
                 minimum_accumulator = fma(-delta_min.y * activation_delta,
                                           float(minimum_dot), minimum_accumulator);
+            }
             }
         }
         barrier();

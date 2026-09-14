@@ -17,7 +17,8 @@ typedef enum fg_vk_tensor_format {
     FG_VK_TENSOR_FORMAT_DEFAULT = 0,
     FG_VK_TENSOR_FORMAT_Q8_0_COOKED = 1,
     FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED = 2,
-    FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED = 3
+    FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED = 3,
+    FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED = 4
 } fg_vk_tensor_format;
 
 #define FG_VK_PROFILE_MAX_KERNELS 64u
@@ -404,6 +405,17 @@ fg_status fg_vk_moe_q8_0_down(fg_vk_context *context,fg_vk_tensor *output,const 
                               const fg_vk_tensor *tiles,const fg_vk_tensor *input,uint32_t output_width,
                               uint32_t input_width,uint32_t expert_stride,uint32_t used_experts,
                               bool packed_weights,uint32_t tile_count,fg_error *err);
+fg_status fg_vk_moe_q8_0_down_cooked_pairs(fg_vk_context *context,fg_vk_tensor *output,
+                                           const fg_vk_tensor *weights,const fg_vk_tensor *tiles,
+                                           const fg_vk_tensor *input,uint32_t output_width,
+                                           uint32_t input_width,uint32_t expert_stride,
+                                           uint32_t routed_pairs,bool packed_weights,
+                                           uint32_t tile_count,fg_error *err);
+fg_status fg_vk_moe_q8_0_down_cooked(fg_vk_context *context,fg_vk_tensor *output,
+                                     const fg_vk_tensor *weights,const fg_vk_tensor *tiles,
+                                     const fg_vk_tensor *input,uint32_t output_width,
+                                     uint32_t input_width,uint32_t expert_stride,
+                                     bool packed_weights,uint32_t tile_count,fg_error *err);
 fg_status fg_vk_moe_reduce(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *down,
                            const fg_vk_tensor *gates,const fg_vk_tensor *tiles,uint32_t output_width,
                            uint32_t selected_count,uint32_t slot_count,fg_error *err);
@@ -456,6 +468,16 @@ fg_status fg_vk_moe_q8_0_down_grouped(fg_vk_context *context,
                                       uint32_t expert_stride,
                                       uint32_t weight_experts,
                                       uint32_t tokens,uint32_t tile_count,fg_error *err);
+fg_status fg_vk_moe_q8_0_down_cooked_grouped(fg_vk_context *context,
+                                             fg_vk_tensor *output,
+                                             const fg_vk_tensor *weights,
+                                             const fg_vk_tensor *tiles,
+                                             const fg_vk_tensor *input,
+                                             uint32_t output_width,
+                                             uint32_t input_width,
+                                             uint32_t expert_stride,
+                                             uint32_t weight_experts,
+                                             uint32_t tokens,uint32_t tile_count,fg_error *err);
 fg_status fg_vk_moe_prefill_shard_reduce(fg_vk_context *context,fg_vk_tensor *output,
     const fg_vk_tensor *experts,const fg_vk_tensor *gates,uint32_t tokens,fg_error *err);
 fg_status fg_vk_moe_prefill_reduce(fg_vk_context *context,fg_vk_tensor *output,

@@ -137,6 +137,9 @@ static fg_status project_down(fg_vk_context *vk,fg_vk_tensor *output,
     if(fg_vk_tensor_get_format(weights)==FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED)
         return fg_vk_moe_q5_1_down_cooked_pairs(vk,output,weights,tiles,input,
             FG_HIDDEN_SIZE,640u,stride,routed_pairs,false,tile_count,err);
+    if(fg_vk_tensor_get_format(weights)==FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED)
+        return fg_vk_moe_q8_0_down_cooked_pairs(vk,output,weights,tiles,input,
+            FG_HIDDEN_SIZE,640u,stride,routed_pairs,false,tile_count,err);
     if(record->ggml_type==7u)
         return fg_vk_moe_q5_1_down(vk,output,weights,tiles,input,FG_HIDDEN_SIZE,
             640u,stride,FG_TOP_K,false,tile_count,err);
@@ -470,6 +473,7 @@ fg_status fg_expert_prefill_enqueue(fg_expert_executor *executor,const fg_prefil
         fg_vk_tensor_get_format(gate_weight)==FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED&&
         fg_vk_tensor_get_format(up_weight)==FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED&&
         (fg_vk_tensor_get_format(down_weight)==FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED||
+         fg_vk_tensor_get_format(down_weight)==FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED||
          (down_record->ggml_type==8u&&
           fg_vk_tensor_get_format(down_weight)==FG_VK_TENSOR_FORMAT_DEFAULT));
     bool single_pair=!grouped&&status==FG_OK&&
@@ -516,6 +520,11 @@ fg_status fg_expert_prefill_enqueue(fg_expert_executor *executor,const fg_prefil
             executor->gate,executor->up,dense_pairs*640u,err);
         if(status==FG_OK&&down_record->ggml_type==7u)
             status=fg_vk_moe_q5_1_down_cooked_grouped(vk,executor->down,
+                down_weight,executor->tiles,executor->mid,FG_HIDDEN_SIZE,
+                640u,down_stride,local_count,work->token_count,tile_count,err);
+        else if(status==FG_OK&&
+                fg_vk_tensor_get_format(down_weight)==FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED)
+            status=fg_vk_moe_q8_0_down_cooked_grouped(vk,executor->down,
                 down_weight,executor->tiles,executor->mid,FG_HIDDEN_SIZE,
                 640u,down_stride,local_count,work->token_count,tile_count,err);
         else if(status==FG_OK)
