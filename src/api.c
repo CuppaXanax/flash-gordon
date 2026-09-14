@@ -18,7 +18,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define FG_API_MAX_REQUEST_BYTES (1024u * 1024u)
+#define FG_API_MAX_REQUEST_BYTES (32u * 1024u * 1024u)
 #define FG_API_MAX_OBJECT_MEMBERS 256u
 #define FG_API_IO_TIMEOUT_SECONDS 30
 #define FG_API_DEFAULT_MAX_TOKENS 512u
@@ -1336,7 +1336,7 @@ static fg_status read_http_request(int fd, http_request *request, unsigned *http
     while (!header_end) {
         if (input.length == FG_API_MAX_REQUEST_BYTES) {
             *http_status = 413u;
-            fg_error_set(err, FG_ERR_LIMIT, "HTTP request exceeds 1 MiB");
+            fg_error_set(err, FG_ERR_LIMIT, "HTTP request exceeds 32 MiB");
             free(input.data);
             return FG_ERR_LIMIT;
         }
@@ -1440,7 +1440,7 @@ static fg_status read_http_request(int fd, http_request *request, unsigned *http
     }
     if (header_bytes + content_length > FG_API_MAX_REQUEST_BYTES) {
         *http_status = 413u;
-        fg_error_set(err, FG_ERR_LIMIT, "HTTP request exceeds 1 MiB");
+        fg_error_set(err, FG_ERR_LIMIT, "HTTP request exceeds 32 MiB");
         free(input.data);
         return FG_ERR_LIMIT;
     }
