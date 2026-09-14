@@ -992,7 +992,9 @@ fg_status fg_vk_qsa_index_score_batch(
     struct{uint32_t tokens,blocks,block_base,score_stride,output_base,first_visible,query_count;}
         push={tokens,blocks,block_base,score_stride,block_base,first_visible,query_count};
     const fg_vk_tensor *bindings[]={queries,keys,norm,positions,scores,ids};
-    return dispatch(c,&c->qsa_score,bindings,&push,blocks,query_count,1u,err);
+    /* One workgroup per block: the kernel scores every query of the dispatch
+     * against a key transformed once, so the grid has no query dimension. */
+    return dispatch(c,&c->qsa_score,bindings,&push,blocks,1u,1u,err);
 }
 
 fg_status fg_vk_qsa_index_score(
