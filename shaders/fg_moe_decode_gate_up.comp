@@ -66,8 +66,12 @@ vec2 scale_min(uint m0, uint m1, uint m2, uint group) {
                 float(((m2 >> (shift + 4u)) & 15u) | (((m1 >> (shift + 6u)) & 3u) << 4u)));
 }
 
-int dot4(uint weight_word, vec4 activation) {
-    return int(dot(vec4(unpack8(int(weight_word))), activation));
+/* Integer dot product, accumulated in fp32.  Every partial sum is an exact
+   integer (max 32 * 15 * 128 = 61440), so the float accumulation is
+   bit-identical to the previous int accumulator and avoids the FToS/SToF
+   round trip per dot on the ISA. */
+float dot4f(uint weight_word, vec4 activation) {
+    return dot(vec4(unpack8(int(weight_word))), activation);
 }
 
 int sum32(uint packed) {
@@ -162,10 +166,10 @@ void main() {
                 uvec2 act_b23 = q8p[act_vec + act_b0 + 1u];
 
                 float activation_delta = uintBitsToFloat(q8[act_base]);
-                int gate_ia = 0;
-                int gate_ib = 0;
-                int up_ia = 0;
-                int up_ib = 0;
+                float gate_ia = 0.0;
+                float gate_ib = 0.0;
+                float up_ia = 0.0;
+                float up_ib = 0.0;
                 for (uint word = 0u; word < 4u; word++) {
                     uint gate_packed = gate_quant[word];
                     uint up_packed = up_quant[word];
@@ -187,18 +191,18 @@ void main() {
                                   word == 2u ? act_b23.x : act_b23.y;
                     vec4 a_value = vec4(unpack8(int(a_word)));
                     vec4 b_value = vec4(unpack8(int(b_word)));
-                    gate_ia += dot4(gate_low, a_value);
-                    gate_ib += dot4(gate_high_bits, b_value);
-                    up_ia += dot4(up_low, a_value);
-                    up_ib += dot4(up_high_bits, b_value);
+                    gate_ia += dot4f(gate_low, a_value);
+                    gate_ib += dot4f(gate_high_bits, b_value);
+                    up_ia += dot4f(up_low, a_value);
+                    up_ib += dot4f(up_high_bits, b_value);
                 }
 
                 if (gate_active) {
-                    float gate_scale = gate_a.x * float(gate_ia) + gate_b.x * float(gate_ib);
+                    float gate_scale = gate_a.x * gate_ia + gate_b.x * gate_ib;
                     gate_acc = fma(gate_dm.x * activation_delta, gate_scale, gate_acc);
                 }
                 if (up_active) {
-                    float up_scale = up_a.x * float(up_ia) + up_b.x * float(up_ib);
+                    float up_scale = up_a.x * up_ia + up_b.x * up_ib;
                     up_acc = fma(up_dm.x * activation_delta, up_scale, up_acc);
                 }
                 if (sub == 0u) {
@@ -227,8 +231,8 @@ void main() {
                 uint act_word = act_base + 1u + s_global * 8u;
                 float sub_acc = 0.0;
                 for (uint i = 0u; i < 8u; i++)
-                    sub_acc += dot4(gws[(quant_byte >> 2u) + i],
-                                    vec4(unpack8(int(q8[act_word + i]))));
+                    sub_acc += dot4f(gws[(quant_byte >> 2u) + i],
+                                     vec4(unpack8(int(q8[act_word + i]))));
                 gate_acc = fma(delta * uintBitsToFloat(q8[act_base]), sub_acc, gate_acc);
             }
             if (up_q8) {
@@ -241,8 +245,8 @@ void main() {
                 uint act_word = act_base + 1u + s_global * 8u;
                 float sub_acc = 0.0;
                 for (uint i = 0u; i < 8u; i++)
-                    sub_acc += dot4(uws[(quant_byte >> 2u) + i],
-                                    vec4(unpack8(int(q8[act_word + i]))));
+                    sub_acc += dot4f(uws[(quant_byte >> 2u) + i],
+                                     vec4(unpack8(int(q8[act_word + i]))));
                 up_acc = fma(delta * uintBitsToFloat(q8[act_base]), sub_acc, up_acc);
             }
         }
