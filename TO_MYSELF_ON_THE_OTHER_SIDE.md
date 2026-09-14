@@ -3,6 +3,79 @@
 You are the post-compaction me. Read this top to bottom before touching anything.
 Everything here is measured, not hoped. The fleet is healthy right now; keep it that way.
 
+## 0a2. PREFILL ROUND 6 — EXPERT FMA CHAINS + QSA SCORE CUT (2026-09-14, fg-work-pref6)
+
+Two shader-only commits on top of `daa2a60` (the post-revert control). No
+vk.c/expert.c/owner.c edits, no pack change, no interface change: the same
+pack/manifest A/Bs directly.
+
+**`4dd37b0` — grouped expert kernels (gate/up + q5_1 down + q8_0 down raw and
+cooked).** The reverted four-lane round proved that the instruction cut is real
+but +48 accumulator VGPRs cost more occupancy than it bought. This keeps the
+instruction cut and the scalar accumulator geometry:
+
+- The q8 block delta multiplies the activation once per (pair, group) (4 scalar
+  muls amortised over the four rows), so every product lane is a single scalar
+  FMA into the existing sixteen scalar accumulators. Per (block, group):
+  gate/up Q4 ~216 -> ~140 issued FP (1.54x), Q5 ~216 -> ~156 (1.38x); q5_1/q8_0
+  down (fp32 input, no delta) 8 ops per (row,pair) -> 4 FMA (2x).
+- Q4_K/Q5_K block loops are duplicated behind the uniform `pc.type`, so the Q4
+  stream drops the 0x01010101 high-bit merge and four high-word loads per block
+  (SPIR-V: 0 merge-mask uses in a Q4-only compile, 4 in a Q5-only compile).
+- The shared `sums` staging, its barrier and the serial lane-0 tree are replaced
+  by a 3-step `subgroupShuffleXor` butterfly over the eight K-segment lanes:
+  epilogue ~270 -> ~110 issued wave instructions, 4.6 KiB shared freed, one
+  barrier removed.
+- Register budget: live set unchanged (16 acc + 16 weight + 16 activation + 12
+  metadata + ~20 address/loop temps); the scaled activation is computed in
+  place. Occupancy must stay at the control level — that is the promotion bar.
+
+**`fbd82db` — QSA `fg_qsa_attention_split_batch`.** Three no-geometry cuts:
+`dot()` -> 4-op FMA chain (0 OpDot left in SPIR-V), the 1/16 score scale folded
+into the query load once (exact 2^-4 multiply, −8 muls/tile), and
+`(s - next_max) * L2E` folded to one FMA against a shared bias (−8 subs/tile).
+~18% off the per-tile issue with no register or shared-footprint growth
+(16 KiB kept, splits kept at 8).
+
+**Expected (instruction-derived, NOT measured; llvmpipe only locally):**
+gate/up 21.5 -> ~15-18 ms/layer, down 8 -> ~5.5-7 ms/layer, QSA 20 -> ~16-17
+ms/layer; roughly 45 ms off a 270-340 ms six-layer stage -> ~410-470 TPS if the
+stage stays the bound. The honest test is the battery.
+
+**Local gates (all PASS):** test_expert_prefill (Q4 gate/Q5 up/Q5_1 down vs
+decode incl. the bit-identical single-token replay), test_owner_reduce,
+test_qsa_prefill (5/100/2051 records, unbalanced splits), test_fg_vk
+`grouped_kquant_prefill(12/13)` and `grouped_down_prefill` (q5_1 + raw/cooked
+q8_0), `make all -j8` warning-free. Known pre-existing failures unchanged.
+
+**Fleet A/B (orchestrator, after the fleet agent releases the blades):**
+1. Correctness gate (64 max tokens; expect `[12]` and `Paris`):
+   `pwsh -NoProfile -File "$env:TEMP\opencode\correctness64.ps1"`
+2. Like-for-like attach battery against the same-pack control:
+   `pwsh -File D:\workspace\bc-250-dbg\Measure-FlashGordonAB.ps1 -Attach -Build ep -Runs4k 1 -LogRunDir D:\workspace\bc-250-dbg\results\pref6-<hash>`
+3. Ring stability gate:
+   `pwsh -NoProfile -File D:\workspace\fg-work-pref6\tools\pi-stability.ps1`
+Promotion bar: 4K prefill clearly above control, 12/Paris unchanged, short and
+4K decode unchanged (these shaders are prefill-only), pi PASS. Also A/B `4dd37b0`
+alone vs `fbd82db` alone if the pair regresses, then report the per-kernel
+gate_up/down/QSA deltas from the attach profile.
+
+**Ranked next steps if this round regresses or stalls:**
+1. QSA cooperative scores (designed, not shipped): each lane accumulates one
+   record over 32 dims and reduces over 8 lanes, broadcast via the existing
+   key_tile dead space. On paper 2.5x on the score phase, but it needs either
+   8 query vec4/lane (+32 VGPR) or a third barrier per tile; only try with a
+   measured A/B slot and an occupancy check.
+2. Split-count sweep at 128 queries (`FG_QSA_ATTENTION_SPLITS` 8 -> 4) now that
+   the score phase is cheaper; also try 16 if the dispatcher cap is raised.
+3. Shared-memory staging of decoded weights reused across pairs in gate/up:
+   worth it only if the FMA-chain version shows issue-bound behavior; it buys
+   no decode work (each weight is decoded once per tile already) so it is an
+   LDS-latency play with a barrier cost.
+4. `dense_q8_0_cooked_tile` (2.7-3.2 ms) and `gdn_prefill_recurrence` (~3 ms)
+   are small; the tile kernel's inner loop is already 8 FMA per k with shared
+   staging. Leave until the big two are settled.
+
 ## 0. RING STATUS 2026-09-13 NIGHT (commit series 2125ed0..652d59d — READ FIRST)
 
 **The ring answers correctly now.** `correctness64.ps1` on the ring pack returns
