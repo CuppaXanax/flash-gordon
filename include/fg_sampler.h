@@ -30,5 +30,9 @@ bool fg_sampler_penalties_active(const fg_sampler_config *config);
 void fg_sampler_apply_penalties(float *scores,const uint32_t *ids,
                                 const uint32_t *counts,uint32_t count,
                                 const fg_sampler_config *config);
+bool fg_sampler_spec_accept_greedy(uint32_t draft,uint32_t target);
+bool fg_sampler_spec_accept_stochastic(uint32_t draft,uint32_t target,
+                                       float draft_prob,float target_prob,
+                                       float uniform);
 
 #endif

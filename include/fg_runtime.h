@@ -10,6 +10,7 @@ typedef struct fg_runtime fg_runtime;
 #define FG_RUNTIME_QSA_HOT_TOKENS 8192u
 #define FG_RUNTIME_QSA_CACHE_MIN_BYTES (UINT64_C(16) << 20u)
 #define FG_RUNTIME_QSA_CACHE_MAX_BYTES (UINT64_C(512) << 20u)
+#define FG_MTP_MAX_DRAFT_TOKENS 2u
 
 enum {
     FG_RUNTIME_EXPERIMENTAL_CONTEXT = 1u << 0,
@@ -25,6 +26,12 @@ enum {
     FG_RUNTIME_OPTION_PREFILL_MICROBATCH = 1u << 4,
     FG_RUNTIME_OPTION_PREFILL_WINDOW = 1u << 5
 };
+
+typedef enum fg_mtp_capability {
+    FG_MTP_CAPABILITY_UNSUPPORTED = 0,
+    FG_MTP_CAPABILITY_WEIGHTS_SEALED = 1,
+    FG_MTP_CAPABILITY_ENABLED = 2
+} fg_mtp_capability;
 
 typedef struct fg_runtime_options {
     uint32_t logical_context_tokens;
@@ -62,6 +69,8 @@ typedef struct fg_generation_stats {
     fg_execution_mode execution_mode;
     double prefill_seconds;
     double decode_seconds;
+    uint32_t draft_proposed;
+    uint32_t draft_accepted;
 } fg_generation_stats;
 typedef fg_status (*fg_token_callback)(void *context,uint32_t token,const char *text,
                                       size_t bytes,fg_error *err);
@@ -106,6 +115,7 @@ uint32_t fg_runtime_context_limit(const fg_runtime *runtime);
 const char *fg_runtime_model_name(const fg_runtime *runtime);
 fg_execution_mode fg_runtime_execution_mode(const fg_runtime *runtime);
 const char *fg_execution_mode_name(fg_execution_mode mode);
+fg_mtp_capability fg_runtime_mtp_capability(const fg_runtime *runtime);
 
 fg_status fg_rank_main(const char *manifest_path, uint32_t rank, fg_error *err);
 fg_status fg_serve_main(const char *manifest_path, fg_error *err);

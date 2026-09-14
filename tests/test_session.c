@@ -363,11 +363,12 @@ static void test_legacy_identity_roundtrip(void){
     free(sealed);free(manifest);unlink(path);
 }
 
-static fg_manifest *write_read_budget_manifest(const char *path,uint32_t logical,
-                                               uint32_t gpu,uint32_t hot,uint64_t page){
+static fg_manifest *write_read_budget_manifest_flags(const char *path,uint32_t logical,
+                                                     uint32_t gpu,uint32_t hot,uint64_t page,
+                                                     uint32_t flags){
     fg_manifest *manifest=malloc(sizeof(*manifest)),*sealed=malloc(sizeof(*sealed));
     CHECK(manifest&&sealed);if(!manifest||!sealed){free(sealed);free(manifest);return NULL;}
-    fg_manifest_init(manifest);manifest->flags=FG_MANIFEST_COMPONENTS_TEXT_REQUIRED;
+    fg_manifest_init(manifest);manifest->flags=flags;
     manifest->session.logical_context_tokens=logical;
     manifest->session.gpu_index_tokens=gpu;
     manifest->session.qsa_hot_record_tokens=hot;
@@ -378,14 +379,22 @@ static fg_manifest *write_read_budget_manifest(const char *path,uint32_t logical
     if(error.code!=FG_OK){free(sealed);return NULL;}return sealed;
 }
 
+static fg_manifest *write_read_budget_manifest(const char *path,uint32_t logical,
+                                               uint32_t gpu,uint32_t hot,uint64_t page){
+    return write_read_budget_manifest_flags(path,logical,gpu,hot,page,
+                                            FG_MANIFEST_COMPONENTS_TEXT_REQUIRED);
+}
+
 static void test_runtime_option_contract(void){
-    char current_path[96],large_path[96],tiered_path[96],legacy_path[96];
+    char current_path[96],large_path[96],tiered_path[96],legacy_path[96],mtp_path[96];
     long pid=(long)getpid();
     snprintf(current_path,sizeof(current_path),"test-session-budget-current-%ld.fgm",pid);
     snprintf(large_path,sizeof(large_path),"test-session-budget-large-%ld.fgm",pid);
     snprintf(tiered_path,sizeof(tiered_path),"test-session-budget-tiered-%ld.fgm",pid);
     snprintf(legacy_path,sizeof(legacy_path),"test-session-budget-legacy-%ld.fgm",pid);
+    snprintf(mtp_path,sizeof(mtp_path),"test-session-budget-mtp-%ld.fgm",pid);
     unlink(current_path);unlink(large_path);unlink(tiered_path);unlink(legacy_path);
+    unlink(mtp_path);
     fg_manifest *current=write_read_budget_manifest(current_path,8192u,8192u,8192u,0u);
     fg_manifest *large=write_read_budget_manifest(large_path,16384u,16384u,8192u,0u);
     fg_manifest *tiered=write_read_budget_manifest(tiered_path,32768u,32768u,0u,
@@ -437,6 +446,20 @@ static void test_runtime_option_contract(void){
         CHECK(fg_runtime_options_resolve(&resolved,current,&requested,&error)==FG_ERR_MISMATCH);
         requested.qsa_hot_tokens=0u;requested.qsa_page_cache_bytes=UINT64_C(8)<<20u;
         CHECK(fg_runtime_options_resolve(&resolved,current,&requested,&error)==FG_ERR_ARGUMENT);
+        fg_runtime_options_init(&requested);
+        requested.experimental_flags=FG_RUNTIME_EXPERIMENTAL_CONTEXT;
+        CHECK(fg_runtime_options_resolve(&resolved,current,&requested,&error)==FG_ERR_UNAVAILABLE);
+        fg_runtime_options_init(&requested);
+        requested.experimental_flags=FG_RUNTIME_EXPERIMENTAL_MTP;
+        CHECK(fg_runtime_options_resolve(&resolved,current,&requested,&error)==FG_ERR_UNAVAILABLE);
+    }
+    fg_manifest *mtp=write_read_budget_manifest_flags(mtp_path,8192u,8192u,8192u,0u,
+        FG_MANIFEST_COMPONENTS_TEXT_REQUIRED|FG_MANIFEST_HAS_MTP);
+    if(mtp){
+        fg_runtime_options_init(&requested);
+        requested.experimental_flags=FG_RUNTIME_EXPERIMENTAL_MTP;
+        CHECK(fg_runtime_options_resolve(&resolved,mtp,&requested,&error)==FG_OK);
+        CHECK((resolved.experimental_flags&FG_RUNTIME_EXPERIMENTAL_MTP)!=0);
     }
     if(large){
         CHECK(fg_manifest_validate_deployment(large,&error)==FG_ERR_UNAVAILABLE);
@@ -471,8 +494,9 @@ static void test_runtime_option_contract(void){
         requested.qsa_hot_tokens=4096u;
         CHECK(fg_runtime_options_resolve(&resolved,decoded,&requested,&error)==FG_ERR_ARGUMENT);
     }
-    free(decoded);free(legacy);free(tiered);free(large);free(current);
+    free(decoded);free(legacy);free(tiered);free(large);free(current);free(mtp);
     unlink(legacy_path);unlink(tiered_path);unlink(large_path);unlink(current_path);
+    unlink(mtp_path);
 }
 
 static void test_identity_and_frontier(void){
