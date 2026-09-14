@@ -639,6 +639,31 @@ fg_status fg_qsa_session_open_mirror_with_scratch(
                               scratch,fetch_pages,fetch_opaque,err);
 }
 
+/* Coordinator variant: the session keeps a state file for the layers this rank
+ * executes while still mirroring remote-owned pages through the fetch callback.
+ * Persist and the state-file read path make its own pages recoverable after
+ * cache eviction, so pins no longer have to hold a whole context in memory. */
+fg_status fg_qsa_session_open_state_mirror_with_scratch(
+    fg_qsa_session **out,fg_model *model,const char *state_path,uint32_t logical_context,
+    uint32_t hot_tokens,uint32_t cache_pages,uint32_t batch_size,fg_vk_tensor *scratch,
+    fg_qsa_page_fetch_fn fetch_pages,void *fetch_opaque,fg_error *err){
+    if(!state_path){
+        fg_error_set(err,FG_ERR_ARGUMENT,"QSA state mirror path is null");
+        return FG_ERR_ARGUMENT;
+    }
+    if(!scratch){
+        fg_error_set(err,FG_ERR_ARGUMENT,"shared QSA attention scratch is null");
+        return FG_ERR_ARGUMENT;
+    }
+    if(logical_context>hot_tokens&&!fetch_pages){
+        fg_error_set(err,FG_ERR_ARGUMENT,
+                     "tiered QSA state mirror requires a cold-page fetch callback");
+        return FG_ERR_ARGUMENT;
+    }
+    return open_decode_config(out,model,state_path,logical_context,hot_tokens,cache_pages,
+                              batch_size,scratch,fetch_pages,fetch_opaque,err);
+}
+
 void fg_qsa_session_close(fg_qsa_session *s){if(!s)return;fg_vk_tensor_destroy(s->attn_partials);for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(s->sel_scores[i]);fg_vk_tensor_destroy(s->sel_ids[i]);}fg_vk_tensor_destroy(s->sel_result_ids);fg_vk_tensor_destroy(s->batch_records);fg_vk_tensor_destroy(s->batch_partials);fg_vk_tensor_destroy(s->batch_slots);fg_vk_tensor_destroy(s->batch_counts);for(uint32_t q=0;q<FG_QSA_PREFILL_QUERY_TILE;q++){fg_vk_tensor_destroy(s->tile_records[q]);for(uint32_t side=0;side<2u;side++){fg_vk_tensor_destroy(s->tile_scores[q][side]);fg_vk_tensor_destroy(s->tile_ids[q][side]);}}fg_qsa_locality_destroy(s->locality,"close");fg_qsa_page_cache_destroy(s->cache);free(s->select_ids);free(s->read_records);free(s->position_written);fg_vk_tensor_destroy(s->index_key_q8_view);fg_vk_tensor_destroy(s->value_q4_view);fg_vk_tensor_destroy(s->key_q8_view);fg_vk_tensor_destroy(s->attention_view);fg_vk_tensor_destroy(s->gate_view);fg_vk_tensor_destroy(s->query_view);fg_vk_tensor_destroy(s->index_query_view);fg_vk_tensor_destroy(s->token_position_view);fg_vk_tensor_destroy(s->position_view);fg_vk_tensor_destroy(s->output);fg_vk_tensor_destroy(s->attention);fg_vk_tensor_destroy(s->selected_records);for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(s->ids[i]);fg_vk_tensor_destroy(s->scores[i]);}fg_vk_tensor_destroy(s->index_key_q8);fg_vk_tensor_destroy(s->value_q4);fg_vk_tensor_destroy(s->key_q8);fg_vk_tensor_destroy(s->index_query);fg_vk_tensor_destroy(s->raw_index_key);fg_vk_tensor_destroy(s->raw_index_query);fg_vk_tensor_destroy(s->key);fg_vk_tensor_destroy(s->gate);fg_vk_tensor_destroy(s->query);fg_vk_tensor_destroy(s->raw_value);fg_vk_tensor_destroy(s->raw_key);fg_vk_tensor_destroy(s->raw_query_gate);for(uint32_t i=0;i<FG_QSA_MAX_LAYERS;i++)for(uint32_t segment=0;segment<FG_QSA_INDEX_MAX_SEGMENTS;segment++){fg_vk_tensor_destroy(s->records[i][segment]);fg_vk_tensor_destroy(s->index_keys[i][segment]);}fg_vk_tensor_destroy(s->cache_records);fg_vk_tensor_destroy(s->positions);fg_qsa_state_close(s->state);free(s);}
 
 fg_status fg_qsa_session_reset(fg_qsa_session *s,fg_error *err){if(!s){fg_error_set(err,FG_ERR_ARGUMENT,"QSA session reset is null");return FG_ERR_ARGUMENT;}if(s->position_written)memset(s->position_written,0,s->max_context);fg_qsa_locality_reset(s->locality,"reset");memset(s->committed,0,sizeof(s->committed));memset(s->partial,0,sizeof(s->partial));fg_qsa_page_cache_reset(s->cache);return s->state?fg_qsa_state_reset(s->state,err):FG_OK;}
@@ -1205,10 +1230,13 @@ static fg_status __attribute__((unused)) gather_prefill_tile(fg_qsa_session *s,u
             if(status!=FG_OK)break;
             /* Cache insertion is optional; unpublished pages may pin all slots. */
             uint32_t cache_slot=0;bool hit=false;fg_error cache_error={0};
-            fg_status cached=fg_qsa_page_cache_acquire(s->cache,layer,fetch[i],&cache_slot,&hit,&cache_error);
-            if(status==FG_OK&&cached==FG_OK)status=fg_vk_tensor_write(s->cache_records,
-                (uint64_t)cache_slot*FG_QSA_PAGE_RECORD_BYTES,page,FG_QSA_PAGE_RECORD_BYTES,err);
-            else if(status==FG_OK&&cached!=FG_ERR_LIMIT){status=cached;if(err)*err=cache_error;}
+            fg_status cached=fg_qsa_page_cache_acquire_soft(s->cache,layer,fetch[i],
+                                                            &cache_slot,&hit,&cache_error);
+            if(status==FG_OK&&cached==FG_OK&&cache_slot!=UINT32_MAX)
+                status=fg_vk_tensor_write(s->cache_records,
+                    (uint64_t)cache_slot*FG_QSA_PAGE_RECORD_BYTES,page,
+                    FG_QSA_PAGE_RECORD_BYTES,err);
+            else if(status==FG_OK&&cached!=FG_OK){status=cached;if(err)*err=cache_error;}
         }
         at=end;
     }
@@ -1313,12 +1341,13 @@ static fg_status prefill_tile_attention(fg_qsa_session *s,uint32_t slot,
                     memcpy(destination,page,FG_QSA_PAGE_RECORD_BYTES);
                 }
                 uint32_t cache_slot=0;bool hit=false;fg_error cache_error={0};
-                fg_status cached=fg_qsa_page_cache_acquire(s->cache,layer,fetch[i],
+                fg_status cached=fg_qsa_page_cache_acquire_soft(s->cache,layer,fetch[i],
                     &cache_slot,&hit,&cache_error);
-                if(status==FG_OK&&cached==FG_OK)status=fg_vk_tensor_write(s->cache_records,
-                    (uint64_t)cache_slot*FG_QSA_PAGE_RECORD_BYTES,page,
-                    FG_QSA_PAGE_RECORD_BYTES,err);
-                else if(status==FG_OK&&cached!=FG_ERR_LIMIT){status=cached;if(err)*err=cache_error;}
+                if(status==FG_OK&&cached==FG_OK&&cache_slot!=UINT32_MAX)
+                    status=fg_vk_tensor_write(s->cache_records,
+                        (uint64_t)cache_slot*FG_QSA_PAGE_RECORD_BYTES,page,
+                        FG_QSA_PAGE_RECORD_BYTES,err);
+                else if(status==FG_OK&&cached!=FG_OK){status=cached;if(err)*err=cache_error;}
             }
             at=end;
         }
@@ -1401,10 +1430,13 @@ static fg_status persist_prefill_state(fg_qsa_session *s,uint32_t slot,
                      "QSA state frontier is ahead of the prefill range");
         return FG_ERR_MISMATCH;
     }
-    if(persisted<first_token){
-        fg_status flush=persist_prefill_state(s,slot,persisted,
-                                              first_token-persisted,err);
+    while(persisted<first_token){
+        uint32_t step=first_token-persisted;
+        if(step>FG_QSA_MAX_SELECTED_BLOCKS*FG_Q38_QSA_COMPRESS_RATIO)
+            step=FG_QSA_MAX_SELECTED_BLOCKS*FG_Q38_QSA_COMPRESS_RATIO;
+        fg_status flush=persist_prefill_state(s,slot,persisted,step,err);
         if(flush!=FG_OK)return flush;
+        persisted+=step;
     }
     uint32_t layer=s->layers[slot],end=first_token+token_count;
     const uint8_t *cache=(const uint8_t *)fg_vk_tensor_map(s->cache_records);
@@ -1564,10 +1596,11 @@ fg_status fg_qsa_session_warm_pages(fg_qsa_session *s,uint32_t layer,
     fg_status status=FG_OK;
     for(uint32_t i=0;status==FG_OK&&i<page_count;i++){
         uint32_t cache_slot=0;bool hit=false;
-        status=fg_qsa_page_cache_acquire(s->cache,layer,blocks[i],&cache_slot,&hit,err);
-        if(status==FG_OK)status=fg_vk_tensor_write(s->cache_records,
-            (uint64_t)cache_slot*FG_QSA_PAGE_RECORD_BYTES,
-            records+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,FG_QSA_PAGE_RECORD_BYTES,err);
+        status=fg_qsa_page_cache_acquire_soft(s->cache,layer,blocks[i],&cache_slot,&hit,err);
+        if(status==FG_OK&&cache_slot!=UINT32_MAX)
+            status=fg_vk_tensor_write(s->cache_records,
+                (uint64_t)cache_slot*FG_QSA_PAGE_RECORD_BYTES,
+                records+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,FG_QSA_PAGE_RECORD_BYTES,err);
     }
     return status;
 }

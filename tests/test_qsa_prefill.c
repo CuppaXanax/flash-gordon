@@ -203,10 +203,60 @@ static int causal_attention(fg_qsa_session *s){
     for(uint32_t q=0;q<5u;q++)for(uint32_t i=0;i<6144u;i++)
         REQUIRE(fabsf(got[q*6144u+i]-expected[q+1u])<2e-6f);
     REQUIRE(s->committed[0]==1u); /* Outer output projection owns publication. */
-    REQUIRE(commit_prefill_records(s,0u,8u,1u,&error)==FG_ERR_LIMIT);
-    REQUIRE(fg_vk_abort(fg_model_vk(s->model),&error)==FG_OK);
+    /* Every slot is pinned by the two committed pages; the next commit must
+     * recycle the oldest one instead of failing the request. */
+    REQUIRE(fg_qsa_page_cache_pinned_count(s->cache)==2u);
+    REQUIRE(commit_prefill_records(s,0u,8u,1u,&error)==FG_OK);
+    uint32_t recycled=0;
+    REQUIRE(fg_qsa_page_cache_lookup(s->cache,3u,2u,&recycled));
+    REQUIRE(!fg_qsa_page_cache_lookup(s->cache,3u,0u,&recycled));
+    REQUIRE(fg_qsa_page_cache_pinned_count(s->cache)==2u);
+    if(fg_vk_batch_active(fg_model_vk(s->model)))
+        REQUIRE(fg_vk_abort(fg_model_vk(s->model),&error)==FG_OK);
     REQUIRE(s->committed[0]==1u);
     s->committed[0]=0u;
+    return 1;
+}
+
+/* A state-backed prefill must release every chunk's pins once its pages are in
+ * the state file.  The old lifecycle only released them through publication,
+ * so a long context left the cache with no evictable slot mid-prefill. */
+static int prefill_persist_lifecycle(fg_qsa_session *s){
+    char path[128];snprintf(path,sizeof(path),"/tmp/fg-qsa-persist-%ld.state",(long)getpid());
+    unlink(path);
+    fg_qsa_page_cache_destroy(s->cache);s->cache=NULL;
+    fg_vk_tensor_destroy(s->cache_records);s->cache_records=NULL;
+    s->cache_pages=32u;
+    REQUIRE(fg_qsa_page_cache_create(&s->cache,32u,&error)==FG_OK);
+    REQUIRE(make_tensor(s,32u*FG_QSA_PAGE_RECORD_BYTES,&s->cache_records,&error)==FG_OK);
+    REQUIRE(ensure_read_records(s,&error)==FG_OK);
+    /* Without a backing state file a chunk's pins are never released: this is
+     * the lifecycle that exhausted the rank-0 mirror mid-prefill. */
+    REQUIRE(commit_prefill_records(s,0u,0u,64u,&error)==FG_OK);
+    REQUIRE(fg_qsa_page_cache_pinned_count(s->cache)==16u);
+    REQUIRE(persist_prefill_state(s,0u,0u,64u,&error)==FG_OK);
+    REQUIRE(fg_qsa_page_cache_pinned_count(s->cache)==16u);
+    fg_qsa_page_cache_reset(s->cache);
+    /* With a state file every chunk's pages become durable and unpinned, so a
+     * context far larger than the cache still prefills. */
+    uint8_t layers[1]={3u};
+    fg_qsa_state *state=NULL;
+    REQUIRE(fg_qsa_state_open(&state,path,layers,1u,4096u,true,&error)==FG_OK);
+    s->state=state;
+    for(uint32_t chunk=0;chunk<24u;chunk++){
+        uint32_t first=chunk*64u;
+        REQUIRE(commit_prefill_records(s,0u,first,64u,&error)==FG_OK);
+        REQUIRE(fg_qsa_page_cache_pinned_count(s->cache)==16u);
+        REQUIRE(persist_prefill_state(s,0u,first,64u,&error)==FG_OK);
+        REQUIRE(fg_qsa_page_cache_pinned_count(s->cache)==0u);
+        REQUIRE(fg_qsa_state_layer_tokens(s->state,0u)==first+64u);
+    }
+    uint8_t records[FG_QSA_PAGE_RECORD_BYTES];uint32_t committed=0;
+    REQUIRE(fg_qsa_state_read_block(s->state,0u,1u,records,&committed,&error)==FG_OK);
+    REQUIRE(committed==FG_Q38_QSA_COMPRESS_RATIO);
+    s->state=NULL;
+    fg_qsa_state_close(state);
+    unlink(path);
     return 1;
 }
 
@@ -388,6 +438,7 @@ int main(void){
     if(ok)ok=causal_attention(session)&&causal_attention_weighted(session)&&gather_eviction(session,false)&&gather_eviction(session,true);
     if(ok)ok=split_merge_selected(session,5u,8u)&&split_merge_selected(session,100u,1u)&&
         split_merge_selected(session,2051u,8u);
+    if(ok)ok=prefill_persist_lifecycle(session);
     if(fg_vk_batch_active(model->vk))fg_vk_abort(model->vk,&error);
     fg_qsa_session_close(session);fg_vk_tensor_destroy(scratch);
     fg_vk_tensor_destroy(model->norm);fg_vk_close(model->vk);free(model);
