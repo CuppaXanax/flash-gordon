@@ -36,7 +36,6 @@ void main(){
         if(lane==0u){float score=0.0;for(uint s=0u;s<gl_NumSubgroups;s++)score+=subgroup_sum[s];score*=0.0625;float new_max=max(shared_maximum,score);shared_scale=shared_maximum<-3.0e38?0.0:exp(shared_maximum-new_max);shared_weight=exp(score-new_max);shared_denominator=shared_denominator*shared_scale+shared_weight;shared_maximum=new_max;}
         barrier();
         accumulator=accumulator*shared_scale+load_value(token,kv_head,lane)*shared_weight;
-        barrier();
     }
     uint base=(head*pc.splits+split)*258u;
     partials[base+lane]=accumulator;
