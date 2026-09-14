@@ -254,6 +254,19 @@ static int prefill_persist_lifecycle(fg_qsa_session *s){
     uint8_t records[FG_QSA_PAGE_RECORD_BYTES];uint32_t committed=0;
     REQUIRE(fg_qsa_state_read_block(s->state,0u,1u,records,&committed,&error)==FG_OK);
     REQUIRE(committed==FG_Q38_QSA_COMPRESS_RATIO);
+    /* The batched state read must agree with the single-page path and return
+     * pages in the requested order. */
+    uint32_t probe_blocks[4]={0u,23u,5u,3u};
+    uint8_t batch[4u*FG_QSA_PAGE_RECORD_BYTES];
+    REQUIRE(fg_qsa_session_state_records_batch(s,3u,probe_blocks,4u,batch,&error)==FG_OK);
+    for(uint32_t i=0;i<4u;i++){
+        uint8_t single[FG_QSA_PAGE_RECORD_BYTES];uint32_t page_committed=0;
+        REQUIRE(fg_qsa_state_read_block(s->state,0u,probe_blocks[i],single,
+                                        &page_committed,&error)==FG_OK);
+        REQUIRE(page_committed==FG_Q38_QSA_COMPRESS_RATIO);
+        REQUIRE(!memcmp(batch+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,single,
+                        FG_QSA_PAGE_RECORD_BYTES));
+    }
     s->state=NULL;
     fg_qsa_state_close(state);
     unlink(path);
