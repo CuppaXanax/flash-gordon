@@ -142,7 +142,12 @@ typedef enum fg_message_type {
      * Both sides must agree, so the direct route is selected from the manifest
      * (final owner != output owner) plus the FG_DECODE_DIRECT_OUTPUT env. */
     FG_MSG_OUTPUT_CONFIG = 46,
-    FG_MSG_OUTPUT_HIDDEN = 47
+    FG_MSG_OUTPUT_HIDDEN = 47,
+    /* Split output head: the final block owner also ships the same 40 KiB hyper
+     * state to rank 0 under FG_MSG_OUTPUT_SLICE, rank 0 reduces its vocabulary
+     * slice and returns the per-slice argmax under FG_MSG_OUTPUT_PARTIAL. */
+    FG_MSG_OUTPUT_SLICE = 48,
+    FG_MSG_OUTPUT_PARTIAL = 49
 } fg_message_type;
 
 typedef struct fg_gdn_state_fetch {
@@ -403,10 +408,26 @@ typedef struct fg_output_result {
 typedef struct fg_output_config {
     uint8_t source_rank;
     uint8_t destination_rank;
+    uint8_t flags;
     uint32_t token_index;
     fg_sampler_config sampler;
     float uniform;
 } fg_output_config;
+
+#define FG_OUTPUT_CONFIG_FLAG_SPLIT 1u
+
+#define FG_OUTPUT_PARTIAL_BYTES 12u
+
+typedef struct fg_output_partial {
+    uint32_t token_index;
+    float value;
+    uint32_t id;
+} fg_output_partial;
+
+fg_status fg_output_partial_encode(uint8_t output[FG_OUTPUT_PARTIAL_BYTES],
+                                   const fg_output_partial *partial,fg_error *err);
+fg_status fg_output_partial_decode(fg_output_partial *partial,const uint8_t *payload,
+                                   uint32_t bytes,fg_error *err);
 
 /* One-deep matcher for the direct output handoff.  Rank 0 emits exactly one
  * config per decode token and the final block owner emits exactly one hidden
@@ -417,14 +438,22 @@ typedef struct fg_output_config {
 typedef struct fg_output_handoff {
     bool have_config;
     bool have_hidden;
+    bool have_local;
+    bool have_remote;
     fg_output_config config;
     fg_layer_result hidden;
+    float local_value;
+    float remote_value;
+    uint32_t local_id;
+    uint32_t remote_id;
 } fg_output_handoff;
 void fg_output_handoff_reset(fg_output_handoff *state);
 fg_status fg_output_handoff_config(fg_output_handoff *state,
                                    const fg_output_config *config,fg_error *err);
 fg_status fg_output_handoff_hidden(fg_output_handoff *state,
                                    const fg_layer_result *hidden,fg_error *err);
+fg_status fg_output_handoff_partial(fg_output_handoff *state,uint32_t token_index,
+                                    float value,uint32_t id,fg_error *err);
 bool fg_output_handoff_ready(const fg_output_handoff *state);
 void fg_output_handoff_take(fg_output_handoff *state,fg_output_config *config,
                             fg_layer_result *hidden);

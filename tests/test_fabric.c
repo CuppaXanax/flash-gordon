@@ -160,13 +160,31 @@ static void protocol_output_handoff_selfcheck(void){
     fg_output_config decoded={0};
     PROTOCOL_CHECK(fg_output_config_decode(&decoded,wire,sizeof(wire),&error)==FG_OK);
     PROTOCOL_CHECK(decoded.source_rank==0u&&decoded.destination_rank==4u&&
-        decoded.token_index==17u&&decoded.uniform==0.25f);
+        decoded.token_index==17u&&decoded.uniform==0.25f&&decoded.flags==0u);
+    fg_output_config split=config;split.flags=FG_OUTPUT_CONFIG_FLAG_SPLIT;
+    PROTOCOL_CHECK(fg_output_config_encode(wire,&split,&error)==FG_OK);
+    PROTOCOL_CHECK(fg_output_config_decode(&decoded,wire,sizeof(wire),&error)==FG_OK&&
+        decoded.flags==FG_OUTPUT_CONFIG_FLAG_SPLIT);
     uint8_t bad[FG_OUTPUT_CONFIG_BYTES];
-    memcpy(bad,wire,sizeof(bad));bad[2]=1u;
+    memcpy(bad,wire,sizeof(bad));bad[2]=0x80u;
+    PROTOCOL_CHECK(fg_output_config_decode(&decoded,bad,sizeof(bad),&error)!=FG_OK);
+    memcpy(bad,wire,sizeof(bad));bad[3]=1u;
     PROTOCOL_CHECK(fg_output_config_decode(&decoded,bad,sizeof(bad),&error)!=FG_OK);
     fg_output_config wrong=config;wrong.destination_rank=5u;
     PROTOCOL_CHECK(fg_output_config_encode(wire,&wrong,&error)!=FG_OK);
-    /* the new handoff message ids must pass frame validation on protocol 6 */
+    PROTOCOL_CHECK(fg_output_config_encode(wire,&config,&error)==FG_OK);
+    fg_output_partial partial={.token_index=17u,.value=-1.25f,.id=12345u};
+    uint8_t partial_wire[FG_OUTPUT_PARTIAL_BYTES];
+    PROTOCOL_CHECK(fg_output_partial_encode(partial_wire,&partial,&error)==FG_OK);
+    fg_output_partial decoded_partial={0};
+    PROTOCOL_CHECK(fg_output_partial_decode(&decoded_partial,partial_wire,
+        sizeof(partial_wire),&error)==FG_OK&&decoded_partial.token_index==17u&&
+        decoded_partial.value==-1.25f&&decoded_partial.id==12345u);
+    PROTOCOL_CHECK(fg_output_partial_decode(&decoded_partial,partial_wire,
+        sizeof(partial_wire)-1u,&error)!=FG_OK);
+    fg_output_partial bad_partial=partial;bad_partial.id=FG_Q38_VOCAB_SIZE;
+    PROTOCOL_CHECK(fg_output_partial_encode(partial_wire,&bad_partial,&error)!=FG_OK);
+    /* the split handoff messages must pass frame validation on protocol 6 */
     fg_frame_header frame;uint32_t frame_bytes=0;
     PROTOCOL_CHECK(fg_output_config_encode(wire,&config,&error)==FG_OK);
     PROTOCOL_CHECK(fg_frame_encode(&frame,FG_MSG_OUTPUT_CONFIG,1u,2u,0u,wire,
@@ -177,6 +195,14 @@ static void protocol_output_handoff_selfcheck(void){
         sizeof(wire),&error)==FG_OK);
     PROTOCOL_CHECK(fg_frame_validate(&frame,wire,&frame_bytes,&error)==FG_OK&&
         fg_frame_type(&frame)==FG_MSG_OUTPUT_HIDDEN);
+    PROTOCOL_CHECK(fg_frame_encode(&frame,FG_MSG_OUTPUT_SLICE,1u,2u,0u,wire,
+        sizeof(wire),&error)==FG_OK);
+    PROTOCOL_CHECK(fg_frame_validate(&frame,wire,&frame_bytes,&error)==FG_OK&&
+        fg_frame_type(&frame)==FG_MSG_OUTPUT_SLICE);
+    PROTOCOL_CHECK(fg_frame_encode(&frame,FG_MSG_OUTPUT_PARTIAL,1u,2u,0u,partial_wire,
+        sizeof(partial_wire),&error)==FG_OK);
+    PROTOCOL_CHECK(fg_frame_validate(&frame,partial_wire,&frame_bytes,&error)==FG_OK&&
+        fg_frame_type(&frame)==FG_MSG_OUTPUT_PARTIAL);
 
     fg_layer_result hidden={.layer=FG_LAYER_COUNT-1u,.source_rank=7u,
         .destination_rank=4u,.token_index=17u};
@@ -221,6 +247,20 @@ static void protocol_output_handoff_selfcheck(void){
     newer.hyper[0]=8.0f;
     PROTOCOL_CHECK(fg_output_handoff_hidden(&state,&newer,&error)==FG_OK);
     PROTOCOL_CHECK(state.hidden.hyper[0]==8.0f);
+    /* the split partial binds to the pending config token and is cleared with it */
+    fg_output_handoff_reset(&state);
+    PROTOCOL_CHECK(fg_output_handoff_partial(&state,17u,0.5f,3u,&error)!=FG_OK);
+    PROTOCOL_CHECK(fg_output_handoff_config(&state,&config,&error)==FG_OK);
+    PROTOCOL_CHECK(fg_output_handoff_partial(&state,16u,0.5f,3u,&error)!=FG_OK);
+    PROTOCOL_CHECK(fg_output_handoff_partial(&state,17u,0.5f,3u,&error)==FG_OK);
+    PROTOCOL_CHECK(state.have_remote&&state.remote_value==0.5f&&state.remote_id==3u);
+    PROTOCOL_CHECK(fg_output_handoff_hidden(&state,&hidden,&error)==FG_OK);
+    PROTOCOL_CHECK(!state.have_local&&state.have_remote);
+    PROTOCOL_CHECK(fg_output_handoff_config(&state,&next,&error)==FG_OK);
+    PROTOCOL_CHECK(!state.have_remote&&!state.have_local);
+    PROTOCOL_CHECK(fg_output_handoff_partial(&state,18u,0.75f,4u,&error)==FG_OK);
+    fg_output_handoff_take(&state,NULL,NULL);
+    PROTOCOL_CHECK(!state.have_remote&&!state.have_local);
     fg_output_handoff_reset(&state);
     PROTOCOL_CHECK(!state.have_config&&!state.have_hidden);
 }

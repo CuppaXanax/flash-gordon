@@ -59,7 +59,7 @@ vulkan/%.spv: shaders/%.comp
 	@mkdir -p vulkan
 	$(GLSLC) -O --target-env=vulkan1.1 -o $@ $<
 
-tests/test_fg_vk: tests/test_fg_vk.o src/vk.o src/quant.o src/q38_math.o src/ngram.o src/uring.o src/sha256.o src/q38_schema.o src/gguf.o src/topology.o src/util.o | shaders
+tests/test_fg_vk: tests/test_fg_vk.o src/vk.o src/quant.o src/q38_math.o src/ngram.o src/uring.o src/sha256.o src/q38_schema.o src/gguf.o src/topology.o src/util.o src/output.o src/model.o src/loader.o src/manifest.o src/runtime_options.o src/sampler.o src/protocol.o | shaders
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS) -lvulkan
 
 test-fg-profile-analysis:
