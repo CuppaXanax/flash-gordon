@@ -1,15 +1,68 @@
 #version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+/* One workgroup per candidate block.  The pooled key transform (RMS norm,
+ * RoPE) is block-scoped, so computing it inside a (block, query) workgroup
+ * as the previous kernel did repeated it once per query of the scoring
+ * sweep.  This kernel computes it once and then scores every query of the
+ * dispatch against the shared transformed key: per query each of the four
+ * 32-lane head groups runs a four-element FMA chain and a five-step XOR
+ * butterfly, so the 128-lane shared-memory tree and its barriers are gone
+ * from the inner loop.  head_sums is indexed by query slot so no barrier is
+ * needed between queries. */
 layout(local_size_x=128,local_size_y=1,local_size_z=1)in;
-layout(set=0,binding=0)readonly buffer Query{float query[];};
+layout(set=0,binding=0)readonly buffer Query{vec4 query4[];};
 layout(set=0,binding=1)readonly buffer Keys{uint keys[];};
 layout(set=0,binding=2)readonly buffer Norm{float norm_weight[];};
 layout(set=0,binding=3)readonly buffer Positions{uint positions[];};
 layout(set=0,binding=4)writeonly buffer Scores{float scores[];};
 layout(set=0,binding=5)writeonly buffer Ids{uint ids[];};
 layout(push_constant)uniform Push{uint tokens;uint blocks;uint block_base;uint score_stride;uint output_base;uint first_visible;uint query_count;}pc;
-shared float key_value[128];shared float reduce_value[128];shared float head_sum[4];
+shared float key_value[128];
+shared vec4 key4[32];
+shared float head_sums[16][4];
+shared float wave_ss[2];
 uint load_byte(uint byte_offset){uint word=keys[byte_offset>>2u];return(word>>((byte_offset&3u)*8u))&255u;}
 float load_q8(uint token,uint element){uint block=element>>5u,inside=element&31u,base=token*136u+block*34u;uint half_bits=load_byte(base)|(load_byte(base+1u)<<8u);float d=unpackHalf2x16(half_bits).x;int q=int(load_byte(base+2u+inside));if(q>=128)q-=256;return d*float(q);}
-void main(){uint lane=gl_LocalInvocationID.x,block=gl_WorkGroupID.x;if(block>=pc.blocks)return;uint query_id=gl_WorkGroupID.y;uint at=query_id*pc.score_stride+pc.output_base+block;
-if((block+pc.block_base+1u)*4u>pc.first_visible+query_id){if(lane==0u){scores[at]=-1.0/0.0;ids[at]=0xffffffffu;}return;}
-uint first=block*4u;float pooled=0.0;for(uint t=0u;t<4u;t++)pooled+=load_q8(first+t,lane)*0.25;key_value[lane]=pooled;reduce_value[lane]=pooled*pooled;barrier();for(uint stride=64u;stride>0u;stride>>=1u){if(lane<stride)reduce_value[lane]+=reduce_value[lane+stride];barrier();}float value=pooled*inversesqrt(reduce_value[0]/128.0+1e-6)*norm_weight[lane];key_value[lane]=value;barrier();if(lane<32u){uint axis=(lane%3u==1u)?1u:((lane%3u==2u&&lane<30u)?2u:0u);float angle=float(positions[first*3u+axis])/pow(10000000.0,float(2u*lane)/64.0),c=cos(angle),s=sin(angle),a=key_value[lane],b=key_value[lane+32u];key_value[lane]=a*c-b*s;key_value[lane+32u]=b*c+a*s;}barrier();for(uint head=0u;head<4u;head++){reduce_value[lane]=query[query_id*512u+head*128u+lane]*key_value[lane];barrier();for(uint stride=64u;stride>0u;stride>>=1u){if(lane<stride)reduce_value[lane]+=reduce_value[lane+stride];barrier();}if(lane==0u)head_sum[head]=max(reduce_value[0],0.0);barrier();}if(lane==0u){scores[at]=(head_sum[0]+head_sum[1]+head_sum[2]+head_sum[3])*0.08838834764831845;ids[at]=block+pc.block_base;}}
+void main(){
+    uint lane=gl_LocalInvocationID.x,block=gl_WorkGroupID.x;
+    if(block>=pc.blocks)return;
+    uint head=lane>>5u,sub=lane&31u;
+    uint first=block*4u;float pooled=0.0;
+    for(uint t=0u;t<4u;t++)pooled+=load_q8(first+t,lane)*0.25;
+    float squares=subgroupAdd(pooled*pooled);
+    if(subgroupElect())wave_ss[gl_SubgroupID]=squares;
+    barrier();
+    float value=pooled*inversesqrt((wave_ss[0]+wave_ss[1])/128.0+1e-6)*norm_weight[lane];
+    key_value[lane]=value;barrier();
+    if(lane<32u){uint axis=(lane%3u==1u)?1u:((lane%3u==2u&&lane<30u)?2u:0u);float angle=float(positions[first*3u+axis])/pow(10000000.0,float(2u*lane)/64.0),c=cos(angle),s=sin(angle),a=key_value[lane],b=key_value[lane+32u];key_value[lane]=a*c-b*s;key_value[lane+32u]=b*c+a*s;}
+    barrier();
+    if(lane<32u)key4[lane]=vec4(key_value[lane*4u],key_value[lane*4u+1u],key_value[lane*4u+2u],key_value[lane*4u+3u]);
+    barrier();
+    for(uint q0=0u;q0<pc.query_count;q0+=16u){
+        uint n=min(16u,pc.query_count-q0);
+        for(uint q=0u;q<n;q++){
+            vec4 qv=query4[(q0+q)*128u+head*32u+sub];
+            vec4 kv=key4[sub];
+            float partial=fma(qv.x,kv.x,fma(qv.y,kv.y,fma(qv.z,kv.z,qv.w*kv.w)));
+            partial+=subgroupShuffleXor(partial,16u);
+            partial+=subgroupShuffleXor(partial,8u);
+            partial+=subgroupShuffleXor(partial,4u);
+            partial+=subgroupShuffleXor(partial,2u);
+            partial+=subgroupShuffleXor(partial,1u);
+            if(sub==0u)head_sums[q][head]=partial;
+        }
+        barrier();
+        if(lane<n){
+            uint at=(q0+lane)*pc.score_stride+pc.output_base+block;
+            if((block+pc.block_base+1u)*4u>pc.first_visible+q0+lane){
+                scores[at]=-1.0/0.0;ids[at]=0xffffffffu;
+            }else{
+                float total=max(head_sums[lane][0],0.0)+max(head_sums[lane][1],0.0)+max(head_sums[lane][2],0.0)+max(head_sums[lane][3],0.0);
+                scores[at]=total*0.08838834764831845;ids[at]=block+pc.block_base;
+            }
+        }
+        barrier();
+    }
+}
