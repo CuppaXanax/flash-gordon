@@ -2542,24 +2542,11 @@ static fg_status coordinator_fetch_qsa_pages(void *opaque,uint32_t layer,
     if(status!=FG_OK)return status;
     uint32_t owner=coordinator->manifest->layer_owner[layer];
     if(owner==0u){
-        /* Rank 0 owns the block: its own session is authoritative.  Prefer the
-         * record cache, but fall back to the state file once a page has been
-         * evicted so a self-owned layer is not pinned resident forever. */
-        for(uint32_t i=0;i<block_count;i++){
-            const uint8_t *page_records=NULL;
-            fg_status cached=fg_owner_qsa_page_records(coordinator->owner,layer,
-                                                       blocks[i],&page_records,err);
-            if(cached==FG_OK){
-                memcpy(records+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,page_records,
-                       FG_QSA_PAGE_RECORD_BYTES);
-                continue;
-            }
-            fg_error state_error={0};
-            status=fg_owner_qsa_state_records(coordinator->owner,layer,blocks[i],
-                records+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,&state_error);
-            if(status!=FG_OK)return status;
-        }
-        return FG_OK;
+        /* Rank 0 owns the block: its own state file is authoritative for the
+         * complete pages that already missed the record cache.  One batched
+         * read replaces a synchronous pread per page. */
+        return fg_owner_qsa_state_records_batch(coordinator->owner,layer,blocks,
+                                                block_count,records,err);
     }
     if(owner>=FG_RANK_COUNT){
         fg_error_set(err,FG_ERR_MISMATCH,"QSA cold page has no authoritative owner");
