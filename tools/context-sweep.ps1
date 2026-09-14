@@ -35,8 +35,11 @@ function Send-Prompt {
     } | ConvertTo-Json -Depth 12 -Compress
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $r = Invoke-WebRequest -Uri "$BaseUrl/v1/chat/completions" -Method Post `
-        -ContentType "application/json" -Body $body -TimeoutSec $TimeoutSeconds
+        -ContentType "application/json" -Body $body -TimeoutSec $TimeoutSeconds -SkipHttpErrorCheck
     $watch.Stop()
+    if ($r.StatusCode -ne 200) {
+        throw "HTTP $($r.StatusCode): $($r.Content)"
+    }
     [pscustomobject]@{
         WallSeconds      = [Math]::Round($watch.Elapsed.TotalSeconds, 3)
         PromptTokens     = [int](Get-HeaderValue $r "X-Flash-Gordon-Prompt-Tokens")
