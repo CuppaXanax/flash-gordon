@@ -147,18 +147,20 @@ Deploy the branch to a separately named install first, then attach:
 # targeted repro of the failure
 pwsh -NoProfile -File tools\context-sweep.ps1 -Contexts 65536
 
-# full native-context curve (defaults: 4096,16384,32768,65536,131072,262144)
+# decode-regression points and the full native-context curve
+pwsh -NoProfile -File tools\context-sweep.ps1 -Contexts 16384,32768
 pwsh -NoProfile -File tools\context-sweep.ps1
+
+# 4K prefill band and correctness battery (two 4K runs)
+D:\workspace\bc-250-dbg\Measure-FlashGordonAB.ps1 -Attach -Build ep -Runs4k 2
 
 # gates and stability (12/Paris correctness probes inside)
 pwsh -NoProfile -File tools\pi-stability.ps1
-
-# 4K prefill band and correctness battery
-D:\workspace\bc-250-dbg\Measure-FlashGordonAB.ps1 -Attach -Build ep
 ```
 
-Acceptance: sweep completes all six targets; 4K/16K/32K prefill stays
->= 270 TPS; pi-stability PASS; gates [12]/[Paris].
+Acceptance: sweep completes all six targets; 16K/32K decode back toward
+18-19 / 17 TPS; 4K/16K/32K prefill stays >= 270 TPS; battery and pi-stability
+PASS; gates [12]/[Paris].
 
 Operational notes for the deploy:
 
@@ -167,6 +169,61 @@ Operational notes for the deploy:
   state files between runs).
 - If rank 0 is given no QSA layer by the owner map, it still opens the
   stateless mirror and behaviour is identical to before.
+
+## Follow-up 2026-09-14: decode regression from the state-backed session
+
+Fleet sweep on the fixed build (binary 6dee7282): prefill 4K 259.0 / 16K 286.6 /
+32K 282.2 / 64K 266.6 / 128K 243.2 TPS (the 54K wall is gone), but decode
+(32 tokens) fell to 4K 20.4 / 16K 10.9 / 32K 9.7 / 64K 8.1 / 128K 7.7. The
+previous leaky build decoded at ~18.8 (16K) and ~17.1 (32K) only because leaked
+pins kept rank-0 pages resident.
+
+Root cause of the per-token cost (two compounding paths):
+
+1. **Mirror warm traffic evicted rank 0's own pages.** Ring prefill still issued
+   `coordinator_warm_qsa_issue` for every worker-owned QSA layer, inserting
+   10 layers x 32 pages per chunk (~1.5 MB/chunk over the fabric) into the
+   128 MiB mirror. Before this branch those inserts competed with *pinned*
+   rank-0 pages and could not evict them; after the fix rank-0 pages are
+   unpinned, so the warm stream pushed them out. Prefill attention then
+   re-read blocks it had just written (mid-prefill state reads), and decode
+   found 16K/32K selected pages missing even though the rank-0 working set
+   (40/80 MiB) fits the mirror.
+2. **The owner==0 fetch fallback was one synchronous pread per page.**
+   `coordinator_fetch_qsa_pages` served rank-0-owned misses with a per-block
+   `fg_owner_qsa_state_records` loop; at 16K a token can miss several hundred
+   of its top-512 selected pages per layer, i.e. hundreds of 8 KiB io_uring
+   round trips (~30-50 us each) per token.
+
+Fixes:
+
+- `coordinator_warm_qsa_issue` returns immediately when `ring_decode` is
+  active (runtime.c). Ring decode executes every QSA layer on its owner, so the
+  rank-0 mirror's remote copies are never read; the mirror now holds only
+  rank 0's own pages. Warm stays enabled for ring prefill + legacy decode.
+- New `fg_qsa_session_state_records_batch` / `fg_owner_qsa_state_records_batch`
+  (qsa.c, owner.c) issue one `fg_qsa_state_read_blocks` submission for the
+  whole fetch list; `coordinator_fetch_qsa_pages` owner==0 uses it directly.
+  The caller has already checked the record cache, so nothing is re-fetched.
+
+Expected deltas (single-run fleet variance applies):
+
+- 16K/32K decode: rank-0 working set (8192/16384 pages) is fully resident again
+  with warm off, so the per-token state reads disappear; expect a return to the
+  ~18-19 / ~17 TPS band.
+- 64K/128K decode: rank-0 pages exceed the mirror (32768/65536 needed), so
+  selected misses still read the state file, but batched: one uring submission
+  per layer per fetch instead of one per page. Expect a large cut in the
+  per-token I/O stall; the floor is the NVMe read of up to ~5 MB/token at 128K.
+- Prefill: warm removal deletes 10 fabric fetches and 320 cache inserts per
+  128-token chunk from the rank-0 critical path and stops the mid-prefill
+  eviction/re-read of rank-0 pages; expect recovery toward the 280-310 band.
+  The persist cost added by the state-backed session is ~4 io_uring submissions
+  per chunk (<0.2% at 4K), so the 4K 259 vs 280 delta is read as single-run
+  variance rather than a structural cost.
+- 262K correctness: unchanged; pins are still released by persist, the state
+  file remains authoritative for evicted pages, and cache pressure is still a
+  soft miss. Decode beyond the mirror's capacity is disk-bound by design.
 
 ## Known limits / follow-ups
 
