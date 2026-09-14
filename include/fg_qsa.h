@@ -161,6 +161,9 @@ fg_status fg_qsa_session_page_records(const fg_qsa_session *session,uint32_t lay
                                       uint32_t block,const uint8_t **records,fg_error *err);
 fg_status fg_qsa_session_state_records(fg_qsa_session *session,uint32_t layer,
                                        uint32_t block,uint8_t *records,fg_error *err);
+fg_status fg_qsa_session_state_records_batch(fg_qsa_session *session,uint32_t layer,
+                                             const uint32_t *blocks,uint32_t page_count,
+                                             uint8_t *records,fg_error *err);
 /* Insert fetched complete pages into a mirror record cache without pinning;
  * used to warm the rank-0 mirror from owner pages during ring prefill. */
 fg_status fg_qsa_session_warm_pages(fg_qsa_session *session,uint32_t layer,

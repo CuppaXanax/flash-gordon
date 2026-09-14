@@ -827,6 +827,15 @@ fg_status fg_owner_qsa_state_records(fg_owner_executor *executor,uint32_t layer,
     }
     return fg_qsa_session_state_records(executor->qsa,layer,block,records,err);
 }
+fg_status fg_owner_qsa_state_records_batch(fg_owner_executor *executor,uint32_t layer,
+    const uint32_t *blocks,uint32_t page_count,uint8_t *records,fg_error *err){
+    if(!executor||!executor->qsa){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"owner QSA state records are unavailable");
+        return FG_ERR_UNAVAILABLE;
+    }
+    return fg_qsa_session_state_records_batch(executor->qsa,layer,blocks,page_count,
+                                              records,err);
+}
 
 static float tensor_l2(const fg_vk_tensor *t,uint32_t n){const float *p=fg_vk_tensor_map((fg_vk_tensor *)t);if(!p)return -1.0f;double s=0.0;for(uint32_t i=0;i<n;i++)s+=(double)p[i]*p[i];return (float)sqrt(s/n);}
 
