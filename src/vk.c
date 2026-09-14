@@ -391,7 +391,7 @@ fg_status fg_vk_expert_graph_create(fg_vk_context *c,fg_vk_expert_graph **out,fg
         struct{uint32_t out_dim,in_dim,blocks,tile_bytes,expert_stride,slots,down_type;}down_reduce_push={hidden_width,mid_width,mid_width/FG_QK8_0,down_q51?(uint32_t)fg_q5_1_cooked_tile_bytes(mid_width):down_q8?(uint32_t)fg_q8_0_cooked_tile_bytes(mid_width):0u,down_expert_stride,slots,down_type};
         const fg_vk_tensor *gate_up_bindings[]={gate_weights,up_weights,activation,tiles,mid},*down_reduce_bindings[]={down_weights,tiles,mid,gates,reduced};
         status=expert_graph_dispatch(graph,&c->moe_decode_gate_up,gate_up_bindings,&gate_up_push,(mid_width+7u)/8u,slots,1u,false,err);
-        if(status==FG_OK)status=expert_graph_dispatch(graph,&c->moe_decode_down_reduce,down_reduce_bindings,&down_reduce_push,(hidden_width+15u)/16u,1u,1u,true,err);
+        if(status==FG_OK)status=expert_graph_dispatch(graph,&c->moe_decode_down_reduce,down_reduce_bindings,&down_reduce_push,down_q8?(hidden_width+7u)/8u:(hidden_width+15u)/16u,1u,1u,true,err);
     }else{
         const fg_vk_tensor *gate_bindings[]={gate_weights,activation,tiles,gate},*up_bindings[]={up_weights,activation,tiles,up},*swiglu_bindings[]={gate,up,mid},*down_bindings[]={down_weights,tiles,mid,down},*reduce_bindings[]={down,gates,tiles,reduced};fg_vk_kernel *gate_kernel=gate_cooked?&c->kquant_cooked:&c->kquant,*up_kernel=up_cooked?&c->kquant_cooked:&c->kquant,*down_kernel=down_q51?&c->moe_q5_1_cooked:down_q8?&c->moe_q8_0_cooked:down_type==7u?&c->moe_q5_1:&c->moe_q8_0;const void *gate_parameters=gate_cooked?(const void *)&gate_cooked_push:(const void *)&gate_push,*up_parameters=up_cooked?(const void *)&up_cooked_push:(const void *)&up_push,*down_parameters=(down_q51||down_q8)?(const void *)&down_cooked_push:(const void *)&down_push;status=expert_graph_dispatch(graph,gate_kernel,gate_bindings,gate_parameters,(mid_width+7u)/8u,slots,1u,false,err);if(status==FG_OK)status=expert_graph_dispatch(graph,up_kernel,up_bindings,up_parameters,(mid_width+7u)/8u,slots,1u,false,err);if(status==FG_OK)status=expert_graph_dispatch(graph,&c->swiglu,swiglu_bindings,&swiglu_push,(slots*mid_width+255u)/256u,1u,1u,true,err);if(status==FG_OK)status=expert_graph_dispatch(graph,down_kernel,down_bindings,down_parameters,(hidden_width+7u)/8u,slots,1u,true,err);if(status==FG_OK)status=expert_graph_dispatch(graph,&c->moe_reduce,reduce_bindings,&reduce_push,(hidden_width+255u)/256u,1u,1u,true,err);
     }
@@ -1179,7 +1179,8 @@ fg_status fg_vk_moe_decode_down_reduce(fg_vk_context *c,fg_vk_tensor *out,
     }
     struct{uint32_t out_dim,in_dim,blocks,tile_bytes,expert_stride,slots,down_type;}push={output_width,input_width,input_width/FG_QK8_0,(uint32_t)tile_bytes,expert_stride,slots,down_type};
     const fg_vk_tensor *bindings[]={down_weights,tiles,input,gates,out};
-    return dispatch(c,&c->moe_decode_down_reduce,bindings,&push,(output_width+15u)/16u,1u,1u,err);
+    uint32_t groups=q8_cooked?(output_width+7u)/8u:(output_width+15u)/16u;
+    return dispatch(c,&c->moe_decode_down_reduce,bindings,&push,groups,1u,1u,err);
 }
 
 /* Decode common-path finish: fold the shared-expert contribution (scaled by

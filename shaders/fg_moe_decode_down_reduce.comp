@@ -59,6 +59,54 @@ uint spread4(uint bits) {
 
 void main() {
     uint local_id = gl_LocalInvocationID.x;
+    if (pc.down_type == 8u && pc.tile_bytes != 0u) {
+        /* Cooked Q8_0 down tiles: eight lanes own one output row and each lane
+           reads one aligned four-value word of every 32-value block, so a warp
+           touches one fully used 32-byte sector per row-block instead of the
+           scattered half-sectors the old row-major geometry produced. */
+        uint lane8 = local_id & 7u;
+        uint row8 = gl_WorkGroupID.x * 8u + (local_id >> 3u);
+        bool live8 = row8 < pc.out_dim;
+        uint row_tile8 = row8 >> 4u;
+        uint tile_row8 = row8 & 15u;
+        uint quant_offset8 = (pc.blocks * 32u + 63u) & ~63u;
+        float accumulator8 = 0.0;
+        if (live8) {
+            for (uint slot = 0u; slot < pc.slots; slot++) {
+                uint tile_base = slot * TILE_WORDS;
+                uint expert = tiles[tile_base];
+                if (expert == INVALID) continue;
+                uint pair = tiles[tile_base + 1u];
+                if (pair == INVALID) continue;
+                float gate = gates[slot];
+                uint row_base = expert * pc.expert_stride + row_tile8 * pc.tile_bytes;
+                uint input_base = pair * (pc.in_dim >> 2u);
+                float slot_acc = 0.0;
+                for (uint block = 0u; block < pc.blocks; block++) {
+                    uint scale_byte = row_base + (block * 16u + tile_row8) * 2u;
+                    vec2 scale = unpackHalf2x16(wb[scale_byte >> 2u]);
+                    float delta = (scale_byte & 2u) == 0u ? scale.x : scale.y;
+                    uint quant_byte = row_base + quant_offset8 +
+                        (tile_row8 * pc.blocks + block) * 32u + lane8 * 4u;
+                    uint packed = wb[quant_byte >> 2u];
+                    vec4 weight = vec4(unpack8(int(packed))) * delta;
+                    vec4 input_value = x4[input_base + block * 8u + lane8];
+                    slot_acc += dot(weight, input_value);
+                }
+                accumulator8 = fma(gate, slot_acc, accumulator8);
+            }
+        }
+        partial[local_id] = accumulator8;
+        barrier();
+        if (live8 && lane8 == 0u) {
+            uint offset = (local_id >> 3u) * 8u;
+            y[row8] = ((partial[offset] + partial[offset + 4u]) +
+                       (partial[offset + 2u] + partial[offset + 6u])) +
+                      ((partial[offset + 1u] + partial[offset + 5u]) +
+                       (partial[offset + 3u] + partial[offset + 7u]));
+        }
+        return;
+    }
     uint part = local_id & (PARTS - 1u);
     uint row_slot = local_id >> 2u;
     uint row = gl_WorkGroupID.x * ROWS_PER_WORKGROUP + row_slot;
