@@ -1,5 +1,6 @@
 #version 460
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_KHR_shader_subgroup_shuffle : require
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
@@ -25,10 +26,7 @@ const uint TILE_WORDS = 5u;
 const uint INVALID = 0xffffffffu;
 const uint Q8K_WORDS = 74u;
 const uint ROWS = 4u;
-const uint SUMS_STRIDE = 9u;
 const uint ROWS_PER_WORKGROUP = 32u;
-
-shared float sums[PAIR_TILE][ROWS_PER_WORKGROUP * SUMS_STRIDE];
 
 /* Six-bit scale/min pair for one 32-value K group, decoded from the three
    packed metadata words that follow the d/dmin half pair. */
@@ -43,25 +41,127 @@ vec2 scale_min(uint m0, uint m1, uint m2, uint group) {
 }
 
 /* Dequantized weight vector for one row lane and one K group.  The minimum
-   term is folded into the vector so the pair dot needs no separate bsum
-   pass; quants stay integral and all products are exact in fp32. */
+   term is folded into the vector so the pair MAC needs no separate bsum
+   pass; quants stay integral and all products are exact in fp32.  The Q5
+   high-bit merge is only present on the Q5 path (pc.type is uniform, so the
+   two specialized block loops below keep it out of the Q4 instruction
+   stream). */
 vec4 weight_values(uint qword, uint high, uint group, vec2 dm,
-                   uint m0, uint m1, uint m2) {
+                   uint m0, uint m1, uint m2, bool q5) {
     uint word = (qword >> ((group & 1u) * 4u)) & 0x0f0f0f0fu;
-    word |= ((high >> group) & 0x01010101u) << 4u;
+    if (q5) word |= ((high >> group) & 0x01010101u) << 4u;
     vec2 sm = scale_min(m0, m1, m2, group);
     return fma(vec4(unpack8(int(word))), vec4(dm.x * sm.x), vec4(-(dm.y * sm.y)));
 }
 
-/* One pair slot of the outer product: the four row weight vectors are
-   decoded once per group and the live flag is tested once for all rows.
-   Empty slots are packed after the live ones, so they cost a branch only. */
-#define FG_PAIR(P, AD, A, L) { \
+/* One product lane of the outer product.  The activation is scaled by the
+   pair's q8 block delta once per group, so each of the four MACs per
+   (row, pair) is a single issued FMA instead of a dot tree (4 mul + 3 add)
+   followed by a scaling FMA.  Four FP instructions per four MACs; the
+   sixteen accumulators stay scalar, so unlike the reverted four-lane
+   experiment this does not widen the accumulator set by 48 VGPRs. */
+#define FG_ACC(A, W, S) { \
+    A = fma(W.x, S.x, A); \
+    A = fma(W.y, S.y, A); \
+    A = fma(W.z, S.z, A); \
+    A = fma(W.w, S.w, A); }
+
+/* One pair slot: the four row weight vectors are decoded once per group and
+   the live flag is tested once for all rows.  Empty slots are packed after
+   the live ones, so they cost a branch only. */
+#define FG_PAIR(P, S, L) { \
     if (L) { \
-        acc0##P = fma(AD, dot(w0, A), acc0##P); \
-        acc1##P = fma(AD, dot(w1, A), acc1##P); \
-        acc2##P = fma(AD, dot(w2, A), acc2##P); \
-        acc3##P = fma(AD, dot(w3, A), acc3##P); \
+        FG_ACC(acc0##P, w0, S) \
+        FG_ACC(acc1##P, w1, S) \
+        FG_ACC(acc2##P, w2, S) \
+        FG_ACC(acc3##P, w3, S) \
+    } }
+
+/* Write the four rows of one pair slot after the K-segment reduction. */
+void store_pair(uint pair, uint row0, float v0, float v1, float v2, float v3) {
+    if (pair == INVALID || pair >= pc.tokens * TOP_K) return;
+    if (row0 + 0u < pc.out_dim) y[pair * pc.out_dim + row0 + 0u] = v0;
+    if (row0 + 1u < pc.out_dim) y[pair * pc.out_dim + row0 + 1u] = v1;
+    if (row0 + 2u < pc.out_dim) y[pair * pc.out_dim + row0 + 2u] = v2;
+    if (row0 + 3u < pc.out_dim) y[pair * pc.out_dim + row0 + 3u] = v3;
+}
+
+/* Three-step XOR butterfly over the eight lanes of a row group: every lane
+   ends with the full K-segment sum, so the shared staging array, its barrier
+   and the serialised lane-0 tree are all gone. */
+#define FG_REDUCE(A) { \
+    A += subgroupShuffleXor(A, 1u); \
+    A += subgroupShuffleXor(A, 2u); \
+    A += subgroupShuffleXor(A, 4u); }
+
+/* The block loop is duplicated for Q4_K and Q5_K.  pc.type is uniform per
+   dispatch, so the Q4 stream never executes the Q5 high-bit merge or the
+   high-word loads, and the Q5 stream never evaluates a per-operation select. */
+#define FG_BLOCK_LOOP(Q5L) { \
+    for (uint block = 0u; block < pc.blocks; block++) { \
+        uint bb = wr + block * (Q5L ? 1408u : 1152u); \
+        uint db = bb + tile_row * 4u; \
+        uint mb = bb + 32u + tile_row * 12u; \
+        uint qb = bb + (Q5L ? 384u : 128u) + tile_row * 128u + lane * 4u; \
+        \
+        uint dw0 = row_live0 ? wb[db >> 2u] : 0u; \
+        uint dw1 = row_live1 ? wb[(db + 4u) >> 2u] : 0u; \
+        uint dw2 = row_live2 ? wb[(db + 8u) >> 2u] : 0u; \
+        uint dw3 = row_live3 ? wb[(db + 12u) >> 2u] : 0u; \
+        vec2 dm0 = unpackHalf2x16(dw0); \
+        vec2 dm1 = unpackHalf2x16(dw1); \
+        vec2 dm2 = unpackHalf2x16(dw2); \
+        vec2 dm3 = unpackHalf2x16(dw3); \
+        \
+        uint s00 = row_live0 ? wb[mb >> 2u] : 0u; \
+        uint s01 = row_live0 ? wb[(mb + 4u) >> 2u] : 0u; \
+        uint s02 = row_live0 ? wb[(mb + 8u) >> 2u] : 0u; \
+        uint s10 = row_live1 ? wb[(mb + 12u) >> 2u] : 0u; \
+        uint s11 = row_live1 ? wb[(mb + 16u) >> 2u] : 0u; \
+        uint s12 = row_live1 ? wb[(mb + 20u) >> 2u] : 0u; \
+        uint s20 = row_live2 ? wb[(mb + 24u) >> 2u] : 0u; \
+        uint s21 = row_live2 ? wb[(mb + 28u) >> 2u] : 0u; \
+        uint s22 = row_live2 ? wb[(mb + 32u) >> 2u] : 0u; \
+        uint s30 = row_live3 ? wb[(mb + 36u) >> 2u] : 0u; \
+        uint s31 = row_live3 ? wb[(mb + 40u) >> 2u] : 0u; \
+        uint s32 = row_live3 ? wb[(mb + 44u) >> 2u] : 0u; \
+        \
+        uint hw0 = 0u, hw1 = 0u, hw2 = 0u, hw3 = 0u; \
+        if (Q5L) { \
+            uint hb = bb + 128u + tile_row * 32u + lane * 4u; \
+            hw0 = row_live0 ? wb[hb >> 2u] : 0u; \
+            hw1 = row_live1 ? wb[(hb + 32u) >> 2u] : 0u; \
+            hw2 = row_live2 ? wb[(hb + 64u) >> 2u] : 0u; \
+            hw3 = row_live3 ? wb[(hb + 96u) >> 2u] : 0u; \
+        } \
+        \
+        float ad0 = live0 ? uintBitsToFloat(q8[t0 + block * Q8K_WORDS]) : 0.0; \
+        float ad1 = live1 ? uintBitsToFloat(q8[t1 + block * Q8K_WORDS]) : 0.0; \
+        float ad2 = live2 ? uintBitsToFloat(q8[t2 + block * Q8K_WORDS]) : 0.0; \
+        float ad3 = live3 ? uintBitsToFloat(q8[t3 + block * Q8K_WORDS]) : 0.0; \
+        \
+        for (uint gp = 0u; gp < 4u; gp++) { \
+            uint q0 = row_live0 ? wb[(qb + gp * 32u) >> 2u] : 0u; \
+            uint q1 = row_live1 ? wb[(qb + 128u + gp * 32u) >> 2u] : 0u; \
+            uint q2 = row_live2 ? wb[(qb + 256u + gp * 32u) >> 2u] : 0u; \
+            uint q3 = row_live3 ? wb[(qb + 384u + gp * 32u) >> 2u] : 0u; \
+            for (uint g2 = 0u; g2 < 2u; g2++) { \
+                uint g = gp * 2u + g2; \
+                vec4 a0 = live0 ? vec4(unpack8(int(q8[t0 + block * Q8K_WORDS + 2u + g * 8u + lane]))) : vec4(0.0); \
+                vec4 a1 = live1 ? vec4(unpack8(int(q8[t1 + block * Q8K_WORDS + 2u + g * 8u + lane]))) : vec4(0.0); \
+                vec4 a2 = live2 ? vec4(unpack8(int(q8[t2 + block * Q8K_WORDS + 2u + g * 8u + lane]))) : vec4(0.0); \
+                vec4 a3 = live3 ? vec4(unpack8(int(q8[t3 + block * Q8K_WORDS + 2u + g * 8u + lane]))) : vec4(0.0); \
+                a0 *= ad0; a1 *= ad1; a2 *= ad2; a3 *= ad3; \
+                vec4 w0 = weight_values(q0, hw0, g, dm0, s00, s01, s02, Q5L); \
+                vec4 w1 = weight_values(q1, hw1, g, dm1, s10, s11, s12, Q5L); \
+                vec4 w2 = weight_values(q2, hw2, g, dm2, s20, s21, s22, Q5L); \
+                vec4 w3 = weight_values(q3, hw3, g, dm3, s30, s31, s32, Q5L); \
+                FG_PAIR(0, a0, live0) \
+                FG_PAIR(1, a1, live1) \
+                FG_PAIR(2, a2, live2) \
+                FG_PAIR(3, a3, live3) \
+            } \
+        } \
     } }
 
 void main() {
@@ -96,111 +196,27 @@ void main() {
     uint row_tile = row0 >> 3u;
     uint tile_row = row0 & 7u;
     uint wr = expert * pc.expert_stride + row_tile * pc.tile_bytes;
-    bool q5 = pc.type == Q5_K;
-    uint block_tile_bytes = q5 ? 1408u : 1152u;
-    uint quant_offset = q5 ? 384u : 128u;
 
     float acc00 = 0.0, acc01 = 0.0, acc02 = 0.0, acc03 = 0.0;
     float acc10 = 0.0, acc11 = 0.0, acc12 = 0.0, acc13 = 0.0;
     float acc20 = 0.0, acc21 = 0.0, acc22 = 0.0, acc23 = 0.0;
     float acc30 = 0.0, acc31 = 0.0, acc32 = 0.0, acc33 = 0.0;
 
-    for (uint block = 0u; block < pc.blocks; block++) {
-        uint bb = wr + block * block_tile_bytes;
-        uint db = bb + tile_row * 4u;
-        uint mb = bb + 32u + tile_row * 12u;
-        uint qb = bb + quant_offset + tile_row * 128u + lane * 4u;
-        uint hb = bb + 128u + tile_row * 32u + lane * 4u;
-
-        uint dw0 = row_live0 ? wb[db >> 2u] : 0u;
-        uint dw1 = row_live1 ? wb[(db + 4u) >> 2u] : 0u;
-        uint dw2 = row_live2 ? wb[(db + 8u) >> 2u] : 0u;
-        uint dw3 = row_live3 ? wb[(db + 12u) >> 2u] : 0u;
-        vec2 dm0 = unpackHalf2x16(dw0);
-        vec2 dm1 = unpackHalf2x16(dw1);
-        vec2 dm2 = unpackHalf2x16(dw2);
-        vec2 dm3 = unpackHalf2x16(dw3);
-
-        uint s00 = row_live0 ? wb[mb >> 2u] : 0u;
-        uint s01 = row_live0 ? wb[(mb + 4u) >> 2u] : 0u;
-        uint s02 = row_live0 ? wb[(mb + 8u) >> 2u] : 0u;
-        uint s10 = row_live1 ? wb[(mb + 12u) >> 2u] : 0u;
-        uint s11 = row_live1 ? wb[(mb + 16u) >> 2u] : 0u;
-        uint s12 = row_live1 ? wb[(mb + 20u) >> 2u] : 0u;
-        uint s20 = row_live2 ? wb[(mb + 24u) >> 2u] : 0u;
-        uint s21 = row_live2 ? wb[(mb + 28u) >> 2u] : 0u;
-        uint s22 = row_live2 ? wb[(mb + 32u) >> 2u] : 0u;
-        uint s30 = row_live3 ? wb[(mb + 36u) >> 2u] : 0u;
-        uint s31 = row_live3 ? wb[(mb + 40u) >> 2u] : 0u;
-        uint s32 = row_live3 ? wb[(mb + 44u) >> 2u] : 0u;
-
-        uint hw0 = (q5 && row_live0) ? wb[hb >> 2u] : 0u;
-        uint hw1 = (q5 && row_live1) ? wb[(hb + 32u) >> 2u] : 0u;
-        uint hw2 = (q5 && row_live2) ? wb[(hb + 64u) >> 2u] : 0u;
-        uint hw3 = (q5 && row_live3) ? wb[(hb + 96u) >> 2u] : 0u;
-
-        float ad0 = live0 ? uintBitsToFloat(q8[t0 + block * Q8K_WORDS]) : 0.0;
-        float ad1 = live1 ? uintBitsToFloat(q8[t1 + block * Q8K_WORDS]) : 0.0;
-        float ad2 = live2 ? uintBitsToFloat(q8[t2 + block * Q8K_WORDS]) : 0.0;
-        float ad3 = live3 ? uintBitsToFloat(q8[t3 + block * Q8K_WORDS]) : 0.0;
-
-        for (uint gp = 0u; gp < 4u; gp++) {
-            uint q0 = row_live0 ? wb[(qb + gp * 32u) >> 2u] : 0u;
-            uint q1 = row_live1 ? wb[(qb + 128u + gp * 32u) >> 2u] : 0u;
-            uint q2 = row_live2 ? wb[(qb + 256u + gp * 32u) >> 2u] : 0u;
-            uint q3 = row_live3 ? wb[(qb + 384u + gp * 32u) >> 2u] : 0u;
-            for (uint g2 = 0u; g2 < 2u; g2++) {
-                uint g = gp * 2u + g2;
-                vec4 a0 = live0 ? vec4(unpack8(int(q8[t0 + block * Q8K_WORDS + 2u + g * 8u + lane]))) : vec4(0.0);
-                vec4 a1 = live1 ? vec4(unpack8(int(q8[t1 + block * Q8K_WORDS + 2u + g * 8u + lane]))) : vec4(0.0);
-                vec4 a2 = live2 ? vec4(unpack8(int(q8[t2 + block * Q8K_WORDS + 2u + g * 8u + lane]))) : vec4(0.0);
-                vec4 a3 = live3 ? vec4(unpack8(int(q8[t3 + block * Q8K_WORDS + 2u + g * 8u + lane]))) : vec4(0.0);
-                vec4 w0 = weight_values(q0, hw0, g, dm0, s00, s01, s02);
-                vec4 w1 = weight_values(q1, hw1, g, dm1, s10, s11, s12);
-                vec4 w2 = weight_values(q2, hw2, g, dm2, s20, s21, s22);
-                vec4 w3 = weight_values(q3, hw3, g, dm3, s30, s31, s32);
-                FG_PAIR(0, ad0, a0, live0)
-                FG_PAIR(1, ad1, a1, live1)
-                FG_PAIR(2, ad2, a2, live2)
-                FG_PAIR(3, ad3, a3, live3)
-            }
-        }
+    if (pc.type == Q5_K) {
+        FG_BLOCK_LOOP(true)
+    } else {
+        FG_BLOCK_LOOP(false)
     }
 
-    uint row_local = row_group * ROWS;
-    sums[0][(row_local + 0u) * SUMS_STRIDE + lane] = acc00;
-    sums[1][(row_local + 0u) * SUMS_STRIDE + lane] = acc01;
-    sums[2][(row_local + 0u) * SUMS_STRIDE + lane] = acc02;
-    sums[3][(row_local + 0u) * SUMS_STRIDE + lane] = acc03;
-    sums[0][(row_local + 1u) * SUMS_STRIDE + lane] = acc10;
-    sums[1][(row_local + 1u) * SUMS_STRIDE + lane] = acc11;
-    sums[2][(row_local + 1u) * SUMS_STRIDE + lane] = acc12;
-    sums[3][(row_local + 1u) * SUMS_STRIDE + lane] = acc13;
-    sums[0][(row_local + 2u) * SUMS_STRIDE + lane] = acc20;
-    sums[1][(row_local + 2u) * SUMS_STRIDE + lane] = acc21;
-    sums[2][(row_local + 2u) * SUMS_STRIDE + lane] = acc22;
-    sums[3][(row_local + 2u) * SUMS_STRIDE + lane] = acc23;
-    sums[0][(row_local + 3u) * SUMS_STRIDE + lane] = acc30;
-    sums[1][(row_local + 3u) * SUMS_STRIDE + lane] = acc31;
-    sums[2][(row_local + 3u) * SUMS_STRIDE + lane] = acc32;
-    sums[3][(row_local + 3u) * SUMS_STRIDE + lane] = acc33;
-    barrier();
+    FG_REDUCE(acc00) FG_REDUCE(acc01) FG_REDUCE(acc02) FG_REDUCE(acc03)
+    FG_REDUCE(acc10) FG_REDUCE(acc11) FG_REDUCE(acc12) FG_REDUCE(acc13)
+    FG_REDUCE(acc20) FG_REDUCE(acc21) FG_REDUCE(acc22) FG_REDUCE(acc23)
+    FG_REDUCE(acc30) FG_REDUCE(acc31) FG_REDUCE(acc32) FG_REDUCE(acc33)
 
     if (lane == 0u) {
-        for (uint p = 0u; p < PAIR_TILE; p++) {
-            uint pair = p == 0u ? p0 : p == 1u ? p1 : p == 2u ? p2 : p3;
-            if (pair == INVALID || pair >= pc.tokens * TOP_K) continue;
-            for (uint r = 0u; r < ROWS; r++) {
-                uint row = row0 + r;
-                if (row >= pc.out_dim) continue;
-                uint offset = (row_local + r) * SUMS_STRIDE;
-                float value =
-                    ((sums[p][offset] + sums[p][offset + 4u]) +
-                     (sums[p][offset + 2u] + sums[p][offset + 6u])) +
-                    ((sums[p][offset + 1u] + sums[p][offset + 5u]) +
-                     (sums[p][offset + 3u] + sums[p][offset + 7u]));
-                y[pair * pc.out_dim + row] = value;
-            }
-        }
+        store_pair(p0, row0, acc00, acc10, acc20, acc30);
+        store_pair(p1, row0, acc01, acc11, acc21, acc31);
+        store_pair(p2, row0, acc02, acc12, acc22, acc32);
+        store_pair(p3, row0, acc03, acc13, acc23, acc33);
     }
 }

@@ -1,5 +1,6 @@
 #version 460
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_KHR_shader_subgroup_shuffle : require
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
@@ -21,10 +22,7 @@ const uint PAIR_TILE = 4u;
 const uint TILE_WORDS = 5u;
 const uint INVALID = 0xffffffffu;
 const uint ROWS = 4u;
-const uint SUMS_STRIDE = 9u;
 const uint ROWS_PER_WORKGROUP = 32u;
-
-shared float sums[PAIR_TILE][ROWS_PER_WORKGROUP * SUMS_STRIDE];
 
 /* Cooked rows can start on either half of a scale word, so the delta and the
    packed quant word are read with the half-word offset of the row block. */
@@ -39,13 +37,40 @@ vec4 q8_0_weight(uint base, uint lane, bool row_live) {
     return vec4(unpack8(int(packed))) * delta;
 }
 
-#define FG_PAIR(P, A, L) { \
+/* One product lane: the input vector is shared by the thread's four rows and
+   the live flag is tested once for all of them.  Four issued FMAs cover the
+   four MACs of a (row, pair, 32-value block) product without the dot tree's
+   horizontal adds and without widening the scalar accumulators. */
+#define FG_ACC(A, W, S) { \
+    A = fma(W.x, S.x, A); \
+    A = fma(W.y, S.y, A); \
+    A = fma(W.z, S.z, A); \
+    A = fma(W.w, S.w, A); }
+
+#define FG_PAIR(P, S, L) { \
     if (L) { \
-        acc0##P += dot(w0, A); \
-        acc1##P += dot(w1, A); \
-        acc2##P += dot(w2, A); \
-        acc3##P += dot(w3, A); \
+        FG_ACC(acc0##P, w0, S) \
+        FG_ACC(acc1##P, w1, S) \
+        FG_ACC(acc2##P, w2, S) \
+        FG_ACC(acc3##P, w3, S) \
     } }
+
+/* Write the four rows of one pair slot after the K-segment reduction. */
+void store_pair(uint pair, uint row0, float v0, float v1, float v2, float v3) {
+    if (pair == INVALID || pair >= pc.tokens * TOP_K) return;
+    if (row0 + 0u < pc.out_dim) y[pair * pc.out_dim + row0 + 0u] = v0;
+    if (row0 + 1u < pc.out_dim) y[pair * pc.out_dim + row0 + 1u] = v1;
+    if (row0 + 2u < pc.out_dim) y[pair * pc.out_dim + row0 + 2u] = v2;
+    if (row0 + 3u < pc.out_dim) y[pair * pc.out_dim + row0 + 3u] = v3;
+}
+
+/* Three-step XOR butterfly over the eight lanes of a row group: every lane
+   ends with the full K-segment sum, so the shared staging array, its barrier
+   and the serialised lane-0 tree are all gone. */
+#define FG_REDUCE(A) { \
+    A += subgroupShuffleXor(A, 1u); \
+    A += subgroupShuffleXor(A, 2u); \
+    A += subgroupShuffleXor(A, 4u); }
 
 void main() {
     uint lid = gl_LocalInvocationID.x;
@@ -97,40 +122,15 @@ void main() {
         FG_PAIR(3, a3, live3)
     }
 
-    uint row_local = row_group * ROWS;
-    sums[0][(row_local + 0u) * SUMS_STRIDE + lane] = acc00;
-    sums[1][(row_local + 0u) * SUMS_STRIDE + lane] = acc01;
-    sums[2][(row_local + 0u) * SUMS_STRIDE + lane] = acc02;
-    sums[3][(row_local + 0u) * SUMS_STRIDE + lane] = acc03;
-    sums[0][(row_local + 1u) * SUMS_STRIDE + lane] = acc10;
-    sums[1][(row_local + 1u) * SUMS_STRIDE + lane] = acc11;
-    sums[2][(row_local + 1u) * SUMS_STRIDE + lane] = acc12;
-    sums[3][(row_local + 1u) * SUMS_STRIDE + lane] = acc13;
-    sums[0][(row_local + 2u) * SUMS_STRIDE + lane] = acc20;
-    sums[1][(row_local + 2u) * SUMS_STRIDE + lane] = acc21;
-    sums[2][(row_local + 2u) * SUMS_STRIDE + lane] = acc22;
-    sums[3][(row_local + 2u) * SUMS_STRIDE + lane] = acc23;
-    sums[0][(row_local + 3u) * SUMS_STRIDE + lane] = acc30;
-    sums[1][(row_local + 3u) * SUMS_STRIDE + lane] = acc31;
-    sums[2][(row_local + 3u) * SUMS_STRIDE + lane] = acc32;
-    sums[3][(row_local + 3u) * SUMS_STRIDE + lane] = acc33;
-    barrier();
+    FG_REDUCE(acc00) FG_REDUCE(acc01) FG_REDUCE(acc02) FG_REDUCE(acc03)
+    FG_REDUCE(acc10) FG_REDUCE(acc11) FG_REDUCE(acc12) FG_REDUCE(acc13)
+    FG_REDUCE(acc20) FG_REDUCE(acc21) FG_REDUCE(acc22) FG_REDUCE(acc23)
+    FG_REDUCE(acc30) FG_REDUCE(acc31) FG_REDUCE(acc32) FG_REDUCE(acc33)
 
     if (lane == 0u) {
-        for (uint p = 0u; p < PAIR_TILE; p++) {
-            uint pair = p == 0u ? p0 : p == 1u ? p1 : p == 2u ? p2 : p3;
-            if (pair == INVALID || pair >= pc.tokens * TOP_K) continue;
-            for (uint r = 0u; r < ROWS; r++) {
-                uint row = row0 + r;
-                if (row >= pc.out_dim) continue;
-                uint offset = (row_local + r) * SUMS_STRIDE;
-                float value =
-                    ((sums[p][offset] + sums[p][offset + 4u]) +
-                     (sums[p][offset + 2u] + sums[p][offset + 6u])) +
-                    ((sums[p][offset + 1u] + sums[p][offset + 5u]) +
-                     (sums[p][offset + 3u] + sums[p][offset + 7u]));
-                y[pair * pc.out_dim + row] = value;
-            }
-        }
+        store_pair(p0, row0, acc00, acc10, acc20, acc30);
+        store_pair(p1, row0, acc01, acc11, acc21, acc31);
+        store_pair(p2, row0, acc02, acc12, acc22, acc32);
+        store_pair(p3, row0, acc03, acc13, acc23, acc33);
     }
 }
