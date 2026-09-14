@@ -43,26 +43,30 @@ vec2 scale_min(uint m0, uint m1, uint m2, uint group) {
 }
 
 /* Dequantized weight vector for one row lane and one K group.  The minimum
-   term is folded into the vector so the pair dot needs no separate bsum
-   pass; quants stay integral and all products are exact in fp32. */
-vec4 weight_values(uint qword, uint high, uint group, vec2 dm,
-                   uint m0, uint m1, uint m2) {
-    uint word = (qword >> ((group & 1u) * 4u)) & 0x0f0f0f0fu;
-    word |= ((high >> group) & 0x01010101u) << 4u;
+   term is folded into the vector; quants stay integral and all products are
+   exact in fp32. */
+vec4 scaled_weights(uint word, vec2 dm, uint m0, uint m1, uint m2, uint group) {
     vec2 sm = scale_min(m0, m1, m2, group);
     return fma(vec4(unpack8(int(word))), vec4(dm.x * sm.x), vec4(-(dm.y * sm.y)));
 }
 
-/* One pair slot of the outer product: the four row weight vectors are
-   decoded once per group and the live flag is tested once for all rows.
-   Empty slots are packed after the live ones, so they cost a branch only. */
-#define FG_PAIR(P, AD, A, L) { \
+/* Hot-loop accumulation keeps four independent product lanes per pair and
+   defers the horizontal reduction to the epilogue, so each weight value costs
+   one FMA instead of a multiply-add tree plus a scale FMA.  The activation
+   delta scales the shared activation vector once per pair and group.  Dead
+   pair slots are packed behind live ones and skip their FMAs entirely. */
+#define FG_FMA_PAIR(P, A, L) { \
     if (L) { \
-        acc0##P = fma(AD, dot(w0, A), acc0##P); \
-        acc1##P = fma(AD, dot(w1, A), acc1##P); \
-        acc2##P = fma(AD, dot(w2, A), acc2##P); \
-        acc3##P = fma(AD, dot(w3, A), acc3##P); \
-    } }
+        acc0##P = fma(w0, A, acc0##P); \
+        acc1##P = fma(w1, A, acc1##P); \
+        acc2##P = fma(w2, A, acc2##P); \
+        acc3##P = fma(w3, A, acc3##P); } }
+
+#define FG_Q4(Q) (((Q) >> ((g & 1u) * 4u)) & 0x0f0f0f0fu)
+#define FG_Q5(Q, H) (FG_Q4(Q) | ((((H) >> g) & 0x01010101u) << 4u))
+
+#define FG_ACT(P) vec4 av##P = live##P ? \
+    vec4(unpack8(int(q8[t##P + block * Q8K_WORDS + 2u + g * 8u + lane]))) * ad##P : vec4(0.0);
 
 void main() {
     uint lid = gl_LocalInvocationID.x;
@@ -100,90 +104,164 @@ void main() {
     uint block_tile_bytes = q5 ? 1408u : 1152u;
     uint quant_offset = q5 ? 384u : 128u;
 
-    float acc00 = 0.0, acc01 = 0.0, acc02 = 0.0, acc03 = 0.0;
-    float acc10 = 0.0, acc11 = 0.0, acc12 = 0.0, acc13 = 0.0;
-    float acc20 = 0.0, acc21 = 0.0, acc22 = 0.0, acc23 = 0.0;
-    float acc30 = 0.0, acc31 = 0.0, acc32 = 0.0, acc33 = 0.0;
+    vec4 acc00 = vec4(0.0), acc01 = vec4(0.0), acc02 = vec4(0.0), acc03 = vec4(0.0);
+    vec4 acc10 = vec4(0.0), acc11 = vec4(0.0), acc12 = vec4(0.0), acc13 = vec4(0.0);
+    vec4 acc20 = vec4(0.0), acc21 = vec4(0.0), acc22 = vec4(0.0), acc23 = vec4(0.0);
+    vec4 acc30 = vec4(0.0), acc31 = vec4(0.0), acc32 = vec4(0.0), acc33 = vec4(0.0);
 
-    for (uint block = 0u; block < pc.blocks; block++) {
-        uint bb = wr + block * block_tile_bytes;
-        uint db = bb + tile_row * 4u;
-        uint mb = bb + 32u + tile_row * 12u;
-        uint qb = bb + quant_offset + tile_row * 128u + lane * 4u;
-        uint hb = bb + 128u + tile_row * 32u + lane * 4u;
+    if (q5) {
+        for (uint block = 0u; block < pc.blocks; block++) {
+            uint bb = wr + block * block_tile_bytes;
+            uint db = bb + tile_row * 4u;
+            uint mb = bb + 32u + tile_row * 12u;
+            uint qb = bb + quant_offset + tile_row * 128u + lane * 4u;
+            uint hb = bb + 128u + tile_row * 32u + lane * 4u;
 
-        uint dw0 = row_live0 ? wb[db >> 2u] : 0u;
-        uint dw1 = row_live1 ? wb[(db + 4u) >> 2u] : 0u;
-        uint dw2 = row_live2 ? wb[(db + 8u) >> 2u] : 0u;
-        uint dw3 = row_live3 ? wb[(db + 12u) >> 2u] : 0u;
-        vec2 dm0 = unpackHalf2x16(dw0);
-        vec2 dm1 = unpackHalf2x16(dw1);
-        vec2 dm2 = unpackHalf2x16(dw2);
-        vec2 dm3 = unpackHalf2x16(dw3);
+            uint dw0 = row_live0 ? wb[db >> 2u] : 0u;
+            uint dw1 = row_live1 ? wb[(db + 4u) >> 2u] : 0u;
+            uint dw2 = row_live2 ? wb[(db + 8u) >> 2u] : 0u;
+            uint dw3 = row_live3 ? wb[(db + 12u) >> 2u] : 0u;
+            vec2 dm0 = unpackHalf2x16(dw0);
+            vec2 dm1 = unpackHalf2x16(dw1);
+            vec2 dm2 = unpackHalf2x16(dw2);
+            vec2 dm3 = unpackHalf2x16(dw3);
 
-        uint s00 = row_live0 ? wb[mb >> 2u] : 0u;
-        uint s01 = row_live0 ? wb[(mb + 4u) >> 2u] : 0u;
-        uint s02 = row_live0 ? wb[(mb + 8u) >> 2u] : 0u;
-        uint s10 = row_live1 ? wb[(mb + 12u) >> 2u] : 0u;
-        uint s11 = row_live1 ? wb[(mb + 16u) >> 2u] : 0u;
-        uint s12 = row_live1 ? wb[(mb + 20u) >> 2u] : 0u;
-        uint s20 = row_live2 ? wb[(mb + 24u) >> 2u] : 0u;
-        uint s21 = row_live2 ? wb[(mb + 28u) >> 2u] : 0u;
-        uint s22 = row_live2 ? wb[(mb + 32u) >> 2u] : 0u;
-        uint s30 = row_live3 ? wb[(mb + 36u) >> 2u] : 0u;
-        uint s31 = row_live3 ? wb[(mb + 40u) >> 2u] : 0u;
-        uint s32 = row_live3 ? wb[(mb + 44u) >> 2u] : 0u;
+            uint s00 = row_live0 ? wb[mb >> 2u] : 0u;
+            uint s01 = row_live0 ? wb[(mb + 4u) >> 2u] : 0u;
+            uint s02 = row_live0 ? wb[(mb + 8u) >> 2u] : 0u;
+            uint s10 = row_live1 ? wb[(mb + 12u) >> 2u] : 0u;
+            uint s11 = row_live1 ? wb[(mb + 16u) >> 2u] : 0u;
+            uint s12 = row_live1 ? wb[(mb + 20u) >> 2u] : 0u;
+            uint s20 = row_live2 ? wb[(mb + 24u) >> 2u] : 0u;
+            uint s21 = row_live2 ? wb[(mb + 28u) >> 2u] : 0u;
+            uint s22 = row_live2 ? wb[(mb + 32u) >> 2u] : 0u;
+            uint s30 = row_live3 ? wb[(mb + 36u) >> 2u] : 0u;
+            uint s31 = row_live3 ? wb[(mb + 40u) >> 2u] : 0u;
+            uint s32 = row_live3 ? wb[(mb + 44u) >> 2u] : 0u;
 
-        uint hw0 = (q5 && row_live0) ? wb[hb >> 2u] : 0u;
-        uint hw1 = (q5 && row_live1) ? wb[(hb + 32u) >> 2u] : 0u;
-        uint hw2 = (q5 && row_live2) ? wb[(hb + 64u) >> 2u] : 0u;
-        uint hw3 = (q5 && row_live3) ? wb[(hb + 96u) >> 2u] : 0u;
+            uint hw0 = row_live0 ? wb[hb >> 2u] : 0u;
+            uint hw1 = row_live1 ? wb[(hb + 32u) >> 2u] : 0u;
+            uint hw2 = row_live2 ? wb[(hb + 64u) >> 2u] : 0u;
+            uint hw3 = row_live3 ? wb[(hb + 96u) >> 2u] : 0u;
 
-        float ad0 = live0 ? uintBitsToFloat(q8[t0 + block * Q8K_WORDS]) : 0.0;
-        float ad1 = live1 ? uintBitsToFloat(q8[t1 + block * Q8K_WORDS]) : 0.0;
-        float ad2 = live2 ? uintBitsToFloat(q8[t2 + block * Q8K_WORDS]) : 0.0;
-        float ad3 = live3 ? uintBitsToFloat(q8[t3 + block * Q8K_WORDS]) : 0.0;
+            float ad0 = live0 ? uintBitsToFloat(q8[t0 + block * Q8K_WORDS]) : 0.0;
+            float ad1 = live1 ? uintBitsToFloat(q8[t1 + block * Q8K_WORDS]) : 0.0;
+            float ad2 = live2 ? uintBitsToFloat(q8[t2 + block * Q8K_WORDS]) : 0.0;
+            float ad3 = live3 ? uintBitsToFloat(q8[t3 + block * Q8K_WORDS]) : 0.0;
 
-        for (uint gp = 0u; gp < 4u; gp++) {
-            uint q0 = row_live0 ? wb[(qb + gp * 32u) >> 2u] : 0u;
-            uint q1 = row_live1 ? wb[(qb + 128u + gp * 32u) >> 2u] : 0u;
-            uint q2 = row_live2 ? wb[(qb + 256u + gp * 32u) >> 2u] : 0u;
-            uint q3 = row_live3 ? wb[(qb + 384u + gp * 32u) >> 2u] : 0u;
-            for (uint g2 = 0u; g2 < 2u; g2++) {
-                uint g = gp * 2u + g2;
-                vec4 a0 = live0 ? vec4(unpack8(int(q8[t0 + block * Q8K_WORDS + 2u + g * 8u + lane]))) : vec4(0.0);
-                vec4 a1 = live1 ? vec4(unpack8(int(q8[t1 + block * Q8K_WORDS + 2u + g * 8u + lane]))) : vec4(0.0);
-                vec4 a2 = live2 ? vec4(unpack8(int(q8[t2 + block * Q8K_WORDS + 2u + g * 8u + lane]))) : vec4(0.0);
-                vec4 a3 = live3 ? vec4(unpack8(int(q8[t3 + block * Q8K_WORDS + 2u + g * 8u + lane]))) : vec4(0.0);
-                vec4 w0 = weight_values(q0, hw0, g, dm0, s00, s01, s02);
-                vec4 w1 = weight_values(q1, hw1, g, dm1, s10, s11, s12);
-                vec4 w2 = weight_values(q2, hw2, g, dm2, s20, s21, s22);
-                vec4 w3 = weight_values(q3, hw3, g, dm3, s30, s31, s32);
-                FG_PAIR(0, ad0, a0, live0)
-                FG_PAIR(1, ad1, a1, live1)
-                FG_PAIR(2, ad2, a2, live2)
-                FG_PAIR(3, ad3, a3, live3)
+            for (uint gp = 0u; gp < 4u; gp++) {
+                uint q0 = row_live0 ? wb[(qb + gp * 32u) >> 2u] : 0u;
+                uint q1 = row_live1 ? wb[(qb + 128u + gp * 32u) >> 2u] : 0u;
+                uint q2 = row_live2 ? wb[(qb + 256u + gp * 32u) >> 2u] : 0u;
+                uint q3 = row_live3 ? wb[(qb + 384u + gp * 32u) >> 2u] : 0u;
+                for (uint g2 = 0u; g2 < 2u; g2++) {
+                    uint g = gp * 2u + g2;
+                    FG_ACT(0)
+                    FG_ACT(1)
+                    FG_ACT(2)
+                    FG_ACT(3)
+                    vec4 w0 = scaled_weights(FG_Q5(q0, hw0), dm0, s00, s01, s02, g);
+                    vec4 w1 = scaled_weights(FG_Q5(q1, hw1), dm1, s10, s11, s12, g);
+                    vec4 w2 = scaled_weights(FG_Q5(q2, hw2), dm2, s20, s21, s22, g);
+                    vec4 w3 = scaled_weights(FG_Q5(q3, hw3), dm3, s30, s31, s32, g);
+                    FG_FMA_PAIR(0, av0, live0)
+                    FG_FMA_PAIR(1, av1, live1)
+                    FG_FMA_PAIR(2, av2, live2)
+                    FG_FMA_PAIR(3, av3, live3)
+                }
+            }
+        }
+    } else {
+        for (uint block = 0u; block < pc.blocks; block++) {
+            uint bb = wr + block * block_tile_bytes;
+            uint db = bb + tile_row * 4u;
+            uint mb = bb + 32u + tile_row * 12u;
+            uint qb = bb + quant_offset + tile_row * 128u + lane * 4u;
+
+            uint dw0 = row_live0 ? wb[db >> 2u] : 0u;
+            uint dw1 = row_live1 ? wb[(db + 4u) >> 2u] : 0u;
+            uint dw2 = row_live2 ? wb[(db + 8u) >> 2u] : 0u;
+            uint dw3 = row_live3 ? wb[(db + 12u) >> 2u] : 0u;
+            vec2 dm0 = unpackHalf2x16(dw0);
+            vec2 dm1 = unpackHalf2x16(dw1);
+            vec2 dm2 = unpackHalf2x16(dw2);
+            vec2 dm3 = unpackHalf2x16(dw3);
+
+            uint s00 = row_live0 ? wb[mb >> 2u] : 0u;
+            uint s01 = row_live0 ? wb[(mb + 4u) >> 2u] : 0u;
+            uint s02 = row_live0 ? wb[(mb + 8u) >> 2u] : 0u;
+            uint s10 = row_live1 ? wb[(mb + 12u) >> 2u] : 0u;
+            uint s11 = row_live1 ? wb[(mb + 16u) >> 2u] : 0u;
+            uint s12 = row_live1 ? wb[(mb + 20u) >> 2u] : 0u;
+            uint s20 = row_live2 ? wb[(mb + 24u) >> 2u] : 0u;
+            uint s21 = row_live2 ? wb[(mb + 28u) >> 2u] : 0u;
+            uint s22 = row_live2 ? wb[(mb + 32u) >> 2u] : 0u;
+            uint s30 = row_live3 ? wb[(mb + 36u) >> 2u] : 0u;
+            uint s31 = row_live3 ? wb[(mb + 40u) >> 2u] : 0u;
+            uint s32 = row_live3 ? wb[(mb + 44u) >> 2u] : 0u;
+
+            float ad0 = live0 ? uintBitsToFloat(q8[t0 + block * Q8K_WORDS]) : 0.0;
+            float ad1 = live1 ? uintBitsToFloat(q8[t1 + block * Q8K_WORDS]) : 0.0;
+            float ad2 = live2 ? uintBitsToFloat(q8[t2 + block * Q8K_WORDS]) : 0.0;
+            float ad3 = live3 ? uintBitsToFloat(q8[t3 + block * Q8K_WORDS]) : 0.0;
+
+            for (uint gp = 0u; gp < 4u; gp++) {
+                uint q0 = row_live0 ? wb[(qb + gp * 32u) >> 2u] : 0u;
+                uint q1 = row_live1 ? wb[(qb + 128u + gp * 32u) >> 2u] : 0u;
+                uint q2 = row_live2 ? wb[(qb + 256u + gp * 32u) >> 2u] : 0u;
+                uint q3 = row_live3 ? wb[(qb + 384u + gp * 32u) >> 2u] : 0u;
+                for (uint g2 = 0u; g2 < 2u; g2++) {
+                    uint g = gp * 2u + g2;
+                    FG_ACT(0)
+                    FG_ACT(1)
+                    FG_ACT(2)
+                    FG_ACT(3)
+                    vec4 w0 = scaled_weights(FG_Q4(q0), dm0, s00, s01, s02, g);
+                    vec4 w1 = scaled_weights(FG_Q4(q1), dm1, s10, s11, s12, g);
+                    vec4 w2 = scaled_weights(FG_Q4(q2), dm2, s20, s21, s22, g);
+                    vec4 w3 = scaled_weights(FG_Q4(q3), dm3, s30, s31, s32, g);
+                    FG_FMA_PAIR(0, av0, live0)
+                    FG_FMA_PAIR(1, av1, live1)
+                    FG_FMA_PAIR(2, av2, live2)
+                    FG_FMA_PAIR(3, av3, live3)
+                }
             }
         }
     }
 
     uint row_local = row_group * ROWS;
-    sums[0][(row_local + 0u) * SUMS_STRIDE + lane] = acc00;
-    sums[1][(row_local + 0u) * SUMS_STRIDE + lane] = acc01;
-    sums[2][(row_local + 0u) * SUMS_STRIDE + lane] = acc02;
-    sums[3][(row_local + 0u) * SUMS_STRIDE + lane] = acc03;
-    sums[0][(row_local + 1u) * SUMS_STRIDE + lane] = acc10;
-    sums[1][(row_local + 1u) * SUMS_STRIDE + lane] = acc11;
-    sums[2][(row_local + 1u) * SUMS_STRIDE + lane] = acc12;
-    sums[3][(row_local + 1u) * SUMS_STRIDE + lane] = acc13;
-    sums[0][(row_local + 2u) * SUMS_STRIDE + lane] = acc20;
-    sums[1][(row_local + 2u) * SUMS_STRIDE + lane] = acc21;
-    sums[2][(row_local + 2u) * SUMS_STRIDE + lane] = acc22;
-    sums[3][(row_local + 2u) * SUMS_STRIDE + lane] = acc23;
-    sums[0][(row_local + 3u) * SUMS_STRIDE + lane] = acc30;
-    sums[1][(row_local + 3u) * SUMS_STRIDE + lane] = acc31;
-    sums[2][(row_local + 3u) * SUMS_STRIDE + lane] = acc32;
-    sums[3][(row_local + 3u) * SUMS_STRIDE + lane] = acc33;
+    sums[0][(row_local + 0u) * SUMS_STRIDE + lane] =
+        ((acc00.x + acc00.y) + (acc00.z + acc00.w));
+    sums[1][(row_local + 0u) * SUMS_STRIDE + lane] =
+        ((acc01.x + acc01.y) + (acc01.z + acc01.w));
+    sums[2][(row_local + 0u) * SUMS_STRIDE + lane] =
+        ((acc02.x + acc02.y) + (acc02.z + acc02.w));
+    sums[3][(row_local + 0u) * SUMS_STRIDE + lane] =
+        ((acc03.x + acc03.y) + (acc03.z + acc03.w));
+    sums[0][(row_local + 1u) * SUMS_STRIDE + lane] =
+        ((acc10.x + acc10.y) + (acc10.z + acc10.w));
+    sums[1][(row_local + 1u) * SUMS_STRIDE + lane] =
+        ((acc11.x + acc11.y) + (acc11.z + acc11.w));
+    sums[2][(row_local + 1u) * SUMS_STRIDE + lane] =
+        ((acc12.x + acc12.y) + (acc12.z + acc12.w));
+    sums[3][(row_local + 1u) * SUMS_STRIDE + lane] =
+        ((acc13.x + acc13.y) + (acc13.z + acc13.w));
+    sums[0][(row_local + 2u) * SUMS_STRIDE + lane] =
+        ((acc20.x + acc20.y) + (acc20.z + acc20.w));
+    sums[1][(row_local + 2u) * SUMS_STRIDE + lane] =
+        ((acc21.x + acc21.y) + (acc21.z + acc21.w));
+    sums[2][(row_local + 2u) * SUMS_STRIDE + lane] =
+        ((acc22.x + acc22.y) + (acc22.z + acc22.w));
+    sums[3][(row_local + 2u) * SUMS_STRIDE + lane] =
+        ((acc23.x + acc23.y) + (acc23.z + acc23.w));
+    sums[0][(row_local + 3u) * SUMS_STRIDE + lane] =
+        ((acc30.x + acc30.y) + (acc30.z + acc30.w));
+    sums[1][(row_local + 3u) * SUMS_STRIDE + lane] =
+        ((acc31.x + acc31.y) + (acc31.z + acc31.w));
+    sums[2][(row_local + 3u) * SUMS_STRIDE + lane] =
+        ((acc32.x + acc32.y) + (acc32.z + acc32.w));
+    sums[3][(row_local + 3u) * SUMS_STRIDE + lane] =
+        ((acc33.x + acc33.y) + (acc33.z + acc33.w));
     barrier();
 
     if (lane == 0u) {
