@@ -2,6 +2,7 @@
 #include "fg_q38_schema.h"
 #include "fg_sha256.h"
 #include "fg_uring.h"
+#include "fg_quant.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -335,6 +336,21 @@ static fg_status pack_rows(fg_ngram_store *s,const uint64_t *addresses,uint32_t 
     return FG_OK;
 }
 
+/* The sealed rows are HOST_VISIBLE, so the iq4_nl decode normally runs on the
+ * host and keeps the per-token GPU submit+fence off the decode critical path;
+ * the byte-for-byte table arithmetic is the same as the shader. */
+static bool ngram_dequant_host(fg_ngram_store *s,uint32_t row_count){
+    const uint8_t *packed=fg_vk_tensor_const_map(s->packed);
+    float *embedding=fg_vk_tensor_map(s->embedding);
+    if(!packed||!embedding)return false;
+    fg_dequantize_iq4_nl(packed,embedding,(uint64_t)row_count*FG_NGRAM_EMBED_WIDTH);
+    return true;
+}
+static fg_status ngram_dequant_path(fg_ngram_store *s,uint32_t row_count,fg_error *err){
+    if(ngram_dequant_host(s,row_count))return FG_OK;
+    return fg_vk_dequantize_iq4_nl(s->vk,s->embedding,s->packed,row_count,
+                                   FG_NGRAM_EMBED_WIDTH,err);
+}
 fg_status fg_ngram_store_lookup_prefill(fg_ngram_store *s,const int32_t *tokens,size_t history_count,uint32_t first_token,uint32_t token_count,fg_vk_tensor **embedding,fg_error *err){
     if(!s||!tokens||!history_count||token_count==0u||token_count>s->max_tokens||!embedding||first_token>history_count||(size_t)token_count>history_count-(size_t)first_token){fg_error_set(err,FG_ERR_ARGUMENT,"invalid bounded n-gram prefill lookup range");return FG_ERR_ARGUMENT;}
     double trace_start=ngram_ts();
@@ -343,13 +359,13 @@ fg_status fg_ngram_store_lookup_prefill(fg_ngram_store *s,const int32_t *tokens,
         token_count,rows,addresses,err);
     if(status!=FG_OK)return status;
     if(ngram_locality_trace_enabled())for(uint32_t token=0;token<token_count;token++){char line[768];int used=snprintf(line,sizeof(line),"NGRAM_LOCALITY position=%u batch_first=%u batch_tokens=%u",first_token+token,first_token,token_count);for(uint32_t head=0;used>0&&(size_t)used<sizeof(line)&&head<FG_NGRAM_HEAD_COUNT;head++){int written=snprintf(line+(size_t)used,sizeof(line)-(size_t)used," h%u=%llu",head,(unsigned long long)addresses[(uint64_t)token*FG_NGRAM_HEAD_COUNT+head]);if(written<0||(size_t)written>=sizeof(line)-(size_t)used){used=-1;break;}used+=written;}if(used>0&&(size_t)used+1u<sizeof(line)){line[used++]='\n';line[used]=0;fputs(line,stderr);}}
-    uint32_t row_count=token_count*FG_NGRAM_HEAD_COUNT;double hash_end=ngram_ts();if(status==FG_OK)status=load_missing_blocks(s,addresses,row_count,err);double load_end=ngram_ts();if(status==FG_OK)status=pack_rows(s,addresses,row_count,err);double pack_end=ngram_ts();if(status==FG_OK)status=fg_vk_dequantize_iq4_nl(s->vk,s->embedding,s->packed,row_count,FG_NGRAM_EMBED_WIDTH,err);double dequant_end=ngram_ts();if(status==FG_OK){fg_vk_tensor_destroy(s->embedding_view);s->embedding_view=NULL;uint64_t bytes=(uint64_t)token_count*FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH*4u;if(bytes==fg_vk_tensor_bytes(s->embedding))*embedding=s->embedding;else{status=fg_vk_tensor_view(s->embedding,0,bytes,&s->embedding_view,err);if(status==FG_OK)*embedding=s->embedding_view;}}if(ngram_trace_enabled())fprintf(stderr,"NGRAM_TRACE first=%u tokens=%u rows=%u reads=%u bytes=%llu hash_ms=%.3f load_ms=%.3f io_ms=%.3f pack_ms=%.3f dequant_ms=%.3f total_ms=%.3f\n",first_token,token_count,row_count,s->last_read_count,(unsigned long long)s->last_read_bytes,hash_end-trace_start,load_end-hash_end,s->last_io_ms,pack_end-load_end,dequant_end-pack_end,ngram_ts()-trace_start);return status;
+    uint32_t row_count=token_count*FG_NGRAM_HEAD_COUNT;double hash_end=ngram_ts();if(status==FG_OK)status=load_missing_blocks(s,addresses,row_count,err);double load_end=ngram_ts();if(status==FG_OK)status=pack_rows(s,addresses,row_count,err);double pack_end=ngram_ts();if(status==FG_OK)status=ngram_dequant_path(s,row_count,err);double dequant_end=ngram_ts();if(status==FG_OK){fg_vk_tensor_destroy(s->embedding_view);s->embedding_view=NULL;uint64_t bytes=(uint64_t)token_count*FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH*4u;if(bytes==fg_vk_tensor_bytes(s->embedding))*embedding=s->embedding;else{status=fg_vk_tensor_view(s->embedding,0,bytes,&s->embedding_view,err);if(status==FG_OK)*embedding=s->embedding_view;}}if(ngram_trace_enabled())fprintf(stderr,"NGRAM_TRACE first=%u tokens=%u rows=%u reads=%u bytes=%llu hash_ms=%.3f load_ms=%.3f io_ms=%.3f pack_ms=%.3f dequant_ms=%.3f total_ms=%.3f\n",first_token,token_count,row_count,s->last_read_count,(unsigned long long)s->last_read_bytes,hash_end-trace_start,load_end-hash_end,s->last_io_ms,pack_end-load_end,dequant_end-pack_end,ngram_ts()-trace_start);return status;
 }
 
 fg_status fg_ngram_store_lookup(fg_ngram_store *s,const int32_t *tokens,size_t count,fg_vk_tensor **embedding,fg_error *err){
     if(!count||count-1u>UINT32_MAX){fg_error_set(err,FG_ERR_LIMIT,"n-gram lookup history exceeds supported context index");return FG_ERR_LIMIT;}return fg_ngram_store_lookup_prefill(s,tokens,count,(uint32_t)(count-1u),1u,embedding,err);
 }
 
-fg_status fg_ngram_store_decode_packed(fg_ngram_store *s,const uint8_t *packed,uint32_t row_count,fg_vk_tensor **embedding,fg_error *err){if(!s||!packed||!row_count||row_count>s->max_rows||!embedding){fg_error_set(err,FG_ERR_ARGUMENT,"invalid packed n-gram decode");return FG_ERR_ARGUMENT;}fg_status status=ensure_tensors(s,err);if(status!=FG_OK)return status;uint64_t packed_bytes=(uint64_t)row_count*FG_NGRAM_ROW_BYTES;status=fg_vk_tensor_write(s->packed,0,packed,packed_bytes,err);if(status==FG_OK)status=fg_vk_dequantize_iq4_nl(s->vk,s->embedding,s->packed,row_count,FG_NGRAM_EMBED_WIDTH,err);if(status==FG_OK){fg_vk_tensor_destroy(s->embedding_view);s->embedding_view=NULL;uint64_t bytes=(uint64_t)row_count*FG_NGRAM_EMBED_WIDTH*4u;if(bytes==fg_vk_tensor_bytes(s->embedding))*embedding=s->embedding;else{status=fg_vk_tensor_view(s->embedding,0,bytes,&s->embedding_view,err);if(status==FG_OK)*embedding=s->embedding_view;}}return status;}
+fg_status fg_ngram_store_decode_packed(fg_ngram_store *s,const uint8_t *packed,uint32_t row_count,fg_vk_tensor **embedding,fg_error *err){if(!s||!packed||!row_count||row_count>s->max_rows||!embedding){fg_error_set(err,FG_ERR_ARGUMENT,"invalid packed n-gram decode");return FG_ERR_ARGUMENT;}fg_status status=ensure_tensors(s,err);if(status!=FG_OK)return status;uint64_t packed_bytes=(uint64_t)row_count*FG_NGRAM_ROW_BYTES;status=fg_vk_tensor_write(s->packed,0,packed,packed_bytes,err);if(status==FG_OK)status=ngram_dequant_path(s,row_count,err);if(status==FG_OK){fg_vk_tensor_destroy(s->embedding_view);s->embedding_view=NULL;uint64_t bytes=(uint64_t)row_count*FG_NGRAM_EMBED_WIDTH*4u;if(bytes==fg_vk_tensor_bytes(s->embedding))*embedding=s->embedding;else{status=fg_vk_tensor_view(s->embedding,0,bytes,&s->embedding_view,err);if(status==FG_OK)*embedding=s->embedding_view;}}return status;}
 
 fg_status fg_ngram_store_verify_packed(fg_ngram_store *s,const uint64_t *addresses,uint32_t row_count,const uint8_t *packed,uint32_t *mismatch_row,fg_error *err){if(!s||!addresses||!row_count||row_count>s->max_rows||!packed){fg_error_set(err,FG_ERR_ARGUMENT,"invalid packed n-gram verification");return FG_ERR_ARGUMENT;}fg_status status=load_missing_blocks(s,addresses,row_count,err);if(status==FG_OK)status=pack_rows(s,addresses,row_count,err);if(status!=FG_OK)return status;const uint8_t *local=fg_vk_tensor_map(s->packed);for(uint32_t row=0;row<row_count;row++)if(memcmp(local+(uint64_t)row*FG_NGRAM_ROW_BYTES,packed+(uint64_t)row*FG_NGRAM_ROW_BYTES,FG_NGRAM_ROW_BYTES)!=0){if(mismatch_row)*mismatch_row=row;fg_error_set(err,FG_ERR_MISMATCH,"resident n-gram packed row %u differs from sealed table",row);return FG_ERR_MISMATCH;}if(mismatch_row)*mismatch_row=UINT32_MAX;return FG_OK;}
