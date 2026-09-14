@@ -3783,6 +3783,11 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
              * slot; the block state was advanced by this rank in ring prefill. */
             status=fg_vk_tensor_write(input,0,work->hyper,(uint64_t)FG_HYPER_WIDTH*4u,err);
             fg_vk_tensor *current=NULL;
+            bool own_profile=decode_profile_enabled();
+            if(status==FG_OK&&own_profile){
+                fg_error profile_error={0};
+                if(fg_vk_profile_begin(vk,&profile_error)!=FG_OK)own_profile=false;
+            }
             if(status==FG_OK&&decode_block_chain_eligible(dispatch.expert,manifest,0u,
                 own_first,last)){
                 status=fg_owner_decode_block_chained(coordinator->owner,own_first,last,
@@ -3791,6 +3796,24 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
             }else if(status==FG_OK)status=fg_owner_decode_block(coordinator->owner,own_first,last,
                 work->token_index,work->position,input,NULL,worker_decode_fire,
                 worker_decode_collect,&dispatch,&current,err);
+            if(own_profile){
+                fg_vk_profile profile={0};fg_error profile_error={0};
+                fg_status profile_status=fg_vk_profile_end(vk,&profile,
+                    status==FG_OK?err:&profile_error);
+                if(profile_status==FG_OK){
+                    fprintf(stderr,"DECODE_PROFILE rank=0 token=%u layers=%u..%u gpu_ms=%.3f "
+                        "kernel_ms=%.3f submissions=%llu dispatches=%llu\n",
+                        work->token_index,own_first,last,profile.gpu_ms,profile.kernel_ms,
+                        (unsigned long long)profile.submissions,
+                        (unsigned long long)profile.dispatches);
+                    for(uint32_t k=0;k<profile.kernel_count;k++)
+                        fprintf(stderr,"DECODE_PROFILE_KERNEL rank=0 scope=%s kernel=%s "
+                            "calls=%llu gpu_ms=%.3f\n",profile.kernels[k].scope,
+                            profile.kernels[k].name,
+                            (unsigned long long)profile.kernels[k].invocations,
+                            profile.kernels[k].gpu_ms);
+                }
+            }
             if(trace)t_own_run=dispatch_ts();
             if(status==FG_OK)status=fg_vk_tensor_read(current,0,work->hyper,
                 (uint64_t)FG_HYPER_WIDTH*4u,err);
