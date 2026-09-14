@@ -113,6 +113,29 @@ which should take 4K decode from 2.06 toward short-decode speed. After that,
 ring decode (per-token chain with 40 KB hops, owners using their own QSA/GDN
 state) is the remaining architecture piece.
 
+## 0u. PREFIX CONTINUATION + PREFILL ROUND 6 (2026-09-14)
+
+**Prefix continuation shipped** (`642fd55`, doc `PERFORMANCE_PREFIX_CONTINUATION`):
+ring requests now resume owner state when the plan's prefill_offset equals the
+runtime state frontier (`FG_PREFIX_CONT=0` restores cold resets); qsa state
+persist flushes the range the state file lags after cache-only decode. Measured
+on a 4-turn growing conversation: turn prefilled tokens 5102/7647/10193 ->
+2538/2538/2538 (reused 2564/5109/7655), TTFT 18.9/27.7/36.5s -> 10.4/10.5/10.4s;
+an 891-token generation followed by a continuation prefilled 32 tokens in 1.42s.
+Run-to-run deterministic; not bit-identical to a fully cold run (FP
+chunk-boundary noise, same class as pre-existing prefix reuse).
+
+**Prefill shader round 6** (`cdaf95d`, `6e9c428`): scalar FMA chains with the
+16-accumulator register budget unchanged (the deliberate answer to the round-5
+occupancy regression), Q4/Q5 loop specialization, subgroup shuffle epilogue,
+FMA-chain QSA scores with folded softmax bias. Same-pack A/B: 4K prefill
+286.3/284.7 TPS vs 277.5/277.7 control (~+3%); decode unchanged.
+
+**Final validated state** (binary ed949758 + pref6 shaders): gates [12]/[Paris];
+4K prefill 284.7-286.3; short decode 20.7-20.9; 4K warm decode 19.9; soak gate
+PASS (6 stages, 4-turn conversation, 8 ranks, 0 failures); continuation
+validator turn 2-4 flat ~1.3s TTFT.
+
 ## 0v. DECODE ROUND 5 + PREFILL REVERT + SOAK GATE (2026-09-13/14)
 
 **Ring decode round 5** (`81f50b5`): QSA decode attention rewritten to a shared
