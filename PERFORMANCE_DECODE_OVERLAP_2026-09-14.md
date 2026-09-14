@@ -1,21 +1,75 @@
 # Ring Decode Overlap: Per-Layer Pipelined Submission and QSA Queue Retention (2026-09-14)
 
-Worktree `fg-work-overlap`, branch `perf/decode-overlap`, base `f224fe6`
-(main: context sweep harness on top of the validated decode-20.8 TPS state).
-Scope: ring decode wall time per token. No shader, pack, manifest, protocol or
-prefill-path change. Four commits:
-
-| commit | file(s) | what |
-|---|---|---|
-| `57b2248` | `include/fg_vk.h`, `src/vk.c`, `src/runtime.c`, `src/qsa.c` | instrumentation: `wait_ms` / `record_ms` in `DECODE_PROFILE`, `flush_ms` in `QSA_TRACE` |
-| `e4771ec` | `src/vk.c`, `include/fg_vk.h`, `src/owner.c`, `tests/test_fg_vk.c` | `fg_vk_flush`: async submit + command-buffer rotation + semaphore chain; chained decode block flushes after every layer |
-| `aecb1a2` | `src/qsa.c` | cache-backed QSA decode keeps the projection/commit recordings queued until the selection fence |
-| `b0d6301` | `src/vk.c` | wait the current slot fence before a standalone dispatch (robustness; not on the decode critical path) |
+Worktree `fg-work-overlap`, branch `perf/decode-overlap` (rebased by the
+orchestrator onto main `7f9f3c0`; no merge to main). Scope: ring decode wall
+time per token. No shader, pack, manifest, protocol or prefill-path change.
+Round-1 commits (rebased hashes): instrumentation `19890d2`, layer pipeline
+`beadeee`, QSA queue retention `63dbca1`, standalone-slot wait `b45e670`.
+Round-2 fix commits: `a79792f`, `443e8ce`.
 
 Gate: `FG_DECODE_PIPELINE=0` disables both overlap paths (per-layer flush and
 QSA flush) and restores the previous submission geometry without a rebuild.
 
-## TL;DR
+## Round 2 result (fix verified on the live fleet, pipeline ON)
+
+The first fleet A/B of the async pipeline corrupted numerics (non-finite block
+output on the first decode token) and was reverted to `FG_DECODE_PIPELINE=0`.
+The root cause is now found and fixed; the pipeline-on build
+`59b2f559369873ead009cb3673c00efa616013ed3ed239e949e8cbf564a9a5c7`
+passes every gate and beats the pipeline-off control:
+
+| metric | pipeline off (control) | pipeline on (fix) | delta |
+|---|---:|---:|---:|
+| correctness gates | [12] / [Paris] | [12] / [Paris] | PASS |
+| short decode (32 tok) | 21.03 | **21.76 / 21.88 / 21.93** | +3.5-4.3% |
+| 4K warm decode (32 tok) | 19.98 | **21.02 / 21.05 / 21.10 / 21.19** | +5.2-6.1% |
+| 16K decode | 18.90 | **19.91** | +5.3% |
+| 32K decode | 16.95 | **17.67** | +4.2% |
+| 4K prefill | 279-285 | 296-320 (spread band) | unchanged code path |
+| `tools/pi-stability.ps1` | PASS | **PASS** (6 stages, 4-turn, 8 ranks, 0 failures) | PASS |
+
+Evidence: `bc-250-dbg/results/ab-20260914-144338`, `ab-20260914-144629`
+(attach batteries), `flash-gordon/results/context-sweep-20260914-145101`,
+pi-stability log in `.fleet-ab` on rank 0.
+
+### Root cause (validation-layer proof)
+
+The failure was not a semaphore or fence bug. With
+`VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` on ranks 0/1 the first decode
+token produced, from rank 1 alone:
+
+```
+VUID-vkUpdateDescriptorSets-None-03047
+vkUpdateDescriptorSets(): ... VkDescriptorSet 0x90000000009 is in use by
+VkCommandBuffer 0x2d590da0. This is only possible with flags found in
+VK_EXT_descriptor_indexing.
+```
+
+`fg_vk_begin` reset `batch_set_count = 0` on every new top-level batch. With
+the async pipeline, the layer-after-a-flush begins a new batch while the
+previous layer's flush **submission is still queued**. The recording then
+rebound descriptor sets 0..N, and RADV reads a descriptor set at execution
+time, so the queued command buffer executed with the new bindings (wrong
+buffers/offsets) and the block output went non-finite. The submission chain
+ordered *execution* correctly; the corruption was a host-side rebind of state
+a queued submission had not consumed yet. This also explains all the isolation
+results: `FG_DECODE_FLUSH_WAIT=1` (every flush fence-waited) passes, while
+per-layer async (b2) and QSA-only async (b1) both fail, and why llvmpipe could
+not reproduce it (software execution consumed descriptors at record time).
+
+### Fix
+
+- `443e8ce`: `fg_vk_begin` no longer restarts the descriptor-set epoch. The
+  epoch resets only in `fg_vk_end` after every pending submission has been
+  fence-drained, and in `fg_vk_begin` only at the half-capacity mark after the
+  same drain (amortized, rare).
+- `a79792f`: `fg_vk_end` drains all pending submissions before resetting the
+  epoch, and the standalone (non-batched) dispatch path drains before it
+  reuses descriptor set 0.
+
+Both are pure host-side ordering fixes; no kernel, protocol or numerics change.
+
+## TL;DR (round 1)
 
 The ring token is a data-dependency chain across eight ranks; the remaining
 per-token cost is not only GPU kernel time but the fact that **host recording
@@ -30,12 +84,11 @@ QSA drain barriers explain most of it: rank 0's own block issued **7
 submissions for one 6-layer block** (230 dispatches) with two full drains per
 QSA layer, and the QSA layer wall (`QSA_TRACE proj_ms`) was 1.2-3.6 ms.
 
-This round makes the host record ahead of the GPU (`fg_vk_flush`), keeps the
+The pipeline makes the host record ahead of the GPU (`fg_vk_flush`), keeps the
 QSA projection/commit work in the pipeline instead of draining at every layer,
 and adds the timestamps needed to see the remaining gap (`wait_ms`,
-`record_ms`, `flush_ms`). Expected combined effect **5-9 ms/token**: short
-decode 20.8 -> **22-25 TPS**, 4K warm 19.9 -> **21.5-24 TPS**. The fleet A/B
-decides; the local box is llvmpipe-only and cannot measure any of it.
+`record_ms`, `flush_ms`). Measured combined effect is **+0.7-1.2 TPS** on
+short/4K/16K/32K decode (table above).
 
 ## 1. The accounting we found (evidence)
 
@@ -172,30 +225,25 @@ Why: those two drains were not needed for any host read; they existed to
 separate batches. Removing the waits lets the projection recording run while
 the previous layer is still executing on the GPU.
 
-## 3. Expected effect, honestly
+## 3. Expected effect vs measured (round 1 estimate, round 2 result)
 
-| change | expected | basis |
-|---|---:|---|
-| instrumentation | 0 | report-only, default path identical |
-| `e4771ec` per-layer pipeline | **-3 to -7 ms/token** | per-block cross-submission was 1.19-1.49 ms on rank 0 and 0.5-1.0 ms on the 1-QSA blocks; recording is 3-5x faster than layer execution, so the idle collapses to block-start + select turnarounds. Up to 6 extra submits/block of ~10-25 us host each are hidden behind GPU execution, but the semaphore/fence overhead per boundary is not free; the lower bound reflects that. |
-| `aecb1a2` QSA queue retention | **-1 to -3 ms/token** | 12 QSA layers x 2 removed drain turnarounds (~0.05-0.15 ms each) with the selection fence still present. The old `proj_ms` totals (1.3 + 3.6 ms on rank 0) are mostly GPU-busy waits and are *not* all recoverable. |
-| **combined** | **-4 to -9 ms/token** | short decode 20.8 -> 22-25 TPS, 4K warm 19.9 -> 21.5-24 TPS |
+Round-1 estimate (kept for the record; the measured column is the fleet A/B on
+the fix build, pipeline on vs pipeline off):
 
-Uncertainty that the A/B must resolve:
+| change | estimated | measured |
+|---|---:|---:|
+| instrumentation | 0 | 0 (report-only) |
+| per-layer pipeline | -3 to -7 ms/token | combined +0.7-1.2 TPS short/4K/16K/32K |
+| QSA queue retention | -1 to -3 ms/token | (same combined figure) |
+| **combined** | short 22-25 TPS, 4K 21.5-24 | short 21.76-21.93, 4K 21.02-21.19, 16K 19.91, 32K 17.67 |
 
-* The size of the recording share of `own_run - gpu_ms` is inferred, not
-  directly measured: the new `record_ms`/`wait_ms` split is exactly what the
-  re-run should report. If `record_ms` is small compared with `wait_ms`, the
-  layer flush will buy less than estimated.
-* Extra submissions can raise the *host* cost per token. If a rank's CPU is
-  the bottleneck (fabric thread contention), more submits could eat part of
-  the win; `submissions=` in `DECODE_PROFILE` shows it directly.
-* Semaphore writes on a single queue cost a few microseconds each; 6
-  flushes/block add ~24 signals/waits per token across the ring.
-* 262K contexts cross index segments and stress the record cache; the QSA
-  change is neutral there (it only removes waits), but the per-layer flush
-  interacts with segment allocation, which is why the segment materialisation
-  is still done at QSA entry.
+The per-layer pipeline estimate was high for the same reason the first A/B
+crashed: the recording share of `own_run - gpu_ms` was inferred, and the real
+recoverable part is the host/GPU serialization plus the QSA drain turnarounds,
+not the full gap. The honest round-2 number is **+~1 TPS at 4K, +0.7-0.9 at
+short/32K**, decided by the two attach batteries and the context sweep above.
+The `record_ms`/`wait_ms`/`flush_ms` instrumentation remains the tool for
+finding the rest.
 
 ## 4. Local validation (llvmpipe, correctness only)
 
@@ -217,40 +265,50 @@ tests/test_session                                  2 pre-existing fails
   (tests/test_session.c:254/257, verified identical on unmodified main)
 ```
 
+Round-2 note: the descriptor-set corruption could not be reproduced locally
+(llvmpipe consumes descriptor bindings at record time); it was found with the
+KHRONOS validation layer on two blades, which reported
+`VUID-vkUpdateDescriptorSets-None-03047` for a set in use by a queued command
+buffer. `vulkan-validation-layers` was installed on 42 and 43 for that
+diagnosis and is inert unless `VK_INSTANCE_LAYERS` is set.
+
 `pipeline_flush_parity` runs a dependent 13-dispatch chain split by flushes,
 compares it bit-for-bit with both the single-batch and the synchronous
 fallback paths, and checks the flush actually produced extra submissions. On
 llvmpipe the async flush chunks are forced through a host-ordered sync before
 the next dependent chunk, because lavapipe does not order same-queue
 submissions on its own (it will happily execute a later command buffer while
-an earlier one is still running). The semaphore chain added in `e4771ec` is
+an earlier one is still running). The semaphore chain added in `beadeee` is
 what orders them on a real driver; RADV executes a single queue in order, as
-the existing async expert-graph path already relies on.
+the existing async expert-graph path already relies on. Round-2 correction:
+the chain orders execution but does not protect host-side rebinding of a
+queued submission's descriptor sets; the epoch discipline in `a79792f` /
+`443e8ce` is what keeps a queued command buffer's bindings stable until it has
+executed.
 
-No fleet access was used for this work (the 262K sweep is running). All
-performance numbers above come from previously recorded fleet logs in
-`bc-250-dbg/results/ab-20260913-204953`.
+No fleet access was used for the round-1 accounting. All performance numbers
+above come from previously recorded fleet logs in
+`bc-250-dbg/results/ab-20260913-204953`; the round-2 measurements are from the
+live fleet on 2026-09-14 (see the table at the top).
 
-## 5. Fleet A/B (orchestrator)
+## 5. Fleet A/B (completed 2026-09-14, pipeline on, fix build)
 
-Deploy from `D:\workspace\fg-work-overlap` (do not serve from this
-worktree). Build warning-free, stage binary + `vulkan/` (SPIR-V unchanged; no
-shader source touched), same ring pack and env as the previous session
-(`FG_PREFILL_RING=1` on rank 0, `FG_WORKER_OWNER=1` on workers,
-`FG_DECODE_DIRECT_OUTPUT` unset on every rank).
+Deployed and verified: binary
+`59b2f559369873ead009cb3673c00efa616013ed3ed239e949e8cbf564a9a5c7` on all
+eight blades, standard ring scripts (`FG_PREFILL_RING=1` on rank 0,
+`FG_WORKER_OWNER=1` on workers, `FG_DECODE_DIRECT_OUTPUT` unset), caches
+dropped before the run.
 
-1. Correctness gate (64 max tokens; expect `[12]` and `Paris`):
-   `pwsh -NoProfile -File "$env:TEMP\opencode\correctness64.ps1"`
-2. Like-for-like attach battery against the current control binary:
-   `pwsh -File D:\workspace\bc-250-dbg\Measure-FlashGordonAB.ps1 -Attach -Build ep -Runs4k 2`
-3. Ring/soak gate:
-   `pwsh -NoProfile -File D:\workspace\fg-work-overlap\tools\pi-stability.ps1`
+1. Correctness gate: `pwsh -NoProfile -File "$env:TEMP\opencode\correctness64.ps1"` -> `[12]` / `[Paris]`.
+2. Attach battery x2: `pwsh -File D:\workspace\bc-250-dbg\Measure-FlashGordonAB.ps1 -Attach -Build ep -Runs4k 2` -> 4K decode 21.02-21.19, short 21.76-21.88.
+3. Context sweep: `pwsh -NoProfile -Command "& 'D:\workspace\flash-gordon\tools\context-sweep.ps1' -Contexts 16384,32768"` -> 16K 19.91, 32K 17.67.
+4. Soak gate: `pwsh -NoProfile -File D:\workspace\fg-work-overlap\tools\pi-stability.ps1` -> PASS (6 stages, 4-turn conversation, 8 ranks, 0 failures).
 
-Promotion bar: gates [12]/[Paris] and pi PASS, 4K prefill >= 270 TPS
-(unchanged; no prefill path touched), short decode and 4K warm decode clearly
-above control.
+Promotion bar met: gates [12]/[Paris] and pi PASS, 4K prefill >= 270 TPS
+(296-320 measured; no prefill path touched), short and 4K warm decode clearly
+above the pipeline-off control. The orchestrator integrates; do not merge.
 
-Instrumented cross-check (one blade per rank, optional but decisive):
+Instrumented cross-check (optional):
 `FG_DECODE_PROFILE=1 FG_FRAME_TRACE=1 FG_DECODE_RING_TRACE=1` on rank 0 and
 one worker, 4K prompt + 32 tokens. Per block, compare against the control:
 * `submissions=` should rise (per-layer flushes) while `own_run_ms` falls;
@@ -258,8 +316,8 @@ one worker, 4K prompt + 32 tokens. Per block, compare against the control:
 * `QSA_TRACE flush_ms` should drop to tens of microseconds.
 If the block does not improve, run the same battery with
 `FG_DECODE_PIPELINE=0` on all ranks to isolate the overlap path without a
-rebuild; if only one commit is suspect, `e4771ec` alone can be tested before
-`aecb1a2` since the QSA flush calls it.
+rebuild; if only one commit is suspect, `beadeee` alone can be tested before
+`63dbca1` since the QSA flush calls it.
 
 ## 6. Next levers (ranked, not this round)
 
