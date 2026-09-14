@@ -331,7 +331,16 @@ fg_status fg_vk_begin(fg_vk_context *c,fg_error *err){
     profile_command_begin(c);
     VkMemoryBarrier before={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT,.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT};
     vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&before,0,NULL,0,NULL);
-    c->batch_depth=1;c->batch_set_count=0;c->batch_has_dispatch=false;return FG_OK;
+    /* The descriptor set epoch must not restart here: a previous flush
+     * submission may still be queued, and it reads its bindings at execution
+     * time. The epoch only resets in fg_vk_end after every pending submission
+     * has been drained. */
+    if(c->batch_set_count>=FG_VK_BATCH_MAX_SETS/2u){
+        fg_status drain=vk_pipeline_drain(c,err);
+        if(drain!=FG_OK)return drain;
+        c->batch_set_count=0;
+    }
+    c->batch_depth=1;c->batch_has_dispatch=false;return FG_OK;
 }
 
 fg_status fg_vk_end(fg_vk_context *c,fg_error *err){
