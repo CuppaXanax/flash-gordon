@@ -743,6 +743,13 @@ static fg_status select_blocks(fg_qsa_session *s,uint32_t slot,const fg_vk_tenso
  * (head, split) workgroups and merge the partial online-softmax states with
  * the deterministic merge kernel instead. */
 #define FG_QSA_DECODE_SPLIT_TOKENS 256u
+/* Single-token decode attention: the serial kernel scans every selected
+ * record under a per-token workgroup barrier, so long contexts leave the GPU
+ * latency-bound.  Above a small window, the shared-tile split kernel scans the
+ * record range with one workgroup per (kv head, split), decodes each record
+ * once for the twelve heads that share the kv head, and merges the partial
+ * online-softmax states with the deterministic merge kernel instead. */
+#define FG_QSA_DECODE_SPLIT_TOKENS 256u
 static fg_status decode_attention(fg_qsa_session *s,fg_vk_tensor *attention,
                                   const fg_vk_tensor *query,const fg_vk_tensor *gate,
                                   uint32_t selected_tokens,fg_error *err){
@@ -753,7 +760,7 @@ static fg_status decode_attention(fg_qsa_session *s,fg_vk_tensor *attention,
     if(splits<2u)
         return fg_vk_qsa_attention(vk,attention,s->selected_records,query,gate,
                                    selected_tokens,err);
-    fg_status status=fg_vk_qsa_attention_split(vk,s->attn_partials,
+    fg_status status=fg_vk_qsa_decode_attention_split(vk,s->attn_partials,
         s->selected_records,query,selected_tokens,splits,err);
     if(status==FG_OK)status=fg_vk_qsa_attention_merge(vk,attention,
         s->attn_partials,gate,splits,err);

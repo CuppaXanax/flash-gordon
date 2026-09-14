@@ -317,6 +317,9 @@ fg_status fg_vk_qsa_attention(fg_vk_context *context,fg_vk_tensor *output,const 
 fg_status fg_vk_qsa_attention_split(fg_vk_context *context,fg_vk_tensor *partials,
                                     const fg_vk_tensor *records,const fg_vk_tensor *query,
                                     uint32_t selected_count,uint32_t splits,fg_error *err);
+fg_status fg_vk_qsa_decode_attention_split(fg_vk_context *context,fg_vk_tensor *partials,
+                                           const fg_vk_tensor *records,const fg_vk_tensor *query,
+                                           uint32_t selected_count,uint32_t splits,fg_error *err);
 fg_status fg_vk_qsa_attention_merge(fg_vk_context *context,fg_vk_tensor *output,
                                     const fg_vk_tensor *partials,const fg_vk_tensor *gate,
                                     uint32_t splits,fg_error *err);
