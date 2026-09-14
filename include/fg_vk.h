@@ -70,8 +70,10 @@ void fg_vk_get_memory_stats(const fg_vk_context *context,fg_vk_memory_stats *sta
 
 fg_status fg_vk_begin(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_end(fg_vk_context *context,fg_error *err);
+fg_status fg_vk_flush(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_abort(fg_vk_context *context,fg_error *err);
 bool fg_vk_batch_active(const fg_vk_context *context);
+bool fg_vk_pipeline_enabled(void);
 
 fg_status fg_vk_expert_graph_create(fg_vk_context *context,fg_vk_expert_graph **out,
                                      fg_vk_tensor *activation,fg_vk_tensor *tiles,

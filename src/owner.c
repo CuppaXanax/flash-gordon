@@ -1174,6 +1174,7 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
         if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_ffn_write",err);
         if(status==FG_OK)status=gr_write_batch_into(e,residual,e->reduced,injection,1u,
             e->hyper_output,e->hyper_output_b,&current,err);
+        if(status==FG_OK&&layer<last_layer&&fg_vk_pipeline_enabled())status=fg_vk_flush(vk,err);
     }
     status=finish_batch(vk,status,err);
     if(status==FG_OK)*output=current;
