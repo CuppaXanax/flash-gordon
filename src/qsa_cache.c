@@ -91,6 +91,13 @@ void fg_qsa_page_cache_reset(fg_qsa_page_cache *cache){
     cache->used=0;cache->lru_head=cache->lru_tail=UINT32_MAX;
 }
 
+uint32_t fg_qsa_page_cache_pinned_count(const fg_qsa_page_cache *cache){
+    if(!cache)return 0u;
+    uint32_t pinned=0;
+    for(uint32_t slot=0;slot<cache->pages;slot++)if(cache->valid[slot]&&cache->pinned[slot])pinned++;
+    return pinned;
+}
+
 uint64_t fg_qsa_page_cache_memory_bytes(const fg_qsa_page_cache *cache){
     if(!cache)return 0;
     return sizeof(*cache)+(uint64_t)cache->pages*
@@ -119,9 +126,9 @@ bool fg_qsa_page_cache_lookup(fg_qsa_page_cache *cache,uint32_t layer,
     cache_lru_front(cache,found);*slot=found;return true;
 }
 
-fg_status fg_qsa_page_cache_acquire(fg_qsa_page_cache *cache,uint32_t layer,
-                                   uint32_t block,uint32_t *slot,bool *hit,
-                                   fg_error *err){
+static fg_status cache_acquire(fg_qsa_page_cache *cache,uint32_t layer,
+                               uint32_t block,uint32_t *slot,bool *hit,
+                               bool soft,fg_error *err){
     if(!cache||!slot||!hit){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA cache acquisition");
         return FG_ERR_ARGUMENT;
@@ -135,11 +142,17 @@ fg_status fg_qsa_page_cache_acquire(fg_qsa_page_cache *cache,uint32_t layer,
             found=cache->lru_tail;
             while(found!=UINT32_MAX&&cache->pinned[found])
                 found=cache->lru_prev[found];
-            if(found==UINT32_MAX){
-                fg_error_set(err,FG_ERR_LIMIT,"QSA cache has no evictable slot");
-                return FG_ERR_LIMIT;
+            if(found==UINT32_MAX&&soft){
+                /* Capacity is a soft miss: the caller streams the page from its
+                 * backing store instead of inserting it into the cache. */
+                *slot=UINT32_MAX;*hit=false;return FG_OK;
             }
+            /* A pinned page outlives the eviction window only while its
+             * records are unpublished; recycle the oldest one rather than
+             * failing the request. */
+            if(found==UINT32_MAX)found=cache->lru_tail;
             cache_remove_hash(cache,found);
+            cache->pinned[found]=0u;
         }
         cache->valid[found]=1u;cache->layers[found]=(uint8_t)layer;
         cache->blocks[found]=block;
@@ -148,6 +161,18 @@ fg_status fg_qsa_page_cache_acquire(fg_qsa_page_cache *cache,uint32_t layer,
         cache->hash_buckets[bucket]=found+1u;
     }
     cache_lru_front(cache,found);*slot=found;return FG_OK;
+}
+
+fg_status fg_qsa_page_cache_acquire(fg_qsa_page_cache *cache,uint32_t layer,
+                                   uint32_t block,uint32_t *slot,bool *hit,
+                                   fg_error *err){
+    return cache_acquire(cache,layer,block,slot,hit,false,err);
+}
+
+fg_status fg_qsa_page_cache_acquire_soft(fg_qsa_page_cache *cache,uint32_t layer,
+                                        uint32_t block,uint32_t *slot,bool *hit,
+                                        fg_error *err){
+    return cache_acquire(cache,layer,block,slot,hit,true,err);
 }
 
 fg_status fg_qsa_page_cache_pin(fg_qsa_page_cache *cache,uint32_t layer,

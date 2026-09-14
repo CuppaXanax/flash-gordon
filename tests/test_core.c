@@ -564,6 +564,24 @@ static void test_qsa_page_cache(void){
     CHECK(fg_qsa_page_cache_lookup(cache,3u,1u,&lookup));
     CHECK(!fg_qsa_page_cache_lookup(cache,3u,2u,&lookup));
     fg_qsa_page_cache_unpin(cache,3u,1u);
+    fg_qsa_page_cache_reset(cache);
+    CHECK(fg_qsa_page_cache_acquire(cache,3u,1u,&slot1,&hit,&err)==FG_OK);
+    CHECK(fg_qsa_page_cache_acquire(cache,3u,2u,&slot2,&hit,&err)==FG_OK);
+    CHECK(fg_qsa_page_cache_pin(cache,3u,1u,&err)==FG_OK);
+    CHECK(fg_qsa_page_cache_pin(cache,3u,2u,&err)==FG_OK);
+    CHECK(fg_qsa_page_cache_pinned_count(cache)==2u);
+    CHECK(fg_qsa_page_cache_acquire_soft(cache,3u,3u,&slot3,&hit,&err)==FG_OK);
+    CHECK(slot3==UINT32_MAX&&!hit);
+    CHECK(fg_qsa_page_cache_pinned_count(cache)==2u);
+    CHECK(fg_qsa_page_cache_lookup(cache,3u,1u,&lookup));
+    CHECK(fg_qsa_page_cache_lookup(cache,3u,2u,&lookup));
+    CHECK(fg_qsa_page_cache_acquire(cache,3u,3u,&slot3,&hit,&err)==FG_OK);
+    CHECK(!hit&&slot3!=UINT32_MAX);
+    CHECK(fg_qsa_page_cache_pinned_count(cache)==1u);
+    CHECK(!fg_qsa_page_cache_lookup(cache,3u,1u,&lookup));
+    CHECK(fg_qsa_page_cache_lookup(cache,3u,2u,&lookup));
+    CHECK(fg_qsa_page_cache_lookup(cache,3u,3u,&lookup));
+    fg_qsa_page_cache_reset(cache);
     fg_qsa_page_cache_destroy(cache);
     cache=NULL;CHECK(fg_qsa_page_cache_create(&cache,UINT32_MAX,&err)==FG_ERR_LIMIT&&!cache);
 }
