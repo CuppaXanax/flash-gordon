@@ -64,6 +64,23 @@ void fg_sampler_state_init(fg_sampler_state *state,uint64_t seed){
     state->state=seed?seed:FG_SAMPLER_DEFAULT_SEED;
 }
 
+bool fg_sampler_spec_accept_greedy(uint32_t draft,uint32_t target){
+    return draft==target;
+}
+
+bool fg_sampler_spec_accept_stochastic(uint32_t draft,uint32_t target,
+                                       float draft_prob,float target_prob,
+                                       float uniform){
+    if(draft==target)return true;
+    if(!isfinite(draft_prob)||draft_prob<=0.0f||!isfinite(target_prob)||
+       target_prob<=0.0f||!isfinite(uniform))return false;
+    double ratio=(double)target_prob/(double)draft_prob;
+    if(ratio>=1.0)return true;
+    if(uniform<0.0f)uniform=0.0f;
+    if(uniform>=1.0f)uniform=nextafterf(1.0f,0.0f);
+    return (double)uniform<ratio;
+}
+
 float fg_sampler_uniform(fg_sampler_state *state){
     /* xorshift64* is deterministic, local to one request, and never global. */
     uint64_t x=state->state;

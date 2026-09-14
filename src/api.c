@@ -2024,6 +2024,12 @@ static fg_status send_completion(const api_generation *generation,
                 stats->prefilled_tokens / stats->prefill_seconds : 0.0;
         double decode_tps =
             stats->decode_seconds > 0.0 ? stats->generated_tokens / stats->decode_seconds : 0.0;
+        char draft_headers[128]="";
+        if (stats->draft_proposed)
+            snprintf(draft_headers, sizeof(draft_headers),
+                     "X-Flash-Gordon-Draft-Proposed: %u\r\n"
+                     "X-Flash-Gordon-Draft-Accepted: %u\r\n",
+                     stats->draft_proposed, stats->draft_accepted);
         char metrics[1280];
         int metrics_length = snprintf(
             metrics, sizeof(metrics),
@@ -2039,14 +2045,16 @@ static fg_status send_completion(const api_generation *generation,
             "X-Flash-Gordon-Prefill-Seconds: %.9f\r\n"
             "X-Flash-Gordon-Prefill-TPS: %.6f\r\n"
             "X-Flash-Gordon-Decode-Seconds: %.9f\r\n"
-            "X-Flash-Gordon-Decode-TPS: %.6f\r\n",
+            "X-Flash-Gordon-Decode-TPS: %.6f\r\n"
+            "%s",
             fg_execution_mode_name(stats->execution_mode),
             stats->prompt_tokens, stats->prefilled_tokens, stats->reused_tokens,
             stats->prefix_cache_hit ? "hit" : "miss",
             stats->exact_frontier ? "true" : "false",
             fg_prefix_reset_reason_name(stats->reset_reason),
             stats->generated_tokens, stats->context_tokens,
-            stats->prefill_seconds, prefill_tps, stats->decode_seconds, decode_tps);
+            stats->prefill_seconds, prefill_tps, stats->decode_seconds, decode_tps,
+            draft_headers);
         if(status==FG_OK&&
            (metrics_length < 0 || (size_t)metrics_length >= sizeof(metrics))) {
             fg_error_set(err, FG_ERR_LIMIT, "API metrics headers exceed buffer");
@@ -2062,6 +2070,8 @@ static fg_status send_completion(const api_generation *generation,
 
 static fg_status handle_models(int fd, fg_runtime *runtime, fg_error *err) {
     const char *model = fg_runtime_model_name(runtime);
+    const char *mtp = fg_runtime_mtp_capability(runtime) == FG_MTP_CAPABILITY_ENABLED ?
+        "true" : "false";
     api_buffer body = {0};
     fg_status status = buffer_append(&body, "{\"object\":\"list\",\"data\":[{\"id\":", err);
     if (status == FG_OK) status = buffer_append_json_string(&body, model, strlen(model), err);
@@ -2070,9 +2080,9 @@ static fg_status handle_models(int fd, fg_runtime *runtime, fg_error *err) {
         int length = snprintf(capabilities, sizeof(capabilities),
                               ",\"object\":\"model\",\"created\":0,\"owned_by\":"
                               "\"flash-gordon\",\"capabilities\":{\"native_context\":%u,"
-                              "\"experimental_context\":0,\"tools\":true,\"mtp\":false,"
+                              "\"experimental_context\":0,\"tools\":true,\"mtp\":%s,"
                               "\"image\":false,\"video\":false}}]}",
-                              fg_runtime_context_limit(runtime));
+                              fg_runtime_context_limit(runtime), mtp);
         if (length < 0 || (size_t)length >= sizeof(capabilities)) {
             fg_error_set(err, FG_ERR_LIMIT, "model capabilities exceed response buffer");
             status = FG_ERR_LIMIT;

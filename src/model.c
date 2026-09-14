@@ -111,7 +111,10 @@ static fg_status model_open_replicated(fg_model **out,const fg_manifest *manifes
         const fg_tensor_record *t=&manifest->tensors[i];
         bool is_shared=t->kind==FG_TENSOR_COMMON&&(include_qsa||!qsa_service_weight(t));
         bool is_my_expert=(t->kind==FG_TENSOR_ROUTED_EXPERT&&t->rank==rank);
-        if(is_shared||is_my_expert){
+        /* Sealed MTP tensors live on the rank that owns the trained head and
+           never take part in text-layer execution; load them only there. */
+        bool is_my_mtp=t->kind==FG_TENSOR_MTP&&t->rank==rank;
+        if(is_shared||is_my_expert||is_my_mtp){
             uint64_t *active=is_my_expert?&expert_cursor:&cursor;
             remap[i]=fg_align_up_u64(*active,FG_ALIGNMENT);
             *active=remap[i]+fg_align_up_u64(t->bytes,FG_ALIGNMENT);

@@ -46,6 +46,13 @@ const char *fg_execution_mode_name(fg_execution_mode mode){
     return mode==FG_EXECUTION_EXPERT_PARALLEL?"expert-parallel":"unsupported";
 }
 
+static fg_mtp_capability test_mtp_capability = FG_MTP_CAPABILITY_UNSUPPORTED;
+
+fg_mtp_capability fg_runtime_mtp_capability(const fg_runtime *runtime){
+    (void)runtime;
+    return test_mtp_capability;
+}
+
 fg_status fg_runtime_open(fg_runtime **out, const char *manifest_path, fg_error *err) {
     (void)out;
     (void)manifest_path;
@@ -722,6 +729,7 @@ static void test_model_capabilities(void) {
     int sockets[2];
     CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
     fg_error err = {0};
+    test_mtp_capability = FG_MTP_CAPABILITY_UNSUPPORTED;
     CHECK(handle_models(sockets[0], NULL, &err) == FG_OK);
     CHECK(shutdown(sockets[0], SHUT_WR) == 0);
     char *response = read_socket_response(sockets[1]);
@@ -735,6 +743,18 @@ static void test_model_capabilities(void) {
         CHECK(strstr(response, "\"video\":false") != NULL);
     }
     free(response);
+    close(sockets[0]);
+    close(sockets[1]);
+
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    test_mtp_capability = FG_MTP_CAPABILITY_ENABLED;
+    CHECK(handle_models(sockets[0], NULL, &err) == FG_OK);
+    CHECK(shutdown(sockets[0], SHUT_WR) == 0);
+    response = read_socket_response(sockets[1]);
+    CHECK(response != NULL);
+    if (response) CHECK(strstr(response, "\"mtp\":true") != NULL);
+    free(response);
+    test_mtp_capability = FG_MTP_CAPABILITY_UNSUPPORTED;
     close(sockets[0]);
     close(sockets[1]);
 }

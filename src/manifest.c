@@ -684,6 +684,18 @@ void fg_manifest_print(const fg_manifest *manifest){
            manifest->tensor_count-cooked_q8-cooked_q8e-cooked_k-cooked_q5-host_q8,
            cooked_q8,cooked_q8e,cooked_k,cooked_q5,host_q8,
            (double)cooked_bytes/(1ull<<30));
+    uint32_t text_tensors=0,ngram_tensors=0,vision_tensors=0,mtp_tensors=0,tokenizer_tensors=0;
+    for(uint32_t i=0;i<manifest->tensor_count;i++)switch(manifest->tensors[i].kind){
+        case FG_TENSOR_COMMON:case FG_TENSOR_ROUTED_EXPERT:case FG_TENSOR_HOST_CACHE:text_tensors++;break;
+        case FG_TENSOR_NGRAM:ngram_tensors++;break;
+        case FG_TENSOR_VISION:vision_tensors++;break;
+        case FG_TENSOR_MTP:mtp_tensors++;break;
+        case FG_TENSOR_TOKENIZER:tokenizer_tensors++;break;
+        default:break;
+    }
+    printf("components text=%u ngram=%u vision=%u mtp=%u tokenizer=%u flags=0x%02x\n",
+           text_tensors,ngram_tensors,vision_tensors,mtp_tensors,tokenizer_tensors,
+           manifest->flags);
     for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){
         const fg_rank_record *record=&manifest->ranks[rank];
         uint64_t resident=0u;

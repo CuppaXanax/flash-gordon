@@ -282,9 +282,16 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
                      manifest->prefill_microbatch,manifest->prefill_window);
         return FG_ERR_MISMATCH;
     }
-    if(resolved->experimental_flags){
+    if(resolved->experimental_flags&~FG_RUNTIME_EXPERIMENTAL_MTP){
         fg_error_set(err,FG_ERR_UNAVAILABLE,
-                     "experimental context, MTP, and vision are not enabled in this runtime");
+                     "experimental context and vision are not enabled in this runtime");
+        return FG_ERR_UNAVAILABLE;
+    }
+    if((resolved->experimental_flags&FG_RUNTIME_EXPERIMENTAL_MTP)&&
+       !(manifest->flags&FG_MANIFEST_HAS_MTP)){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "manifest has no sealed MTP component; MTP requires a repack with the "
+                     "trained MTP tensors in the pack");
         return FG_ERR_UNAVAILABLE;
     }
     if(legacy&&(resolved->logical_context_tokens!=boot_context||
