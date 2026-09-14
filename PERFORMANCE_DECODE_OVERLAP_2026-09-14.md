@@ -332,3 +332,135 @@ rebuild; if only one commit is suspect, `beadeee` alone can be tested before
 3. Expert pair geometry (~1.42 ms/block, instruction-bound at ~150 GB/s) and
    GR-chain fusion (12 small read kernels/layer) remain the largest GPU
    blocks; both are shader work and neither changes this overlap structure.
+
+## Round 3: depth (D) and host off the critical path (E) (2026-09-14, `perf/decode-depth`)
+
+Worktree `fg-work-overlap`, branch `perf/decode-depth` from main `2c9be2a`.
+No shader, pack, manifest or prefill-path change. The fleet was busy with the
+prefill round-7 workstream, so this round is locally built and locally
+validated (llvmpipe oracles) with the A/B plan in 3.4 for the orchestrator.
+
+Round-3 commits:
+
+| commit | change |
+|---|---|
+| `eaf095c` | instrumentation: `RING_DECODE` splits `ngram_ms`/`send_ms`; `FG_GENERATE_TRACE=1` prints the per-generation host loop |
+| `280c718` | n-gram iq4_nl dequant on the host with the GPU dispatch as fallback (bit-identical; `iq4_nl_dequant` oracle) |
+| `c1dc63d` | static command-buffer replay for token-invariant block runs (`FG_VK_STATIC_SLOTS=4`, gate `FG_DECODE_STATIC=0`) |
+| `8401fc4` | rank-0 vocabulary slice head, exact per-slice argmax and partial combine (output module + protocol + tests) |
+| `9a562dc` | runtime wiring for the split head (rank 0 coordinator, rank 4 handoff, rank 7 dual send) |
+
+### 3.1 Measured accounting that motivates each change
+
+* Rank-0 decode send path: `NGRAM_TRACE dequant_ms` was 0.10 ms/token of GPU
+  dispatch time inside `ngram_store_decode_packed`; the dequant is a pure
+  CPU-side row unpack (`fg_dequantize_iq4_nl`), so doing it on the host removes
+  the dispatch and the GPU wake-up from the per-token path (evidence:
+  `bc-250-dbg/results/ab-20260913-204953/ep-rank-00.log`).
+* Per-block host exposure: with `FG_DECODE_PIPELINE=1` the first non-QSA run of
+  each block is recorded inline before the GPU can start (record ~0.15 ms);
+  the mid-block QSA layers keep the GPU busy while the *second* non-QSA run is
+  recorded, so only the block head is exposed. Static replay removes that
+  exposure for every token after the first (record once, submit+wait per
+  token).
+* Output head: `output.weight` is 675.6 MB of cooked q8_0; the logit GEMM is
+  bandwidth-bound (~2.4 ms of the 2.9-3.4 ms `output_ms` tail). The head runs
+  on one rank (4) while rank 0 has an idle GPU and the replicated model
+  (`model_open_replicated` includes every `FG_TENSOR_COMMON` tensor, so rank 0
+  has `output.weight`, `output_hc_*`). Splitting the vocabulary two ways runs
+  both halves concurrently in their own memory: rank 4 keeps rows
+  `[0, 140048)` and rank 0 reduces `[140048, 248320)`.
+
+### 3.2 What changed
+
+1. Host n-gram dequant (`src/ngram.c`): `ngram_dequant_path`/`ngram_dequant_host`
+   unpack `iq4_nl` rows with `fg_dequantize_iq4_nl` when the packed rows are
+   host-visible, and keep the old GPU dispatch otherwise. -0.10 ms/token.
+2. Static replay (`src/vk.c`, `src/owner.c`, `include/fg_vk.h`):
+   `fg_vk_static_begin/end/submit/wait/drain`, four slots, static descriptor
+   sets in the upper half (`FG_VK_STATIC_SET_BASE=2048`), owner records each
+   non-QSA run once and replays it with fresh host input; ping-pong arithmetic
+   is mirrored through `chained_ping_next`. QSA layers stay dynamic (their
+   push constants - token, position, hot slot, block counts, selected count -
+   change per token and no shader change is allowed this round). Replay is
+   disabled under `fg_vk_profile_active`/numerics tracing and by
+   `FG_DECODE_STATIC=0`. Expected -0.5..-0.9 ms/token across the six blocks.
+3. Split output head: `fg_output_slice_create/run` builds a cooked q8_0 view of
+   the 16-row-tile-aligned weight slice (`fg_q8_0_cooked_matrix_bytes`), runs
+   the same HC chain, the same cooked dense kernel with `out_dim = rows` and the
+   same argmax cascade, and returns `(value, id)`. `fg_output_better/combine`
+   mirror the shader `before()` rule (padding, NaN/Inf, then higher value,
+   lower id) so combining two slice maxima is the exact full-vocabulary argmax.
+   Rank 7 sends `FG_MSG_OUTPUT_SLICE` (the same 40 KiB `fg_layer_result`
+   payload as `OUTPUT_HIDDEN`) to rank 0 and the hidden to rank 4; rank 0
+   returns `FG_MSG_OUTPUT_PARTIAL` (12 bytes) on the control channel; rank 4
+   combines and sends the usual `OUTPUT_RESULT`. The config frame's previously
+   reserved byte 2 is now a flags field (`FG_OUTPUT_CONFIG_FLAG_SPLIT`) so rank
+   4 only takes the split path when rank 0 declares it. Expected -1.0..-1.4
+   ms/token at short/4K.
+
+### 3.3 Expected effect (estimate; A/B in 3.4)
+
+Round-2 fleet build (`59b2f5...`) measured short 21.76-21.93 / 4K 21.02-21.19.
+Adding the three changes above (-1.6..-2.4 ms/token in total) predicts
+**short ~22.5-22.9 / 4K ~21.8-22.2 TPS**. The 25-28 TPS milestone is *not*
+reachable by D+E alone; see 3.6.
+
+### 3.4 Fleet A/B plan
+
+1. Build/deploy as usual (patch tar -> build on .42 after quiescing all 8 ->
+   package -> distribute -> start scripts); record the binary sha256.
+2. Gates: `pwsh -NoProfile -File "$env:TEMP\opencode\correctness64.ps1"` ->
+   `[12]` / `[Paris]`.
+3. Attach battery x2: `pwsh -File D:\workspace\bc-250-dbg\Measure-FlashGordonAB.ps1 -Attach -Build ep -Runs4k 2`
+   -> short + 4K, includes the 4K prefill check (must stay >= 270).
+4. Context sweep: `pwsh -NoProfile -Command "& 'D:\workspace\flash-gordon\tools\context-sweep.ps1' -Contexts 16384,32768"`.
+5. Soak: `pwsh -NoProfile -File D:\workspace\fg-work-overlap\tools\pi-stability.ps1`.
+6. Split-head A/B (one battery each): default is *off* (no env). Run once with
+   `FG_OUTPUT_SPLIT=1` set on **all ranks** and once with it unset. Expect
+   +0.5..0.7 TPS on short/4K with the env on. If the fleet logs
+   `split output config reached a rank without a slice executor`, the env did
+   not reach rank 4 - unset it everywhere and re-run; do not mix.
+7. Static-replay A/B (one battery each): `FG_DECODE_STATIC=0` vs default on
+   (already on in 2-5). Expect +0.25..0.45 TPS from the default.
+8. Hop probe (optional, 32 decode tokens): `FG_FABRIC_PROFILE=1` on ranks 0, 4
+   and 7; read `payload_ms` for the ~40 KiB bulk frames. Seven hops per token;
+   if a hop is wire-bound (1 GbE would be ~0.33 ms), that is ~2.3 ms/token of
+   floor that only less data or a faster link can move.
+
+### 3.5 Local validation (llvmpipe, correctness only)
+
+| oracle | result |
+|---|---|
+| `q8_cooked_view_slice` (new) | PASS - cooked dense over a 16-row-tile-aligned weight view is bit-identical to the full GEMM rows |
+| `output_split_combine` (new) | PASS - combine equals the full argmax for ties, NaN, Inf, all-equal and off-boundary splits |
+| `test_fabric` protocol selfcheck | PASS - config flags round trip, reserved bytes still rejected, partial codec, handoff partial binding/clearing, new frame ids validate on protocol 6 |
+| `static_batch_replay`, `batch_submission_parity`, `pipeline_flush_parity`, `gpu_profile`, `output_argmax`, `qsa_attention*` | PASS |
+| `test_qsa_prefill`, `test_expert_prefill`, `test_owner_reduce` | PASS |
+| `test_core` | 1 pre-existing failure (line 457 `stale_reserve`), unchanged |
+| `test_session` | 2 pre-existing environment failures (lines 254/257), unchanged |
+
+Only `test_fg_vk` gained link deps (`src/output.o src/model.o src/loader.o
+src/manifest.o src/runtime_options.o src/sampler.o src/protocol.o`).
+
+### 3.6 Remaining gap to 25-28 TPS (ranked)
+
+1. Ring hop floor: seven 40 KiB hops per token. The measured
+   `first_hop_ms` ~7.8 vs rank-1 GPU ~6.6 in `ab-20260913-204953` is consistent
+   with per-hop latency that no host change can remove; measure with the
+   `FG_FABRIC_PROFILE` probe above. Wire-bound hops need less data or a link
+   upgrade.
+2. QSA `topk` 0.2 ms/call x 12 layers = ~2.4 ms/token at 4K (shader work).
+3. Expert pairs (~1.42 ms/block, 11.4 ms summed) and GDN (~10.9 ms summed),
+   GR chains (~6.6 ms summed) are the remaining GPU totals (shader work).
+4. QSA submission consolidation: in the cache path the two entry
+   `qsa_decode_flush` calls could stay in one batch (-0.1..-0.3 ms/token,
+   small risk, not done this round).
+5. 4-way head split: rank 4 + rank 0 are the only ranks with the head weights;
+   helpers for the other two slices need a foreign-tensor loader for
+   `rank-04.fgw` offsets (only ~169 MB per slice, fits). -0.4..-0.6 ms more
+   over the 2-way split.
+
+Verdict: D+E land at ~22.5-22.9 short / ~21.8-22.2 4K, which is the practical
+ceiling of overlap-only work; the 25-28 milestone needs the shader cuts in 2-3
+plus either the hop work in 1 or the wider head split in 5.
