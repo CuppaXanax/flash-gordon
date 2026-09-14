@@ -44,6 +44,18 @@ const float NEG_INF=-3.402823466e38;
 shared vec4 key_tile[TILE*64u];
 shared vec4 value_tile[TILE*64u];
 
+/* Four issued FP instructions per four MACs: a scalar FMA chain replaces the
+   dot tree (4 mul + 3 add) that OpDot lowers to before the subgroup
+   reduction.  The chain is four deep, but the eight records, the twelve
+   heads' subgroups and the value pipeline give the scheduler enough
+   independent chains to issue continuously. */
+float fg_dot4(vec4 a,vec4 b){
+    float d=a.x*b.x;
+    d=fma(a.y,b.y,d);
+    d=fma(a.z,b.z,d);
+    return fma(a.w,b.w,d);
+}
+
 /* Decode one vec4 of q8_0 data (4 consecutive quantized elements).  The q8
  * block scale is the half at the block start; the four bytes may straddle two
  * words because 34-byte blocks alternate 2/0 mod 4. */
@@ -85,9 +97,11 @@ void main(){
     uint v4=64u/lanes;
     uint query_row=subgroup*64u+lane;
     /* The twelve query rows of this KV head are the workgroup's 768 lanes;
-     * load them straight from the query tensor into registers. */
+     * load them straight from the query tensor into registers.  The 1/16
+     * score scale is folded in here once (exact power of two) instead of one
+     * multiply per record per tile. */
     vec4 query_value[8];
-    for(uint i=0u;i<v4;i++)query_value[i]=query4[query_base+query_row+i*lanes];
+    for(uint i=0u;i<v4;i++)query_value[i]=query4[query_base+query_row+i*lanes]*0.0625;
 
     float running_max=NEG_INF,running_den=0.0;
     if(lanes==64u){
@@ -106,57 +120,59 @@ void main(){
             if(owns_head){
                 float s0=NEG_INF,s1=NEG_INF,s2=NEG_INF,s3=NEG_INF;
                 float s4=NEG_INF,s5=NEG_INF,s6=NEG_INF,s7=NEG_INF;
-                if(0u<span)s0=subgroupAdd(dot(qv,key_tile[0u*64u+lane]))*0.0625;
-                if(1u<span)s1=subgroupAdd(dot(qv,key_tile[1u*64u+lane]))*0.0625;
-                if(2u<span)s2=subgroupAdd(dot(qv,key_tile[2u*64u+lane]))*0.0625;
-                if(3u<span)s3=subgroupAdd(dot(qv,key_tile[3u*64u+lane]))*0.0625;
-                if(4u<span)s4=subgroupAdd(dot(qv,key_tile[4u*64u+lane]))*0.0625;
-                if(5u<span)s5=subgroupAdd(dot(qv,key_tile[5u*64u+lane]))*0.0625;
-                if(6u<span)s6=subgroupAdd(dot(qv,key_tile[6u*64u+lane]))*0.0625;
-                if(7u<span)s7=subgroupAdd(dot(qv,key_tile[7u*64u+lane]))*0.0625;
+                if(0u<span)s0=subgroupAdd(fg_dot4(qv,key_tile[0u*64u+lane]));
+                if(1u<span)s1=subgroupAdd(fg_dot4(qv,key_tile[1u*64u+lane]));
+                if(2u<span)s2=subgroupAdd(fg_dot4(qv,key_tile[2u*64u+lane]));
+                if(3u<span)s3=subgroupAdd(fg_dot4(qv,key_tile[3u*64u+lane]));
+                if(4u<span)s4=subgroupAdd(fg_dot4(qv,key_tile[4u*64u+lane]));
+                if(5u<span)s5=subgroupAdd(fg_dot4(qv,key_tile[5u*64u+lane]));
+                if(6u<span)s6=subgroupAdd(fg_dot4(qv,key_tile[6u*64u+lane]));
+                if(7u<span)s7=subgroupAdd(fg_dot4(qv,key_tile[7u*64u+lane]));
                 float tile_max=max(max(max(s0,s1),max(s2,s3)),
                                    max(max(s4,s5),max(s6,s7)));
                 float next_max=max(running_max,tile_max);
                 float scale=running_max<-3.0e38?0.0:exp2((running_max-next_max)*L2E);
                 accumulator*=scale;
                 float denominator=running_den*scale;
+                /* (s - next_max) * L2E as one FMA against the shared bias. */
+                float bias=-next_max*L2E;
                 {
-                    float weight=exp2((s0-next_max)*L2E);
+                    float weight=exp2(fma(s0,L2E,bias));
                     denominator+=weight;
                     accumulator=fma(vec4(weight),value_tile[0u*64u+lane],accumulator);
                 }
                 {
-                    float weight=exp2((s1-next_max)*L2E);
+                    float weight=exp2(fma(s1,L2E,bias));
                     denominator+=weight;
                     accumulator=fma(vec4(weight),value_tile[1u*64u+lane],accumulator);
                 }
                 {
-                    float weight=exp2((s2-next_max)*L2E);
+                    float weight=exp2(fma(s2,L2E,bias));
                     denominator+=weight;
                     accumulator=fma(vec4(weight),value_tile[2u*64u+lane],accumulator);
                 }
                 {
-                    float weight=exp2((s3-next_max)*L2E);
+                    float weight=exp2(fma(s3,L2E,bias));
                     denominator+=weight;
                     accumulator=fma(vec4(weight),value_tile[3u*64u+lane],accumulator);
                 }
                 {
-                    float weight=exp2((s4-next_max)*L2E);
+                    float weight=exp2(fma(s4,L2E,bias));
                     denominator+=weight;
                     accumulator=fma(vec4(weight),value_tile[4u*64u+lane],accumulator);
                 }
                 {
-                    float weight=exp2((s5-next_max)*L2E);
+                    float weight=exp2(fma(s5,L2E,bias));
                     denominator+=weight;
                     accumulator=fma(vec4(weight),value_tile[5u*64u+lane],accumulator);
                 }
                 {
-                    float weight=exp2((s6-next_max)*L2E);
+                    float weight=exp2(fma(s6,L2E,bias));
                     denominator+=weight;
                     accumulator=fma(vec4(weight),value_tile[6u*64u+lane],accumulator);
                 }
                 {
-                    float weight=exp2((s7-next_max)*L2E);
+                    float weight=exp2(fma(s7,L2E,bias));
                     denominator+=weight;
                     accumulator=fma(vec4(weight),value_tile[7u*64u+lane],accumulator);
                 }
@@ -193,10 +209,17 @@ void main(){
                 for(uint record=0u;record<TILE;record++){
                     float score=NEG_INF;
                     if(record<span){
+                        /* Four issued FMAs per (lane, record) product. */
                         float partial=0.0;
-                        for(uint i=0u;i<v4;i++)
-                            partial+=dot(query_value[i],key_tile[record*64u+lane+i*lanes]);
-                        score=subgroupAdd(partial)*0.0625;
+                        for(uint i=0u;i<v4;i++){
+                            vec4 q=query_value[i];
+                            vec4 k=key_tile[record*64u+lane+i*lanes];
+                            partial=fma(q.x,k.x,partial);
+                            partial=fma(q.y,k.y,partial);
+                            partial=fma(q.z,k.z,partial);
+                            partial=fma(q.w,k.w,partial);
+                        }
+                        score=subgroupAdd(partial);
                     }
                     scores[record]=score;
                     tile_max=max(tile_max,score);
@@ -205,8 +228,9 @@ void main(){
                 float scale=running_max<-3.0e38?0.0:exp2((running_max-next_max)*L2E);
                 float denominator=running_den*scale;
                 for(uint i=0u;i<v4;i++)accumulator[i]*=scale;
+                float bias=-next_max*L2E;
                 for(uint record=0u;record<TILE;record++){
-                    float weight=exp2((scores[record]-next_max)*L2E);
+                    float weight=exp2(fma(scores[record],L2E,bias));
                     denominator+=weight;
                     for(uint i=0u;i<v4;i++)
                         accumulator[i]=fma(vec4(weight),
