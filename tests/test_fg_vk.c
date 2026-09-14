@@ -1,6 +1,7 @@
 #include "fg_q38_math.h"
 #include "fg_q38_schema.h"
 #include "fg_ngram.h"
+#include "fg_output.h"
 #include "fg_quant.h"
 #include "fg_qsa.h"
 #include "fg_vk.h"
@@ -2613,6 +2614,101 @@ static bool test_selected(const char *name){
     const char *filter=getenv("DS4_REMOTE_TEST_FILTER");
     return !filter||!*filter||strcmp(filter,name)==0;
 }
+static int test_q8_cooked_view_slice(void){
+    enum{INPUT=2560,ROWS=64,SPLIT=32};
+    uint32_t blocks=INPUT/32u,source_row=blocks*FG_Q8_0_BLOCK_BYTES;
+    uint64_t source_bytes=(uint64_t)ROWS*source_row,
+             cooked_bytes=fg_q8_0_cooked_matrix_bytes(INPUT,ROWS),
+             tile=fg_q8_0_cooked_tile_bytes(INPUT);
+    float *source=malloc((size_t)INPUT*ROWS*4u),input[INPUT],full[ROWS],slice[SPLIT];
+    uint8_t *quantized=malloc((size_t)source_bytes),*cooked=malloc((size_t)cooked_bytes);
+    if(!source||!quantized||!cooked){free(cooked);free(quantized);free(source);return 0;}
+    for(uint32_t row=0;row<ROWS;row++){
+        for(uint32_t i=0;i<INPUT;i++)
+            source[(uint64_t)row*INPUT+i]=sinf((float)((uint64_t)row*INPUT+i)*0.0017f)+
+                0.3f*cosf((float)i*0.011f);
+        fg_quantize_q8_0(source+(uint64_t)row*INPUT,
+                         quantized+(uint64_t)row*source_row,INPUT);
+    }
+    for(uint32_t i=0;i<INPUT;i++)
+        input[i]=cosf((float)(i+7u)*0.013f)-0.2f*sinf((float)i*0.0031f);
+    int ok=fg_cook_q8_0_rows(quantized,cooked,cooked_bytes,INPUT,ROWS);
+    fg_vk_tensor *w=ok?tensor(cooked,cooked_bytes):NULL,*x=ok?tensor(input,sizeof(input)):NULL,
+        *y=ok?tensor(NULL,(uint64_t)ROWS*4u):NULL,*z=ok?tensor(NULL,(uint64_t)SPLIT*4u):NULL;
+    fg_vk_tensor *view=NULL;
+    if(w)fg_vk_tensor_set_format(w,FG_VK_TENSOR_FORMAT_Q8_0_COOKED);
+    ok=ok&&w&&x&&y&&z&&
+        fg_vk_dense_q8_0_f32(context,y,w,x,INPUT,ROWS,1u,1.0f,&error)==FG_OK&&
+        fg_vk_tensor_view(w,(uint64_t)(SPLIT/FG_Q8_0_COOK_ROWS)*tile,
+            fg_q8_0_cooked_matrix_bytes(INPUT,SPLIT),&view,&error)==FG_OK&&
+        view&&fg_vk_tensor_get_format(view)==FG_VK_TENSOR_FORMAT_Q8_0_COOKED&&
+        fg_vk_dense_q8_0_f32(context,z,view,x,INPUT,SPLIT,1u,1.0f,&error)==FG_OK&&
+        fg_vk_tensor_read(y,0,full,sizeof(full),&error)==FG_OK&&
+        fg_vk_tensor_read(z,0,slice,sizeof(slice),&error)==FG_OK;
+    for(uint32_t row=0;ok&&row<SPLIT;row++)
+        if(memcmp(&slice[row],&full[SPLIT+row],sizeof(float))!=0){
+            fprintf(stderr,"cooked view slice row %u GPU=%g full=%g\n",
+                row,slice[row],full[SPLIT+row]);
+            ok=0;
+        }
+    fg_vk_tensor_destroy(view);fg_vk_tensor_destroy(z);fg_vk_tensor_destroy(y);
+    fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);
+    free(cooked);free(quantized);free(source);return ok;
+}
+
+static int test_output_split_combine(void){
+    enum{COUNT=8192,HALVES=3};
+    float *scores=malloc((size_t)COUNT*4u);uint32_t *ids=malloc((size_t)COUNT*4u);
+    if(!scores||!ids){free(ids);free(scores);return 0;}
+    int ok=1;
+    for(uint32_t trial=0;trial<6u&&ok;trial++){
+        for(uint32_t i=0;i<COUNT;i++){
+            scores[i]=sinf((float)(i+1u)*(float)(trial+1u)*0.0031f)*3.0f;
+            ids[i]=i;
+        }
+        if(trial==1u){scores[100]=5.0f;scores[5000]=5.0f;}
+        else if(trial==2u)scores[7]=NAN;
+        else if(trial==3u){scores[4096]=INFINITY;scores[900]=INFINITY;}
+        else if(trial==4u)for(uint32_t i=0;i<COUNT;i++)scores[i]=1.0f;
+        else if(trial==5u)scores[COUNT-1u]=12.0f;
+        float ref_value=scores[0];uint32_t ref_id=ids[0];
+        for(uint32_t i=1u;i<COUNT;i++)
+            if(fg_output_better(scores[i],ids[i],ref_value,ref_id)){
+                ref_value=scores[i];ref_id=ids[i];
+            }
+        for(uint32_t split=1u;split<=HALVES&&ok;split++){
+            uint32_t boundary=split*(COUNT/(HALVES+1u));
+            boundary=(boundary+FG_Q8_0_COOK_ROWS-1u)/FG_Q8_0_COOK_ROWS*FG_Q8_0_COOK_ROWS;
+            if(boundary>=COUNT)continue;
+            float left_value=scores[0];uint32_t left_id=ids[0];
+            for(uint32_t i=1u;i<boundary;i++)
+                if(fg_output_better(scores[i],ids[i],left_value,left_id)){
+                    left_value=scores[i];left_id=ids[i];
+                }
+            float right_value=scores[boundary];uint32_t right_id=ids[boundary];
+            for(uint32_t i=boundary+1u;i<COUNT;i++)
+                if(fg_output_better(scores[i],ids[i],right_value,right_id)){
+                    right_value=scores[i];right_id=ids[i];
+                }
+            float combined_value=0.0f;uint32_t combined_id=0u;
+            fg_output_combine(left_value,left_id,right_value,right_id,
+                              &combined_value,&combined_id);
+            bool same=combined_id==ref_id&&(combined_value==ref_value||
+                (isnan(combined_value)&&isnan(ref_value)));
+            if(!same){
+                fprintf(stderr,"split %u trial %u combine id %u ref %u\n",
+                    boundary,trial,combined_id,ref_id);
+                ok=0;break;
+            }
+        }
+    }
+    ok=ok&&fg_output_better(-1.0f,3u,0.0f,0xffffffffu)&&
+        !fg_output_better(0.0f,0xffffffffu,-1.0f,3u)&&
+        fg_output_better(NAN,4u,10.0f,2u)&&!fg_output_better(10.0f,2u,NAN,4u)&&
+        fg_output_better(2.0f,5u,2.0f,6u)&&!fg_output_better(2.0f,6u,2.0f,5u);
+    free(ids);free(scores);return ok;
+}
+
 static int run_test(const char *name,int (*fn)(void)){if(!test_selected(name))return 1;selected_test_count++;fprintf(stderr,"  [%s] ... ",name);fflush(stderr);int ok=fn();fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 static int run_test_i(const char *name,int (*fn)(int),int arg){if(!test_selected(name))return 1;selected_test_count++;fprintf(stderr,"  [%s(%d)] ... ",name,arg);fflush(stderr);int ok=fn(arg);fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 int main(void){if(fg_vk_open(&context,&error)!=FG_OK){fprintf(stderr,"Vulkan unavailable: %s\n",error.message);return 77;}fprintf(stderr,"Flash Gordon Vulkan device: %s\n",fg_vk_device_name(context));int ok=1;
@@ -2707,6 +2803,8 @@ ok=run_test("qsa_prefill_chunk_liveness",test_qsa_prefill_chunk_liveness)&&ok;
 ok=run_test("output_topk",test_output_topk)&&ok;
 ok=run_test("generation_topk_selector",test_generation_topk_selector)&&ok;
 ok=run_test("output_argmax",test_output_argmax)&&ok;
+ok=run_test("output_split_combine",test_output_split_combine)&&ok;
+ok=run_test("q8_cooked_view_slice",test_q8_cooked_view_slice)&&ok;
 ok=run_test("qsa_prefill_prepare",test_qsa_prefill_prepare)&&ok;
 ok=run_test("qsa_attention_single",test_qsa_attention_single)&&ok;
 ok=run_test("qsa_attention",test_qsa_attention)&&ok;

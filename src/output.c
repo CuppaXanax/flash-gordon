@@ -1,5 +1,6 @@
 #include "fg_output.h"
 #include "fg_q38_schema.h"
+#include "fg_quant.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -31,6 +32,179 @@ struct fg_output_executor {
 
 static fg_status scratch(fg_vk_context *vk,uint64_t values,fg_vk_tensor **out,fg_error *err){
     return fg_vk_tensor_create(vk,values*sizeof(float),out,err);
+}
+
+bool fg_output_split_requested(void){
+    const char *enabled=getenv("FG_OUTPUT_SPLIT");
+    return enabled&&*enabled&&strcmp(enabled,"0")!=0;
+}
+
+static fg_status output_hc_chain(fg_vk_context *vk,fg_model *model,fg_vk_tensor *normalized,
+    fg_vk_tensor *down,fg_vk_tensor *activated,fg_vk_tensor *up,fg_vk_tensor *hidden,
+    const fg_vk_tensor *hyper,fg_error *err);
+
+struct fg_output_slice {
+    fg_model *model;
+    fg_vk_tensor *weight;
+    fg_vk_tensor *normalized;
+    fg_vk_tensor *down;
+    fg_vk_tensor *activated;
+    fg_vk_tensor *up;
+    fg_vk_tensor *hidden;
+    fg_vk_tensor *hyper;
+    fg_vk_tensor *logits;
+    fg_vk_tensor *ids;
+    fg_vk_tensor *topk_scores[2];
+    fg_vk_tensor *topk_ids[2];
+    uint32_t first_row;
+    uint32_t rows;
+    uint32_t groups;
+};
+
+static fg_status output_slice_require(fg_model *model,fg_error *err){
+    static const char *required[]={"output_hc_norm.weight","output_hc_down.weight","output_hc_up.weight","output.weight"};
+    for(uint32_t i=0;i<sizeof(required)/sizeof(required[0]);i++)
+        if(!fg_model_tensor(model,required[i])){
+            fg_error_set(err,FG_ERR_MISMATCH,"rank %u is missing %s",
+                         fg_model_rank(model),required[i]);
+            return FG_ERR_MISMATCH;
+        }
+    return FG_OK;
+}
+
+fg_status fg_output_slice_create(fg_output_slice **out,fg_model *model,
+                                 uint32_t first_row,uint32_t rows,fg_error *err){
+    if(!out||!model||!rows||rows>FG_Q38_VOCAB_SIZE||first_row>=FG_Q38_VOCAB_SIZE||
+       first_row+rows>FG_Q38_VOCAB_SIZE){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid output slice arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    *out=NULL;
+    fg_status status=output_slice_require(model,err);
+    if(status!=FG_OK)return status;
+    fg_vk_tensor *base=fg_model_tensor(model,"output.weight");
+    uint64_t offset=0,bytes=0;
+    if(fg_vk_tensor_get_format(base)==FG_VK_TENSOR_FORMAT_Q8_0_COOKED){
+        if(first_row%FG_Q8_0_COOK_ROWS){
+            fg_error_set(err,FG_ERR_MISMATCH,"output slice row %u is not tile aligned",first_row);
+            return FG_ERR_MISMATCH;
+        }
+        uint64_t tile=fg_q8_0_cooked_tile_bytes(FG_HIDDEN_SIZE);
+        uint64_t tiles=((uint64_t)first_row+rows+FG_Q8_0_COOK_ROWS-1u)/FG_Q8_0_COOK_ROWS-
+                       first_row/FG_Q8_0_COOK_ROWS;
+        offset=((uint64_t)first_row/FG_Q8_0_COOK_ROWS)*tile;
+        bytes=tiles*tile;
+    }else{
+        uint64_t row_bytes=(uint64_t)(FG_HIDDEN_SIZE/32u)*FG_Q8_0_BLOCK_BYTES;
+        offset=(uint64_t)first_row*row_bytes;
+        bytes=(uint64_t)rows*row_bytes;
+    }
+    if(!bytes){fg_error_set(err,FG_ERR_FORMAT,"output slice weight span is empty");return FG_ERR_FORMAT;}
+    fg_output_slice *slice=calloc(1,sizeof(*slice));
+    if(!slice){fg_error_set(err,FG_ERR_OOM,"allocate output slice");return FG_ERR_OOM;}
+    slice->model=model;slice->first_row=first_row;slice->rows=rows;
+    slice->groups=(rows+4095u)/4096u;if(!slice->groups)slice->groups=1u;
+    fg_vk_context *vk=fg_model_vk(model);
+    status=fg_vk_tensor_view(base,offset,bytes,&slice->weight,err);
+    if(status==FG_OK)status=scratch(vk,FG_Q38_HYPER_WIDTH,&slice->normalized,err);
+    if(status==FG_OK)status=scratch(vk,FG_Q38_HYPER_RANK,&slice->down,err);
+    if(status==FG_OK)status=scratch(vk,FG_Q38_HYPER_RANK,&slice->activated,err);
+    if(status==FG_OK)status=scratch(vk,FG_Q38_HYPER_WIDTH,&slice->up,err);
+    if(status==FG_OK)status=scratch(vk,FG_HIDDEN_SIZE,&slice->hidden,err);
+    if(status==FG_OK)status=scratch(vk,FG_Q38_HYPER_WIDTH,&slice->hyper,err);
+    if(status==FG_OK)status=scratch(vk,rows,&slice->logits,err);
+    if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)rows*4u,&slice->ids,err);
+    for(uint32_t i=0;status==FG_OK&&i<2u;i++){
+        status=scratch(vk,slice->groups,&slice->topk_scores[i],err);
+        if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)slice->groups*4u,
+                                                    &slice->topk_ids[i],err);
+    }
+    if(status==FG_OK){
+        uint32_t *ids=fg_vk_tensor_map(slice->ids);
+        for(uint32_t i=0;i<rows;i++)ids[i]=first_row+i;
+    }
+    if(status!=FG_OK){fg_output_slice_destroy(slice);return status;}
+    *out=slice;return FG_OK;
+}
+
+void fg_output_slice_destroy(fg_output_slice *slice){
+    if(!slice)return;
+    for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(slice->topk_ids[i]);fg_vk_tensor_destroy(slice->topk_scores[i]);}
+    fg_vk_tensor_destroy(slice->ids);fg_vk_tensor_destroy(slice->logits);
+    fg_vk_tensor_destroy(slice->hyper);fg_vk_tensor_destroy(slice->hidden);
+    fg_vk_tensor_destroy(slice->up);fg_vk_tensor_destroy(slice->activated);
+    fg_vk_tensor_destroy(slice->down);fg_vk_tensor_destroy(slice->normalized);
+    fg_vk_tensor_destroy(slice->weight);free(slice);
+}
+
+fg_status fg_output_slice_run(fg_output_slice *slice,const void *hyper,
+                              float *value,uint32_t *id,fg_error *err){
+    if(!slice||!hyper||!value||!id){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid output slice run arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_vk_context *vk=fg_model_vk(slice->model);
+    if(fg_vk_batch_active(vk)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"output slice cannot run inside a Vulkan batch");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_status status=fg_vk_tensor_write(slice->hyper,0,hyper,
+        (uint64_t)FG_Q38_HYPER_WIDTH*4u,err);
+    if(status==FG_OK)status=fg_vk_begin(vk,err);
+    if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"output_slice",err);
+    if(status==FG_OK)status=output_hc_chain(vk,slice->model,slice->normalized,slice->down,
+        slice->activated,slice->up,slice->hidden,slice->hyper,err);
+    if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,slice->logits,slice->weight,slice->hidden,
+        FG_HIDDEN_SIZE,slice->rows,1u,1.0f,err);
+    uint32_t count=slice->rows,slot=0u;
+    const fg_vk_tensor *scores=slice->logits,*ids=slice->ids;
+    while(status==FG_OK&&count>1u){
+        uint32_t next=0u;
+        status=fg_vk_argmax_reduce(vk,slice->topk_scores[slot],slice->topk_ids[slot],
+            scores,ids,count,&next,err);
+        scores=slice->topk_scores[slot];ids=slice->topk_ids[slot];count=next;slot^=1u;
+    }
+    if(status==FG_OK){fg_status end_status=fg_vk_end(vk,err);if(end_status!=FG_OK)status=end_status;}
+    if(status!=FG_OK&&fg_vk_batch_active(vk)){fg_error ignored={0};fg_vk_abort(vk,&ignored);}
+    if(status!=FG_OK)return status;
+    const float *values=fg_vk_tensor_map((fg_vk_tensor *)scores);
+    const uint32_t *indices=fg_vk_tensor_map((fg_vk_tensor *)ids);
+    uint32_t best=indices[0];
+    if(count!=1u||best<slice->first_row||best>=slice->first_row+slice->rows||!isfinite(values[0])){
+        fg_error_set(err,FG_ERR_MISMATCH,"invalid output slice finalist at token %u",best);
+        return FG_ERR_MISMATCH;
+    }
+    *value=values[0];*id=best;return FG_OK;
+}
+
+static fg_status output_hc_chain(fg_vk_context *vk,fg_model *model,fg_vk_tensor *normalized,
+    fg_vk_tensor *down,fg_vk_tensor *activated,fg_vk_tensor *up,fg_vk_tensor *hidden,
+    const fg_vk_tensor *hyper,fg_error *err){
+    fg_status status=fg_vk_group_rms_norm(vk,normalized,hyper,
+        fg_model_tensor(model,"output_hc_norm.weight"),FG_HIDDEN_SIZE,FG_Q38_HYPER_COUNT,1u,1e-6f,err);
+    if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,down,
+        fg_model_tensor(model,"output_hc_down.weight"),normalized,FG_Q38_HYPER_WIDTH,FG_Q38_HYPER_RANK,1u,1.0f,err);
+    if(status==FG_OK)status=fg_vk_silu_scaled(vk,activated,down,FG_Q38_HYPER_RANK,1.0f/(float)FG_Q38_HYPER_COUNT,err);
+    if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,up,
+        fg_model_tensor(model,"output_hc_up.weight"),activated,FG_Q38_HYPER_RANK,FG_Q38_HYPER_WIDTH,1u,1.0f,err);
+    if(status==FG_OK)status=fg_vk_hc_finalize(vk,hidden,normalized,up,FG_HIDDEN_SIZE,FG_Q38_HYPER_COUNT,1u,err);
+    return status;
+}
+
+bool fg_output_better(float left,uint32_t left_id,float right,uint32_t right_id){
+    bool left_padding=left_id==0xffffffffu,right_padding=right_id==0xffffffffu;
+    if(left_padding||right_padding)return !left_padding&&right_padding;
+    bool left_nonfinite=isnan(left)||isinf(left);
+    bool right_nonfinite=isnan(right)||isinf(right);
+    if(left_nonfinite||right_nonfinite)
+        return left_nonfinite!=right_nonfinite?left_nonfinite:left_id<right_id;
+    return left>right||(left==right&&left_id<right_id);
+}
+
+void fg_output_combine(float left,uint32_t left_id,float right,uint32_t right_id,
+                       float *value,uint32_t *id){
+    if(fg_output_better(left,left_id,right,right_id)){if(value)*value=left;if(id)*id=left_id;}
+    else{if(value)*value=right;if(id)*id=right_id;}
 }
 
 fg_status fg_output_executor_create(fg_output_executor **out,fg_model *model,fg_error *err){
@@ -82,11 +256,8 @@ fg_status fg_output_logits(fg_output_executor *executor,const fg_vk_tensor *hype
     if(!executor||!hyper||!logits||fg_vk_tensor_bytes(hyper)<FG_Q38_HYPER_WIDTH*sizeof(float)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Qwen output arguments");return FG_ERR_ARGUMENT;}
     fg_vk_context *vk=fg_model_vk(executor->model);
     fg_status status=fg_vk_profile_active(vk)?fg_vk_profile_set_scope(vk,"output",err):FG_OK;
-    if(status==FG_OK)status=fg_vk_group_rms_norm(vk,executor->normalized,hyper,fg_model_tensor(executor->model,"output_hc_norm.weight"),FG_HIDDEN_SIZE,FG_Q38_HYPER_COUNT,1u,1e-6f,err);
-    if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,executor->down,fg_model_tensor(executor->model,"output_hc_down.weight"),executor->normalized,FG_Q38_HYPER_WIDTH,FG_Q38_HYPER_RANK,1u,1.0f,err);
-    if(status==FG_OK)status=fg_vk_silu_scaled(vk,executor->activated,executor->down,FG_Q38_HYPER_RANK,1.0f/(float)FG_Q38_HYPER_COUNT,err);
-    if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,executor->up,fg_model_tensor(executor->model,"output_hc_up.weight"),executor->activated,FG_Q38_HYPER_RANK,FG_Q38_HYPER_WIDTH,1u,1.0f,err);
-    if(status==FG_OK)status=fg_vk_hc_finalize(vk,executor->hidden,executor->normalized,executor->up,FG_HIDDEN_SIZE,FG_Q38_HYPER_COUNT,1u,err);
+    if(status==FG_OK)status=output_hc_chain(vk,executor->model,executor->normalized,
+        executor->down,executor->activated,executor->up,executor->hidden,hyper,err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,executor->logits,fg_model_tensor(executor->model,"output.weight"),executor->hidden,FG_HIDDEN_SIZE,FG_Q38_VOCAB_SIZE,1u,1.0f,err);
     if(status==FG_OK)*logits=executor->logits;
     return status;
