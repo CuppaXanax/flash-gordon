@@ -1391,6 +1391,21 @@ static fg_status attend_prefill_tiles(fg_qsa_session *s,uint32_t slot,
 static fg_status persist_prefill_state(fg_qsa_session *s,uint32_t slot,
     uint32_t first_token,uint32_t token_count,fg_error *err){
     if(!s->cache||!s->state)return FG_OK;
+    /* Decode commits records into the page cache without write-through, so a
+     * continuation prefill starts with the state file behind the session
+     * frontier.  Persist that decoded range from the cache first; the pages
+     * are pinned, so the lookup below cannot miss them. */
+    uint32_t persisted=fg_qsa_state_layer_tokens(s->state,slot);
+    if(persisted>first_token){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "QSA state frontier is ahead of the prefill range");
+        return FG_ERR_MISMATCH;
+    }
+    if(persisted<first_token){
+        fg_status flush=persist_prefill_state(s,slot,persisted,
+                                              first_token-persisted,err);
+        if(flush!=FG_OK)return flush;
+    }
     uint32_t layer=s->layers[slot],end=first_token+token_count;
     const uint8_t *cache=(const uint8_t *)fg_vk_tensor_map(s->cache_records);
     if(!cache){

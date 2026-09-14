@@ -2811,6 +2811,11 @@ struct fg_runtime {
     fg_coordinator coordinator;
     int32_t *history;
     size_t history_count,history_capacity;
+    /* Owner state frontier: the number of tokens the block owners (and this
+     * rank's own owner executor) have processed.  Equals history_count after a
+     * successful generation; zero after any reset.  Ring continuation resumes
+     * only when the prefix plan's offset matches exactly. */
+    uint32_t state_frontier;
     char *rendered_history;
     size_t rendered_history_length;
     size_t pending_boundary_bytes;
@@ -2833,6 +2838,10 @@ struct fg_runtime {
     uint32_t pending_draft;
     uint32_t draft_proposed;
     uint32_t draft_accepted;
+    /* Ring prefix continuation: resume owner state across sequential requests
+     * on an exact token-prefix extension.  FG_PREFIX_CONT=0 disables it for
+     * A/B measurement without rebuilding. */
+    bool prefix_continuation;
 };
 
 static fg_status coordinator_begin_session(fg_coordinator *coordinator,fg_error *err){
@@ -4040,6 +4049,7 @@ static fg_status runtime_reset_state(fg_runtime *runtime,fg_prefix_reset_reason 
     }
     runtime->state_ready=false;
     runtime->history_count=0;
+    runtime->state_frontier=0;
     runtime->next_token_valid=false;
     runtime->next_token=0;
     runtime->next_logit=0.0f;
@@ -4081,6 +4091,11 @@ fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
         }
     }
     if(status==FG_OK)runtime->context_limit=runtime->options.logical_context_tokens;
+    if(status==FG_OK){
+        const char *prefix_cont=getenv("FG_PREFIX_CONT");
+        runtime->prefix_continuation=!(prefix_cont&&*prefix_cont&&
+                                       strcmp(prefix_cont,"0")==0);
+    }
     if(status==FG_OK)status=manifest_directory(path,runtime->directory,err);
     if(status==FG_OK)
         status=coordinator_open(&runtime->coordinator,runtime->manifest,
@@ -4201,13 +4216,24 @@ static fg_status runtime_generate_tokens(
     if(status==FG_OK)status=fg_prefix_plan_tokens(
         runtime->history,runtime->history_count,runtime->next_token_valid,
         prompt->data,prompt->count,runtime->empty_reason,&plan,err);
-    /* Ring prefill advances GDN/PLE state on the block owners, not on rank 0;
-     * a reused prefix would resume those owners from a stale frontier.  Until
-     * state push-back lands, ring requests always prefill from a cold reset. */
+    /* Ring prefill advances GDN/PLE/QSA state on the block owners.  With ring
+     * decode those owners remain authoritative across requests, so a request
+     * whose history extends the previous one can resume from the recorded
+     * frontier and prefill only the appended tokens.  Without ring decode a
+     * reused prefix would resume owners from a stale frontier, so those
+     * configurations keep the cold reset.  The frontier guard is belt and
+     * braces: if rank 0's token history and the owners' state ever disagree,
+     * demote to a cold reset instead of prefilling from the wrong offset. */
     if(status==FG_OK&&runtime->coordinator.ring_prefill&&plan.hit){
-        plan.hit=false;plan.exact_frontier=false;plan.reused_tokens=0;
-        plan.prefill_offset=0;plan.prefill_tokens=prompt->count;
-        plan.reset_reason=FG_PREFIX_RESET_COLD_START;
+        bool resumable=runtime->coordinator.ring_decode&&
+            runtime->prefix_continuation&&
+            plan.prefill_offset==(size_t)runtime->state_frontier;
+        if(!resumable){
+            plan.hit=false;plan.exact_frontier=false;plan.reused_tokens=0;
+            plan.prefill_offset=0;plan.prefill_tokens=prompt->count;
+            plan.reset_reason=runtime->coordinator.ring_decode?
+                FG_PREFIX_RESET_FRONTIER_UNAVAILABLE:FG_PREFIX_RESET_COLD_START;
+        }
     }
     if(status==FG_OK&&require_prefix_hit&&!plan.hit){
         if(prefix_miss)*prefix_miss=true;
@@ -4346,6 +4372,7 @@ static fg_status runtime_generate_tokens(
     if(status==FG_OK){
         clock_gettime(CLOCK_MONOTONIC,&decode_end);
         runtime->empty_reason=FG_PREFIX_RESET_NONE;
+        runtime->state_frontier=(uint32_t)runtime->history_count;
         free(runtime->rendered_history);
         runtime->rendered_history=candidate;
         runtime->rendered_history_length=candidate_length;
