@@ -36,14 +36,12 @@ const uint ROWS_PER_WORKGROUP = 32u;
 
 shared float sums[PAIR_TILE][ROWS_PER_WORKGROUP * SUMS_STRIDE];
 
-/* The four product lanes stay independent so the hot loop is one FMA per
-   weight value; the horizontal reduction runs once in the epilogue. */
 #define FG_PAIR(P, A, L) { \
     if (L) { \
-        acc0##P = fma(w0, A, acc0##P); \
-        acc1##P = fma(w1, A, acc1##P); \
-        acc2##P = fma(w2, A, acc2##P); \
-        acc3##P = fma(w3, A, acc3##P); \
+        acc0##P += dot(w0, A); \
+        acc1##P += dot(w1, A); \
+        acc2##P += dot(w2, A); \
+        acc3##P += dot(w3, A); \
     } }
 
 void main() {
@@ -76,10 +74,10 @@ void main() {
     uint wr = expert * pc.expert_stride + row_tile * pc.tile_bytes;
     uint quant_offset = (pc.blocks * 32u + 63u) & ~63u;
 
-    vec4 acc00 = vec4(0.0), acc01 = vec4(0.0), acc02 = vec4(0.0), acc03 = vec4(0.0);
-    vec4 acc10 = vec4(0.0), acc11 = vec4(0.0), acc12 = vec4(0.0), acc13 = vec4(0.0);
-    vec4 acc20 = vec4(0.0), acc21 = vec4(0.0), acc22 = vec4(0.0), acc23 = vec4(0.0);
-    vec4 acc30 = vec4(0.0), acc31 = vec4(0.0), acc32 = vec4(0.0), acc33 = vec4(0.0);
+    float acc00 = 0.0, acc01 = 0.0, acc02 = 0.0, acc03 = 0.0;
+    float acc10 = 0.0, acc11 = 0.0, acc12 = 0.0, acc13 = 0.0;
+    float acc20 = 0.0, acc21 = 0.0, acc22 = 0.0, acc23 = 0.0;
+    float acc30 = 0.0, acc31 = 0.0, acc32 = 0.0, acc33 = 0.0;
 
     for (uint block = 0u; block < pc.blocks; block++) {
         uint block_base = wr + block * 32u;
@@ -115,38 +113,22 @@ void main() {
     }
 
     uint row_local = row_group * ROWS;
-    sums[0][(row_local + 0u) * SUMS_STRIDE + lane] =
-        ((acc00.x + acc00.y) + (acc00.z + acc00.w));
-    sums[1][(row_local + 0u) * SUMS_STRIDE + lane] =
-        ((acc01.x + acc01.y) + (acc01.z + acc01.w));
-    sums[2][(row_local + 0u) * SUMS_STRIDE + lane] =
-        ((acc02.x + acc02.y) + (acc02.z + acc02.w));
-    sums[3][(row_local + 0u) * SUMS_STRIDE + lane] =
-        ((acc03.x + acc03.y) + (acc03.z + acc03.w));
-    sums[0][(row_local + 1u) * SUMS_STRIDE + lane] =
-        ((acc10.x + acc10.y) + (acc10.z + acc10.w));
-    sums[1][(row_local + 1u) * SUMS_STRIDE + lane] =
-        ((acc11.x + acc11.y) + (acc11.z + acc11.w));
-    sums[2][(row_local + 1u) * SUMS_STRIDE + lane] =
-        ((acc12.x + acc12.y) + (acc12.z + acc12.w));
-    sums[3][(row_local + 1u) * SUMS_STRIDE + lane] =
-        ((acc13.x + acc13.y) + (acc13.z + acc13.w));
-    sums[0][(row_local + 2u) * SUMS_STRIDE + lane] =
-        ((acc20.x + acc20.y) + (acc20.z + acc20.w));
-    sums[1][(row_local + 2u) * SUMS_STRIDE + lane] =
-        ((acc21.x + acc21.y) + (acc21.z + acc21.w));
-    sums[2][(row_local + 2u) * SUMS_STRIDE + lane] =
-        ((acc22.x + acc22.y) + (acc22.z + acc22.w));
-    sums[3][(row_local + 2u) * SUMS_STRIDE + lane] =
-        ((acc23.x + acc23.y) + (acc23.z + acc23.w));
-    sums[0][(row_local + 3u) * SUMS_STRIDE + lane] =
-        ((acc30.x + acc30.y) + (acc30.z + acc30.w));
-    sums[1][(row_local + 3u) * SUMS_STRIDE + lane] =
-        ((acc31.x + acc31.y) + (acc31.z + acc31.w));
-    sums[2][(row_local + 3u) * SUMS_STRIDE + lane] =
-        ((acc32.x + acc32.y) + (acc32.z + acc32.w));
-    sums[3][(row_local + 3u) * SUMS_STRIDE + lane] =
-        ((acc33.x + acc33.y) + (acc33.z + acc33.w));
+    sums[0][(row_local + 0u) * SUMS_STRIDE + lane] = acc00;
+    sums[1][(row_local + 0u) * SUMS_STRIDE + lane] = acc01;
+    sums[2][(row_local + 0u) * SUMS_STRIDE + lane] = acc02;
+    sums[3][(row_local + 0u) * SUMS_STRIDE + lane] = acc03;
+    sums[0][(row_local + 1u) * SUMS_STRIDE + lane] = acc10;
+    sums[1][(row_local + 1u) * SUMS_STRIDE + lane] = acc11;
+    sums[2][(row_local + 1u) * SUMS_STRIDE + lane] = acc12;
+    sums[3][(row_local + 1u) * SUMS_STRIDE + lane] = acc13;
+    sums[0][(row_local + 2u) * SUMS_STRIDE + lane] = acc20;
+    sums[1][(row_local + 2u) * SUMS_STRIDE + lane] = acc21;
+    sums[2][(row_local + 2u) * SUMS_STRIDE + lane] = acc22;
+    sums[3][(row_local + 2u) * SUMS_STRIDE + lane] = acc23;
+    sums[0][(row_local + 3u) * SUMS_STRIDE + lane] = acc30;
+    sums[1][(row_local + 3u) * SUMS_STRIDE + lane] = acc31;
+    sums[2][(row_local + 3u) * SUMS_STRIDE + lane] = acc32;
+    sums[3][(row_local + 3u) * SUMS_STRIDE + lane] = acc33;
     barrier();
 
     if (lane == 0u) {
