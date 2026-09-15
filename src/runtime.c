@@ -875,10 +875,13 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
             direct?FG_MSG_OUTPUT_HIDDEN:FG_MSG_DECODE_LAYER_RESULT,request,
             work->token_index*FG_LAYER_COUNT+last,0,context->result_wire,
             FG_DECODE_LAYER_RESULT_BYTES,err);
-        if(status==FG_OK&&direct&&fg_output_split_requested())
-            status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,FG_MSG_OUTPUT_SLICE,request,
+        if(status==FG_OK&&direct&&fg_output_split_requested()){
+            status=fg_output_slice_encode(context->result_wire,result,err);
+            if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,
+                FG_MSG_OUTPUT_SLICE,request,
                 work->token_index*FG_LAYER_COUNT+last,0,context->result_wire,
                 FG_DECODE_LAYER_RESULT_BYTES,err);
+        }
         if(direct&&trace&&status==FG_OK)
             fprintf(stderr,"RING_DECODE_HANDOFF rank=%u token=%u output_rank=%u\n",
                 self,work->token_index,output_owner);

@@ -569,6 +569,11 @@ fg_status fg_decode_layer_result_encode(uint8_t output[FG_DECODE_LAYER_RESULT_BY
                                         const fg_layer_result *result,fg_error *err);
 fg_status fg_decode_layer_result_decode(fg_layer_result *result,const uint8_t *payload,
                                         uint32_t bytes,fg_error *err);
+/* The split output head sends the final block's hyper to rank 0 under
+ * FG_MSG_OUTPUT_SLICE; the payload is the layer result with rank 0 as the
+ * destination so the coordinator's route check accepts it. */
+fg_status fg_output_slice_encode(uint8_t output[FG_DECODE_LAYER_RESULT_BYTES],
+                                 const fg_layer_result *result,fg_error *err);
 fg_status fg_qsa_block_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
                                    uint16_t protocol_version,const fg_qsa_block_work *work,
                                    fg_error *err);
