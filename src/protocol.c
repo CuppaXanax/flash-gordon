@@ -61,6 +61,18 @@ uint32_t fg_output_split_rank(uint32_t ways,uint32_t way){
     return UINT32_MAX;
 }
 
+fg_status fg_output_split_require_slice(bool have_slice,uint32_t ways,uint32_t rank,
+                                        fg_error *err){
+    if(have_slice)return FG_OK;
+    if(ways)fg_error_set(err,FG_ERR_MISMATCH,
+        "rank %u needs a %u-way slice executor but holds none (FG_OUTPUT_SPLIT must match on all ranks)",
+        rank,ways);
+    else fg_error_set(err,FG_ERR_MISMATCH,
+        "rank %u needs a slice executor but holds none (FG_OUTPUT_SPLIT must match on all ranks)",
+        rank);
+    return FG_ERR_MISMATCH;
+}
+
 void fg_output_split_span(uint32_t ways,uint32_t way,uint32_t *first_row,uint32_t *rows){
     uint32_t first=0u,count=0u;
     if(ways==FG_OUTPUT_SPLIT_WAYS_MIN){
