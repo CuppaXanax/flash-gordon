@@ -3,6 +3,30 @@
 You are the post-compaction me. Read this top to bottom before touching anything.
 Everything here is measured, not hoped. The fleet is healthy right now; keep it that way.
 
+## 0a7. BYTE BUDGET - THE PRE-MTP CEILING (2026-09-15)
+
+Audited from the deployed pack/manifest (sha `1368cd6d`), not from prior docs:
+**6.671 GB/token** (weights 6.34, state 0.33) + 379,532 B wire + n-gram reads.
+Per-rank ledger: rank 4 is the fat rank (1427 MB: 684 MB output head), others
+738-793 MB. **Dense is 62% of bytes, experts only 23%.**
+
+- Absolute ceiling at clpeak 353 GB/s, zero overhead: **18.9 ms = 52.9 TPS**
+  (unreachable).
+- Practical ceiling at measured per-shape rates (92-298 GB/s): **32-42 ms =
+  24-31 TPS**.
+- Current 39-43 ms (23.4-24.6 TPS) is ~46% of the clpeak floor but **~86% of
+  the practical floor** - the build is nearly at its own byte band.
+- 50 TPS needs 334 GB/s sustained (94.5% of clpeak) with 4.0 GB/token; **60 TPS
+  needs 400 GB/s > clpeak: physically excluded.**
+- **Falsified**: "3.3 GB active weights/token" (true 6.34 GB); "61.2 MB/layer
+  GDN" (full layer 87.2 MB). Dense requant (~1.45-1.95 GB, the 62% share) is
+  the big bytes lever, not experts (~0.15 GB). Hop bf16 has no codec in tree
+  yet; wire recomputes to ~175 KB default / ~190-195 KB 4-way.
+- Unaccounted risk: n-gram O_DIRECT reads observed 0.8-25 ms cold.
+
+See `PERFORMANCE_BYTE_BUDGET_2026-09-15.md`. Path to >31 TPS practical is byte
+reduction (dense requant first); path past 50 is speculation on top.
+
 ## 0a6. ROUND 12 - DENSE OCCUPANCY HYPOTHESIS CLOSED (2026-09-15)
 
 Two gated r8 variants measured on the fleet (`perf/dense-kernel-latency`,
