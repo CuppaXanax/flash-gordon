@@ -1,5 +1,5 @@
 param(
-    [string]$BaseUrl = "http://192.0.2.42:8080",
+    [string]$BaseUrl = $(if ($env:FG_BASE_URL) { $env:FG_BASE_URL } else { "http://192.0.2.42:8080" }),
     [int[]]$Contexts = @(4096, 16384, 32768, 65536, 131072, 262144),
     [int]$DecodeTokens = 32,
     [int]$TimeoutSeconds = 7200,

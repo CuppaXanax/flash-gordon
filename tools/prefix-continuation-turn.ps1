@@ -3,7 +3,7 @@
 # X-Flash-Gordon-* metrics headers are only emitted on the non-streaming path).
 [CmdletBinding()]
 param(
-    [string]$ApiUrl = "http://192.0.2.42:8080/v1/chat/completions",
+    [string]$ApiUrl = $(if ($env:FG_API_URL) { $env:FG_API_URL } else { "http://192.0.2.42:8080/v1/chat/completions" }),
     [string]$Model = "Qwen3.8-Flash-Next",
     [int]$Turns = 4,
     [int]$FillerRepeats = 0,

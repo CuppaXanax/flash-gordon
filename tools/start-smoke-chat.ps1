@@ -38,9 +38,10 @@ $repo = Split-Path $PSScriptRoot -Parent
 $runId = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,6)
 $results = Join-Path $repo "results/smoke-$runId"
 $null = New-Item -ItemType Directory -Path $results
-$base = if ($BaseUrl) { $BaseUrl.TrimEnd('/') } else { "http://192.0.2.42:$Port/v1" }
+$base = if ($BaseUrl) { $BaseUrl.TrimEnd('/') } elseif ($env:FG_BASE_URL) { $env:FG_BASE_URL.TrimEnd('/') } else { "http://192.0.2.42:$Port/v1" }
 $model = 'Qwen3.8-Flash-Next'
-$targets = @(42..49 | ForEach-Object { "192.0.2.$_" })
+$prefix = if ($env:FG_FLEET_PREFIX) { $env:FG_FLEET_PREFIX } else { "192.0.2." }
+$targets = @(42..49 | ForEach-Object { "$prefix$_" })
 $fleetArguments = @{ Auth=$Auth; IdentityFile=$IdentityFile; PassThru=$true }
 if ($SshUser) { $fleetArguments.User = $SshUser }
 $script:remoteSequence = 0
