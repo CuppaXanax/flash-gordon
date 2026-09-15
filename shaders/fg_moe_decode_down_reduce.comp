@@ -174,29 +174,6 @@ void main() {
                 qt_uvec += 96u;
                 in_vec += 16u;
             }
-        } else if (pc.down_type == 8u && pc.tile_bytes != 0u) {
-            uint row_tile = row >> 4u;
-            uint tile_row = row & 15u;
-            uint row_base = expert * pc.expert_stride + row_tile * pc.tile_bytes;
-            uint input_base = pair * (pc.in_dim >> 2u);
-            uint quant_offset = (pc.blocks * 32u + 63u) & ~63u;
-            for (uint block = parity; block < pc.blocks; block += 2u) {
-                uint scale_byte = row_base + (block * 16u + tile_row) * 2u;
-                vec2 scale = unpackHalf2x16(wb[scale_byte >> 2u]);
-                float delta = (scale_byte & 2u) == 0u ? scale.x : scale.y;
-                uint quant_base = row_base + quant_offset +
-                    (tile_row * pc.blocks + block) * 32u + seg * 16u;
-                vec4 w0 = vec4(unpack8(int(wb[quant_base >> 2u]))) * delta;
-                vec4 w1 = vec4(unpack8(int(wb[(quant_base >> 2u) + 1u]))) * delta;
-                vec4 w2 = vec4(unpack8(int(wb[(quant_base >> 2u) + 2u]))) * delta;
-                vec4 w3 = vec4(unpack8(int(wb[(quant_base >> 2u) + 3u]))) * delta;
-                vec4 input0 = x4[input_base + block * 8u + seg * 4u];
-                vec4 input1 = x4[input_base + block * 8u + seg * 4u + 1u];
-                vec4 input2 = x4[input_base + block * 8u + seg * 4u + 2u];
-                vec4 input3 = x4[input_base + block * 8u + seg * 4u + 3u];
-                slot_acc += dot(w0, input0) + dot(w1, input1) +
-                    dot(w2, input2) + dot(w3, input3);
-            }
         } else {
             uint row_bytes = pc.blocks * 34u;
             uint row_base = expert * pc.expert_stride + row * row_bytes;
