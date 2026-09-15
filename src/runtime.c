@@ -4027,13 +4027,17 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
         if(status==FG_OK&&last_hyper)*last_hyper=input;
     }
     if(trace){t_output=dispatch_ts();
+        fg_vk_counters decode_counters={0};fg_vk_get_counters(vk,&decode_counters);
         fprintf(stderr,"RING_DECODE token=%u embed_ms=%.3f ngram_ms=%.3f send_ms=%.3f "
             "first_hop_ms=%.3f own_layers=%u..%u own_ms=%.3f own_run_ms=%.3f "
-            "own_read_ms=%.3f tail_ms=%.3f output_ms=%.3f total_ms=%.3f handoff=%u\n",
+            "own_read_ms=%.3f tail_ms=%.3f output_ms=%.3f total_ms=%.3f handoff=%u "
+            "submissions_total=%llu dispatches_total=%llu\n",
             token_index,t_sent-t0,t_ngram-t_embed,t_sent-t_ngram,t_own_recv-t_sent,
             own_first,own_last,
             t_own_end-t_own_recv,t_own_run-t_own_recv,t_own_read-t_own_run,
-            t_final-t_own_end,t_output-t_final,t_output-t0,direct?1u:0u);}
+            t_final-t_own_end,t_output-t_final,t_output-t0,direct?1u:0u,
+            (unsigned long long)decode_counters.submissions,
+            (unsigned long long)decode_counters.dispatches);}
     return status;
 }
 

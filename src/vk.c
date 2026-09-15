@@ -497,7 +497,8 @@ fg_status fg_vk_static_submit(fg_vk_context *c,uint32_t slot,fg_error *err){
     VkResult vr=vkResetFences(c->device,1,&c->static_fence[slot]);
     if(vr!=VK_SUCCESS)return vk_error(err,"reset static fence",vr);
     c->static_pending[slot]=true;
-    if(c->pending_fence_count>0u){
+    const char *hold_value=getenv("FG_VK_HOLD_STATIC");bool hold_static=!(hold_value&&*hold_value&&strcmp(hold_value,"0")==0);
+    if(hold_static&&c->pending_fence_count>0u){
         c->held_commands[c->held_count]=c->static_command[slot];
         c->held_slots[c->held_count]=slot;c->held_count++;
         c->static_submit_fence[slot]=VK_NULL_HANDLE;
