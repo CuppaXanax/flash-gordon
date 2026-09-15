@@ -1830,6 +1830,183 @@ static int test_expert_decode_fused_q8_gates(void){
     return ok;
 }
 
+/* Random-routing parity for the batch-1 fused expert pair: random weights,
+   gates, activation and slot maps (including dead slots) across the cooked
+   Q4_K/Q5_K gate/up and Q5_1/cooked-Q8_0 down combinations, compared against
+   the legacy five-dispatch path at <=1e-3 relative.  FG_EXPERT_PARITY_DUMP
+   appends the fused rows so two kernel revisions can be diffed bit-for-bit. */
+static uint32_t parity_rng(uint32_t *state){
+    uint32_t x=*state;
+    x^=x<<13u;x^=x>>17u;x^=x<<5u;
+    *state=x;
+    return x;
+}
+
+static int run_expert_decode_fused_random(uint32_t seed,uint32_t gate_type,
+    uint32_t up_type,uint32_t down_type,bool down_cooked){
+    enum{HIDDEN=256,MID=64,SLOTS=10,EXPERTS=4};
+    uint32_t rng=seed*2654435761u+1u;
+    uint64_t down_row=down_type==7u?(uint64_t)(MID/32u)*FG_Q5_1_BLOCK_BYTES:
+        (uint64_t)(MID/32u)*FG_Q8_0_BLOCK_BYTES;
+    uint32_t gate_block=gate_type==13u?176u:144u,up_block=up_type==13u?176u:144u;
+    uint64_t gate_stride=gate_type==8u?fg_q8_0_cooked_matrix_bytes(HIDDEN,MID):
+        fg_k_quant_cooked_matrix_bytes(HIDDEN,MID,gate_type);
+    uint64_t up_stride=up_type==8u?fg_q8_0_cooked_matrix_bytes(HIDDEN,MID):
+        fg_k_quant_cooked_matrix_bytes(HIDDEN,MID,up_type);
+    uint64_t down_stride=down_type==7u?fg_q5_1_cooked_matrix_bytes(MID,HIDDEN):
+        (down_cooked?fg_q8_0_cooked_matrix_bytes(MID,HIDDEN):
+         (uint64_t)(MID/32u)*FG_Q8_0_BLOCK_BYTES*HIDDEN);
+    uint64_t gate_raw=gate_type==8u?(uint64_t)(HIDDEN/32u)*FG_Q8_0_BLOCK_BYTES*MID:
+        (uint64_t)(HIDDEN/256u)*gate_block*MID;
+    uint64_t up_raw=up_type==8u?(uint64_t)(HIDDEN/32u)*FG_Q8_0_BLOCK_BYTES*MID:
+        (uint64_t)(HIDDEN/256u)*up_block*MID;
+    uint64_t down_raw=down_type==7u?(uint64_t)(MID/32u)*FG_Q5_1_BLOCK_BYTES*HIDDEN:
+        (uint64_t)(MID/32u)*FG_Q8_0_BLOCK_BYTES*HIDDEN;
+    uint8_t *gate_source=calloc(1,gate_raw*EXPERTS),*up_source=calloc(1,up_raw*EXPERTS),*down_source=calloc(1,down_raw*EXPERTS);
+    uint8_t *gate_cooked=malloc(gate_stride*EXPERTS),*up_cooked=malloc(up_stride*EXPERTS),*down_cooked_data=malloc(down_stride*EXPERTS);
+    float input[HIDDEN],expected[HIDDEN],got[HIDDEN],gates[SLOTS];
+    uint8_t q8[FG_Q8_K_BLOCK_BYTES];
+    uint32_t schedule[SLOTS*9u];
+    fg_vk_tensor *gw=NULL,*uw=NULL,*dw=NULL;
+    fg_vk_tensor *activation=NULL,*tiles=NULL,*gate_values=NULL;
+    fg_vk_tensor *gate=NULL,*up=NULL,*mid=NULL,*down=NULL,*reference=NULL,*fused=NULL;
+    int ok=gate_source&&up_source&&down_source&&gate_cooked&&up_cooked&&down_cooked_data;
+    if(!ok)goto done;
+    for(uint32_t expert=0;expert<EXPERTS;expert++){
+        for(uint32_t row=0;row<MID;row++){
+            uint32_t phase=parity_rng(&rng);
+            if(gate_type==8u)
+                make_q8_expert_row(gate_source+((uint64_t)expert*MID+row)*(HIDDEN/32u)*FG_Q8_0_BLOCK_BYTES,HIDDEN,phase);
+            else
+                make_k_row(gate_source+((uint64_t)expert*MID+row)*(HIDDEN/256u)*gate_block,gate_type==13u,phase);
+            phase=parity_rng(&rng);
+            if(up_type==8u)
+                make_q8_expert_row(up_source+((uint64_t)expert*MID+row)*(HIDDEN/32u)*FG_Q8_0_BLOCK_BYTES,HIDDEN,phase);
+            else
+                make_k_row(up_source+((uint64_t)expert*MID+row)*(HIDDEN/256u)*up_block,up_type==13u,phase);
+        }
+        for(uint32_t row=0;row<HIDDEN;row++){
+            uint8_t *destination=down_source+((uint64_t)expert*HIDDEN+row)*down_row;
+            uint32_t phase=parity_rng(&rng);
+            if(down_type==7u)make_q5_1_row(destination,MID,phase);
+            else make_q8_expert_row(destination,MID,phase);
+        }
+    }
+    for(uint32_t expert=0;ok&&expert<EXPERTS;expert++){
+        if(gate_type==8u){
+            if(!fg_cook_q8_0_rows(gate_source+(uint64_t)expert*gate_stride,gate_cooked+(uint64_t)expert*gate_stride,gate_stride,HIDDEN,MID))ok=0;
+        }else if(!fg_cook_k_quant_rows(gate_source+(uint64_t)expert*gate_stride,gate_cooked+(uint64_t)expert*gate_stride,gate_stride,HIDDEN,MID,gate_type))ok=0;
+        if(!ok)break;
+        if(up_type==8u){
+            if(!fg_cook_q8_0_rows(up_source+(uint64_t)expert*up_stride,up_cooked+(uint64_t)expert*up_stride,up_stride,HIDDEN,MID))ok=0;
+        }else if(!fg_cook_k_quant_rows(up_source+(uint64_t)expert*up_stride,up_cooked+(uint64_t)expert*up_stride,up_stride,HIDDEN,MID,up_type))ok=0;
+        if(!ok)break;
+        if(down_type==7u&&!fg_cook_q5_1_rows(down_source+(uint64_t)expert*down_stride,down_cooked_data+(uint64_t)expert*down_stride,down_stride,MID,HIDDEN))ok=0;
+        if(down_type==8u){
+            if(down_cooked){
+                if(!fg_cook_q8_0_rows(down_source+(uint64_t)expert*down_stride,down_cooked_data+(uint64_t)expert*down_stride,down_stride,MID,HIDDEN))ok=0;
+            }else memcpy(down_cooked_data+(uint64_t)expert*down_stride,down_source+(uint64_t)expert*down_stride,(size_t)down_stride);
+        }
+    }
+    for(uint32_t i=0;ok&&i<HIDDEN;i++)
+        input[i]=sinf((float)(i+3u)*0.013f)+0.1f*cosf((float)(i+parity_rng(&rng)%17u)*0.007f);
+    fg_quantize_q8_k(input,q8,HIDDEN);
+    for(uint32_t i=0;i<SLOTS*9u;i++)schedule[i]=UINT32_MAX;
+    for(uint32_t slot=0;ok&&slot<SLOTS;slot++){
+        if((parity_rng(&rng)%4u)==0u)continue;
+        schedule[slot*9u]=parity_rng(&rng)%EXPERTS;
+        schedule[slot*9u+1u]=(slot*3u+seed)%SLOTS;
+        gates[slot]=((float)(parity_rng(&rng)%2001u)-1000.0f)*0.001f;
+    }
+    if(ok){
+        activation=tensor(q8,sizeof(q8));
+        tiles=tensor(schedule,sizeof(schedule));
+        gate_values=tensor(gates,sizeof(gates));
+        gate=tensor(NULL,(uint64_t)SLOTS*MID*4u);
+        up=tensor(NULL,(uint64_t)SLOTS*MID*4u);
+        mid=tensor(NULL,(uint64_t)SLOTS*MID*4u);
+        down=tensor(NULL,(uint64_t)SLOTS*HIDDEN*4u);
+        reference=tensor(NULL,(uint64_t)HIDDEN*4u);
+        fused=tensor(NULL,(uint64_t)HIDDEN*4u);
+        ok=activation&&tiles&&gate_values&&gate&&up&&mid&&down&&reference&&fused;
+    }
+    if(ok)ok=fg_vk_tensor_create(context,gate_stride*FG_EXPERTS_PER_RANK,&gw,&error)==FG_OK&&
+        fg_vk_tensor_create(context,up_stride*FG_EXPERTS_PER_RANK,&uw,&error)==FG_OK&&
+        fg_vk_tensor_create(context,down_stride*FG_EXPERTS_PER_RANK,&dw,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_write(gw,0,gate_cooked,gate_stride*EXPERTS,&error)==FG_OK&&
+        fg_vk_tensor_write(uw,0,up_cooked,up_stride*EXPERTS,&error)==FG_OK&&
+        fg_vk_tensor_write(dw,0,down_cooked_data,down_stride*EXPERTS,&error)==FG_OK;
+    if(ok)fg_vk_tensor_set_format(gw,gate_type==8u?FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED:FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED);
+    if(ok)fg_vk_tensor_set_format(uw,up_type==8u?FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED:FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED);
+    if(ok&&down_type==7u)fg_vk_tensor_set_format(dw,FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED);
+    if(ok&&down_type==8u&&down_cooked)fg_vk_tensor_set_format(dw,FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED);
+    if(ok)ok=fg_vk_begin(context,&error)==FG_OK&&
+        (gate_type==8u?
+            fg_vk_moe_kquant_cooked_pairs(context,gate,gw,activation,tiles,8u,MID,HIDDEN,(uint32_t)gate_stride,SLOTS,SLOTS,false,SLOTS,&error):
+            fg_vk_moe_kquant_cooked_pairs(context,gate,gw,activation,tiles,gate_type,MID,HIDDEN,(uint32_t)gate_stride,SLOTS,SLOTS,false,SLOTS,&error))==FG_OK&&
+        (up_type==8u?
+            fg_vk_moe_kquant_cooked_pairs(context,up,uw,activation,tiles,8u,MID,HIDDEN,(uint32_t)up_stride,SLOTS,SLOTS,false,SLOTS,&error):
+            fg_vk_moe_kquant_cooked_pairs(context,up,uw,activation,tiles,up_type,MID,HIDDEN,(uint32_t)up_stride,SLOTS,SLOTS,false,SLOTS,&error))==FG_OK&&
+        fg_vk_swiglu(context,mid,gate,up,SLOTS*MID,&error)==FG_OK&&
+        (down_type==7u?
+            fg_vk_moe_q5_1_down_cooked_pairs(context,down,dw,tiles,mid,HIDDEN,MID,(uint32_t)down_stride,SLOTS,false,SLOTS,&error):
+            (down_cooked?
+                fg_vk_moe_q8_0_down_cooked_pairs(context,down,dw,tiles,mid,HIDDEN,MID,(uint32_t)down_stride,SLOTS,false,SLOTS,&error):
+                fg_vk_moe_q8_0_down(context,down,dw,tiles,mid,HIDDEN,MID,(uint32_t)down_stride,SLOTS,false,SLOTS,&error)))==FG_OK&&
+        fg_vk_moe_reduce(context,reference,down,gate_values,tiles,HIDDEN,SLOTS,SLOTS,&error)==FG_OK&&
+        fg_vk_end(context,&error)==FG_OK&&
+        fg_vk_tensor_read(reference,0,expected,sizeof(expected),&error)==FG_OK;
+    if(ok)ok=fg_vk_begin(context,&error)==FG_OK&&
+        fg_vk_moe_decode_gate_up(context,mid,gw,uw,activation,tiles,MID,HIDDEN,(uint32_t)gate_stride,(uint32_t)up_stride,gate_type,up_type,SLOTS,&error)==FG_OK&&
+        fg_vk_moe_decode_down_reduce(context,fused,dw,tiles,mid,gate_values,HIDDEN,MID,(uint32_t)down_stride,SLOTS,down_type,&error)==FG_OK&&
+        fg_vk_end(context,&error)==FG_OK&&
+        fg_vk_tensor_read(fused,0,got,sizeof(got),&error)==FG_OK;
+    double max_rel=0.0;
+    for(uint32_t i=0;ok&&i<HIDDEN;i++){
+        double difference=fabs((double)got[i]-expected[i]);
+        double relative=difference/fmax(1.0,fabs((double)expected[i]));
+        if(relative>max_rel)max_rel=relative;
+        if(relative>1e-3){
+            fprintf(stderr,"expert_decode_fused_random seed=%u gate=%u up=%u down=%u cooked=%d row %u fused=%g legacy=%g rel=%g\n",
+                seed,(unsigned)gate_type,(unsigned)up_type,(unsigned)down_type,(int)down_cooked,i,got[i],expected[i],relative);
+            ok=0;
+        }
+    }
+    const char *dump=getenv("FG_EXPERT_PARITY_DUMP");
+    if(ok&&dump&&*dump){
+        FILE *file=fopen(dump,"a");
+        if(file){
+            fprintf(file,"seed=%u gate=%u up=%u down=%u cooked=%d",seed,(unsigned)gate_type,(unsigned)up_type,(unsigned)down_type,(int)down_cooked);
+            for(uint32_t i=0;i<HIDDEN;i++)fprintf(file," %a",(double)got[i]);
+            fputc('\n',file);
+            fclose(file);
+        }
+    }
+    if(ok&&seed<3u)
+        fprintf(stderr,"expert_decode_fused_random seed=%u gate=%u up=%u down=%u cooked=%d max_rel=%.3g PASS\n",
+            seed,(unsigned)gate_type,(unsigned)up_type,(unsigned)down_type,(int)down_cooked,max_rel);
+done:
+    fg_vk_tensor_destroy(fused);fg_vk_tensor_destroy(reference);fg_vk_tensor_destroy(down);
+    fg_vk_tensor_destroy(mid);fg_vk_tensor_destroy(up);fg_vk_tensor_destroy(gate);
+    fg_vk_tensor_destroy(gate_values);fg_vk_tensor_destroy(tiles);fg_vk_tensor_destroy(activation);
+    fg_vk_tensor_destroy(dw);fg_vk_tensor_destroy(uw);fg_vk_tensor_destroy(gw);
+    free(down_cooked_data);free(up_cooked);free(gate_cooked);
+    free(down_source);free(up_source);free(gate_source);
+    return ok;
+}
+
+static int test_expert_decode_fused_random(void){
+    int ok=1;
+    for(uint32_t seed=0;seed<4u;seed++){
+        ok=run_expert_decode_fused_random(seed,12u,13u,7u,false)&&ok;
+        ok=run_expert_decode_fused_random(seed,13u,12u,7u,false)&&ok;
+        ok=run_expert_decode_fused_random(seed,12u,13u,8u,true)&&ok;
+        ok=run_expert_decode_fused_random(seed,12u,12u,8u,false)&&ok;
+    }
+    ok=run_expert_decode_fused_random(7u,8u,8u,8u,true)&&ok;
+    return ok;
+}
+
 /* The fixed expert graph must select the two-dispatch fused pair when gate/up
    are K-quant cooked and down is cooked Q5_1, cooked Q8_0 or raw Q8_0, and the
    recorded command must replay the direct wrapper result exactly. */
@@ -2783,6 +2960,7 @@ ok=run_test_i("expert_decode_fused_q8_0",test_expert_decode_fused_q8_0,13)&&ok;
 ok=run_test_i("expert_decode_fused_q8_0_cooked",test_expert_decode_fused_q8_0_cooked,12)&&ok;
 ok=run_test_i("expert_decode_fused_q8_0_cooked",test_expert_decode_fused_q8_0_cooked,13)&&ok;
 ok=run_test("expert_decode_fused_q8_gates",test_expert_decode_fused_q8_gates)&&ok;
+ok=run_test("expert_decode_fused_random",test_expert_decode_fused_random)&&ok;
 ok=run_test_i("expert_graph_fused",test_expert_graph_fused_i,7)&&ok;
 ok=run_test_i("expert_graph_fused",test_expert_graph_fused_i,8)&&ok;
 ok=run_test("expert_graph_fused_q8_0_cooked",test_expert_graph_fused_q8_0_cooked)&&ok;

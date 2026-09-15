@@ -21,7 +21,17 @@
    The same geometry also reads the size-neutral cooked Q8_0 tiles: lane l
    owns 32-value sub-block l of every 256-value block, so a block costs two
    uint4 quant loads and eight scalar q8_k words, and the f16 scale comes from
-   the [block][row] scale run.  Gate and up may use different layouts. */
+   the [block][row] scale run.  Gate and up may use different layouts.
+
+   The Q4_K/Q5_K pair path is fully unrolled and specialized per projection
+   type: the four weight words and the eight activation words stay in named
+   registers (no dynamically indexed local arrays), the word loop has no
+   per-iteration index selects, and the activation conversion is shared by
+   gate and up.  Q4_K skips the fifth-bit merge entirely at compile time; Q5_K
+   pays it without a runtime branch.  The integer partial dots remain exact
+   sums of small integers, so the accumulated values are bit-identical to the
+   rolled loop.  The generic rolled loop remains for the Q8_0/cooked paths and
+   for mixed-type pairs. */
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
@@ -82,6 +92,92 @@ int sum32(uint packed) {
     return low + high;
 }
 
+/* One unrolled 32-value word of the K-quant pair: split the low/high nibbles
+   of both projections, merge the q5 fifth bits only on the Q5 compile-time
+   paths, and accumulate the four exact integer dots into the per-projection
+   group accumulators.  The activation word conversions are shared between
+   gate and up. */
+#define FG_KWORD(W, G5V, U5V) { \
+    uint gl = gqw[W] & 0x0f0f0f0fu; \
+    uint gh = (gqw[W] >> 4u) & 0x0f0f0f0fu; \
+    uint ul = uqw[W] & 0x0f0f0f0fu; \
+    uint uh = (uqw[W] >> 4u) & 0x0f0f0f0fu; \
+    if (G5V) { \
+        gl |= ((ghw[W] >> group_a) & 0x01010101u) << 4u; \
+        gh |= ((ghw[W] >> group_b) & 0x01010101u) << 4u; \
+    } \
+    if (U5V) { \
+        ul |= ((uhw[W] >> group_a) & 0x01010101u) << 4u; \
+        uh |= ((uhw[W] >> group_b) & 0x01010101u) << 4u; \
+    } \
+    vec4 avw = vec4(unpack8(int(aw##W))); \
+    vec4 bvw = vec4(unpack8(int(bw##W))); \
+    gia += dot4f(gl, avw); gib += dot4f(gh, bvw); \
+    uia += dot4f(ul, avw); uib += dot4f(uh, bvw); }
+
+/* The Q4_K/Q5_K block loop, duplicated per gate/up type by the uniform
+   branch in main so no runtime type test sits inside the loop.  All offsets
+   are per-lane constants advanced by a fixed per-block stride. */
+#define FG_KPAIR(G5V, U5V) { \
+    uint gq_vec = ((gate_row_base + gate_quant_offset + tile_row_k * 128u) >> 4u) + lane; \
+    uint uq_vec = ((up_row_base + up_quant_offset + tile_row_k * 128u) >> 4u) + lane; \
+    uint gh_vec = ((gate_row_base + 128u + tile_row_k * 32u) >> 4u) + sub; \
+    uint uh_vec = ((up_row_base + 128u + tile_row_k * 32u) >> 4u) + sub; \
+    uint gd_word = (gate_row_base + tile_row_k * 4u) >> 2u; \
+    uint ud_word = (up_row_base + tile_row_k * 4u) >> 2u; \
+    uint gm_word = (gate_row_base + 32u + tile_row_k * 12u) >> 2u; \
+    uint um_word = (up_row_base + 32u + tile_row_k * 12u) >> 2u; \
+    uint gq_step = gate_block_bytes >> 4u; \
+    uint uq_step = up_block_bytes >> 4u; \
+    uint gss = gate_block_bytes >> 2u; \
+    uint uss = up_block_bytes >> 2u; \
+    for (uint block = 0u; block < pc.blocks; block++) { \
+        uint gbw = gd_word + block * gss; \
+        uint ubw = ud_word + block * uss; \
+        vec2 gdm = unpackHalf2x16(gws[gbw]); \
+        vec2 udm = unpackHalf2x16(uws[ubw]); \
+        uint gm0 = gws[gm_word + block * gss]; \
+        uint gm1 = gws[gm_word + block * gss + 1u]; \
+        uint gm2 = gws[gm_word + block * gss + 2u]; \
+        uint um0 = uws[um_word + block * uss]; \
+        uint um1 = uws[um_word + block * uss + 1u]; \
+        uint um2 = uws[um_word + block * uss + 2u]; \
+        vec2 gma = scale_min(gm0, gm1, gm2, group_a); \
+        vec2 gmb = scale_min(gm0, gm1, gm2, group_b); \
+        vec2 uma = scale_min(um0, um1, um2, group_a); \
+        vec2 umb = scale_min(um0, um1, um2, group_b); \
+        uvec4 gqw = gwv[gq_vec + block * gq_step]; \
+        uvec4 uqw = uwv[uq_vec + block * uq_step]; \
+        uvec4 ghw = uvec4(0u); \
+        uvec4 uhw = uvec4(0u); \
+        if (G5V) ghw = gwv[gh_vec + block * gq_step]; \
+        if (U5V) uhw = uwv[uh_vec + block * uq_step]; \
+        uint act_vec = (block * Q8K_WORDS) >> 1u; \
+        uvec2 a01 = q8p[act_vec + act_a0]; \
+        uvec2 a23 = q8p[act_vec + act_a0 + 1u]; \
+        uvec2 b01 = q8p[act_vec + act_b0]; \
+        uvec2 b23 = q8p[act_vec + act_b0 + 1u]; \
+        uint aw0 = a01.x, aw1 = a01.y, aw2 = a23.x, aw3 = a23.y; \
+        uint bw0 = b01.x, bw1 = b01.y, bw2 = b23.x, bw3 = b23.y; \
+        float gia = 0.0, gib = 0.0, uia = 0.0, uib = 0.0; \
+        FG_KWORD(0, G5V, U5V) \
+        FG_KWORD(1, G5V, U5V) \
+        FG_KWORD(2, G5V, U5V) \
+        FG_KWORD(3, G5V, U5V) \
+        float act_delta = uintBitsToFloat(q8[block * Q8K_WORDS]); \
+        gate_acc = fma(gdm.x * act_delta, gma.x * gia + gmb.x * gib, gate_acc); \
+        up_acc = fma(udm.x * act_delta, uma.x * uia + umb.x * uib, up_acc); \
+        if (sub == 0u) { \
+            uvec2 sums = q8p[act_vec + 33u + group_pair]; \
+            gate_min = fma(-gdm.y * act_delta, \
+                float(int(gma.y) * sum32(sums.x) + int(gmb.y) * sum32(sums.y)), \
+                gate_min); \
+            up_min = fma(-udm.y * act_delta, \
+                float(int(uma.y) * sum32(sums.x) + int(umb.y) * sum32(sums.y)), \
+                up_min); \
+        } \
+    } }
+
 void main() {
     uint lid = gl_LocalInvocationID.x;
     uint row_slot = lid >> 3u;
@@ -99,7 +195,8 @@ void main() {
     bool up_q8 = pc.up_type == Q8_0;
     bool gate_active = !gate_q8;
     bool up_active = !up_q8;
-    bool k_active = gate_active || up_active;
+    bool gate_k = gate_q5 || !gate_q8;
+    bool up_k = up_q5 || !up_q8;
     uint gate_block_bytes = gate_q5 ? 1408u : 1152u;
     uint up_block_bytes = up_q5 ? 1408u : 1152u;
     uint gate_quant_offset = gate_q5 ? 384u : 128u;
@@ -127,127 +224,137 @@ void main() {
     if (row_live) {
         uint gate_row_base = expert * pc.gate_stride + row_tile_k * pc.gate_tile_bytes;
         uint up_row_base = expert * pc.up_stride + row_tile_k * pc.up_tile_bytes;
-        uint gate_quant_vec = ((gate_row_base + gate_quant_offset + tile_row_k * 128u) >> 4u) + lane;
-        uint up_quant_vec = ((up_row_base + up_quant_offset + tile_row_k * 128u) >> 4u) + lane;
-        uint gate_high_vec = ((gate_row_base + 128u + tile_row_k * 32u) >> 4u) + sub;
-        uint up_high_vec = ((up_row_base + 128u + tile_row_k * 32u) >> 4u) + sub;
-        uint gate_q8_base = expert * pc.gate_stride + row_tile_q8 * pc.gate_tile_bytes;
-        uint up_q8_base = expert * pc.up_stride + row_tile_q8 * pc.up_tile_bytes;
-        for (uint block = 0u; block < pc.blocks; block++) {
-            uint act_base = block * Q8K_WORDS;
-            if (k_active) {
-                uint gb = gate_row_base + block * gate_block_bytes;
-                uint ub = up_row_base + block * up_block_bytes;
+        if (gate_k && up_k) {
+            if (gate_q5) {
+                if (up_q5) FG_KPAIR(true, true)
+                else FG_KPAIR(true, false)
+            } else {
+                if (up_q5) FG_KPAIR(false, true)
+                else FG_KPAIR(false, false)
+            }
+        } else {
+            uint gate_quant_vec = ((gate_row_base + gate_quant_offset + tile_row_k * 128u) >> 4u) + lane;
+            uint up_quant_vec = ((up_row_base + up_quant_offset + tile_row_k * 128u) >> 4u) + lane;
+            uint gate_high_vec = ((gate_row_base + 128u + tile_row_k * 32u) >> 4u) + sub;
+            uint up_high_vec = ((up_row_base + 128u + tile_row_k * 32u) >> 4u) + sub;
+            uint gate_q8_base = expert * pc.gate_stride + row_tile_q8 * pc.gate_tile_bytes;
+            uint up_q8_base = expert * pc.up_stride + row_tile_q8 * pc.up_tile_bytes;
+            for (uint block = 0u; block < pc.blocks; block++) {
+                uint act_base = block * Q8K_WORDS;
+                if (gate_active || up_active) {
+                    uint gb = gate_row_base + block * gate_block_bytes;
+                    uint ub = up_row_base + block * up_block_bytes;
 
-                vec2 gate_dm = gate_active ? unpackHalf2x16(gws[(gb + tile_row_k * 4u) >> 2u]) : vec2(0.0);
-                vec2 up_dm = up_active ? unpackHalf2x16(uws[(ub + tile_row_k * 4u) >> 2u]) : vec2(0.0);
-                uint gm0 = gate_active ? gws[(gb + 32u + tile_row_k * 12u) >> 2u] : 0u;
-                uint gm1 = gate_active ? gws[(gb + 36u + tile_row_k * 12u) >> 2u] : 0u;
-                uint gm2 = gate_active ? gws[(gb + 40u + tile_row_k * 12u) >> 2u] : 0u;
-                uint um0 = up_active ? uws[(ub + 32u + tile_row_k * 12u) >> 2u] : 0u;
-                uint um1 = up_active ? uws[(ub + 36u + tile_row_k * 12u) >> 2u] : 0u;
-                uint um2 = up_active ? uws[(ub + 40u + tile_row_k * 12u) >> 2u] : 0u;
-                vec2 gate_a = scale_min(gm0, gm1, gm2, group_a);
-                vec2 gate_b = scale_min(gm0, gm1, gm2, group_b);
-                vec2 up_a = scale_min(um0, um1, um2, group_a);
-                vec2 up_b = scale_min(um0, um1, um2, group_b);
+                    vec2 gate_dm = gate_active ? unpackHalf2x16(gws[(gb + tile_row_k * 4u) >> 2u]) : vec2(0.0);
+                    vec2 up_dm = up_active ? unpackHalf2x16(uws[(ub + tile_row_k * 4u) >> 2u]) : vec2(0.0);
+                    uint gm0 = gate_active ? gws[(gb + 32u + tile_row_k * 12u) >> 2u] : 0u;
+                    uint gm1 = gate_active ? gws[(gb + 36u + tile_row_k * 12u) >> 2u] : 0u;
+                    uint gm2 = gate_active ? gws[(gb + 40u + tile_row_k * 12u) >> 2u] : 0u;
+                    uint um0 = up_active ? uws[(ub + 32u + tile_row_k * 12u) >> 2u] : 0u;
+                    uint um1 = up_active ? uws[(ub + 36u + tile_row_k * 12u) >> 2u] : 0u;
+                    uint um2 = up_active ? uws[(ub + 40u + tile_row_k * 12u) >> 2u] : 0u;
+                    vec2 gate_a = scale_min(gm0, gm1, gm2, group_a);
+                    vec2 gate_b = scale_min(gm0, gm1, gm2, group_b);
+                    vec2 up_a = scale_min(um0, um1, um2, group_a);
+                    vec2 up_b = scale_min(um0, um1, um2, group_b);
 
-                uvec4 gate_quant = gate_active ? gwv[gate_quant_vec + block * (gate_block_bytes >> 4u)] : uvec4(0u);
-                uvec4 up_quant = up_active ? uwv[up_quant_vec + block * (up_block_bytes >> 4u)] : uvec4(0u);
-                uvec4 gate_high = uvec4(0u);
-                uvec4 up_high = uvec4(0u);
-                if (gate_q5) gate_high = gwv[gate_high_vec + block * (gate_block_bytes >> 4u)];
-                if (up_q5) up_high = uwv[up_high_vec + block * (up_block_bytes >> 4u)];
+                    uvec4 gate_quant = gate_active ? gwv[gate_quant_vec + block * (gate_block_bytes >> 4u)] : uvec4(0u);
+                    uvec4 up_quant = up_active ? uwv[up_quant_vec + block * (up_block_bytes >> 4u)] : uvec4(0u);
+                    uvec4 gate_high = uvec4(0u);
+                    uvec4 up_high = uvec4(0u);
+                    if (gate_q5) gate_high = gwv[gate_high_vec + block * (gate_block_bytes >> 4u)];
+                    if (up_q5) up_high = uwv[up_high_vec + block * (up_block_bytes >> 4u)];
 
-                uint act_vec = act_base >> 1u;
-                uvec2 act_a01 = q8p[act_vec + act_a0];
-                uvec2 act_a23 = q8p[act_vec + act_a0 + 1u];
-                uvec2 act_b01 = q8p[act_vec + act_b0];
-                uvec2 act_b23 = q8p[act_vec + act_b0 + 1u];
+                    uint act_vec = act_base >> 1u;
+                    uvec2 act_a01 = q8p[act_vec + act_a0];
+                    uvec2 act_a23 = q8p[act_vec + act_a0 + 1u];
+                    uvec2 act_b01 = q8p[act_vec + act_b0];
+                    uvec2 act_b23 = q8p[act_vec + act_b0 + 1u];
 
-                float activation_delta = uintBitsToFloat(q8[act_base]);
-                float gate_ia = 0.0;
-                float gate_ib = 0.0;
-                float up_ia = 0.0;
-                float up_ib = 0.0;
-                for (uint word = 0u; word < 4u; word++) {
-                    uint gate_packed = gate_quant[word];
-                    uint up_packed = up_quant[word];
-                    uint gate_low = gate_packed & 0x0f0f0f0fu;
-                    uint gate_high_bits = (gate_packed >> 4u) & 0x0f0f0f0fu;
-                    uint up_low = up_packed & 0x0f0f0f0fu;
-                    uint up_high_bits = (up_packed >> 4u) & 0x0f0f0f0fu;
-                    if (gate_q5) {
-                        gate_low |= ((gate_high[word] >> group_a) & 0x01010101u) << 4u;
-                        gate_high_bits |= ((gate_high[word] >> group_b) & 0x01010101u) << 4u;
+                    float activation_delta = uintBitsToFloat(q8[act_base]);
+                    float gate_ia = 0.0;
+                    float gate_ib = 0.0;
+                    float up_ia = 0.0;
+                    float up_ib = 0.0;
+                    for (uint word = 0u; word < 4u; word++) {
+                        uint gate_packed = gate_quant[word];
+                        uint up_packed = up_quant[word];
+                        uint gate_low = gate_packed & 0x0f0f0f0fu;
+                        uint gate_high_bits = (gate_packed >> 4u) & 0x0f0f0f0fu;
+                        uint up_low = up_packed & 0x0f0f0f0fu;
+                        uint up_high_bits = (up_packed >> 4u) & 0x0f0f0f0fu;
+                        if (gate_q5) {
+                            gate_low |= ((gate_high[word] >> group_a) & 0x01010101u) << 4u;
+                            gate_high_bits |= ((gate_high[word] >> group_b) & 0x01010101u) << 4u;
+                        }
+                        if (up_q5) {
+                            up_low |= ((up_high[word] >> group_a) & 0x01010101u) << 4u;
+                            up_high_bits |= ((up_high[word] >> group_b) & 0x01010101u) << 4u;
+                        }
+                        uint a_word = word == 0u ? act_a01.x : word == 1u ? act_a01.y :
+                                      word == 2u ? act_a23.x : act_a23.y;
+                        uint b_word = word == 0u ? act_b01.x : word == 1u ? act_b01.y :
+                                      word == 2u ? act_b23.x : act_b23.y;
+                        vec4 a_value = vec4(unpack8(int(a_word)));
+                        vec4 b_value = vec4(unpack8(int(b_word)));
+                        gate_ia += dot4f(gate_low, a_value);
+                        gate_ib += dot4f(gate_high_bits, b_value);
+                        up_ia += dot4f(up_low, a_value);
+                        up_ib += dot4f(up_high_bits, b_value);
                     }
-                    if (up_q5) {
-                        up_low |= ((up_high[word] >> group_a) & 0x01010101u) << 4u;
-                        up_high_bits |= ((up_high[word] >> group_b) & 0x01010101u) << 4u;
-                    }
-                    uint a_word = word == 0u ? act_a01.x : word == 1u ? act_a01.y :
-                                  word == 2u ? act_a23.x : act_a23.y;
-                    uint b_word = word == 0u ? act_b01.x : word == 1u ? act_b01.y :
-                                  word == 2u ? act_b23.x : act_b23.y;
-                    vec4 a_value = vec4(unpack8(int(a_word)));
-                    vec4 b_value = vec4(unpack8(int(b_word)));
-                    gate_ia += dot4f(gate_low, a_value);
-                    gate_ib += dot4f(gate_high_bits, b_value);
-                    up_ia += dot4f(up_low, a_value);
-                    up_ib += dot4f(up_high_bits, b_value);
-                }
 
-                if (gate_active) {
-                    float gate_scale = gate_a.x * gate_ia + gate_b.x * gate_ib;
-                    gate_acc = fma(gate_dm.x * activation_delta, gate_scale, gate_acc);
-                }
-                if (up_active) {
-                    float up_scale = up_a.x * up_ia + up_b.x * up_ib;
-                    up_acc = fma(up_dm.x * activation_delta, up_scale, up_acc);
-                }
-                if (sub == 0u) {
-                    uvec2 sums = q8p[act_vec + 33u + group_pair];
                     if (gate_active) {
-                        int gate_minimum = int(gate_a.y) * sum32(sums.x) +
-                            int(gate_b.y) * sum32(sums.y);
-                        gate_min = fma(-gate_dm.y * activation_delta,
-                                       float(gate_minimum), gate_min);
+                        float gate_scale = gate_a.x * gate_ia + gate_b.x * gate_ib;
+                        gate_acc = fma(gate_dm.x * activation_delta, gate_scale, gate_acc);
                     }
                     if (up_active) {
-                        int up_minimum = int(up_a.y) * sum32(sums.x) +
-                            int(up_b.y) * sum32(sums.y);
-                        up_min = fma(-up_dm.y * activation_delta,
-                                     float(up_minimum), up_min);
+                        float up_scale = up_a.x * up_ia + up_b.x * up_ib;
+                        up_acc = fma(up_dm.x * activation_delta, up_scale, up_acc);
+                    }
+                    if (sub == 0u) {
+                        uvec2 sums = q8p[act_vec + 33u + group_pair];
+                        if (gate_active) {
+                            int gate_minimum = int(gate_a.y) * sum32(sums.x) +
+                                int(gate_b.y) * sum32(sums.y);
+                            gate_min = fma(-gate_dm.y * activation_delta,
+                                           float(gate_minimum), gate_min);
+                        }
+                        if (up_active) {
+                            int up_minimum = int(up_a.y) * sum32(sums.x) +
+                                int(up_b.y) * sum32(sums.y);
+                            up_min = fma(-up_dm.y * activation_delta,
+                                         float(up_minimum), up_min);
+                        }
                     }
                 }
-            }
-            if (gate_q8) {
-                uint s_global = block * 8u + lane;
-                uint scale_byte = gate_q8_base + (s_global * 16u + tile_row_q8) * 2u;
-                vec2 scale = unpackHalf2x16(gws[scale_byte >> 2u]);
-                float delta = (scale_byte & 2u) == 0u ? scale.x : scale.y;
-                uint quant_byte = gate_q8_base + q8_quant_offset +
-                    (tile_row_q8 * q8_blocks + s_global) * 32u;
-                uint act_word = act_base + 1u + s_global * 8u;
-                float sub_acc = 0.0;
-                for (uint i = 0u; i < 8u; i++)
-                    sub_acc += dot4f(gws[(quant_byte >> 2u) + i],
-                                     vec4(unpack8(int(q8[act_word + i]))));
-                gate_acc = fma(delta * uintBitsToFloat(q8[act_base]), sub_acc, gate_acc);
-            }
-            if (up_q8) {
-                uint s_global = block * 8u + lane;
-                uint scale_byte = up_q8_base + (s_global * 16u + tile_row_q8) * 2u;
-                vec2 scale = unpackHalf2x16(uws[scale_byte >> 2u]);
-                float delta = (scale_byte & 2u) == 0u ? scale.x : scale.y;
-                uint quant_byte = up_q8_base + q8_quant_offset +
-                    (tile_row_q8 * q8_blocks + s_global) * 32u;
-                uint act_word = act_base + 1u + s_global * 8u;
-                float sub_acc = 0.0;
-                for (uint i = 0u; i < 8u; i++)
-                    sub_acc += dot4f(uws[(quant_byte >> 2u) + i],
-                                     vec4(unpack8(int(q8[act_word + i]))));
-                up_acc = fma(delta * uintBitsToFloat(q8[act_base]), sub_acc, up_acc);
+                if (gate_q8) {
+                    uint s_global = block * 8u + lane;
+                    uint scale_byte = gate_q8_base + (s_global * 16u + tile_row_q8) * 2u;
+                    vec2 scale = unpackHalf2x16(gws[scale_byte >> 2u]);
+                    float delta = (scale_byte & 2u) == 0u ? scale.x : scale.y;
+                    uint quant_byte = gate_q8_base + q8_quant_offset +
+                        (tile_row_q8 * q8_blocks + s_global) * 32u;
+                    uint act_word = act_base + 1u + s_global * 8u;
+                    float sub_acc = 0.0;
+                    for (uint i = 0u; i < 8u; i++)
+                        sub_acc += dot4f(gws[(quant_byte >> 2u) + i],
+                                         vec4(unpack8(int(q8[act_word + i]))));
+                    gate_acc = fma(delta * uintBitsToFloat(q8[act_base]), sub_acc, gate_acc);
+                }
+                if (up_q8) {
+                    uint s_global = block * 8u + lane;
+                    uint scale_byte = up_q8_base + (s_global * 16u + tile_row_q8) * 2u;
+                    vec2 scale = unpackHalf2x16(uws[scale_byte >> 2u]);
+                    float delta = (scale_byte & 2u) == 0u ? scale.x : scale.y;
+                    uint quant_byte = up_q8_base + q8_quant_offset +
+                        (tile_row_q8 * q8_blocks + s_global) * 32u;
+                    uint act_word = act_base + 1u + s_global * 8u;
+                    float sub_acc = 0.0;
+                    for (uint i = 0u; i < 8u; i++)
+                        sub_acc += dot4f(uws[(quant_byte >> 2u) + i],
+                                         vec4(unpack8(int(q8[act_word + i]))));
+                    up_acc = fma(delta * uintBitsToFloat(q8[act_base]), sub_acc, up_acc);
+                }
             }
         }
     }
