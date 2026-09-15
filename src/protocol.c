@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <float.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
@@ -16,6 +17,62 @@ static uint64_t ntoh64_halves(uint32_t hi,uint32_t lo){return ((uint64_t)ntohl(h
 
 bool fg_protocol_version_supported(uint16_t version){
     return version>=FG_PROTOCOL_MIN_VERSION&&version<=FG_PROTOCOL_MAX_VERSION;
+}
+
+fg_status fg_output_split_mode(uint32_t *ways,fg_error *err){
+    if(!ways){fg_error_set(err,FG_ERR_ARGUMENT,"output split mode output is null");return FG_ERR_ARGUMENT;}
+    const char *value=getenv("FG_OUTPUT_SPLIT");
+    *ways=0u;
+    if(!value||!*value||strcmp(value,"0")==0)return FG_OK;
+    if(strcmp(value,"1")==0||strcmp(value,"2")==0){*ways=FG_OUTPUT_SPLIT_WAYS_MIN;return FG_OK;}
+    if(strcmp(value,"4")==0){*ways=FG_OUTPUT_SPLIT_WAYS_MAX;return FG_OK;}
+    fg_error_set(err,FG_ERR_ARGUMENT,
+                 "FG_OUTPUT_SPLIT=%s is not a supported split; use 0 (off), 1 or 2 (2-way) or 4 (4-way)",
+                 value);
+    return FG_ERR_ARGUMENT;
+}
+
+bool fg_output_split_requested(void){
+    uint32_t ways=0u;fg_error ignored={0};
+    if(fg_output_split_mode(&ways,&ignored)!=FG_OK)return false;
+    return ways!=0u;
+}
+
+bool fg_output_split_way_for_rank(uint32_t ways,uint32_t rank,uint32_t *way){
+    uint32_t slot=UINT32_MAX;
+    if(ways==FG_OUTPUT_SPLIT_WAYS_MIN){
+        if(rank==4u)slot=0u;
+        else if(rank==0u)slot=1u;
+    }else if(ways==FG_OUTPUT_SPLIT_WAYS_MAX){
+        if(rank==4u)slot=0u;
+        else if(rank==0u)slot=1u;
+        else if(rank==1u)slot=2u;
+        else if(rank==2u)slot=3u;
+    }
+    if(slot==UINT32_MAX)return false;
+    if(way)*way=slot;
+    return true;
+}
+
+uint32_t fg_output_split_rank(uint32_t ways,uint32_t way){
+    if(ways==FG_OUTPUT_SPLIT_WAYS_MIN)return way==0u?4u:way==1u?0u:UINT32_MAX;
+    if(ways==FG_OUTPUT_SPLIT_WAYS_MAX)
+        return way==0u?4u:way==1u?0u:way==2u?1u:way==3u?2u:UINT32_MAX;
+    return UINT32_MAX;
+}
+
+void fg_output_split_span(uint32_t ways,uint32_t way,uint32_t *first_row,uint32_t *rows){
+    uint32_t first=0u,count=0u;
+    if(ways==FG_OUTPUT_SPLIT_WAYS_MIN){
+        if(way==0u)count=FG_OUTPUT_SPLIT_FIRST_ROWS;
+        else if(way==1u){first=FG_OUTPUT_SPLIT_FIRST_ROWS;count=FG_Q38_VOCAB_SIZE-FG_OUTPUT_SPLIT_FIRST_ROWS;}
+    }else if(ways==FG_OUTPUT_SPLIT_WAYS_MAX&&way<FG_OUTPUT_SPLIT_WAYS_MAX){
+        uint32_t per=FG_Q38_VOCAB_SIZE/FG_OUTPUT_SPLIT_WAYS_MAX;
+        first=way*per;
+        count=way+1u==FG_OUTPUT_SPLIT_WAYS_MAX?FG_Q38_VOCAB_SIZE-first:per;
+    }
+    if(first_row)*first_row=first;
+    if(rows)*rows=count;
 }
 
 static bool message_type_supported(uint16_t version,fg_message_type type){
