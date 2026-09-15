@@ -21,7 +21,7 @@ struct fg_qsa_replica {
     pthread_cond_t drained;
     fg_status status;
     fg_error error;
-    uint32_t head,count,reserved;
+    uint32_t head,count,reserved,payload_bytes,payload_live;
     bool stop,thread_started,mutex_ready,ready_ready,drained_ready;
 };
 
@@ -67,21 +67,15 @@ static void replica_cleanup(fg_qsa_replica *replica){
 }
 
 fg_status fg_qsa_replica_create(fg_qsa_replica **out,fg_qsa_replica_send_fn send,
-                                void *context,fg_error *err){
-    if(!out||!send){
+                                void *context,uint32_t payload_bytes,fg_error *err){
+    if(!out||!send||!payload_bytes||payload_bytes>FG_QSA_PAGE_APPEND_MAX_BYTES){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA replica queue");
         return FG_ERR_ARGUMENT;
     }
     *out=NULL;fg_qsa_replica *replica=calloc(1,sizeof(*replica));
     if(!replica){fg_error_set(err,FG_ERR_OOM,"allocate QSA replica queue");return FG_ERR_OOM;}
     replica->send=send;replica->context=context;replica->status=FG_OK;
-    for(uint32_t i=0;i<FG_QSA_REPLICA_DEPTH;i++){
-        replica->slots[i].payload=malloc(FG_QSA_PAGE_APPEND_MAX_BYTES);
-        if(!replica->slots[i].payload){
-            fg_error_set(err,FG_ERR_OOM,"allocate bounded QSA replica slot");
-            replica_cleanup(replica);return FG_ERR_OOM;
-        }
-    }
+    replica->payload_bytes=payload_bytes;
     if(pthread_mutex_init(&replica->mutex,NULL)!=0){
         fg_error_set(err,FG_ERR_UNAVAILABLE,"initialize QSA replica mutex");
         replica_cleanup(replica);return FG_ERR_UNAVAILABLE;
@@ -122,9 +116,21 @@ fg_status fg_qsa_replica_reserve(fg_qsa_replica *replica,uint32_t count,
         return FG_ERR_LIMIT;
     }
     replica->reserved=count;
-    for(uint32_t i=0;i<count;i++)
-        buffers[i]=replica->slots[(replica->head+replica->count+i)%
-                                  FG_QSA_REPLICA_DEPTH].payload;
+    for(uint32_t i=0;i<count;i++){
+        replica_slot *slot=&replica->slots[(replica->head+replica->count+i)%
+                                          FG_QSA_REPLICA_DEPTH];
+        if(!slot->payload){
+            slot->payload=malloc(replica->payload_bytes);
+            if(!slot->payload){
+                replica->reserved=0;
+                pthread_mutex_unlock(&replica->mutex);
+                fg_error_set(err,FG_ERR_OOM,"allocate bounded QSA replica slot");
+                return FG_ERR_OOM;
+            }
+            replica->payload_live++;
+        }
+        buffers[i]=slot->payload;
+    }
     pthread_mutex_unlock(&replica->mutex);return FG_OK;
 }
 
@@ -149,7 +155,7 @@ fg_status fg_qsa_replica_commit(fg_qsa_replica *replica,
     }
     for(uint32_t i=0;i<count;i++){
         if(items[i].owner==0u||items[i].owner>=FG_RANK_COUNT||!items[i].session_id||
-           !items[i].bytes||items[i].bytes>FG_QSA_PAGE_APPEND_MAX_BYTES){
+           !items[i].bytes||items[i].bytes>replica->payload_bytes){
             replica->reserved=0;pthread_mutex_unlock(&replica->mutex);
             fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA replica item");
             return FG_ERR_ARGUMENT;
@@ -185,8 +191,8 @@ fg_status fg_qsa_replica_drain(fg_qsa_replica *replica,fg_error *err){
     pthread_mutex_unlock(&replica->mutex);return status;
 }
 
-static uint64_t replica_payload_bytes(void){
-    return (uint64_t)FG_QSA_REPLICA_DEPTH*FG_QSA_PAGE_APPEND_MAX_BYTES;
+static uint64_t replica_payload_bytes(uint32_t payload_bytes){
+    return (uint64_t)FG_QSA_REPLICA_DEPTH*payload_bytes;
 }
 
 static uint64_t replica_metadata_bytes(void){
@@ -194,11 +200,12 @@ static uint64_t replica_metadata_bytes(void){
 }
 
 uint64_t fg_qsa_replica_host_bytes(const fg_qsa_replica *replica){
-    return replica?replica_metadata_bytes()+replica_payload_bytes():0u;
+    return replica?replica_metadata_bytes()+
+        (uint64_t)replica->payload_live*replica->payload_bytes:0u;
 }
 
-uint64_t fg_qsa_replica_host_bytes_for_capacity(void){
-    return replica_metadata_bytes()+replica_payload_bytes();
+uint64_t fg_qsa_replica_host_bytes_for_capacity(uint32_t payload_bytes){
+    return replica_metadata_bytes()+replica_payload_bytes(payload_bytes);
 }
 
 void fg_qsa_replica_destroy(fg_qsa_replica *replica){replica_cleanup(replica);}
