@@ -13,6 +13,7 @@ Two parts, both local-only:
 |---|---|
 | `73152f4` | 4-way split mode, slice-hidden protocol, foreign loader, runtime plumbing |
 | `b68aff5` | layout/view-slice/combine oracles and the eight-process 4-way mesh |
+| `7a41057` | uniform missing-slice-executor check and this document |
 
 ## 1. Design: the 4-way split
 
@@ -50,9 +51,12 @@ define the layout (rows are tile aligned in both modes):
 
 2-way stays exactly as qualified: way 0 = rank 4 `[0, 140048)`, way 1 = rank 0
 `[140048, 248320)` (8753 + 6767 tiles).  The 4-way slice assignment was chosen
-so the two foreign slices land on ranks 1 and 2, which are idle when the head
-runs: rank 7 ends the chain and must stay free for the next token's first hop,
-and ranks 3/5/6 have less memory headroom than 1/2 on this pack.
+so the two foreign slices land on ranks 1 and 2: they are the first two chain
+owners and therefore idle when the head runs, while rank 7 must stay free for
+the next token's first hop.  Sealed-weight sizes on the recorded 4K session
+(`ab-20260913-204953`) are 9.49/9.45/9.47/9.45/9.40/9.60 GiB for ranks
+1/2/3/5/6/7, so any worker fits the +169 MB slice; 1 and 2 are the natural
+first two.
 
 ### 1.3 Payload flow: hidden broadcast, not hyper fanout
 
