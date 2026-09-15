@@ -476,7 +476,7 @@ static fg_status open_decode_config(fg_qsa_session **out,fg_model *model,const c
     for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
         if((coordinator&&!owned_only)||manifest->layer_owner[layer]==rank)
             s->layers[s->layer_count++]=(uint8_t)layer;
-    uint32_t expected_layers=(coordinator&&!owned_only)?FG_QSA_MAX_LAYERS:
+    uint32_t expected_layers=coordinator?FG_QSA_MAX_LAYERS:
                 FG_QSA_OWNER_LAYERS;
     if(!s->layer_count||s->layer_count>expected_layers){
         fg_error_set(err,FG_ERR_MISMATCH,"rank %u has %u QSA layers, expected %u",
