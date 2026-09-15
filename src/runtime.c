@@ -2038,6 +2038,7 @@ static fg_status handle_output_partial(fg_fabric *fabric,fg_output_executor *out
         fg_error_set(err,FG_ERR_MISMATCH,"stale or misrouted output partial");
         status=FG_ERR_MISMATCH;
     }
+    if(status==FG_OK&&!state->have_config)return FG_OK;
     if(status==FG_OK)status=fg_output_handoff_partial(state,partial.token_index,(uint8_t)peer,
         partial.value,partial.id,err);
     if(status==FG_OK)status=worker_output_handoff_flush(fabric,output,output_slice,vk,self,

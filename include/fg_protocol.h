@@ -423,7 +423,19 @@ typedef struct fg_output_config {
 #define FG_OUTPUT_CONFIG_FLAG_SPLIT_4 2u
 
 #define FG_OUTPUT_PARTIAL_BYTES 12u
+#define FG_OUTPUT_SPLIT_FIRST_ROWS 140048u
+#define FG_OUTPUT_SPLIT_WAYS_MIN 2u
 #define FG_OUTPUT_SPLIT_WAYS_MAX 4u
+
+/* FG_OUTPUT_SPLIT: unset/0 disables the split, 1 or 2 select the 2-way split
+ * and 4 selects the 4-way split.  Any other value is an error: the mode is
+ * parsed once per rank at startup so a partial or invalid configuration fails
+ * with a message instead of hanging on a missing partial. */
+fg_status fg_output_split_mode(uint32_t *ways,fg_error *err);
+bool fg_output_split_requested(void);
+bool fg_output_split_way_for_rank(uint32_t ways,uint32_t rank,uint32_t *way);
+uint32_t fg_output_split_rank(uint32_t ways,uint32_t way);
+void fg_output_split_span(uint32_t ways,uint32_t way,uint32_t *first_row,uint32_t *rows);
 
 typedef struct fg_output_partial {
     uint32_t token_index;

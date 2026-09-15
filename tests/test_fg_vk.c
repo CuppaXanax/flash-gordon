@@ -2941,6 +2941,148 @@ static int test_output_split_combine(void){
     free(ids);free(scores);return ok;
 }
 
+static int test_output_split_layout(void){
+    fg_error error={0};uint32_t ways=0u,way=0u,first=0u,rows=0u;
+    int ok=1;
+    unsetenv("FG_OUTPUT_SPLIT");
+    ok=ok&&fg_output_split_mode(&ways,&error)==FG_OK&&ways==0u&&!fg_output_split_requested();
+    setenv("FG_OUTPUT_SPLIT","0",1);
+    ok=ok&&fg_output_split_mode(&ways,&error)==FG_OK&&ways==0u&&!fg_output_split_requested();
+    setenv("FG_OUTPUT_SPLIT","1",1);
+    ok=ok&&fg_output_split_mode(&ways,&error)==FG_OK&&ways==2u&&fg_output_split_requested();
+    setenv("FG_OUTPUT_SPLIT","2",1);
+    ok=ok&&fg_output_split_mode(&ways,&error)==FG_OK&&ways==2u;
+    setenv("FG_OUTPUT_SPLIT","4",1);
+    ok=ok&&fg_output_split_mode(&ways,&error)==FG_OK&&ways==4u&&fg_output_split_requested();
+    setenv("FG_OUTPUT_SPLIT","3",1);
+    ok=ok&&fg_output_split_mode(&ways,&error)!=FG_OK&&error.message[0];
+    setenv("FG_OUTPUT_SPLIT","four",1);
+    ok=ok&&fg_output_split_mode(&ways,&error)!=FG_OK;
+    unsetenv("FG_OUTPUT_SPLIT");
+    ok=ok&&fg_output_split_way_for_rank(2u,4u,&way)&&way==0u;
+    ok=ok&&fg_output_split_way_for_rank(2u,0u,&way)&&way==1u;
+    ok=ok&&!fg_output_split_way_for_rank(2u,1u,&way);
+    for(uint32_t rank=0;rank<FG_RANK_COUNT&&ok;rank++)
+        ok=fg_output_split_way_for_rank(2u,rank,&way)==(rank==4u||rank==0u);
+    static const uint32_t quad_ranks[4]={4u,0u,1u,2u};
+    for(uint32_t index=0;index<4u&&ok;index++){
+        ok=fg_output_split_rank(4u,index)==quad_ranks[index];
+        ok=ok&&fg_output_split_way_for_rank(4u,quad_ranks[index],&way)&&way==index;
+    }
+    ok=ok&&!fg_output_split_way_for_rank(4u,7u,&way);
+    ok=ok&&fg_output_split_rank(4u,4u)==UINT32_MAX;
+    uint32_t cursor=0u;
+    for(uint32_t index=0;index<2u&&ok;index++){
+        fg_output_split_span(2u,index,&first,&rows);
+        ok=first==cursor&&rows>0u&&rows%FG_Q8_0_COOK_ROWS==0u;
+        cursor+=rows;
+    }
+    ok=ok&&cursor==FG_Q38_VOCAB_SIZE;
+    cursor=0u;
+    for(uint32_t index=0;index<4u&&ok;index++){
+        fg_output_split_span(4u,index,&first,&rows);
+        ok=first==cursor&&rows==FG_Q38_VOCAB_SIZE/4u&&rows%FG_Q8_0_COOK_ROWS==0u;
+        cursor+=rows;
+    }
+    ok=ok&&cursor==FG_Q38_VOCAB_SIZE;
+    ok=ok&&fg_output_slice_ways(NULL)==0u;
+    return ok;
+}
+
+static int test_output_split_combine_4way(void){
+    enum{COUNT=10240,WAY=COUNT/4u};
+    float *scores=malloc((size_t)COUNT*4u);uint32_t *ids=malloc((size_t)COUNT*4u);
+    if(!scores||!ids){free(ids);free(scores);return 0;}
+    int ok=1;
+    for(uint32_t trial=0;trial<8u&&ok;trial++){
+        for(uint32_t i=0;i<COUNT;i++){
+            scores[i]=sinf((float)(i+1u)*(float)(trial+1u)*0.0027f)*2.0f;
+            ids[i]=i;
+        }
+        if(trial==1u){scores[10]=5.0f;scores[COUNT-1u]=5.0f;}
+        else if(trial==2u)scores[WAY*2u+7u]=NAN;
+        else if(trial==3u){scores[WAY]=INFINITY;scores[WAY*3u+3u]=INFINITY;}
+        else if(trial==4u)for(uint32_t i=0;i<COUNT;i++)scores[i]=1.0f;
+        else if(trial==5u)scores[0]=NAN;
+        else if(trial==6u)scores[WAY-1u]=4.0f;
+        else if(trial==7u){scores[WAY]=5.0f;scores[WAY+1u]=5.0f;scores[WAY*2u]=5.0f;}
+        float ref_value=scores[0];uint32_t ref_id=ids[0];
+        for(uint32_t i=1u;i<COUNT;i++)
+            if(fg_output_better(scores[i],ids[i],ref_value,ref_id)){
+                ref_value=scores[i];ref_id=ids[i];
+            }
+        float slice_value[4];uint32_t slice_id[4];
+        for(uint32_t w=0u;w<4u;w++){
+            slice_value[w]=scores[w*WAY];slice_id[w]=ids[w*WAY];
+            for(uint32_t i=1u;i<WAY;i++){
+                uint32_t index=w*WAY+i;
+                if(fg_output_better(scores[index],ids[index],slice_value[w],slice_id[w])){
+                    slice_value[w]=scores[index];slice_id[w]=ids[index];
+                }
+            }
+        }
+        static const uint32_t orders[3][4]={{0u,1u,2u,3u},{3u,1u,0u,2u},{2u,0u,3u,1u}};
+        for(uint32_t order=0;order<3u&&ok;order++){
+            float value=slice_value[orders[order][0]];
+            uint32_t id=slice_id[orders[order][0]];
+            for(uint32_t i=1u;i<4u;i++)
+                fg_output_combine(slice_value[orders[order][i]],slice_id[orders[order][i]],
+                                  value,id,&value,&id);
+            bool same=id==ref_id&&(value==ref_value||(isnan(value)&&isnan(ref_value)));
+            if(!same){
+                fprintf(stderr,"4-way combine trial %u order %u id %u ref %u\n",
+                    trial,order,id,ref_id);
+                ok=0;break;
+            }
+        }
+    }
+    free(ids);free(scores);return ok;
+}
+
+static int test_q8_cooked_view_slice_quad(void){
+    enum{INPUT=2560,ROWS=128,WAY=32};
+    uint32_t blocks=INPUT/32u,source_row=blocks*FG_Q8_0_BLOCK_BYTES;
+    uint64_t source_bytes=(uint64_t)ROWS*source_row,
+             cooked_bytes=fg_q8_0_cooked_matrix_bytes(INPUT,ROWS),
+             tile=fg_q8_0_cooked_tile_bytes(INPUT);
+    float *source=malloc((size_t)INPUT*ROWS*4u),input[INPUT],full[ROWS],slice[WAY];
+    uint8_t *quantized=malloc((size_t)source_bytes),*cooked=malloc((size_t)cooked_bytes);
+    if(!source||!quantized||!cooked){free(cooked);free(quantized);free(source);return 0;}
+    for(uint32_t row=0;row<ROWS;row++){
+        for(uint32_t i=0;i<INPUT;i++)
+            source[(uint64_t)row*INPUT+i]=sinf((float)((uint64_t)row*INPUT+i)*0.0017f)+
+                0.3f*cosf((float)i*0.011f);
+        fg_quantize_q8_0(source+(uint64_t)row*INPUT,
+                         quantized+(uint64_t)row*source_row,INPUT);
+    }
+    for(uint32_t i=0;i<INPUT;i++)
+        input[i]=cosf((float)(i+7u)*0.013f)-0.2f*sinf((float)i*0.0031f);
+    int ok=fg_cook_q8_0_rows(quantized,cooked,cooked_bytes,INPUT,ROWS);
+    fg_vk_tensor *w=ok?tensor(cooked,cooked_bytes):NULL,*x=ok?tensor(input,sizeof(input)):NULL,
+        *y=ok?tensor(NULL,(uint64_t)ROWS*4u):NULL,*z=ok?tensor(NULL,(uint64_t)WAY*4u):NULL;
+    if(w)fg_vk_tensor_set_format(w,FG_VK_TENSOR_FORMAT_Q8_0_COOKED);
+    ok=ok&&w&&x&&y&&z&&
+        fg_vk_dense_q8_0_f32(context,y,w,x,INPUT,ROWS,1u,1.0f,&error)==FG_OK&&
+        fg_vk_tensor_read(y,0,full,sizeof(full),&error)==FG_OK;
+    for(uint32_t way=0;way<4u&&ok;way++){
+        fg_vk_tensor *view=NULL;
+        ok=fg_vk_tensor_view(w,(uint64_t)((way*WAY)/FG_Q8_0_COOK_ROWS)*tile,
+            fg_q8_0_cooked_matrix_bytes(INPUT,WAY),&view,&error)==FG_OK;
+        ok=ok&&view&&fg_vk_tensor_get_format(view)==FG_VK_TENSOR_FORMAT_Q8_0_COOKED&&
+            fg_vk_dense_q8_0_f32(context,z,view,x,INPUT,WAY,1u,1.0f,&error)==FG_OK&&
+            fg_vk_tensor_read(z,0,slice,sizeof(slice),&error)==FG_OK;
+        for(uint32_t row=0;ok&&row<WAY;row++)
+            if(memcmp(&slice[row],&full[way*WAY+row],sizeof(float))!=0){
+                fprintf(stderr,"quad slice %u row %u GPU=%g full=%g\n",
+                    way,row,slice[row],full[way*WAY+row]);
+                ok=0;
+            }
+        fg_vk_tensor_destroy(view);
+    }
+    fg_vk_tensor_destroy(z);fg_vk_tensor_destroy(y);fg_vk_tensor_destroy(x);
+    fg_vk_tensor_destroy(w);free(cooked);free(quantized);free(source);return ok;
+}
+
 static int dense_decode_shape_case(const char *name,uint32_t input_width,uint32_t rows,uint32_t splits){
     uint32_t blocks=input_width/FG_QK8_0;
     uint64_t source_row=(uint64_t)blocks*FG_Q8_0_BLOCK_BYTES,source_bytes=(uint64_t)rows*source_row,
@@ -3083,7 +3225,10 @@ ok=run_test("topk_reduce_chunked_parity",test_topk_reduce_chunked_parity)&&ok;
 ok=run_test("generation_topk_selector",test_generation_topk_selector)&&ok;
 ok=run_test("output_argmax",test_output_argmax)&&ok;
 ok=run_test("output_split_combine",test_output_split_combine)&&ok;
+ok=run_test("output_split_layout",test_output_split_layout)&&ok;
+ok=run_test("output_split_combine_4way",test_output_split_combine_4way)&&ok;
 ok=run_test("q8_cooked_view_slice",test_q8_cooked_view_slice)&&ok;
+ok=run_test("q8_cooked_view_slice_quad",test_q8_cooked_view_slice_quad)&&ok;
 ok=run_test("qsa_prefill_prepare",test_qsa_prefill_prepare)&&ok;
 ok=run_test("qsa_attention_single",test_qsa_attention_single)&&ok;
 ok=run_test("qsa_attention",test_qsa_attention)&&ok;
