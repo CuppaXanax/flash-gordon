@@ -439,6 +439,7 @@ static fg_status open_decode_config(fg_qsa_session **out,fg_model *model,const c
                                     uint32_t logical_context,uint32_t hot_tokens,
                                     uint32_t cache_pages,uint32_t batch_size,
                                     fg_vk_tensor *shared_scratch,
+                                    bool owned_only,
                                     fg_qsa_page_fetch_fn fetch_pages,void *fetch_opaque,
                                     fg_error *err){
     (void)hot_tokens;
@@ -473,9 +474,9 @@ static fg_status open_decode_config(fg_qsa_session **out,fg_model *model,const c
     s->fetch_opaque=fetch_opaque;
     if(coordinator)s->locality=fg_qsa_locality_create_from_env(s->max_blocks,0u);
     for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
-        if(coordinator||manifest->layer_owner[layer]==rank)
+        if((coordinator&&!owned_only)||manifest->layer_owner[layer]==rank)
             s->layers[s->layer_count++]=(uint8_t)layer;
-    uint32_t expected_layers=coordinator?FG_QSA_MAX_LAYERS:
+    uint32_t expected_layers=(coordinator&&!owned_only)?FG_QSA_MAX_LAYERS:
                 FG_QSA_OWNER_LAYERS;
     if(!s->layer_count||s->layer_count>expected_layers){
         fg_error_set(err,FG_ERR_MISMATCH,"rank %u has %u QSA layers, expected %u",
@@ -599,7 +600,7 @@ fg_status fg_qsa_session_open_decode(fg_qsa_session **out,fg_model *model,const 
         fg_error_set(err,FG_ERR_ARGUMENT,"decode QSA state path is null");return FG_ERR_ARGUMENT;
     }
     return open_decode_config(out,model,state_path,resident_tokens,resident_tokens,0u,batch_size,
-                              NULL,NULL,NULL,err);
+                              NULL,false,NULL,NULL,err);
 }
 
 /* State-backed worker session: the owner computes its QSA layers and persists
@@ -615,7 +616,7 @@ fg_status fg_qsa_session_open_state(fg_qsa_session **out,fg_model *model,
         return FG_ERR_ARGUMENT;
     }
     return open_decode_config(out,model,state_path,logical_context,hot_tokens,
-                              cache_pages,batch_size,NULL,NULL,NULL,err);
+                              cache_pages,batch_size,NULL,false,NULL,NULL,err);
 }
 
 fg_status fg_qsa_session_open_mirror(fg_qsa_session **out,fg_model *model,
@@ -628,7 +629,7 @@ fg_status fg_qsa_session_open_mirror(fg_qsa_session **out,fg_model *model,
         return FG_ERR_ARGUMENT;
     }
     return open_decode_config(out,model,NULL,logical_context,hot_tokens,cache_pages,batch_size,
-                              NULL,fetch_pages,fetch_opaque,err);
+                              NULL,false,fetch_pages,fetch_opaque,err);
 }
 
 fg_status fg_qsa_session_open_mirror_with_scratch(
@@ -644,7 +645,7 @@ fg_status fg_qsa_session_open_mirror_with_scratch(
         return FG_ERR_ARGUMENT;
     }
     return open_decode_config(out,model,NULL,logical_context,hot_tokens,cache_pages,batch_size,
-                              scratch,fetch_pages,fetch_opaque,err);
+                              scratch,false,fetch_pages,fetch_opaque,err);
 }
 
 /* Coordinator variant: the session keeps a state file for the layers this rank
@@ -654,7 +655,7 @@ fg_status fg_qsa_session_open_mirror_with_scratch(
 fg_status fg_qsa_session_open_state_mirror_with_scratch(
     fg_qsa_session **out,fg_model *model,const char *state_path,uint32_t logical_context,
     uint32_t hot_tokens,uint32_t cache_pages,uint32_t batch_size,fg_vk_tensor *scratch,
-    fg_qsa_page_fetch_fn fetch_pages,void *fetch_opaque,fg_error *err){
+    bool owned_only,fg_qsa_page_fetch_fn fetch_pages,void *fetch_opaque,fg_error *err){
     if(!state_path){
         fg_error_set(err,FG_ERR_ARGUMENT,"QSA state mirror path is null");
         return FG_ERR_ARGUMENT;
@@ -669,7 +670,7 @@ fg_status fg_qsa_session_open_state_mirror_with_scratch(
         return FG_ERR_ARGUMENT;
     }
     return open_decode_config(out,model,state_path,logical_context,hot_tokens,cache_pages,
-                              batch_size,scratch,fetch_pages,fetch_opaque,err);
+                              batch_size,scratch,owned_only,fetch_pages,fetch_opaque,err);
 }
 
 void fg_qsa_session_close(fg_qsa_session *s){if(!s)return;fg_vk_tensor_destroy(s->attn_partials);for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(s->sel_scores[i]);fg_vk_tensor_destroy(s->sel_ids[i]);}fg_vk_tensor_destroy(s->sel_result_ids);fg_vk_tensor_destroy(s->batch_records);fg_vk_tensor_destroy(s->batch_partials);fg_vk_tensor_destroy(s->batch_slots);fg_vk_tensor_destroy(s->batch_counts);for(uint32_t q=0;q<FG_QSA_PREFILL_QUERY_TILE;q++){fg_vk_tensor_destroy(s->tile_records[q]);for(uint32_t side=0;side<2u;side++){fg_vk_tensor_destroy(s->tile_scores[q][side]);fg_vk_tensor_destroy(s->tile_ids[q][side]);}}fg_qsa_locality_destroy(s->locality,"close");fg_qsa_page_cache_destroy(s->cache);free(s->select_ids);free(s->read_records);free(s->position_written);fg_vk_tensor_destroy(s->index_key_q8_view);fg_vk_tensor_destroy(s->value_q4_view);fg_vk_tensor_destroy(s->key_q8_view);fg_vk_tensor_destroy(s->attention_view);fg_vk_tensor_destroy(s->gate_view);fg_vk_tensor_destroy(s->query_view);fg_vk_tensor_destroy(s->index_query_view);fg_vk_tensor_destroy(s->token_position_view);fg_vk_tensor_destroy(s->position_view);fg_vk_tensor_destroy(s->output);fg_vk_tensor_destroy(s->attention);fg_vk_tensor_destroy(s->selected_records);for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(s->ids[i]);fg_vk_tensor_destroy(s->scores[i]);}fg_vk_tensor_destroy(s->index_key_q8);fg_vk_tensor_destroy(s->value_q4);fg_vk_tensor_destroy(s->key_q8);fg_vk_tensor_destroy(s->index_query);fg_vk_tensor_destroy(s->raw_index_key);fg_vk_tensor_destroy(s->raw_index_query);fg_vk_tensor_destroy(s->key);fg_vk_tensor_destroy(s->gate);fg_vk_tensor_destroy(s->query);fg_vk_tensor_destroy(s->raw_value);fg_vk_tensor_destroy(s->raw_key);fg_vk_tensor_destroy(s->raw_query_gate);for(uint32_t i=0;i<FG_QSA_MAX_LAYERS;i++)for(uint32_t segment=0;segment<FG_QSA_INDEX_MAX_SEGMENTS;segment++){fg_vk_tensor_destroy(s->records[i][segment]);fg_vk_tensor_destroy(s->index_keys[i][segment]);}fg_vk_tensor_destroy(s->cache_records);fg_vk_tensor_destroy(s->positions);fg_qsa_state_close(s->state);free(s);}

@@ -5,6 +5,18 @@
 #include "fg_prefix.h"
 #include "fg_sampler.h"
 
+#include <stdlib.h>
+#include <string.h>
+
+/* Both ring halves must be active for the executor to spend its Vulkan budget
+ * on the layers this rank actually executes. */
+static inline bool fg_runtime_ring_enabled(void){
+    const char *prefill=getenv("FG_PREFILL_RING");
+    const char *decode=getenv("FG_DECODE_RING");
+    return prefill&&*prefill&&strcmp(prefill,"0")!=0&&
+           decode&&*decode&&strcmp(decode,"0")!=0;
+}
+
 typedef struct fg_runtime fg_runtime;
 #define FG_RUNTIME_BOOT_CONTEXT_TOKENS FG_MANIFEST_DEFAULT_CONTEXT_TOKENS
 #define FG_RUNTIME_QSA_HOT_TOKENS 8192u

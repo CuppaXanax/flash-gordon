@@ -2378,9 +2378,17 @@ static void coordinator_memory_report(const fg_coordinator *coordinator){
     uint64_t physical=coordinator_physical_memory_bytes();
     uint64_t logical=coordinator->options.logical_context_tokens;
     uint32_t cache_page_count=coordinator_qsa_cache_pages(&coordinator->options);
+    bool ring=coordinator->ring_prefill&&coordinator->ring_decode;
+    uint32_t qsa_layers=0,gdn_layers=0;bool ple_state=false;
+    for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){
+        bool owned=coordinator->manifest->layer_owner[layer]==0u||!ring;
+        if((layer&3u)==3u){if(owned)qsa_layers++;}
+        else if(owned)gdn_layers++;
+        if(layer==1u&&owned)ple_state=true;
+    }
     /* Index segments after the first are lazy, so the startup ledger counts
      * only the eager first segment per QSA layer. */
-    uint64_t index=(uint64_t)fg_qsa_index_segment_tokens(logical,0u)*12u*
+    uint64_t index=(uint64_t)fg_qsa_index_segment_tokens(logical,0u)*qsa_layers*
         FG_Q38_QSA_INDEX_KEY_BYTES;
     uint64_t record_cache=(uint64_t)cache_page_count*FG_QSA_PAGE_RECORD_BYTES;
     uint32_t ngram_store_tokens=coordinator->manifest->prefill_microbatch<=FG_NGRAM_PREFILL_MAX_TOKENS/FG_PREFILL_FRAMES?FG_PREFILL_FRAMES*coordinator->manifest->prefill_microbatch:FG_NGRAM_PREFILL_MAX_TOKENS;
@@ -2393,8 +2401,8 @@ static void coordinator_memory_report(const fg_coordinator *coordinator){
         logical,coordinator->manifest->prefill_microbatch);
     uint64_t owner_family=fg_qsa_attention_family_scratch_bytes(
         coordinator->manifest->prefill_microbatch);
-    uint64_t owner_state=(uint64_t)(FG_LAYER_COUNT-FG_LAYER_COUNT/4u)*
-        (10240u*4u*4u+48u*128u*128u*4u)+10240u*9u*4u;
+    uint64_t owner_state=(uint64_t)gdn_layers*
+        (10240u*4u*4u+48u*128u*128u*4u)+(ple_state?10240u*9u*4u:0u);
     uint64_t owner_pingpong=(uint64_t)coordinator->manifest->prefill_microbatch*
         10240u*4u*2u;
     uint64_t owner_activation=(uint64_t)coordinator->manifest->prefill_microbatch*
@@ -2402,7 +2410,7 @@ static void coordinator_memory_report(const fg_coordinator *coordinator){
     uint64_t expert_activation=owner_activation;
     uint64_t qsa_positions=logical*FG_Q38_QSA_POSITION_BYTES;
     uint64_t qsa_index=(uint64_t)fg_qsa_index_segment_tokens(logical,0u)*
-        (FG_LAYER_COUNT/4u)*FG_Q38_QSA_INDEX_KEY_BYTES;
+        qsa_layers*FG_Q38_QSA_INDEX_KEY_BYTES;
     uint64_t qsa_record_cache=record_cache;
     uint64_t prefill_token=(uint64_t)coordinator->prefill_layer[0].tokens*
         sizeof(uint32_t)*FG_PREFILL_FRAMES;
@@ -4165,6 +4173,7 @@ static fg_status coordinator_open_qsa(fg_coordinator *coordinator,const char *di
                                       uint32_t logical_context,uint32_t cache_pages,
                                       fg_error *err){
     const fg_manifest *manifest=coordinator->manifest;
+    bool ring=fg_runtime_ring_enabled();
     bool owns_qsa=false;
     for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
         if(manifest->layer_owner[layer]==0u)owns_qsa=true;
@@ -4180,8 +4189,11 @@ static fg_status coordinator_open_qsa(fg_coordinator *coordinator,const char *di
     }
     unlink(path);
     uint8_t layers[FG_LAYER_COUNT/4u];uint32_t layer_count=0;
+    /* Ring decode executes each QSA layer on its block owner, so the state
+     * mirror only needs the layers this rank actually runs. */
     for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
-        layers[layer_count++]=(uint8_t)layer;
+        if(!ring||manifest->layer_owner[layer]==0u)
+            layers[layer_count++]=(uint8_t)layer;
     fg_qsa_state *state=NULL;
     fg_status status=fg_qsa_state_open(&state,path,layers,layer_count,logical_context,
                                        true,err);
@@ -4189,7 +4201,7 @@ static fg_status coordinator_open_qsa(fg_coordinator *coordinator,const char *di
     if(status!=FG_OK)return status;
     return fg_owner_qsa_open_state_mirror(coordinator->owner,path,logical_context,
         coordinator->options.qsa_hot_tokens,cache_pages,manifest->prefill_microbatch,
-        coordinator_fetch_qsa_pages,coordinator,err);
+        ring,coordinator_fetch_qsa_pages,coordinator,err);
 }
 
 static fg_status coordinator_open(fg_coordinator *coordinator,const fg_manifest *manifest,const char *directory,const fg_runtime_options *options,fg_error *err){memset(coordinator,0,sizeof(*coordinator));coordinator->manifest=manifest;coordinator->options=*options;fg_status status=fg_session_identity_from_manifest(manifest,&coordinator->identity,err);if(status==FG_OK&&manifest->protocol_version<6u){fg_error_set(err,FG_ERR_MISMATCH,"QSA page ownership requires protocol version 6");status=FG_ERR_MISMATCH;}if(status==FG_OK)status=fg_model_open_coordinator(&coordinator->model,manifest,directory,0u,err);if(status==FG_OK&&fg_output_split_requested())status=fg_output_slice_create(&coordinator->output_slice,coordinator->model,FG_OUTPUT_SPLIT_FIRST_ROWS,FG_Q38_VOCAB_SIZE-FG_OUTPUT_SPLIT_FIRST_ROWS,err);if(status==FG_OK)status=fg_owner_executor_create(&coordinator->owner,coordinator->model,err);if(status==FG_OK)status=fg_expert_executor_create(&coordinator->expert,coordinator->model,err);uint32_t cache_page_count=coordinator_qsa_cache_pages(options);if(status==FG_OK&&!cache_page_count){fg_error_set(err,FG_ERR_LIMIT,"QSA record cache has no capacity");status=FG_ERR_LIMIT;}if(status==FG_OK)status=coordinator_open_qsa(coordinator,directory,options->logical_context_tokens,cache_page_count,err);if(status==FG_OK)status=fg_tokenizer_open(&coordinator->tokenizer,directory,manifest,err);if(status==FG_OK)status=fg_tokenizer_validate_qwen38(coordinator->tokenizer,err);const fg_tensor_record *ngram_record=NULL;for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++)if(manifest->tensors[i].kind==FG_TENSOR_NGRAM){if(ngram_record){fg_error_set(err,FG_ERR_MISMATCH,"multiple n-gram tensors in deployment manifest");status=FG_ERR_MISMATCH;}else ngram_record=&manifest->tensors[i];}char ngram_path[1200];if(status==FG_OK&&!ngram_record){fg_error_set(err,FG_ERR_MISMATCH,"deployment manifest has no n-gram tensor");status=FG_ERR_MISMATCH;}if(status==FG_OK&&snprintf(ngram_path,sizeof(ngram_path),"%s/ngram.iq4nl",directory)>=(int)sizeof(ngram_path)){fg_error_set(err,FG_ERR_LIMIT,"n-gram path is too long");status=FG_ERR_LIMIT;}uint32_t ngram_store_tokens=manifest->prefill_microbatch<=FG_NGRAM_PREFILL_MAX_TOKENS/FG_PREFILL_FRAMES?FG_PREFILL_FRAMES*manifest->prefill_microbatch:FG_NGRAM_PREFILL_MAX_TOKENS;if(status==FG_OK)status=fg_ngram_store_open(&coordinator->ngram,fg_model_vk(coordinator->model),ngram_path,ngram_record->bytes,ngram_store_tokens,err);
