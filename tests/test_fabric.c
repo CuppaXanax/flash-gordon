@@ -184,6 +184,25 @@ static void protocol_output_handoff_selfcheck(void){
         sizeof(partial_wire)-1u,&error)!=FG_OK);
     fg_output_partial bad_partial=partial;bad_partial.id=FG_Q38_VOCAB_SIZE;
     PROTOCOL_CHECK(fg_output_partial_encode(partial_wire,&bad_partial,&error)!=FG_OK);
+    /* the split slice must re-route the final layer result to rank 0: the
+     * hidden payload alone names the output owner and must never be accepted
+     * by the coordinator's slice handler */
+    fg_layer_result slice_result={.layer=FG_LAYER_COUNT-1u,.source_rank=7u,
+        .destination_rank=4u,.token_index=17u};
+    slice_result.hyper[0]=1.5f;slice_result.hyper[FG_HYPER_WIDTH-1u]=-2.5f;
+    uint8_t slice_wire[FG_DECODE_LAYER_RESULT_BYTES];
+    PROTOCOL_CHECK(fg_decode_layer_result_encode(slice_wire,&slice_result,&error)==FG_OK);
+    fg_layer_result routed={0};
+    PROTOCOL_CHECK(fg_decode_layer_result_decode(&routed,slice_wire,
+        sizeof(slice_wire),&error)==FG_OK);
+    PROTOCOL_CHECK(routed.destination_rank==4u);
+    PROTOCOL_CHECK(routed.destination_rank!=0u);
+    PROTOCOL_CHECK(fg_output_slice_encode(slice_wire,&slice_result,&error)==FG_OK);
+    PROTOCOL_CHECK(fg_decode_layer_result_decode(&routed,slice_wire,
+        sizeof(slice_wire),&error)==FG_OK);
+    PROTOCOL_CHECK(routed.destination_rank==0u&&routed.source_rank==7u&&
+        routed.layer==FG_LAYER_COUNT-1u&&routed.token_index==17u&&
+        routed.hyper[0]==1.5f&&routed.hyper[FG_HYPER_WIDTH-1u]==-2.5f);
     /* the split handoff messages must pass frame validation on protocol 6 */
     fg_frame_header frame;uint32_t frame_bytes=0;
     PROTOCOL_CHECK(fg_output_config_encode(wire,&config,&error)==FG_OK);
@@ -266,17 +285,40 @@ static void protocol_output_handoff_selfcheck(void){
 }
 
 static fg_status output_handoff_roundtrip(fg_fabric *fabric,uint32_t rank,uint64_t request,fg_error *error){
-    enum{TOKEN_INDEX=77u,RESULT_TOKEN=123u};
+    enum{TOKEN_INDEX=77u,LOCAL_ID=100u,REMOTE_ID=200u,RESULT_TOKEN=REMOTE_ID};
+    const float LOCAL_VALUE=1.5f,REMOTE_VALUE=2.5f;
     uint8_t wire[FG_OUTPUT_WORK_BYTES];
     if(rank!=0u&&rank!=4u&&rank!=7u)return FG_OK;
     if(rank==0u){
         fg_output_config config={.source_rank=0u,.destination_rank=4u,
-            .token_index=TOKEN_INDEX,.uniform=0.5f};
+            .flags=FG_OUTPUT_CONFIG_FLAG_SPLIT,.token_index=TOKEN_INDEX,.uniform=0.5f};
         fg_status status=fg_output_config_encode(wire,&config,error);
         if(status==FG_OK)status=fg_fabric_send(fabric,4u,FG_FABRIC_CONTROL,
             FG_MSG_OUTPUT_CONFIG,request,TOKEN_INDEX*FG_LAYER_COUNT+FG_LAYER_COUNT,
             0,wire,FG_OUTPUT_CONFIG_BYTES,error);
         fg_frame_header header;uint32_t recv_bytes=0;
+        fg_layer_result slice;
+        if(status==FG_OK)status=fg_fabric_recv(fabric,7u,FG_FABRIC_BULK,&header,wire,
+            sizeof(wire),&recv_bytes,error);
+        if(status==FG_OK&&(fg_frame_type(&header)!=FG_MSG_OUTPUT_SLICE||
+           fg_frame_request_id(&header)!=request||
+           fg_frame_sequence(&header)!=TOKEN_INDEX*FG_LAYER_COUNT+FG_LAYER_COUNT-1u)){
+            fg_error_set(error,FG_ERR_MISMATCH,"invalid direct output slice frame");
+            status=FG_ERR_MISMATCH;
+        }
+        if(status==FG_OK)status=fg_decode_layer_result_decode(&slice,wire,recv_bytes,error);
+        if(status==FG_OK&&(slice.destination_rank!=0u||slice.source_rank!=7u||
+           slice.layer!=FG_LAYER_COUNT-1u||slice.token_index!=TOKEN_INDEX)){
+            fg_error_set(error,FG_ERR_MISMATCH,"misrouted direct output slice");
+            status=FG_ERR_MISMATCH;
+        }
+        fg_output_partial partial={.token_index=TOKEN_INDEX,.value=REMOTE_VALUE,
+            .id=REMOTE_ID};
+        uint8_t partial_wire[FG_OUTPUT_PARTIAL_BYTES];
+        if(status==FG_OK)status=fg_output_partial_encode(partial_wire,&partial,error);
+        if(status==FG_OK)status=fg_fabric_send(fabric,4u,FG_FABRIC_CONTROL,
+            FG_MSG_OUTPUT_PARTIAL,request,TOKEN_INDEX*FG_LAYER_COUNT+FG_LAYER_COUNT,
+            0,partial_wire,FG_OUTPUT_PARTIAL_BYTES,error);
         if(status==FG_OK)status=fg_fabric_recv(fabric,4u,FG_FABRIC_BULK,&header,wire,
             sizeof(wire),&recv_bytes,error);
         fg_output_result result;
@@ -298,14 +340,20 @@ static fg_status output_handoff_roundtrip(fg_fabric *fabric,uint32_t rank,uint64
         fg_layer_result hidden={.layer=FG_LAYER_COUNT-1u,.source_rank=7u,
             .destination_rank=4u,.token_index=TOKEN_INDEX};
         for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)hidden.hyper[i]=(float)(i%17u)*0.25f;
+        hidden.hyper[0]=LOCAL_VALUE;
         fg_status status=fg_decode_layer_result_encode(wire,&hidden,error);
         if(status==FG_OK)status=fg_fabric_send(fabric,4u,FG_FABRIC_BULK,
             FG_MSG_OUTPUT_HIDDEN,request,
             TOKEN_INDEX*FG_LAYER_COUNT+FG_LAYER_COUNT-1u,0,wire,
             FG_DECODE_LAYER_RESULT_BYTES,error);
+        if(status==FG_OK)status=fg_output_slice_encode(wire,&hidden,error);
+        if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,
+            FG_MSG_OUTPUT_SLICE,request,
+            TOKEN_INDEX*FG_LAYER_COUNT+FG_LAYER_COUNT-1u,0,wire,
+            FG_DECODE_LAYER_RESULT_BYTES,error);
         return status;
     }
-    /* rank 4: the hidden arrives first, then the config completes the pair */
+    /* rank 4: the hidden arrives first, then the config and the remote partial */
     fg_output_handoff state;
     fg_output_handoff_reset(&state);
     fg_frame_header header;uint32_t bytes=0;
@@ -330,14 +378,32 @@ static fg_status output_handoff_roundtrip(fg_fabric *fabric,uint32_t rank,uint64
         status=FG_ERR_MISMATCH;
     }
     if(status==FG_OK)status=fg_output_config_decode(&config,wire,bytes,error);
+    if(status==FG_OK&&(config.flags&FG_OUTPUT_CONFIG_FLAG_SPLIT)==0u){
+        fg_error_set(error,FG_ERR_MISMATCH,"direct output config lost the split flag");
+        status=FG_ERR_MISMATCH;
+    }
     if(status==FG_OK)status=fg_output_handoff_config(&state,&config,error);
+    if(status==FG_OK)status=fg_fabric_recv(fabric,0u,FG_FABRIC_CONTROL,&header,wire,
+        sizeof(wire),&bytes,error);
+    fg_output_partial partial;
+    if(status==FG_OK&&(fg_frame_type(&header)!=FG_MSG_OUTPUT_PARTIAL||
+       fg_frame_request_id(&header)!=request||
+       fg_frame_sequence(&header)!=TOKEN_INDEX*FG_LAYER_COUNT+FG_LAYER_COUNT)){
+        fg_error_set(error,FG_ERR_MISMATCH,"invalid direct output partial frame");
+        status=FG_ERR_MISMATCH;
+    }
+    if(status==FG_OK)status=fg_output_partial_decode(&partial,wire,bytes,error);
+    if(status==FG_OK)status=fg_output_handoff_partial(&state,partial.token_index,
+        partial.value,partial.id,error);
     if(status!=FG_OK)return status;
     if(!fg_output_handoff_ready(&state)){
         fg_error_set(error,FG_ERR_MISMATCH,"output handoff pair did not match");
         return FG_ERR_MISMATCH;
     }
+    uint32_t token=state.remote_value>hidden.hyper[0]?state.remote_id:LOCAL_ID;
+    float logit=state.remote_value>hidden.hyper[0]?state.remote_value:hidden.hyper[0];
     fg_output_result result={.source_rank=4u,.destination_rank=0u,
-        .token_index=TOKEN_INDEX,.token=RESULT_TOKEN,.logit=4.5f};
+        .token_index=TOKEN_INDEX,.token=token,.logit=logit};
     status=fg_output_result_encode(wire,&result,error);
     if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,FG_MSG_OUTPUT_RESULT,
         request,TOKEN_INDEX*FG_LAYER_COUNT+FG_LAYER_COUNT,0,wire,FG_OUTPUT_RESULT_BYTES,

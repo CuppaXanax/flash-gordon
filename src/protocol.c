@@ -310,6 +310,13 @@ fg_status fg_decode_layer_result_decode(fg_layer_result *result,const uint8_t *p
     return fg_layer_result_decode(result,payload,bytes,err);
 }
 
+fg_status fg_output_slice_encode(uint8_t output[FG_DECODE_LAYER_RESULT_BYTES],
+                                 const fg_layer_result *result,fg_error *err){
+    if(!result){fg_error_set(err,FG_ERR_ARGUMENT,"output slice result is null");return FG_ERR_ARGUMENT;}
+    fg_layer_result slice=*result;slice.destination_rank=0u;
+    return fg_decode_layer_result_encode(output,&slice,err);
+}
+
 static fg_status validate_qsa_block_route(uint8_t layer,uint8_t source_rank,
                                           uint8_t destination_rank,
                                           fg_position_mode position_mode,
