@@ -91,6 +91,7 @@ fg_status fg_vk_abort(fg_vk_context *context,fg_error *err);
 bool fg_vk_batch_active(const fg_vk_context *context);
 bool fg_vk_pipeline_enabled(void);
 void fg_vk_next_dispatch_independent(fg_vk_context *context);
+void fg_vk_host_write_visible(fg_vk_context *context);
 
 fg_status fg_vk_expert_graph_create(fg_vk_context *context,fg_vk_expert_graph **out,
                                      fg_vk_tensor *activation,fg_vk_tensor *tiles,
@@ -332,6 +333,11 @@ fg_status fg_vk_qsa_record_gather(fg_vk_context *context,fg_vk_tensor *output,
                                   const fg_vk_tensor *records,const fg_vk_tensor *block_ids,
                                   uint32_t layer_slot,uint32_t capacity,uint32_t block_count,
                                   uint32_t tail_start,uint32_t tail_count,fg_error *err);
+fg_status fg_vk_qsa_select_resolve(fg_vk_context *context,fg_vk_tensor *resolved,
+                                   fg_vk_tensor *flags,const fg_vk_tensor *selected_ids,
+                                   const fg_vk_tensor *slot_table,uint32_t count,
+                                   uint32_t block_limit,uint32_t layer_base,
+                                   fg_error *err);
 fg_status fg_vk_qsa_attention(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *records,
                               const fg_vk_tensor *query,const fg_vk_tensor *gate,
                               uint32_t selected_count,fg_error *err);
