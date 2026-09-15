@@ -1,5 +1,5 @@
 param(
-    [string]$BaseUrl = "http://192.0.2.42:8080/v1",
+    [string]$BaseUrl = $(if ($env:FG_BASE_URL) { $env:FG_BASE_URL } else { "http://192.0.2.42:8080/v1" }),
     [string]$Model = "Qwen3.8-Flash-Next",
     [int]$WarmupRuns = 1,
     [int]$MeasuredRuns = 5

@@ -29,9 +29,9 @@ pwsh -NoProfile -File tools/pi-stability.ps1 -SkipPerf
 #>
 [CmdletBinding()]
 param(
-    [string]$ApiUrl = "http://192.0.2.42:8080/v1/chat/completions",
+    [string]$ApiUrl = $(if ($env:FG_API_URL) { $env:FG_API_URL } else { "http://192.0.2.42:8080/v1/chat/completions" }),
     [string]$Model = "Qwen3.8-Flash-Next",
-    [string]$FleetRunner = "D:\workspace\bc-250-dbg\Invoke-BC250Fleet.ps1",
+    [string]$FleetRunner = $(if ($env:FG_FLEET_RUNNER) { $env:FG_FLEET_RUNNER } else { "D:\workspace\bc-250-dbg\Invoke-BC250Fleet.ps1" }),
     [string]$FleetUser = "xander",
     [int]$RequestTimeoutSec = 1800,
     [double]$MinPrefillTps = 240.0,
@@ -138,7 +138,8 @@ echo "rank=$rank alive=$count"
     $path = Join-Path ([IO.Path]::GetTempPath()) ("fg-stab-{0}.sh" -f [guid]::NewGuid().ToString("N").Substring(0, 8))
     [IO.File]::WriteAllText($path, $scriptText.Replace("`r", ""), [Text.UTF8Encoding]::new($false))
     try {
-        $targets = @(42..49 | ForEach-Object { "192.0.2.$_" })
+        $prefix = if ($env:FG_FLEET_PREFIX) { $env:FG_FLEET_PREFIX } else { "192.0.2." }
+        $targets = @(42..49 | ForEach-Object { "$prefix$_" })
         try {
             $records = @(& $FleetRunner -ScriptPath $path -Targets $targets -User $FleetUser -Auth Password -PassThru -CommandTimeout 120)
         } catch {
