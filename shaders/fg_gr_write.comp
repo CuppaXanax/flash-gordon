@@ -1,3 +1,24 @@
 #version 460
-layout(local_size_x=256,local_size_y=1,local_size_z=1)in;layout(set=0,binding=0)readonly buffer HyperInput{float hyper_input[];};layout(set=0,binding=1)readonly buffer BlockOutput{float block_output[];};layout(set=0,binding=2)readonly buffer Injection{float injection[];};layout(set=0,binding=3)writeonly buffer Output{float output_value[];};layout(push_constant)uniform Push{uint hidden;uint groups;uint tokens;}pc;
-void main(){uint index=gl_GlobalInvocationID.x,total=pc.tokens*pc.groups*pc.hidden;if(index>=total)return;uint feature=index%pc.hidden,group=(index/pc.hidden)%pc.groups,token=index/(pc.hidden*pc.groups);output_value[index]=hyper_input[index]+block_output[token*pc.hidden+feature]*injection[token*pc.groups+group];}
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer HyperInput{float hyper_input[];};
+layout(set=0,binding=0)readonly buffer HyperInputVector{vec4 hyper4[];};
+layout(set=0,binding=1)readonly buffer BlockOutput{float block_output[];};
+layout(set=0,binding=1)readonly buffer BlockOutputVector{vec4 block4[];};
+layout(set=0,binding=2)readonly buffer Injection{float injection[];};
+layout(set=0,binding=3)writeonly buffer Output{float output_value[];};
+layout(set=0,binding=3)writeonly buffer OutputVector{vec4 output4[];};
+layout(push_constant)uniform Push{uint hidden;uint groups;uint tokens;}pc;
+void main(){
+    if((pc.hidden&3u)==0u){
+        uint index=gl_GlobalInvocationID.x*4u,total=pc.tokens*pc.groups*pc.hidden;
+        if(index>=total)return;
+        uint feature=index%pc.hidden,group=(index/pc.hidden)%pc.groups,token=index/(pc.hidden*pc.groups);
+        float scale=injection[token*pc.groups+group];vec4 hyper=hyper4[index>>2u],block=block4[(token*pc.hidden+feature)>>2u];
+        output4[index>>2u]=vec4(hyper.x+block.x*scale,hyper.y+block.y*scale,hyper.z+block.z*scale,hyper.w+block.w*scale);
+    }else{
+        uint index=gl_GlobalInvocationID.x,total=pc.tokens*pc.groups*pc.hidden;
+        if(index>=total)return;
+        uint feature=index%pc.hidden,group=(index/pc.hidden)%pc.groups,token=index/(pc.hidden*pc.groups);
+        output_value[index]=hyper_input[index]+block_output[token*pc.hidden+feature]*injection[token*pc.groups+group];
+    }
+}
