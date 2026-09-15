@@ -4,8 +4,11 @@
 #include "fg_protocol.h"
 
 typedef struct fg_qsa_page_cache fg_qsa_page_cache;
+typedef void (*fg_qsa_page_cache_evict_fn)(void *opaque,uint32_t layer,uint32_t block);
 
 fg_status fg_qsa_page_cache_create(fg_qsa_page_cache **out,uint32_t pages,fg_error *err);
+void fg_qsa_page_cache_set_evict_hook(fg_qsa_page_cache *cache,
+                                      fg_qsa_page_cache_evict_fn hook,void *opaque);
 void fg_qsa_page_cache_destroy(fg_qsa_page_cache *cache);
 void fg_qsa_page_cache_reset(fg_qsa_page_cache *cache);
 uint64_t fg_qsa_page_cache_memory_bytes(const fg_qsa_page_cache *cache);
