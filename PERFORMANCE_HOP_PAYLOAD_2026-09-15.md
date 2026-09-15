@@ -81,6 +81,8 @@ Greedy is decided from the same `coordinator->sampler` bits that are sent in
 `FG_MSG_OUTPUT_CONFIG`, so rank 7's suppression and rank 4's split branch
 cannot disagree; a stale/duplicated token is still bounded by the existing
 split waits (loud `OUTPUT_SPLIT_TIMEOUT`/`RING_DECODE_TIMEOUT`, no wedge).
+`FG_OUTPUT_SPLIT_HIDDEN=0` on the sending rank restores the old always-send
+behaviour for a same-binary A/B control.
 
 Expected: **-0.33 ms wire, -0.4 ms with the send service**, and rank 4's
 slice (and the way-3 slice that gates the combine) leaves ~0.33 ms earlier
@@ -157,18 +159,21 @@ chain is host-bound, only #1 and #3 pay, and bf16 should stay off.
 
 1. Deploy the same binary to all eight ranks (lockstep; protocol 6, no version
    bump).  Keep `FG_OUTPUT_SPLIT=4` on all ranks so the 4-way path is active.
-2. Gates: `[12]` / `[Paris]` with `FG_OUTPUT_SPLIT=4` (suppression active,
+2. Same-binary A/B control: run once with `FG_OUTPUT_SPLIT_HIDDEN=0` on the
+   sending ranks (old hidden-always behaviour) and once unset (suppressed).
+3. Gates: `[12]` / `[Paris]` with `FG_OUTPUT_SPLIT=4` (suppression active,
    no env needed) and `FG_OUTPUT_SPLIT_TRACE=1` to see
    `what=hidden-suppressed`.
-3. Battery: 4-way default vs 4-way with `FG_OUTPUT_SPLIT=0` (or unset) for
-   the no-regression control; promotion bar as in
-   `PERFORMANCE_OUTPUT_SPLIT_4WAY_2026-09-14.md` section 9.
-4. Hop probe: one 32-token request with
+4. Battery: 4-way suppressed vs 4-way `FG_OUTPUT_SPLIT_HIDDEN=0` for the
+   controlled delta, and the flag-unset default control for the no-regression
+   check; promotion bar as in `PERFORMANCE_OUTPUT_SPLIT_4WAY_2026-09-14.md`
+   section 9.
+5. Hop probe: one 32-token request with
    `FG_FABRIC_PROFILE=1 FG_PREFILL_RING=1 FG_DECODE_RING=1 FG_RING_TRACE=1`
    on rank 0 and `FG_WORKER_OWNER=1 FG_FABRIC_PROFILE=1` on workers; confirm
    message type 47/48 disappears from rank 7's send log on greedy tokens and
    read `payload_ms` for 40 KiB frames to settle wire-vs-host.
-5. bf16 candidate (separate A/B, after 2-4): rerun the gates and battery with
+6. bf16 candidate (separate A/B, after 2-5): rerun the gates and battery with
    `FG_FABRIC_HOP_BF16=1` on **all** ranks.  Gate: gates pass and per-token
    logits/tokens match the f32 control within the run's sampling tolerance;
    any divergence rejects the candidate.
