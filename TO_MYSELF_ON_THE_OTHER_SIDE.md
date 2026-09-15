@@ -3,6 +3,61 @@
 You are the post-compaction me. Read this top to bottom before touching anything.
 Everything here is measured, not hoped. The fleet is healthy right now; keep it that way.
 
+## 0a3. PREFILL ROUND 7 — LONG-CONTEXT SELECTION SCAN (2026-09-14, fg-work-pref7)
+
+One shader-only commit (`89f0ee1`, binary `eb84975b`) on top of the decode-overlap
+round-2 build `59b2f559`. No vk/pack/manifest/protocol/decode change.
+
+**The measurement (FG_PREFILL_PROFILE=1 on workers, context sweep):** the 4K->256K
+TPS loss is entirely the QSA selection scan. Per QSA layer per 128-token microbatch,
+rank 1, GPU ms: 4K 37.1 (index_score 0.57, topk_merge 0.96, attention 5.30, q8 tile
+8.77, gate/up 7.67) -> 64K 53.4 (11.95, 4.51, 6.92, 8.64, 7.53) -> 256K mean 96.3
+(47.96, 11.27, 7.01, 8.65, 7.54) -> 256K last 33K depth 147.8 (91.84, 18.94, 7.07,
+8.67, 7.54). Everything else is flat with context: GDN layer 30.0 ms at 4K and 30.0
+at 256K; record gather 2.1 ms; attention 7.0 ms. Selection is 61% of the 256K QSA
+layer mean and 75% at depth. Host wall is another ~5.5 ms/GDN layer and 14-30 ms/QSA
+layer (32 per-tile staging fences + one selection readback per layer; QSA_PREFILL_TRACE
+`select_ms` 94-99 of a 160 ms layer wall at the 256K tail). That host half is QSA
+staging/residency work, documented in PERFORMANCE_PREFILL_ROUND7 section 5.
+
+**The change:** `fg_qsa_index_score` was one workgroup per (block, query); the
+block-scoped key transform (q8 decode, RMS tree, RoPE) plus four 128-lane shared
+dot trees (28 barriers) ran per pair. It is now one workgroup per block with the
+transform once, a `vec4` key in shared, four 32-lane head groups scoring every query
+of the dispatch with a four-FMA chain and a five-step XOR butterfly, and per-query
+head sums staged so the query loop has no barriers. Grid is now 1D; bindings/push
+unchanged. Score values move in the last ulp (subgroup tree vs shared tree);
+selection ids and tie-break are unchanged.
+
+**Fleet A/B (same pack, gates first):** gates [12]/[Paris] in three sessions;
+256K prefill **274.8 / 275.0 vs 237.9 TPS (+15.6%, two runs)**; 64K
+318.9/312.0/309.3 (control's own 64K band today was 267-348); 4K first request
+278.8/284.0 vs the 280.8-284.4 control band, warm repeats 325.5-328.6 (control
+warm band 296-320) - 4K is neutral within spread, as expected (selection is
+1.5 ms of a 37 ms 4K QSA layer). Short decode 22.32, 4K decode 21.1, 64K decode
+11.6 - decode untouched.
+
+**Local gates:** make all -Werror clean; test_qsa_prefill, test_expert_prefill,
+test_owner_reduce PASS; focused test_fg_vk (qsa_indexer, qsa_segmented_index_score,
+qsa_prefill_chunk_liveness, qsa_prefill_prepare, qsa_attention,
+qsa_resident_hierarchical_topk, q8_cooked_prefill_parity/sweep, gdn_project_cooked)
+PASS. Known pre-existing failures unchanged.
+
+**Measured and rejected this round:** (1) `fg_dense_q8_0_cooked_tile` 4x4/128-thread
+variant (vec4 both operands): neutral-to-slightly-negative at 4K (271-318 vs
+325.5-326.6), reverted - the kernel is not LDS bound. (2) GDN recurrence wave-32
+shuffle reduction (bit-exact on wave64, kills 14 barriers/token): fails
+`gdn_chunked_prefill_parity_random` under llvmpipe (subgroup size 8), needs a
+`gl_SubgroupSize >= 32` guard with the shared fallback; do it next.
+
+**Ranked next steps:** (1) topk_merge partial selection (11.3/18.9 ms at 256K);
+(2) index_score query-staging / multi-block workgroups - it re-reads 32 KiB of
+queries per block per dispatch, ~2 GiB per dispatch at 256K, the likely bound on
+the speedup; (3) GDN recurrence shuffle with the size guard; (4) host-side QSA
+staging pipeline (2.5 MiB more rank-0 headroom needs a scratch decision);
+(5) a 256-thread q8 tile variant (ROWS=64, TOKEN_TILE=64) if the LDS hypothesis
+is to be given one more shot.
+
 ## 0a2. PREFILL ROUND 6 — EXPERT FMA CHAINS + QSA SCORE CUT (2026-09-14, fg-work-pref6)
 
 Two shader-only commits on top of `daa2a60` (the post-revert control). No
