@@ -212,76 +212,53 @@ crash per the round brief).
 
 ## 4. Fleet A/B plan
 
-### 4.1 Prep: the foreign `rank-04.fgw` extents
+Ops-only details (blade addresses, pack paths, exact prep/deploy/recovery
+commands) live in the local fleet workspace, not in this repo.
 
-Rank 1/2/7 do not carry `rank-04.fgw`.  On the fleet pack
-`/home/user/fg-ring-pack` the output bundle is contiguous at the start of
-`rank-04.fgw` (`output.weight` off 0, 675,430,400 B; `output_hc_norm/down/up`
-at 678,912,000/675,430,400/678,952,960).  The needed extents are:
+### 4.1 Prep: the foreign rank-file extents
 
-| rank | way | extent in `rank-04.fgw` | file size to keep |
+Ranks 1, 2 and 7 do not carry the output owner's rank file
+(`rank-04.fgw`).  On the shipped pack the output bundle is contiguous at the
+start of that file (`output.weight` off 0, 675,430,400 B; `output_hc_norm`,
+`output_hc_down`, `output_hc_up` at 678,912,000 / 675,430,400 / 678,952,960).
+The 4-way slice ranks need these extents of the owning rank file:
+
+| rank | way | extent in the owning rank file | file size to keep |
 |---|---:|---|---:|
-| 1 (.43) | 2 | `[337715200, 506572800)` (168,857,600 B) | 506,572,800 |
-| 2 (.44) | 3 | `[506572800, 675430400)` (168,857,600 B) | 675,430,400 |
-| 7 (.49) | HC chain | `[675430400, 682434560)` (7,004,160 B) | 682,434,560 |
+| 1 | 2 | `[337715200, 506572800)` (168,857,600 B) | 506,572,800 |
+| 2 | 3 | `[506572800, 675430400)` (168,857,600 B) | 675,430,400 |
+| 7 | HC chain | `[675430400, 682434560)` (7,004,160 B) | 682,434,560 |
 
-Build one sparse copy per blade from a full source (`/home/user/fg-ring-pack`
-on .42 or .46 has one) and scp it into the pack directory:
-
-```bash
-SRC=/home/user/fg-ring-pack/rank-04.fgw
-# way 2 -> rank 1
-truncate -s 506572800 /tmp/rank04.fgw
-dd if=$SRC of=/tmp/rank04.fgw bs=8M iflag=skip_bytes,count_bytes \
-   oflag=seek_bytes skip=337715200 count=168857600 seek=337715200 \
-   conv=notrunc,sparse
-scp /tmp/rank04.fgw xander@192.0.2.43:/home/user/fg-ring-pack/rank-04.fgw
-# way 3 -> rank 2
-truncate -s 675430400 /tmp/rank04.fgw
-dd if=$SRC of=/tmp/rank04.fgw bs=8M iflag=skip_bytes,count_bytes \
-   oflag=seek_bytes skip=506572800 count=168857600 seek=506572800 \
-   conv=notrunc,sparse
-scp /tmp/rank04.fgw xander@192.0.2.44:/home/user/fg-ring-pack/rank-04.fgw
-# HC chain -> rank 7
-truncate -s 682434560 /tmp/rank04.fgw
-dd if=$SRC of=/tmp/rank04.fgw bs=8M iflag=skip_bytes,count_bytes \
-   oflag=seek_bytes skip=675430400 count=7004160 seek=675430400 \
-   conv=notrunc,sparse
-scp /tmp/rank04.fgw xander@192.0.2.49:/home/user/fg-ring-pack/rank-04.fgw
-```
-
-`du` on each file shows only the copied extent (161 MiB / 6.7 MiB).  If the
-pack is rebuilt, the loader's startup error carries the new offset and length;
-substitute them.  The full manifest SHA is unchanged (`rank-01..07.fgw` are
-untouched), so the other ranks boot exactly as today.
+The loader only preads these spans, so a sparse per-rank copy (one `dd` range
+per extent, `du` shows 161 MiB / 161 MiB / 6.7 MiB) is enough; if the pack is
+rebuilt, the loader's startup error carries the new offset and length.  The
+manifest SHA is unchanged, so every other rank boots exactly as today.
 
 ### 4.2 Command sequence
 
-1. Deploy the standard chain (quiesce, patch tar, build on .42, distribute,
-   restart rank 0 first, then workers) with `FG_OUTPUT_SPLIT` set to the mode
-   under test on **all ranks** (`start-rank0-ring.sh` / `start-workers-ring.sh`
-   currently export 1; make a `-split4` pair that exports 4).
+1. Deploy the standard chain (quiesce, patch tar, build, distribute, restart
+   rank 0 first, then workers) with `FG_OUTPUT_SPLIT=4` set to the mode under
+   test on **all ranks** (plus `FG_OUTPUT_SPLIT_TRACE=1` for diagnostics).
 2. Confirm each startup log contains the slice line:
    `OUTPUT_SPLIT rank=0 ways=4 way=1 rows=62080..124160`,
    rank 1/2 `slice=1`, rank 4 `way=0`, rank 7 `slice=0 hc=1`.
-3. Correctness gates, both modes (same pack, drop caches first):
-   `pwsh -NoProfile -File "$env:TEMP\opencode\correctness64.ps1"` -> `[12]` /
+3. Correctness gates, both modes (same pack, drop caches first): `[12]` /
    `[Paris]`.
-4. Like-for-like battery:
-   `pwsh -File D:\workspace\bc-250-dbg\Measure-FlashGordonAB.ps1 -Attach -Build ep -Runs4k 2`
-   * 2-way control: `FG_OUTPUT_SPLIT=1`
+4. Like-for-like battery (`Measure-FlashGordonAB.ps1 -Attach -Build ep
+   -Runs4k 2`):
    * 4-way: `FG_OUTPUT_SPLIT=4`
    * default control (no env) for the no-regression check.
-   Promotion bar: 4-way short/4K decode clearly above the 2-way, gates and 4K
-   prefill (>= 270) unchanged, default/2-way not below their bands.
-5. Context sweep on the winner:
-   `pwsh -NoProfile -Command "& 'D:\workspace\flash-gordon\tools\context-sweep.ps1' -Contexts 16384,32768"`.
-6. Hop probe on the 4-way build (section 6).
+   Promotion bar: 4-way short/4K decode at or above the default band, gates
+   and 4K prefill unchanged, default not below its band.
+5. Context sweep: `context-sweep.ps1 -Contexts 16384,32768` (the `-File` form
+   mis-parses the array; use `pwsh -NoProfile -Command "& ..."`).
+6. Soak: `pi-stability.ps1`.
+7. Hop probe on the 4-way build (section 6).
 
 If rank 4 exits with the split-mismatch message, the env did not reach every
 rank; if a helper exits with "without a 4-way slice executor", its own start
 script missed `FG_OUTPUT_SPLIT=4`; if a helper exits at startup with the
-foreign-file message, the rank-04.fgw prep missed that blade.  Do not mix
+foreign-file message, the rank-file prep missed that blade.  Do not mix
 modes across ranks.
 
 ## 5. Hop payload inventory (task 2)
@@ -430,14 +407,13 @@ double free or corruption (!prev)                  <- rank 0 dies
 
 The same pathology reproduces **without the split**: the default-config
 recovery run served a 21-token prompt with `RING_OWN_BLOCK ... ms=93510.1`
-(93.5 s).  `.42`'s dmesg shows global OOM kills during both runs
-(systemd-userwork/crond/systemd-userdbd at 02:01, NetworkManager at 02:59);
-`free -m` during the run shows rank 0 at ~160 MB free (`used 15180` of
-15198) with the 8 GB zram swap in active use.  Rank 0's Vulkan ledger is
+(93.5 s).  The coordinator's kernel log shows global OOM kills during both
+runs (system daemons, then the network manager); the coordinator had ~160 MB
+free with its zram swap in active use.  Rank 0's Vulkan ledger is
 `final_requested=15.53 GiB` on a 15.98 GiB UMA device, so the 4K/16K prefill
 scratch pushes the box into swap thrash; blocks take tens of seconds to
-minutes, SSH starves (sshd cannot fork), and rank 0 eventually crashes with
-heap corruption.  The 4-way slices change rank 0's memory by less than 1 MB
+minutes, SSH starves, and rank 0 eventually crashes with heap corruption.
+The 4-way slices change rank 0's memory by less than 1 MB
 (rank 0's slice shrank from 108272 to 62080 rows; the weight is a view of the
 replicated arena), and no split timeout fired because the stall never reached
 the split path.
@@ -493,11 +469,11 @@ budget helper and the timeout message.
 
 ### 8.4 Fleet A/B commands (unchanged, plus round-2 envs)
 
-The 4.1 foreign-extent prep and the 4.2 restart/gate/battery sequence stand.
-Until rank 0 has headroom, treat the 4K/16K battery as a memory experiment:
-`sync; drop_caches` on all ranks first, run one case at a time, and watch
-`.42`'s `free -m`; a wedge is recovered by killing the workers so rank 0 exits
-(never leave it wedged).  For split diagnosis set
+The 4.1 foreign-extent prep and the 4.2 restart/gate/battery sequence stand,
+and the local ops workspace has the blade-level commands.  Treat the 4K/16K
+battery as a memory experiment: drop caches on all ranks first, run one case
+at a time, watch the coordinator ledger, and recover per the fleet runbook if
+it wedges (never leave it wedged).  For split diagnosis set
 `FG_OUTPUT_SPLIT_TRACE=1` and optionally `FG_OUTPUT_SPLIT_TIMEOUT_MS=3000` on
 all ranks: the trace names the stalled hop and the timeout names the missing
 rank instead of hanging.
