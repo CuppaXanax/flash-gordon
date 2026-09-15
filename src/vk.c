@@ -48,6 +48,7 @@ struct fg_vk_context {
     VkSemaphore flush_semaphores[2];VkSemaphore pipelined_semaphore;bool pipelined_semaphore_valid;uint32_t flush_semaphore_slot;
     VkCommandBuffer static_command[FG_VK_STATIC_SLOTS];VkFence static_fence[FG_VK_STATIC_SLOTS];
     bool static_recorded[FG_VK_STATIC_SLOTS],static_pending[FG_VK_STATIC_SLOTS],static_ready[FG_VK_STATIC_SLOTS];
+    VkCommandBuffer held_commands[FG_VK_STATIC_SLOTS];uint32_t held_slots[FG_VK_STATIC_SLOTS],held_count;VkFence static_submit_fence[FG_VK_STATIC_SLOTS];VkFence held_fence;bool held_fence_pending;
     VkCommandBuffer command_swap;bool static_active;uint32_t static_slot_active;uint32_t static_saved_set_count;
     uint32_t batch_set_base;
     VkPhysicalDeviceMemoryProperties memory;char device_name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
@@ -96,6 +97,7 @@ static void vk_submit_attach(fg_vk_context *c,bool signal_flush,VkSemaphore *wai
 static bool tensor_range(const fg_vk_tensor *tensor,uint64_t offset,uint64_t bytes){return tensor&&offset<=tensor->bytes&&bytes<=tensor->bytes-offset;}
 static bool tensor_on_context(const fg_vk_context *context,const fg_vk_tensor *tensor){return tensor&&tensor->context==context;}
 
+static fg_status vk_flush_held(fg_vk_context *c,fg_error *err);
 static void profile_command_begin(fg_vk_context *c){
     if(!c->profile_active)return;
     c->profile_query_count=1u;c->profile_dispatch_count=0u;c->profile_overflow=false;
@@ -191,7 +193,7 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
     const char *device_extensions[1];uint32_t device_extension_count=0;VkPhysicalDeviceShaderIntegerDotProductFeaturesKHR enabled_integer_dot={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_FEATURES_KHR,.shaderIntegerDotProduct=c->integer_dot_product?VK_TRUE:VK_FALSE};VkPhysicalDeviceFeatures2 enabled_features={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,.pNext=c->integer_dot_product?&enabled_integer_dot:NULL};if(c->integer_dot_product)device_extensions[device_extension_count++]="VK_KHR_shader_integer_dot_product";
     VkDeviceCreateInfo dc={.sType=VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,.pNext=c->integer_dot_product?&enabled_features:NULL,.queueCreateInfoCount=1,.pQueueCreateInfos=&qc,.enabledExtensionCount=device_extension_count,.ppEnabledExtensionNames=device_extension_count?device_extensions:NULL};vr=vkCreateDevice(c->physical,&dc,NULL,&c->device);if(vr!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create Vulkan device",vr);}vkGetDeviceQueue(c->device,family,0,&c->queue);
     VkCommandPoolCreateInfo pc={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,.queueFamilyIndex=family};if((vr=vkCreateCommandPool(c->device,&pc,NULL,&c->command_pool))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create command pool",vr);}VkCommandBufferAllocateInfo ca={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,.commandPool=c->command_pool,.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY,.commandBufferCount=2};VkCommandBuffer commands[2]={0};if((vr=vkAllocateCommandBuffers(c->device,&ca,commands))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"allocate command buffer",vr);}c->command=commands[0];c->command_alt=commands[1];
-    VkFenceCreateInfo fc={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};if((vr=vkCreateFence(c->device,&fc,NULL,&c->fence))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create fence",vr);}if((vr=vkCreateFence(c->device,&fc,NULL,&c->expert_fence))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create expert fence",vr);}if((vr=vkCreateFence(c->device,&fc,NULL,&c->fence_alt))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create alternate fence",vr);}VkSemaphoreCreateInfo sc={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};for(uint32_t i=0;i<2u;i++)if((vr=vkCreateSemaphore(c->device,&sc,NULL,&c->flush_semaphores[i]))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create pipeline semaphore",vr);}c->pipeline_ready=true;VkDescriptorSetLayoutBinding layout_bindings[16];for(uint32_t i=0;i<16u;i++)layout_bindings[i]=(VkDescriptorSetLayoutBinding){.binding=i,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.descriptorCount=1u,.stageFlags=VK_SHADER_STAGE_COMPUTE_BIT};VkDescriptorSetLayoutCreateInfo layout_create={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,.bindingCount=16u,.pBindings=layout_bindings};if((vr=vkCreateDescriptorSetLayout(c->device,&layout_create,NULL,&c->descriptor_set_layout))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create shared descriptor layout",vr);}VkDescriptorPoolSize ps={.type=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.descriptorCount=FG_VK_BATCH_MAX_SETS*16u};VkDescriptorPoolCreateInfo dp={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,.maxSets=FG_VK_BATCH_MAX_SETS,.poolSizeCount=1,.pPoolSizes=&ps};if((vr=vkCreateDescriptorPool(c->device,&dp,NULL,&c->descriptor_pool))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create descriptor pool",vr);}VkDescriptorSetLayout set_layouts[FG_VK_BATCH_MAX_SETS];for(uint32_t i=0;i<FG_VK_BATCH_MAX_SETS;i++)set_layouts[i]=c->descriptor_set_layout;VkDescriptorSetAllocateInfo set_allocate={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,.descriptorPool=c->descriptor_pool,.descriptorSetCount=FG_VK_BATCH_MAX_SETS,.pSetLayouts=set_layouts};if((vr=vkAllocateDescriptorSets(c->device,&set_allocate,c->descriptor_sets))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"preallocate descriptor sets",vr);}VkPipelineCacheCreateInfo pci={.sType=VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};if((vr=vkCreatePipelineCache(c->device,&pci,NULL,&c->pipeline_cache))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create pipeline cache",vr);}
+    VkFenceCreateInfo fc={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};if((vr=vkCreateFence(c->device,&fc,NULL,&c->fence))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create fence",vr);}if((vr=vkCreateFence(c->device,&fc,NULL,&c->expert_fence))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create expert fence",vr);}if((vr=vkCreateFence(c->device,&fc,NULL,&c->fence_alt))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create alternate fence",vr);}if((vr=vkCreateFence(c->device,&fc,NULL,&c->held_fence))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create held-batch fence",vr);}VkSemaphoreCreateInfo sc={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};for(uint32_t i=0;i<2u;i++)if((vr=vkCreateSemaphore(c->device,&sc,NULL,&c->flush_semaphores[i]))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create pipeline semaphore",vr);}c->pipeline_ready=true;VkDescriptorSetLayoutBinding layout_bindings[16];for(uint32_t i=0;i<16u;i++)layout_bindings[i]=(VkDescriptorSetLayoutBinding){.binding=i,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.descriptorCount=1u,.stageFlags=VK_SHADER_STAGE_COMPUTE_BIT};VkDescriptorSetLayoutCreateInfo layout_create={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,.bindingCount=16u,.pBindings=layout_bindings};if((vr=vkCreateDescriptorSetLayout(c->device,&layout_create,NULL,&c->descriptor_set_layout))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create shared descriptor layout",vr);}VkDescriptorPoolSize ps={.type=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.descriptorCount=FG_VK_BATCH_MAX_SETS*16u};VkDescriptorPoolCreateInfo dp={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,.maxSets=FG_VK_BATCH_MAX_SETS,.poolSizeCount=1,.pPoolSizes=&ps};if((vr=vkCreateDescriptorPool(c->device,&dp,NULL,&c->descriptor_pool))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create descriptor pool",vr);}VkDescriptorSetLayout set_layouts[FG_VK_BATCH_MAX_SETS];for(uint32_t i=0;i<FG_VK_BATCH_MAX_SETS;i++)set_layouts[i]=c->descriptor_set_layout;VkDescriptorSetAllocateInfo set_allocate={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,.descriptorPool=c->descriptor_pool,.descriptorSetCount=FG_VK_BATCH_MAX_SETS,.pSetLayouts=set_layouts};if((vr=vkAllocateDescriptorSets(c->device,&set_allocate,c->descriptor_sets))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"preallocate descriptor sets",vr);}VkPipelineCacheCreateInfo pci={.sType=VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};if((vr=vkCreatePipelineCache(c->device,&pci,NULL,&c->pipeline_cache))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create pipeline cache",vr);}
     c->quant_q8k=(fg_vk_kernel){.file="fg_quantize_q8_k.spv",.bindings=2,.push_bytes=12};c->quant_q8=(fg_vk_kernel){.file="fg_quantize_q8_0.spv",.bindings=2,.push_bytes=12};c->quant_q4=(fg_vk_kernel){.file="fg_quantize_q4_0.spv",.bindings=2,.push_bytes=12};
     c->dequant_iq4nl=(fg_vk_kernel){.file="fg_dequantize_iq4_nl.spv",.bindings=2,.push_bytes=8};c->embedding=(fg_vk_kernel){.file="fg_embedding_q8_0.spv",.bindings=2,.push_bytes=16};c->embedding_batch=(fg_vk_kernel){.file="fg_embedding_q8_0_batch.spv",.bindings=3,.push_bytes=16};c->swiglu=(fg_vk_kernel){.file="fg_swiglu.spv",.bindings=3,.push_bytes=4};c->silu_scaled=(fg_vk_kernel){.file="fg_silu_scaled.spv",.bindings=2,.push_bytes=8};c->dense=(fg_vk_kernel){.file="fg_dense_q8_0_f32.spv",.bindings=3,.push_bytes=20};c->dense_f32=(fg_vk_kernel){.file="fg_dense_f32.spv",.bindings=3,.push_bytes=12};c->dense_bf16=(fg_vk_kernel){.file="fg_dense_bf16_f32.spv",.bindings=3,.push_bytes=12};
     c->rms=(fg_vk_kernel){.file="fg_group_rms_norm.spv",.bindings=3,.push_bytes=16};c->gr=(fg_vk_kernel){.file="fg_gr_mix.spv",.bindings=5,.push_bytes=12};c->hc_inject_partial=(fg_vk_kernel){.file="fg_hc_inject_partial.spv",.bindings=3,.push_bytes=16};c->gr_partial=(fg_vk_kernel){.file="fg_gr_mix_partial.spv",.bindings=5,.push_bytes=16};c->hc_finalize=(fg_vk_kernel){.file="fg_hc_finalize.spv",.bindings=3,.push_bytes=12};c->gr_write=(fg_vk_kernel){.file="fg_gr_write.spv",.bindings=4,.push_bytes=12};c->ple_gate=(fg_vk_kernel){.file="fg_ple_gate.spv",.bindings=4,.push_bytes=0};c->ple_gate_prefill=(fg_vk_kernel){.file="fg_ple_gate_prefill.spv",.bindings=4,.push_bytes=4};c->ple_conv=(fg_vk_kernel){.file="fg_ple_conv_decode.spv",.bindings=5,.push_bytes=0};c->ple_conv_prefill=(fg_vk_kernel){.file="fg_ple_conv_prefill.spv",.bindings=5,.push_bytes=4};c->add=(fg_vk_kernel){.file="fg_add_f32.spv",.bindings=3,.push_bytes=4};c->gdn_conv=(fg_vk_kernel){.file="fg_gdn_conv_decode.spv",.bindings=4,.push_bytes=4};c->gdn_conv_prefill=(fg_vk_kernel){.file="fg_gdn_conv_prefill.spv",.bindings=4,.push_bytes=8};c->gdn_recurrent=(fg_vk_kernel){.file="fg_gdn_recurrent_decode.spv",.bindings=9,.push_bytes=16};c->gdn_recurrent_algebraic=(fg_vk_kernel){.file="fg_gdn_recurrent_algebraic.spv",.bindings=9,.push_bytes=16};c->gdn_recurrent_prefill=(fg_vk_kernel){.file="fg_gdn_recurrent_prefill.spv",.bindings=9,.push_bytes=20};c->gdn_prefill_qk_norm=(fg_vk_kernel){.file="fg_gdn_prefill_qk_norm.spv",.bindings=1,.push_bytes=8};c->gdn_prefill_recurrence=(fg_vk_kernel){.file="fg_gdn_prefill_recurrence.spv",.bindings=7,.push_bytes=4};c->gdn_prefill_output=(fg_vk_kernel){.file="fg_gdn_prefill_output.spv",.bindings=3,.push_bytes=8};
@@ -362,9 +364,14 @@ fg_status fg_vk_end(fg_vk_context *c,fg_error *err){
     profile_command_end(c);
     VkResult vr;if((vr=vkEndCommandBuffer(c->command))!=VK_SUCCESS){fg_status status=vk_error(err,"end batch command",vr);fg_error ignored={0};fg_vk_abort(c,&ignored);return status;}
     vk_profile_end_record(c);
-    VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&c->command};
+    VkCommandBuffer commands[FG_VK_STATIC_SLOTS+1u];uint32_t command_count=0u;
+    for(uint32_t i=0u;i<c->held_count;i++)commands[command_count++]=c->held_commands[i];
+    commands[command_count++]=c->command;
+    VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=command_count,.pCommandBuffers=commands};
     VkSemaphore sem_wait,sem_signal;VkPipelineStageFlags sem_stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;vk_submit_attach(c,false,&sem_wait,&sem_signal,&sem_stage,&submit);
     double submit_begin=c->profile_active?vk_wall_seconds():0.0;if((vr=vkQueueSubmit(c->queue,1,&submit,c->fence))!=VK_SUCCESS){fg_status status=vk_error(err,"submit batch command",vr);fg_error ignored={0};fg_vk_abort(c,&ignored);return status;}if(c->profile_active)c->profile.submit_ms+=(vk_wall_seconds()-submit_begin)*1000.0;c->counters.submissions++;
+    for(uint32_t i=0u;i<c->held_count;i++)c->static_submit_fence[c->held_slots[i]]=c->fence;
+    c->held_count=0u;
     vk_fence_track(c,c->fence);
     fg_status wait_status=vk_fence_wait(c,c->fence,err);
     if(wait_status!=FG_OK){vkDeviceWaitIdle(c->device);c->batch_depth=0;c->batch_set_count=0;c->batch_has_dispatch=false;return wait_status;}
@@ -385,9 +392,14 @@ fg_status fg_vk_flush(fg_vk_context *c,fg_error *err){
     VkMemoryBarrier after={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};
     vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&after,0,NULL,0,NULL);
     VkResult vr;if((vr=vkEndCommandBuffer(c->command))!=VK_SUCCESS){fg_status status=vk_error(err,"end flush command",vr);fg_error ignored={0};fg_vk_abort(c,&ignored);return status;}
-    VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&c->command};
+    VkCommandBuffer commands[FG_VK_STATIC_SLOTS+1u];uint32_t command_count=0u;
+    for(uint32_t i=0u;i<c->held_count;i++)commands[command_count++]=c->held_commands[i];
+    commands[command_count++]=c->command;
+    VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=command_count,.pCommandBuffers=commands};
     VkSemaphore sem_wait,sem_signal;VkPipelineStageFlags sem_stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;vk_submit_attach(c,true,&sem_wait,&sem_signal,&sem_stage,&submit);
     double submit_begin=c->profile_active?vk_wall_seconds():0.0;if((vr=vkQueueSubmit(c->queue,1,&submit,c->fence))!=VK_SUCCESS){fg_status status=vk_error(err,"submit flush command",vr);fg_error ignored={0};fg_vk_abort(c,&ignored);return status;}if(c->profile_active)c->profile.submit_ms+=(vk_wall_seconds()-submit_begin)*1000.0;c->counters.submissions++;
+    for(uint32_t i=0u;i<c->held_count;i++)c->static_submit_fence[c->held_slots[i]]=c->fence;
+    c->held_count=0u;
     vk_fence_track(c,c->fence);
     VkCommandBuffer command=c->command;c->command=c->command_alt;c->command_alt=command;
     VkFence fence=c->fence;c->fence=c->fence_alt;c->fence_alt=fence;
@@ -397,6 +409,7 @@ fg_status fg_vk_flush(fg_vk_context *c,fg_error *err){
 }
 fg_status fg_vk_abort(fg_vk_context *c,fg_error *err){
     if(!c||!c->batch_depth){fg_error_set(err,FG_ERR_ARGUMENT,"not in batch");return FG_ERR_ARGUMENT;}
+    if(c->held_count){fg_error ignored={0};fg_status held_status=vk_flush_held(c,&ignored);(void)held_status;}
     if(c->static_active){c->command=c->command_swap;c->static_active=false;c->batch_set_count=c->static_saved_set_count;c->batch_set_base=0;}
     VkResult vr=vkResetCommandBuffer(c->command,0);
     c->batch_depth=0;c->batch_has_dispatch=false;
@@ -456,6 +469,26 @@ fg_status fg_vk_static_end(fg_vk_context *c,uint32_t slot,fg_error *err){
     c->static_recorded[slot]=true;
     return FG_OK;
 }
+static fg_status vk_flush_held(fg_vk_context *c,fg_error *err){
+    if(!c->held_count)return FG_OK;
+    VkResult vr;
+    if(c->held_fence_pending){
+        vr=vkWaitForFences(c->device,1,&c->held_fence,VK_TRUE,UINT64_MAX);
+        if(vr!=VK_SUCCESS)return vk_error(err,"wait held static batches",vr);
+        c->held_fence_pending=false;
+    }
+    vr=vkResetFences(c->device,1,&c->held_fence);
+    if(vr!=VK_SUCCESS)return vk_error(err,"reset held-batch fence",vr);
+    VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=c->held_count,.pCommandBuffers=c->held_commands};
+    VkSemaphore sem_wait,sem_signal;VkPipelineStageFlags sem_stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    vk_submit_attach(c,true,&sem_wait,&sem_signal,&sem_stage,&submit);
+    if((vr=vkQueueSubmit(c->queue,1,&submit,c->held_fence))!=VK_SUCCESS)
+        return vk_error(err,"submit held static batches",vr);
+    c->counters.submissions++;
+    for(uint32_t i=0u;i<c->held_count;i++)c->static_submit_fence[c->held_slots[i]]=c->held_fence;
+    c->held_fence_pending=true;c->held_count=0u;
+    return FG_OK;
+}
 fg_status fg_vk_static_submit(fg_vk_context *c,uint32_t slot,fg_error *err){
     if(!c||slot>=FG_VK_STATIC_SLOTS){fg_error_set(err,FG_ERR_ARGUMENT,"invalid static batch slot");return FG_ERR_ARGUMENT;}
     if(!c->static_recorded[slot]){fg_error_set(err,FG_ERR_MISMATCH,"static batch slot is not recorded");return FG_ERR_MISMATCH;}
@@ -463,6 +496,13 @@ fg_status fg_vk_static_submit(fg_vk_context *c,uint32_t slot,fg_error *err){
     if(c->batch_depth){fg_error_set(err,FG_ERR_MISMATCH,"static batch cannot submit inside a dynamic batch");return FG_ERR_MISMATCH;}
     VkResult vr=vkResetFences(c->device,1,&c->static_fence[slot]);
     if(vr!=VK_SUCCESS)return vk_error(err,"reset static fence",vr);
+    c->static_pending[slot]=true;
+    if(c->pending_fence_count>0u){
+        c->held_commands[c->held_count]=c->static_command[slot];
+        c->held_slots[c->held_count]=slot;c->held_count++;
+        c->static_submit_fence[slot]=VK_NULL_HANDLE;
+        return FG_OK;
+    }
     VkCommandBuffer command=c->static_command[slot];
     VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&command};
     VkSemaphore sem_wait,sem_signal;VkPipelineStageFlags sem_stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
@@ -470,13 +510,15 @@ fg_status fg_vk_static_submit(fg_vk_context *c,uint32_t slot,fg_error *err){
     if((vr=vkQueueSubmit(c->queue,1,&submit,c->static_fence[slot]))!=VK_SUCCESS)
         return vk_error(err,"submit static batch",vr);
     c->counters.submissions++;
-    c->static_pending[slot]=true;
+    c->static_submit_fence[slot]=c->static_fence[slot];
     return FG_OK;
 }
 fg_status fg_vk_static_wait(fg_vk_context *c,uint32_t slot,fg_error *err){
     if(!c||slot>=FG_VK_STATIC_SLOTS){fg_error_set(err,FG_ERR_ARGUMENT,"invalid static batch slot");return FG_ERR_ARGUMENT;}
     if(!c->static_pending[slot])return FG_OK;
-    VkResult vr=vkWaitForFences(c->device,1,&c->static_fence[slot],VK_TRUE,UINT64_MAX);
+    fg_status status=vk_flush_held(c,err);
+    if(status!=FG_OK)return status;
+    VkResult vr=vkWaitForFences(c->device,1,&c->static_submit_fence[slot],VK_TRUE,UINT64_MAX);
     if(vr!=VK_SUCCESS)return vk_error(err,"wait static batch",vr);
     c->static_pending[slot]=false;
     return FG_OK;
