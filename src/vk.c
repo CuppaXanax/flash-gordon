@@ -1296,8 +1296,8 @@ fg_status fg_vk_qsa_resident_attention(
 }
 
 static bool topk_v2_requested(void){
-    const char *enabled=getenv("FG_QSA_TOPK_V2");
-    return enabled&&*enabled&&strcmp(enabled,"0")!=0;
+    const char *disabled=getenv("FG_QSA_TOPK_V2");
+    return !(disabled&&*disabled&&strcmp(disabled,"0")==0);
 }
 fg_status fg_vk_topk_reduce(fg_vk_context *c,fg_vk_tensor *out_scores,fg_vk_tensor *out_ids,const fg_vk_tensor *in_scores,const fg_vk_tensor *in_ids,uint32_t count,uint32_t *output_count,fg_error *err){uint32_t groups=(count+4095u)/4096u,produced=groups*512u;if(groups==1u&&count<512u)produced=count;if(!c||!count||!output_count||!tensor_range(in_scores,0,(uint64_t)count*4u)||!tensor_range(in_ids,0,(uint64_t)count*4u)||!tensor_range(out_scores,0,(uint64_t)produced*4u)||!tensor_range(out_ids,0,(uint64_t)produced*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid top-k reduction dispatch");return FG_ERR_ARGUMENT;}uint32_t width=2u;while(width<count&&width<4096u)width<<=1u;struct{uint32_t count,width;}push={count,width};const fg_vk_tensor *bindings[]={in_scores,in_ids,out_scores,out_ids};fg_status status=dispatch(c,topk_v2_requested()?&c->topk_v2:&c->topk,bindings,&push,groups,1,1,err);if(status==FG_OK)*output_count=produced;return status;}
 
