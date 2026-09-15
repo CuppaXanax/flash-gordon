@@ -2886,6 +2886,50 @@ static int test_output_split_combine(void){
     free(ids);free(scores);return ok;
 }
 
+static int dense_decode_shape_case(const char *name,uint32_t input_width,uint32_t rows,uint32_t splits){
+    uint32_t blocks=input_width/FG_QK8_0;
+    uint64_t source_row=(uint64_t)blocks*FG_Q8_0_BLOCK_BYTES,source_bytes=(uint64_t)rows*source_row,
+             cooked_bytes=fg_q8_0_cooked_matrix_bytes(input_width,rows);
+    float *source=malloc((size_t)input_width*rows*4u),*values=malloc((size_t)input_width*4u);
+    uint8_t *raw=malloc((size_t)source_bytes),*cooked=malloc((size_t)cooked_bytes);
+    float *reference=malloc((size_t)rows*4u),*candidate=malloc((size_t)rows*4u);
+    if(!source||!values||!raw||!cooked||!reference||!candidate){free(candidate);free(reference);free(cooked);free(raw);free(values);free(source);return 0;}
+    for(uint32_t row=0;row<rows;row++)
+        for(uint32_t i=0;i<input_width;i++)
+            source[(uint64_t)row*input_width+i]=sinf((float)((uint64_t)row*input_width+i)*0.0041f)*0.5f+cosf((float)i*0.017f);
+    for(uint32_t row=0;row<rows;row++)fg_quantize_q8_0(source+(uint64_t)row*input_width,raw+(uint64_t)row*source_row,input_width);
+    for(uint32_t i=0;i<input_width;i++)values[i]=sinf((float)(i+3u)*0.013f)+0.1f*cosf((float)i*0.007f);
+    int ok=fg_cook_q8_0_rows(raw,cooked,cooked_bytes,input_width,rows);
+    fg_vk_tensor *w_ref=ok?tensor(raw,source_bytes):NULL,*w_cooked=ok?tensor(cooked,cooked_bytes):NULL,
+                  *x=ok?tensor(values,(uint64_t)input_width*4u):NULL,*y_ref=ok?tensor(NULL,(uint64_t)rows*4u):NULL,
+                  *y_candidate=ok?tensor(NULL,(uint64_t)rows*4u):NULL,
+                  *partials=splits?tensor(NULL,(uint64_t)rows*splits*4u):NULL;
+    if(w_cooked)fg_vk_tensor_set_format(w_cooked,FG_VK_TENSOR_FORMAT_Q8_0_COOKED);
+    ok=ok&&w_ref&&w_cooked&&x&&y_ref&&y_candidate&&(!splits||partials);
+    if(ok)ok=fg_vk_dense_q8_0_f32(context,y_ref,w_ref,x,input_width,rows,1u,1.0f,&error)==FG_OK;
+    if(ok&&splits)ok=fg_vk_dense_q8_0_cooked_split(context,y_candidate,partials,w_cooked,x,input_width,rows,1u,splits,1.0f,&error)==FG_OK;
+    if(ok&&!splits)ok=fg_vk_dense_q8_0_cooked(context,y_candidate,w_cooked,x,input_width,rows,1u,1.0f,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_read(y_ref,0,reference,(uint64_t)rows*4u,&error)==FG_OK&&fg_vk_tensor_read(y_candidate,0,candidate,(uint64_t)rows*4u,&error)==FG_OK;
+    for(uint32_t row=0;ok&&row<rows;row++){
+        double difference=fabs((double)candidate[row]-(double)reference[row]),
+               relative=difference/fmax(1.0,fabs((double)reference[row]));
+        if(relative>2e-4){fprintf(stderr,"decode dense %s row=%u candidate=%g reference=%g\n",name,row,candidate[row],reference[row]);ok=0;}
+    }
+    fg_vk_tensor_destroy(partials);fg_vk_tensor_destroy(y_candidate);fg_vk_tensor_destroy(y_ref);
+    fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w_cooked);fg_vk_tensor_destroy(w_ref);
+    free(candidate);free(reference);free(cooked);free(raw);free(values);free(source);
+    return ok;
+}
+
+static int test_q8_decode_shape_parity(void){
+    int ok=1;
+    ok=dense_decode_shape_case("gr_up_320x10240",320u,10240u,0u)&&ok;
+    ok=dense_decode_shape_case("gdn_output_6144x2560",6144u,2560u,0u)&&ok;
+    ok=dense_decode_shape_case("gdn_qkv_2560x10240",2560u,10240u,0u)&&ok;
+    ok=dense_decode_shape_case("gr_down_split_10240x320",10240u,320u,8u)&&ok;
+    return ok;
+}
+
 static int run_test(const char *name,int (*fn)(void)){if(!test_selected(name))return 1;selected_test_count++;fprintf(stderr,"  [%s] ... ",name);fflush(stderr);int ok=fn();fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 static int run_test_i(const char *name,int (*fn)(int),int arg){if(!test_selected(name))return 1;selected_test_count++;fprintf(stderr,"  [%s(%d)] ... ",name,arg);fflush(stderr);int ok=fn(arg);fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 int main(void){if(fg_vk_open(&context,&error)!=FG_OK){fprintf(stderr,"Vulkan unavailable: %s\n",error.message);return 77;}fprintf(stderr,"Flash Gordon Vulkan device: %s\n",fg_vk_device_name(context));int ok=1;
@@ -2901,6 +2945,7 @@ ok=run_test("q8_dense_cooked",test_q8_dense_cooked)&&ok;
 ok=run_test("q8_subgroup_benchmark",test_q8_subgroup_benchmark)&&ok;
 ok=run_test("q8_cooked_benchmark",test_q8_cooked_benchmark)&&ok;
 ok=run_test("q8_cooked_prefill_parity",test_q8_cooked_prefill_parity)&&ok;
+ok=run_test("q8_decode_shape_parity",test_q8_decode_shape_parity)&&ok;
 ok=run_test("q8_cooked_prefill_sweep",test_q8_cooked_prefill_sweep)&&ok;
 ok=run_test("q8_embedding",test_q8_embedding)&&ok;
 ok=run_test("hc_finalize",test_hc_finalize)&&ok;
