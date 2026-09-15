@@ -26,14 +26,13 @@ fallback to the old host path; ~1.1-1.7 ms/token expected at 4K.
 19.68 (was 17.95), 64K decode 12.03; prefill 32K 303.2 / 64K 303.4; pi-stability
 PASS.
 
-**Ops lessons:** full runbook in `docs/FLEET_OPERATIONS.md` (memory model, console
-trim, deploy recipe + live-dir mtime trap, failure recovery, gates, flags).
-Short version: /tmp on the blades is tmpfs - never write large files there (it
-OOM-killed a blade and sshd). A wedged rank 0 (oom_score_adj -500, no headroom) is
-SSH-unreachable; recovery is killing the workers so rank 0's fabric transport
-becomes fatal and it exits. The split4 branch adds `FG_OUTPUT_SPLIT_TIMEOUT_MS`
-liveness so a missing partial can never wedge the coordinator again (fleet
-re-test pending).
+**Ops lessons:** the full fleet runbook is kept locally in the `bc-250-dbg`
+workspace (intentionally not in this public repo). Short version: /tmp on the
+blades is tmpfs - never write large files there (it OOM-killed a blade and
+sshd). A wedged rank 0 (oom_score_adj -500, no headroom) is SSH-unreachable;
+recovery is killing the workers so rank 0's fabric transport becomes fatal and
+it exits. The split4 branch adds `FG_OUTPUT_SPLIT_TIMEOUT_MS` liveness so a
+missing partial can never wedge the coordinator again (fleet re-test pending).
 
 ## 0a4. DECODE ROUND 8 — EXPERT GEOMETRY + GDN/GR FUSION + CUTS (2026-09-14/15)
 
