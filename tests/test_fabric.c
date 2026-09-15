@@ -165,7 +165,14 @@ static void protocol_output_handoff_selfcheck(void){
     PROTOCOL_CHECK(fg_output_config_encode(wire,&split,&error)==FG_OK);
     PROTOCOL_CHECK(fg_output_config_decode(&decoded,wire,sizeof(wire),&error)==FG_OK&&
         decoded.flags==FG_OUTPUT_CONFIG_FLAG_SPLIT);
+    fg_output_config split4=config;
+    split4.flags=FG_OUTPUT_CONFIG_FLAG_SPLIT|FG_OUTPUT_CONFIG_FLAG_SPLIT_4;
+    PROTOCOL_CHECK(fg_output_config_encode(wire,&split4,&error)==FG_OK);
+    PROTOCOL_CHECK(fg_output_config_decode(&decoded,wire,sizeof(wire),&error)==FG_OK&&
+        decoded.flags==(FG_OUTPUT_CONFIG_FLAG_SPLIT|FG_OUTPUT_CONFIG_FLAG_SPLIT_4));
     uint8_t bad[FG_OUTPUT_CONFIG_BYTES];
+    memcpy(bad,wire,sizeof(bad));bad[2]=FG_OUTPUT_CONFIG_FLAG_SPLIT_4;
+    PROTOCOL_CHECK(fg_output_config_decode(&decoded,bad,sizeof(bad),&error)!=FG_OK);
     memcpy(bad,wire,sizeof(bad));bad[2]=0x80u;
     PROTOCOL_CHECK(fg_output_config_decode(&decoded,bad,sizeof(bad),&error)!=FG_OK);
     memcpy(bad,wire,sizeof(bad));bad[3]=1u;
@@ -184,6 +191,30 @@ static void protocol_output_handoff_selfcheck(void){
         sizeof(partial_wire)-1u,&error)!=FG_OK);
     fg_output_partial bad_partial=partial;bad_partial.id=FG_Q38_VOCAB_SIZE;
     PROTOCOL_CHECK(fg_output_partial_encode(partial_wire,&bad_partial,&error)!=FG_OK);
+    fg_output_slice_hidden head_slice={.source_rank=7u,.destination_rank=1u,
+        .token_index=17u};
+    for(uint32_t i=0;i<FG_HIDDEN_SIZE;i++)head_slice.hidden[i]=(float)(i%23u)*0.125f-1.0f;
+    uint8_t head_wire[FG_OUTPUT_SLICE_HIDDEN_BYTES];
+    PROTOCOL_CHECK(fg_output_slice_hidden_encode(head_wire,&head_slice,&error)==FG_OK);
+    fg_output_slice_hidden decoded_head={0};
+    PROTOCOL_CHECK(fg_output_slice_hidden_decode(&decoded_head,head_wire,
+        sizeof(head_wire),&error)==FG_OK&&decoded_head.source_rank==7u&&
+        decoded_head.destination_rank==1u&&decoded_head.token_index==17u&&
+        memcmp(decoded_head.hidden,head_slice.hidden,sizeof(head_slice.hidden))==0);
+    PROTOCOL_CHECK(fg_output_slice_hidden_decode(&decoded_head,head_wire,
+        sizeof(head_wire)-1u,&error)!=FG_OK);
+    uint8_t head_bad[FG_OUTPUT_SLICE_HIDDEN_BYTES];
+    memcpy(head_bad,head_wire,sizeof(head_bad));head_bad[2]=1u;
+    PROTOCOL_CHECK(fg_output_slice_hidden_decode(&decoded_head,head_bad,
+        sizeof(head_bad),&error)!=FG_OK);
+    memcpy(head_bad,head_wire,sizeof(head_bad));head_bad[3]=1u;
+    PROTOCOL_CHECK(fg_output_slice_hidden_decode(&decoded_head,head_bad,
+        sizeof(head_bad),&error)!=FG_OK);
+    fg_output_slice_hidden bad_head=head_slice;bad_head.destination_rank=7u;
+    PROTOCOL_CHECK(fg_output_slice_hidden_encode(head_wire,&bad_head,&error)!=FG_OK);
+    bad_head.destination_rank=1u;bad_head.hidden[9]=NAN;
+    PROTOCOL_CHECK(fg_output_slice_hidden_encode(head_wire,&bad_head,&error)!=FG_OK);
+    PROTOCOL_CHECK(fg_output_slice_hidden_encode(head_wire,&head_slice,&error)==FG_OK);
     fg_layer_result slice_result={.layer=FG_LAYER_COUNT-1u,.source_rank=7u,
         .destination_rank=4u,.token_index=17u};
     slice_result.hyper[0]=1.5f;slice_result.hyper[FG_HYPER_WIDTH-1u]=-2.5f;
@@ -219,6 +250,11 @@ static void protocol_output_handoff_selfcheck(void){
         sizeof(partial_wire),&error)==FG_OK);
     PROTOCOL_CHECK(fg_frame_validate(&frame,partial_wire,&frame_bytes,&error)==FG_OK&&
         fg_frame_type(&frame)==FG_MSG_OUTPUT_PARTIAL);
+    PROTOCOL_CHECK(fg_frame_encode(&frame,FG_MSG_OUTPUT_SLICE_HIDDEN,1u,2u,0u,head_wire,
+        sizeof(head_wire),&error)==FG_OK);
+    PROTOCOL_CHECK(fg_frame_validate(&frame,head_wire,&frame_bytes,&error)==FG_OK&&
+        frame_bytes==sizeof(head_wire)&&
+        fg_frame_type(&frame)==FG_MSG_OUTPUT_SLICE_HIDDEN);
 
     fg_layer_result hidden={.layer=FG_LAYER_COUNT-1u,.source_rank=7u,
         .destination_rank=4u,.token_index=17u};
@@ -265,20 +301,49 @@ static void protocol_output_handoff_selfcheck(void){
     PROTOCOL_CHECK(state.hidden.hyper[0]==8.0f);
     /* the split partial binds to the pending config token and is cleared with it */
     fg_output_handoff_reset(&state);
-    PROTOCOL_CHECK(fg_output_handoff_partial(&state,17u,0.5f,3u,&error)!=FG_OK);
+    PROTOCOL_CHECK(fg_output_handoff_partial(&state,17u,0u,0.5f,3u,&error)!=FG_OK);
     PROTOCOL_CHECK(fg_output_handoff_config(&state,&config,&error)==FG_OK);
-    PROTOCOL_CHECK(fg_output_handoff_partial(&state,16u,0.5f,3u,&error)!=FG_OK);
-    PROTOCOL_CHECK(fg_output_handoff_partial(&state,17u,0.5f,3u,&error)==FG_OK);
-    PROTOCOL_CHECK(state.have_remote&&state.remote_value==0.5f&&state.remote_id==3u);
+    PROTOCOL_CHECK(fg_output_handoff_partial(&state,16u,0u,0.5f,3u,&error)!=FG_OK);
+    PROTOCOL_CHECK(fg_output_handoff_partial(&state,17u,0u,0.5f,3u,&error)==FG_OK);
+    PROTOCOL_CHECK(state.remote_count==1u&&state.remote_value[0]==0.5f&&
+        state.remote_id[0]==3u&&state.remote_rank[0]==0u);
     PROTOCOL_CHECK(fg_output_handoff_hidden(&state,&hidden,&error)==FG_OK);
-    PROTOCOL_CHECK(!state.have_local&&state.have_remote);
+    PROTOCOL_CHECK(!state.have_local&&state.remote_count==1u);
     PROTOCOL_CHECK(fg_output_handoff_config(&state,&next,&error)==FG_OK);
-    PROTOCOL_CHECK(!state.have_remote&&!state.have_local);
-    PROTOCOL_CHECK(fg_output_handoff_partial(&state,18u,0.75f,4u,&error)==FG_OK);
+    PROTOCOL_CHECK(state.remote_count==0u&&!state.have_local);
+    PROTOCOL_CHECK(fg_output_handoff_partial(&state,18u,0u,0.75f,4u,&error)==FG_OK);
     fg_output_handoff_take(&state,NULL,NULL);
-    PROTOCOL_CHECK(!state.have_remote&&!state.have_local);
+    PROTOCOL_CHECK(state.remote_count==0u&&!state.have_local);
     fg_output_handoff_reset(&state);
     PROTOCOL_CHECK(!state.have_config&&!state.have_hidden);
+    /* 4-way: the head input is the required payload and three partials bind
+     * to their source rank; readiness never needs the 40 KiB hyper */
+    fg_output_handoff_reset(&state);
+    fg_output_config quad=config;
+    quad.flags=FG_OUTPUT_CONFIG_FLAG_SPLIT|FG_OUTPUT_CONFIG_FLAG_SPLIT_4;
+    PROTOCOL_CHECK(fg_output_handoff_config(&state,&quad,&error)==FG_OK);
+    PROTOCOL_CHECK(!fg_output_handoff_ready(&state));
+    PROTOCOL_CHECK(fg_output_handoff_hidden(&state,&hidden,&error)==FG_OK);
+    PROTOCOL_CHECK(!fg_output_handoff_ready(&state)&&fg_output_handoff_sample_ready(&state));
+    fg_layer_result head={.layer=FG_LAYER_COUNT-1u,.source_rank=7u,
+        .destination_rank=4u,.token_index=17u};
+    head.hyper[0]=1.25f;head.hyper[FG_HIDDEN_SIZE-1u]=-0.5f;
+    PROTOCOL_CHECK(fg_output_handoff_hidden_slice(&state,&head,&error)==FG_OK);
+    PROTOCOL_CHECK(fg_output_handoff_ready(&state)&&state.have_hidden);
+    PROTOCOL_CHECK(fg_output_handoff_sample_ready(&state));
+    fg_layer_result stale_head=head;stale_head.token_index=16u;
+    PROTOCOL_CHECK(fg_output_handoff_hidden_slice(&state,&stale_head,&error)==FG_OK);
+    PROTOCOL_CHECK(state.hidden_slice.token_index==17u);
+    PROTOCOL_CHECK(fg_output_handoff_partial(&state,17u,0u,0.5f,100u,&error)==FG_OK);
+    PROTOCOL_CHECK(fg_output_handoff_partial(&state,17u,1u,0.25f,200u,&error)==FG_OK);
+    PROTOCOL_CHECK(fg_output_handoff_partial(&state,17u,2u,0.75f,300u,&error)==FG_OK);
+    PROTOCOL_CHECK(state.remote_count==3u&&state.remote_rank[2]==2u&&
+        state.remote_value[2]==0.75f&&state.remote_id[1]==200u);
+    PROTOCOL_CHECK(fg_output_handoff_partial(&state,17u,3u,1.0f,400u,&error)==FG_OK);
+    PROTOCOL_CHECK(fg_output_handoff_partial(&state,17u,17u,1.0f,500u,&error)!=FG_OK);
+    fg_output_handoff_take(&state,NULL,NULL);
+    PROTOCOL_CHECK(state.remote_count==0u&&!state.have_hidden_slice);
+    fg_output_handoff_reset(&state);
 }
 
 static fg_status output_handoff_roundtrip(fg_fabric *fabric,uint32_t rank,uint64_t request,fg_error *error){
@@ -391,14 +456,14 @@ static fg_status output_handoff_roundtrip(fg_fabric *fabric,uint32_t rank,uint64
     }
     if(status==FG_OK)status=fg_output_partial_decode(&partial,wire,bytes,error);
     if(status==FG_OK)status=fg_output_handoff_partial(&state,partial.token_index,
-        partial.value,partial.id,error);
+        0u,partial.value,partial.id,error);
     if(status!=FG_OK)return status;
     if(!fg_output_handoff_ready(&state)){
         fg_error_set(error,FG_ERR_MISMATCH,"output handoff pair did not match");
         return FG_ERR_MISMATCH;
     }
-    uint32_t token=state.remote_value>hidden.hyper[0]?state.remote_id:LOCAL_ID;
-    float logit=state.remote_value>hidden.hyper[0]?state.remote_value:hidden.hyper[0];
+    uint32_t token=state.remote_value[0]>hidden.hyper[0]?state.remote_id[0]:LOCAL_ID;
+    float logit=state.remote_value[0]>hidden.hyper[0]?state.remote_value[0]:hidden.hyper[0];
     fg_output_result result={.source_rank=4u,.destination_rank=0u,
         .token_index=TOKEN_INDEX,.token=token,.logit=logit};
     status=fg_output_result_encode(wire,&result,error);

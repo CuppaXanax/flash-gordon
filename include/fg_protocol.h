@@ -147,7 +147,12 @@ typedef enum fg_message_type {
      * state to rank 0 under FG_MSG_OUTPUT_SLICE, rank 0 reduces its vocabulary
      * slice and returns the per-slice argmax under FG_MSG_OUTPUT_PARTIAL. */
     FG_MSG_OUTPUT_SLICE = 48,
-    FG_MSG_OUTPUT_PARTIAL = 49
+    FG_MSG_OUTPUT_PARTIAL = 49,
+    /* 4-way split: the final block owner runs the head's HC chain once, sends
+     * the 10 KiB head input to every slice rank under FG_MSG_OUTPUT_SLICE_HIDDEN
+     * and each slice rank returns its per-slice argmax under the same
+     * FG_MSG_OUTPUT_PARTIAL contract. */
+    FG_MSG_OUTPUT_SLICE_HIDDEN = 50
 } fg_message_type;
 
 typedef struct fg_gdn_state_fetch {
@@ -415,8 +420,10 @@ typedef struct fg_output_config {
 } fg_output_config;
 
 #define FG_OUTPUT_CONFIG_FLAG_SPLIT 1u
+#define FG_OUTPUT_CONFIG_FLAG_SPLIT_4 2u
 
 #define FG_OUTPUT_PARTIAL_BYTES 12u
+#define FG_OUTPUT_SPLIT_WAYS_MAX 4u
 
 typedef struct fg_output_partial {
     uint32_t token_index;
@@ -429,6 +436,25 @@ fg_status fg_output_partial_encode(uint8_t output[FG_OUTPUT_PARTIAL_BYTES],
 fg_status fg_output_partial_decode(fg_output_partial *partial,const uint8_t *payload,
                                    uint32_t bytes,fg_error *err);
 
+/* 4-way split: the final block owner runs the head's HC chain once and ships
+ * the resulting head input instead of the 40 KiB hyper, so the extra slice
+ * ranks never fan out the full state over the fabric. */
+#define FG_OUTPUT_SLICE_HIDDEN_BYTES (8u+FG_HIDDEN_SIZE*4u)
+
+typedef struct fg_output_slice_hidden {
+    uint8_t source_rank;
+    uint8_t destination_rank;
+    uint32_t token_index;
+    float hidden[FG_HIDDEN_SIZE];
+} fg_output_slice_hidden;
+
+fg_status fg_output_slice_hidden_encode(
+    uint8_t output[FG_OUTPUT_SLICE_HIDDEN_BYTES],
+    const fg_output_slice_hidden *slice,fg_error *err);
+fg_status fg_output_slice_hidden_decode(fg_output_slice_hidden *slice,
+                                        const uint8_t *payload,uint32_t bytes,
+                                        fg_error *err);
+
 /* One-deep matcher for the direct output handoff.  Rank 0 emits exactly one
  * config per decode token and the final block owner emits exactly one hidden
  * result; either can be the first to arrive.  Newer token indexes replace
@@ -438,23 +464,30 @@ fg_status fg_output_partial_decode(fg_output_partial *partial,const uint8_t *pay
 typedef struct fg_output_handoff {
     bool have_config;
     bool have_hidden;
+    bool have_hidden_slice;
     bool have_local;
-    bool have_remote;
     fg_output_config config;
     fg_layer_result hidden;
+    fg_layer_result hidden_slice;
     float local_value;
-    float remote_value;
     uint32_t local_id;
-    uint32_t remote_id;
+    float remote_value[FG_OUTPUT_SPLIT_WAYS_MAX];
+    uint32_t remote_id[FG_OUTPUT_SPLIT_WAYS_MAX];
+    uint8_t remote_rank[FG_OUTPUT_SPLIT_WAYS_MAX];
+    uint32_t remote_count;
 } fg_output_handoff;
 void fg_output_handoff_reset(fg_output_handoff *state);
 fg_status fg_output_handoff_config(fg_output_handoff *state,
                                    const fg_output_config *config,fg_error *err);
 fg_status fg_output_handoff_hidden(fg_output_handoff *state,
                                    const fg_layer_result *hidden,fg_error *err);
+fg_status fg_output_handoff_hidden_slice(fg_output_handoff *state,
+                                         const fg_layer_result *slice,fg_error *err);
 fg_status fg_output_handoff_partial(fg_output_handoff *state,uint32_t token_index,
-                                    float value,uint32_t id,fg_error *err);
+                                    uint8_t source_rank,float value,uint32_t id,
+                                    fg_error *err);
 bool fg_output_handoff_ready(const fg_output_handoff *state);
+bool fg_output_handoff_sample_ready(const fg_output_handoff *state);
 void fg_output_handoff_take(fg_output_handoff *state,fg_output_config *config,
                             fg_layer_result *hidden);
 

@@ -25,7 +25,7 @@ static bool message_type_supported(uint16_t version,fg_message_type type){
     if(version>=6u&&type>=FG_MSG_OUTPUT_HISTORY&&
        type<=FG_MSG_OUTPUT_HISTORY_ACK)return true;
     if(version>=6u&&type>=FG_MSG_GDN_STATE_FETCH&&type<=FG_MSG_OUTPUT_HIDDEN)return true;
-    if(version>=6u&&type>=FG_MSG_OUTPUT_SLICE&&type<=FG_MSG_OUTPUT_PARTIAL)return true;
+    if(version>=6u&&type>=FG_MSG_OUTPUT_SLICE&&type<=FG_MSG_OUTPUT_SLICE_HIDDEN)return true;
     return version>=6u&&type>=FG_MSG_SESSION_PREPARE&&type<=FG_MSG_SESSION_RESTORED;
 }
 
@@ -850,9 +850,17 @@ static fg_status validate_output_config(const fg_output_config *config,fg_error 
 
 fg_status fg_output_config_encode(uint8_t output[FG_OUTPUT_CONFIG_BYTES],const fg_output_config *config,fg_error *err){if(!output){fg_error_set(err,FG_ERR_ARGUMENT,"output config buffer is null");return FG_ERR_ARGUMENT;}fg_status status=validate_output_config(config,err);if(status!=FG_OK)return status;output[0]=config->source_rank;output[1]=config->destination_rank;output[2]=config->flags;output[3]=0;put_u32_be(output+4u,config->token_index);put_f32_be(output+8u,config->sampler.temperature);put_f32_be(output+12u,config->sampler.top_p);put_u32_be(output+16u,config->sampler.top_k);put_f32_be(output+20u,config->uniform);put_f32_be(output+24u,config->sampler.presence_penalty);put_f32_be(output+28u,config->sampler.frequency_penalty);put_f32_be(output+32u,config->sampler.repetition_penalty);put_f32_be(output+36u,config->sampler.min_p);return FG_OK;}
 
-fg_status fg_output_config_decode(fg_output_config *config,const uint8_t *payload,uint32_t bytes,fg_error *err){if(!config||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output config input");return FG_ERR_ARGUMENT;}if(bytes!=FG_OUTPUT_CONFIG_BYTES||payload[3]||(payload[2]&~FG_OUTPUT_CONFIG_FLAG_SPLIT)){fg_error_set(err,FG_ERR_FORMAT,"invalid output config size or reserved bytes");return FG_ERR_FORMAT;}memset(config,0,sizeof(*config));config->source_rank=payload[0];config->destination_rank=payload[1];config->flags=payload[2];config->token_index=get_u32_be(payload+4u);config->sampler.temperature=get_f32_be(payload+8u);config->sampler.top_p=get_f32_be(payload+12u);config->sampler.top_k=get_u32_be(payload+16u);config->uniform=get_f32_be(payload+20u);config->sampler.presence_penalty=get_f32_be(payload+24u);config->sampler.frequency_penalty=get_f32_be(payload+28u);config->sampler.repetition_penalty=get_f32_be(payload+32u);config->sampler.min_p=get_f32_be(payload+36u);return validate_output_config(config,err);}
+fg_status fg_output_config_decode(fg_output_config *config,const uint8_t *payload,uint32_t bytes,fg_error *err){if(!config||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output config input");return FG_ERR_ARGUMENT;}if(bytes!=FG_OUTPUT_CONFIG_BYTES||payload[3]||(payload[2]&~(FG_OUTPUT_CONFIG_FLAG_SPLIT|FG_OUTPUT_CONFIG_FLAG_SPLIT_4))||((payload[2]&FG_OUTPUT_CONFIG_FLAG_SPLIT_4)&&!(payload[2]&FG_OUTPUT_CONFIG_FLAG_SPLIT))){fg_error_set(err,FG_ERR_FORMAT,"invalid output config size or reserved bytes");return FG_ERR_FORMAT;}memset(config,0,sizeof(*config));config->source_rank=payload[0];config->destination_rank=payload[1];config->flags=payload[2];config->token_index=get_u32_be(payload+4u);config->sampler.temperature=get_f32_be(payload+8u);config->sampler.top_p=get_f32_be(payload+12u);config->sampler.top_k=get_u32_be(payload+16u);config->uniform=get_f32_be(payload+20u);config->sampler.presence_penalty=get_f32_be(payload+24u);config->sampler.frequency_penalty=get_f32_be(payload+28u);config->sampler.repetition_penalty=get_f32_be(payload+32u);config->sampler.min_p=get_f32_be(payload+36u);return validate_output_config(config,err);}
 
 void fg_output_handoff_reset(fg_output_handoff *state){if(state)memset(state,0,sizeof(*state));}
+
+static void handoff_clear_partials(fg_output_handoff *state){
+    state->have_local=false;
+    state->remote_count=0u;
+    memset(state->remote_value,0,sizeof(state->remote_value));
+    memset(state->remote_id,0,sizeof(state->remote_id));
+    memset(state->remote_rank,0,sizeof(state->remote_rank));
+}
 
 fg_status fg_output_handoff_config(fg_output_handoff *state,const fg_output_config *config,fg_error *err){
     if(!state||!config){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output handoff config");return FG_ERR_ARGUMENT;}
@@ -863,8 +871,10 @@ fg_status fg_output_handoff_config(fg_output_handoff *state,const fg_output_conf
     if(state->have_config&&config->token_index<state->config.token_index)return FG_OK;
     if(state->have_hidden&&config->token_index<state->hidden.token_index)return FG_OK;
     if(state->have_hidden&&config->token_index>state->hidden.token_index)state->have_hidden=false;
+    if(state->have_hidden_slice&&config->token_index<state->hidden_slice.token_index)return FG_OK;
+    if(state->have_hidden_slice&&config->token_index>state->hidden_slice.token_index)state->have_hidden_slice=false;
     state->config=*config;state->have_config=true;
-    state->have_local=false;state->have_remote=false;
+    handoff_clear_partials(state);
     return FG_OK;
 }
 
@@ -875,31 +885,68 @@ fg_status fg_output_handoff_hidden(fg_output_handoff *state,const fg_layer_resul
         return FG_OK;
     }
     if(state->have_hidden&&hidden->token_index<state->hidden.token_index)return FG_OK;
+    if(state->have_hidden_slice&&hidden->token_index<state->hidden_slice.token_index)return FG_OK;
+    if(state->have_hidden_slice&&hidden->token_index>state->hidden_slice.token_index)state->have_hidden_slice=false;
     if(state->have_config&&hidden->token_index<state->config.token_index)return FG_OK;
     if(state->have_config&&hidden->token_index>state->config.token_index){
         state->have_config=false;
-        state->have_local=false;state->have_remote=false;
+        handoff_clear_partials(state);
     }
-    if(!state->have_config||hidden->token_index!=state->config.token_index){
-        state->have_local=false;state->have_remote=false;
-    }
+    if(!state->have_config||hidden->token_index!=state->config.token_index)
+        handoff_clear_partials(state);
     state->hidden=*hidden;state->have_hidden=true;
     return FG_OK;
 }
 
+fg_status fg_output_handoff_hidden_slice(fg_output_handoff *state,const fg_layer_result *slice,fg_error *err){
+    if(!state||!slice){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output handoff slice hidden");return FG_ERR_ARGUMENT;}
+    if(state->have_hidden_slice&&slice->token_index==state->hidden_slice.token_index){
+        state->hidden_slice=*slice;
+        return FG_OK;
+    }
+    if(state->have_hidden_slice&&slice->token_index<state->hidden_slice.token_index)return FG_OK;
+    if(state->have_hidden&&slice->token_index<state->hidden.token_index)return FG_OK;
+    if(state->have_hidden&&slice->token_index>state->hidden.token_index)state->have_hidden=false;
+    if(state->have_config&&slice->token_index<state->config.token_index)return FG_OK;
+    if(state->have_config&&slice->token_index>state->config.token_index){
+        state->have_config=false;
+        handoff_clear_partials(state);
+    }
+    if(!state->have_config||slice->token_index!=state->config.token_index)
+        handoff_clear_partials(state);
+    state->hidden_slice=*slice;state->have_hidden_slice=true;
+    return FG_OK;
+}
+
 bool fg_output_handoff_ready(const fg_output_handoff *state){
+    if(!state||!state->have_config)return false;
+    if(state->config.flags&FG_OUTPUT_CONFIG_FLAG_SPLIT_4)
+        return state->have_hidden_slice&&
+            state->hidden_slice.token_index==state->config.token_index;
+    return state->have_hidden&&state->hidden.token_index==state->config.token_index;
+}
+
+bool fg_output_handoff_sample_ready(const fg_output_handoff *state){
     return state&&state->have_config&&state->have_hidden&&
-        state->config.token_index==state->hidden.token_index;
+        state->hidden.token_index==state->config.token_index;
 }
 
 fg_status fg_output_handoff_partial(fg_output_handoff *state,uint32_t token_index,
-                                    float value,uint32_t id,fg_error *err){
+                                    uint8_t source_rank,float value,uint32_t id,
+                                    fg_error *err){
     if(!state){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output handoff partial");return FG_ERR_ARGUMENT;}
     if(!state->have_config||token_index!=state->config.token_index){
         fg_error_set(err,FG_ERR_MISMATCH,"stale output handoff partial");
         return FG_ERR_MISMATCH;
     }
-    state->remote_value=value;state->remote_id=id;state->have_remote=true;
+    if(state->remote_count>=FG_OUTPUT_SPLIT_WAYS_MAX){
+        fg_error_set(err,FG_ERR_LIMIT,"too many output handoff partials");
+        return FG_ERR_LIMIT;
+    }
+    state->remote_value[state->remote_count]=value;
+    state->remote_id[state->remote_count]=id;
+    state->remote_rank[state->remote_count]=source_rank;
+    state->remote_count++;
     return FG_OK;
 }
 
@@ -907,8 +954,8 @@ void fg_output_handoff_take(fg_output_handoff *state,fg_output_config *config,fg
     if(!state)return;
     if(config)*config=state->config;
     if(hidden)*hidden=state->hidden;
-    state->have_config=false;state->have_hidden=false;
-    state->have_local=false;state->have_remote=false;
+    state->have_config=false;state->have_hidden=false;state->have_hidden_slice=false;
+    handoff_clear_partials(state);
 }
 
 static fg_status validate_output_result(const fg_output_result *result,fg_error *err){if(!result||result->source_rank!=4u||result->destination_rank>=FG_RANK_COUNT||result->token>=FG_Q38_VOCAB_SIZE||!isfinite(result->logit)){fg_error_set(err,FG_ERR_FORMAT,"invalid output result");return FG_ERR_FORMAT;}return FG_OK;}
@@ -922,6 +969,45 @@ static fg_status validate_output_partial(const fg_output_partial *partial,fg_err
 fg_status fg_output_partial_encode(uint8_t output[FG_OUTPUT_PARTIAL_BYTES],const fg_output_partial *partial,fg_error *err){if(!output){fg_error_set(err,FG_ERR_ARGUMENT,"output partial buffer is null");return FG_ERR_ARGUMENT;}fg_status status=validate_output_partial(partial,err);if(status!=FG_OK)return status;put_u32_be(output,partial->token_index);put_f32_be(output+4u,partial->value);put_u32_be(output+8u,partial->id);return FG_OK;}
 
 fg_status fg_output_partial_decode(fg_output_partial *partial,const uint8_t *payload,uint32_t bytes,fg_error *err){if(!partial||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output partial input");return FG_ERR_ARGUMENT;}if(bytes!=FG_OUTPUT_PARTIAL_BYTES){fg_error_set(err,FG_ERR_FORMAT,"invalid output partial size");return FG_ERR_FORMAT;}memset(partial,0,sizeof(*partial));partial->token_index=get_u32_be(payload);partial->value=get_f32_be(payload+4u);partial->id=get_u32_be(payload+8u);return validate_output_partial(partial,err);}
+
+static fg_status validate_output_slice_hidden(const fg_output_slice_hidden *slice,fg_error *err){
+    if(!slice||slice->source_rank>=FG_RANK_COUNT||slice->destination_rank>=FG_RANK_COUNT||
+       slice->source_rank==slice->destination_rank){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid output slice hidden route");return FG_ERR_FORMAT;
+    }
+    for(uint32_t i=0;i<FG_HIDDEN_SIZE;i++)if(!isfinite(slice->hidden[i])){
+        fg_error_set(err,FG_ERR_FORMAT,"non-finite output slice hidden at %u",i);
+        return FG_ERR_FORMAT;
+    }
+    return FG_OK;
+}
+
+fg_status fg_output_slice_hidden_encode(uint8_t output[FG_OUTPUT_SLICE_HIDDEN_BYTES],
+                                        const fg_output_slice_hidden *slice,
+                                        fg_error *err){
+    if(!output){fg_error_set(err,FG_ERR_ARGUMENT,"output slice hidden buffer is null");return FG_ERR_ARGUMENT;}
+    fg_status status=validate_output_slice_hidden(slice,err);
+    if(status!=FG_OK)return status;
+    output[0]=slice->source_rank;output[1]=slice->destination_rank;
+    output[2]=0u;output[3]=0u;put_u32_be(output+4u,slice->token_index);
+    for(uint32_t i=0;i<FG_HIDDEN_SIZE;i++)put_f32_be(output+8u+i*4u,slice->hidden[i]);
+    return FG_OK;
+}
+
+fg_status fg_output_slice_hidden_decode(fg_output_slice_hidden *slice,
+                                        const uint8_t *payload,uint32_t bytes,
+                                        fg_error *err){
+    if(!slice||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output slice hidden input");return FG_ERR_ARGUMENT;}
+    if(bytes!=FG_OUTPUT_SLICE_HIDDEN_BYTES||payload[2]||payload[3]){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid output slice hidden size or reserved bytes");
+        return FG_ERR_FORMAT;
+    }
+    memset(slice,0,sizeof(*slice));
+    slice->source_rank=payload[0];slice->destination_rank=payload[1];
+    slice->token_index=get_u32_be(payload+4u);
+    for(uint32_t i=0;i<FG_HIDDEN_SIZE;i++)slice->hidden[i]=get_f32_be(payload+8u+i*4u);
+    return validate_output_slice_hidden(slice,err);
+}
 
 fg_status fg_output_history_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
                                    const fg_output_history *history,fg_error *err){
