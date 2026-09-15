@@ -35,6 +35,7 @@ static double elapsed_seconds(const struct timespec *start,const struct timespec
 static uint32_t output_split_timeout_ms(void);
 static bool output_split_trace_enabled(void);
 static void output_split_trace(const char *what,uint32_t rank,uint32_t token,uint32_t detail);
+static bool output_hidden_suppression_enabled(void);
 
 static bool token_profile_requested(uint32_t token){const char *requested=getenv("FG_PROFILE_TOKEN");char value[16];if(!requested||!*requested)return false;snprintf(value,sizeof(value),"%u",token);return strcmp(requested,value)==0;}
 static bool prefill_profile_requested(void){const char *enabled=getenv("FG_PREFILL_PROFILE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
@@ -876,7 +877,8 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
         uint32_t output_owner=fg_output_owner_rank(manifest);
         bool direct=decode_direct_output_eligible(manifest)&&output_owner!=self;
         bool skip_hidden=direct&&context->output_split_ways==FG_OUTPUT_SPLIT_WAYS_MAX&&
-            (work->flags&FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY)!=0u;
+            (work->flags&FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY)!=0u&&
+            output_hidden_suppression_enabled();
         fg_layer_result *result=&context->decode_result;
         memset(result,0,sizeof(*result));
         result->layer=(uint8_t)last;result->source_rank=(uint8_t)self;
@@ -1944,6 +1946,16 @@ static uint32_t output_split_timeout_ms(void){
 static bool output_split_trace_enabled(void){
     const char *value=getenv("FG_OUTPUT_SPLIT_TRACE");
     return value&&*value&&strcmp(value,"0")!=0;
+}
+
+static bool output_hidden_suppression_enabled(void){
+    static bool initialized=false,enabled=true;
+    if(!initialized){
+        const char *value=getenv("FG_OUTPUT_SPLIT_HIDDEN");
+        enabled=!(value&&*value&&strcmp(value,"0")==0);
+        initialized=true;
+    }
+    return enabled;
 }
 
 static void output_split_trace(const char *what,uint32_t rank,uint32_t token,uint32_t detail){
