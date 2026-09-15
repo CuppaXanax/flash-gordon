@@ -41,6 +41,13 @@ typedef struct fg_vk_profile {
     double kernel_ms;
     double wait_ms;
     double record_ms;
+    double gap_ms;
+    double gap_max_ms;
+    uint64_t gap_count;
+    const char *gap_max_kernel;
+    double op_ms;
+    double barrier_ms;
+    double submit_ms;
     fg_vk_profile_kernel kernels[FG_VK_PROFILE_MAX_KERNELS];
 } fg_vk_profile;
 
