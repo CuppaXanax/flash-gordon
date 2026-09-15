@@ -7,7 +7,16 @@ struct fg_qsa_page_cache {
     uint32_t pages,hash_capacity,used,lru_head,lru_tail;
     uint32_t *blocks,*hash_buckets,*hash_next,*lru_prev,*lru_next;
     uint8_t *layers,*valid,*pinned;
+    fg_qsa_page_cache_evict_fn evict_hook;
+    void *evict_opaque;
 };
+
+void fg_qsa_page_cache_set_evict_hook(fg_qsa_page_cache *cache,
+                                      fg_qsa_page_cache_evict_fn hook,void *opaque){
+    if(!cache)return;
+    cache->evict_hook=hook;
+    cache->evict_opaque=opaque;
+}
 
 static uint32_t cache_bucket(const fg_qsa_page_cache *cache,uint32_t layer,uint32_t block){
     uint64_t value=((uint64_t)layer<<32u)|block;
@@ -151,6 +160,9 @@ static fg_status cache_acquire(fg_qsa_page_cache *cache,uint32_t layer,
              * records are unpublished; recycle the oldest one rather than
              * failing the request. */
             if(found==UINT32_MAX)found=cache->lru_tail;
+            if(cache->evict_hook)
+                cache->evict_hook(cache->evict_opaque,cache->layers[found],
+                                  cache->blocks[found]);
             cache_remove_hash(cache,found);
             cache->pinned[found]=0u;
         }
