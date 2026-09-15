@@ -118,6 +118,101 @@ static int selection_parity(fg_qsa_session *s,uint32_t first){
     return 1;
 }
 
+static int select_resolve_mirror(fg_qsa_session *s){
+    REQUIRE(ensure_select_resolve(s,&error)==FG_OK);
+    REQUIRE(s->slot_table&&s->select_resolved&&s->select_flags);
+    qsa_cache_reset(s);
+    uint32_t slot=0;bool hit=false;
+    REQUIRE(qsa_cache_acquire(s,3u,5u,&slot,&hit,&error)==FG_OK);
+    REQUIRE(slot==0u&&!hit);
+    REQUIRE(((uint32_t *)fg_vk_tensor_map(s->slot_table))[5u]==0u);
+    REQUIRE(qsa_cache_acquire(s,3u,7u,&slot,&hit,&error)==FG_OK);
+    REQUIRE(slot==1u&&!hit);
+    REQUIRE(((uint32_t *)fg_vk_tensor_map(s->slot_table))[7u]==1u);
+    REQUIRE(qsa_cache_acquire(s,3u,9u,&slot,&hit,&error)==FG_OK);
+    REQUIRE(slot==0u&&!hit);
+    REQUIRE(((uint32_t *)fg_vk_tensor_map(s->slot_table))[5u]==UINT32_MAX);
+    REQUIRE(((uint32_t *)fg_vk_tensor_map(s->slot_table))[9u]==0u);
+    REQUIRE(((uint32_t *)fg_vk_tensor_map(s->slot_table))[7u]==1u);
+    uint32_t ids[4]={7u,9u,5u,65536u};
+    REQUIRE(fg_vk_tensor_write(s->ids[0],0,ids,sizeof(ids),&error)==FG_OK);
+    REQUIRE(fg_vk_begin(fg_model_vk(s->model),&error)==FG_OK);
+    REQUIRE(fg_vk_qsa_select_resolve(fg_model_vk(s->model),s->select_resolved,
+        s->select_flags,s->ids[0],s->slot_table,4u,s->max_blocks,0u,&error)==FG_OK);
+    REQUIRE(fg_vk_end(fg_model_vk(s->model),&error)==FG_OK);
+    uint32_t slots[4]={0},flags[2]={0};
+    REQUIRE(fg_vk_tensor_read(s->select_resolved,0,slots,sizeof(slots),&error)==FG_OK);
+    REQUIRE(fg_vk_tensor_read(s->select_flags,0,flags,sizeof(flags),&error)==FG_OK);
+    REQUIRE(slots[0]==1u&&slots[1]==0u&&slots[2]==UINT32_MAX&&slots[3]==UINT32_MAX);
+    REQUIRE(flags[0]==2u&&flags[1]==0u);
+    return 1;
+}
+
+static int select_resolve_parity(fg_qsa_session *s,uint32_t tokens){
+    REQUIRE(ensure_select_resolve(s,&error)==FG_OK);
+    fg_vk_context *vk=fg_model_vk(s->model);
+    fg_qsa_page_cache_destroy(s->cache);s->cache=NULL;
+    fg_vk_tensor_destroy(s->cache_records);s->cache_records=NULL;
+    s->cache_pages=1024u;
+    REQUIRE(fg_qsa_page_cache_create(&s->cache,1024u,&error)==FG_OK);
+    REQUIRE(make_tensor(s,1024u*FG_QSA_PAGE_RECORD_BYTES,&s->cache_records,&error)==FG_OK);
+    REQUIRE(ensure_select_resolve(s,&error)==FG_OK);
+    uint32_t reference[512],resolved_ids[512],count_ref=0,count=0;
+    bool fallback=false;
+    REQUIRE(fg_vk_begin(vk,&error)==FG_OK);
+    REQUIRE(select_blocks(s,0u,s->index_query_view,tokens,reference,&count_ref,false,&error)==FG_OK);
+    REQUIRE(count_ref==512u);
+    qsa_cache_reset(s);
+    for(uint32_t i=0;i<count_ref;i++){
+        uint32_t slot=0;bool hit=false;
+        REQUIRE(qsa_cache_acquire(s,3u,reference[i],&slot,&hit,&error)==FG_OK);
+    }
+    REQUIRE(fg_vk_begin(vk,&error)==FG_OK);
+    REQUIRE(select_blocks_resolve(s,0u,s->index_query_view,tokens,resolved_ids,
+        &count,&fallback,&error)==FG_OK);
+    REQUIRE(count==count_ref&&!fallback);
+    uint32_t slots[512],flags[2]={0};
+    REQUIRE(fg_vk_tensor_read(s->select_resolved,0,slots,count*4u,&error)==FG_OK);
+    REQUIRE(fg_vk_tensor_read(s->select_flags,0,flags,sizeof(flags),&error)==FG_OK);
+    REQUIRE(flags[0]==0u);
+    for(uint32_t i=0;i<count;i++){
+        uint32_t slot=0;
+        REQUIRE(fg_qsa_page_cache_lookup(s->cache,3u,reference[i],&slot));
+        REQUIRE(slots[i]==slot);
+    }
+    REQUIRE(fg_vk_begin(vk,&error)==FG_OK);
+    REQUIRE(fg_vk_qsa_record_gather(vk,s->selected_records,s->cache_records,
+        s->select_resolved,0u,s->cache_pages*FG_Q38_QSA_COMPRESS_RATIO,count,0u,0u,
+        &error)==FG_OK);
+    REQUIRE(fg_vk_end(vk,&error)==FG_OK);
+    const uint8_t *arena=fg_vk_tensor_map(s->selected_records);
+    const uint8_t *records=fg_vk_tensor_map(s->cache_records);
+    for(uint32_t i=0;i<count;i++)for(uint32_t t=0;t<4u;t++)
+        REQUIRE(!memcmp(arena+((uint64_t)i*4u+t)*FG_Q38_QSA_TOKEN_RECORD_BYTES,
+            records+((uint64_t)slots[i]*4u+t)*FG_Q38_QSA_TOKEN_RECORD_BYTES,
+            FG_Q38_QSA_TOKEN_RECORD_BYTES));
+    qsa_cache_reset(s);
+    for(uint32_t i=1;i<count_ref;i++){
+        uint32_t slot=0;bool hit=false;
+        REQUIRE(qsa_cache_acquire(s,3u,reference[i],&slot,&hit,&error)==FG_OK);
+    }
+    REQUIRE(fg_vk_begin(vk,&error)==FG_OK);
+    REQUIRE(select_blocks_resolve(s,0u,s->index_query_view,tokens,resolved_ids,
+        &count,&fallback,&error)==FG_OK);
+    REQUIRE(count==count_ref&&fallback);
+    REQUIRE(!memcmp(reference,resolved_ids,count*4u));
+    REQUIRE(fg_vk_tensor_read(s->select_flags,0,flags,sizeof(flags),&error)==FG_OK);
+    REQUIRE(flags[0]==1u);
+    fg_qsa_page_cache_destroy(s->cache);s->cache=NULL;
+    fg_vk_tensor_destroy(s->cache_records);s->cache_records=NULL;
+    s->cache_pages=2u;
+    REQUIRE(fg_qsa_page_cache_create(&s->cache,2u,&error)==FG_OK);
+    REQUIRE(make_tensor(s,2u*FG_QSA_PAGE_RECORD_BYTES,&s->cache_records,&error)==FG_OK);
+    REQUIRE(ensure_select_resolve(s,&error)==FG_OK);
+    qsa_cache_reset(s);
+    return 1;
+}
+
 typedef struct fetch_fixture {uint8_t pages[6][FG_QSA_PAGE_RECORD_BYTES];uint32_t calls,pages_read;bool fail;} fetch_fixture;
 static fg_status fetch_pages(void *opaque,uint32_t layer,const uint32_t *blocks,
     uint32_t count,uint8_t *records,fg_error *err){
@@ -448,6 +543,7 @@ int main(void){
     if(ok)ok=lazy_index_segment(session)&&fill_index_rows(session);
     if(ok)ok=selection_window_boundary(session);
     if(ok)ok=selection_parity(session,131071u)&&selection_parity(session,2045u);
+    if(ok)ok=select_resolve_mirror(session)&&select_resolve_parity(session,8191u);
     if(ok)ok=causal_attention(session)&&causal_attention_weighted(session)&&gather_eviction(session,false)&&gather_eviction(session,true);
     if(ok)ok=split_merge_selected(session,5u,8u)&&split_merge_selected(session,100u,1u)&&
         split_merge_selected(session,2051u,8u);
