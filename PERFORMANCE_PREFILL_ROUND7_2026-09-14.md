@@ -146,6 +146,19 @@ whose subgroup size is 8 (the 32-lane shuffle sequence is undefined there);
 it needs a `gl_SubgroupSize >= 32` fast path with the old shared fallback.
 Not deployed this round.
 
+### 4.3 Fleet state left behind
+
+The round-7 build is not promoted, so the fleet was restored to the validated
+control sources: `src/vk.c` and `shaders/fg_qsa_index_score.comp` reverted to
+`2c9be2a` and rebuilt on .42. The previous `59b2f559` binary had been
+overwritten by the round's deploys and no copy existed on the blades, so the
+restored control is a clean rebuild of the exact base sources
+(`6be74071...`, all eight blades, standard `start-rank0-ring.sh` /
+`start-workers-ring.sh`, ring pack). It was re-gated: `correctness64.ps1`
+[12]/[Paris], `tools/pi-stability.ps1` PASS (6 stages, 4-turn conversation,
+8 ranks, 0 failures; 4K 279.42 TPS, short decode 19.87). The round-7 package
+(binary `eb84975b` + shader `e86690e3`) is reproducible from commit `89f0ee1`.
+
 ## 5. QSA selection/residency overhead handed to the cache workstream
 
 Measured, not fixed in this round:
