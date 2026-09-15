@@ -872,10 +872,12 @@ fg_status fg_owner_decode_layer(fg_owner_executor *e,uint32_t layer,uint32_t tok
     if(status==FG_OK)status=fg_vk_quantize_q8_k(vk,e->activation_q8k,mixed,FG_HIDDEN_SIZE,1u,err);
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"shared_expert",err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->shared_gate,gate_w,mixed,FG_HIDDEN_SIZE,640u,1u,1.0f,err);
+    if(status==FG_OK)fg_vk_next_dispatch_independent(vk);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->shared_up,up_w,mixed,FG_HIDDEN_SIZE,640u,1u,1.0f,err);
+    if(status==FG_OK)fg_vk_next_dispatch_independent(vk);
+    if(status==FG_OK)status=fg_vk_dense_f32(vk,e->shared_scalar,shared_gate_w,mixed,FG_HIDDEN_SIZE,1u,1u,err);
     if(status==FG_OK)status=fg_vk_swiglu(vk,e->shared_mid,e->shared_gate,e->shared_up,640u,err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->shared_output,down_w,e->shared_mid,640u,FG_HIDDEN_SIZE,1u,1.0f,err);
-    if(status==FG_OK)status=fg_vk_dense_f32(vk,e->shared_scalar,shared_gate_w,mixed,FG_HIDDEN_SIZE,1u,1u,err);
     status=finish_batch(vk,status,err); /* SYNC 2: read activation + shared output */
     if(status==FG_OK)activation=fg_vk_tensor_map(e->activation_q8k);
     double t_mprep=ts_ms();
@@ -973,10 +975,12 @@ static fg_status decode_layer_begin_impl(fg_owner_executor *e,uint32_t slot,uint
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"shared_expert",err);
     if(status==FG_OK)status=fg_vk_begin(vk,err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->shared_gate,gate_w,mixed,FG_HIDDEN_SIZE,640u,1u,1.0f,err);
+    if(status==FG_OK)fg_vk_next_dispatch_independent(vk);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->shared_up,up_w,mixed,FG_HIDDEN_SIZE,640u,1u,1.0f,err);
+    if(status==FG_OK)fg_vk_next_dispatch_independent(vk);
+    if(status==FG_OK)status=fg_vk_dense_f32(vk,frame->shared_scalar,shared_gate_w,mixed,FG_HIDDEN_SIZE,1u,1u,err);
     if(status==FG_OK)status=fg_vk_swiglu(vk,e->shared_mid,e->shared_gate,e->shared_up,640u,err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,frame->shared_output,down_w,e->shared_mid,640u,FG_HIDDEN_SIZE,1u,1.0f,err);
-    if(status==FG_OK)status=fg_vk_dense_f32(vk,frame->shared_scalar,shared_gate_w,mixed,FG_HIDDEN_SIZE,1u,1u,err);
     status=finish_batch(vk,status,err);
     frame->residual=residual;frame->t_sync1=t_sync1;frame->trace_sync1=trace_sync1;frame->t_topk=t_topk;frame->t_fire=t_fire;frame->trace_fire=trace_fire;frame->t_sync2=ts_ms();frame->trace_sync2=ep_trace?wall_ns():0;
     if(status!=FG_OK){
@@ -1146,6 +1150,7 @@ static fg_status owner_record_layer(fg_owner_executor *e,uint32_t layer,
     if(status==FG_OK)status=fg_vk_dense_f32(vk,e->router_logits,router_w,mixed,
         FG_HIDDEN_SIZE,FG_EXPERT_COUNT,1u,err);
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"router_quantization",err);
+    if(status==FG_OK)fg_vk_next_dispatch_independent(vk);
     if(status==FG_OK)status=fg_vk_quantize_q8_k(vk,e->activation_q8k,mixed,
         FG_HIDDEN_SIZE,1u,err);
     fg_vk_tensor *shared_gate_w=NULL,*gate_w=NULL,*up_w=NULL,*down_w=NULL;
@@ -1159,14 +1164,16 @@ static fg_status owner_record_layer(fg_owner_executor *e,uint32_t layer,
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"shared_expert",err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->shared_gate,gate_w,mixed,
         FG_HIDDEN_SIZE,640u,1u,1.0f,err);
+    if(status==FG_OK)fg_vk_next_dispatch_independent(vk);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->shared_up,up_w,mixed,
         FG_HIDDEN_SIZE,640u,1u,1.0f,err);
+    if(status==FG_OK)fg_vk_next_dispatch_independent(vk);
+    if(status==FG_OK)status=fg_vk_dense_f32(vk,e->shared_scalar,shared_gate_w,
+        mixed,FG_HIDDEN_SIZE,1u,1u,err);
     if(status==FG_OK)status=fg_vk_swiglu(vk,e->shared_mid,e->shared_gate,
         e->shared_up,640u,err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->shared_output,down_w,
         e->shared_mid,640u,FG_HIDDEN_SIZE,1u,1.0f,err);
-    if(status==FG_OK)status=fg_vk_dense_f32(vk,e->shared_scalar,shared_gate_w,
-        mixed,FG_HIDDEN_SIZE,1u,1u,err);
     fg_vk_tensor *expert_output=NULL;
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"expert_decode",err);
     if(status==FG_OK)status=expert(expert_context,layer,e->activation_q8k,

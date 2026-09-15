@@ -90,6 +90,7 @@ bool fg_vk_static_recorded(const fg_vk_context *context,uint32_t slot);
 fg_status fg_vk_abort(fg_vk_context *context,fg_error *err);
 bool fg_vk_batch_active(const fg_vk_context *context);
 bool fg_vk_pipeline_enabled(void);
+void fg_vk_next_dispatch_independent(fg_vk_context *context);
 
 fg_status fg_vk_expert_graph_create(fg_vk_context *context,fg_vk_expert_graph **out,
                                      fg_vk_tensor *activation,fg_vk_tensor *tiles,
