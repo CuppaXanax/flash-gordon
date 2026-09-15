@@ -49,6 +49,19 @@ void main(){
     delta[lane]=(value-memory)*mix;
     barrier();
     index=0u;
+    for(;index+8u<=pc.head_dim;index+=8u){
+        uint base0=state_base+index*pc.head_dim+lane,stride=pc.head_dim;
+        float old0=recurrent[base0],old1=recurrent[base0+stride],old2=recurrent[base0+2u*stride],old3=recurrent[base0+3u*stride];
+        float old4=recurrent[base0+4u*stride],old5=recurrent[base0+5u*stride],old6=recurrent[base0+6u*stride],old7=recurrent[base0+7u*stride];
+        recurrent[base0]=old0*decay+key[index]*delta[lane];
+        recurrent[base0+stride]=old1*decay+key[index+1u]*delta[lane];
+        recurrent[base0+2u*stride]=old2*decay+key[index+2u]*delta[lane];
+        recurrent[base0+3u*stride]=old3*decay+key[index+3u]*delta[lane];
+        recurrent[base0+4u*stride]=old4*decay+key[index+4u]*delta[lane];
+        recurrent[base0+5u*stride]=old5*decay+key[index+5u]*delta[lane];
+        recurrent[base0+6u*stride]=old6*decay+key[index+6u]*delta[lane];
+        recurrent[base0+7u*stride]=old7*decay+key[index+7u]*delta[lane];
+    }
     for(;index+4u<=pc.head_dim;index+=4u){
         uint base0=state_base+index*pc.head_dim+lane,stride=pc.head_dim;
         float old0=recurrent[base0],old1=recurrent[base0+stride],old2=recurrent[base0+2u*stride],old3=recurrent[base0+3u*stride];
