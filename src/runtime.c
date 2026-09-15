@@ -1966,12 +1966,9 @@ static fg_status worker_output_handoff_flush(fg_fabric *fabric,fg_output_executo
     fg_output_result result={.source_rank=(uint8_t)self,.destination_rank=0u,
         .token_index=config->token_index};
     if(split){
-        if(!output_slice){
-            fg_error_set(err,FG_ERR_MISMATCH,
-                         "split output config reached a rank without a slice executor");
-            return FG_ERR_MISMATCH;
-        }
         uint32_t ways=worker_output_split_ways(state);
+        fg_status missing=fg_output_split_require_slice(output_slice!=NULL,ways,self,err);
+        if(missing!=FG_OK)return missing;
         if(fg_output_slice_ways(output_slice)!=ways){
             fg_error_set(err,FG_ERR_MISMATCH,
                 "output config declares a %u-way split but this rank holds a %u-way slice executor (FG_OUTPUT_SPLIT must match on all ranks)",
@@ -2024,10 +2021,12 @@ static fg_status handle_output_partial(fg_fabric *fabric,fg_output_executor *out
     fg_output_slice *output_slice,fg_vk_context *vk,uint32_t self,uint64_t session_id,
     uint32_t peer,const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,
     fg_vk_tensor *hyper_tensor,fg_output_handoff *state,fg_error *err){
-    if(self!=4u||!output_slice||!state){
+    if(self!=4u||!state){
         fg_error_set(err,FG_ERR_MISMATCH,"output partial reached a rank without the split head");
         return FG_ERR_MISMATCH;
     }
+    fg_status head=fg_output_split_require_slice(output_slice!=NULL,0u,self,err);
+    if(head!=FG_OK)return head;
     fg_output_partial partial;
     fg_status status=fg_output_partial_decode(&partial,payload,bytes,err);
     uint32_t ways=fg_output_slice_ways(output_slice),way=0u;
@@ -2054,15 +2053,22 @@ static fg_status handle_output_slice_hidden(fg_fabric *fabric,fg_output_executor
     fg_output_slice *output_slice,fg_vk_context *vk,const fg_manifest *manifest,uint32_t self,
     uint64_t session_id,uint32_t peer,const fg_frame_header *header,const uint8_t *payload,
     uint32_t bytes,fg_vk_tensor *hyper_tensor,fg_output_handoff *state,fg_error *err){
-    if(!decode_direct_output_eligible(manifest)||!output_slice||
-       fg_output_slice_ways(output_slice)!=FG_OUTPUT_SPLIT_WAYS_MAX){
+    if(!decode_direct_output_eligible(manifest)){
         fg_error_set(err,FG_ERR_MISMATCH,
-            "rank %u received a 4-way output slice without a 4-way slice executor (FG_OUTPUT_SPLIT must match on all ranks)",
-            self);
+            "rank %u received a 4-way output slice without the direct output handoff",self);
+        return FG_ERR_MISMATCH;
+    }
+    fg_status status=fg_output_split_require_slice(output_slice!=NULL,
+        FG_OUTPUT_SPLIT_WAYS_MAX,self,err);
+    if(status!=FG_OK)return status;
+    if(fg_output_slice_ways(output_slice)!=FG_OUTPUT_SPLIT_WAYS_MAX){
+        fg_error_set(err,FG_ERR_MISMATCH,
+            "rank %u holds a %u-way slice executor for a 4-way output slice (FG_OUTPUT_SPLIT must match on all ranks)",
+            self,fg_output_slice_ways(output_slice));
         return FG_ERR_MISMATCH;
     }
     fg_output_slice_hidden slice;
-    fg_status status=fg_output_slice_hidden_decode(&slice,payload,bytes,err);
+    status=fg_output_slice_hidden_decode(&slice,payload,bytes,err);
     if(status==FG_OK&&(!session_id||fg_frame_request_id(header)!=session_id||
        slice.destination_rank!=self||
        slice.source_rank!=manifest->layer_owner[FG_LAYER_COUNT-1u]||
@@ -3971,14 +3977,17 @@ static fg_status coordinator_output_slice(fg_coordinator *coordinator,uint32_t p
     const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,
     uint32_t token_index,fg_error *err){
     const fg_manifest *manifest=coordinator->manifest;
-    if(!coordinator->output_slice||
-       fg_output_slice_ways(coordinator->output_slice)!=FG_OUTPUT_SPLIT_WAYS_MIN){
+    fg_status status=fg_output_split_require_slice(coordinator->output_slice!=NULL,
+        FG_OUTPUT_SPLIT_WAYS_MIN,0u,err);
+    if(status!=FG_OK)return status;
+    if(fg_output_slice_ways(coordinator->output_slice)!=FG_OUTPUT_SPLIT_WAYS_MIN){
         fg_error_set(err,FG_ERR_MISMATCH,
-                     "ring decode received a 2-way output slice without a 2-way slice executor (FG_OUTPUT_SPLIT must match on all ranks)");
+                     "rank 0 holds a %u-way slice executor for a 2-way output slice (FG_OUTPUT_SPLIT must match on all ranks)",
+                     fg_output_slice_ways(coordinator->output_slice));
         return FG_ERR_MISMATCH;
     }
     fg_layer_result slice;
-    fg_status status=fg_decode_layer_result_decode(&slice,payload,bytes,err);
+    status=fg_decode_layer_result_decode(&slice,payload,bytes,err);
     if(status==FG_OK&&(slice.destination_rank!=0u||slice.layer!=FG_LAYER_COUNT-1u||
        slice.source_rank!=manifest->layer_owner[FG_LAYER_COUNT-1u]||
        slice.source_rank!=peer||slice.token_index!=token_index||
@@ -4002,14 +4011,17 @@ static fg_status coordinator_output_slice_hidden(fg_coordinator *coordinator,uin
     const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,
     uint32_t token_index,fg_error *err){
     const fg_manifest *manifest=coordinator->manifest;
-    if(!coordinator->output_slice||
-       fg_output_slice_ways(coordinator->output_slice)!=FG_OUTPUT_SPLIT_WAYS_MAX){
+    fg_status status=fg_output_split_require_slice(coordinator->output_slice!=NULL,
+        FG_OUTPUT_SPLIT_WAYS_MAX,0u,err);
+    if(status!=FG_OK)return status;
+    if(fg_output_slice_ways(coordinator->output_slice)!=FG_OUTPUT_SPLIT_WAYS_MAX){
         fg_error_set(err,FG_ERR_MISMATCH,
-                     "ring decode received a 4-way output slice without a 4-way slice executor (FG_OUTPUT_SPLIT must match on all ranks)");
+                     "rank 0 holds a %u-way slice executor for a 4-way output slice (FG_OUTPUT_SPLIT must match on all ranks)",
+                     fg_output_slice_ways(coordinator->output_slice));
         return FG_ERR_MISMATCH;
     }
     fg_output_slice_hidden slice;
-    fg_status status=fg_output_slice_hidden_decode(&slice,payload,bytes,err);
+    status=fg_output_slice_hidden_decode(&slice,payload,bytes,err);
     if(status==FG_OK&&(slice.destination_rank!=0u||
        slice.source_rank!=manifest->layer_owner[FG_LAYER_COUNT-1u]||
        slice.source_rank!=peer||slice.token_index!=token_index||

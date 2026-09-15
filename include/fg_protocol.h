@@ -436,6 +436,11 @@ bool fg_output_split_requested(void);
 bool fg_output_split_way_for_rank(uint32_t ways,uint32_t rank,uint32_t *way);
 uint32_t fg_output_split_rank(uint32_t ways,uint32_t way);
 void fg_output_split_span(uint32_t ways,uint32_t way,uint32_t *first_row,uint32_t *rows);
+/* Every split receive path uses this check so a rank that the mode assigns a
+ * slice to but that holds no executor fails with one message instead of
+ * waiting for a partial that will never come. */
+fg_status fg_output_split_require_slice(bool have_slice,uint32_t ways,uint32_t rank,
+                                        fg_error *err);
 
 typedef struct fg_output_partial {
     uint32_t token_index;

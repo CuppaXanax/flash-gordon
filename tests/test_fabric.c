@@ -153,6 +153,12 @@ static fg_status decode_layer_chain_roundtrip(fg_fabric *fabric,uint32_t rank,ui
 
 static void protocol_output_handoff_selfcheck(void){
     fg_error error={0};
+    fg_error missing={0};
+    PROTOCOL_CHECK(fg_output_split_require_slice(true,4u,1u,&missing)==FG_OK);
+    PROTOCOL_CHECK(fg_output_split_require_slice(false,4u,1u,&missing)!=FG_OK);
+    PROTOCOL_CHECK(strstr(missing.message,"slice executor")!=NULL);
+    PROTOCOL_CHECK(strstr(missing.message,"rank 1")!=NULL);
+    PROTOCOL_CHECK(fg_output_split_require_slice(false,2u,0u,&missing)!=FG_OK);
     fg_output_config config={.source_rank=0u,.destination_rank=4u,.token_index=17u,
         .uniform=0.25f};
     uint8_t wire[FG_OUTPUT_CONFIG_BYTES];
