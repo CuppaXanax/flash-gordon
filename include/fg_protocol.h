@@ -148,10 +148,6 @@ typedef enum fg_message_type {
      * slice and returns the per-slice argmax under FG_MSG_OUTPUT_PARTIAL. */
     FG_MSG_OUTPUT_SLICE = 48,
     FG_MSG_OUTPUT_PARTIAL = 49,
-    /* 4-way split: the final block owner runs the head's HC chain once, sends
-     * the 10 KiB head input to every slice rank under FG_MSG_OUTPUT_SLICE_HIDDEN
-     * and each slice rank returns its per-slice argmax under the same
-     * FG_MSG_OUTPUT_PARTIAL contract. */
     FG_MSG_OUTPUT_SLICE_HIDDEN = 50
 } fg_message_type;
 
@@ -427,18 +423,11 @@ typedef struct fg_output_config {
 #define FG_OUTPUT_SPLIT_WAYS_MIN 2u
 #define FG_OUTPUT_SPLIT_WAYS_MAX 4u
 
-/* FG_OUTPUT_SPLIT: unset/0 disables the split, 1 or 2 select the 2-way split
- * and 4 selects the 4-way split.  Any other value is an error: the mode is
- * parsed once per rank at startup so a partial or invalid configuration fails
- * with a message instead of hanging on a missing partial. */
 fg_status fg_output_split_mode(uint32_t *ways,fg_error *err);
 bool fg_output_split_requested(void);
 bool fg_output_split_way_for_rank(uint32_t ways,uint32_t rank,uint32_t *way);
 uint32_t fg_output_split_rank(uint32_t ways,uint32_t way);
 void fg_output_split_span(uint32_t ways,uint32_t way,uint32_t *first_row,uint32_t *rows);
-/* Every split receive path uses this check so a rank that the mode assigns a
- * slice to but that holds no executor fails with one message instead of
- * waiting for a partial that will never come. */
 fg_status fg_output_split_require_slice(bool have_slice,uint32_t ways,uint32_t rank,
                                         fg_error *err);
 
@@ -453,9 +442,6 @@ fg_status fg_output_partial_encode(uint8_t output[FG_OUTPUT_PARTIAL_BYTES],
 fg_status fg_output_partial_decode(fg_output_partial *partial,const uint8_t *payload,
                                    uint32_t bytes,fg_error *err);
 
-/* 4-way split: the final block owner runs the head's HC chain once and ships
- * the resulting head input instead of the 40 KiB hyper, so the extra slice
- * ranks never fan out the full state over the fabric. */
 #define FG_OUTPUT_SLICE_HIDDEN_BYTES (8u+FG_HIDDEN_SIZE*4u)
 
 typedef struct fg_output_slice_hidden {

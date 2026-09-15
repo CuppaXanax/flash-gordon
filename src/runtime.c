@@ -2045,10 +2045,6 @@ static fg_status handle_output_partial(fg_fabric *fabric,fg_output_executor *out
     return status;
 }
 
-/* 4-way split: the final block owner ran the HC chain once and every slice
- * rank receives the same head input.  The output owner stores it for the
- * combine; the helper ranks reduce their slice immediately and return a
- * 12-byte partial. */
 static fg_status handle_output_slice_hidden(fg_fabric *fabric,fg_output_executor *output,
     fg_output_slice *output_slice,fg_vk_context *vk,const fg_manifest *manifest,uint32_t self,
     uint64_t session_id,uint32_t peer,const fg_frame_header *header,const uint8_t *payload,

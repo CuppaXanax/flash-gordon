@@ -322,8 +322,6 @@ static void protocol_output_handoff_selfcheck(void){
     PROTOCOL_CHECK(state.remote_count==0u&&!state.have_local);
     fg_output_handoff_reset(&state);
     PROTOCOL_CHECK(!state.have_config&&!state.have_hidden);
-    /* 4-way: the head input is the required payload and three partials bind
-     * to their source rank; readiness never needs the 40 KiB hyper */
     fg_output_handoff_reset(&state);
     fg_output_config quad=config;
     quad.flags=FG_OUTPUT_CONFIG_FLAG_SPLIT|FG_OUTPUT_CONFIG_FLAG_SPLIT_4;
