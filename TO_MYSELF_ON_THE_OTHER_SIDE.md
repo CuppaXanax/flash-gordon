@@ -3,6 +3,36 @@
 You are the post-compaction me. Read this top to bottom before touching anything.
 Everything here is measured, not hoped. The fleet is healthy right now; keep it that way.
 
+## 0a5. RANK-0 MEMORY + DECODE ROUND 11 (2026-09-15)
+
+**Rank-0 memory pathology (blocker, fixed).** Prefill blocks stalled 16s-561s and
+double-freed at the memory edge: rank 0 started at 15.65/15.94 GiB used
+(`conservative_peak_margin=-524 MB`, zram engaged). Fixes (`e5b2a1f`): QSA page
+transport allocated lazily at microbatch size (was 246 MB, 232 MB fixed replica
+slots), rank-0 QSA mirror index 204->34 MB and GDN/PLE owner state 114->12.6 MB
+(owned layers only), rank-0 state file 6.0->1.0 GiB. Margin now +46 MB; 4K prefill
+max 363 ms (n=34), three batteries + full soak PASS, no double-free in ~60 min.
+The double-free root cause is open (follow-up: ASAN rank-0 build + FG_VK_ALLOC_TRACE).
+
+**Dense-kernel latency round.** r8/generic dense scale-broadcast cut (210->123
+result-ops, -41%), GDN algebraic 8-column update; bit-identical; ~+0.1-0.5 ms/token.
+
+**QSA selection offload.** Device-side selection resolution (new
+`fg_qsa_select_resolve`), chunked top-k (`FG_QSA_TOPK_V2`) now default, exact-miss
+fallback to the old host path; ~1.1-1.7 ms/token expected at 4K.
+
+**Measured (binary `cbcee93a`, default config):** gates [12]/[Paris]; short decode
+24.28/24.68 (was 24.01/24.16), 4K warm 23.41-23.74 (was 22.57/22.76), 32K decode
+19.68 (was 17.95), 64K decode 12.03; prefill 32K 303.2 / 64K 303.4; pi-stability
+PASS.
+
+**Ops lessons:** /tmp on the blades is tmpfs - never write large files there (it
+OOM-killed a blade and sshd). A wedged rank 0 (oom_score_adj -500, no headroom) is
+SSH-unreachable; recovery is killing the workers so rank 0's fabric transport
+becomes fatal and it exits. The split4 branch adds `FG_OUTPUT_SPLIT_TIMEOUT_MS`
+liveness so a missing partial can never wedge the coordinator again (fleet
+re-test pending).
+
 ## 0a4. DECODE ROUND 8 — EXPERT GEOMETRY + GDN/GR FUSION + CUTS (2026-09-14/15)
 
 Three parallel rounds merged (main `ed99965`, fleet binary `9ec61a98`):
