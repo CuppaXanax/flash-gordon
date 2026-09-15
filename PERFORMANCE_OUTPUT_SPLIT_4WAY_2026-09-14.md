@@ -477,3 +477,65 @@ it wedges (never leave it wedged).  For split diagnosis set
 `FG_OUTPUT_SPLIT_TRACE=1` and optionally `FG_OUTPUT_SPLIT_TIMEOUT_MS=3000` on
 all ranks: the trace names the stalled hop and the timeout names the missing
 rank instead of hanging.
+
+## 9. Round 3: full 4-way fleet qualification (2026-09-15)
+
+Rank-0 memory was fixed on main (`e5b2a1f`: lazy QSA page transport, rank-0
+mirror/state restricted to owned layers, state file 6 -> 1 GiB;
+`conservative_peak_margin` +46 MB, 4K prefill max 363 ms).  The branch was
+rebased onto `7a3151b` and the resulting binary `5f61ef74...` was deployed to
+all eight blades.  Slices were pre-planted on ranks 1/2 (way 2/3) and 7 (HC
+chain); startup showed `OUTPUT_SPLIT rank=0 ways=4 way=1`, ranks 1/2
+`slice=1`, rank 4 `slice=1`, rank 7 `slice=0 hc=1`.
+
+Current default baseline on the same fleet (binary `cbcee93a`, flag unset):
+short decode 24.28/24.68, 4K warm 23.41-23.74, 32K decode 19.68 TPS.
+
+### 9.1 4-way results (`FG_OUTPUT_SPLIT=4` on all ranks)
+
+| measurement | 4-way | default control (same fleet) |
+|---|---:|---:|
+| gates | `[12]` / `[Paris]` | `[12]` / `[Paris]` |
+| short decode (32 tok) | **25.03 / 25.50** | 24.51 |
+| 4K warm decode | **24.43 / 24.45 / 24.48** | 23.65 |
+| 4K prefill | 275.0 / 279.5 / 282.5 / 283.2 | 265.8 / 278.9 |
+| 16K prefill / decode | 305.1-306.3 / **23.09** | - |
+| 32K prefill / decode | 306.3-308.1 / **20.32** | 19.68 (baseline) |
+| soak (`pi-stability`) | **PASS** (6 stages, 4-turn, 8 ranks, 0 failures; 4K prefill 275.71, short decode 23.05) | - |
+
+Delta vs the default: short decode **+0.5..+1.0 TPS**, warm 4K decode
+**+0.8 TPS**, 32K decode **+0.64 TPS** (baseline).  The target was ~+0.3 TPS
+(-0.4..-0.6 ms/token); the observed delta is larger, within the BC-250
+run-to-run spread but consistently on the positive side across three
+independent 4-way runs and two contexts.  One 4-way battery and the default
+control showed ~11.7 TPS on the first 4K case (a cold-case artifact of this
+harness, present on both configs); the other 4-way battery and every warm 4K
+run were 23.7-24.5, and those are the numbers used above.
+
+### 9.2 Default path untouched
+
+The flag-unset control battery on the same binary (`5f61ef74`, `FG_OUTPUT_SPLIT`
+unset) reproduced the pre-branch baseline: gates `[12]`/`[Paris]`, short
+decode 24.51, warm 4K decode 23.65, 4K prefill 265.8-278.9.  No default-path
+code is on the split branches (`worker_output_split_active`,
+`coordinator_output_config`, the sender's way selector, and the timed waits are
+all gated on the mode), and the untimed fabric calls remain for the default and
+2-way paths.
+
+### 9.3 Timeout liveness
+
+The bounded waits were exercised by the eight-process `test_fabric` probe
+(dropped partial: rank 4 logs the timeout error naming rank 1, and rank 0's
+backstop ends its result wait), not on the fleet: in the live topology the two
+helper ranks are also chain owners, so a forced missing partial breaks the
+layer chain before it can reach rank 4's wait, and the timeout cannot be
+exercised in isolation without poisoning the session.  The trace showed every
+split hop (`hc -> slice x4 -> local + partial x3 -> combined`) with no
+timeouts across the full qualification.
+
+### 9.4 Verdict
+
+4-way qualifies: gates, battery x2, context sweep, and soak all pass with the
+flag on, the default path is unchanged, and the measured decode delta is
+positive at short/4K/32K.  Ready for merge (opt-in mode; `FG_OUTPUT_SPLIT=4`
+must be set on all ranks).
