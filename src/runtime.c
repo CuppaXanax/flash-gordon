@@ -862,7 +862,8 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
     if(status==FG_OK&&last+1u<FG_LAYER_COUNT){
         fg_layer_work next={.layer=(uint8_t)(last+1u),.source_rank=(uint8_t)self,
             .destination_rank=manifest->layer_owner[last+1u],
-            .token_index=work->token_index,.position_mode=FG_POSITION_TEXT};
+            .token_index=work->token_index,.position_mode=FG_POSITION_TEXT,
+            .flags=(uint8_t)(work->flags&FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY)};
         for(uint32_t axis=0;axis<3u;axis++)next.position[axis]=work->position[axis];
         memcpy(next.hyper,context->hyper_out,(uint64_t)FG_HYPER_WIDTH*4u);
         uint32_t wire_bytes=0;
@@ -874,22 +875,30 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
     }else if(status==FG_OK){
         uint32_t output_owner=fg_output_owner_rank(manifest);
         bool direct=decode_direct_output_eligible(manifest)&&output_owner!=self;
+        bool skip_hidden=direct&&context->output_split_ways==FG_OUTPUT_SPLIT_WAYS_MAX&&
+            (work->flags&FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY)!=0u;
         fg_layer_result *result=&context->decode_result;
         memset(result,0,sizeof(*result));
         result->layer=(uint8_t)last;result->source_rank=(uint8_t)self;
         result->destination_rank=(uint8_t)(direct?output_owner:0u);result->token_index=work->token_index;
         memcpy(result->hyper,context->hyper_out,sizeof(result->hyper));
-        status=fg_decode_layer_result_encode(context->result_wire,result,err);
-        if(status==FG_OK)status=fg_fabric_send(fabric,direct?output_owner:0u,FG_FABRIC_BULK,
-            direct?FG_MSG_OUTPUT_HIDDEN:FG_MSG_DECODE_LAYER_RESULT,request,
-            work->token_index*FG_LAYER_COUNT+last,0,context->result_wire,
-            FG_DECODE_LAYER_RESULT_BYTES,err);
+        if(skip_hidden)output_split_trace("hidden-suppressed",self,work->token_index,
+            context->output_split_ways);
+        if(!skip_hidden){
+            uint32_t result_bytes=0u;
+            status=fg_decode_layer_result_encode(context->result_wire,result,&result_bytes,err);
+            if(status==FG_OK)status=fg_fabric_send(fabric,direct?output_owner:0u,FG_FABRIC_BULK,
+                direct?FG_MSG_OUTPUT_HIDDEN:FG_MSG_DECODE_LAYER_RESULT,request,
+                work->token_index*FG_LAYER_COUNT+last,0,context->result_wire,
+                result_bytes,err);
+        }
         if(status==FG_OK&&direct&&context->output_split_ways==FG_OUTPUT_SPLIT_WAYS_MIN){
-            status=fg_output_slice_encode(context->result_wire,result,err);
+            uint32_t slice_bytes=0u;
+            status=fg_output_slice_encode(context->result_wire,result,&slice_bytes,err);
             if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,
                 FG_MSG_OUTPUT_SLICE,request,
                 work->token_index*FG_LAYER_COUNT+last,0,context->result_wire,
-                FG_DECODE_LAYER_RESULT_BYTES,err);
+                slice_bytes,err);
         }else if(status==FG_OK&&direct&&context->output_split_ways==FG_OUTPUT_SPLIT_WAYS_MAX){
             float hidden[FG_HIDDEN_SIZE];
             if(!context->output_hc){
@@ -904,11 +913,12 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
                 fg_output_slice_hidden slice={.source_rank=(uint8_t)self,
                     .destination_rank=(uint8_t)destination,.token_index=work->token_index};
                 memcpy(slice.hidden,hidden,sizeof(slice.hidden));
-                status=fg_output_slice_hidden_encode(context->result_wire,&slice,err);
+                uint32_t hidden_bytes=0u;
+                status=fg_output_slice_hidden_encode(context->result_wire,&slice,&hidden_bytes,err);
                 if(status==FG_OK)status=fg_fabric_send(fabric,destination,FG_FABRIC_BULK,
                     FG_MSG_OUTPUT_SLICE_HIDDEN,request,
                     work->token_index*FG_LAYER_COUNT+last,0,context->result_wire,
-                    FG_OUTPUT_SLICE_HIDDEN_BYTES,err);
+                    hidden_bytes,err);
             }
         }
         if(direct&&trace&&status==FG_OK)
@@ -4136,6 +4146,11 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
     memset(work,0,sizeof(*work));
     work->layer=0u;work->source_rank=0u;work->destination_rank=manifest->layer_owner[0u];
     work->flags=ngram_view?FG_LAYER_WORK_HAS_NGRAM:0u;work->position_mode=FG_POSITION_TEXT;
+    if(direct&&coordinator->output_slice&&
+       fg_output_slice_ways(coordinator->output_slice)==FG_OUTPUT_SPLIT_WAYS_MAX&&
+       coordinator->sampler.temperature==0.0f&&
+       !fg_sampler_penalties_active(&coordinator->sampler))
+        work->flags|=FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY;
     work->token_index=token_index;
     for(uint32_t axis=0;axis<3u;axis++)work->position[axis]=token_index;
     if(status==FG_OK)status=fg_vk_tensor_read(input,0,work->hyper,
@@ -4253,7 +4268,8 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
             if(status==FG_OK&&last+1u<FG_LAYER_COUNT){
                 fg_layer_work next={.layer=(uint8_t)(last+1u),.source_rank=0u,
                     .destination_rank=manifest->layer_owner[last+1u],
-                    .token_index=work->token_index,.position_mode=FG_POSITION_TEXT};
+                    .token_index=work->token_index,.position_mode=FG_POSITION_TEXT,
+                    .flags=(uint8_t)(work->flags&FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY)};
                 for(uint32_t axis=0;axis<3u;axis++)next.position[axis]=work->position[axis];
                 memcpy(next.hyper,work->hyper,(uint64_t)FG_HYPER_WIDTH*4u);
                 uint32_t next_bytes=0;
@@ -4270,12 +4286,13 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
                 result->layer=(uint8_t)last;result->source_rank=0u;
                 result->destination_rank=0u;result->token_index=work->token_index;
                 memcpy(result->hyper,work->hyper,sizeof(result->hyper));
+                uint32_t result_bytes=0u;
                 status=fg_decode_layer_result_encode(coordinator->decode_work_wire,
-                    result,err);
+                    result,&result_bytes,err);
                 if(status==FG_OK)status=fg_fabric_send(coordinator->fabric,0u,
                     FG_FABRIC_BULK,FG_MSG_DECODE_LAYER_RESULT,coordinator->session_id,
                     work->token_index*FG_LAYER_COUNT+last,0,coordinator->decode_work_wire,
-                    FG_DECODE_LAYER_RESULT_BYTES,err);
+                    result_bytes,err);
             }
             if(trace)t_final=dispatch_ts();
             if(status==FG_OK&&last+1u==FG_LAYER_COUNT)have_result=true;
