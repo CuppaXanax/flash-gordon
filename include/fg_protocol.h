@@ -478,6 +478,7 @@ typedef struct fg_output_handoff {
     uint32_t remote_id[FG_OUTPUT_SPLIT_WAYS_MAX];
     uint8_t remote_rank[FG_OUTPUT_SPLIT_WAYS_MAX];
     uint32_t remote_count;
+    uint64_t wait_start_ms;
 } fg_output_handoff;
 void fg_output_handoff_reset(fg_output_handoff *state);
 fg_status fg_output_handoff_config(fg_output_handoff *state,
@@ -493,6 +494,14 @@ bool fg_output_handoff_ready(const fg_output_handoff *state);
 bool fg_output_handoff_sample_ready(const fg_output_handoff *state);
 void fg_output_handoff_take(fg_output_handoff *state,fg_output_config *config,
                             fg_layer_result *hidden);
+/* Split liveness: -1 before the wait starts, 0 at/after the deadline, else the
+ * remaining budget in milliseconds. */
+int32_t fg_output_split_wait_remaining_ms(uint64_t start_ms,uint64_t now_ms,
+                                          uint32_t timeout_ms);
+/* Builds the loud timeout error naming every way rank whose partial the output
+ * owner is still missing. */
+fg_status fg_output_split_timeout_error(const fg_output_handoff *state,uint32_t ways,
+                                        uint32_t waited_ms,fg_error *err);
 
 typedef struct fg_output_history {
     const uint32_t *tokens;

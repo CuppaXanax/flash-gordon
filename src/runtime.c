@@ -32,6 +32,9 @@ static fg_status manifest_directory(const char *path,char output[1024],fg_error 
 
 typedef struct token_profile_capture {fg_vk_context *vk;struct timespec start;bool owned;} token_profile_capture;
 static double elapsed_seconds(const struct timespec *start,const struct timespec *end);
+static uint32_t output_split_timeout_ms(void);
+static bool output_split_trace_enabled(void);
+static void output_split_trace(const char *what,uint32_t rank,uint32_t token,uint32_t detail);
 
 static bool token_profile_requested(uint32_t token){const char *requested=getenv("FG_PROFILE_TOKEN");char value[16];if(!requested||!*requested)return false;snprintf(value,sizeof(value),"%u",token);return strcmp(requested,value)==0;}
 static bool prefill_profile_requested(void){const char *enabled=getenv("FG_PREFILL_PROFILE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
@@ -91,6 +94,7 @@ static void numerics_trace_host(const char *phase,uint32_t rank,uint32_t layer,
         (uint64_t)tokens*FG_HYPER_WIDTH);
 }
 static uint64_t critical_ns(void){struct timespec value;clock_gettime(CLOCK_REALTIME,&value);return (uint64_t)value.tv_sec*UINT64_C(1000000000)+(uint64_t)value.tv_nsec;}
+static uint64_t monotonic_ms(void){struct timespec value;clock_gettime(CLOCK_MONOTONIC,&value);return (uint64_t)value.tv_sec*1000u+(uint64_t)value.tv_nsec/1000000u;}
 _Static_assert(FG_NGRAM_ROW_BYTES==FG_NGRAM_WIRE_ROW_BYTES,"n-gram row wire size mismatch");
 static uint64_t coordinator_prefill_work_wire_bytes(uint32_t tokens);
 
@@ -893,6 +897,7 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
                     "rank %u is the final block owner without a 4-way output HC executor",self);
                 status=FG_ERR_MISMATCH;
             }else status=fg_output_hc_run(context->output_hc,result->hyper,hidden,err);
+            if(status==FG_OK)output_split_trace("hc",self,work->token_index,0u);
             for(uint32_t way=0;status==FG_OK&&way<FG_OUTPUT_SPLIT_WAYS_MAX;way++){
                 uint32_t destination=fg_output_split_rank(context->output_split_ways,way);
                 if(destination==UINT32_MAX||destination==self)continue;
@@ -1913,6 +1918,30 @@ static fg_status handle_output_work(fg_fabric *fabric,fg_output_executor *output
  * channel) and the 40 KiB hidden (bulk channel) are buffered until both name
  * the same token, then the head runs and the 16-byte result returns to rank 0
  * on the bulk channel exactly like the relay route. */
+#define FG_OUTPUT_SPLIT_TIMEOUT_DEFAULT_MS 4000u
+#define FG_OUTPUT_SPLIT_TIMEOUT_MAX_MS 60000u
+#define FG_OUTPUT_SPLIT_TIMEOUT_GRACE_MS 4000u
+
+static uint32_t output_split_timeout_ms(void){
+    const char *value=getenv("FG_OUTPUT_SPLIT_TIMEOUT_MS");
+    if(!value||!*value)return FG_OUTPUT_SPLIT_TIMEOUT_DEFAULT_MS;
+    long parsed=strtol(value,NULL,10);
+    if(parsed<(long)100u)parsed=100;
+    if(parsed>(long)FG_OUTPUT_SPLIT_TIMEOUT_MAX_MS)parsed=(long)FG_OUTPUT_SPLIT_TIMEOUT_MAX_MS;
+    return (uint32_t)parsed;
+}
+
+static bool output_split_trace_enabled(void){
+    const char *value=getenv("FG_OUTPUT_SPLIT_TRACE");
+    return value&&*value&&strcmp(value,"0")!=0;
+}
+
+static void output_split_trace(const char *what,uint32_t rank,uint32_t token,uint32_t detail){
+    if(output_split_trace_enabled())
+        fprintf(stderr,"OUTPUT_SPLIT_STATE rank=%u token=%u what=%s detail=%u\n",
+                rank,token,what,detail);
+}
+
 static bool worker_output_split_active(const fg_output_handoff *state){
     return state&&(state->config.flags&FG_OUTPUT_CONFIG_FLAG_SPLIT)!=0u&&
         state->config.sampler.temperature==0.0f&&
@@ -1922,6 +1951,30 @@ static bool worker_output_split_active(const fg_output_handoff *state){
 static uint32_t worker_output_split_ways(const fg_output_handoff *state){
     return state->config.flags&FG_OUTPUT_CONFIG_FLAG_SPLIT_4?
         FG_OUTPUT_SPLIT_WAYS_MAX:FG_OUTPUT_SPLIT_WAYS_MIN;
+}
+
+static bool worker_output_split_pending(const fg_output_handoff *state){
+    if(!state||!worker_output_split_active(state)||!state->have_local)return false;
+    if(worker_output_split_ways(state)!=FG_OUTPUT_SPLIT_WAYS_MAX)return false;
+    return state->remote_count<worker_output_split_ways(state)-1u;
+}
+
+static int32_t worker_output_split_remaining_ms(const fg_output_handoff *state){
+    if(!state||!state->wait_start_ms)return -1;
+    return fg_output_split_wait_remaining_ms(state->wait_start_ms,monotonic_ms(),
+                                             output_split_timeout_ms());
+}
+
+static fg_status worker_output_split_timeout(fg_output_handoff *state,uint32_t self,
+                                             fg_error *err){
+    uint32_t ways=worker_output_split_ways(state);
+    uint64_t now=monotonic_ms();
+    uint32_t waited_ms=state->wait_start_ms&&now>=state->wait_start_ms?
+        (uint32_t)(now-state->wait_start_ms):0u;
+    fg_status status=fg_output_split_timeout_error(state,ways,waited_ms,err);
+    fprintf(stderr,"OUTPUT_SPLIT_TIMEOUT rank=%u token=%u waited_ms=%u ways=%u %s\n",
+            self,state->config.token_index,waited_ms,ways,err->message);
+    return status;
 }
 
 static fg_status worker_output_split_combine(fg_output_handoff *state,uint32_t ways,
@@ -1985,8 +2038,10 @@ static fg_status worker_output_handoff_flush(fg_fabric *fabric,fg_output_executo
                 status=fg_output_slice_run(output_slice,hidden->hyper,
                     &state->local_value,&state->local_id,err);
             if(status==FG_OK)state->have_local=true;
+            output_split_trace("local",self,config->token_index,ways);
         }
         if(status==FG_OK&&state->remote_count<ways-1u){
+            if(!state->wait_start_ms)state->wait_start_ms=monotonic_ms();
             status=token_profile_end(&capture,self,"output",config->token_index,
                                      UINT32_MAX,status,err);
             return status;
@@ -1999,6 +2054,7 @@ static fg_status worker_output_handoff_flush(fg_fabric *fabric,fg_output_executo
         if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,FG_MSG_OUTPUT_RESULT,
             session_id,config->token_index*FG_LAYER_COUNT+FG_LAYER_COUNT,0,wire,sizeof(wire),err);
         status=token_profile_end(&capture,self,"output",config->token_index,UINT32_MAX,status,err);
+        output_split_trace("combined",self,config->token_index,state->remote_count);
         fg_output_handoff_reset(state);
         return status;
     }
@@ -2037,9 +2093,10 @@ static fg_status handle_output_partial(fg_fabric *fabric,fg_output_executor *out
         fg_error_set(err,FG_ERR_MISMATCH,"stale or misrouted output partial");
         status=FG_ERR_MISMATCH;
     }
-    if(status==FG_OK&&!state->have_config)return FG_OK;
+        if(status==FG_OK&&!state->have_config)return FG_OK;
     if(status==FG_OK)status=fg_output_handoff_partial(state,partial.token_index,(uint8_t)peer,
         partial.value,partial.id,err);
+    if(status==FG_OK)output_split_trace("partial",self,partial.token_index,peer);
     if(status==FG_OK)status=worker_output_handoff_flush(fabric,output,output_slice,vk,self,
         session_id,hyper_tensor,state,err);
     return status;
@@ -2090,6 +2147,7 @@ static fg_status handle_output_slice_hidden(fg_fabric *fabric,fg_output_executor
     if(status==FG_OK){
         float value=0.0f;uint32_t id=0u;
         status=fg_output_slice_run_hidden(output_slice,slice.hidden,&value,&id,err);
+        if(status==FG_OK)output_split_trace("slice",self,slice.token_index,id);
         fg_output_partial partial={.token_index=slice.token_index,.value=value,.id=id};
         uint8_t wire[FG_OUTPUT_PARTIAL_BYTES];
         if(status==FG_OK)status=fg_output_partial_encode(wire,&partial,err);
@@ -2194,7 +2252,7 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_
     if(status==FG_OK&&output){handoff=calloc(1,sizeof(*handoff));if(!handoff){fg_error_set(err,FG_ERR_OOM,"allocate output handoff state");status=FG_ERR_OOM;}}
     if(status==FG_OK)status=token_profile_prepare(fg_model_vk(model),err);
     uint8_t *bulk_receive=prefill.receive;uint32_t bulk_capacity=prefill.receive_capacity;if(qsa.enabled&&qsa.receive_capacity>bulk_capacity){bulk_receive=qsa.receive_wire;bulk_capacity=qsa.receive_capacity;}if(layer_work.work_capacity>bulk_capacity){bulk_receive=layer_work.work_wire;bulk_capacity=layer_work.work_capacity;}uint64_t session_id=0;
-    while(status==FG_OK){uint32_t peer=0,bytes=0;fg_frame_header header;fg_fabric_class ready_class;fg_fabric_recv_timing receive_timing={0};receive_timing.poll_start_ns=critical_ns();status=fg_fabric_wait_ready(fabric,3u,&peer,&ready_class,err);receive_timing.ready_ns=critical_ns();if(status!=FG_OK)break;if(ready_class==FG_FABRIC_BULK){status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_BULK,&header,bulk_receive,bulk_capacity,&bytes,&receive_timing,err);fg_message_type type=status==FG_OK?fg_frame_type(&header):0;if(status==FG_OK&&type==FG_MSG_PREFILL_LAYER_WORK)status=handle_prefill_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_PREFILL_WORK)status=handle_prefill_expert_work(fabric,expert,manifest,self,session_id,peer,&header,bulk_receive,bytes,&prefill,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_APPEND)status=handle_qsa_page_append(&qsa,manifest,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_BARRIER)status=handle_qsa_page_barrier(fabric,&qsa,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_FETCH)status=handle_qsa_page_fetch(fabric,&qsa,owner,manifest,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_GDN_STATE_FETCH)status=handle_gdn_state_fetch(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_DECODE_LAYER_WORK)status=handle_decode_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_HIDDEN)status=handle_output_hidden(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,bulk_receive,bytes,hyper,handoff,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_SLICE_HIDDEN)status=handle_output_slice_hidden(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,bulk_receive,bytes,hyper,handoff,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported bulk message %u",self,type);status=FG_ERR_FORMAT;}continue;}status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_CONTROL,&header,control,control_capacity,&bytes,&receive_timing,err);if(status!=FG_OK)break;fg_message_type type=fg_frame_type(&header);if(type==FG_MSG_DECODE_WORK){if(!session_id||fg_frame_request_id(&header)!=session_id){fg_error_set(err,FG_ERR_MISMATCH,"stale expert work request");status=FG_ERR_MISMATCH;}else status=handle_expert_work(fabric,expert,fg_model_vk(model),self,peer,&header,control,bytes,&receive_timing,ew_result,ew_wire,err);    }else if(type==FG_MSG_NGRAM_WORK)status=handle_ngram_work(fabric,ngram,FG_FABRIC_BULK,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_SESSION_BEGIN){fg_output_handoff_reset(handoff);status=begin_session(fabric,manifest,directory,&qsa,owner,self,peer,&header,control,bytes,&session_id,output,err);}else if(type==FG_MSG_OUTPUT_HISTORY)status=handle_output_history(fabric,output,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_OUTPUT_WORK)status=handle_output_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,err);else if(type==FG_MSG_OUTPUT_CONFIG)status=handle_output_config(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,control,bytes,hyper,handoff,err);else if(type==FG_MSG_OUTPUT_PARTIAL)status=handle_output_partial(fabric,output,output_slice,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,handoff,err);else{fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported control message %u",self,type);status=FG_ERR_FORMAT;}}
+    while(status==FG_OK){uint32_t peer=0,bytes=0;fg_frame_header header;fg_fabric_class ready_class;fg_fabric_recv_timing receive_timing={0};receive_timing.poll_start_ns=critical_ns();int32_t split_wait_ms=worker_output_split_pending(handoff)?worker_output_split_remaining_ms(handoff):-1;if(split_wait_ms==0){status=worker_output_split_timeout(handoff,self,err);break;}status=split_wait_ms>0?fg_fabric_wait_ready_timeout(fabric,3u,split_wait_ms,&peer,&ready_class,err):fg_fabric_wait_ready(fabric,3u,&peer,&ready_class,err);if(status==FG_ERR_LIMIT){if(worker_output_split_pending(handoff)&&worker_output_split_remaining_ms(handoff)==0)status=worker_output_split_timeout(handoff,self,err);else status=FG_OK;}receive_timing.ready_ns=critical_ns();if(status!=FG_OK)break;if(ready_class==FG_FABRIC_BULK){status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_BULK,&header,bulk_receive,bulk_capacity,&bytes,&receive_timing,err);fg_message_type type=status==FG_OK?fg_frame_type(&header):0;if(status==FG_OK&&type==FG_MSG_PREFILL_LAYER_WORK)status=handle_prefill_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_PREFILL_WORK)status=handle_prefill_expert_work(fabric,expert,manifest,self,session_id,peer,&header,bulk_receive,bytes,&prefill,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_APPEND)status=handle_qsa_page_append(&qsa,manifest,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_BARRIER)status=handle_qsa_page_barrier(fabric,&qsa,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_FETCH)status=handle_qsa_page_fetch(fabric,&qsa,owner,manifest,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_GDN_STATE_FETCH)status=handle_gdn_state_fetch(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_DECODE_LAYER_WORK)status=handle_decode_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_HIDDEN)status=handle_output_hidden(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,bulk_receive,bytes,hyper,handoff,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_SLICE_HIDDEN)status=handle_output_slice_hidden(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,bulk_receive,bytes,hyper,handoff,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported bulk message %u",self,type);status=FG_ERR_FORMAT;}continue;}status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_CONTROL,&header,control,control_capacity,&bytes,&receive_timing,err);if(status!=FG_OK)break;fg_message_type type=fg_frame_type(&header);if(type==FG_MSG_DECODE_WORK){if(!session_id||fg_frame_request_id(&header)!=session_id){fg_error_set(err,FG_ERR_MISMATCH,"stale expert work request");status=FG_ERR_MISMATCH;}else status=handle_expert_work(fabric,expert,fg_model_vk(model),self,peer,&header,control,bytes,&receive_timing,ew_result,ew_wire,err);    }else if(type==FG_MSG_NGRAM_WORK)status=handle_ngram_work(fabric,ngram,FG_FABRIC_BULK,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_SESSION_BEGIN){fg_output_handoff_reset(handoff);status=begin_session(fabric,manifest,directory,&qsa,owner,self,peer,&header,control,bytes,&session_id,output,err);}else if(type==FG_MSG_OUTPUT_HISTORY)status=handle_output_history(fabric,output,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_OUTPUT_WORK)status=handle_output_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,err);else if(type==FG_MSG_OUTPUT_CONFIG)status=handle_output_config(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,control,bytes,hyper,handoff,err);else if(type==FG_MSG_OUTPUT_PARTIAL)status=handle_output_partial(fabric,output,output_slice,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,handoff,err);else{fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported control message %u",self,type);status=FG_ERR_FORMAT;}}
     fg_vk_tensor_destroy(hyper);free(handoff);layer_work_context_destroy(&layer_work);qsa_owner_runtime_destroy(&qsa);
     prefill_worker_buffers_destroy(&prefill);free(ew_wire);free(ew_result);free(control);return status;
 }
@@ -4029,6 +4087,7 @@ static fg_status coordinator_output_slice_hidden(fg_coordinator *coordinator,uin
     fg_output_partial partial={.token_index=token_index};
     if(status==FG_OK)status=fg_output_slice_run_hidden(coordinator->output_slice,
         slice.hidden,&partial.value,&partial.id,err);
+    if(status==FG_OK)output_split_trace("slice",0u,token_index,partial.id);
     uint8_t wire[FG_OUTPUT_PARTIAL_BYTES];
     if(status==FG_OK)status=fg_output_partial_encode(wire,&partial,err);
     if(status==FG_OK)status=fg_fabric_send(coordinator->fabric,4u,FG_FABRIC_CONTROL,
@@ -4101,9 +4160,27 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
     bool have_result=false;
     double t_own_recv=0.0,t_own_end=0.0,t_final=0.0,t_own_run=0.0,t_own_read=0.0;
     uint32_t own_first=0u,own_last=0u;
+    bool split_timeout=direct&&coordinator->output_slice&&
+        fg_output_slice_ways(coordinator->output_slice)==FG_OUTPUT_SPLIT_WAYS_MAX;
+    uint32_t split_timeout_ms=split_timeout?
+        output_split_timeout_ms()+FG_OUTPUT_SPLIT_TIMEOUT_GRACE_MS:0u;
+    uint64_t split_deadline=split_timeout?monotonic_ms()+split_timeout_ms:0u;
     while(status==FG_OK&&!have_result){
         uint32_t peer=0,bytes=0;fg_frame_header header;
-        status=fg_fabric_recv_any(coordinator->fabric,FG_FABRIC_BULK,&peer,&header,
+        if(split_timeout){
+            uint64_t now=monotonic_ms();
+            int32_t remaining=now<split_deadline?(int32_t)(split_deadline-now):0;
+            status=fg_fabric_recv_any_timeout(coordinator->fabric,FG_FABRIC_BULK,remaining,
+                &peer,&header,coordinator->decode_work_wire,
+                FG_DECODE_LAYER_WORK_MAX_BYTES,&bytes,err);
+            if(status==FG_ERR_LIMIT){
+                fg_error_set(err,FG_ERR_LIMIT,
+                    "ring decode timed out after %u ms waiting for the 4-way result from rank 4",
+                    split_timeout_ms);
+                fprintf(stderr,"RING_DECODE_TIMEOUT rank=0 token=%u waited_ms=%u expected=OUTPUT_RESULT peer=4\n",
+                        token_index,split_timeout_ms);
+            }
+        }else status=fg_fabric_recv_any(coordinator->fabric,FG_FABRIC_BULK,&peer,&header,
             coordinator->decode_work_wire,FG_DECODE_LAYER_WORK_MAX_BYTES,&bytes,err);
         if(status!=FG_OK)break;
         fg_message_type type=fg_frame_type(&header);

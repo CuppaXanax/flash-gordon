@@ -40,6 +40,15 @@ fg_status fg_fabric_recv_any_timed(fg_fabric *fabric,fg_fabric_class cls,uint32_
                                    uint32_t *bytes,fg_fabric_recv_timing *timing,fg_error *err);
 fg_status fg_fabric_wait_ready(fg_fabric *fabric,uint32_t class_mask,uint32_t *peer,
                                fg_fabric_class *ready_class,fg_error *err);
+/* Timeout variants return FG_ERR_LIMIT when timeout_ms elapses with nothing
+ * ready; -1 waits forever exactly like the untimed calls. */
+fg_status fg_fabric_wait_ready_timeout(fg_fabric *fabric,uint32_t class_mask,
+                                       int32_t timeout_ms,uint32_t *peer,
+                                       fg_fabric_class *ready_class,fg_error *err);
+fg_status fg_fabric_recv_any_timeout(fg_fabric *fabric,fg_fabric_class cls,
+                                     int32_t timeout_ms,uint32_t *peer,
+                                     fg_frame_header *header,void *payload,
+                                     uint32_t capacity,uint32_t *bytes,fg_error *err);
 /* Async recv: prep header recv SQEs, flush, reap, then prep payload recvs. */
 fg_status fg_fabric_prep_header_recv(fg_fabric *fabric,uint32_t peer,fg_fabric_class cls,
                                      fg_frame_header *header,uint64_t tag,fg_error *err);
