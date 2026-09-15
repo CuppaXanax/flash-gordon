@@ -868,6 +868,18 @@ static fg_status select_blocks_resolve(fg_qsa_session *s,uint32_t slot,
     }
     if(status==FG_OK&&misses)
         status=fg_vk_tensor_read(s->ids[side],0,selected,(uint64_t)count*4u,err);
+    if(status==FG_OK&&!misses&&s->cache){
+        uint32_t slots[FG_QSA_MAX_SELECTED_BLOCKS];
+        status=fg_vk_tensor_read(s->select_resolved,0,slots,(uint64_t)count*4u,err);
+        for(uint32_t i=0;status==FG_OK&&i<count;i++){
+            if(slots[i]>=s->cache_pages){
+                fg_error_set(err,FG_ERR_MISMATCH,"resolved QSA slot is out of range");
+                status=FG_ERR_MISMATCH;
+                break;
+            }
+            fg_qsa_page_cache_touch(s->cache,slots[i]);
+        }
+    }
     if(trace){
         read_done=qsa_now_ms();
         fprintf(stderr,"QSA_SELECT_TRACE layer=%u tokens=%u count=%u misses=%u "

@@ -135,6 +135,11 @@ bool fg_qsa_page_cache_lookup(fg_qsa_page_cache *cache,uint32_t layer,
     cache_lru_front(cache,found);*slot=found;return true;
 }
 
+void fg_qsa_page_cache_touch(fg_qsa_page_cache *cache,uint32_t slot){
+    if(!cache||slot>=cache->pages||!cache->valid[slot])return;
+    cache_lru_front(cache,slot);
+}
+
 static fg_status cache_acquire(fg_qsa_page_cache *cache,uint32_t layer,
                                uint32_t block,uint32_t *slot,bool *hit,
                                bool soft,fg_error *err){

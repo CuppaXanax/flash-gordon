@@ -16,6 +16,7 @@ uint32_t fg_qsa_page_cache_pinned_count(const fg_qsa_page_cache *cache);
 uint64_t fg_qsa_page_cache_memory_bytes_for_pages(uint32_t pages);
 bool fg_qsa_page_cache_lookup(fg_qsa_page_cache *cache,uint32_t layer,
                               uint32_t block,uint32_t *slot);
+void fg_qsa_page_cache_touch(fg_qsa_page_cache *cache,uint32_t slot);
 fg_status fg_qsa_page_cache_acquire(fg_qsa_page_cache *cache,uint32_t layer,
                                    uint32_t block,uint32_t *slot,bool *hit,
                                    fg_error *err);
