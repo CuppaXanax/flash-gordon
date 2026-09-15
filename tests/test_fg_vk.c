@@ -3127,6 +3127,48 @@ static int test_q8_decode_shape_parity(void){
     return ok;
 }
 
+static int test_q8_split_silu_parity(void){
+    enum{INPUT=10240,ROWS=320,SPLITS=8};
+    uint32_t blocks=INPUT/FG_QK8_0;
+    uint64_t source_row=(uint64_t)blocks*FG_Q8_0_BLOCK_BYTES,source_bytes=(uint64_t)ROWS*source_row,
+             cooked_bytes=fg_q8_0_cooked_matrix_bytes(INPUT,ROWS);
+    float *source=malloc((size_t)INPUT*ROWS*4u),*values=malloc((size_t)INPUT*4u);
+    uint8_t *raw=malloc((size_t)source_bytes),*cooked=malloc((size_t)cooked_bytes);
+    float *low_ref=malloc((size_t)ROWS*4u),*low_fused=malloc((size_t)ROWS*4u),
+          *active_ref=malloc((size_t)ROWS*4u),*active_fused=malloc((size_t)ROWS*4u);
+    if(!source||!values||!raw||!cooked||!low_ref||!low_fused||!active_ref||!active_fused){
+        free(active_fused);free(active_ref);free(low_fused);free(low_ref);
+        free(cooked);free(raw);free(values);free(source);return 0;
+    }
+    for(uint32_t row=0;row<ROWS;row++)
+        for(uint32_t i=0;i<INPUT;i++)
+            source[(uint64_t)row*INPUT+i]=sinf((float)((uint64_t)row*INPUT+i)*0.0041f)*0.5f+cosf((float)i*0.017f);
+    for(uint32_t row=0;row<ROWS;row++)fg_quantize_q8_0(source+(uint64_t)row*INPUT,raw+(uint64_t)row*source_row,INPUT);
+    for(uint32_t i=0;i<INPUT;i++)values[i]=sinf((float)(i+3u)*0.013f)+0.1f*cosf((float)i*0.007f);
+    int ok=fg_cook_q8_0_rows(raw,cooked,cooked_bytes,INPUT,ROWS);
+    fg_vk_tensor *w=ok?tensor(cooked,cooked_bytes):NULL,*x=ok?tensor(values,(uint64_t)INPUT*4u):NULL,
+        *low=ok?tensor(NULL,(uint64_t)ROWS*4u):NULL,*active=ok?tensor(NULL,(uint64_t)ROWS*4u):NULL,
+        *low_b=ok?tensor(NULL,(uint64_t)ROWS*4u):NULL,*active_b=ok?tensor(NULL,(uint64_t)ROWS*4u):NULL,
+        *partials_a=ok?tensor(NULL,(uint64_t)ROWS*SPLITS*4u):NULL,
+        *partials_b=ok?tensor(NULL,(uint64_t)ROWS*SPLITS*4u):NULL;
+    if(w)fg_vk_tensor_set_format(w,FG_VK_TENSOR_FORMAT_Q8_0_COOKED);
+    ok=ok&&w&&x&&low&&active&&low_b&&active_b&&partials_a&&partials_b;
+    if(ok)ok=fg_vk_dense_q8_0_cooked_split(context,low,partials_a,w,x,INPUT,ROWS,1u,SPLITS,1.0f,&error)==FG_OK;
+    if(ok)ok=fg_vk_silu_scaled(context,active,low,ROWS,0.25f,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_read(low,0,low_ref,(uint64_t)ROWS*4u,&error)==FG_OK&&fg_vk_tensor_read(active,0,active_ref,(uint64_t)ROWS*4u,&error)==FG_OK;
+    if(ok)ok=fg_vk_dense_q8_0_cooked_split_silu(context,low_b,active_b,partials_b,w,x,INPUT,ROWS,1u,SPLITS,1.0f,0.25f,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_read(low_b,0,low_fused,(uint64_t)ROWS*4u,&error)==FG_OK&&fg_vk_tensor_read(active_b,0,active_fused,(uint64_t)ROWS*4u,&error)==FG_OK;
+    for(uint32_t row=0;ok&&row<ROWS;row++){
+        if(memcmp(&low_fused[row],&low_ref[row],sizeof(float))!=0){fprintf(stderr,"split silu low row=%u fused=%g reference=%g\n",row,low_fused[row],low_ref[row]);ok=0;}
+        if(memcmp(&active_fused[row],&active_ref[row],sizeof(float))!=0){fprintf(stderr,"split silu active row=%u fused=%g reference=%g\n",row,active_fused[row],active_ref[row]);ok=0;}
+    }
+    fg_vk_tensor_destroy(partials_b);fg_vk_tensor_destroy(partials_a);fg_vk_tensor_destroy(active_b);
+    fg_vk_tensor_destroy(low_b);fg_vk_tensor_destroy(active);fg_vk_tensor_destroy(low);
+    fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);
+    free(active_fused);free(active_ref);free(low_fused);free(low_ref);
+    free(cooked);free(raw);free(values);free(source);return ok;
+}
+
 static int run_test(const char *name,int (*fn)(void)){if(!test_selected(name))return 1;selected_test_count++;fprintf(stderr,"  [%s] ... ",name);fflush(stderr);int ok=fn();fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 static int run_test_i(const char *name,int (*fn)(int),int arg){if(!test_selected(name))return 1;selected_test_count++;fprintf(stderr,"  [%s(%d)] ... ",name,arg);fflush(stderr);int ok=fn(arg);fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 int main(void){if(fg_vk_open(&context,&error)!=FG_OK){fprintf(stderr,"Vulkan unavailable: %s\n",error.message);return 77;}fprintf(stderr,"Flash Gordon Vulkan device: %s\n",fg_vk_device_name(context));int ok=1;
@@ -3143,6 +3185,7 @@ ok=run_test("q8_subgroup_benchmark",test_q8_subgroup_benchmark)&&ok;
 ok=run_test("q8_cooked_benchmark",test_q8_cooked_benchmark)&&ok;
 ok=run_test("q8_cooked_prefill_parity",test_q8_cooked_prefill_parity)&&ok;
 ok=run_test("q8_decode_shape_parity",test_q8_decode_shape_parity)&&ok;
+ok=run_test("q8_split_silu_parity",test_q8_split_silu_parity)&&ok;
 ok=run_test("q8_cooked_prefill_sweep",test_q8_cooked_prefill_sweep)&&ok;
 ok=run_test("q8_embedding",test_q8_embedding)&&ok;
 ok=run_test("hc_finalize",test_hc_finalize)&&ok;
