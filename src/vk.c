@@ -1224,9 +1224,6 @@ fg_status fg_vk_qsa_resident_attention(
                     24u,query_tokens,1u,err);
 }
 
-/* Chunked top-512 selection (fg_topk_reduce_v2.comp): sort 512-slot runs and
- * merge only the top half.  Opt-in for the fleet A/B; FG_QSA_TOPK_V2=0 keeps
- * the wide bitonic kernel. */
 static bool topk_v2_requested(void){
     const char *enabled=getenv("FG_QSA_TOPK_V2");
     return enabled&&*enabled&&strcmp(enabled,"0")!=0;
