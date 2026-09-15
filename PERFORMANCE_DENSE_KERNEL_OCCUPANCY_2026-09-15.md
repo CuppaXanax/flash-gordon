@@ -1,16 +1,18 @@
 # Dense Kernel Occupancy and Trip-Count Experiments (2026-09-15)
 
 Worktree `D:\workspace\fg-work-lat11`, branch `perf/dense-kernel-latency`
-rebased onto main `7a3151b` (round-11 qualified binary `cbcee93a`, short decode
-24.28/24.68, 4K warm 23.41-23.74).  This is the follow-up to
+rebased onto main `5fbeb29` (post-privacy-scrub, includes the qualified 4-way
+output split).  Measured on the 8-blade ring 2026-09-15 with fleet binary
+`b47c12ba4d4b85ac49ad80081b6c67d6716afa2bcec8a425e61f8a2e8edb2380`; the fleet
+was left on the default config afterwards.  This is the follow-up to
 `PERFORMANCE_DENSE_KERNEL_LATENCY_2026-09-14.md`; it works the two levers that
 doc parked.
 
 | commit | change |
 |---|---|
-| `89fb528` | gated wave-split r8 variant (`FG_DENSE_R8_WAVE_SPLIT`) |
-| `e862917` | gated 32-block pair r8 variant (`FG_DENSE_R8_PAIR`) |
-| this doc | accounting, occupancy gate, layout design, A/B plan |
+| `cf684ce` | gated wave-split r8 variant (`FG_DENSE_R8_WAVE_SPLIT`) |
+| `035fa47` | gated 32-block pair r8 variant (`FG_DENSE_R8_PAIR`) |
+| docs update | measured A/B, VGPR ground truth, decision (this file) |
 
 Both variants are new SPIR-V files selected by an env flag in the existing
 `dense_cooked` promotion path (`src/vk.c`); default is the qualified r8 kernel,
@@ -36,12 +38,17 @@ test them:
   loop-body ops 1476 -> 1098 (-26%).  Cost: proxy 116 VGPRs, gated to
   `blocks > 16` so the 320-wide GR up shape stays on r8.
 
-Neither is promoted by this round: the occupancy ground truth (RADV shader
-stats on the blade) is still the gate for `_ws`, and `_pair` trades register
-budget for trips.  Both are one-env-restart A/Bs with a documented revert.
-The last untested lever is the **row-interleaved cooked layout** (section 4);
-it needs a pack-format version and a pack rebuild, which is a fleet round, and
-its payoff is not proven by the available fleet data.
+Both variants were measured on the fleet and **both are rejected**: the wave
+split costs 1.4 short / 0.8 4K / 0.8 32K TPS and the pair costs 3.9 / 3.4 / 2.5
+TPS against the same-session control.  The VGPR ground truth explains it: ACO
+already allocates the 8-row r8 kernel only **36 VGPRs**, the lowest of the
+three (`_ws` 40, `_pair` 48), so the occupancy lever the round-11 doc
+hypothesised does not exist and both variants pay register cost for nothing.
+The measured ordering (24.5 > 23.2 > 20.7 TPS short) matches the
+register-limited waves per SIMD (7 > 6 > 5).  The fleet is left on the default
+r8 config.  The last untested lever remains the **row-interleaved cooked
+layout** (section 4); it needs a pack-format version and a pack rebuild, which
+is a fleet round, and its payoff is not proven by the available fleet data.
 
 ## 1. Where the two levers came from
 
@@ -175,23 +182,35 @@ without regressing qkv/z/GR.  If the layout is tried and the output does not
 move, the remaining explanation is the grid ramp of a 320-workgroup dispatch,
 which no layout change can fix.
 
-## 5. Fleet occupancy ground truth (required step before promoting `_ws`)
+## 5. Fleet occupancy ground truth (measured)
 
-The round-11 doc asked for the blade VGPR counts; they are still not measured.
-On a decode run with the standard profile environment, a RADV shader-stats
-trace (`RADV_DEBUG=shaderstats`) reports the per-shader VGPR/SGPR allocation
-for the compiled pipeline.  Record it for `fg_dense_q8_0_cooked_r8.spv` (and
-the two variants when their flags are on) at the first token.
+The round-11 doc asked for the blade VGPR counts.  Method: start rank 0 with
+`RADV_DEBUG=shaderstats`; the driver prints one stats block per shader it
+compiles.  With a warm shader cache a variant run compiles only the one new
+kernel (ws 40, pair 48), and the r8 count was pinned by two `nocache` runs with
+identical dispatch order whose VGPR lists differ in exactly one position: 36 in
+the control run, 40 in the wave-split run.  ACO's numbers are 2.4x lower
+than the LLVM AMDGPU proxy of section 1.2, which is why the proxy's 86
+misled the round-11 write-up.
 
-Decision rule:
+| kernel | VGPRs (ACO) | register-limited waves/SIMD |
+|---|---:|---:|
+| `fg_dense_q8_0_cooked_r8` | **36** | 7 |
+| `fg_dense_q8_0_cooked_r8_ws` | 40 | 6 |
+| `fg_dense_q8_0_cooked_r8_pair` | 48 | 5 |
 
-* r8 <= 64 VGPRs: occupancy is not the limiter (4+ waves/SIMD), do not promote
-  `_ws`; keep the round's value in the geometry/trip accounting and move to the
-  layout item.
-* r8 > 64 VGPRs: check `_ws` on the same trace; promote only if its count
-  drops below r8's threshold and the A/B is positive.
-* `_pair` has no gate; it is a direct A/B (its proxy registers are higher, so
-  the fleet either rewards the trip/contiguity cut or it does not).
+Decision rule application:
+
+* r8 = 36 <= 64 -> the occupancy lever does not exist; do not promote `_ws`.
+  The measured ordering confirms it: short decode 24.6 (r8) > 23.2 (ws) >
+  20.7 (pair) TPS, exactly the register-limited wave order 7 > 6 > 5.
+* `_pair` is rejected on its A/B (section 7): it has fewer instructions and the
+  same input traffic per weight as r8, but the wider in-flight window costs 30%
+  of the register-limited occupancy and that dominates.
+
+The occupancy hypothesis from round 11 is closed for the dense family: the
+existing kernel is already the most occupancy-efficient of the three shapes
+tested, and its 170-286 GB/s spread across shapes is not a register problem.
 
 ## 6. Local validation (llvmpipe, correctness only)
 
@@ -232,39 +251,76 @@ vocab shape) is the expected behaviour of an instruction-bound CPU rasteriser
 and is not used to promote or reject anything; it only shows both kernels are
 live and self-consistent.
 
-## 7. Fleet A/B plan
+## 7. Fleet A/B results (measured 2026-09-15, binary `b47c12ba`)
 
-Both variants are one-env restarts on the same pack and binary; the default
-path is byte-identical to the qualified binary, so the control is the round-11
-result.  Run the standard attach battery, gates and soak for each restart:
+Same ring pack, same build; variants differ only by the env flag on all eight
+ranks.  Every measurement is the standard attach battery (one 128-token sanity,
+two 4k prefills with one decode each, one 32-token decode) plus a 32k context
+sweep.  Run-to-run spread on this fleet is +/-10-15% thermal, so each variant
+was run twice and compared against controls taken at both ends of the session:
 
-| restart | env on all ranks |
-|---|---|
-| control | none (round-11 `cbcee93a` numbers) |
-| wave split | `FG_DENSE_R8_WAVE_SPLIT=1` |
-| pair | `FG_DENSE_R8_PAIR=1` |
-| occupancy trace | none, plus `RADV_DEBUG=shaderstats` captured at the first token |
+| config | short decode | 4k warm decode | 32k decode | 4k prefill (r1 / r2) |
+|---|---:|---:|---:|---:|
+| control (r8), start of session | 24.61 | 23.54 | - | 274.5 / 282.9 |
+| control (r8), end of session | 24.21 | 23.44 | 19.36 | 277.3 / 266.4 |
+| wave split `FG_DENSE_R8_WAVE_SPLIT=1`, run 1 | 23.18 | 22.81 | - | 276.6 / 280.1 |
+| wave split, run 2 | 23.21 | 22.68 | 18.60 | 268.7 / 281.2 |
+| pair `FG_DENSE_R8_PAIR=1`, run 1 | 20.60 | 20.13 | - | 275.2 / 277.2 |
+| pair, run 2 | 20.76 | 20.09 | 16.89 | 274.9 / 282.7 |
 
-Promotion: gates `[12]`/`[Paris]` green, pi-stability PASS, 4K prefill in band,
-short/4K decode at or above the round-11 band, and the `gdn_output` /
-`gdn_projection` / `gdn_recurrent` scope sums no worse than 0.361 / 0.597 /
-0.158 ms per block.  Revert is unsetting the env; dropping the branch removes
-both kernels without touching the default path.
+Deltas against the two controls that bracket the variants: wave split
+-1.4 short / -0.75 4k / -0.76 32k TPS; pair -3.9 / -3.4 / -2.5 TPS.  Prefill
+stays in the 266-283 band for every config, so the launch path is unaffected
+and the regressions are in the decode kernels.  The ordering is exactly the
+register-limited occupancy order of section 5, and both variants are
+reproducible across their two runs, so thermal drift (which moves the control
+by only ~0.3 TPS between the bracketing runs) does not explain them.
+
+### 7.1 Kernel scopes (rank 0, `FG_DECODE_PROFILE=1`, one 6-layer block)
+
+r8 control, captured the same session as the batteries:
+
+| scope | calls | ms/block |
+|---|---:|---:|
+| gr_attn_read: rms 0.087 / split 0.115 / reduce 0.021 / inject 0.042 / silu 0.007 / **up r8 0.152** / mix 0.047 | 7 | 0.471 |
+| gr_ffn_read: rms 0.086 / split 0.114 / reduce 0.021 / inject 0.040 / silu 0.007 / **up r8 0.149** / mix 0.045 | 7 | 0.462 |
+| gdn_projection: **qkv r8 0.400** / z generic 0.233 / controls | 4+4+8 | 0.634 |
+| gdn_output: **r8 0.382** | 4 | 0.382 |
+| shared_expert: **r8 0.164** / swiglu 0.008 / scalar | 18+12 | 0.173 |
+| qsa_projection: **r8 0.262** / prepare+bf16+quantize+index | 6+14 | 0.472 |
+| qsa_output: **r8 0.193** | 2 | 0.193 |
+| gdn_recurrent: conv 0.012 / algebraic 0.148 | 4+4 | 0.160 |
+
+Wave split, captured during its 32k sweep (the same-session control for that
+run was not profiled, and the run's non-dense kernels - expert pair 0.851 vs
+1.385 ms - show a different machine state, so these are raw data, not a clean
+per-kernel delta): up ws 0.123 and 0.121, qkv ws 0.437, output ws 0.396,
+shared_expert ws 0.143, qsa_projection ws 0.252, qsa_output ws 0.192,
+algebraic 0.125.
+
+Final state: both gates `[12]`/`[Paris]`, pi-stability PASS (6 stages, 4-turn
+conversation, 8 ranks, 0 failures, 4k prefill 275.34, short decode 22.37), and
+all eight blades left running one process of the default config (no dense
+flags, no `RADV_DEBUG`, no profile env) on `b47c12ba`.
 
 ## 8. Ranked next steps
 
-1. **Read the blade VGPR counts** (section 5) and promote/reject `_ws` on the
-   rule.  This is the one measurement the previous round asked for and it has
-   not been taken.
-2. **A/B `_pair`**; if it wins on the output and GR shapes, the trip/contiguity
-   hypothesis is confirmed and the layout item drops in priority.
-3. **Row-interleaved cooked layout** (section 4) as its own pack round if
-   `_pair` is neutral or negative and the VGPR trace rules out occupancy: it is
-   the only remaining structural change that matches the winning shapes'
-   memory pattern, and it is cheap to evaluate once a pack rebuild is in the
-   loop.
-4. **Small-grid shapes** (QSA kv 64 workgroups at 92 GB/s, shared gate 80 at
-   112 GB/s): neither tile nor split nor the two variants above address a
-   64-workgroup dispatch.  The only fix is dispatch fusion (a batched
-   projection covering several small shapes in one grid), which is a vk.c and
-   caller change, not a shader one.
+1. **Row-interleaved cooked layout** (section 4) is now the top structural
+   item: occupancy (36 VGPRs, section 5), row tile and K-split (round-11 fleet
+   sweep) and the trip/contiguity restructure (measured here) are all refuted,
+   so the 170 GB/s GDN output call can only be the weight layout or the
+   320-workgroup ramp.  It is a pack round: block-major quant placement, new
+   format version, all parity oracles on the rebuilt pack, and the promotion
+   bar in section 4.
+2. **If the layout round is declined**, the output-shape deficit should be
+   documented as a dispatch-ramp property: 320 workgroups is 13.3 per CU and
+   the same kernel reaches 286 GB/s at 1280 workgroups with the same bytes per
+   row, so the remaining gap needs either dispatch fusion or a persistent
+   kernel, not a shader edit.
+3. **Small-grid shapes** (QSA kv 64 workgroups at 92 GB/s, shared gate 80 at
+   112 GB/s): unchanged from round 11; dispatch fusion is the only fix and it
+   is a vk.c/caller change.
+4. **Keep the default**: the two gated kernels stay in the branch as measured
+   and rejected experiments (`FG_DENSE_R8_WAVE_SPLIT` / `FG_DENSE_R8_PAIR`
+   must not be enabled on the fleet); the default path is byte-identical to
+   the qualified build.
