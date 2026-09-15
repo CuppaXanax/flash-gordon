@@ -2679,6 +2679,46 @@ static int test_ple_decode(void){
     fg_vk_tensor *gk=tensor(key,HYPER*4u),*gq=tensor(query,HYPER*4u),*gv=tensor(value,HIDDEN*4u),*gg=tensor(NULL,HYPER*4u),*gn=tensor(normalized,HYPER*4u),*gw=tensor(weight,HYPER*16u),*gs=tensor(state,HYPER*HISTORY*4u),*go=tensor(NULL,HYPER*4u),*gl=tensor(left,HYPER*4u),*ga=tensor(NULL,HYPER*4u);int ok=gk&&gq&&gv&&gg&&gn&&gw&&gs&&go&&gl&&ga&&fg_vk_ple_gate(context,gg,gk,gq,gv,&error)==FG_OK&&fg_vk_tensor_read(gg,0,got,HYPER*4u,&error)==FG_OK;for(uint32_t i=0;ok&&i<HYPER;i++)if(fabsf(got[i]-gated[i])>2e-5f){fprintf(stderr,"PLE gate %u GPU=%g CPU=%g\n",i,got[i],gated[i]);ok=0;}if(ok)ok=fg_vk_ple_conv_decode(context,go,gs,gg,gn,gw,&error)==FG_OK&&fg_vk_tensor_read(go,0,got,HYPER*4u,&error)==FG_OK&&fg_vk_tensor_read(gs,0,state,HYPER*HISTORY*4u,&error)==FG_OK;for(uint32_t i=0;ok&&i<HYPER;i++)if(fabsf(got[i]-ple_expected[i])>2e-5f){fprintf(stderr,"PLE conv %u GPU=%g CPU=%g\n",i,got[i],ple_expected[i]);ok=0;}for(uint32_t i=0;ok&&i<HYPER*HISTORY;i+=37u)if(state[i]!=state_expected[i]){fprintf(stderr,"PLE state %u GPU=%g CPU=%g\n",i,state[i],state_expected[i]);ok=0;}if(ok)ok=fg_vk_add_f32(context,ga,gl,go,HYPER,&error)==FG_OK&&fg_vk_tensor_read(ga,0,got,HYPER*4u,&error)==FG_OK;for(uint32_t i=0;ok&&i<HYPER;i++)if(fabsf(got[i]-sum_expected[i])>2e-5f){fprintf(stderr,"PLE add %u GPU=%g CPU=%g\n",i,got[i],sum_expected[i]);ok=0;}fg_vk_tensor_destroy(ga);fg_vk_tensor_destroy(gl);fg_vk_tensor_destroy(go);fg_vk_tensor_destroy(gs);fg_vk_tensor_destroy(gw);fg_vk_tensor_destroy(gn);fg_vk_tensor_destroy(gg);fg_vk_tensor_destroy(gv);fg_vk_tensor_destroy(gq);fg_vk_tensor_destroy(gk);free(sum_expected);free(left);free(got);free(ple_expected);free(state_expected);free(state);free(weight);free(normalized);free(gated);free(value);free(query);free(key);return ok;
 }
 
+static int test_ple_conv_add_parity(void){
+    enum{HIDDEN=2560,HYPER=10240,HISTORY=9};
+    float *gated=malloc(HYPER*4u),*normalized=malloc(HYPER*4u),*weight=malloc(HYPER*4u*4u),
+          *state_seq=malloc(HYPER*HISTORY*4u),*state_fused=malloc(HYPER*HISTORY*4u),
+          *state_got=malloc(HYPER*HISTORY*4u),*hyper=malloc(HYPER*4u),
+          *out_seq=malloc(HYPER*4u),*out_fused=malloc(HYPER*4u);
+    if(!gated||!normalized||!weight||!state_seq||!state_fused||!state_got||!hyper||!out_seq||!out_fused){
+        free(out_fused);free(out_seq);free(hyper);free(state_got);free(state_fused);free(state_seq);
+        free(weight);free(normalized);free(gated);return 0;
+    }
+    for(uint32_t i=0;i<HYPER;i++){
+        gated[i]=sinf((float)i*0.0021f);normalized[i]=sinf((float)i*0.0031f)*0.5f;
+        hyper[i]=cosf((float)i*0.0043f);
+        for(uint32_t k=0;k<4u;k++)weight[i*4u+k]=0.1f*cosf((float)(i*4u+k)*0.0013f);
+        for(uint32_t h=0;h<HISTORY;h++)state_seq[i*HISTORY+h]=0.03f*sinf((float)(i*HISTORY+h)*0.0007f);
+    }
+    memcpy(state_fused,state_seq,HYPER*HISTORY*4u);
+    fg_vk_tensor *gg=tensor(gated,HYPER*4u),*gn=tensor(normalized,HYPER*4u),*gw=tensor(weight,HYPER*16u),
+        *gsa=tensor(state_seq,HYPER*HISTORY*4u),*gsb=tensor(state_fused,HYPER*HISTORY*4u),
+        *gh=tensor(hyper,HYPER*4u),*gc=tensor(NULL,HYPER*4u),*go=tensor(NULL,HYPER*4u),
+        *gf=tensor(NULL,HYPER*4u);
+    int ok=gg&&gn&&gw&&gsa&&gsb&&gh&&gc&&go&&gf&&
+        fg_vk_ple_conv_decode(context,gc,gsa,gg,gn,gw,&error)==FG_OK&&
+        fg_vk_add_f32(context,go,gh,gc,HYPER,&error)==FG_OK&&
+        fg_vk_ple_conv_decode_add(context,gf,gsb,gg,gn,gw,gh,&error)==FG_OK&&
+        fg_vk_tensor_read(go,0,out_seq,HYPER*4u,&error)==FG_OK&&
+        fg_vk_tensor_read(gf,0,out_fused,HYPER*4u,&error)==FG_OK&&
+        fg_vk_tensor_read(gsa,0,state_seq,HYPER*HISTORY*4u,&error)==FG_OK&&
+        fg_vk_tensor_read(gsb,0,state_got,HYPER*HISTORY*4u,&error)==FG_OK;
+    for(uint32_t i=0;ok&&i<HYPER;i++)
+        if(memcmp(&out_fused[i],&out_seq[i],sizeof(float))!=0){fprintf(stderr,"PLE conv add %u fused=%g sequence=%g\n",i,out_fused[i],out_seq[i]);ok=0;}
+    for(uint32_t i=0;ok&&i<HYPER*HISTORY;i++)
+        if(memcmp(&state_got[i],&state_seq[i],sizeof(float))!=0){fprintf(stderr,"PLE conv add state %u fused=%g sequence=%g\n",i,state_got[i],state_seq[i]);ok=0;break;}
+    fg_vk_tensor_destroy(gf);fg_vk_tensor_destroy(go);fg_vk_tensor_destroy(gc);fg_vk_tensor_destroy(gh);
+    fg_vk_tensor_destroy(gsb);fg_vk_tensor_destroy(gsa);fg_vk_tensor_destroy(gw);fg_vk_tensor_destroy(gn);
+    fg_vk_tensor_destroy(gg);
+    free(out_fused);free(out_seq);free(hyper);free(state_got);free(state_fused);free(state_seq);
+    free(weight);free(normalized);free(gated);return ok;
+}
+
 static int test_ple_prefill_scan_tokens(uint32_t tokens){
     const uint32_t TOKENS=tokens;enum{HIDDEN=2560,HYPER=10240,HISTORY=9};float *key=malloc(TOKENS*HYPER*4u),*query=malloc(TOKENS*HYPER*4u),*value=malloc(TOKENS*HIDDEN*4u),*normalized=malloc(TOKENS*HYPER*4u),*weight=malloc(HYPER*4u*4u),*state_initial=malloc(HYPER*HISTORY*4u),*gate_sequential=malloc(TOKENS*HYPER*4u),*gate_batched=malloc(TOKENS*HYPER*4u),*conv_sequential=malloc(TOKENS*HYPER*4u),*conv_batched=malloc(TOKENS*HYPER*4u),*state_sequential=malloc(HYPER*HISTORY*4u),*state_batched=malloc(HYPER*HISTORY*4u);if(!key||!query||!value||!normalized||!weight||!state_initial||!gate_sequential||!gate_batched||!conv_sequential||!conv_batched||!state_sequential||!state_batched)return 0;
     for(uint32_t i=0;i<TOKENS*HYPER;i++){key[i]=sinf((float)i*0.003f);query[i]=cosf((float)i*0.004f);normalized[i]=sinf((float)i*0.005f)*0.5f;}for(uint32_t i=0;i<TOKENS*HIDDEN;i++)value[i]=cosf((float)i*0.007f);for(uint32_t i=0;i<HYPER*4u;i++)weight[i]=0.1f*cosf((float)i*0.0011f);for(uint32_t i=0;i<HYPER*HISTORY;i++)state_initial[i]=0.02f*sinf((float)i*0.0003f);
@@ -3196,6 +3236,7 @@ ok=run_test("ngram_direct_lookup",test_ngram_direct_lookup)&&ok;
 ok=run_test("ngram_resident",test_ngram_resident)&&ok;
 ok=run_test("ngram_prefill_lookup",test_ngram_prefill_lookup)&&ok;
 ok=run_test("ple_decode",test_ple_decode)&&ok;
+ok=run_test("ple_conv_add_parity",test_ple_conv_add_parity)&&ok;
 ok=run_test("ple_prefill_scan",test_ple_prefill_scan)&&ok;
 ok=run_test("ple_prefill_t1_compat",test_ple_prefill_t1_compat)&&ok;
 ok=run_test("qsa_quant_and_bf16",test_qsa_quant_and_bf16)&&ok;
