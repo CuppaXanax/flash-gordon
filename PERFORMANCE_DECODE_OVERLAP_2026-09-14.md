@@ -464,3 +464,24 @@ src/manifest.o src/runtime_options.o src/sampler.o src/protocol.o`).
 Verdict: D+E land at ~22.5-22.9 short / ~21.8-22.2 4K, which is the practical
 ceiling of overlap-only work; the 25-28 milestone needs the shader cuts in 2-3
 plus either the hop work in 1 or the wider head split in 5.
+
+## 4. Fleet qualification of the merged rounds (2026-09-14, binary 872ba4b5)
+
+Merged rounds 3+7 qualified on the live ring, default config
+(`FG_DECODE_STATIC` on, `FG_OUTPUT_SPLIT` off):
+
+- Gates `[12]`/`[Paris]`; `pi-stability.ps1` PASS (6 stages, 4 turns, 8
+  ranks, 0 failures).
+- Battery x2: short decode 22.52 / 23.01 (baseline 21.76-21.93), 4K decode
+  21.64 / 21.56 (baseline 21.02-21.19), 4K prefill 276-314 (band unchanged).
+- Context sweep: 32K prefill 306.3 / decode 16.89; 64K prefill 300.5 /
+  decode 11.43 (control 267 prefill); 256K prefill 274.8/275.0 measured on
+  the round-7 build (round 3 does not touch the prefill path).
+
+**Known issue - `FG_OUTPUT_SPLIT=1` does not qualify.** With the flag set on
+all ranks (verified in every start script), rank 0 served one request
+(`RING_OWN_BLOCK chunk=0`) and exited with `distributed transport is not
+reusable; reopen the runtime`; the gates returned empty responses and no
+`slice executor` config error was logged. The flag is off by default and the
+qualified path above never touches the split code. A follow-up round owns the
+fleet diagnosis; item 5 above is where the remaining ~0.5-1.1 ms lives.
