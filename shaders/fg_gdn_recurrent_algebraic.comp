@@ -25,8 +25,19 @@ void main(){
     barrier();
     for(uint stride=64u;stride>0u;stride>>=1u){if(lane<stride)dot_qk[lane]+=dot_qk[lane+stride];barrier();}
     float decay=exp(a_decay[head]*softplus(alpha[head]+dt_bias[head])),mix=1.0/(1.0+exp(-beta[head]));
-    uint state_base=head*pc.head_dim*pc.head_dim;float memory=0.0,prior_result=0.0;
+    uint state_base=head*pc.head_dim*pc.head_dim;
+    float memory=0.0,prior_result=0.0;
     uint index=0u;
+    for(;index+8u<=pc.head_dim;index+=8u){
+        uint base0=state_base+index*pc.head_dim+lane,stride=pc.head_dim;
+        float old0=recurrent[base0],old1=recurrent[base0+stride],old2=recurrent[base0+2u*stride],old3=recurrent[base0+3u*stride];
+        float old4=recurrent[base0+4u*stride],old5=recurrent[base0+5u*stride],old6=recurrent[base0+6u*stride],old7=recurrent[base0+7u*stride];
+        float d0=old0*decay,d1=old1*decay,d2=old2*decay,d3=old3*decay,d4=old4*decay,d5=old5*decay,d6=old6*decay,d7=old7*decay;
+        memory=fma(d0,key[index],memory);memory=fma(d1,key[index+1u],memory);memory=fma(d2,key[index+2u],memory);memory=fma(d3,key[index+3u],memory);
+        memory=fma(d4,key[index+4u],memory);memory=fma(d5,key[index+5u],memory);memory=fma(d6,key[index+6u],memory);memory=fma(d7,key[index+7u],memory);
+        prior_result=fma(d0,query[index],prior_result);prior_result=fma(d1,query[index+1u],prior_result);prior_result=fma(d2,query[index+2u],prior_result);prior_result=fma(d3,query[index+3u],prior_result);
+        prior_result=fma(d4,query[index+4u],prior_result);prior_result=fma(d5,query[index+5u],prior_result);prior_result=fma(d6,query[index+6u],prior_result);prior_result=fma(d7,query[index+7u],prior_result);
+    }
     for(;index+4u<=pc.head_dim;index+=4u){
         uint base0=state_base+index*pc.head_dim+lane,stride=pc.head_dim;
         float old0=recurrent[base0],old1=recurrent[base0+stride],old2=recurrent[base0+2u*stride],old3=recurrent[base0+3u*stride];
