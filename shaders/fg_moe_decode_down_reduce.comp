@@ -21,7 +21,13 @@
    two vector activation words per half and the fifth-bit expansion is a
    single multiply instead of four shift/or pairs; the only barrier is the
    final four-lane row reduction.  The gate is applied once per slot so the
-   arithmetic order matches fg_moe_reduce. */
+   arithmetic order matches fg_moe_reduce.
+
+   Both cooked paths advance their word/vector offsets by fixed strides
+   instead of rebuilding the full expression per block, the Q5_1 two-word
+   decode is unrolled (no dynamically indexed local vector), and the cooked
+   Q8_0 path scales the summed dot once per block instead of multiplying all
+   four quant words.  The row-block partial sums are otherwise unchanged. */
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
@@ -57,6 +63,10 @@ uint spread4(uint bits) {
     return ((bits * 0x00204081u) & 0x01010101u) << 4u;
 }
 
+float dot4f(uint weight_word, vec4 activation) {
+    return dot(vec4(unpack8(int(weight_word))), activation);
+}
+
 void main() {
     uint local_id = gl_LocalInvocationID.x;
     if (pc.down_type == 8u && pc.tile_bytes != 0u) {
@@ -81,17 +91,19 @@ void main() {
                 float gate = gates[slot];
                 uint row_base = expert * pc.expert_stride + row_tile8 * pc.tile_bytes;
                 uint input_base = pair * (pc.in_dim >> 2u);
+                uint scale_word = (row_base + tile_row8 * 2u) >> 2u;
+                uint quant_word = (row_base + quant_offset8 + tile_row8 * pc.blocks * 32u + lane8 * 4u) >> 2u;
+                uint in_vec = input_base + lane8;
+                bool upper = (tile_row8 & 1u) != 0u;
                 float slot_acc = 0.0;
                 for (uint block = 0u; block < pc.blocks; block++) {
-                    uint scale_byte = row_base + (block * 16u + tile_row8) * 2u;
-                    vec2 scale = unpackHalf2x16(wb[scale_byte >> 2u]);
-                    float delta = (scale_byte & 2u) == 0u ? scale.x : scale.y;
-                    uint quant_byte = row_base + quant_offset8 +
-                        (tile_row8 * pc.blocks + block) * 32u + lane8 * 4u;
-                    uint packed = wb[quant_byte >> 2u];
-                    vec4 weight = vec4(unpack8(int(packed))) * delta;
-                    vec4 input_value = x4[input_base + block * 8u + lane8];
-                    slot_acc += dot(weight, input_value);
+                    vec2 scale = unpackHalf2x16(wb[scale_word]);
+                    uint packed = wb[quant_word];
+                    float delta = upper ? scale.y : scale.x;
+                    slot_acc = fma(delta, dot4f(packed, x4[in_vec]), slot_acc);
+                    scale_word += 8u;
+                    quant_word += 8u;
+                    in_vec += 8u;
                 }
                 accumulator8 = fma(gate, slot_acc, accumulator8);
             }
@@ -130,28 +142,37 @@ void main() {
             uint tile_row = row & 15u;
             uint row_base = expert * pc.expert_stride + row_tile * pc.tile_bytes;
             uint input_base = pair * (pc.in_dim >> 2u);
+            uint sm_word = ((row_base + tile_row * 4u) >> 2u) + parity * 96u;
+            uint hw_word = ((row_base + 64u + tile_row * 4u) >> 2u) + parity * 96u;
+            uint qt_uvec = ((row_base + 128u + tile_row * 16u) >> 3u) + parity * 48u + seg;
+            uint in_vec = input_base + parity * 8u + seg * 2u;
+            uint bit_base = seg * 8u;
             for (uint block = parity; block < pc.blocks; block += 2u) {
-                uint block_base = row_base + block * BLOCK_TILE_BYTES;
-                vec2 scale_min = unpackHalf2x16(wb[(block_base + tile_row * 4u) >> 2u]);
-                uint high_word = wb[(block_base + 64u + tile_row * 4u) >> 2u];
-                uvec2 quant = wv[((block_base + 128u + tile_row * 16u) >> 3u) + seg];
-                for (uint word = 0u; word < 2u; word++) {
-                    uint packed = quant[word];
-                    uint low = packed & 0x0f0f0f0fu;
-                    uint high = (packed >> 4u) & 0x0f0f0f0fu;
-                    uint bit_base = seg * 8u + word * 4u;
-                    uint low_bits = (high_word >> bit_base) & 15u;
-                    uint high_bits = (high_word >> (16u + bit_base)) & 15u;
-                    vec4 weight_lo = fma(vec4(scale_min.x),
-                        vec4(unpack8(int(low | spread4(low_bits)))),
-                        vec4(scale_min.y));
-                    vec4 weight_hi = fma(vec4(scale_min.x),
-                        vec4(unpack8(int(high | spread4(high_bits)))),
-                        vec4(scale_min.y));
-                    vec4 input_lo = x4[input_base + block * 8u + seg * 2u + word];
-                    vec4 input_hi = x4[input_base + block * 8u + seg * 2u + 4u + word];
-                    slot_acc += dot(weight_lo, input_lo) + dot(weight_hi, input_hi);
-                }
+                vec2 sm = unpackHalf2x16(wb[sm_word]);
+                uint hw = wb[hw_word];
+                uvec2 q = wv[qt_uvec];
+                vec4 dmx = vec4(sm.x);
+                vec4 dmy = vec4(sm.y);
+                uint q0 = q.x;
+                uint q1 = q.y;
+                uint lo0 = q0 & 0x0f0f0f0fu;
+                uint hi0 = (q0 >> 4u) & 0x0f0f0f0fu;
+                uint lo1 = q1 & 0x0f0f0f0fu;
+                uint hi1 = (q1 >> 4u) & 0x0f0f0f0fu;
+                vec4 w0 = fma(dmx, vec4(unpack8(int(lo0 | spread4((hw >> bit_base) & 15u)))), dmy);
+                vec4 w1 = fma(dmx, vec4(unpack8(int(hi0 | spread4((hw >> (16u + bit_base)) & 15u)))), dmy);
+                vec4 w2 = fma(dmx, vec4(unpack8(int(lo1 | spread4((hw >> (bit_base + 4u)) & 15u)))), dmy);
+                vec4 w3 = fma(dmx, vec4(unpack8(int(hi1 | spread4((hw >> (20u + bit_base)) & 15u)))), dmy);
+                vec4 i0 = x4[in_vec];
+                vec4 i4 = x4[in_vec + 4u];
+                vec4 i1 = x4[in_vec + 1u];
+                vec4 i5 = x4[in_vec + 5u];
+                slot_acc += dot(w0, i0) + dot(w1, i4);
+                slot_acc += dot(w2, i1) + dot(w3, i5);
+                sm_word += 192u;
+                hw_word += 192u;
+                qt_uvec += 96u;
+                in_vec += 16u;
             }
         } else if (pc.down_type == 8u && pc.tile_bytes != 0u) {
             uint row_tile = row >> 4u;
