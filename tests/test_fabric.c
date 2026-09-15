@@ -184,9 +184,6 @@ static void protocol_output_handoff_selfcheck(void){
         sizeof(partial_wire)-1u,&error)!=FG_OK);
     fg_output_partial bad_partial=partial;bad_partial.id=FG_Q38_VOCAB_SIZE;
     PROTOCOL_CHECK(fg_output_partial_encode(partial_wire,&bad_partial,&error)!=FG_OK);
-    /* the split slice must re-route the final layer result to rank 0: the
-     * hidden payload alone names the output owner and must never be accepted
-     * by the coordinator's slice handler */
     fg_layer_result slice_result={.layer=FG_LAYER_COUNT-1u,.source_rank=7u,
         .destination_rank=4u,.token_index=17u};
     slice_result.hyper[0]=1.5f;slice_result.hyper[FG_HYPER_WIDTH-1u]=-2.5f;

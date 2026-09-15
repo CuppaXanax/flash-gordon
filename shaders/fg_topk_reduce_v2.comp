@@ -1,13 +1,4 @@
 #version 460
-/* Top-512 selection bounded by the output width.  Fixed 64-slot runs are
- * sorted in place; runs are then merged pairwise while the merged size stays
- * at or below 512 (both halves kept), and only wider merges keep the top
- * half.  The wide kernel (fg_topk_reduce) fully sorts the padded width: at a
- * 4K decode window (count ~1090) that is 66 passes / 67584 comparators / 528
- * lane iterations over 2048 slots; this network runs 65 passes / 29568
- * comparators / 322 lane iterations over 1152 slots and emits the identical
- * sorted top-512.  The unused tail of shared memory stays sentinel-filled so
- * an odd run count merges safely against an all-padding partner. */
 layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
 layout(set=0,binding=0)readonly buffer InputScores{float input_scores[];};
 layout(set=0,binding=1)readonly buffer InputIds{uint input_ids[];};
