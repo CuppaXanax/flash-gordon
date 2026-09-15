@@ -68,7 +68,8 @@ static void test_publication(fg_manifest *manifest){
             c.qsa_pages.append_pages[i]=calloc(FG_QSA_PAGE_APPEND_MAX_PAGES,sizeof(fg_qsa_page));
             CHECK(c.qsa_pages.append_pages[i]!=NULL);
         }
-        CHECK(fg_qsa_replica_create(&c.qsa_pages.replica,accept_pages,NULL,&err)==FG_OK);
+        CHECK(fg_qsa_replica_create(&c.qsa_pages.replica,accept_pages,NULL,
+                                    FG_QSA_PAGE_APPEND_MAX_BYTES,&err)==FG_OK);
         released_pages=0u;fail_commit=scenario==0u;
         fg_status status=coordinator_publish_qsa_pages(&c,0u,4u,&err);
         CHECK(status==(fail_commit?FG_ERR_IO:FG_OK));

@@ -16,7 +16,7 @@ typedef struct fg_qsa_replica_item {
 } fg_qsa_replica_item;
 
 fg_status fg_qsa_replica_create(fg_qsa_replica **out,fg_qsa_replica_send_fn send,
-                                void *context,fg_error *err);
+                                void *context,uint32_t payload_bytes,fg_error *err);
 fg_status fg_qsa_replica_reserve(fg_qsa_replica *replica,uint32_t count,
                                  uint8_t *buffers[FG_RANK_COUNT],fg_error *err);
 fg_status fg_qsa_replica_commit(fg_qsa_replica *replica,
@@ -31,7 +31,7 @@ static inline fg_status fg_qsa_replica_drain_if_present(
     return replica?fg_qsa_replica_drain(replica,err):FG_OK;
 }
 uint64_t fg_qsa_replica_host_bytes(const fg_qsa_replica *replica);
-uint64_t fg_qsa_replica_host_bytes_for_capacity(void);
+uint64_t fg_qsa_replica_host_bytes_for_capacity(uint32_t payload_bytes);
 void fg_qsa_replica_destroy(fg_qsa_replica *replica);
 
 #endif

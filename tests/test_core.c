@@ -441,7 +441,8 @@ static void test_qsa_replica_queue(void){
     replica_probe probe={0};CHECK(pthread_mutex_init(&probe.mutex,NULL)==0);
     CHECK(pthread_cond_init(&probe.ready,NULL)==0);fg_error err={0};
     fg_qsa_replica *replica=NULL;
-    CHECK(fg_qsa_replica_create(&replica,replica_probe_send,&probe,&err)==FG_OK);
+    CHECK(fg_qsa_replica_create(&replica,replica_probe_send,&probe,
+                                FG_QSA_PAGE_APPEND_MAX_BYTES,&err)==FG_OK);
     uint8_t *buffers[FG_RANK_COUNT]={0};
     CHECK(fg_qsa_replica_reserve(replica,2u,buffers,&err)==FG_OK);
     buffers[0][0]=1u;buffers[1][0]=2u;
@@ -465,7 +466,8 @@ static void test_qsa_replica_queue(void){
     pthread_cond_destroy(&probe.ready);pthread_mutex_destroy(&probe.mutex);
     probe=(replica_probe){0};CHECK(pthread_mutex_init(&probe.mutex,NULL)==0);
     CHECK(pthread_cond_init(&probe.ready,NULL)==0);probe.release=true;probe.fail=true;
-    CHECK(fg_qsa_replica_create(&replica,replica_probe_send,&probe,&err)==FG_OK);
+    CHECK(fg_qsa_replica_create(&replica,replica_probe_send,&probe,
+                                FG_QSA_PAGE_APPEND_MAX_BYTES,&err)==FG_OK);
     CHECK(fg_qsa_replica_reserve(replica,1u,buffers,&err)==FG_OK);
     buffers[0][0]=3u;items[0]=(fg_qsa_replica_item){
         .owner=3u,.batch_id=0u,.bytes=1u,.session_id=99u};
@@ -476,7 +478,8 @@ static void test_qsa_replica_queue(void){
     pthread_cond_destroy(&probe.ready);pthread_mutex_destroy(&probe.mutex);
     probe=(replica_probe){0};CHECK(pthread_mutex_init(&probe.mutex,NULL)==0);
     CHECK(pthread_cond_init(&probe.ready,NULL)==0);probe.fail=true;
-    CHECK(fg_qsa_replica_create(&replica,replica_probe_send,&probe,&err)==FG_OK);
+    CHECK(fg_qsa_replica_create(&replica,replica_probe_send,&probe,
+                                FG_QSA_PAGE_APPEND_MAX_BYTES,&err)==FG_OK);
     CHECK(fg_qsa_replica_reserve(replica,1u,buffers,&err)==FG_OK);
     buffers[0][0]=4u;items[0]=(fg_qsa_replica_item){
         .owner=3u,.batch_id=0u,.bytes=1u,.session_id=99u};

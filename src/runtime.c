@@ -2151,7 +2151,7 @@ typedef struct qsa_page_transport {
     fg_fabric *fabric;
     atomic_uint *transport_state;
     uint32_t append_sequence[FG_RANK_COUNT],fetch_sequence[FG_RANK_COUNT],
-             append_count[FG_RANK_COUNT],append_owner_mask;
+             append_count[FG_RANK_COUNT],append_owner_mask,append_payload_bytes;
     uint32_t warm_outstanding;
 } qsa_page_transport;
 
@@ -2207,7 +2207,10 @@ static fg_status qsa_page_transport_ensure(qsa_page_transport *transport,fg_erro
         fg_error_set(err,FG_ERR_OOM,"allocate fixed QSA page transport buffers");
         return FG_ERR_OOM;
     }
-    fg_status status=fg_qsa_replica_create(&transport->replica,qsa_replica_send,transport,err);
+    uint32_t payload=transport->append_payload_bytes;
+    if(!payload)payload=FG_QSA_PAGE_APPEND_MAX_BYTES;
+    fg_status status=fg_qsa_replica_create(&transport->replica,qsa_replica_send,
+                                           transport,payload,err);
     if(status!=FG_OK)qsa_page_transport_destroy(transport);
     return status;
 }
@@ -2236,11 +2239,24 @@ static uint64_t coordinator_transport_host_bytes(const qsa_page_transport *trans
            fg_qsa_replica_host_bytes(transport->replica);
 }
 
-static uint64_t coordinator_transport_capacity_bytes(void){
+/* One publish batch carries at most one page run per QSA layer a single owner
+ * can hold, so the replica slot payload only needs the sealed microbatch's
+ * page count instead of the 512-token protocol ceiling. */
+static uint32_t coordinator_qsa_append_payload_bytes(uint32_t tokens){
+    uint64_t blocks=((uint64_t)tokens+FG_Q38_QSA_COMPRESS_RATIO-1u)/
+        FG_Q38_QSA_COMPRESS_RATIO;
+    uint64_t bytes=FG_QSA_PAGE_BATCH_HEADER_BYTES+
+        (uint64_t)FG_QSA_OWNER_LAYER_COUNT*blocks*FG_QSA_PAGE_ENTRY_BYTES;
+    if(bytes>FG_QSA_PAGE_APPEND_MAX_BYTES)bytes=FG_QSA_PAGE_APPEND_MAX_BYTES;
+    if(!bytes)bytes=1u;
+    return (uint32_t)bytes;
+}
+
+static uint64_t coordinator_transport_capacity_bytes(uint32_t append_payload_bytes){
     return (uint64_t)FG_RANK_COUNT*FG_QSA_PAGE_APPEND_MAX_PAGES*sizeof(fg_qsa_page)+
            2u*(uint64_t)FG_QSA_PAGE_FETCH_MAX_PAGES*sizeof(fg_qsa_page)+
            FG_QSA_PAGE_FETCH_MAX_BYTES+FG_QSA_PAGE_RESULT_MAX_BYTES+
-           fg_qsa_replica_host_bytes_for_capacity();
+           fg_qsa_replica_host_bytes_for_capacity(append_payload_bytes);
 }
 
 static uint64_t coordinator_prefill_work_wire_bytes(uint32_t tokens){
@@ -2436,8 +2452,11 @@ static void coordinator_memory_report(const fg_coordinator *coordinator){
         coordinator->prefill_expert[f].result_wire?0u:coordinator->prefill_expert[f].result_capacity;
     uint64_t deferred_prefill_work=coordinator_prefill_work_wire_bytes(
         coordinator->manifest->prefill_microbatch);
-    uint64_t deferred_transport=coordinator->qsa_pages.replica?
-        0u:coordinator_transport_capacity_bytes();
+    uint64_t deferred_transport=(coordinator->qsa_pages.replica||
+        (coordinator->ring_prefill&&coordinator->ring_decode))?
+        0u:coordinator_transport_capacity_bytes(
+            coordinator_qsa_append_payload_bytes(
+                coordinator->manifest->prefill_microbatch));
     uint64_t deferred_host=0;
     deferred_host=coordinator_saturating_add(deferred_host,deferred_qsa_host);
     deferred_host=coordinator_saturating_add(deferred_host,deferred_ngram_host);
@@ -2542,6 +2561,12 @@ static fg_status coordinator_publish_qsa_pages(fg_coordinator *coordinator,uint3
     fg_vk_context *vk=fg_model_vk(coordinator->model);
     fg_status status=FG_OK;
     while(status==FG_OK&&fg_vk_batch_active(vk))status=fg_vk_end(vk,err);
+    /* Ring prefill commits every complete page in the block that owns it, so
+     * rank 0 never publishes or mirrors remote pages here; leave the transport
+     * unallocated until a non-ring path actually needs it. */
+    transport->append_payload_bytes=coordinator_qsa_append_payload_bytes(
+        coordinator->manifest->prefill_microbatch);
+    if(status==FG_OK&&coordinator->ring_prefill)return status;
     if(status==FG_OK)status=qsa_page_transport_ensure(transport,err);
     if(status!=FG_OK)return status;
     status=fg_qsa_replica_status(transport->replica,err);
@@ -2590,7 +2615,7 @@ static fg_status coordinator_publish_qsa_pages(fg_coordinator *coordinator,uint3
             .batch_id=transport->append_sequence[owner],.page_count=(uint16_t)count,
             .pages=transport->append_pages[owner]};
         uint32_t bytes=0;status=fg_qsa_page_append_encode(buffers[send_index],
-            FG_QSA_PAGE_APPEND_MAX_BYTES,&bytes,&batch,err);
+            transport->append_payload_bytes,&bytes,&batch,err);
         if(status!=FG_OK){fg_qsa_replica_cancel(transport->replica);return status;}
         items[send_index++]=(fg_qsa_replica_item){.owner=owner,.batch_id=batch.batch_id,
             .bytes=bytes,.session_id=coordinator->session_id};
@@ -2619,6 +2644,8 @@ static fg_status coordinator_fetch_qsa_pages(void *opaque,uint32_t layer,
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid coordinator QSA page fetch");
         return FG_ERR_ARGUMENT;
     }
+    transport->append_payload_bytes=coordinator_qsa_append_payload_bytes(
+        coordinator->manifest->prefill_microbatch);
     fg_status status=qsa_page_transport_ensure(transport,err);
     if(status!=FG_OK)return status;
     uint32_t owner=coordinator->manifest->layer_owner[layer];
@@ -2725,6 +2752,8 @@ static fg_status coordinator_warm_qsa_issue(fg_coordinator *coordinator,
      * the state file. */
     if(coordinator->ring_decode)return FG_OK;
     qsa_page_transport *transport=&coordinator->qsa_pages;
+    transport->append_payload_bytes=coordinator_qsa_append_payload_bytes(
+        coordinator->manifest->prefill_microbatch);
     fg_status status=qsa_page_transport_ensure(transport,err);
     if(status!=FG_OK)return status;
     uint32_t first_block=0,block_count=0;
