@@ -14,6 +14,7 @@ Two parts, both local-only:
 | `73152f4` | 4-way split mode, slice-hidden protocol, foreign loader, runtime plumbing |
 | `b68aff5` | layout/view-slice/combine oracles and the eight-process 4-way mesh |
 | `7a41057` | uniform missing-slice-executor check and this document |
+| `6e626e6` | comment-free style pass on the split code |
 
 ## 1. Design: the 4-way split
 
