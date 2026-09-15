@@ -1,20 +1,26 @@
 # Output head: 4-way split + fabric hop payload probe (2026-09-14)
 
-Worktree `fg-work-split4`, branch `perf/output-split-4way` from main `f700967`.
-Two parts, both local-only:
+Worktree `fg-work-split4`, branch `perf/output-split-4way` (rebased onto main
+`56f76bb`).  Two parts:
 
 1. the 4-way output head split (round-3 `PERFORMANCE_DECODE_OVERLAP_2026-09-14`
    section 3.6 item 5), implemented behind a new mode so the fleet-validated
    2-way stays the default, and
 2. the `FG_FABRIC_PROFILE` hop payload inventory and probe plan (section 3.6
-   item 1), with per-candidate payoff estimates.  No fleet access was used.
+   item 1), with per-candidate payoff estimates.
+
+Round 1 (`73152f4`..`c45a50e`) came back from the fleet wedged: the diagnosis
+in section 8 shows the wedge is **rank-0 memory exhaustion during 4K ring
+prefill**, reproduced on the default config, not the split.  Round 2 adds the
+mandated liveness deadlines plus split tracing and lands them on the fleet.
 
 | commit | change |
 |---|---|
-| `73152f4` | 4-way split mode, slice-hidden protocol, foreign loader, runtime plumbing |
-| `b68aff5` | layout/view-slice/combine oracles and the eight-process 4-way mesh |
-| `7a41057` | uniform missing-slice-executor check and this document |
-| `6e626e6` | comment-free style pass on the split code |
+| `ae3ce0b` | 4-way split mode, slice-hidden protocol, foreign loader, runtime plumbing |
+| `b538b42` | layout/view-slice/combine oracles and the eight-process 4-way mesh |
+| `52ce7d3` | uniform missing-slice-executor check and this document |
+| `788b965` | comment-free style pass on the split code |
+| `2c812c0` | round 2: bounded split waits, trace, dropped-partial mesh probe |
 
 ## 1. Design: the 4-way split
 
@@ -403,3 +409,95 @@ Expected probe outcomes and what they would change:
   chain and is deliberately left out of this round.
 * The foreign extents in 4.1 are computed from the current ring manifest
   snapshot; a repack changes them and the loader error is the source of truth.
+
+## 8. Round 2: the fleet wedge - root cause, liveness deadlines, evidence
+
+### 8.1 Root cause: rank-0 memory exhaustion, not the split
+
+The 4-way fleet run (`FG_OUTPUT_SPLIT=4` on all ranks, slices planted) passed
+the correctness gates twice and then the battery's 4K request wedged rank 0.
+Rank 0's log shows where: every stalled stage is **rank 0's own prefill block**
+(`RING_OWN_BLOCK layers=6..11`), a code path the split never touches:
+
+```
+RING_STAGE chunk=0 layer=6 in_flight=8 t=798.514
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=55448.4     <- 55 s
+RING_OWN_BLOCK chunk=2 layers=6..11 ms=135882.5    <- 136 s
+RING_OWN_BLOCK chunk=11 layers=6..11 ms=690023.3   <- 11.5 min
+...
+double free or corruption (!prev)                  <- rank 0 dies
+```
+
+The same pathology reproduces **without the split**: the default-config
+recovery run served a 21-token prompt with `RING_OWN_BLOCK ... ms=93510.1`
+(93.5 s).  `.42`'s dmesg shows global OOM kills during both runs
+(systemd-userwork/crond/systemd-userdbd at 02:01, NetworkManager at 02:59);
+`free -m` during the run shows rank 0 at ~160 MB free (`used 15180` of
+15198) with the 8 GB zram swap in active use.  Rank 0's Vulkan ledger is
+`final_requested=15.53 GiB` on a 15.98 GiB UMA device, so the 4K/16K prefill
+scratch pushes the box into swap thrash; blocks take tens of seconds to
+minutes, SSH starves (sshd cannot fork), and rank 0 eventually crashes with
+heap corruption.  The 4-way slices change rank 0's memory by less than 1 MB
+(rank 0's slice shrank from 108272 to 62080 rows; the weight is a view of the
+replicated arena), and no split timeout fired because the stall never reached
+the split path.
+
+Conclusion: the incident was a pre-existing rank-0 memory/swap pathology
+triggered by the 4K ring prefill.  It is not a 4-way partial/combine deadlock.
+It belongs to the memory workstream (rank-0 headroom; zram pressure); the
+mandated liveness deadlines below are what keep any *split* wait from ever
+looking like this again.
+
+### 8.2 Liveness deadlines (`2c812c0`)
+
+`FG_OUTPUT_SPLIT_TIMEOUT_MS` (default 4000, clamp 100..60000) bounds every
+4-way wait; the default and 2-way paths keep the untimed calls unchanged.
+
+| wait | owner | behaviour on expiry |
+|---|---|---|
+| partial wait | output owner (rank 4) | the worker loop polls with the remaining budget; on expiry it logs `OUTPUT_SPLIT_TIMEOUT rank=4 token=N waited_ms=M ways=4 output split timed out after M ms waiting for partials from ranks X,Y` and returns `FG_ERR_LIMIT` (the request fails; no wedge) |
+| result wait | coordinator (rank 0) | the 4-way decode loop receives with a deadline of `timeout + 4000 ms`; on expiry it logs `RING_DECODE_TIMEOUT rank=0 token=N waited_ms=M expected=OUTPUT_RESULT peer=4` and fails the request |
+
+`fabric.c` gains `fg_fabric_wait_ready_timeout()` and
+`fg_fabric_recv_any_timeout()` (additive; `-1` is the old infinite wait), and
+`fg_output_split_wait_remaining_ms()` / `fg_output_split_timeout_error()`
+build the deadline math and the missing-rank message.  Diagnostics are behind
+`FG_OUTPUT_SPLIT_TRACE=1`, which logs every split hop
+(`OUTPUT_SPLIT_STATE rank=R token=T what={hc,slice,local,partial,combined}`),
+so a future stall names its hop even when no timeout fires.  Unit proof:
+`test_fabric` now runs the 4-way mesh over 4 tokens with per-token acks and a
+dropped-partial probe where rank 4's bounded wait fires, names rank 1, and
+rank 0's backstop ends its result wait; the protocol selfcheck covers the
+budget helper and the timeout message.
+
+### 8.3 Fleet evidence (round 2)
+
+* Deployed binary `11ee2352bb063c842636c15d...` (patch `019de49b...`,
+  5 files) on all eight blades.  Startup confirms `OUTPUT_SPLIT rank=0 ways=4
+  way=1`, rank 1/2 `slice=1`, rank 4 `slice=1`, rank 7 `slice=0 hc=1`.
+* Correctness gates with the 4-way active: `[12]` / `[Paris]`.
+* Split trace on the gate traffic: rank 7 `what=hc`, rank 4 `what=local` +
+  three `what=partial` (ranks 0,1,2) + `what=combined` per decode token; no
+  timeouts.
+* Short decode, same session, 32 tokens, identical prompt: 4-way
+  **20.20 / 20.44 / 20.35 TPS** (wall 2.78/2.69/2.61 s) vs default
+  **19.23 / 19.90 / 19.87 TPS** (wall 2.80/2.65/2.65 s).  Not a controlled
+  battery A/B (the 4-way runs came first, so thermal drift can only favour the
+  later default runs); it bounds the 4-way at or above the default here.
+* The mandated battery (`Measure-FlashGordonAB.ps1 -Attach -Build ep
+  -Runs4k 2`) could **not** be completed: its 4K/16K prefills wedge rank 0 on
+  both configs (section 8.1), so pi-stability was skipped for the same reason.
+  The fleet was recovered and left on the **default** config with gates
+  `[12]`/`[Paris]` (rank 0: `FG_PREFILL_RING=1 FG_DECODE_RING=1
+  FG_RING_TRACE=1`; workers: `FG_WORKER_OWNER=1`; no `FG_OUTPUT_SPLIT`).
+
+### 8.4 Fleet A/B commands (unchanged, plus round-2 envs)
+
+The 4.1 foreign-extent prep and the 4.2 restart/gate/battery sequence stand.
+Until rank 0 has headroom, treat the 4K/16K battery as a memory experiment:
+`sync; drop_caches` on all ranks first, run one case at a time, and watch
+`.42`'s `free -m`; a wedge is recovered by killing the workers so rank 0 exits
+(never leave it wedged).  For split diagnosis set
+`FG_OUTPUT_SPLIT_TRACE=1` and optionally `FG_OUTPUT_SPLIT_TIMEOUT_MS=3000` on
+all ranks: the trace names the stalled hop and the timeout names the missing
+rank instead of hanging.
