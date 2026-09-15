@@ -3,6 +3,32 @@
 You are the post-compaction me. Read this top to bottom before touching anything.
 Everything here is measured, not hoped. The fleet is healthy right now; keep it that way.
 
+## 0a4. DECODE ROUND 8 — EXPERT GEOMETRY + GDN/GR FUSION + CUTS (2026-09-14/15)
+
+Three parallel rounds merged (main `ed99965`, fleet binary `9ec61a98`):
+`perf/decode-expert-geometry` (gate_up unrolled/specialized: -58% result-ops,
+bit-identical; down Q5_1 -32%, cooked-Q8 <=1.2e-5), `perf/gdn-gr-fusion` (r8
+dense 64->128 threads / 8->16 splits, GDN algebraic 8-deep state pipeline, conv
+vec4 views, GR write 4-feature/load), and `perf/decode-cuts` (FG_OUTPUT_SPLIT
+protocol fix: the slice frame reused rank-4's destination encoding so rank 0
+rejected it with `misrouted ring decode output slice`; topk v2 opt-in).
+
+**Measured:** short decode 23.66/24.20/24.07/24.31 (was 22.52/23.01), 4K decode
+22.38-22.81 (was 21.64/21.56), 16K decode 20.96, 32K 16.60; 16K prefill 350.35
+(was ~313). Soak PASS. Net +1.0..+1.3 TPS: below the instruction-accounting
+projections because the pair/dense kernels are latency/barrier bound, not issue
+bound.
+
+**Flags:** `FG_OUTPUT_SPLIT=1` now qualifies (gates + batteries green) at
++0.1-0.3 TPS, within spread — opt-in. `FG_QSA_TOPK_V2=1` read worst for 4K
+prefill (257-268 vs 271-299 across configs) but thermal drift makes single-run
+prefill comparisons unreliable; keep opt-in until re-measured.
+
+**Round 9 lever:** dispatch/barrier overhead — 190-220 dispatches per decode
+block, compute->compute barriers per dispatch in `src/vk.c`, GR at 107 GB/s
+against a 353 GB/s byte floor. Standing: 4-way head split (foreign
+`rank-04.fgw` loader) and hop payload work.
+
 ## 0a3. PREFILL ROUND 7 — LONG-CONTEXT SELECTION SCAN (2026-09-14, fg-work-pref7)
 
 One shader-only commit (`89f0ee1`, binary `eb84975b`) on top of the decode-overlap
