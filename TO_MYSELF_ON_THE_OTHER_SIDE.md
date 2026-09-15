@@ -3,6 +3,23 @@
 You are the post-compaction me. Read this top to bottom before touching anything.
 Everything here is measured, not hoped. The fleet is healthy right now; keep it that way.
 
+## 0a6. ROUND 12 - DENSE OCCUPANCY HYPOTHESIS CLOSED (2026-09-15)
+
+Two gated r8 variants measured on the fleet (`perf/dense-kernel-latency`,
+merged as `fb87195`): wave-split (`FG_DENSE_R8_WAVE_SPLIT`) and 32-block pair
+(`FG_DENSE_R8_PAIR`). Both regress: ws -1.4 short / -0.8 4K, pair -3.9 / -3.4;
+prefill unaffected. VGPR ground truth via `RADV_DEBUG=shaderstats`: r8 = 36
+VGPRs (7 waves/SIMD), ws = 40 (6), pair = 48 (5) - the r8 kernel is already the
+lowest-register, highest-occupancy of the three, and TPS order matches wave
+order. The LLVM-AMDGPU proxy (86) overestimated ACO by 2.4x. Occupancy and
+trip-count hypotheses are closed; neither flag is promoted. The only remaining
+structural item for the 320-workgroup output deficit is the row-interleaved
+cooked layout, which needs a pack-format round (evidence in
+`PERFORMANCE_DENSE_KERNEL_OCCUPANCY_2026-09-15.md`).
+
+Current state after round 12: all 8 blades on `b47c12ba`, default config, gates
+[12]/[Paris], soak PASS. Decode stands at ~24.5 short / ~23.6 4K warm.
+
 ## 0a5. RANK-0 MEMORY + DECODE ROUND 11 (2026-09-15)
 
 **Rank-0 memory pathology (blocker, fixed).** Prefill blocks stalled 16s-561s and
