@@ -848,6 +848,59 @@ static int test_output_topk(void){
     enum{COUNT=FG_Q38_VOCAB_SIZE,FIRST=(COUNT+4095)/4096*512};float *scores=malloc((size_t)COUNT*4u),top_scores[4];uint32_t *ids=malloc((size_t)COUNT*4u),top_ids[4];if(!scores||!ids){free(ids);free(scores);return 0;}for(uint32_t i=0;i<COUNT;i++){scores[i]=-(float)i;ids[i]=i;}scores[12345]=100.0f;scores[23456]=99.0f;scores[34567]=98.0f;scores[45678]=NAN;fg_vk_tensor *input_scores=tensor(scores,(uint64_t)COUNT*4u),*input_ids=tensor(ids,(uint64_t)COUNT*4u),*scratch_scores[2]={tensor(NULL,(uint64_t)FIRST*4u),tensor(NULL,(uint64_t)FIRST*4u)},*scratch_ids[2]={tensor(NULL,(uint64_t)FIRST*4u),tensor(NULL,(uint64_t)FIRST*4u)};uint32_t count=COUNT,slot=0;int ok=input_scores&&input_ids&&scratch_scores[0]&&scratch_scores[1]&&scratch_ids[0]&&scratch_ids[1]&&fg_vk_begin(context,&error)==FG_OK;const fg_vk_tensor *source_scores=input_scores,*source_ids=input_ids;while(ok&&count>512u){uint32_t next=0;ok=fg_vk_topk_reduce(context,scratch_scores[slot],scratch_ids[slot],source_scores,source_ids,count,&next,&error)==FG_OK;source_scores=scratch_scores[slot];source_ids=scratch_ids[slot];count=next;slot^=1u;}if(ok)ok=fg_vk_end(context,&error)==FG_OK&&count==512u&&fg_vk_tensor_read(source_scores,0,top_scores,sizeof(top_scores),&error)==FG_OK&&fg_vk_tensor_read(source_ids,0,top_ids,sizeof(top_ids),&error)==FG_OK&&top_ids[0]==45678u&&!isfinite(top_scores[0])&&top_ids[1]==12345u&&top_ids[2]==23456u&&top_ids[3]==34567u&&top_scores[1]==100.0f&&top_scores[2]==99.0f&&top_scores[3]==98.0f;else if(fg_vk_batch_active(context))fg_vk_end(context,&error);fg_vk_tensor_destroy(scratch_ids[1]);fg_vk_tensor_destroy(scratch_ids[0]);fg_vk_tensor_destroy(scratch_scores[1]);fg_vk_tensor_destroy(scratch_scores[0]);fg_vk_tensor_destroy(input_ids);fg_vk_tensor_destroy(input_scores);free(ids);free(scores);return ok;
 }
 
+static int run_topk_path(uint32_t count,const float *scores,const uint32_t *ids,
+                         float *out_scores,uint32_t *out_ids,uint32_t *produced,int legacy){
+    if(legacy)unsetenv("FG_QSA_TOPK_V2");else setenv("FG_QSA_TOPK_V2","1",1);
+    fg_vk_tensor *input_scores=tensor(scores,(uint64_t)count*4u);
+    fg_vk_tensor *input_ids=tensor(ids,(uint64_t)count*4u);
+    uint32_t capacity=((count+4095u)/4096u)*512u;
+    fg_vk_tensor *output_scores=tensor(NULL,(uint64_t)capacity*4u);
+    fg_vk_tensor *output_ids=tensor(NULL,(uint64_t)capacity*4u);
+    int ok=input_scores&&input_ids&&output_scores&&output_ids&&
+        fg_vk_topk_reduce(context,output_scores,output_ids,input_scores,input_ids,count,
+                          produced,&error)==FG_OK&&
+        fg_vk_tensor_read(output_scores,0,out_scores,(uint64_t)*produced*4u,&error)==FG_OK&&
+        fg_vk_tensor_read(output_ids,0,out_ids,(uint64_t)*produced*4u,&error)==FG_OK;
+    fg_vk_tensor_destroy(output_ids);fg_vk_tensor_destroy(output_scores);
+    fg_vk_tensor_destroy(input_ids);fg_vk_tensor_destroy(input_scores);
+    return ok;
+}
+
+static int test_topk_reduce_chunked_parity(void){
+    static const uint32_t counts[]={1u,2u,7u,100u,511u,512u,513u,1000u,1024u,1090u,
+                                    1091u,2048u,3000u,4096u,4097u,5000u,8200u};
+    uint32_t max=counts[sizeof(counts)/sizeof(counts[0])-1u];
+    float *scores=malloc((size_t)max*4u),*legacy_scores=malloc((size_t)max*4u),
+          *chunked_scores=malloc((size_t)max*4u);
+    uint32_t *ids=malloc((size_t)max*4u),*legacy_ids=malloc((size_t)max*4u),
+              *chunked_ids=malloc((size_t)max*4u);
+    int ok=scores&&legacy_scores&&chunked_scores&&ids&&legacy_ids&&chunked_ids;
+    uint32_t seed=12345u;
+    for(uint32_t i=0;ok&&i<max;i++){
+        seed=seed*1664525u+1013904223u;
+        float value=(float)((int32_t)(seed>>8u)%2000)*0.5f;
+        if(i%97u==0u)value=0.0f;
+        if(i%257u==0u)value=NAN;
+        if(i%389u==0u)value=INFINITY;
+        if(i%521u==0u)value=-INFINITY;
+        scores[i]=value;ids[i]=i;
+    }
+    for(uint32_t c=0;ok&&c<sizeof(counts)/sizeof(counts[0]);c++){
+        uint32_t count=counts[c],legacy_count=0,chunked_count=0;
+        ok=run_topk_path(count,scores,ids,legacy_scores,legacy_ids,&legacy_count,1)&&
+            run_topk_path(count,scores,ids,chunked_scores,chunked_ids,&chunked_count,0)&&
+            legacy_count==chunked_count&&
+            memcmp(legacy_scores,chunked_scores,(size_t)legacy_count*4u)==0&&
+            memcmp(legacy_ids,chunked_ids,(size_t)legacy_count*4u)==0;
+        if(!ok)fprintf(stderr,"topk chunked parity count=%u produced=%u/%u\n",
+                       count,legacy_count,chunked_count);
+    }
+    unsetenv("FG_QSA_TOPK_V2");
+    free(chunked_ids);free(legacy_ids);free(ids);
+    free(chunked_scores);free(legacy_scores);free(scores);
+    return ok;
+}
+
 static int test_generation_topk_selector(void){
     enum{COUNT=19,K=4};
     float scores[COUNT]={1.0f,9.0f,7.0f,9.0f,3.0f,8.0f,2.0f,7.0f,6.0f,5.0f,
@@ -3024,6 +3077,7 @@ ok=run_test("qsa_indexer",test_qsa_indexer)&&ok;
 ok=run_test("qsa_segmented_index_score",test_qsa_segmented_index_score)&&ok;
 ok=run_test("qsa_prefill_chunk_liveness",test_qsa_prefill_chunk_liveness)&&ok;
 ok=run_test("output_topk",test_output_topk)&&ok;
+ok=run_test("topk_reduce_chunked_parity",test_topk_reduce_chunked_parity)&&ok;
 ok=run_test("generation_topk_selector",test_generation_topk_selector)&&ok;
 ok=run_test("output_argmax",test_output_argmax)&&ok;
 ok=run_test("output_split_combine",test_output_split_combine)&&ok;

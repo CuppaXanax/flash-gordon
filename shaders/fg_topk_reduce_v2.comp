@@ -1,0 +1,94 @@
+#version 460
+/* Top-512 selection bounded by the output width.  Fixed 64-slot runs are
+ * sorted in place; runs are then merged pairwise while the merged size stays
+ * at or below 512 (both halves kept), and only wider merges keep the top
+ * half.  The wide kernel (fg_topk_reduce) fully sorts the padded width: at a
+ * 4K decode window (count ~1090) that is 66 passes / 67584 comparators / 528
+ * lane iterations over 2048 slots; this network runs 65 passes / 29568
+ * comparators / 322 lane iterations over 1152 slots and emits the identical
+ * sorted top-512.  The unused tail of shared memory stays sentinel-filled so
+ * an odd run count merges safely against an all-padding partner. */
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer InputScores{float input_scores[];};
+layout(set=0,binding=1)readonly buffer InputIds{uint input_ids[];};
+layout(set=0,binding=2)writeonly buffer OutputScores{float output_scores[];};
+layout(set=0,binding=3)writeonly buffer OutputIds{uint output_ids[];};
+layout(push_constant)uniform Push{uint count;uint width;}pc;
+const uint RUN=64u;
+shared float values[4096];shared uint indices[4096];
+bool before(float a,uint ai,float b,uint bi){bool ap=ai==0xffffffffu,bp=bi==0xffffffffu;if(ap||bp)return !ap&&bp;bool an=isnan(a)||isinf(a),bn=isnan(b)||isinf(b);if(an||bn)return an!=bn?an:ai<bi;return a>b||(a==b&&ai<bi);}
+void exchange_desc(uint lo,uint hi){
+    if(!before(values[lo],indices[lo],values[hi],indices[hi])){
+        float value=values[lo];values[lo]=values[hi];values[hi]=value;
+        uint id=indices[lo];indices[lo]=indices[hi];indices[hi]=id;
+    }
+}
+void exchange_asc(uint lo,uint hi){
+    if(before(values[lo],indices[lo],values[hi],indices[hi])){
+        float value=values[lo];values[lo]=values[hi];values[hi]=value;
+        uint id=indices[lo];indices[lo]=indices[hi];indices[hi]=id;
+    }
+}
+void keep_best(uint lo,uint hi){
+    if(!before(values[lo],indices[lo],values[hi],indices[hi])){
+        values[lo]=values[hi];indices[lo]=indices[hi];
+    }
+}
+void main(){
+    uint lane=gl_LocalInvocationID.x,group=gl_WorkGroupID.x,base=group*4096u;
+    uint count=pc.count>base?pc.count-base:0u;
+    if(count>4096u)count=4096u;
+    uint chunks=(count+RUN-1u)/RUN;
+    if(chunks==0u)chunks=1u;
+    uint slots=chunks*RUN;
+    uint leaf=RUN;
+    if(chunks==1u){leaf=2u;while(leaf<count)leaf<<=1u;}
+    uint leaf_slots=chunks==1u?leaf:slots;
+    for(uint i=lane;i<4096u;i+=256u){values[i]=-1.0/0.0;indices[i]=0xffffffffu;}
+    for(uint i=lane;i<slots;i+=256u){
+        uint source=base+i;
+        if(source<pc.count){values[i]=input_scores[source];indices[i]=input_ids[source];}
+    }
+    barrier();
+    for(uint width=2u;width<=leaf;width<<=1u)
+        for(uint stride=width>>1u;stride>0u;stride>>=1u){
+            for(uint i=lane;i<leaf_slots;i+=256u){
+                uint other=i^stride;
+                if(other>i){
+                    if(((i&(RUN-1u))&width)==0u)exchange_desc(i,other);
+                    else exchange_asc(i,other);
+                }
+            }
+            barrier();
+        }
+    uint runs=chunks,spacing=RUN,size=RUN;
+    while(runs>1u){
+        uint pairs=(runs+1u)>>1u;
+        uint keep=size*2u>512u?512u:size*2u;
+        bool truncated=keep<size*2u;
+        for(uint q=lane;q<pairs*size;q+=256u){
+            uint pair=q/size,inside=q%size;
+            uint lo=pair*2u*spacing+inside;
+            uint hi=pair*2u*spacing+spacing+size-1u-inside;
+            if(truncated)keep_best(lo,hi);
+            else exchange_desc(lo,hi);
+        }
+        barrier();
+        uint stride=(size>512u?512u:size)>>1u;
+        for(;stride>0u;stride>>=1u){
+            for(uint q=lane;q<pairs*keep;q+=256u){
+                uint pair=q/keep,inside=q%keep;
+                uint other=inside^stride;
+                if(other>inside)exchange_desc(pair*2u*spacing+inside,
+                                              pair*2u*spacing+other);
+            }
+            barrier();
+        }
+        runs=pairs;spacing*=2u;size=keep;
+    }
+    uint valid=min(512u,count);
+    for(uint i=lane;i<512u;i+=256u){
+        if(i<valid){output_scores[group*512u+i]=values[i];output_ids[group*512u+i]=indices[i];}
+        else{output_scores[group*512u+i]=-1.0/0.0;output_ids[group*512u+i]=0xffffffffu;}
+    }
+}
