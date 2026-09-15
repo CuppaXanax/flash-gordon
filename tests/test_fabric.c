@@ -143,9 +143,9 @@ static fg_status decode_layer_chain_roundtrip(fg_fabric *fabric,uint32_t rank,ui
     for(uint32_t cycle=0;status==FG_OK&&cycle<CYCLES;cycle++){
         uint32_t base=cycle*FG_RANK_COUNT;
         if(rank==0u){
-            if(cycle==0u){fg_layer_work first={.layer=1u,.source_rank=0u,.destination_rank=1u,.flags=FG_LAYER_WORK_HAS_NGRAM,.token_index=TOKEN};memcpy(first.position,position,sizeof(position));memcpy(first.hyper,hyper,(size_t)FG_HYPER_WIDTH*4u);memcpy(first.ngram_embedding,ngram,(size_t)FG_NGRAM_EMBED_VALUES*4u);uint32_t bytes=0;status=fg_layer_work_encode(wire,work_capacity,&bytes,&first,error);if(status==FG_OK)status=fg_fabric_send(fabric,1u,FG_FABRIC_CONTROL,FG_MSG_LAYER_WORK,request,TOKEN*FG_LAYER_COUNT+1u,0,wire,bytes,error);}
-            else{uint32_t boundary=base,bytes=0;fg_frame_header header;status=fg_fabric_recv(fabric,7u,FG_FABRIC_CONTROL,&header,wire,work_capacity,&bytes,error);fg_layer_work work={0};if(status==FG_OK&&(fg_frame_type(&header)!=FG_MSG_LAYER_WORK||fg_frame_request_id(&header)!=request||fg_frame_sequence(&header)!=TOKEN*FG_LAYER_COUNT+boundary)){fg_error_set(error,FG_ERR_MISMATCH,"invalid direct decode boundary frame at layer %u",boundary);status=FG_ERR_MISMATCH;}if(status==FG_OK)status=fg_layer_work_decode(&work,wire,bytes,error);if(status==FG_OK&&(work.layer!=boundary||work.source_rank!=7u||work.destination_rank!=0u||work.token_index!=TOKEN||memcmp(work.position,position,sizeof(position))!=0||memcmp(work.hyper,hyper,(size_t)FG_HYPER_WIDTH*4u)!=0||work.flags!=0u)){fg_error_set(error,FG_ERR_MISMATCH,"direct decode boundary payload mismatch at layer %u",boundary);status=FG_ERR_MISMATCH;}if(status==FG_OK){fg_layer_work next={.layer=(uint8_t)(boundary+1u),.source_rank=0u,.destination_rank=1u,.token_index=TOKEN};memcpy(next.position,work.position,sizeof(next.position));memcpy(next.hyper,work.hyper,sizeof(next.hyper));status=fg_layer_work_encode(wire,work_capacity,&bytes,&next,error);if(status==FG_OK)status=fg_fabric_send(fabric,1u,FG_FABRIC_CONTROL,FG_MSG_LAYER_WORK,request,TOKEN*FG_LAYER_COUNT+boundary+1u,0,wire,bytes,error);}}
-        }else{uint32_t layer=base+rank,peer=rank-1u,bytes=0;fg_frame_header header;status=fg_fabric_recv(fabric,peer,FG_FABRIC_CONTROL,&header,wire,work_capacity,&bytes,error);fg_layer_work work={0};if(status==FG_OK&&(fg_frame_type(&header)!=FG_MSG_LAYER_WORK||fg_frame_request_id(&header)!=request||fg_frame_sequence(&header)!=TOKEN*FG_LAYER_COUNT+layer)){fg_error_set(error,FG_ERR_MISMATCH,"invalid direct decode layer hop at rank %u",rank);status=FG_ERR_MISMATCH;}if(status==FG_OK)status=fg_layer_work_decode(&work,wire,bytes,error);if(status==FG_OK&&(work.layer!=layer||work.source_rank!=peer||work.destination_rank!=rank||work.token_index!=TOKEN||memcmp(work.position,position,sizeof(position))!=0||memcmp(work.hyper,hyper,(size_t)FG_HYPER_WIDTH*4u)!=0||work.flags!=(layer==1u?FG_LAYER_WORK_HAS_NGRAM:0u)||(layer==1u&&memcmp(work.ngram_embedding,ngram,(size_t)FG_NGRAM_EMBED_VALUES*4u)!=0))){fg_error_set(error,FG_ERR_MISMATCH,"direct decode layer payload mismatch at rank %u layer %u",rank,layer);status=FG_ERR_MISMATCH;}if(status==FG_OK){if(rank<7u){fg_layer_work next={.layer=(uint8_t)(layer+1u),.source_rank=(uint8_t)rank,.destination_rank=(uint8_t)(rank+1u),.token_index=TOKEN};memcpy(next.position,work.position,sizeof(next.position));memcpy(next.hyper,work.hyper,sizeof(next.hyper));status=fg_layer_work_encode(wire,work_capacity,&bytes,&next,error);if(status==FG_OK)status=fg_fabric_send(fabric,rank+1u,FG_FABRIC_CONTROL,FG_MSG_LAYER_WORK,request,TOKEN*FG_LAYER_COUNT+layer+1u,0,wire,bytes,error);}else if(cycle+1u<CYCLES){fg_layer_work next={.layer=(uint8_t)(layer+1u),.source_rank=7u,.destination_rank=0u,.token_index=TOKEN};memcpy(next.position,work.position,sizeof(next.position));memcpy(next.hyper,work.hyper,sizeof(next.hyper));status=fg_layer_work_encode(wire,work_capacity,&bytes,&next,error);if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_CONTROL,FG_MSG_LAYER_WORK,request,TOKEN*FG_LAYER_COUNT+layer+1u,0,wire,bytes,error);}else{fg_layer_result result={.layer=(uint8_t)layer,.source_rank=7u,.destination_rank=0u,.token_index=TOKEN};memcpy(result.hyper,work.hyper,sizeof(result.hyper));status=fg_layer_result_encode(result_wire,&result,error);if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,FG_MSG_LAYER_RESULT,request,TOKEN*FG_LAYER_COUNT+layer,0,result_wire,result_capacity,error);}}}
+            if(cycle==0u){fg_layer_work first={.layer=1u,.source_rank=0u,.destination_rank=1u,.flags=FG_LAYER_WORK_HAS_NGRAM|FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY,.token_index=TOKEN};memcpy(first.position,position,sizeof(position));memcpy(first.hyper,hyper,(size_t)FG_HYPER_WIDTH*4u);memcpy(first.ngram_embedding,ngram,(size_t)FG_NGRAM_EMBED_VALUES*4u);uint32_t bytes=0;status=fg_layer_work_encode(wire,work_capacity,&bytes,&first,error);if(status==FG_OK)status=fg_fabric_send(fabric,1u,FG_FABRIC_CONTROL,FG_MSG_LAYER_WORK,request,TOKEN*FG_LAYER_COUNT+1u,0,wire,bytes,error);}
+            else{uint32_t boundary=base,bytes=0;fg_frame_header header;status=fg_fabric_recv(fabric,7u,FG_FABRIC_CONTROL,&header,wire,work_capacity,&bytes,error);fg_layer_work work={0};if(status==FG_OK&&(fg_frame_type(&header)!=FG_MSG_LAYER_WORK||fg_frame_request_id(&header)!=request||fg_frame_sequence(&header)!=TOKEN*FG_LAYER_COUNT+boundary)){fg_error_set(error,FG_ERR_MISMATCH,"invalid direct decode boundary frame at layer %u",boundary);status=FG_ERR_MISMATCH;}if(status==FG_OK)status=fg_layer_work_decode(&work,wire,bytes,error);if(status==FG_OK&&(work.layer!=boundary||work.source_rank!=7u||work.destination_rank!=0u||work.token_index!=TOKEN||memcmp(work.position,position,sizeof(position))!=0||memcmp(work.hyper,hyper,(size_t)FG_HYPER_WIDTH*4u)!=0||work.flags!=FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY)){fg_error_set(error,FG_ERR_MISMATCH,"direct decode boundary payload mismatch at layer %u",boundary);status=FG_ERR_MISMATCH;}if(status==FG_OK){fg_layer_work next={.layer=(uint8_t)(boundary+1u),.source_rank=0u,.destination_rank=1u,.token_index=TOKEN,.flags=(uint8_t)(work.flags&FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY)};memcpy(next.position,work.position,sizeof(next.position));memcpy(next.hyper,work.hyper,sizeof(next.hyper));status=fg_layer_work_encode(wire,work_capacity,&bytes,&next,error);if(status==FG_OK)status=fg_fabric_send(fabric,1u,FG_FABRIC_CONTROL,FG_MSG_LAYER_WORK,request,TOKEN*FG_LAYER_COUNT+boundary+1u,0,wire,bytes,error);}}
+        }else{uint32_t layer=base+rank,peer=rank-1u,bytes=0;fg_frame_header header;status=fg_fabric_recv(fabric,peer,FG_FABRIC_CONTROL,&header,wire,work_capacity,&bytes,error);fg_layer_work work={0};if(status==FG_OK&&(fg_frame_type(&header)!=FG_MSG_LAYER_WORK||fg_frame_request_id(&header)!=request||fg_frame_sequence(&header)!=TOKEN*FG_LAYER_COUNT+layer)){fg_error_set(error,FG_ERR_MISMATCH,"invalid direct decode layer hop at rank %u",rank);status=FG_ERR_MISMATCH;}if(status==FG_OK)status=fg_layer_work_decode(&work,wire,bytes,error);if(status==FG_OK&&(work.layer!=layer||work.source_rank!=peer||work.destination_rank!=rank||work.token_index!=TOKEN||memcmp(work.position,position,sizeof(position))!=0||memcmp(work.hyper,hyper,(size_t)FG_HYPER_WIDTH*4u)!=0||work.flags!=((layer==1u?FG_LAYER_WORK_HAS_NGRAM:0u)|FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY)||(layer==1u&&memcmp(work.ngram_embedding,ngram,(size_t)FG_NGRAM_EMBED_VALUES*4u)!=0))){fg_error_set(error,FG_ERR_MISMATCH,"direct decode layer payload mismatch at rank %u layer %u",rank,layer);status=FG_ERR_MISMATCH;}if(status==FG_OK){if(rank<7u){fg_layer_work next={.layer=(uint8_t)(layer+1u),.source_rank=(uint8_t)rank,.destination_rank=(uint8_t)(rank+1u),.token_index=TOKEN,.flags=(uint8_t)(work.flags&FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY)};memcpy(next.position,work.position,sizeof(next.position));memcpy(next.hyper,work.hyper,sizeof(next.hyper));status=fg_layer_work_encode(wire,work_capacity,&bytes,&next,error);if(status==FG_OK)status=fg_fabric_send(fabric,rank+1u,FG_FABRIC_CONTROL,FG_MSG_LAYER_WORK,request,TOKEN*FG_LAYER_COUNT+layer+1u,0,wire,bytes,error);}else if(cycle+1u<CYCLES){fg_layer_work next={.layer=(uint8_t)(layer+1u),.source_rank=7u,.destination_rank=0u,.token_index=TOKEN,.flags=(uint8_t)(work.flags&FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY)};memcpy(next.position,work.position,sizeof(next.position));memcpy(next.hyper,work.hyper,sizeof(next.hyper));status=fg_layer_work_encode(wire,work_capacity,&bytes,&next,error);if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_CONTROL,FG_MSG_LAYER_WORK,request,TOKEN*FG_LAYER_COUNT+layer+1u,0,wire,bytes,error);}else{fg_layer_result result={.layer=(uint8_t)layer,.source_rank=7u,.destination_rank=0u,.token_index=TOKEN};memcpy(result.hyper,work.hyper,sizeof(result.hyper));uint32_t result_bytes=0u;status=fg_layer_result_encode(result_wire,&result,&result_bytes,error);if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,FG_MSG_LAYER_RESULT,request,TOKEN*FG_LAYER_COUNT+layer,0,result_wire,result_bytes,error);}}}
     }
     if(status==FG_OK&&rank==0u){uint32_t bytes=0;fg_frame_header header;status=fg_fabric_recv(fabric,7u,FG_FABRIC_BULK,&header,result_wire,result_capacity,&bytes,error);fg_layer_result result={0};if(status==FG_OK&&(fg_frame_type(&header)!=FG_MSG_LAYER_RESULT||fg_frame_request_id(&header)!=request||fg_frame_sequence(&header)!=TOKEN*FG_LAYER_COUNT+FG_LAYER_COUNT-1u)){fg_error_set(error,FG_ERR_MISMATCH,"invalid final direct decode layer frame");status=FG_ERR_MISMATCH;}if(status==FG_OK)status=fg_layer_result_decode(&result,result_wire,bytes,error);if(status==FG_OK&&(result.layer!=FG_LAYER_COUNT-1u||result.source_rank!=7u||result.destination_rank!=0u||result.token_index!=TOKEN||memcmp(result.hyper,hyper,(size_t)FG_HYPER_WIDTH*4u)!=0)){fg_error_set(error,FG_ERR_MISMATCH,"invalid final direct decode layer payload");status=FG_ERR_MISMATCH;}}
     free(ngram);free(hyper);free(result_wire);free(wire);return status;
@@ -200,8 +200,8 @@ static void protocol_output_handoff_selfcheck(void){
     fg_output_slice_hidden head_slice={.source_rank=7u,.destination_rank=1u,
         .token_index=17u};
     for(uint32_t i=0;i<FG_HIDDEN_SIZE;i++)head_slice.hidden[i]=(float)(i%23u)*0.125f-1.0f;
-    uint8_t head_wire[FG_OUTPUT_SLICE_HIDDEN_BYTES];
-    PROTOCOL_CHECK(fg_output_slice_hidden_encode(head_wire,&head_slice,&error)==FG_OK);
+    uint8_t head_wire[FG_OUTPUT_SLICE_HIDDEN_BYTES];uint32_t head_bytes=0u;
+    PROTOCOL_CHECK(fg_output_slice_hidden_encode(head_wire,&head_slice,&head_bytes,&error)==FG_OK);
     fg_output_slice_hidden decoded_head={0};
     PROTOCOL_CHECK(fg_output_slice_hidden_decode(&decoded_head,head_wire,
         sizeof(head_wire),&error)==FG_OK&&decoded_head.source_rank==7u&&
@@ -217,26 +217,89 @@ static void protocol_output_handoff_selfcheck(void){
     PROTOCOL_CHECK(fg_output_slice_hidden_decode(&decoded_head,head_bad,
         sizeof(head_bad),&error)!=FG_OK);
     fg_output_slice_hidden bad_head=head_slice;bad_head.destination_rank=7u;
-    PROTOCOL_CHECK(fg_output_slice_hidden_encode(head_wire,&bad_head,&error)!=FG_OK);
+    PROTOCOL_CHECK(fg_output_slice_hidden_encode(head_wire,&bad_head,&head_bytes,&error)!=FG_OK);
     bad_head.destination_rank=1u;bad_head.hidden[9]=NAN;
-    PROTOCOL_CHECK(fg_output_slice_hidden_encode(head_wire,&bad_head,&error)!=FG_OK);
-    PROTOCOL_CHECK(fg_output_slice_hidden_encode(head_wire,&head_slice,&error)==FG_OK);
+    PROTOCOL_CHECK(fg_output_slice_hidden_encode(head_wire,&bad_head,&head_bytes,&error)!=FG_OK);
+    PROTOCOL_CHECK(fg_output_slice_hidden_encode(head_wire,&head_slice,&head_bytes,&error)==FG_OK);
     fg_layer_result slice_result={.layer=FG_LAYER_COUNT-1u,.source_rank=7u,
         .destination_rank=4u,.token_index=17u};
     slice_result.hyper[0]=1.5f;slice_result.hyper[FG_HYPER_WIDTH-1u]=-2.5f;
-    uint8_t slice_wire[FG_DECODE_LAYER_RESULT_BYTES];
-    PROTOCOL_CHECK(fg_decode_layer_result_encode(slice_wire,&slice_result,&error)==FG_OK);
+    uint8_t slice_wire[FG_DECODE_LAYER_RESULT_BYTES];uint32_t slice_bytes=0u;
+    PROTOCOL_CHECK(fg_decode_layer_result_encode(slice_wire,&slice_result,&slice_bytes,&error)==FG_OK&&slice_bytes==FG_DECODE_LAYER_RESULT_BYTES);
     fg_layer_result routed={0};
     PROTOCOL_CHECK(fg_decode_layer_result_decode(&routed,slice_wire,
         sizeof(slice_wire),&error)==FG_OK);
     PROTOCOL_CHECK(routed.destination_rank==4u);
     PROTOCOL_CHECK(routed.destination_rank!=0u);
-    PROTOCOL_CHECK(fg_output_slice_encode(slice_wire,&slice_result,&error)==FG_OK);
+    PROTOCOL_CHECK(fg_output_slice_encode(slice_wire,&slice_result,&slice_bytes,&error)==FG_OK);
     PROTOCOL_CHECK(fg_decode_layer_result_decode(&routed,slice_wire,
         sizeof(slice_wire),&error)==FG_OK);
     PROTOCOL_CHECK(routed.destination_rank==0u&&routed.source_rank==7u&&
         routed.layer==FG_LAYER_COUNT-1u&&routed.token_index==17u&&
         routed.hyper[0]==1.5f&&routed.hyper[FG_HYPER_WIDTH-1u]==-2.5f);
+    fg_layer_work flagged={.layer=12u,.source_rank=1u,.destination_rank=2u,
+        .token_index=17u,.position_mode=FG_POSITION_TEXT,
+        .flags=FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY};
+    uint8_t layer_wire[FG_LAYER_WORK_MAX_BYTES];uint32_t layer_bytes=0;
+    PROTOCOL_CHECK(fg_decode_layer_work_encode(layer_wire,sizeof(layer_wire),&layer_bytes,
+        FG_PROTOCOL_VERSION,&flagged,&error)==FG_OK);
+    fg_layer_work decoded_flag={0};
+    PROTOCOL_CHECK(fg_decode_layer_work_decode(&decoded_flag,FG_PROTOCOL_VERSION,layer_wire,
+        layer_bytes,&error)==FG_OK&&
+        decoded_flag.flags==FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY);
+    layer_wire[3]=0x80u;
+    PROTOCOL_CHECK(fg_decode_layer_work_decode(&decoded_flag,FG_PROTOCOL_VERSION,layer_wire,
+        layer_bytes,&error)!=FG_OK);
+    layer_wire[3]=0x01u;
+    PROTOCOL_CHECK(fg_decode_layer_work_decode(&decoded_flag,FG_PROTOCOL_VERSION,layer_wire,
+        layer_bytes,&error)!=FG_OK);
+    fg_layer_work both_flags=flagged;both_flags.layer=1u;
+    both_flags.flags=FG_LAYER_WORK_HAS_NGRAM|FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY;
+    PROTOCOL_CHECK(fg_decode_layer_work_encode(layer_wire,sizeof(layer_wire),&layer_bytes,
+        FG_PROTOCOL_VERSION,&both_flags,&error)==FG_OK);
+    PROTOCOL_CHECK(fg_decode_layer_work_decode(&decoded_flag,FG_PROTOCOL_VERSION,layer_wire,
+        layer_bytes,&error)==FG_OK&&decoded_flag.flags==
+        (FG_LAYER_WORK_HAS_NGRAM|FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY));
+    fg_layer_work bf16_src={.layer=6u,.source_rank=1u,.destination_rank=0u,
+        .token_index=9u,.position_mode=FG_POSITION_TEXT};
+    for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)bf16_src.hyper[i]=sinf((float)i)*8.0f+0.5f;
+    PROTOCOL_CHECK(setenv("FG_FABRIC_HOP_BF16","1",1)==0);
+    PROTOCOL_CHECK(fg_decode_layer_work_encode(layer_wire,sizeof(layer_wire),&layer_bytes,
+        FG_PROTOCOL_VERSION,&bf16_src,&error)==FG_OK&&
+        layer_bytes==FG_LAYER_WORK_TEXT_HEADER_BYTES+FG_HYPER_WIDTH*2u);
+    fg_layer_work bf16_decoded={0};
+    PROTOCOL_CHECK(fg_decode_layer_work_decode(&bf16_decoded,FG_PROTOCOL_VERSION,layer_wire,
+        layer_bytes,&error)==FG_OK&&
+        bf16_decoded.flags==FG_LAYER_WORK_FLAG_BF16_HYPER);
+    for(uint32_t i=0;i<FG_HYPER_WIDTH;i++){
+        double delta=fabs((double)bf16_decoded.hyper[i]-(double)bf16_src.hyper[i]);
+        double bound=0.00390625*fabs((double)bf16_src.hyper[i])+1e-9;
+        PROTOCOL_CHECK(delta<=bound);
+    }
+    uint8_t result_bf16[FG_LAYER_RESULT_BYTES];uint32_t result_bf16_bytes=0u;
+    PROTOCOL_CHECK(fg_decode_layer_result_encode(result_bf16,&slice_result,
+        &result_bf16_bytes,&error)==FG_OK&&result_bf16_bytes==FG_LAYER_RESULT_BF16_BYTES);
+    fg_layer_result result_bf16_decoded={0};
+    PROTOCOL_CHECK(fg_decode_layer_result_decode(&result_bf16_decoded,result_bf16,
+        result_bf16_bytes,&error)==FG_OK&&
+        result_bf16_decoded.hyper[0]==slice_result.hyper[0]&&
+        result_bf16_decoded.hyper[FG_HYPER_WIDTH-1u]==slice_result.hyper[FG_HYPER_WIDTH-1u]);
+    uint32_t head_bf16_bytes=0u;
+    PROTOCOL_CHECK(fg_output_slice_hidden_encode(head_wire,&head_slice,&head_bf16_bytes,
+        &error)==FG_OK&&head_bf16_bytes==FG_OUTPUT_SLICE_HIDDEN_BF16_BYTES&&head_wire[2]==1u);
+    fg_output_slice_hidden head_bf16_decoded={0};
+    PROTOCOL_CHECK(fg_output_slice_hidden_decode(&head_bf16_decoded,head_wire,
+        head_bf16_bytes,&error)==FG_OK&&
+        memcmp(head_bf16_decoded.hidden,head_slice.hidden,sizeof(head_slice.hidden))==0);
+    PROTOCOL_CHECK(fg_decode_layer_work_decode(&bf16_decoded,FG_PROTOCOL_VERSION,layer_wire,
+        FG_LAYER_WORK_TEXT_HEADER_BYTES+FG_HYPER_WIDTH*4u,&error)!=FG_OK);
+    layer_wire[3]=(uint8_t)(layer_wire[3]&~FG_LAYER_WORK_FLAG_BF16_HYPER);
+    PROTOCOL_CHECK(fg_decode_layer_work_decode(&bf16_decoded,FG_PROTOCOL_VERSION,layer_wire,
+        FG_LAYER_WORK_TEXT_HEADER_BYTES+FG_HYPER_WIDTH*2u,&error)!=FG_OK);
+    PROTOCOL_CHECK(unsetenv("FG_FABRIC_HOP_BF16")==0);
+    PROTOCOL_CHECK(fg_decode_layer_work_encode(layer_wire,sizeof(layer_wire),&layer_bytes,
+        FG_PROTOCOL_VERSION,&bf16_src,&error)==FG_OK&&
+        layer_bytes==FG_LAYER_WORK_TEXT_HEADER_BYTES+FG_HYPER_WIDTH*4u);
     /* the split handoff messages must pass frame validation on protocol 6 */
     fg_frame_header frame;uint32_t frame_bytes=0;
     PROTOCOL_CHECK(fg_output_config_encode(wire,&config,&error)==FG_OK);
@@ -421,16 +484,18 @@ static fg_status output_handoff_roundtrip(fg_fabric *fabric,uint32_t rank,uint64
             .destination_rank=4u,.token_index=TOKEN_INDEX};
         for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)hidden.hyper[i]=(float)(i%17u)*0.25f;
         hidden.hyper[0]=LOCAL_VALUE;
-        fg_status status=fg_decode_layer_result_encode(wire,&hidden,error);
+        uint32_t hidden_bytes=0u;
+        fg_status status=fg_decode_layer_result_encode(wire,&hidden,&hidden_bytes,error);
         if(status==FG_OK)status=fg_fabric_send(fabric,4u,FG_FABRIC_BULK,
             FG_MSG_OUTPUT_HIDDEN,request,
             TOKEN_INDEX*FG_LAYER_COUNT+FG_LAYER_COUNT-1u,0,wire,
-            FG_DECODE_LAYER_RESULT_BYTES,error);
-        if(status==FG_OK)status=fg_output_slice_encode(wire,&hidden,error);
+            hidden_bytes,error);
+        uint32_t slice_bytes=0u;
+        if(status==FG_OK)status=fg_output_slice_encode(wire,&hidden,&slice_bytes,error);
         if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,
             FG_MSG_OUTPUT_SLICE,request,
             TOKEN_INDEX*FG_LAYER_COUNT+FG_LAYER_COUNT-1u,0,wire,
-            FG_DECODE_LAYER_RESULT_BYTES,error);
+            slice_bytes,error);
         return status;
     }
     /* rank 4: the hidden arrives first, then the config and the remote partial */
@@ -575,11 +640,12 @@ static fg_status output_split4_token_roundtrip(fg_fabric *fabric,uint32_t rank,
                 .destination_rank=(uint8_t)destinations[i],.token_index=TOKEN_INDEX};
             for(uint32_t value=0u;value<FG_HIDDEN_SIZE;value++)
                 head.hidden[value]=(float)(value%19u)*0.25f;
-            status=fg_output_slice_hidden_encode(wire,&head,error);
+            uint32_t head_bytes=0u;
+            status=fg_output_slice_hidden_encode(wire,&head,&head_bytes,error);
             if(status==FG_OK)status=fg_fabric_send(fabric,destinations[i],FG_FABRIC_BULK,
                 FG_MSG_OUTPUT_SLICE_HIDDEN,request,
                 TOKEN_INDEX*FG_LAYER_COUNT+FG_LAYER_COUNT-1u,0,wire,
-                FG_OUTPUT_SLICE_HIDDEN_BYTES,error);
+                head_bytes,error);
         }
         return status;
     }
@@ -756,11 +822,12 @@ static fg_status output_split4_timeout_roundtrip(fg_fabric *fabric,uint32_t rank
                 .destination_rank=(uint8_t)destinations[i],.token_index=TOKEN_INDEX};
             for(uint32_t value=0u;value<FG_HIDDEN_SIZE;value++)
                 head.hidden[value]=(float)(value%19u)*0.25f;
-            status=fg_output_slice_hidden_encode(wire,&head,error);
+            uint32_t head_bytes=0u;
+            status=fg_output_slice_hidden_encode(wire,&head,&head_bytes,error);
             if(status==FG_OK)status=fg_fabric_send(fabric,destinations[i],FG_FABRIC_BULK,
                 FG_MSG_OUTPUT_SLICE_HIDDEN,request,
                 TOKEN_INDEX*FG_LAYER_COUNT+FG_LAYER_COUNT-1u,0,wire,
-                FG_OUTPUT_SLICE_HIDDEN_BYTES,error);
+                head_bytes,error);
         }
         if(status==FG_OK){
             status=fg_fabric_recv(fabric,4u,FG_FABRIC_CONTROL,&header,wire,sizeof(wire),
