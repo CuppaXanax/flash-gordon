@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <float.h>
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -71,6 +72,41 @@ fg_status fg_output_split_require_slice(bool have_slice,uint32_t ways,uint32_t r
         "rank %u needs a slice executor but holds none (FG_OUTPUT_SPLIT must match on all ranks)",
         rank);
     return FG_ERR_MISMATCH;
+}
+
+int32_t fg_output_split_wait_remaining_ms(uint64_t start_ms,uint64_t now_ms,
+                                          uint32_t timeout_ms){
+    if(!start_ms)return -1;
+    uint64_t elapsed=now_ms>=start_ms?now_ms-start_ms:0u;
+    if(elapsed>=timeout_ms)return 0;
+    return (int32_t)(timeout_ms-elapsed);
+}
+
+fg_status fg_output_split_timeout_error(const fg_output_handoff *state,uint32_t ways,
+                                        uint32_t waited_ms,fg_error *err){
+    if(!state||!ways||ways>FG_OUTPUT_SPLIT_WAYS_MAX){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid output split timeout state");
+        return FG_ERR_ARGUMENT;
+    }
+    char missing[64];
+    size_t used=0u;
+    missing[0]=0;
+    for(uint32_t way=0u;way<ways;way++){
+        uint32_t rank=fg_output_split_rank(ways,way);
+        if(rank==UINT32_MAX||rank==4u)continue;
+        bool seen=false;
+        for(uint32_t i=0u;i<state->remote_count;i++)
+            if(state->remote_rank[i]==rank)seen=true;
+        if(seen)continue;
+        int written=snprintf(missing+used,sizeof(missing)-used,"%s%u",
+                             used?",":"",rank);
+        if(written<0||(size_t)written>=sizeof(missing)-used)break;
+        used+=(size_t)written;
+    }
+    fg_error_set(err,FG_ERR_LIMIT,
+        "output split timed out after %u ms waiting for partials from ranks %s",
+        waited_ms,used?missing:"none");
+    return FG_ERR_LIMIT;
 }
 
 void fg_output_split_span(uint32_t ways,uint32_t way,uint32_t *first_row,uint32_t *rows){
@@ -926,6 +962,7 @@ void fg_output_handoff_reset(fg_output_handoff *state){if(state)memset(state,0,s
 static void handoff_clear_partials(fg_output_handoff *state){
     state->have_local=false;
     state->remote_count=0u;
+    state->wait_start_ms=0u;
     memset(state->remote_value,0,sizeof(state->remote_value));
     memset(state->remote_id,0,sizeof(state->remote_id));
     memset(state->remote_rank,0,sizeof(state->remote_rank));
