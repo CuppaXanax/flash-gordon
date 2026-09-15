@@ -49,9 +49,6 @@ static fg_vk_tensor_format record_format(const fg_tensor_record *record){
         FG_VK_TENSOR_FORMAT_Q8_0_COOKED:FG_VK_TENSOR_FORMAT_DEFAULT;
 }
 
-/* Helper ranks hold no output bundle in their own shard.  Read the needed span
- * from the owning rank file at the manifest offset into a fresh device tensor.
- * The rank file may be sparse as long as the byte span itself is present. */
 static fg_status foreign_tensor_load(fg_vk_context *vk,const fg_tensor_record *record,
     const char *pack_dir,uint64_t skip,uint64_t bytes,const char *what,
     fg_vk_tensor **out,fg_error *err){
