@@ -179,7 +179,11 @@ llvmpipe `qsa_record_commit` crash after the expert tests.
 
 Old-vs-new dump hashes: gate_up `8c877b32` -> `6c6826a7` (bit-identical),
 down `2fee13c9` -> `de2da5c6` (Q5_1 bit-identical, Q8 <=1.2e-05 relative),
-dead-code `de2da5c6` -> same output.
+dead-code `de2da5c6` -> `45f800f9` with byte-identical output.
+
+Deploy identification (sha256 of the shipped SPIR-V):
+gate_up `6c6826a73bd23159524119a9391b83e33b8412c8a5c786661b605b8f091063d0`,
+down `45f800f9f28e0e13b6d065e36405c05e73a61e9ccc8e6620896d79889376126a`.
 
 ## 5. Fleet A/B plan (orchestrator)
 
