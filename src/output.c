@@ -2,10 +2,13 @@
 #include "fg_q38_schema.h"
 #include "fg_quant.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define FG_OUTPUT_TOPK_CAPACITY (((FG_Q38_VOCAB_SIZE+4095u)/4096u)*512u)
 
@@ -34,18 +37,136 @@ static fg_status scratch(fg_vk_context *vk,uint64_t values,fg_vk_tensor **out,fg
     return fg_vk_tensor_create(vk,values*sizeof(float),out,err);
 }
 
-bool fg_output_split_requested(void){
-    const char *enabled=getenv("FG_OUTPUT_SPLIT");
-    return enabled&&*enabled&&strcmp(enabled,"0")!=0;
+fg_status fg_output_split_mode(uint32_t *ways,fg_error *err){
+    if(!ways){fg_error_set(err,FG_ERR_ARGUMENT,"output split mode output is null");return FG_ERR_ARGUMENT;}
+    const char *value=getenv("FG_OUTPUT_SPLIT");
+    *ways=0u;
+    if(!value||!*value||strcmp(value,"0")==0)return FG_OK;
+    if(strcmp(value,"1")==0||strcmp(value,"2")==0){*ways=FG_OUTPUT_SPLIT_WAYS_MIN;return FG_OK;}
+    if(strcmp(value,"4")==0){*ways=FG_OUTPUT_SPLIT_WAYS_MAX;return FG_OK;}
+    fg_error_set(err,FG_ERR_ARGUMENT,
+                 "FG_OUTPUT_SPLIT=%s is not a supported split; use 0 (off), 1 or 2 (2-way) or 4 (4-way)",
+                 value);
+    return FG_ERR_ARGUMENT;
 }
 
-static fg_status output_hc_chain(fg_vk_context *vk,fg_model *model,fg_vk_tensor *normalized,
+bool fg_output_split_requested(void){
+    uint32_t ways=0u;fg_error ignored={0};
+    if(fg_output_split_mode(&ways,&ignored)!=FG_OK)return false;
+    return ways!=0u;
+}
+
+bool fg_output_split_way_for_rank(uint32_t ways,uint32_t rank,uint32_t *way){
+    uint32_t slot=UINT32_MAX;
+    if(ways==FG_OUTPUT_SPLIT_WAYS_MIN){
+        if(rank==4u)slot=0u;
+        else if(rank==0u)slot=1u;
+    }else if(ways==FG_OUTPUT_SPLIT_WAYS_MAX){
+        if(rank==4u)slot=0u;
+        else if(rank==0u)slot=1u;
+        else if(rank==1u)slot=2u;
+        else if(rank==2u)slot=3u;
+    }
+    if(slot==UINT32_MAX)return false;
+    if(way)*way=slot;
+    return true;
+}
+
+uint32_t fg_output_split_rank(uint32_t ways,uint32_t way){
+    if(ways==FG_OUTPUT_SPLIT_WAYS_MIN)return way==0u?4u:way==1u?0u:UINT32_MAX;
+    if(ways==FG_OUTPUT_SPLIT_WAYS_MAX)
+        return way==0u?4u:way==1u?0u:way==2u?1u:way==3u?2u:UINT32_MAX;
+    return UINT32_MAX;
+}
+
+void fg_output_split_span(uint32_t ways,uint32_t way,uint32_t *first_row,uint32_t *rows){
+    uint32_t first=0u,count=0u;
+    if(ways==FG_OUTPUT_SPLIT_WAYS_MIN){
+        if(way==0u)count=FG_OUTPUT_SPLIT_FIRST_ROWS;
+        else if(way==1u){first=FG_OUTPUT_SPLIT_FIRST_ROWS;count=FG_Q38_VOCAB_SIZE-FG_OUTPUT_SPLIT_FIRST_ROWS;}
+    }else if(ways==FG_OUTPUT_SPLIT_WAYS_MAX&&way<FG_OUTPUT_SPLIT_WAYS_MAX){
+        uint32_t per=FG_Q38_VOCAB_SIZE/FG_OUTPUT_SPLIT_WAYS_MAX;
+        first=way*per;
+        count=way+1u==FG_OUTPUT_SPLIT_WAYS_MAX?FG_Q38_VOCAB_SIZE-first:per;
+    }
+    if(first_row)*first_row=first;
+    if(rows)*rows=count;
+}
+
+static const fg_tensor_record *manifest_record(const fg_manifest *manifest,const char *name){
+    if(!manifest||!name)return NULL;
+    for(uint32_t i=0;i<manifest->tensor_count;i++)
+        if(strcmp(manifest->tensors[i].name,name)==0)return &manifest->tensors[i];
+    return NULL;
+}
+
+static fg_vk_tensor_format record_format(const fg_tensor_record *record){
+    return record->layout==FG_TENSOR_LAYOUT_Q8_0_COOKED?
+        FG_VK_TENSOR_FORMAT_Q8_0_COOKED:FG_VK_TENSOR_FORMAT_DEFAULT;
+}
+
+/* Helper ranks hold no output bundle in their own shard.  Read the needed span
+ * from the owning rank file at the manifest offset into a fresh device tensor.
+ * The rank file may be sparse as long as the byte span itself is present. */
+static fg_status foreign_tensor_load(fg_vk_context *vk,const fg_tensor_record *record,
+    const char *pack_dir,uint64_t skip,uint64_t bytes,const char *what,
+    fg_vk_tensor **out,fg_error *err){
+    if(out)*out=NULL;
+    if(!vk||!record||!pack_dir||!bytes||skip>record->bytes||bytes>record->bytes-skip){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid foreign %s span",what);
+        return FG_ERR_FORMAT;
+    }
+    char path[1024];
+    if(snprintf(path,sizeof(path),"%s/rank-%02u.fgw",pack_dir,(unsigned)record->rank)>=(int)sizeof(path)){
+        fg_error_set(err,FG_ERR_LIMIT,"foreign %s rank path is too long",what);
+        return FG_ERR_LIMIT;
+    }
+    int fd=open(path,O_RDONLY|O_CLOEXEC);
+    if(fd<0){
+        fg_error_set(err,FG_ERR_IO,
+            "open %s for foreign %s (offset %llu bytes %llu): %s; FG_OUTPUT_SPLIT=4 needs the owning rank file on every slice rank",
+            path,what,(unsigned long long)(record->offset+skip),(unsigned long long)bytes,strerror(errno));
+        return FG_ERR_IO;
+    }
+    fg_vk_tensor *tensor=NULL;
+    fg_status status=fg_vk_tensor_create(vk,bytes,&tensor,err);
+    uint8_t *mapped=status==FG_OK?fg_vk_tensor_map(tensor):NULL;
+    if(status==FG_OK&&!mapped){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"foreign %s tensor is not host mapped",what);
+        status=FG_ERR_UNAVAILABLE;
+    }
+    uint64_t done=0u;
+    while(status==FG_OK&&done<bytes){
+        size_t chunk=(bytes-done)>(1u<<20)?(1u<<20):(size_t)(bytes-done);
+        ssize_t got=pread(fd,mapped+done,chunk,(off_t)(record->offset+skip+done));
+        if(got<0&&errno==EINTR)continue;
+        if(got<=(ssize_t)0){
+            fg_error_set(err,FG_ERR_IO,"pread %s for foreign %s at %llu: %s",path,what,
+                (unsigned long long)(record->offset+skip+done),
+                got<0?strerror(errno):"short read");
+            status=FG_ERR_IO;
+            break;
+        }
+        done+=(uint64_t)got;
+    }
+    close(fd);
+    if(status!=FG_OK){fg_vk_tensor_destroy(tensor);return status;}
+    fg_vk_tensor_set_format(tensor,record_format(record));
+    *out=tensor;
+    return FG_OK;
+}
+
+static fg_status output_hc_chain(fg_vk_context *vk,const fg_vk_tensor *hc_norm,
+    const fg_vk_tensor *hc_down,const fg_vk_tensor *hc_up,fg_vk_tensor *normalized,
     fg_vk_tensor *down,fg_vk_tensor *activated,fg_vk_tensor *up,fg_vk_tensor *hidden,
     const fg_vk_tensor *hyper,fg_error *err);
 
 struct fg_output_slice {
     fg_model *model;
     fg_vk_tensor *weight;
+    fg_vk_tensor *hc_norm;
+    fg_vk_tensor *hc_down;
+    fg_vk_tensor *hc_up;
     fg_vk_tensor *normalized;
     fg_vk_tensor *down;
     fg_vk_tensor *activated;
@@ -59,6 +180,20 @@ struct fg_output_slice {
     uint32_t first_row;
     uint32_t rows;
     uint32_t groups;
+    uint32_t ways;
+};
+
+struct fg_output_hc {
+    fg_model *model;
+    fg_vk_tensor *hc_norm;
+    fg_vk_tensor *hc_down;
+    fg_vk_tensor *hc_up;
+    fg_vk_tensor *normalized;
+    fg_vk_tensor *down;
+    fg_vk_tensor *activated;
+    fg_vk_tensor *up;
+    fg_vk_tensor *hidden;
+    fg_vk_tensor *hyper;
 };
 
 static fg_status output_slice_require(fg_model *model,fg_error *err){
@@ -72,41 +207,42 @@ static fg_status output_slice_require(fg_model *model,fg_error *err){
     return FG_OK;
 }
 
-fg_status fg_output_slice_create(fg_output_slice **out,fg_model *model,
-                                 uint32_t first_row,uint32_t rows,fg_error *err){
-    if(!out||!model||!rows||rows>FG_Q38_VOCAB_SIZE||first_row>=FG_Q38_VOCAB_SIZE||
-       first_row+rows>FG_Q38_VOCAB_SIZE){
-        fg_error_set(err,FG_ERR_ARGUMENT,"invalid output slice arguments");
-        return FG_ERR_ARGUMENT;
-    }
-    *out=NULL;
-    fg_status status=output_slice_require(model,err);
-    if(status!=FG_OK)return status;
-    fg_vk_tensor *base=fg_model_tensor(model,"output.weight");
-    uint64_t offset=0,bytes=0;
-    if(fg_vk_tensor_get_format(base)==FG_VK_TENSOR_FORMAT_Q8_0_COOKED){
+static fg_status output_weight_span(const fg_tensor_record *record,uint32_t first_row,
+                                    uint32_t rows,uint64_t *offset,uint64_t *bytes,
+                                    fg_error *err){
+    uint64_t span=0u,start=0u;
+    if(record->layout==FG_TENSOR_LAYOUT_Q8_0_COOKED){
         if(first_row%FG_Q8_0_COOK_ROWS){
             fg_error_set(err,FG_ERR_MISMATCH,"output slice row %u is not tile aligned",first_row);
             return FG_ERR_MISMATCH;
         }
-        uint64_t tile=fg_q8_0_cooked_tile_bytes(FG_HIDDEN_SIZE);
+        uint64_t tile=fg_q8_0_cooked_tile_bytes((uint32_t)record->shape[0]);
         uint64_t tiles=((uint64_t)first_row+rows+FG_Q8_0_COOK_ROWS-1u)/FG_Q8_0_COOK_ROWS-
                        first_row/FG_Q8_0_COOK_ROWS;
-        offset=((uint64_t)first_row/FG_Q8_0_COOK_ROWS)*tile;
-        bytes=tiles*tile;
+        start=((uint64_t)first_row/FG_Q8_0_COOK_ROWS)*tile;
+        span=tiles*tile;
     }else{
-        uint64_t row_bytes=(uint64_t)(FG_HIDDEN_SIZE/32u)*FG_Q8_0_BLOCK_BYTES;
-        offset=(uint64_t)first_row*row_bytes;
-        bytes=(uint64_t)rows*row_bytes;
+        uint64_t row_bytes=(uint64_t)(record->shape[0]/32u)*FG_Q8_0_BLOCK_BYTES;
+        start=(uint64_t)first_row*row_bytes;
+        span=(uint64_t)rows*row_bytes;
     }
-    if(!bytes){fg_error_set(err,FG_ERR_FORMAT,"output slice weight span is empty");return FG_ERR_FORMAT;}
+    if(!span||start>record->bytes||span>record->bytes-start){
+        fg_error_set(err,FG_ERR_FORMAT,"output slice weight span is invalid");
+        return FG_ERR_FORMAT;
+    }
+    if(offset)*offset=start;
+    if(bytes)*bytes=span;
+    return FG_OK;
+}
+
+static fg_status output_slice_alloc(fg_output_slice **out,fg_model *model,uint32_t ways,
+                                    uint32_t first_row,uint32_t rows,fg_error *err){
     fg_output_slice *slice=calloc(1,sizeof(*slice));
     if(!slice){fg_error_set(err,FG_ERR_OOM,"allocate output slice");return FG_ERR_OOM;}
-    slice->model=model;slice->first_row=first_row;slice->rows=rows;
+    slice->model=model;slice->first_row=first_row;slice->rows=rows;slice->ways=ways;
     slice->groups=(rows+4095u)/4096u;if(!slice->groups)slice->groups=1u;
     fg_vk_context *vk=fg_model_vk(model);
-    status=fg_vk_tensor_view(base,offset,bytes,&slice->weight,err);
-    if(status==FG_OK)status=scratch(vk,FG_Q38_HYPER_WIDTH,&slice->normalized,err);
+    fg_status status=scratch(vk,FG_Q38_HYPER_WIDTH,&slice->normalized,err);
     if(status==FG_OK)status=scratch(vk,FG_Q38_HYPER_RANK,&slice->down,err);
     if(status==FG_OK)status=scratch(vk,FG_Q38_HYPER_RANK,&slice->activated,err);
     if(status==FG_OK)status=scratch(vk,FG_Q38_HYPER_WIDTH,&slice->up,err);
@@ -124,6 +260,72 @@ fg_status fg_output_slice_create(fg_output_slice **out,fg_model *model,
         for(uint32_t i=0;i<rows;i++)ids[i]=first_row+i;
     }
     if(status!=FG_OK){fg_output_slice_destroy(slice);return status;}
+    *out=slice;
+    return FG_OK;
+}
+
+fg_status fg_output_slice_create(fg_output_slice **out,fg_model *model,uint32_t ways,
+                                 uint32_t first_row,uint32_t rows,fg_error *err){
+    if(!out||!model||!rows||rows>FG_Q38_VOCAB_SIZE||first_row>=FG_Q38_VOCAB_SIZE||
+       first_row+rows>FG_Q38_VOCAB_SIZE||(ways!=FG_OUTPUT_SPLIT_WAYS_MIN&&
+       ways!=FG_OUTPUT_SPLIT_WAYS_MAX)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid output slice arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    *out=NULL;
+    fg_status status=output_slice_require(model,err);
+    if(status!=FG_OK)return status;
+    fg_vk_tensor *base=fg_model_tensor(model,"output.weight");
+    const fg_tensor_record *record=fg_model_tensor_record(model,"output.weight");
+    uint64_t offset=0u,bytes=0u;
+    status=record?output_weight_span(record,first_row,rows,&offset,&bytes,err):FG_ERR_MISMATCH;
+    if(status!=FG_OK)return status;
+    fg_output_slice *slice=NULL;
+    status=output_slice_alloc(&slice,model,ways,first_row,rows,err);
+    if(status!=FG_OK)return status;
+    status=fg_vk_tensor_view(base,offset,bytes,&slice->weight,err);
+    if(status==FG_OK)fg_vk_tensor_set_format(slice->weight,fg_vk_tensor_get_format(base));
+    slice->hc_norm=fg_model_tensor(model,"output_hc_norm.weight");
+    slice->hc_down=fg_model_tensor(model,"output_hc_down.weight");
+    slice->hc_up=fg_model_tensor(model,"output_hc_up.weight");
+    if(status!=FG_OK){fg_output_slice_destroy(slice);return status;}
+    *out=slice;return FG_OK;
+}
+
+fg_status fg_output_slice_create_foreign(fg_output_slice **out,fg_model *model,
+                                         const char *pack_dir,uint32_t ways,
+                                         uint32_t first_row,uint32_t rows,fg_error *err){
+    if(!out||!model||!pack_dir||!rows||rows>FG_Q38_VOCAB_SIZE||
+       first_row>=FG_Q38_VOCAB_SIZE||first_row+rows>FG_Q38_VOCAB_SIZE||
+       (ways!=FG_OUTPUT_SPLIT_WAYS_MIN&&ways!=FG_OUTPUT_SPLIT_WAYS_MAX)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid foreign output slice arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    *out=NULL;
+    const fg_manifest *manifest=fg_model_manifest(model);
+    const fg_tensor_record *weight=manifest_record(manifest,"output.weight");
+    const fg_tensor_record *hc_norm=manifest_record(manifest,"output_hc_norm.weight");
+    const fg_tensor_record *hc_down=manifest_record(manifest,"output_hc_down.weight");
+    const fg_tensor_record *hc_up=manifest_record(manifest,"output_hc_up.weight");
+    if(!weight||!hc_norm||!hc_down||!hc_up){
+        fg_error_set(err,FG_ERR_MISMATCH,"manifest is missing the output head bundle");
+        return FG_ERR_MISMATCH;
+    }
+    uint64_t offset=0u,bytes=0u;
+    fg_status status=output_weight_span(weight,first_row,rows,&offset,&bytes,err);
+    if(status!=FG_OK)return status;
+    fg_vk_context *vk=fg_model_vk(model);
+    fg_output_slice *slice=NULL;
+    status=output_slice_alloc(&slice,model,ways,first_row,rows,err);
+    if(status!=FG_OK)return status;
+    status=foreign_tensor_load(vk,weight,pack_dir,offset,bytes,"output slice",&slice->weight,err);
+    if(status==FG_OK)status=foreign_tensor_load(vk,hc_norm,pack_dir,0u,hc_norm->bytes,
+        "output_hc_norm.weight",&slice->hc_norm,err);
+    if(status==FG_OK)status=foreign_tensor_load(vk,hc_down,pack_dir,0u,hc_down->bytes,
+        "output_hc_down.weight",&slice->hc_down,err);
+    if(status==FG_OK)status=foreign_tensor_load(vk,hc_up,pack_dir,0u,hc_up->bytes,
+        "output_hc_up.weight",&slice->hc_up,err);
+    if(status!=FG_OK){fg_output_slice_destroy(slice);return status;}
     *out=slice;return FG_OK;
 }
 
@@ -134,27 +336,16 @@ void fg_output_slice_destroy(fg_output_slice *slice){
     fg_vk_tensor_destroy(slice->hyper);fg_vk_tensor_destroy(slice->hidden);
     fg_vk_tensor_destroy(slice->up);fg_vk_tensor_destroy(slice->activated);
     fg_vk_tensor_destroy(slice->down);fg_vk_tensor_destroy(slice->normalized);
-    fg_vk_tensor_destroy(slice->weight);free(slice);
+    fg_vk_tensor_destroy(slice->hc_up);fg_vk_tensor_destroy(slice->hc_down);
+    fg_vk_tensor_destroy(slice->hc_norm);fg_vk_tensor_destroy(slice->weight);free(slice);
 }
 
-fg_status fg_output_slice_run(fg_output_slice *slice,const void *hyper,
-                              float *value,uint32_t *id,fg_error *err){
-    if(!slice||!hyper||!value||!id){
-        fg_error_set(err,FG_ERR_ARGUMENT,"invalid output slice run arguments");
-        return FG_ERR_ARGUMENT;
-    }
+uint32_t fg_output_slice_ways(const fg_output_slice *slice){return slice?slice->ways:0u;}
+
+static fg_status output_slice_reduce(fg_output_slice *slice,float *value,uint32_t *id,
+                                     fg_error *err){
     fg_vk_context *vk=fg_model_vk(slice->model);
-    if(fg_vk_batch_active(vk)){
-        fg_error_set(err,FG_ERR_ARGUMENT,"output slice cannot run inside a Vulkan batch");
-        return FG_ERR_ARGUMENT;
-    }
-    fg_status status=fg_vk_tensor_write(slice->hyper,0,hyper,
-        (uint64_t)FG_Q38_HYPER_WIDTH*4u,err);
-    if(status==FG_OK)status=fg_vk_begin(vk,err);
-    if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"output_slice",err);
-    if(status==FG_OK)status=output_hc_chain(vk,slice->model,slice->normalized,slice->down,
-        slice->activated,slice->up,slice->hidden,slice->hyper,err);
-    if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,slice->logits,slice->weight,slice->hidden,
+    fg_status status=fg_vk_dense_q8_0_f32(vk,slice->logits,slice->weight,slice->hidden,
         FG_HIDDEN_SIZE,slice->rows,1u,1.0f,err);
     uint32_t count=slice->rows,slot=0u;
     const fg_vk_tensor *scores=slice->logits,*ids=slice->ids;
@@ -177,16 +368,137 @@ fg_status fg_output_slice_run(fg_output_slice *slice,const void *hyper,
     *value=values[0];*id=best;return FG_OK;
 }
 
-static fg_status output_hc_chain(fg_vk_context *vk,fg_model *model,fg_vk_tensor *normalized,
+fg_status fg_output_slice_run(fg_output_slice *slice,const void *hyper,
+                              float *value,uint32_t *id,fg_error *err){
+    if(!slice||!hyper||!value||!id||slice->ways!=FG_OUTPUT_SPLIT_WAYS_MIN){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid output slice run arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_vk_context *vk=fg_model_vk(slice->model);
+    if(fg_vk_batch_active(vk)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"output slice cannot run inside a Vulkan batch");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_status status=fg_vk_tensor_write(slice->hyper,0,hyper,
+        (uint64_t)FG_Q38_HYPER_WIDTH*4u,err);
+    if(status==FG_OK)status=fg_vk_begin(vk,err);
+    if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"output_slice",err);
+    if(status==FG_OK)status=output_hc_chain(vk,slice->hc_norm,slice->hc_down,slice->hc_up,
+        slice->normalized,slice->down,slice->activated,slice->up,slice->hidden,slice->hyper,err);
+    if(status==FG_OK)status=output_slice_reduce(slice,value,id,err);
+    return status;
+}
+
+fg_status fg_output_slice_run_hidden(fg_output_slice *slice,const void *hidden,
+                                     float *value,uint32_t *id,fg_error *err){
+    if(!slice||!hidden||!value||!id||slice->ways!=FG_OUTPUT_SPLIT_WAYS_MAX){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid hidden output slice run arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_vk_context *vk=fg_model_vk(slice->model);
+    if(fg_vk_batch_active(vk)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"output slice cannot run inside a Vulkan batch");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_status status=fg_vk_tensor_write(slice->hidden,0,hidden,
+        (uint64_t)FG_HIDDEN_SIZE*4u,err);
+    if(status==FG_OK)status=fg_vk_begin(vk,err);
+    if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"output_slice",err);
+    if(status==FG_OK)status=output_slice_reduce(slice,value,id,err);
+    return status;
+}
+
+fg_status fg_output_hc_create(fg_output_hc **out,fg_model *model,const char *pack_dir,
+                              bool foreign,fg_error *err){
+    if(!out||!model||(foreign&&!pack_dir)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid output HC executor arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    *out=NULL;
+    fg_output_hc *hc=calloc(1,sizeof(*hc));
+    if(!hc){fg_error_set(err,FG_ERR_OOM,"allocate output HC executor");return FG_ERR_OOM;}
+    hc->model=model;
+    fg_status status=FG_OK;
+    if(foreign){
+        const fg_manifest *manifest=fg_model_manifest(model);
+        const fg_tensor_record *records[3]={
+            manifest_record(manifest,"output_hc_norm.weight"),
+            manifest_record(manifest,"output_hc_down.weight"),
+            manifest_record(manifest,"output_hc_up.weight")};
+        fg_vk_tensor **targets[3]={&hc->hc_norm,&hc->hc_down,&hc->hc_up};
+        static const char *names[3]={"output_hc_norm.weight","output_hc_down.weight","output_hc_up.weight"};
+        for(uint32_t i=0;status==FG_OK&&i<3u;i++){
+            if(!records[i]){
+                fg_error_set(err,FG_ERR_MISMATCH,"manifest is missing %s",names[i]);
+                status=FG_ERR_MISMATCH;
+                break;
+            }
+            status=foreign_tensor_load(fg_model_vk(model),records[i],pack_dir,0u,
+                records[i]->bytes,names[i],targets[i],err);
+        }
+    }else{
+        hc->hc_norm=fg_model_tensor(model,"output_hc_norm.weight");
+        hc->hc_down=fg_model_tensor(model,"output_hc_down.weight");
+        hc->hc_up=fg_model_tensor(model,"output_hc_up.weight");
+        if(!hc->hc_norm||!hc->hc_down||!hc->hc_up){
+            fg_error_set(err,FG_ERR_MISMATCH,"rank %u is missing the output HC weights",
+                         fg_model_rank(model));
+            status=FG_ERR_MISMATCH;
+        }
+    }
+    fg_vk_context *vk=fg_model_vk(model);
+    if(status==FG_OK)status=scratch(vk,FG_Q38_HYPER_WIDTH,&hc->normalized,err);
+    if(status==FG_OK)status=scratch(vk,FG_Q38_HYPER_RANK,&hc->down,err);
+    if(status==FG_OK)status=scratch(vk,FG_Q38_HYPER_RANK,&hc->activated,err);
+    if(status==FG_OK)status=scratch(vk,FG_Q38_HYPER_WIDTH,&hc->up,err);
+    if(status==FG_OK)status=scratch(vk,FG_HIDDEN_SIZE,&hc->hidden,err);
+    if(status==FG_OK)status=scratch(vk,FG_Q38_HYPER_WIDTH,&hc->hyper,err);
+    if(status!=FG_OK){fg_output_hc_destroy(hc);return status;}
+    *out=hc;return FG_OK;
+}
+
+void fg_output_hc_destroy(fg_output_hc *hc){
+    if(!hc)return;
+    fg_vk_tensor_destroy(hc->hyper);fg_vk_tensor_destroy(hc->hidden);
+    fg_vk_tensor_destroy(hc->up);fg_vk_tensor_destroy(hc->activated);
+    fg_vk_tensor_destroy(hc->down);fg_vk_tensor_destroy(hc->normalized);
+    fg_vk_tensor_destroy(hc->hc_up);fg_vk_tensor_destroy(hc->hc_down);
+    fg_vk_tensor_destroy(hc->hc_norm);free(hc);
+}
+
+fg_status fg_output_hc_run(fg_output_hc *hc,const void *hyper,float *hidden,fg_error *err){
+    if(!hc||!hyper||!hidden){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid output HC run arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_vk_context *vk=fg_model_vk(hc->model);
+    if(fg_vk_batch_active(vk)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"output HC chain cannot run inside a Vulkan batch");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_status status=fg_vk_tensor_write(hc->hyper,0,hyper,
+        (uint64_t)FG_Q38_HYPER_WIDTH*4u,err);
+    if(status==FG_OK)status=fg_vk_begin(vk,err);
+    if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"output_hc",err);
+    if(status==FG_OK)status=output_hc_chain(vk,hc->hc_norm,hc->hc_down,hc->hc_up,
+        hc->normalized,hc->down,hc->activated,hc->up,hc->hidden,hc->hyper,err);
+    if(status==FG_OK){fg_status end_status=fg_vk_end(vk,err);if(end_status!=FG_OK)status=end_status;}
+    if(status!=FG_OK&&fg_vk_batch_active(vk)){fg_error ignored={0};fg_vk_abort(vk,&ignored);}
+    if(status!=FG_OK)return status;
+    return fg_vk_tensor_read(hc->hidden,0,hidden,(uint64_t)FG_HIDDEN_SIZE*4u,err);
+}
+
+static fg_status output_hc_chain(fg_vk_context *vk,const fg_vk_tensor *hc_norm,
+    const fg_vk_tensor *hc_down,const fg_vk_tensor *hc_up,fg_vk_tensor *normalized,
     fg_vk_tensor *down,fg_vk_tensor *activated,fg_vk_tensor *up,fg_vk_tensor *hidden,
     const fg_vk_tensor *hyper,fg_error *err){
     fg_status status=fg_vk_group_rms_norm(vk,normalized,hyper,
-        fg_model_tensor(model,"output_hc_norm.weight"),FG_HIDDEN_SIZE,FG_Q38_HYPER_COUNT,1u,1e-6f,err);
+        hc_norm,FG_HIDDEN_SIZE,FG_Q38_HYPER_COUNT,1u,1e-6f,err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,down,
-        fg_model_tensor(model,"output_hc_down.weight"),normalized,FG_Q38_HYPER_WIDTH,FG_Q38_HYPER_RANK,1u,1.0f,err);
+        hc_down,normalized,FG_Q38_HYPER_WIDTH,FG_Q38_HYPER_RANK,1u,1.0f,err);
     if(status==FG_OK)status=fg_vk_silu_scaled(vk,activated,down,FG_Q38_HYPER_RANK,1.0f/(float)FG_Q38_HYPER_COUNT,err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,up,
-        fg_model_tensor(model,"output_hc_up.weight"),activated,FG_Q38_HYPER_RANK,FG_Q38_HYPER_WIDTH,1u,1.0f,err);
+        hc_up,activated,FG_Q38_HYPER_RANK,FG_Q38_HYPER_WIDTH,1u,1.0f,err);
     if(status==FG_OK)status=fg_vk_hc_finalize(vk,hidden,normalized,up,FG_HIDDEN_SIZE,FG_Q38_HYPER_COUNT,1u,err);
     return status;
 }
@@ -256,8 +568,12 @@ fg_status fg_output_logits(fg_output_executor *executor,const fg_vk_tensor *hype
     if(!executor||!hyper||!logits||fg_vk_tensor_bytes(hyper)<FG_Q38_HYPER_WIDTH*sizeof(float)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Qwen output arguments");return FG_ERR_ARGUMENT;}
     fg_vk_context *vk=fg_model_vk(executor->model);
     fg_status status=fg_vk_profile_active(vk)?fg_vk_profile_set_scope(vk,"output",err):FG_OK;
-    if(status==FG_OK)status=output_hc_chain(vk,executor->model,executor->normalized,
-        executor->down,executor->activated,executor->up,executor->hidden,hyper,err);
+    if(status==FG_OK)status=output_hc_chain(vk,
+        fg_model_tensor(executor->model,"output_hc_norm.weight"),
+        fg_model_tensor(executor->model,"output_hc_down.weight"),
+        fg_model_tensor(executor->model,"output_hc_up.weight"),
+        executor->normalized,executor->down,executor->activated,executor->up,
+        executor->hidden,hyper,err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,executor->logits,fg_model_tensor(executor->model,"output.weight"),executor->hidden,FG_HIDDEN_SIZE,FG_Q38_VOCAB_SIZE,1u,1.0f,err);
     if(status==FG_OK)*logits=executor->logits;
     return status;
