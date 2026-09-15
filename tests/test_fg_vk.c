@@ -867,8 +867,10 @@ static int run_topk_path(uint32_t count,const float *scores,const uint32_t *ids,
 }
 
 static int test_topk_reduce_chunked_parity(void){
-    static const uint32_t counts[]={1u,2u,7u,100u,511u,512u,513u,1000u,1024u,1090u,
-                                    1091u,2048u,3000u,4096u,4097u,5000u,8200u};
+    static const uint32_t counts[]={1u,2u,7u,63u,64u,65u,100u,127u,128u,129u,192u,320u,
+                                    448u,511u,512u,513u,576u,640u,704u,768u,1000u,1024u,
+                                    1088u,1090u,1091u,1152u,1216u,2048u,2112u,3000u,4032u,
+                                    4096u,4097u,4160u,4224u,5000u,8000u,8192u,8200u};
     uint32_t max=counts[sizeof(counts)/sizeof(counts[0])-1u];
     float *scores=malloc((size_t)max*4u),*legacy_scores=malloc((size_t)max*4u),
           *chunked_scores=malloc((size_t)max*4u);
