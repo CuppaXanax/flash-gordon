@@ -3,6 +3,32 @@
 You are the post-compaction me. Read this top to bottom before touching anything.
 Everything here is measured, not hoped. The fleet is healthy right now; keep it that way.
 
+## 0aa. THINKING CRASH FIXED + REASONING_CONTENT EMITTED (2026-09-16)
+
+Two birds, one root cause hunt (`fix/thinking-and-reasoning`, merged `e7fb96d`):
+
+**The crash.** "Thinking" prompts (no `/no_think`) killed the ring: rank 1 fatal
+`non-finite layer input at 0`, others `peer closed fabric socket`, rank 0
+`distributed transport is not reusable`. NOT a token/embedding issue (the full
+248K-row embedding scan was clean) and NOT concurrency. Root cause: **static
+replay in `fg_owner_decode_block_chained`** - a command recorded ~80 tokens
+earlier replayed with bit-identical input/state produced NaN, while
+re-recording the same dispatches stayed finite (context token 81, id 283, same
+in both modes). Static replay is **parked** (correctness over its ~0.25-0.45
+TPS); the verified dynamic per-token recording path is used. Permanent safety
+checks added: non-finite block-output/input rejection with rank/token/element
+naming, `FG_NUMERICS_TRACE` per-layer/state diagnostics, token ids under
+`FG_GENERATE_TRACE`. Follow-up: re-enable replay only after the replay-only
+divergence is root-caused.
+
+**Reasoning.** The API parsed `<think>` into `generated->reasoning` but never
+emitted it - Pi (configured `"reasoning": true`) saw only final content. Now:
+non-streaming messages carry `reasoning_content`, streaming emits incremental
+`delta.reasoning_content` frames (UTF-8-safe, partial `</think>` held back)
+before `delta.content`; `/no_think` omits it. Input-side continuation of
+assistant `reasoning_content` unchanged. Fleet-verified: probes 200, gates
+[12]/[Paris], soak PASS.
+
 ## 0a9. 40 CU UNLOCK + FLAG PURGE (2026-09-16)
 
 **40 CU unlock (runtime UMR path, per duggasco/WinnieLV; driver-level, no firmware).**
