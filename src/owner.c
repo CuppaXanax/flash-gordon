@@ -56,6 +56,39 @@ static void numerics_trace_values_local(const char *phase,uint32_t rank,uint32_t
         (unsigned long long)count,(unsigned long long)numerics_hash_bytes(values,count*4u),
         sum,min,max,values[0],values[count-1u]);
 }
+static fg_status owner_check_block_output(uint32_t rank,uint32_t first_layer,
+    uint32_t last_layer,uint32_t token,const fg_vk_tensor *output,fg_error *err){
+    const float *values=fg_vk_tensor_map((fg_vk_tensor *)output);
+    if(!values)return FG_OK;
+    for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(values[i])){
+        fg_error_set(err,FG_ERR_FORMAT,
+            "rank %u decode block layers=%u..%u token=%u produced non-finite hidden at element %u value=%g",
+            rank,first_layer,last_layer,token,i,values[i]);
+        return FG_ERR_FORMAT;
+    }
+    return FG_OK;
+}
+
+static fg_status chained_layer_trace(uint32_t rank,fg_vk_context *vk,uint32_t layer,
+    uint32_t token,const fg_vk_tensor *state,fg_error *err){
+    if(!numerics_trace_enabled())return FG_OK;
+    while(fg_vk_batch_active(vk)){fg_status pending=fg_vk_end(vk,err);if(pending!=FG_OK)return pending;}
+    fg_status status=fg_vk_static_drain(vk,err);
+    if(status!=FG_OK)return status;
+    const float *values=fg_vk_tensor_map((fg_vk_tensor *)state);
+    int32_t first_bad=-1;
+    if(values)for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(values[i])){first_bad=(int32_t)i;break;}
+    fprintf(stderr,"FG_NUMERICS_LAYER rank=%u token=%u layer=%u finite=%d first_bad=%d f0=%g\n",
+        rank,token,layer,first_bad<0,first_bad,values?values[0]:0.0f);
+    if(first_bad>=0){
+        fg_error_set(err,FG_ERR_FORMAT,
+            "rank %u decode layer %u token %u produced non-finite hidden at element %d value=%g",
+            rank,layer,token,first_bad,values[first_bad]);
+        return FG_ERR_FORMAT;
+    }
+    return FG_OK;
+}
+
 static fg_status finish_batch(fg_vk_context *vk,fg_status status,fg_error *err){
     if(status==FG_OK)status=fg_vk_end(vk,err);
     if(status!=FG_OK&&fg_vk_batch_active(vk)){
@@ -123,6 +156,7 @@ struct fg_owner_executor {
     fg_owner_pending_write pending_write;
     fg_owner_decode_slot decode_slots[FG_OWNER_SLOT_COUNT];
     fg_owner_prefill_slot prefill_slots[FG_OWNER_SLOT_COUNT];
+    fg_vk_tensor *static_run_output[FG_VK_STATIC_SLOTS];
     fg_qsa_session *qsa;
 };
 
@@ -1093,6 +1127,8 @@ fg_status fg_owner_decode_block(fg_owner_executor *e,uint32_t first_layer,
         if(status!=FG_OK)return status;
         current=materialized;
     }
+    fg_status check=owner_check_block_output(fg_model_rank(e->model),first_layer,last_layer,token,current,err);
+    if(check!=FG_OK)return check;
     *output=current;
     return FG_OK;
 }
@@ -1101,15 +1137,44 @@ static fg_status ensure_decode_batch(fg_vk_context *vk,fg_error *err){
     return fg_vk_batch_active(vk)?FG_OK:fg_vk_begin(vk,err);
 }
 
-/* The residual stream lives in the executor ping-pong; this mirrors the choice
- * gr_write_batch_into makes when the recording runs, so a replayed static run
- * leaves the same tensor current without executing the recording code. */
+/* The residual stream lives in the executor ping-pong; the tensor a recorded
+ * run leaves current is captured when the run is recorded and reused verbatim
+ * on replay, so this rule only feeds the STATIC_PING diagnostic. */
 static fg_vk_tensor *chained_ping_next(fg_owner_executor *e,const fg_vk_tensor *residual){
     return residual!=e->hyper_output?e->hyper_output:e->hyper_output_b;
 }
 
+static uint64_t state_hash_f32(const float *values,uint64_t count){
+    uint64_t hash=UINT64_C(1469598103934665603);
+    for(uint64_t i=0;i<count;i++){uint32_t bits;memcpy(&bits,&values[i],4u);hash^=bits;hash*=UINT64_C(1099511628211);}
+    return hash;
+}
+
+static void gdn_state_trace(fg_owner_executor *e,uint32_t layer,uint32_t token,
+    const char *phase,const fg_vk_tensor *input){
+    if(!numerics_trace_enabled())return;
+    if(!e||layer>=FG_LAYER_COUNT||(layer&3u)==3u)return;
+    const fg_vk_tensor *conv=e->gdn_state[layer].conv_state;
+    const fg_vk_tensor *recur=e->gdn_state[layer].recurrent_state;
+    if(!conv||!recur)return;
+    const float *c=fg_vk_tensor_map((fg_vk_tensor *)conv);
+    const float *r=fg_vk_tensor_map((fg_vk_tensor *)recur);
+    const float *in=input?fg_vk_tensor_map((fg_vk_tensor *)input):NULL;
+    fprintf(stderr,"FG_STATE rank=%u token=%u layer=%u phase=%s input=%016llx conv=%016llx recur=%016llx c0=%g r0=%g i0=%g\n",
+        fg_model_rank(e->model),token,layer,phase,
+        (unsigned long long)(in?state_hash_f32(in,FG_HIDDEN_SIZE):0u),
+        (unsigned long long)state_hash_f32(c,10240u),
+        (unsigned long long)state_hash_f32(r,48u*128u*128u),c[0],r[0],in?in[0]:0.0f);
+}
+
 static bool chained_static_allowed(fg_vk_context *vk){
-    return !fg_vk_profile_active(vk)&&!numerics_trace_enabled();
+    (void)vk;
+    /* Static replay is parked: a run recorded once and replayed after many
+     * tokens diverges from a freshly recorded run (non-finite layer-0 state at
+     * token 81 on the thinking repro), while re-recording each token and the
+     * fully dynamic path both match.  Correctness wins over the per-token
+     * recording cost until the replay divergence is understood. */
+    return false;
 }
 
 /* One text layer: PLE, GR read, GDN or QSA, GR write, GR read, router, shared
@@ -1220,6 +1285,7 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
             status=owner_record_layer(e,layer,token,position,hyper_input,
                 ngram_embedding,expert,expert_context,&current,err);
             if(status==FG_OK&&layer<last_layer)status=fg_vk_flush(vk,err);
+            if(status==FG_OK)status=chained_layer_trace(fg_model_rank(e->model),vk,layer,token,current,err);
             layer++;
             continue;
         }
@@ -1228,13 +1294,18 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
         uint32_t slot=0u;
         for(uint32_t l=first_layer;l<layer;l++)if((l&3u)==3u)slot++;
         if(static_allowed&&slot<FG_VK_STATIC_SLOTS&&fg_vk_static_recorded(vk,slot)){
-            const fg_vk_tensor *cur=current;
-            for(uint32_t l=layer;l<=run_last;l++){
-                const fg_vk_tensor *run_input=cur;
-                if(l==1u)run_input=chained_ping_next(e,hyper_input);
-                cur=chained_ping_next(e,run_input);
+            if(frame_trace_enabled()){
+                const fg_vk_tensor *cur=current;
+                for(uint32_t l=layer;l<=run_last;l++){
+                    const fg_vk_tensor *run_input=cur;
+                    if(l==1u)run_input=chained_ping_next(e,hyper_input);
+                    cur=chained_ping_next(e,run_input);
+                }
+                fprintf(stderr,"STATIC_PING rank=%u token=%u slot=%u sim=%p recorded=%p\n",
+                    fg_model_rank(e->model),token,slot,(const void *)cur,
+                    (const void *)e->static_run_output[slot]);
             }
-            current=(fg_vk_tensor *)cur;
+            if(e->static_run_output[slot])current=e->static_run_output[slot];
             status=fg_vk_static_submit(vk,slot,err);
         }else if(static_allowed&&slot<FG_VK_STATIC_SLOTS){
             status=fg_vk_static_begin(vk,slot,err);
@@ -1243,11 +1314,14 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
                     ngram_embedding,expert,expert_context,&current,err);
             if(status==FG_OK)status=fg_vk_static_end(vk,slot,err);
             if(status==FG_OK)status=fg_vk_static_submit(vk,slot,err);
+            if(status==FG_OK)e->static_run_output[slot]=current;
         }else{
             for(uint32_t l=layer;status==FG_OK&&l<=run_last;l++){
                 status=owner_record_layer(e,l,token,position,hyper_input,
                     ngram_embedding,expert,expert_context,&current,err);
                 if(status==FG_OK&&l<last_layer)status=fg_vk_flush(vk,err);
+                if(status==FG_OK)status=chained_layer_trace(fg_model_rank(e->model),vk,l,token,current,err);
+                if(status==FG_OK)gdn_state_trace(e,l,token,"post",current);
             }
         }
         layer=run_last+1u;
@@ -1256,6 +1330,7 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
         if(fg_vk_batch_active(vk))status=finish_batch(vk,status,err);
         if(status==FG_OK)status=fg_vk_static_drain(vk,err);
     }
+    if(status==FG_OK)status=owner_check_block_output(fg_model_rank(e->model),first_layer,last_layer,token,current,err);
     if(status==FG_OK)*output=current;
     return status;
 }
