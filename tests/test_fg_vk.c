@@ -2921,18 +2921,12 @@ static int test_pipeline_flush_parity(void){
     if(ok)ok=fg_vk_end(context,&error)==FG_OK&&fg_vk_tensor_read(current,0,batched,sizeof(batched),&error)==FG_OK;
     fg_vk_get_counters(context,&after);
     if(ok)ok=after.submissions-before.submissions==1u;
-    setenv("FG_DECODE_PIPELINE","1",1);current=si;fg_vk_get_counters(context,&before);
+    current=si;fg_vk_get_counters(context,&before);
     if(ok)ok=fg_vk_begin(context,&error)==FG_OK;
     for(uint32_t step=0;ok&&step<STEPS;step++){fg_vk_tensor *target=(step&1u)?fb:fa;ok=fg_vk_add_f32(context,target,current,sb,VALUES,&error)==FG_OK;current=target;if(ok&&step+1u<STEPS&&(step%3u)==2u){ok=fg_vk_flush(context,&error)==FG_OK;if(ok)ok=fg_vk_begin(context,&error)==FG_OK;if(ok)ok=fg_vk_end(context,&error)==FG_OK;if(ok)ok=fg_vk_begin(context,&error)==FG_OK;}}
     if(ok)ok=fg_vk_end(context,&error)==FG_OK&&fg_vk_tensor_read(current,0,flushed,sizeof(flushed),&error)==FG_OK;
     fg_vk_get_counters(context,&after);
     if(ok)ok=after.submissions-before.submissions>1u&&memcmp(batched,flushed,sizeof(batched))==0;
-    setenv("FG_DECODE_PIPELINE","0",1);memset(flushed,0,sizeof(flushed));current=si;
-    if(ok)ok=fg_vk_begin(context,&error)==FG_OK;
-    for(uint32_t step=0;ok&&step<STEPS;step++){fg_vk_tensor *target=(step&1u)?fb:fa;ok=fg_vk_add_f32(context,target,current,sb,VALUES,&error)==FG_OK;current=target;if(ok&&step+1u<STEPS&&(step%3u)==2u){ok=fg_vk_flush(context,&error)==FG_OK;if(ok)ok=fg_vk_begin(context,&error)==FG_OK;if(ok)ok=fg_vk_end(context,&error)==FG_OK;if(ok)ok=fg_vk_begin(context,&error)==FG_OK;}}
-    if(ok)ok=fg_vk_end(context,&error)==FG_OK&&fg_vk_tensor_read(current,0,flushed,sizeof(flushed),&error)==FG_OK;
-    if(ok)ok=memcmp(batched,flushed,sizeof(batched))==0;
-    unsetenv("FG_DECODE_PIPELINE");
     if(fg_vk_batch_active(context)){fg_error ignored={0};fg_vk_abort(context,&ignored);}
     fg_vk_tensor_destroy(fb);fg_vk_tensor_destroy(fa);fg_vk_tensor_destroy(bb);fg_vk_tensor_destroy(ba);fg_vk_tensor_destroy(sb);fg_vk_tensor_destroy(si);return ok;
 }

@@ -87,7 +87,6 @@ static double vk_wall_seconds(void){struct timespec value;clock_gettime(CLOCK_MO
 static void vk_profile_begin_record(fg_vk_context *c){if(c->profile_active)c->record_start_s=vk_wall_seconds();}
 static void vk_profile_end_record(fg_vk_context *c){if(c->profile_active)c->profile.record_ms+=(vk_wall_seconds()-c->record_start_s)*1000.0;}
 static void vk_profile_add_wait(fg_vk_context *c,double seconds){if(c->profile_active)c->profile.wait_ms+=seconds*1000.0;}
-bool fg_vk_pipeline_enabled(void){const char *value=getenv("FG_DECODE_PIPELINE");return !(value&&*value&&strcmp(value,"0")==0);}
 static void vk_fence_track(fg_vk_context *c,VkFence fence){if(c->pending_fence_count<2u)c->pending_fences[c->pending_fence_count++]=fence;}
 static fg_status vk_fence_wait(fg_vk_context *c,VkFence fence,fg_error *err){uint32_t index=0u;while(index<c->pending_fence_count&&c->pending_fences[index]!=fence)index++;if(index==c->pending_fence_count)return FG_OK;double wait_begin=vk_wall_seconds();VkResult vr=vkWaitForFences(c->device,1u,&fence,VK_TRUE,UINT64_MAX);vk_profile_add_wait(c,vk_wall_seconds()-wait_begin);if(vr!=VK_SUCCESS)return vk_error(err,"wait for queued command",vr);c->pending_fences[index]=c->pending_fences[--c->pending_fence_count];return FG_OK;}
 static fg_status vk_pipeline_drain(fg_vk_context *c,fg_error *err){while(c->pending_fence_count){fg_status status=vk_fence_wait(c,c->pending_fences[0],err);if(status!=FG_OK)return status;}return FG_OK;}
@@ -391,7 +390,7 @@ fg_status fg_vk_flush(fg_vk_context *c,fg_error *err){
     if(!c->batch_depth){fg_error_set(err,FG_ERR_ARGUMENT,"not in batch");return FG_ERR_ARGUMENT;}
     if(c->batch_depth>1){c->batch_depth--;return FG_OK;}
     if(c->batch_set_base){fg_error_set(err,FG_ERR_MISMATCH,"static run flushed by the dynamic batch path");return FG_ERR_MISMATCH;}
-    if(!c->pipeline_ready||!fg_vk_pipeline_enabled()||c->profile_active)return fg_vk_end(c,err);
+    if(!c->pipeline_ready||c->profile_active)return fg_vk_end(c,err);
     VkMemoryBarrier after={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};
     vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&after,0,NULL,0,NULL);
     VkResult vr;if((vr=vkEndCommandBuffer(c->command))!=VK_SUCCESS){fg_status status=vk_error(err,"end flush command",vr);fg_error ignored={0};fg_vk_abort(c,&ignored);return status;}
@@ -508,8 +507,7 @@ fg_status fg_vk_static_submit(fg_vk_context *c,uint32_t slot,fg_error *err){
     VkResult vr=vkResetFences(c->device,1,&c->static_fence[slot]);
     if(vr!=VK_SUCCESS)return vk_error(err,"reset static fence",vr);
     c->static_pending[slot]=true;
-    const char *hold_value=getenv("FG_VK_HOLD_STATIC");bool hold_static=!(hold_value&&*hold_value&&strcmp(hold_value,"0")==0);
-    if(hold_static&&c->pending_fence_count>0u){
+    if(c->pending_fence_count>0u){
         c->held_commands[c->held_count]=c->static_command[slot];
         c->held_slots[c->held_count]=slot;c->held_count++;
         c->static_submit_fence[slot]=VK_NULL_HANDLE;

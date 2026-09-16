@@ -1220,7 +1220,7 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
         if((layer&3u)==3u){
             status=owner_record_layer(e,layer,token,position,hyper_input,
                 ngram_embedding,expert,expert_context,&current,err);
-            if(status==FG_OK&&layer<last_layer&&fg_vk_pipeline_enabled())status=fg_vk_flush(vk,err);
+            if(status==FG_OK&&layer<last_layer)status=fg_vk_flush(vk,err);
             layer++;
             continue;
         }
@@ -1248,7 +1248,7 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
             for(uint32_t l=layer;status==FG_OK&&l<=run_last;l++){
                 status=owner_record_layer(e,l,token,position,hyper_input,
                     ngram_embedding,expert,expert_context,&current,err);
-                if(status==FG_OK&&l<last_layer&&fg_vk_pipeline_enabled())status=fg_vk_flush(vk,err);
+                if(status==FG_OK&&l<last_layer)status=fg_vk_flush(vk,err);
             }
         }
         layer=run_last+1u;
