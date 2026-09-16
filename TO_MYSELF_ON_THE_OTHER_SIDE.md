@@ -3,6 +3,36 @@
 You are the post-compaction me. Read this top to bottom before touching anything.
 Everything here is measured, not hoped. The fleet is healthy right now; keep it that way.
 
+## 0a9. 40 CU UNLOCK + FLAG PURGE (2026-09-16)
+
+**40 CU unlock (runtime UMR path, per duggasco/WinnieLV; driver-level, no firmware).**
+Registers CC `0xfff80000->0xffe00000` + SPI `0x07->0x1f` written live and persisted
+by a boot service. Result: 7 blades at 40 CU, `.43` at 38 (one defective WGP on
+SE1.SH1 masked; pre-mask ring crashes - rank1 non-finite router probs, rank0
+double-free - were traced to it). `dmesg active_cu_number`/`vulkaninfo num_cu`
+stay 24 under the UMR path (driver caches topology at init); evidence is UMR
+register readback + compute parity/scaling.
+
+**Measured 24 -> 40 CU (same ring/build):** 16K prefill 307 -> 377/379 TPS
+(+23%), 32K 307 -> 334/392, 4K prefill 265-298 -> 282-328; decode flat
+(24.9 warm, short 26.4) - bandwidth-bound as expected. Per-blade q8 microbench
++31-48% on CU-bound shapes. Thermals 76 C peak / 169 W at 2000 MHz; governor
+left at 1000-2000 (1500 cap costs decode -5% for no prefill gain). Trap paid:
+`dnf install umr` upgraded Mesa without libdrm -> RADV init failure, fixed with
+`dnf update libdrm` (2.4.134). Revert steps + raw evidence in the local ops
+workspace (`bc-250-dbg\results\cu40-*`, runbook).
+
+**Flag purge + CU agnosticism** (branch `cleanup/flags-and-cu-agnostic`, local
+validated): deleted `FG_DECODE_PIPELINE/STATIC`, `FG_QSA_SELECT_GPU/TOPK_V2`,
+`FG_DECODE_CHAIN/DIRECT_OUTPUT`, `FG_VK_HOLD_STATIC`, `FG_DECODE_EXPERT_LEGACY`,
+`FG_EXPERT_BATCH_SEND`, `FG_FABRIC_DIRECT_*`, `FG_MTP_DRAFT_ECHO`,
+`FG_OUTPUT_SPLIT_HIDDEN`; `FG_PREFIX_CONT` env replaced by `api --no-prefix-cont`.
+The 24-CU constants (`FG_HC_INJECT_PIECES`, coordinator copy, manifest
+`required_cu` allowlist) now derive from
+`VK_AMD_shader_core_properties2.activeComputeUnitCount` (fallback to the
+properties product, else 0 = unknown). Fleet validation pending at the new CU
+state.
+
 ## 0a8. ROUND 13 COMBINED A/B - DENSE + HOP MERGED, EXPERTS REJECTED (2026-09-15)
 
 Three branches qualified in one fleet cycle (`perf/combined-round13` scratch build
