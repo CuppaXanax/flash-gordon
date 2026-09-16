@@ -997,6 +997,7 @@ static int test_group_norm(void){
     for(uint32_t i=0;i<TOTAL;i++){x[i]=sinf((float)i*0.007f)+0.1f;w[i]=cosf((float)i*0.003f)*0.05f;}fg_q38_group_rms_norm(ref,x,w,GROUPS,WIDTH,1e-6f);
     fg_vk_tensor *gx=tensor(x,TOTAL*4u),*gw=tensor(w,TOTAL*4u),*gy=tensor(NULL,TOTAL*4u);int ok=gx&&gw&&gy&&fg_vk_group_rms_norm(context,gy,gx,gw,WIDTH,GROUPS,1,1e-6f,&error)==FG_OK&&fg_vk_tensor_read(gy,0,got,TOTAL*4u,&error)==FG_OK;
     for(uint32_t i=0;ok&&i<TOTAL;i++)if(fabsf(got[i]-ref[i])>2e-5f)ok=0;
+    if(getenv("FG_RMS_HASH")){uint64_t hash=1469598103934665603ull;const uint8_t *bytes=(const uint8_t *)got;for(uint32_t i=0;i<TOTAL*4u;i++){hash^=bytes[i];hash*=1099511628211ull;}fprintf(stderr,"GROUP_NORM_HASH %016llx\n",(unsigned long long)hash);}
     fg_vk_tensor_destroy(gy);fg_vk_tensor_destroy(gw);fg_vk_tensor_destroy(gx);free(ref);free(got);free(w);free(x);return ok;
 }
 
