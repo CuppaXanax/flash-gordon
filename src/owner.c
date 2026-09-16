@@ -1108,9 +1108,7 @@ static fg_vk_tensor *chained_ping_next(fg_owner_executor *e,const fg_vk_tensor *
 }
 
 static bool chained_static_allowed(fg_vk_context *vk){
-    const char *value=getenv("FG_DECODE_STATIC");
-    return !(value&&*value&&strcmp(value,"0")==0)&&!fg_vk_profile_active(vk)&&
-        !numerics_trace_enabled();
+    return !fg_vk_profile_active(vk)&&!numerics_trace_enabled();
 }
 
 /* One text layer: PLE, GR read, GDN or QSA, GR write, GR read, router, shared

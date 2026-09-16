@@ -1342,13 +1342,11 @@ fg_status fg_vk_moe_kquant_cooked(fg_vk_context *c,fg_vk_tensor *out,const fg_vk
    down projection with the gate reduction folded in.  The gate/up projections
    accept the cooked K-quant and cooked Q8_0 layouts; the down projection also
    accepts cooked Q5_1 and raw row-major Q8_0, so Q8_0 expert tensors use the
-   two-dispatch path after the size-neutral cooked repack.  The legacy five
-   dispatches stay available behind FG_DECODE_EXPERT_LEGACY. */
+   two-dispatch path after the size-neutral cooked repack.  Tensors that cannot
+   take the fused pair fall back to the generic projection dispatches. */
 bool fg_vk_decode_experts_fusable(const fg_vk_tensor *gate_weights,
     const fg_vk_tensor *up_weights,const fg_vk_tensor *down_weights,
     uint32_t down_type){
-    const char *legacy=getenv("FG_DECODE_EXPERT_LEGACY");
-    if(legacy&&*legacy&&strcmp(legacy,"0")!=0)return false;
     bool down_ok=down_weights&&
         (down_weights->format==FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED||
          down_weights->format==FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED||
