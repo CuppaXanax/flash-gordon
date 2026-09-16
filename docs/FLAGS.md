@@ -9,8 +9,6 @@ Status values:
   start configuration sets it and the numbers are measured with it on.
 - **opt-out** - on by default; setting it to `0` restores the alternate path.
   Kept as a control so a regression can be bisected on the same binary.
-- **A/B toggle** - same-binary switch used to measure a variant against the
-  default path.
 - **variant (opt-in)** - off by default; only enable for a specific experiment.
 - **profiling** - diagnostics only; no numeric effect when off (some traces
   force a GPU synchronization and are not throughput-representative).
@@ -24,32 +22,18 @@ Status values:
 | `FG_PREFILL_RING` | unset (off); reference config sets `1` on rank 0 | Layer-ring prefill. The ring executor activates only when both ring halves are non-zero. | validated default |
 | `FG_DECODE_RING` | unset (decode half enabled); reference config sets `1` | Layer-ring decode. `0` restores the legacy expert-parallel decode replay. | validated default |
 | `FG_WORKER_OWNER` | unset (off); reference worker config sets `1` | Worker-side owner executor. | validated default |
-| `FG_DECODE_CHAIN` | unset (on) | Chained ring blocks: one submission and one fence per block owner. `0` falls back to the per-layer owner machine. | opt-out |
-| `FG_DECODE_DIRECT_OUTPUT` | unset (on) | Final block owner hands the hidden state straight to the output owner. `0` restores the rank-0 relay. Must match on every rank. | opt-out |
-| `FG_PREFIX_CONT` | unset (on) | Prefix continuation on exact frontier hits. `0` forces cold resets. | opt-out |
 | `FG_PACK_EMBED_RANK` | rank 7 | Packer placement override for `token_embd.weight` (0-7). | packer option |
-| `FG_MTP_DRAFT_ECHO` | unset (off) | Draft/verify harness for the MTP scaffolding; no trained MTP weights exist, so this echoes the target token. Decode stays bit-identical. | test harness |
 
-## Correctness / performance controls (validated opt-outs)
-
-| Flag | Default | Effect | Status |
-|---|---|---|---|
-| `FG_DECODE_PIPELINE` | unset (on) | Async decode submission pipeline. `0` disables it. | opt-out |
-| `FG_DECODE_STATIC` | unset (on) | Static recorded replay for token-invariant layer runs. `0` disables it. Forced off while profiling or numeric tracing is active. | opt-out |
-| `FG_QSA_SELECT_GPU` | unset (on) | Device-side QSA selection resolve with an exact-miss host fallback. `0` forces the old host selection path. | opt-out |
-| `FG_QSA_TOPK_V2` | unset (on) | Wide chunked top-k control. `0` selects the legacy top-k kernel. | opt-out |
-| `FG_DECODE_EXPERT_LEGACY` | unset (off) | `1` forces the legacy five-dispatch batch-1 expert path instead of the fused pair. | opt-out (inverted) |
-| `FG_VK_HOLD_STATIC` | unset (hold on) | Holds static submissions behind the pending fence queue. `0` submits them immediately. | opt-out |
-| `FG_FABRIC_DIRECT_SEND` | unset (off) | Direct fabric send path. | variant (opt-in) |
-| `FG_FABRIC_DIRECT_RECV` | unset (off) | Direct fabric receive path. | variant (opt-in) |
-| `FG_EXPERT_BATCH_SEND` | unset (off) | Batches expert work messages on the remote fan-out. | variant (opt-in) |
+Prefix continuation (resuming exact token-prefix extensions from the recorded
+owner-state frontier) is the default. Disable it per run with
+`--no-prefix-cont` on `flash-gordon chat` or `flash-gordon api`; the
+session-level cold reset (`fg_runtime_reset`) is unchanged.
 
 ## Output split (opt-in 4-way head handoff)
 
 | Flag | Default | Effect | Status |
 |---|---|---|---|
 | `FG_OUTPUT_SPLIT` | `0` (off) | `1`/`2` select the 2-way head split; `4` selects the 4-way split. Requires a pack which supports the split layout. | variant (opt-in) |
-| `FG_OUTPUT_SPLIT_HIDDEN` | unset (suppress on) | Hidden-state suppression in the split path: when the output owner already has the sampling config, the 40 KiB hidden message is dropped (bit-identical result). `0` restores the hidden send for A/B. | A/B toggle |
 | `FG_OUTPUT_SPLIT_TIMEOUT_MS` | `4000` | Liveness bound for waiting on split partials; clamped to 100-60000. | variant (opt-in) |
 | `FG_OUTPUT_SPLIT_TRACE` | unset (off) | Split handoff state trace. | profiling |
 
@@ -107,3 +91,17 @@ These no longer exist in the code; setting them has no effect.
 | `FG_FABRIC_HOP_BF16` | Parked bf16 hop codec for the hyper-state and hidden handoff messages. Precision trades are policy-excluded, so the encoder, wire tags and tests were deleted. | Yes - as a new tagged wire encoding if the no-precision-trade policy changes. |
 | `FG_DENSE_R8_WAVE_SPLIT` | Gated rows8 dense variant; lost its fleet A/B (regression). | No; the validated rows8 kernel is unconditional. |
 | `FG_DENSE_R8_PAIR` | Gated 32-block rows8 pair variant; lost its fleet A/B (regression). | No; the validated rows8 kernel is unconditional. |
+| `FG_DECODE_PIPELINE` | Async decode submission pipeline is unconditional; the descriptor-epoch discipline stays. | No. |
+| `FG_DECODE_STATIC` | Static recorded replay is unconditional; it still auto-disables under profiling or numeric tracing. | No. |
+| `FG_DECODE_CHAIN` | Chained ring blocks are unconditional; the per-layer owner machine remains only as the eligibility fallback for packs without whole-slab experts. | No. |
+| `FG_DECODE_DIRECT_OUTPUT` | Direct final-block handoff is selected from the topology; the rank-0 relay remains the fallback when the route is not eligible. | No. |
+| `FG_DECODE_EXPERT_LEGACY` | The fused expert pair is unconditional; the generic projection path remains for layouts that cannot fuse. | No. |
+| `FG_VK_HOLD_STATIC` | Static submissions always coalesce with the pending fence queue. | No. |
+| `FG_QSA_SELECT_GPU` | Device-side QSA selection resolve with the exact-miss host fallback is unconditional. | No. |
+| `FG_QSA_TOPK_V2` | The chunked top-k is unconditional; the legacy wide kernel and shader were deleted. | No. |
+| `FG_FABRIC_DIRECT_SEND` | Never-validated forced direct send; the qualified QSA page append keeps its explicit direct call. | No. |
+| `FG_FABRIC_DIRECT_RECV` | Never-validated direct receive; receives always use io_uring. | No. |
+| `FG_EXPERT_BATCH_SEND` | Never-validated batched expert fan-out; the send-batch API and test were removed. | No. |
+| `FG_MTP_DRAFT_ECHO` | Harness scaffolding for the parked MTP head; the draft/verify scaffold and speculative-accept helpers were deleted. | Yes - with the trained MTP pack and kernels. |
+| `FG_OUTPUT_SPLIT_HIDDEN` | The finished 4-way A/B round promoted suppression; the 40 KiB hidden is always dropped under 4-way. | No. |
+| `FG_PREFIX_CONT` | Replaced by the discoverable `--no-prefix-cont` CLI option on `chat`/`api`. | N/A - use the CLI option. |
