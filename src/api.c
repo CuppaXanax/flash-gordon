@@ -2024,12 +2024,6 @@ static fg_status send_completion(const api_generation *generation,
                 stats->prefilled_tokens / stats->prefill_seconds : 0.0;
         double decode_tps =
             stats->decode_seconds > 0.0 ? stats->generated_tokens / stats->decode_seconds : 0.0;
-        char draft_headers[128]="";
-        if (stats->draft_proposed)
-            snprintf(draft_headers, sizeof(draft_headers),
-                     "X-Flash-Gordon-Draft-Proposed: %u\r\n"
-                     "X-Flash-Gordon-Draft-Accepted: %u\r\n",
-                     stats->draft_proposed, stats->draft_accepted);
         char metrics[1280];
         int metrics_length = snprintf(
             metrics, sizeof(metrics),
@@ -2045,16 +2039,14 @@ static fg_status send_completion(const api_generation *generation,
             "X-Flash-Gordon-Prefill-Seconds: %.9f\r\n"
             "X-Flash-Gordon-Prefill-TPS: %.6f\r\n"
             "X-Flash-Gordon-Decode-Seconds: %.9f\r\n"
-            "X-Flash-Gordon-Decode-TPS: %.6f\r\n"
-            "%s",
+            "X-Flash-Gordon-Decode-TPS: %.6f\r\n",
             fg_execution_mode_name(stats->execution_mode),
             stats->prompt_tokens, stats->prefilled_tokens, stats->reused_tokens,
             stats->prefix_cache_hit ? "hit" : "miss",
             stats->exact_frontier ? "true" : "false",
             fg_prefix_reset_reason_name(stats->reset_reason),
             stats->generated_tokens, stats->context_tokens,
-            stats->prefill_seconds, prefill_tps, stats->decode_seconds, decode_tps,
-            draft_headers);
+            stats->prefill_seconds, prefill_tps, stats->decode_seconds, decode_tps);
         if(status==FG_OK&&
            (metrics_length < 0 || (size_t)metrics_length >= sizeof(metrics))) {
             fg_error_set(err, FG_ERR_LIMIT, "API metrics headers exceed buffer");

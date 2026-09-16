@@ -3150,14 +3150,8 @@ struct fg_runtime {
     char directory[1024];
     fg_sampler_config sampler;
     fg_mtp_capability mtp_capability;
-    bool mtp_enabled;
-    bool pending_draft_valid;
-    uint32_t pending_draft;
-    uint32_t draft_proposed;
-    uint32_t draft_accepted;
     /* Ring prefix continuation: resume owner state across sequential requests
-     * on an exact token-prefix extension.  FG_PREFIX_CONT=0 disables it for
-     * A/B measurement without rebuilding. */
+     * on an exact token-prefix extension. */
     bool prefix_continuation;
 };
 
@@ -4094,8 +4088,7 @@ static fg_status coordinator_output_slice_hidden(fg_coordinator *coordinator,uin
 
 static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
     const int32_t *history,size_t history_count,uint32_t token_index,
-    uint32_t *next_token,float *logit,fg_vk_tensor **last_hyper,fg_error *err){
-    if(last_hyper)*last_hyper=NULL;
+    uint32_t *next_token,float *logit,fg_error *err){
     const fg_manifest *manifest=coordinator->manifest;
     if(!history||!history_count||(uint32_t)history[history_count-1u]>=FG_Q38_VOCAB_SIZE){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid ring decode token history");
@@ -4331,7 +4324,6 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
             (uint64_t)FG_HYPER_WIDTH*4u,err);
         if(status==FG_OK)status=coordinator_output(coordinator,token_index,input,next_token,
             logit,err);
-        if(status==FG_OK&&last_hyper)*last_hyper=input;
     }
     if(trace){t_output=dispatch_ts();
         fg_vk_counters decode_counters={0};fg_vk_get_counters(vk,&decode_counters);
@@ -4349,8 +4341,7 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
 }
 
 /* Expert-parallel decode: all 48 layers on the coordinator, MoE dispatched to workers */
-static fg_status coordinator_decode_token_local(fg_coordinator *coordinator,const int32_t *history,size_t history_count,uint32_t token_index,uint32_t *next_token,float *logit,fg_vk_tensor **last_hyper,fg_error *err){
-    if(last_hyper)*last_hyper=NULL;
+static fg_status coordinator_decode_token_local(fg_coordinator *coordinator,const int32_t *history,size_t history_count,uint32_t token_index,uint32_t *next_token,float *logit,fg_error *err){
     if(!history||!history_count||(uint32_t)history[history_count-1u]>=FG_Q38_VOCAB_SIZE){fg_error_set(err,FG_ERR_ARGUMENT,"invalid local decode token history");return FG_ERR_ARGUMENT;}
     fg_vk_context *vk=fg_model_vk(coordinator->model);token_profile_capture capture={0};fg_status status=token_profile_begin(&capture,vk,token_index,err);double frame_start=dispatch_ts();
     fg_vk_tensor *embedding=fg_model_tensor(coordinator->model,"token_embd.weight");
@@ -4386,7 +4377,6 @@ static fg_status coordinator_decode_token_local(fg_coordinator *coordinator,cons
         if(status==FG_OK)current=layer_out;
     }
     double frame_layers=dispatch_ts();
-    if(status==FG_OK&&last_hyper)*last_hyper=current;
     if(status==FG_OK)status=coordinator_output(coordinator,token_index,current,next_token,logit,err);
     if(status==FG_OK)status=coordinator_publish_qsa_pages(coordinator,token_index,1u,err);
     double frame_output=dispatch_ts();
@@ -4400,38 +4390,12 @@ static fg_status coordinator_decode_token_local(fg_coordinator *coordinator,cons
  * default until the ring path keeps the accuracy gates green. */
 static fg_status coordinator_decode_token(fg_coordinator *coordinator,const int32_t *history,
     size_t history_count,uint32_t token_index,uint32_t *next_token,float *logit,
-    fg_vk_tensor **last_hyper,fg_error *err){
+    fg_error *err){
     if(coordinator->ring_decode)
         return coordinator_decode_token_ring(coordinator,history,history_count,token_index,
-            next_token,logit,last_hyper,err);
+            next_token,logit,err);
     return coordinator_decode_token_local(coordinator,history,history_count,token_index,
-        next_token,logit,last_hyper,err);
-}
-
-/* The trained MTP head is not linked yet; the only executable draft source is
- * the FG_MTP_DRAFT_ECHO harness, which echoes the target token already computed
- * for the next position.  It exercises the proposal/verify/accept path with
- * output bit-identical to plain greedy decode. */
-static bool runtime_mtp_backend_available(void){
-    const char *mode=getenv("FG_MTP_DRAFT_ECHO");
-    return mode&&*mode&&strcmp(mode,"0")!=0;
-}
-
-static fg_status runtime_mtp_propose(fg_runtime *runtime,const fg_vk_tensor *last_hyper,
-                                     uint32_t target_token,uint32_t *draft,fg_error *err){
-    (void)last_hyper;
-    if(!runtime||!draft){
-        fg_error_set(err,FG_ERR_ARGUMENT,"invalid MTP draft request");
-        return FG_ERR_ARGUMENT;
-    }
-    if(runtime_mtp_backend_available()){
-        *draft=target_token;
-        return FG_OK;
-    }
-    fg_error_set(err,FG_ERR_UNAVAILABLE,
-                 "sealed MTP weights have no linked MTP head in this build; see "
-                 "MTP_FEASIBILITY_2026-09-13.md for the required pack and kernels");
-    return FG_ERR_UNAVAILABLE;
+        next_token,logit,err);
 }
 
 static void coordinator_close(fg_coordinator *coordinator){if(!coordinator)return;free(coordinator->decode_result_wire);free(coordinator->decode_work_wire);for(uint32_t i=0;i<FG_GROUP_SIZE;i++)free(coordinator->async_recv_payloads[i]);qsa_page_transport_destroy(&coordinator->qsa_pages);for(uint32_t slot=0;slot<FG_PREFILL_FRAMES;slot++){fg_vk_tensor_destroy(coordinator->ring_output[slot]);prefill_layer_buffers_destroy(&coordinator->prefill_layer[slot]);prefill_worker_buffers_destroy(&coordinator->prefill_expert[slot]);}fg_ngram_store_close(coordinator->ngram);fg_tokenizer_close(coordinator->tokenizer);fg_fabric_close(coordinator->fabric);fg_output_slice_destroy(coordinator->output_slice);fg_owner_executor_destroy(coordinator->owner);fg_expert_executor_destroy(coordinator->expert);fg_model_close(coordinator->model);memset(coordinator,0,sizeof(*coordinator));}
@@ -4570,15 +4534,12 @@ fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
         bool requested_mtp=
             (runtime->options.experimental_flags&FG_RUNTIME_EXPERIMENTAL_MTP)!=0;
         bool sealed_mtp=(runtime->manifest->flags&FG_MANIFEST_HAS_MTP)!=0;
-        runtime->mtp_enabled=requested_mtp&&sealed_mtp&&runtime_mtp_backend_available();
-        runtime->mtp_capability=!sealed_mtp?FG_MTP_CAPABILITY_UNSUPPORTED:
-            runtime->mtp_enabled?FG_MTP_CAPABILITY_ENABLED:
-            FG_MTP_CAPABILITY_WEIGHTS_SEALED;
-        if(requested_mtp&&!runtime->mtp_enabled){
+        runtime->mtp_capability=sealed_mtp?FG_MTP_CAPABILITY_WEIGHTS_SEALED:
+            FG_MTP_CAPABILITY_UNSUPPORTED;
+        if(requested_mtp){
             fg_error_set(err,FG_ERR_UNAVAILABLE,
                          "sealed MTP weights require the MTP head kernels described in "
-                         "MTP_FEASIBILITY_2026-09-13.md; unset --experimental-mtp or set "
-                         "FG_MTP_DRAFT_ECHO=1 to run the draft/verify harness");
+                         "MTP_FEASIBILITY_2026-09-13.md; unset --experimental-mtp");
             status=FG_ERR_UNAVAILABLE;
         }
     }
@@ -4690,15 +4651,6 @@ static fg_status runtime_generate_tokens(
     if(!runtime||!transcript||!prompt||(!prompt->data&&prompt->count)||!callback||
        !max_tokens){fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident generation arguments");return FG_ERR_ARGUMENT;}
     if(!runtime->state_ready){fg_error_set(err,FG_ERR_MISMATCH,"resident runtime requires a successful reset");return FG_ERR_MISMATCH;}
-    if(runtime->mtp_enabled&&
-       (runtime->sampler.temperature!=0.0f||fg_sampler_penalties_active(&runtime->sampler))){
-        fg_error_set(err,FG_ERR_UNAVAILABLE,
-                     "experimental MTP verification requires greedy sampling without penalties");
-        return FG_ERR_UNAVAILABLE;
-    }
-    runtime->pending_draft_valid=false;
-    runtime->draft_proposed=0;
-    runtime->draft_accepted=0;
     if(stats){
         memset(stats,0,sizeof(*stats));
         stats->execution_mode=FG_EXECUTION_EXPERT_PARALLEL;
@@ -4847,23 +4799,9 @@ static fg_status runtime_generate_tokens(
         if(status!=FG_OK)break;
         runtime->history[runtime->history_count++]=(int32_t)next;generated++;
         state_mutated=true;
-        {
-            fg_vk_tensor *last_hyper=NULL;
-            status=coordinator_decode_token(&runtime->coordinator,runtime->history,
-                runtime->history_count,(uint32_t)runtime->history_count-1u,&next,&logit,
-                runtime->mtp_enabled?&last_hyper:NULL,err);
-            if(generate_trace)gt_decode+=dispatch_ts()-t_mark;
-            if(status==FG_OK&&runtime->mtp_enabled){
-                if(runtime->pending_draft_valid){
-                    runtime->draft_proposed++;
-                    if(fg_sampler_spec_accept_greedy(runtime->pending_draft,next))
-                        runtime->draft_accepted++;
-                }
-                status=runtime_mtp_propose(runtime,last_hyper,next,
-                                           &runtime->pending_draft,err);
-                runtime->pending_draft_valid=status==FG_OK;
-            }
-        }
+        status=coordinator_decode_token(&runtime->coordinator,runtime->history,
+            runtime->history_count,(uint32_t)runtime->history_count-1u,&next,&logit,err);
+        if(generate_trace)gt_decode+=dispatch_ts()-t_mark;
         if(status==FG_OK){
             runtime->next_token=next;
             runtime->next_logit=logit;
@@ -4885,8 +4823,6 @@ static fg_status runtime_generate_tokens(
             stats->generated_tokens=generated;
             stats->context_tokens=(uint32_t)runtime->history_count;
             stats->decode_seconds=elapsed_seconds(&decode_start,&decode_end);
-            stats->draft_proposed=runtime->draft_proposed;
-            stats->draft_accepted=runtime->draft_accepted;
         }
     }else if(state_mutated&&transport_ready(&runtime->coordinator.transport_state)){
         fg_error reset_error={0};
@@ -5219,7 +5155,7 @@ fg_status fg_eval_main(const char *path,const char *prompt,uint32_t generate,fg_
         fg_error_set(err,FG_ERR_OOM,"allocate eval token history");status=FG_ERR_OOM;
     }
     for(size_t i=0;status==FG_OK&&i<prompt_tokens.count;i++){history[i]=(int32_t)prompt_tokens.data[i];}uint32_t next=0;float logit=0.0f;struct timespec start,end;fg_vk_tensor *prefill_output=NULL;if(status==FG_OK)clock_gettime(CLOCK_MONOTONIC,&start);for(uint32_t first=0;status==FG_OK&&first<prompt_tokens.count;){uint32_t count=(uint32_t)(prompt_tokens.count-first);if(count>manifest->prefill_microbatch)count=manifest->prefill_microbatch;fg_vk_tensor *ngram_batch=NULL;status=fg_ngram_store_lookup_prefill(coordinator.ngram,history,prompt_tokens.count,first,count,&ngram_batch,err);if(status==FG_OK)status=coordinator_prefill_microbatch(&coordinator,prompt_tokens.data+first,first,(uint16_t)count,ngram_batch,&prefill_output,err);first+=count;}prefill_worker_buffers_release_result_wire(&coordinator.prefill_expert[0]);prefill_worker_buffers_release_result_wire(&coordinator.prefill_expert[1]);prefill_worker_buffers_release_result_wire(&coordinator.prefill_expert[2]);fg_vk_tensor *last_hyper=NULL;if(status==FG_OK){uint32_t final_count=(uint32_t)(prompt_tokens.count%manifest->prefill_microbatch);if(!final_count)final_count=manifest->prefill_microbatch;status=fg_vk_tensor_view(prefill_output,(uint64_t)(final_count-1u)*FG_HYPER_WIDTH*4u,FG_HYPER_WIDTH*4u,&last_hyper,err);}if(status==FG_OK)status=coordinator_output(&coordinator,(uint32_t)prompt_tokens.count-1u,last_hyper,&next,&logit,err);fg_vk_tensor_destroy(last_hyper);if(status==FG_OK){clock_gettime(CLOCK_MONOTONIC,&end);double seconds=(double)(end.tv_sec-start.tv_sec)+(double)(end.tv_nsec-start.tv_nsec)*1e-9;fprintf(stderr,"prefill: %zu tokens in %.3f s (%.2f tok/s), next=%u logit=%g\n",prompt_tokens.count,seconds,(double)prompt_tokens.count/seconds,next,logit);}
-    size_t history_count=prompt_tokens.count;struct timespec decode_start,decode_tok;clock_gettime(CLOCK_MONOTONIC,&decode_start);for(uint32_t generated=0;status==FG_OK&&generated<generate;generated++){char decoded[4096];size_t bytes=0;status=fg_tokenizer_decode_token(coordinator.tokenizer,next,decoded,sizeof(decoded),&bytes,err);if(status!=FG_OK)break;clock_gettime(CLOCK_MONOTONIC,&decode_tok);double tok_elapsed=(double)(decode_tok.tv_sec-decode_start.tv_sec)+(double)(decode_tok.tv_nsec-decode_start.tv_nsec)*1e-9;double tok_per_sec=generated>0?(double)generated/tok_elapsed:0.0;fprintf(stderr,"decode[%u]: token=%u logit=%.4f (%.3f s, avg %.2f tok/s)\n",generated,next,logit,tok_elapsed,tok_per_sec);fwrite(decoded,1,bytes,stdout);fflush(stdout);if(next==fg_tokenizer_eos(coordinator.tokenizer)||generated+1u==generate)break;history[history_count++]=(int32_t)next;status=coordinator_decode_token_local(&coordinator,history,history_count,(uint32_t)(history_count-1u),&next,&logit,NULL,err);}if(status==FG_OK){clock_gettime(CLOCK_MONOTONIC,&decode_tok);double total=(double)(decode_tok.tv_sec-decode_start.tv_sec)+(double)(decode_tok.tv_nsec-decode_start.tv_nsec)*1e-9;fprintf(stderr,"decode complete: %.2f tok/s avg\n",total>0?(double)(generate)/total:0.0);fputc('\n',stdout);}
+    size_t history_count=prompt_tokens.count;struct timespec decode_start,decode_tok;clock_gettime(CLOCK_MONOTONIC,&decode_start);for(uint32_t generated=0;status==FG_OK&&generated<generate;generated++){char decoded[4096];size_t bytes=0;status=fg_tokenizer_decode_token(coordinator.tokenizer,next,decoded,sizeof(decoded),&bytes,err);if(status!=FG_OK)break;clock_gettime(CLOCK_MONOTONIC,&decode_tok);double tok_elapsed=(double)(decode_tok.tv_sec-decode_start.tv_sec)+(double)(decode_tok.tv_nsec-decode_start.tv_nsec)*1e-9;double tok_per_sec=generated>0?(double)generated/tok_elapsed:0.0;fprintf(stderr,"decode[%u]: token=%u logit=%.4f (%.3f s, avg %.2f tok/s)\n",generated,next,logit,tok_elapsed,tok_per_sec);fwrite(decoded,1,bytes,stdout);fflush(stdout);if(next==fg_tokenizer_eos(coordinator.tokenizer)||generated+1u==generate)break;history[history_count++]=(int32_t)next;status=coordinator_decode_token_local(&coordinator,history,history_count,(uint32_t)(history_count-1u),&next,&logit,err);}if(status==FG_OK){clock_gettime(CLOCK_MONOTONIC,&decode_tok);double total=(double)(decode_tok.tv_sec-decode_start.tv_sec)+(double)(decode_tok.tv_nsec-decode_start.tv_nsec)*1e-9;fprintf(stderr,"decode complete: %.2f tok/s avg\n",total>0?(double)(generate)/total:0.0);fputc('\n',stdout);}
     free(history);
     fg_tokens_free(&prompt_tokens);
     if(manifest)coordinator_close(&coordinator);

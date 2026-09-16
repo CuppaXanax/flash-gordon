@@ -52,13 +52,5 @@ int main(void){
     fg_sampler_apply_penalties(penalized,penalty_ids,counts,3u,&config);
     CHECK(penalized[0]==2.0f-2.0f&&penalized[1]==-8.0f-2.5f&&penalized[2]==3.0f);
     config.min_p=.1f;CHECK(fg_sampler_config_validate(&config,&err)==FG_ERR_ARGUMENT);
-    CHECK(fg_sampler_spec_accept_greedy(7u,7u));
-    CHECK(!fg_sampler_spec_accept_greedy(7u,8u));
-    CHECK(fg_sampler_spec_accept_stochastic(7u,7u,0.1f,0.0f,0.5f));
-    CHECK(fg_sampler_spec_accept_stochastic(7u,8u,0.2f,0.4f,0.9f));
-    CHECK(fg_sampler_spec_accept_stochastic(7u,8u,0.4f,0.2f,0.49f));
-    CHECK(!fg_sampler_spec_accept_stochastic(7u,8u,0.4f,0.2f,0.5f));
-    CHECK(!fg_sampler_spec_accept_stochastic(7u,8u,0.0f,0.2f,0.0f));
-    CHECK(!fg_sampler_spec_accept_stochastic(7u,8u,0.4f,0.0f,0.0f));
     return failures?1:0;
 }

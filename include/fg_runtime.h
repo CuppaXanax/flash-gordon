@@ -81,8 +81,6 @@ typedef struct fg_generation_stats {
     fg_execution_mode execution_mode;
     double prefill_seconds;
     double decode_seconds;
-    uint32_t draft_proposed;
-    uint32_t draft_accepted;
 } fg_generation_stats;
 typedef fg_status (*fg_token_callback)(void *context,uint32_t token,const char *text,
                                       size_t bytes,fg_error *err);
