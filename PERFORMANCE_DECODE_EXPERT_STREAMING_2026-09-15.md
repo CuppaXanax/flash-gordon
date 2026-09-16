@@ -1,3 +1,12 @@
+> **Fleet verdict (2026-09-16): the two kernel changes below were REJECTED and
+> reverted.**  Measured on the fleet they cost +12/+16 VGPRs and -2/-4
+> waves/SIMD, and the pair median rose to 1.377 ms/block against a same-session
+> control of ~1.283.  The instruction cuts were real; the occupancy loss
+> dominated.  Reverts: `728d702` (gate/up prefetch), `ab03657` (two-row
+> down/reduce).  The rate tool, the `FG_BENCH_EXPERT_DECODE` probe and this
+> accounting stay.  Salvage round and the promoted configuration:
+> `PERFORMANCE_DECODE_EXPERT_OCCUPANCY_2026-09-16.md`.
+
 # Decode Expert Pair: Streaming Round (2026-09-15)
 
 Worktree `D:\looking-glass-labs\fg-work-exp13`, branch `perf/expert-streaming`
