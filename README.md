@@ -111,7 +111,12 @@ active native context and tool support. Experimental context, MTP, image, and
 video remain reported as unavailable until their runtime paths are qualified.
 Completions accept string-content system/developer, user, assistant, tool, and
 function messages; `max_tokens` or `max_completion_tokens`; and `stream`.
-Non-streaming responses are JSON and streaming responses use SSE. The runtime
+Non-streaming responses are JSON and streaming responses use SSE. Thinking
+responses return the parsed `<think>` block as the OpenAI `reasoning_content`
+field: inside the non-streaming assistant message, and as
+`delta.reasoning_content` SSE chunks emitted before the visible content
+deltas. Requests rendered with a closed think block (`/no_think`) omit the
+field. The runtime
 stays loaded, and its single authoritative session reuses only exact canonical
 token prefixes across sequential requests. Shorter or divergent transcripts
 reset before a full prefill. The server handles one connection at a time and

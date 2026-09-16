@@ -107,6 +107,9 @@ typedef struct api_generation {
     api_buffer visible_pending;
     char utf8_pending[4];
     size_t utf8_pending_length;
+    char utf8_reasoning_pending[4];
+    size_t utf8_reasoning_pending_length;
+    size_t reasoning_emitted;
     size_t streamed_tool_calls;
 } api_generation;
 
@@ -1506,8 +1509,8 @@ static fg_status send_sse_headers(int fd, fg_error *err) {
     return send_all(fd, headers, sizeof(headers) - 1u, err);
 }
 
-static fg_status send_content_delta(api_generation *generation,const char *text,size_t length,
-                                    fg_error *err) {
+static fg_status send_delta_field(api_generation *generation,const char *field,
+                                  const char *text,size_t length,fg_error *err) {
     if (!length) return FG_OK;
     api_buffer event = {0};
     fg_status status = buffer_append(&event, "data: {\"id\":", err);
@@ -1527,7 +1530,9 @@ static fg_status send_content_delta(api_generation *generation,const char *text,
             buffer_append_json_string(&event, generation->model, strlen(generation->model), err);
     if (status == FG_OK)
         status = buffer_append(
-            &event, ",\"choices\":[{\"index\":0,\"delta\":{\"content\":", err);
+            &event, ",\"choices\":[{\"index\":0,\"delta\":{\"", err);
+    if (status == FG_OK) status = buffer_append(&event, field, err);
+    if (status == FG_OK) status = buffer_append(&event, "\":", err);
     if (status == FG_OK) status = buffer_append_json_string(&event, text, length, err);
     if (status == FG_OK)
         status = buffer_append(&event, "},\"finish_reason\":null}]}\n\n", err);
@@ -1537,6 +1542,16 @@ static fg_status send_content_delta(api_generation *generation,const char *text,
     }
     free(event.data);
     return status;
+}
+
+static fg_status send_content_delta(api_generation *generation,const char *text,size_t length,
+                                    fg_error *err) {
+    return send_delta_field(generation, "content", text, length, err);
+}
+
+static fg_status send_reasoning_delta(api_generation *generation,const char *text,
+                                      size_t length,fg_error *err) {
+    return send_delta_field(generation, "reasoning_content", text, length, err);
 }
 
 static void tool_call_id(const api_generation *generation, size_t index, char id[128]) {
@@ -1650,24 +1665,40 @@ static int utf8_unit(const unsigned char *text,size_t available,size_t *bytes) {
     *bytes=need;return 1;
 }
 
-static fg_status send_utf8_delta(api_generation *generation,const char *text,size_t length,
-                                 fg_error *err) {
-    char combined[4100];size_t total=generation->utf8_pending_length+length;
+static fg_status send_utf8_delta_channel(api_generation *generation,const char *text,
+                                         size_t length,bool reasoning,fg_error *err) {
+    char *pending = reasoning ? generation->utf8_reasoning_pending : generation->utf8_pending;
+    size_t *pending_length = reasoning ? &generation->utf8_reasoning_pending_length
+                                       : &generation->utf8_pending_length;
+    char combined[4100];size_t total=*pending_length+length;
     if(total>sizeof(combined)){fg_error_set(err,FG_ERR_LIMIT,"streamed token exceeds UTF-8 buffer");return FG_ERR_LIMIT;}
-    memcpy(combined,generation->utf8_pending,generation->utf8_pending_length);
-    memcpy(combined+generation->utf8_pending_length,text,length);
-    generation->utf8_pending_length=0;
+    memcpy(combined,pending,*pending_length);
+    memcpy(combined+*pending_length,text,length);
+    *pending_length=0;
     size_t offset=0,run=0;fg_status status=FG_OK;
     while(status==FG_OK&&offset<total){
         size_t unit=0;int valid=utf8_unit((const unsigned char *)combined+offset,total-offset,&unit);
         if(valid>0){offset+=unit;continue;}
-        if(offset>run)status=send_content_delta(generation,combined+run,offset-run,err);
+        if(offset>run){
+            status=reasoning?send_reasoning_delta(generation,combined+run,offset-run,err)
+                            :send_content_delta(generation,combined+run,offset-run,err);
+        }
         if(status!=FG_OK)break;
-        if(valid==0){generation->utf8_pending_length=total-offset;memcpy(generation->utf8_pending,combined+offset,generation->utf8_pending_length);return FG_OK;}
-        status=send_content_delta(generation,"\xef\xbf\xbd",3u,err);offset++;run=offset;
+        if(valid==0){*pending_length=total-offset;memcpy(pending,combined+offset,*pending_length);return FG_OK;}
+        status=reasoning?send_reasoning_delta(generation,"\xef\xbf\xbd",3u,err)
+                        :send_content_delta(generation,"\xef\xbf\xbd",3u,err);
+        offset++;run=offset;
     }
-    if(status==FG_OK&&offset>run)status=send_content_delta(generation,combined+run,offset-run,err);
+    if(status==FG_OK&&offset>run){
+        status=reasoning?send_reasoning_delta(generation,combined+run,offset-run,err)
+                        :send_content_delta(generation,combined+run,offset-run,err);
+    }
     return status;
+}
+
+static fg_status send_utf8_delta(api_generation *generation,const char *text,size_t length,
+                                 fg_error *err) {
+    return send_utf8_delta_channel(generation, text, length, false, err);
 }
 
 static void pending_consume(api_buffer *pending, size_t count) {
@@ -1852,6 +1883,38 @@ static fg_status queue_visible_content(api_generation *generation,const char *te
     return status;
 }
 
+static fg_status stream_reasoning(api_generation *generation, bool final, fg_error *err) {
+    if (generation->think_closed || generation->output_stopped) return FG_OK;
+    const char *base = generation->content.data;
+    size_t total = generation->content.length;
+    if (!base || !total) return FG_OK;
+    if (generation->reasoning_emitted == 0u && total < 7u &&
+        marker_suffix(base, total, "<think>"))
+        return FG_OK;
+    if (generation->reasoning_emitted < 7u && total >= 7u && !memcmp(base, "<think>", 7u))
+        generation->reasoning_emitted = 7u;
+    const char *close = strstr(base + generation->reasoning_emitted, "</think>");
+    size_t limit = close ? (size_t)(close - base) : total;
+    if (!close && !final) {
+        size_t hold = marker_suffix(base + generation->reasoning_emitted,
+                                    total - generation->reasoning_emitted, "</think>");
+        limit -= hold;
+    }
+    fg_status status = FG_OK;
+    if (limit > generation->reasoning_emitted) {
+        status = send_utf8_delta_channel(generation, base + generation->reasoning_emitted,
+                                         limit - generation->reasoning_emitted, true, err);
+        generation->reasoning_emitted = limit;
+    }
+    if (status != FG_OK || !close) return status;
+    generation->think_closed = true;
+    const char *emit = close + sizeof("</think>") - 1u;
+    while (*emit == '\r' || *emit == '\n') emit++;
+    size_t emit_length = total - (size_t)(emit - base);
+    if (!emit_length) return FG_OK;
+    return queue_visible_content(generation, emit, emit_length, false, err);
+}
+
 static fg_status api_token(void *context, uint32_t token, const char *text, size_t length,
                            fg_error *err) {
     (void)token;
@@ -1859,19 +1922,9 @@ static fg_status api_token(void *context, uint32_t token, const char *text, size
     size_t previous=generation->content.length;
     fg_status status=buffer_append_n(&generation->content,text,length,err);
     if(status!=FG_OK||!generation->stream)return status;
-    const char *emit=NULL;size_t emit_length=0;
-    if(generation->think_closed){
-        emit=generation->content.data+previous;emit_length=length;
-    }else{
-        const char *close=strstr(generation->content.data,"</think>");
-        if(!close)return FG_OK;
-        emit=close+strlen("</think>");
-        while(*emit=='\r'||*emit=='\n')emit++;
-        emit_length=generation->content.length-(size_t)(emit-generation->content.data);
-        generation->think_closed=true;
-    }
-    if(!emit_length)return FG_OK;
-    return queue_visible_content(generation,emit,emit_length,false,err);
+    if(!generation->think_closed)return stream_reasoning(generation,false,err);
+    if(!length)return FG_OK;
+    return queue_visible_content(generation,generation->content.data+previous,length,false,err);
 }
 
 static fg_status send_stream_start(const api_generation *generation, fg_error *err) {
@@ -1905,6 +1958,13 @@ static fg_status send_stream_start(const api_generation *generation, fg_error *e
 static fg_status send_stream_end(api_generation *generation,
                                  const fg_chat_generated *generated,const char *reason,
                                  fg_error *err) {
+    fg_status reasoning=stream_reasoning(generation,true,err);
+    if(reasoning!=FG_OK)return reasoning;
+    if(generation->utf8_reasoning_pending_length){
+        generation->utf8_reasoning_pending_length=0;
+        reasoning=send_reasoning_delta(generation,"\xef\xbf\xbd",3u,err);
+        if(reasoning!=FG_OK)return reasoning;
+    }
     for(size_t i=generation->streamed_tool_calls;i<generated->tool_call_count;i++){
         fg_status tool=send_tool_call_delta(generation,&generated->tool_calls[i],i,err);
         if(tool!=FG_OK)return tool;
@@ -1975,8 +2035,14 @@ static fg_status send_completion(const api_generation *generation,
             buffer_append_json_string(&body, generation->model, strlen(generation->model), err);
     if (status == FG_OK)
         status = buffer_append(
-            &body, ",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":",
-            err);
+            &body, ",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\"", err);
+    if (status == FG_OK && generated->reasoning && generated->reasoning[0]) {
+        status = buffer_append(&body, ",\"reasoning_content\":", err);
+        if (status == FG_OK)
+            status = buffer_append_json_string(&body, generated->reasoning,
+                                               strlen(generated->reasoning), err);
+    }
+    if (status == FG_OK) status = buffer_append(&body, ",\"content\":", err);
     if (status == FG_OK && generated->tool_call_count && !generated->content[0])
         status = buffer_append(&body, "null", err);
     else if (status == FG_OK)

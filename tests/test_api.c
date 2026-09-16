@@ -606,6 +606,7 @@ static void test_streamed_tool_response(void) {
     shutdown(sockets[0], SHUT_WR);
     char *response = read_socket_response(sockets[1]);
     CHECK(response && strstr(response, "\"content\":\"Answer before tool\""));
+    CHECK(response && strstr(response, "\"reasoning_content\":\"hidden\""));
     CHECK(response && strstr(response, "\"tool_calls\":[{\"index\":0"));
     CHECK(response && strstr(response, "\"id\":\"call_chatcmpl-stream_0\""));
     CHECK(response && strstr(response, "\"tool_calls\":[{\"index\":1"));
@@ -613,7 +614,7 @@ static void test_streamed_tool_response(void) {
     CHECK(response && strstr(response, "\"name\":\"clock\""));
     CHECK(response && strstr(response, "\"finish_reason\":\"tool_calls\""));
     CHECK(response && strstr(response, "data: [DONE]"));
-    CHECK(response && !strstr(response, "hidden"));
+    CHECK(response && !strstr(response, "\"content\":\"hidden"));
     CHECK(response && !strstr(response, "<tool_call>"));
     free(response);
     fg_chat_generated_free(&generated);
@@ -798,7 +799,7 @@ static void test_live_prefix_hit_divergence_and_reset(void) {
     CHECK(status == FG_OK);
     CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: miss\r\n"));
     CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: cold-start\r\n"));
-    CHECK(response && !strstr(response,"reasoning_content"));
+    CHECK(response && strstr(response,"\"reasoning_content\":\"hidden\\n\""));
     CHECK(response && !strstr(response,"<|im_end|>"));
     static const char text_boundary[]="answer<|im_end|>\n";
     CHECK(runtime.history_length>=sizeof(text_boundary)-1u);
@@ -897,7 +898,7 @@ static void test_live_prefix_tool_loop(void) {
     char *response = run_chat_request(&runtime, &session,first.data, &status);
     CHECK(status == FG_OK);
     CHECK(response && strstr(response, "\"finish_reason\":\"tool_calls\""));
-    CHECK(response && !strstr(response,"reasoning_content"));
+    CHECK(response && strstr(response,"\"reasoning_content\":\"hidden\\n\""));
     CHECK(response && !strstr(response,"<|im_end|>"));
     CHECK(runtime.history&&strstr(runtime.history,
                                   "</function>\n</tool_call><|im_end|>\n"));
@@ -1067,6 +1068,139 @@ static void test_failed_generation_fails_closed(void) {
     fg_runtime_close(&runtime);
 }
 
+static void test_nonstream_reasoning_content(void) {
+    fg_runtime runtime = {
+        .generated = "private steps\n</think>\n\nVisible answer",
+    };
+    api_public_session session={0};
+    fg_status status=FG_OK;
+    char *response=run_chat_request(&runtime,&session,
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"Think then answer.\"}]}",
+        &status);
+    CHECK(status==FG_OK);
+    CHECK(response && strstr(response, "\"reasoning_content\":\"private steps\\n\""));
+    CHECK(response && strstr(response, "\"content\":\"Visible answer\""));
+    free(response);
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
+
+    fg_runtime quiet = {
+        .generated = "Four",
+    };
+    api_public_session quiet_session={0};
+    response=run_chat_request(&quiet,&quiet_session,
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"/no_think What is 2+2?\"}]}",
+        &status);
+    CHECK(status==FG_OK);
+    CHECK(response && !strstr(response, "reasoning_content"));
+    CHECK(response && strstr(response, "\"content\":\"Four\""));
+    free(response);
+    api_public_session_free(&quiet_session);
+    fg_runtime_close(&quiet);
+}
+
+static void test_streamed_reasoning_content(void) {
+    int sockets[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    api_chat_request request = {0};
+    api_generation generation = {
+        .fd = sockets[0],
+        .stream = true,
+        .id = "chatcmpl-reason-stream",
+        .model = "Qwen3.8-Flash-Next",
+        .created = 7,
+        .request = &request,
+    };
+    fg_error err = {0};
+    CHECK(send_stream_start(&generation, &err) == FG_OK);
+    CHECK(api_token(&generation, 1, "step one", 8, &err) == FG_OK);
+    CHECK(api_token(&generation, 2, " and two", 8, &err) == FG_OK);
+    CHECK(api_token(&generation, 3, "</think>\n\nVisible",
+                    sizeof("</think>\n\nVisible") - 1u, &err) == FG_OK);
+    CHECK(api_token(&generation, 4, " answer", 7, &err) == FG_OK);
+    fg_chat_generated generated = {0};
+    CHECK(fg_chat_parse_generated(generation.content.data, true, &generated, &err) == FG_OK);
+    CHECK(send_stream_end(&generation, &generated, "stop", &err) == FG_OK);
+    shutdown(sockets[0], SHUT_WR);
+    char *response = read_socket_response(sockets[1]);
+    CHECK(response && strstr(response, "\"reasoning_content\":\"step one\""));
+    CHECK(response && strstr(response, "\"reasoning_content\":\" and two\""));
+    CHECK(response && strstr(response, "\"content\":\"Visible\""));
+    CHECK(response && strstr(response, "\"content\":\" answer\""));
+    const char *reasoning = response ? strstr(response, "\"reasoning_content\"") : NULL;
+    const char *content = response ? strstr(response, "\"content\"") : NULL;
+    CHECK(reasoning && content && reasoning < content);
+    CHECK(response && !strstr(response, "</think>"));
+    free(response);
+    fg_chat_generated_free(&generated);
+    free(generation.content.data);
+    free(generation.visible_pending.data);
+    close(sockets[0]);
+    close(sockets[1]);
+}
+
+static void test_streamed_no_think_has_no_reasoning(void) {
+    int sockets[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    api_chat_request request = {0};
+    api_generation generation = {
+        .fd = sockets[0],
+        .stream = true,
+        .id = "chatcmpl-no-think",
+        .model = "Qwen3.8-Flash-Next",
+        .created = 8,
+        .request = &request,
+        .think_closed = true,
+    };
+    fg_error err = {0};
+    CHECK(send_stream_start(&generation, &err) == FG_OK);
+    CHECK(api_token(&generation, 1, "Four", 4, &err) == FG_OK);
+    fg_chat_generated generated = {0};
+    CHECK(fg_chat_parse_generated(generation.content.data, false, &generated, &err) == FG_OK);
+    CHECK(send_stream_end(&generation, &generated, "stop", &err) == FG_OK);
+    shutdown(sockets[0], SHUT_WR);
+    char *response = read_socket_response(sockets[1]);
+    CHECK(response && strstr(response, "\"content\":\"Four\""));
+    CHECK(response && !strstr(response, "reasoning_content"));
+    free(response);
+    fg_chat_generated_free(&generated);
+    free(generation.content.data);
+    free(generation.visible_pending.data);
+    close(sockets[0]);
+    close(sockets[1]);
+}
+
+static void test_streamed_unclosed_reasoning_flushed(void) {
+    int sockets[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    api_chat_request request = {0};
+    api_generation generation = {
+        .fd = sockets[0],
+        .stream = true,
+        .id = "chatcmpl-unclosed",
+        .model = "Qwen3.8-Flash-Next",
+        .created = 9,
+        .request = &request,
+    };
+    fg_error err = {0};
+    CHECK(send_stream_start(&generation, &err) == FG_OK);
+    CHECK(api_token(&generation, 1, "half a", 6, &err) == FG_OK);
+    CHECK(api_token(&generation, 2, " thought", 8, &err) == FG_OK);
+    fg_chat_generated generated = {0};
+    CHECK(fg_chat_parse_generated(generation.content.data, true, &generated, &err) == FG_OK);
+    CHECK(send_stream_end(&generation, &generated, "length", &err) == FG_OK);
+    shutdown(sockets[0], SHUT_WR);
+    char *response = read_socket_response(sockets[1]);
+    CHECK(response && strstr(response, "\"reasoning_content\":\" thought\""));
+    CHECK(response && !strstr(response, "\"content\":\"half a"));
+    free(response);
+    fg_chat_generated_free(&generated);
+    free(generation.content.data);
+    free(generation.visible_pending.data);
+    close(sockets[0]);
+    close(sockets[1]);
+}
+
 int main(void) {
     test_openai_tools_request();
     test_openai_structured_text_content();
@@ -1075,7 +1209,11 @@ int main(void) {
     test_history_reasoning_and_empty_calls();
     test_greedy_controls();
     test_nonstream_tool_response();
+    test_nonstream_reasoning_content();
     test_streamed_tool_response();
+    test_streamed_reasoning_content();
+    test_streamed_no_think_has_no_reasoning();
+    test_streamed_unclosed_reasoning_flushed();
     test_streamed_incomplete_tags_do_not_leak();
     test_streamed_utf8_and_sentinel_filtering();
     test_json_nul_and_member_limit();
