@@ -836,11 +836,6 @@ static fg_status select_blocks(fg_qsa_session *s,uint32_t slot,const fg_vk_tenso
     return status;
 }
 
-static bool qsa_select_resolve_requested(void){
-    const char *value=getenv("FG_QSA_SELECT_GPU");
-    return !(value&&*value&&strcmp(value,"0")==0);
-}
-
 static fg_status select_blocks_resolve(fg_qsa_session *s,uint32_t slot,
                                        const fg_vk_tensor *index_query,uint32_t tokens,
                                        uint32_t *selected,uint32_t *selected_count,
@@ -934,8 +929,7 @@ static fg_status attend_cache(fg_qsa_session *s,uint32_t slot,uint32_t tokens,
     fg_status status=FG_OK;
     bool trace=qsa_trace_enabled();double t0=0,t_select=0,t_lookup=0,t_fetch=0,t_gather=0;uint32_t fetched=0;
     bool use_resolve=complete_blocks>FG_QSA_MAX_SELECTED_BLOCKS&&!s->locality&&
-        s->slot_table&&s->select_resolved&&s->select_flags&&
-        qsa_select_resolve_requested();
+        s->slot_table&&s->select_resolved&&s->select_flags;
     bool fallback=false,resolved=false;
     if(trace)t0=qsa_now_ms();
     if(complete_blocks<=FG_QSA_MAX_SELECTED_BLOCKS){
