@@ -3,6 +3,32 @@
 You are the post-compaction me. Read this top to bottom before touching anything.
 Everything here is measured, not hoped. The fleet is healthy right now; keep it that way.
 
+## 0a8. ROUND 13 COMBINED A/B - DENSE + HOP MERGED, EXPERTS REJECTED (2026-09-15)
+
+Three branches qualified in one fleet cycle (`perf/combined-round13` scratch build
+`4c63f439`, results in the local ops workspace `bc-250-dbg\results\round13-combined-*`):
+
+- **dense-streaming MERGED**: the "GR chain at 107 GB/s" was 2.6 MB/block of
+  elementwise dispatches - `group_rms_norm` 8.5 -> 40.5 GB/s, `gr_attn_read`
+  96.5 -> 127.3, `gr_ffn_read` 98.4 -> 129.9; split-reduce+SiLU fused, PLE fold,
+  RMS register cache. Measured +0.85 TPS short / +0.75 4K; gates + soak PASS.
+  New tool `tools/fg_dense_rates.py` (per-kernel achieved-GB/s from profile logs).
+- **hop-payload MERGED (opt-in, `FG_OUTPUT_SPLIT=4` only)**: rank-7 hidden
+  suppression is bit-identical; same-binary toggle `FG_OUTPUT_SPLIT_HIDDEN=0`
+  measured +0.35..+0.73 TPS in the 4-way config; trace shows 73 x
+  `hidden-suppressed` and zero hidden sends. bf16 hop packing is PARKED by the
+  no-precision-trade policy.
+- **expert-streaming REJECTED**: register-positive changes cost occupancy -
+  gate_up 72 -> 84 VGPRs (14 -> 12 waves/SIMD), down_reduce 48 -> 64 (20 -> 16);
+  pair 1.377 ms/block vs the <1.00 bar and 133.9 GB/s vs the 185 target (control
+  ~1.283). Revert `1da0af1` first, then `61b1fe2`, if retried.
+
+**Current best numbers:** default config 25.00/25.77 short, 24.13-24.53 4K warm;
+4-way + suppression 26.51/26.89 short, 25.18-25.43 4K warm. The byte-budget
+ceiling says the practical band is 24-31 TPS - we are near its top with these
+kernels; the next real step is the structural item (row-interleaved cooked
+layout for the 175 GB/s GDN-output shape) or new ideas, not more of the same.
+
 ## 0a7. BYTE BUDGET - THE PRE-MTP CEILING (2026-09-15)
 
 Audited from the deployed pack/manifest (sha `1368cd6d`), not from prior docs:
