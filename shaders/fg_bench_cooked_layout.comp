@@ -9,7 +9,7 @@ layout(set=0,binding=0)readonly buffer Weights{uint wb[];};
 layout(set=0,binding=0)readonly buffer WeightsVector{uvec4 wb4[];};
 layout(set=0,binding=1)readonly buffer Input{vec4 x4[];};
 layout(set=0,binding=2)writeonly buffer Output{float y[];};
-layout(push_constant)uniform Push{uint out_dim;uint n_tok;uint blocks;uint tile_bytes;float scale;uint row_stride;uint block_stride;}pc;
+layout(push_constant)uniform Push{uint out_dim;uint n_tok;uint blocks;uint tile_bytes;float scale;uint row_stride;uint block_stride;uint group_stride;}pc;
 shared vec4 subgroup_sum0[64],subgroup_sum1[64];
 
 void main(){
@@ -19,7 +19,7 @@ void main(){
     uint tile_base=(first_row>>4u)*pc.tile_bytes,tile_row=first_row&15u;
     uint quant_offset=(16u*pc.blocks*2u+63u)&~63u;
     uvec4 rows0=uvec4(tile_row,tile_row+1u,tile_row+2u,tile_row+3u),rows1=rows0+4u;
-    uvec4 quant_base0=tile_base+quant_offset+rows0*pc.row_stride,quant_base1=tile_base+quant_offset+rows1*pc.row_stride;
+    uvec4 quant_base0=tile_base+quant_offset+(rows0&7u)*pc.row_stride+(rows0>>3u)*pc.group_stride,quant_base1=tile_base+quant_offset+(rows1&7u)*pc.row_stride+(rows1>>3u)*pc.group_stride;
     uint input_base=token*pc.blocks*8u,cohorts=(pc.blocks+15u)/16u;
     vec4 accumulator0=vec4(0.0),accumulator1=vec4(0.0);
     for(uint group=0u;group<cohorts;group++){
