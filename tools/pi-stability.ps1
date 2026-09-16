@@ -131,8 +131,9 @@ function Test-Ranks {
     }
     $scriptText = @'
 #!/usr/bin/env bash
-rank=$(( $(ip -4 addr show | grep -oP '192\.0\.2\.\K[0-9]+' | head -1) - 42 ))
-count=$(pgrep -cf '^/home/user/.*flash-gordon[^ ]* (api|rank|eval)( |$)' || true)
+ip=$(hostname -I | awk '{print $1}')
+rank=$(( ${ip##*.} - 42 ))
+count=$(pgrep -cf 'flash-gordon[^ ]* (api|rank|eval)( |$)' || true)
 echo "rank=$rank alive=$count"
 '@
     $path = Join-Path ([IO.Path]::GetTempPath()) ("fg-stab-{0}.sh" -f [guid]::NewGuid().ToString("N").Substring(0, 8))
