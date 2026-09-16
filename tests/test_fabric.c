@@ -253,6 +253,9 @@ static void protocol_output_handoff_selfcheck(void){
     layer_wire[3]=0x01u;
     PROTOCOL_CHECK(fg_decode_layer_work_decode(&decoded_flag,FG_PROTOCOL_VERSION,layer_wire,
         layer_bytes,&error)!=FG_OK);
+    layer_wire[3]=0x04u;
+    PROTOCOL_CHECK(fg_decode_layer_work_decode(&decoded_flag,FG_PROTOCOL_VERSION,layer_wire,
+        layer_bytes,&error)!=FG_OK);
     fg_layer_work both_flags=flagged;both_flags.layer=1u;
     both_flags.flags=FG_LAYER_WORK_HAS_NGRAM|FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY;
     PROTOCOL_CHECK(fg_decode_layer_work_encode(layer_wire,sizeof(layer_wire),&layer_bytes,
@@ -260,46 +263,6 @@ static void protocol_output_handoff_selfcheck(void){
     PROTOCOL_CHECK(fg_decode_layer_work_decode(&decoded_flag,FG_PROTOCOL_VERSION,layer_wire,
         layer_bytes,&error)==FG_OK&&decoded_flag.flags==
         (FG_LAYER_WORK_HAS_NGRAM|FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY));
-    fg_layer_work bf16_src={.layer=6u,.source_rank=1u,.destination_rank=0u,
-        .token_index=9u,.position_mode=FG_POSITION_TEXT};
-    for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)bf16_src.hyper[i]=sinf((float)i)*8.0f+0.5f;
-    PROTOCOL_CHECK(setenv("FG_FABRIC_HOP_BF16","1",1)==0);
-    PROTOCOL_CHECK(fg_decode_layer_work_encode(layer_wire,sizeof(layer_wire),&layer_bytes,
-        FG_PROTOCOL_VERSION,&bf16_src,&error)==FG_OK&&
-        layer_bytes==FG_LAYER_WORK_TEXT_HEADER_BYTES+FG_HYPER_WIDTH*2u);
-    fg_layer_work bf16_decoded={0};
-    PROTOCOL_CHECK(fg_decode_layer_work_decode(&bf16_decoded,FG_PROTOCOL_VERSION,layer_wire,
-        layer_bytes,&error)==FG_OK&&
-        bf16_decoded.flags==FG_LAYER_WORK_FLAG_BF16_HYPER);
-    for(uint32_t i=0;i<FG_HYPER_WIDTH;i++){
-        double delta=fabs((double)bf16_decoded.hyper[i]-(double)bf16_src.hyper[i]);
-        double bound=0.00390625*fabs((double)bf16_src.hyper[i])+1e-9;
-        PROTOCOL_CHECK(delta<=bound);
-    }
-    uint8_t result_bf16[FG_LAYER_RESULT_BYTES];uint32_t result_bf16_bytes=0u;
-    PROTOCOL_CHECK(fg_decode_layer_result_encode(result_bf16,&slice_result,
-        &result_bf16_bytes,&error)==FG_OK&&result_bf16_bytes==FG_LAYER_RESULT_BF16_BYTES);
-    fg_layer_result result_bf16_decoded={0};
-    PROTOCOL_CHECK(fg_decode_layer_result_decode(&result_bf16_decoded,result_bf16,
-        result_bf16_bytes,&error)==FG_OK&&
-        result_bf16_decoded.hyper[0]==slice_result.hyper[0]&&
-        result_bf16_decoded.hyper[FG_HYPER_WIDTH-1u]==slice_result.hyper[FG_HYPER_WIDTH-1u]);
-    uint32_t head_bf16_bytes=0u;
-    PROTOCOL_CHECK(fg_output_slice_hidden_encode(head_wire,&head_slice,&head_bf16_bytes,
-        &error)==FG_OK&&head_bf16_bytes==FG_OUTPUT_SLICE_HIDDEN_BF16_BYTES&&head_wire[2]==1u);
-    fg_output_slice_hidden head_bf16_decoded={0};
-    PROTOCOL_CHECK(fg_output_slice_hidden_decode(&head_bf16_decoded,head_wire,
-        head_bf16_bytes,&error)==FG_OK&&
-        memcmp(head_bf16_decoded.hidden,head_slice.hidden,sizeof(head_slice.hidden))==0);
-    PROTOCOL_CHECK(fg_decode_layer_work_decode(&bf16_decoded,FG_PROTOCOL_VERSION,layer_wire,
-        FG_LAYER_WORK_TEXT_HEADER_BYTES+FG_HYPER_WIDTH*4u,&error)!=FG_OK);
-    layer_wire[3]=(uint8_t)(layer_wire[3]&~FG_LAYER_WORK_FLAG_BF16_HYPER);
-    PROTOCOL_CHECK(fg_decode_layer_work_decode(&bf16_decoded,FG_PROTOCOL_VERSION,layer_wire,
-        FG_LAYER_WORK_TEXT_HEADER_BYTES+FG_HYPER_WIDTH*2u,&error)!=FG_OK);
-    PROTOCOL_CHECK(unsetenv("FG_FABRIC_HOP_BF16")==0);
-    PROTOCOL_CHECK(fg_decode_layer_work_encode(layer_wire,sizeof(layer_wire),&layer_bytes,
-        FG_PROTOCOL_VERSION,&bf16_src,&error)==FG_OK&&
-        layer_bytes==FG_LAYER_WORK_TEXT_HEADER_BYTES+FG_HYPER_WIDTH*4u);
     /* the split handoff messages must pass frame validation on protocol 6 */
     fg_frame_header frame;uint32_t frame_bytes=0;
     PROTOCOL_CHECK(fg_output_config_encode(wire,&config,&error)==FG_OK);
