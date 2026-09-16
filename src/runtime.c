@@ -4532,11 +4532,7 @@ fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
         }
     }
     if(status==FG_OK)runtime->context_limit=runtime->options.logical_context_tokens;
-    if(status==FG_OK){
-        const char *prefix_cont=getenv("FG_PREFIX_CONT");
-        runtime->prefix_continuation=!(prefix_cont&&*prefix_cont&&
-                                       strcmp(prefix_cont,"0")==0);
-    }
+    if(status==FG_OK)runtime->prefix_continuation=!runtime->options.no_prefix_continuation;
     if(status==FG_OK)status=manifest_directory(path,runtime->directory,err);
     if(status==FG_OK)
         status=coordinator_open(&runtime->coordinator,runtime->manifest,

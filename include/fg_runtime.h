@@ -36,7 +36,8 @@ enum {
     FG_RUNTIME_OPTION_QSA_HOT = 1u << 2,
     FG_RUNTIME_OPTION_PAGE_CACHE = 1u << 3,
     FG_RUNTIME_OPTION_PREFILL_MICROBATCH = 1u << 4,
-    FG_RUNTIME_OPTION_PREFILL_WINDOW = 1u << 5
+    FG_RUNTIME_OPTION_PREFILL_WINDOW = 1u << 5,
+    FG_RUNTIME_OPTION_PREFIX_CONT = 1u << 6
 };
 
 typedef enum fg_mtp_capability {
@@ -54,6 +55,7 @@ typedef struct fg_runtime_options {
     uint32_t prefill_window;
     uint32_t experimental_flags;
     uint32_t specified;
+    bool no_prefix_continuation;
 } fg_runtime_options;
 
 typedef struct fg_runtime_profile_definition {

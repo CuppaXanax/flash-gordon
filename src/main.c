@@ -32,6 +32,7 @@ static void usage(FILE *file) {
             "  --context-tokens N --gpu-index-tokens N --qsa-hot-tokens N "
             "--qsa-page-cache-mib N\n"
             "  --experimental-context N --experimental-mtp --experimental-vision\n"
+            "  --no-prefix-cont (force a cold reset instead of resuming an exact prefix)\n"
             "Deployment profiles:\n"
             "  --profile " FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_128_NAME
             " (seals 262144/262144/8192/16 MiB with microbatch 128; "
@@ -114,6 +115,11 @@ static fg_status parse_runtime_option(int *index, int argc, char **argv,
     }
     if (!strcmp(flag, "--experimental-vision")) {
         options->experimental_flags |= FG_RUNTIME_EXPERIMENTAL_VISION;
+        return FG_OK;
+    }
+    if (!strcmp(flag, "--no-prefix-cont")) {
+        options->no_prefix_continuation = true;
+        options->specified |= FG_RUNTIME_OPTION_PREFIX_CONT;
         return FG_OK;
     }
     *handled = false;

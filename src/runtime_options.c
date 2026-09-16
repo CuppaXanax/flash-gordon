@@ -60,6 +60,7 @@ static uint32_t requested_mask(const fg_runtime_options *requested){
     if(requested->qsa_page_cache_bytes)mask|=FG_RUNTIME_OPTION_PAGE_CACHE;
     if(requested->prefill_microbatch)mask|=FG_RUNTIME_OPTION_PREFILL_MICROBATCH;
     if(requested->prefill_window)mask|=FG_RUNTIME_OPTION_PREFILL_WINDOW;
+    if(requested->no_prefix_continuation)mask|=FG_RUNTIME_OPTION_PREFIX_CONT;
     return mask;
 }
 
@@ -273,6 +274,7 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
         return FG_ERR_MISMATCH;
     }
     resolved->experimental_flags=input.experimental_flags;
+    resolved->no_prefix_continuation=input.no_prefix_continuation;
     resolved->specified=mask;
     if(resolved->prefill_microbatch!=manifest->prefill_microbatch||
        resolved->prefill_window!=manifest->prefill_window){

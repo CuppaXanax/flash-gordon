@@ -231,6 +231,15 @@ static void test_manifest_upgrade(void){
               resolved.qsa_hot_tokens==FG_RUNTIME_BOOT_CONTEXT_TOKENS&&
               resolved.qsa_page_cache_bytes==0u&&
               resolved.prefill_microbatch==FG_DEFAULT_MICROBATCH);
+        {
+            fg_runtime_options no_prefix={0};
+            no_prefix.no_prefix_continuation=true;
+            no_prefix.specified=FG_RUNTIME_OPTION_PREFIX_CONT;
+            fg_runtime_options resolved_no_prefix={0};
+            CHECK(fg_runtime_options_resolve(&resolved_no_prefix,upgraded,&no_prefix,
+                                             &error)==FG_OK);
+            CHECK(resolved_no_prefix.no_prefix_continuation);
+        }
         CHECK(upgraded->tensor_count==legacy->tensor_count);
         CHECK(upgraded->ranks[3].state_file_bytes==123456u);
         CHECK(memcmp(upgraded->ranks,legacy->ranks,sizeof(legacy->ranks))==0);
