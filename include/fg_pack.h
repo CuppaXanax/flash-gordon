@@ -4,6 +4,9 @@
 #include "fg_gguf.h"
 #include "fg_manifest.h"
 
+#define FG_TOWER_PACK_FILENAME "tower.fgw"
+#define FG_TOWER_MANIFEST_FILENAME "tower.fgm"
+
 typedef struct fg_pack_options {
     const char *output_dir;
     const char **source_paths;
@@ -16,6 +19,15 @@ typedef struct fg_pack_options {
 } fg_pack_options;
 
 fg_status fg_pack_run(const fg_pack_options *options, fg_error *err);
+
+typedef struct fg_pack_tower_options {
+    const char *output_dir;
+    const char **source_paths;
+    uint32_t source_count;
+    bool dry_run;
+} fg_pack_tower_options;
+
+fg_status fg_pack_tower_run(const fg_pack_tower_options *options, fg_error *err);
 
 typedef struct fg_verify_options {
     const char *manifest_path;

@@ -400,13 +400,20 @@ fg_status fg_pack_run(const fg_pack_options *o,fg_error *err){
     }
     for(uint64_t i=0;i<g.tensor_count;i++){
         const fg_gguf_tensor *tensor=&g.tensors[i];
+        fg_tensor_kind kind=fg_gguf_tensor_kind(tensor->name);
+        if(kind==FG_TENSOR_VISION){
+            fg_error_set(err,FG_ERR_MISMATCH,
+                         "vision tensor %.80s belongs in a separate tower pack",
+                         tensor->name);
+            rc=FG_ERR_MISMATCH;break;
+        }
         FILE *source=fopen(g.paths[tensor->shard],"rb");
         if(!source){
             fg_error_set(err,FG_ERR_IO,"reopen %s: %s",
                          g.paths[tensor->shard],strerror(errno));
             rc=FG_ERR_IO;break;
         }
-        if(fg_gguf_tensor_kind(tensor->name)==FG_TENSOR_ROUTED_EXPERT)
+        if(kind==FG_TENSOR_ROUTED_EXPERT)
             rc=pack_expert_tensor(&g,tensor,source,m,rank,err);
         else rc=pack_common(tensor,source,m,rank,&ngram,err);
         fclose(source);
@@ -482,6 +489,135 @@ done:
     free(m);fg_gguf_close(&g);return rc;
 }
 
+/* ---------- tower pack ---------- */
+
+static fg_status tower_source_digest(const fg_pack_tower_options *o,uint8_t composite[32],
+                                     fg_error *err){
+    fg_sha256 source_hash;fg_sha256_init(&source_hash);
+    for(uint32_t i=0;i<o->source_count;i++){
+        uint8_t digest[32];
+        if(o->dry_run){
+            struct stat info;
+            if(stat(o->source_paths[i],&info)!=0||info.st_size<0){
+                fg_error_set(err,FG_ERR_IO,"stat tower source %s: %s",
+                             o->source_paths[i],strerror(errno));
+                return FG_ERR_IO;
+            }
+            uint64_t bytes=(uint64_t)info.st_size;
+            fg_sha256_update(&source_hash,&bytes,sizeof(bytes));
+            fg_sha256_update(&source_hash,o->source_paths[i],
+                             strlen(o->source_paths[i]));
+            continue;
+        }
+        fg_status status=fg_sha256_file(o->source_paths[i],digest,err);
+        if(status!=FG_OK)return status;
+        fg_sha256_update(&source_hash,digest,32);
+    }
+    fg_sha256_final(&source_hash,composite);
+    if(o->dry_run)
+        fprintf(stderr,"tower pack dry-run: payload SHA-256 verification is deferred to the full pack\n");
+    return FG_OK;
+}
+
+fg_status fg_pack_tower_run(const fg_pack_tower_options *o,fg_error *err){
+    if(!o||!o->output_dir||!o->source_paths||!o->source_count){
+        fg_error_set(err,FG_ERR_ARGUMENT,
+                     "tower pack requires --output and at least one --source");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_gguf g;
+    fg_status rc=fg_gguf_open(o->source_paths,o->source_count,&g,err);
+    if(rc!=FG_OK)return rc;
+    if(!g.tensor_count){
+        fg_gguf_close(&g);
+        fg_error_set(err,FG_ERR_FORMAT,"tower source has no tensors");
+        return FG_ERR_FORMAT;
+    }
+    for(uint64_t i=0;i<g.tensor_count;i++){
+        if(fg_gguf_tensor_kind(g.tensors[i].name)!=FG_TENSOR_VISION){
+            fg_error_set(err,FG_ERR_MISMATCH,
+                         "tower source tensor %.80s is not a vision tensor",
+                         g.tensors[i].name);
+            fg_gguf_close(&g);return FG_ERR_MISMATCH;
+        }
+    }
+    fg_manifest *m=malloc(sizeof(*m));
+    if(!m){fg_gguf_close(&g);fg_error_set(err,FG_ERR_OOM,"allocate tower manifest");return FG_ERR_OOM;}
+    fg_manifest_init(m);
+    m->flags|=FG_MANIFEST_HAS_VISION;
+    pack_output tower={0};
+    if(!o->dry_run){
+        if(mkdir_one(o->output_dir,err)!=FG_OK){rc=err->code;goto done;}
+        char path[1024];
+        if(snprintf(path,sizeof(path),"%s/%s",o->output_dir,
+                    FG_TOWER_PACK_FILENAME)>=(int)sizeof(path)){
+            fg_error_set(err,FG_ERR_LIMIT,"tower pack output path is too long");
+            rc=FG_ERR_LIMIT;goto done;
+        }
+        rc=open_pack_output(&tower,path,true,err);
+        if(rc!=FG_OK)goto done;
+    }
+    rc=tower_source_digest(o,m->source_sha256,err);
+    if(rc!=FG_OK)goto done;
+    for(uint64_t i=0;i<g.tensor_count;i++){
+        const fg_gguf_tensor *tensor=&g.tensors[i];
+        FILE *source=fopen(g.paths[tensor->shard],"rb");
+        if(!source){
+            fg_error_set(err,FG_ERR_IO,"reopen %s: %s",
+                         g.paths[tensor->shard],strerror(errno));
+            rc=FG_ERR_IO;break;
+        }
+        uint64_t start=fg_align_up_u64(tower.offset,FG_ALIGNMENT);
+        rc=pad_to(&tower,start,err);
+        fg_sha256 hash;fg_sha256_init(&hash);
+        if(rc==FG_OK)
+            rc=copy_range(source,tensor->offset,tensor->bytes,&tower,&hash,err);
+        fclose(source);
+        if(rc!=FG_OK)break;
+        fg_tensor_record record={0};
+        snprintf(record.name,sizeof(record.name),"%s",tensor->name);
+        record.offset=start;record.bytes=tensor->bytes;record.ggml_type=tensor->type;
+        record.dims=tensor->dims;memcpy(record.shape,tensor->shape,sizeof(record.shape));
+        record.rank=0u;record.layer=UINT16_MAX;record.expert=UINT16_MAX;
+        record.kind=(uint8_t)FG_TENSOR_VISION;record.layout=(uint8_t)FG_TENSOR_LAYOUT_GGML;
+        fg_sha256_final(&hash,record.sha256);
+        rc=fg_manifest_add_tensor(m,&record,err);
+        if(rc!=FG_OK)break;
+        m->ranks[0].tensor_count++;
+        m->ranks[0].persistent_bytes=fg_align_up_u64(tower.offset,FG_ALIGNMENT);
+    }
+    {
+        fg_error close_error={0};
+        fg_status close_rc=finalize_output(&tower,rc==FG_OK?err:&close_error);
+        if(rc==FG_OK)rc=close_rc;
+    }
+    if(rc!=FG_OK)goto done;
+    if(!o->dry_run){
+        rc=commit_output(&tower,err);
+        if(rc!=FG_OK)goto done;
+        char path[1024];
+        if(snprintf(path,sizeof(path),"%s/%s",o->output_dir,
+                    FG_TOWER_MANIFEST_FILENAME)>=(int)sizeof(path)){
+            fg_error_set(err,FG_ERR_LIMIT,"tower manifest output path is too long");
+            rc=FG_ERR_LIMIT;goto done;
+        }
+        struct stat existing;
+        if((stat(path,&existing)==0||errno!=ENOENT)){
+            fg_error_set(err,FG_ERR_IO,"tower pack output already exists: %s",path);
+            rc=FG_ERR_IO;goto done;
+        }
+        rc=fg_manifest_write(path,m,err);
+        if(rc!=FG_OK)goto done;
+    }
+    printf("tower pack%s: %llu vision tensors, %llu payload bytes (aligned) flags=0x%02x\n",
+           o->dry_run?" dry-run":"",(unsigned long long)m->tensor_count,
+           (unsigned long long)m->ranks[0].persistent_bytes,m->flags);
+    fg_manifest_print(m);
+done:
+    if(rc!=FG_OK)discard_output(&tower);
+    free(m);fg_gguf_close(&g);return rc;
+}
+
 /* ---------- pack verification ---------- */
 
 static fg_status hash_gguf_range(FILE *src,uint64_t offset,uint64_t bytes,uint8_t digest[32],fg_error *err){
@@ -533,7 +669,7 @@ fg_status fg_pack_verify(const fg_verify_options *o,fg_error *err){
     printf("Verifying %u manifest tensors against %llu GGUF tensors\n",m->tensor_count,(unsigned long long)g.tensor_count);
 
     /* Phase 1: dump tensor inventory */
-    uint32_t common_count=0,expert_count=0,ngram_count=0,token_count=0,host_count=0;
+    uint32_t common_count=0,expert_count=0,ngram_count=0,token_count=0,host_count=0,vision_count=0;
     for(uint32_t i=0;i<m->tensor_count;i++){
         const fg_tensor_record *t=&m->tensors[i];
         switch(t->kind){
@@ -542,10 +678,11 @@ fg_status fg_pack_verify(const fg_verify_options *o,fg_error *err){
             case FG_TENSOR_NGRAM:ngram_count++;break;
             case FG_TENSOR_TOKENIZER:token_count++;break;
             case FG_TENSOR_HOST_CACHE:host_count++;break;
+            case FG_TENSOR_VISION:vision_count++;break;
             default:break;
         }
     }
-    printf("  common=%u expert=%u ngram=%u tokenizer=%u host-cache=%u\n",common_count,expert_count,ngram_count,token_count,host_count);
+    printf("  common=%u expert=%u ngram=%u tokenizer=%u host-cache=%u vision=%u\n",common_count,expert_count,ngram_count,token_count,host_count,vision_count);
 
     /* Phase 2: verify common tensors */
     uint32_t pass=0,fail=0,skip=0;
@@ -565,6 +702,44 @@ fg_status fg_pack_verify(const fg_verify_options *o,fg_error *err){
         }
     }
     printf("Common tensors: %u pass, %u fail, %u skip\n",pass,fail,skip);
+
+    /* Phase 2b: verify tower (vision) tensors against the source and the tower payload */
+    uint32_t vpass=0,vfail=0;
+    if(m->flags&FG_MANIFEST_HAS_VISION){
+        char tower_path[1200];struct stat info;
+        if(snprintf(tower_path,sizeof(tower_path),"%s/%s",o->pack_dir,
+                    FG_TOWER_PACK_FILENAME)>=(int)sizeof(tower_path)||
+           stat(tower_path,&info)!=0||info.st_size<0||
+           (uint64_t)info.st_size!=m->ranks[0].persistent_bytes){
+            printf("  FAIL tower artifact %s is missing or truncated\n",FG_TOWER_PACK_FILENAME);
+            vfail++;
+        }else for(uint32_t i=0;i<m->tensor_count;i++){
+            const fg_tensor_record *t=&m->tensors[i];
+            if(t->kind!=FG_TENSOR_VISION)continue;
+            const fg_gguf_tensor *gt=find_gguf_tensor(&g,t->name);
+            if(!gt||gt->bytes!=t->bytes||t->layout!=FG_TENSOR_LAYOUT_GGML){
+                printf("  FAIL vision %.80s source inventory mismatch\n",t->name);
+                vfail++;continue;
+            }
+            FILE *src=fopen(g.paths[gt->shard],"rb");
+            uint8_t digest[32];bool source_ok=false;
+            if(src){source_ok=hash_gguf_range(src,gt->offset,gt->bytes,digest,err)==FG_OK;fclose(src);}
+            FILE *artifact=fopen(tower_path,"rb");
+            uint8_t payload[32];bool payload_ok=false;
+            if(artifact){
+                payload_ok=hash_gguf_range(artifact,t->offset,t->bytes,payload,err)==FG_OK;
+                fclose(artifact);
+            }
+            if(source_ok&&payload_ok&&!memcmp(digest,t->sha256,32)&&
+               !memcmp(payload,t->sha256,32)){
+                vpass++;
+            }else{
+                printf("  FAIL vision %.80s SHA-256 mismatch\n",t->name);
+                vfail++;
+            }
+        }
+    }
+    printf("Vision tensors: %u pass, %u fail\n",vpass,vfail);
 
     uint32_t hpass=0,hfail=0;
     for(uint32_t i=0;i<m->tensor_count;i++){
@@ -702,7 +877,7 @@ fg_status fg_pack_verify(const fg_verify_options *o,fg_error *err){
             fgw_head[0],fgw_head[1],fgw_head[2],fgw_head[3]);
     }
 
-    uint32_t total_pass=pass+epass+hpass+npass,total_fail=fail+efail+hfail+nfail;
+    uint32_t total_pass=pass+epass+hpass+npass+vpass,total_fail=fail+efail+hfail+nfail+vfail;
     printf("\n=== VERIFICATION %s: %u pass, %u fail ===\n",total_fail?"FAILED":"PASSED",total_pass,total_fail);
     fg_gguf_close(&g);free(m);
     return total_fail?FG_ERR_MISMATCH:FG_OK;

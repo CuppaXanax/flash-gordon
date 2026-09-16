@@ -17,6 +17,8 @@ static void usage(FILE *file) {
             "Usage:\n"
             "  flash-gordon pack --output DIR --source FILE [--source FILE ...] "
             "[--router-profile FILE | --expert-map FILE] [--profile NAME] [--dry-run]\n"
+            "  flash-gordon pack-tower --output DIR --source FILE [--source FILE ...] "
+            "[--dry-run]\n"
             "  flash-gordon verify --manifest FILE --pack-dir DIR --source FILE "
             "[--source FILE ...]\n"
             "  flash-gordon schema --source FILE [--source FILE ...]\n"
@@ -165,6 +167,36 @@ static fg_status pack_cmd(int argc, char **argv, fg_error *err) {
     }
     options.source_paths = sources;
     fg_status status = fg_pack_run(&options, err);
+    free(sources);
+    return status;
+}
+
+static fg_status pack_tower_cmd(int argc, char **argv, fg_error *err) {
+    fg_pack_tower_options options = {0};
+    const char **sources = calloc((size_t)argc, sizeof(*sources));
+    if (!sources) {
+        fg_error_set(err, FG_ERR_OOM, "allocate tower source arguments");
+        return FG_ERR_OOM;
+    }
+    for (int i = 2; i < argc; i++) {
+        if (!strcmp(argv[i], "--output"))
+            options.output_dir = arg_value(&i, argc, argv, "--output", err);
+        else if (!strcmp(argv[i], "--source"))
+            sources[options.source_count++] = arg_value(&i, argc, argv, "--source", err);
+        else if (!strcmp(argv[i], "--dry-run"))
+            options.dry_run = true;
+        else {
+            fg_error_set(err, FG_ERR_ARGUMENT, "unknown pack-tower option: %s", argv[i]);
+            free(sources);
+            return FG_ERR_ARGUMENT;
+        }
+        if (err->code != FG_OK) {
+            free(sources);
+            return err->code;
+        }
+    }
+    options.source_paths = sources;
+    fg_status status = fg_pack_tower_run(&options, err);
     free(sources);
     return status;
 }
@@ -389,6 +421,8 @@ int main(int argc, char **argv) {
     fg_status status;
     if (!strcmp(argv[1], "pack"))
         status = pack_cmd(argc, argv, &err);
+    else if (!strcmp(argv[1], "pack-tower"))
+        status = pack_tower_cmd(argc, argv, &err);
     else if (!strcmp(argv[1], "verify"))
         status = verify_cmd(argc, argv, &err);
     else if (!strcmp(argv[1], "upgrade-manifest"))

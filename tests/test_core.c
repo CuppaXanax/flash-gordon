@@ -589,6 +589,124 @@ static void test_qsa_page_cache(void){
     cache=NULL;CHECK(fg_qsa_page_cache_create(&cache,UINT32_MAX,&err)==FG_ERR_LIMIT&&!cache);
 }
 static void put_u32(FILE *f,uint32_t v){CHECK(fwrite(&v,1,4,f)==4);}static void put_u64(FILE *f,uint64_t v){CHECK(fwrite(&v,1,8,f)==8);}static void put_string(FILE *f,const char *s){uint64_t n=strlen(s);put_u64(f,n);CHECK(fwrite(s,1,(size_t)n,f)==n);}
+
+static void put_gguf_tensor(FILE *f,const char *name,uint32_t type,uint32_t dims,
+                            const uint64_t *shape,uint64_t offset){
+    put_string(f,name);put_u32(f,dims);
+    for(uint32_t d=0;d<dims;d++)put_u64(f,shape[d]);
+    put_u32(f,type);put_u64(f,offset);
+}
+
+static void test_tensor_classification(void){
+    CHECK(fg_gguf_tensor_kind("v.patch_embd.weight")==FG_TENSOR_VISION);
+    CHECK(fg_gguf_tensor_kind("v.patch_embd.weight.1")==FG_TENSOR_VISION);
+    CHECK(fg_gguf_tensor_kind("v.blk.26.ffn_down.weight")==FG_TENSOR_VISION);
+    CHECK(fg_gguf_tensor_kind("v.position_embd.weight")==FG_TENSOR_VISION);
+    CHECK(fg_gguf_tensor_kind("mm.0.weight")==FG_TENSOR_VISION);
+    CHECK(fg_gguf_tensor_kind("mm.2.bias")==FG_TENSOR_VISION);
+    CHECK(fg_gguf_tensor_kind("blk.48.attn_q.weight")==FG_TENSOR_MTP);
+    CHECK(fg_gguf_tensor_kind("blk.48.ffn_gate_exps.weight")==FG_TENSOR_MTP);
+    CHECK(fg_gguf_tensor_kind("blk.48.nextn.eh_proj.weight")==FG_TENSOR_MTP);
+    CHECK(fg_gguf_tensor_kind("blk.48.nextn.enorm.weight")==FG_TENSOR_MTP);
+    CHECK(fg_gguf_tensor_kind("mtp.fc_embedding.weight")==FG_TENSOR_MTP);
+    CHECK(fg_gguf_tensor_kind("token_embd.weight")==FG_TENSOR_COMMON);
+    CHECK(fg_gguf_tensor_kind("blk.0.attn_q.weight")==FG_TENSOR_COMMON);
+    CHECK(fg_gguf_tensor_kind("blk.47.attn_q.weight")==FG_TENSOR_COMMON);
+    CHECK(fg_gguf_tensor_kind("output.weight")==FG_TENSOR_COMMON);
+    CHECK(fg_gguf_tensor_kind("output_hc_down.weight")==FG_TENSOR_COMMON);
+    CHECK(fg_gguf_tensor_kind("per_layer_token_embd.weight")==FG_TENSOR_NGRAM);
+    CHECK(fg_gguf_tensor_kind("blk.0.ffn_down_exps.weight")==FG_TENSOR_ROUTED_EXPERT);
+}
+
+static void test_pack_tower(void){
+    fg_error err={0};
+    test_tensor_classification();
+    char source[128],text_source[128],dir[128],manifest_path[160];
+    snprintf(source,sizeof(source),"/tmp/fg-tower-%ld.gguf",(long)getpid());
+    snprintf(text_source,sizeof(text_source),"/tmp/fg-tower-text-%ld.gguf",(long)getpid());
+    snprintf(dir,sizeof(dir),"/tmp/fg-tower-%ld-pack",(long)getpid());
+    snprintf(manifest_path,sizeof(manifest_path),"%s/%s",dir,FG_TOWER_MANIFEST_FILENAME);
+    FILE *f=fopen(source,"wb");
+    CHECK(f!=NULL);
+    if(!f)return;
+    static const uint64_t patch_shape[4]={16,16,3,32};
+    static const uint64_t pos_shape[2]={32,8};
+    static const uint64_t qkv_shape[2]={32,32};
+    static const uint64_t mm0_shape[2]={64,32};
+    static const uint64_t bias_shape[1]={8};
+    put_u32(f,0x46554747u);put_u32(f,3);put_u64(f,6);put_u64(f,0);
+    put_gguf_tensor(f,"v.patch_embd.weight",0,4,patch_shape,0u);
+    put_gguf_tensor(f,"v.patch_embd.weight.1",0,4,patch_shape,98304u);
+    put_gguf_tensor(f,"v.position_embd.weight",0,2,pos_shape,196608u);
+    put_gguf_tensor(f,"v.blk.0.attn_qkv.weight",8,2,qkv_shape,197632u);
+    put_gguf_tensor(f,"mm.0.weight",8,2,mm0_shape,198720u);
+    put_gguf_tensor(f,"mm.2.bias",0,1,bias_shape,200896u);
+    while((ftell(f)&31)!=0)fputc(0,f);
+    for(uint32_t i=0;i<24576u;i++){float v=(float)(i%97)*0.5f;CHECK(fwrite(&v,1,4,f)==4);}
+    for(uint32_t i=0;i<24576u;i++){float v=-(float)(i%89)*0.25f;CHECK(fwrite(&v,1,4,f)==4);}
+    for(uint32_t i=0;i<256u;i++){float v=(float)i;CHECK(fwrite(&v,1,4,f)==4);}
+    uint8_t q8[1088];memset(q8,0,sizeof(q8));CHECK(fwrite(q8,1,sizeof(q8),f)==sizeof(q8));
+    uint8_t q8b[2176];memset(q8b,0,sizeof(q8b));CHECK(fwrite(q8b,1,sizeof(q8b),f)==sizeof(q8b));
+    for(uint32_t i=0;i<8u;i++){float v=(float)i;CHECK(fwrite(&v,1,4,f)==4);}
+    fclose(f);
+    f=fopen(text_source,"wb");
+    CHECK(f!=NULL);
+    if(f){
+        put_u32(f,0x46554747u);put_u32(f,3);put_u64(f,1);put_u64(f,0);
+        put_gguf_tensor(f,"token_embd.weight",0,1,bias_shape,0u);
+        while((ftell(f)&31)!=0)fputc(0,f);
+        for(uint32_t i=0;i<8u;i++){float v=(float)i;CHECK(fwrite(&v,1,4,f)==4);}
+        fclose(f);
+    }
+    const char *sources[]={source};
+    const char *text_sources[]={text_source};
+    fg_pack_tower_options dry={.output_dir=dir,.source_paths=sources,.source_count=1u,.dry_run=true};
+    CHECK(fg_pack_tower_run(&dry,&err)==FG_OK);
+    char tower_path[160];struct stat info;
+    snprintf(tower_path,sizeof(tower_path),"%s/%s",dir,FG_TOWER_PACK_FILENAME);
+    CHECK(stat(tower_path,&info)!=0&&errno==ENOENT);
+    fg_pack_tower_options tower_options={.output_dir=dir,.source_paths=sources,.source_count=1u};
+    CHECK(fg_pack_tower_run(&tower_options,&err)==FG_OK);
+    fg_manifest *m=malloc(sizeof(*m));
+    CHECK(m!=NULL);
+    if(m){
+        CHECK(fg_manifest_read(manifest_path,m,&err)==FG_OK);
+        CHECK((m->flags&FG_MANIFEST_HAS_VISION)!=0u);
+        CHECK(m->tensor_count==6u);
+        CHECK(m->ranks[0].tensor_count==6u);
+        for(uint32_t i=0;i<m->tensor_count;i++){
+            CHECK(m->tensors[i].kind==FG_TENSOR_VISION);
+            CHECK(m->tensors[i].rank==0u);
+            CHECK(m->tensors[i].layer==UINT16_MAX);
+            CHECK(m->tensors[i].layout==FG_TENSOR_LAYOUT_GGML);
+        }
+        CHECK(!strcmp(m->tensors[0].name,"v.patch_embd.weight"));
+        CHECK(!strcmp(m->tensors[3].name,"v.blk.0.attn_qkv.weight"));
+        CHECK(!strcmp(m->tensors[5].name,"mm.2.bias"));
+        CHECK(stat(tower_path,&info)==0);
+        CHECK((uint64_t)info.st_size==m->ranks[0].persistent_bytes);
+        CHECK((uint64_t)info.st_size==fg_align_up_u64(208928u,FG_ALIGNMENT));
+        fg_verify_options verify={.manifest_path=manifest_path,.pack_dir=dir,
+                                  .source_paths=sources,.source_count=1u};
+        CHECK(fg_pack_verify(&verify,&err)==FG_OK);
+        FILE *artifact=fopen(tower_path,"r+b");
+        CHECK(artifact!=NULL);
+        if(artifact){
+            CHECK(fseek(artifact,100,SEEK_SET)==0);
+            int c=fgetc(artifact);CHECK(c!=EOF);
+            CHECK(fseek(artifact,-1,SEEK_CUR)==0);
+            fputc(c^0x40,artifact);fclose(artifact);
+        }
+        CHECK(fg_pack_verify(&verify,&err)==FG_ERR_MISMATCH);
+        free(m);
+    }
+    fg_pack_options text={.output_dir=dir,.source_paths=sources,.source_count=1u,.skip_model_validation=true};
+    CHECK(fg_pack_run(&text,&err)==FG_ERR_MISMATCH);
+    fg_pack_tower_options reversed={.output_dir=dir,.source_paths=text_sources,.source_count=1u};
+    CHECK(fg_pack_tower_run(&reversed,&err)==FG_ERR_MISMATCH);
+    unlink(manifest_path);unlink(tower_path);rmdir(dir);
+    unlink(source);unlink(text_source);
+}
 static void test_pack(void){char source[128],dir[128],manifest_path[160];snprintf(source,sizeof(source),"/tmp/fg-test-%ld.gguf",(long)getpid());snprintf(dir,sizeof(dir),"/tmp/fg-test-%ld-pack",(long)getpid());snprintf(manifest_path,sizeof(manifest_path),"%s/manifest.fgm",dir);FILE *f=fopen(source,"wb");CHECK(f!=NULL);if(!f)return;put_u32(f,0x46554747u);put_u32(f,3);put_u64(f,2);put_u64(f,0);put_string(f,"token_embd.weight");put_u32(f,1);put_u64(f,1);put_u32(f,0);put_u64(f,0);put_string(f,"blk.0.ffn_gate_exps.weight");put_u32(f,2);put_u64(f,1);put_u64(f,512);put_u32(f,0);put_u64(f,32);while((ftell(f)&31)!=0)fputc(0,f);float one=1.0f;CHECK(fwrite(&one,1,4,f)==4);for(unsigned i=4;i<32;i++)fputc(0,f);for(unsigned i=0;i<512;i++){float v=(float)i;CHECK(fwrite(&v,1,4,f)==4);}fclose(f);const char *sources[]={source};fg_pack_options o={.output_dir=dir,.source_paths=sources,.source_count=1,.skip_model_validation=true};fg_error err={0};fg_status pack_rc=fg_pack_run(&o,&err);if(pack_rc!=FG_OK)fprintf(stderr,"pack error: %s\n",err.message);CHECK(pack_rc==FG_OK);fg_manifest *m=malloc(sizeof(*m));CHECK(m!=NULL);if(m){CHECK(fg_manifest_read(manifest_path,m,&err)==FG_OK);CHECK(m->prefill_microbatch==128u&&m->session.logical_context_tokens==262144u&&m->session.gpu_index_tokens==262144u&&m->session.host_page_cache_bytes==FG_RUNTIME_PROFILE_NATIVE_262K_PAGE_CACHE_BYTES);for(uint32_t r=0;r<FG_RANK_COUNT;r++)CHECK(m->ranks[r].scratch_bytes==fg_q38_runtime_scratch_bytes(r,m->prefill_microbatch,m->prefill_window,m->max_context));CHECK(m->tensor_count==5);CHECK(m->tensors[0].dims==1&&m->tensors[0].shape[0]==1&&m->tensors[0].kind==FG_TENSOR_COMMON&&m->tensors[0].layout==FG_TENSOR_LAYOUT_GGML);char external_path[160];struct stat external_info;snprintf(external_path,sizeof(external_path),"%s/%s",dir,FG_TOKEN_EMBEDDING_ARTIFACT);CHECK(stat(external_path,&external_info)!=0&&errno==ENOENT);for(uint32_t i=1;i<5;i++){uint32_t rank=m->layer_groups[0][i-1u];char expected[FG_TENSOR_NAME_MAX];snprintf(expected,sizeof(expected),"blk.0.ffn_gate_exps.weight.rank%u",rank);CHECK(m->tensors[i].dims==2&&m->tensors[i].shape[1]==128);CHECK(!strcmp(m->tensors[i].name,expected)&&m->tensors[i].rank==rank&&m->tensors[i].bytes==512u);}for(uint32_t r=0;r<4;r++)CHECK(m->ranks[m->layer_groups[0][r]].tensor_count>=1);char rank_path[160];snprintf(rank_path,sizeof(rank_path),"%s/rank-00.fgw",dir);struct stat st;CHECK(stat(rank_path,&st)==0);void *arena=NULL;CHECK(posix_memalign(&arena,FG_ALIGNMENT,(size_t)st.st_size)==0);FILE *rf=fopen(rank_path,"rb");CHECK(rf!=NULL);if(arena&&rf){CHECK(fread(arena,1,(size_t)st.st_size,rf)==(size_t)st.st_size);fclose(rf);CHECK(fg_verify_rank_arena(m,0,arena,(uint64_t)st.st_size,&err)==FG_OK);((uint8_t *)arena)[m->tensors[0].offset]^=1;CHECK(fg_verify_rank_arena(m,0,arena,(uint64_t)st.st_size,&err)==FG_ERR_MISMATCH);}free(arena);uint64_t sealed_scratch=m->ranks[1].scratch_bytes;m->ranks[1].scratch_bytes=sealed_scratch-1u;CHECK(fg_manifest_write(manifest_path,m,&err)==FG_OK);fg_manifest *understated=malloc(sizeof(*understated));CHECK(understated!=NULL);if(understated){CHECK(fg_manifest_read(manifest_path,understated,&err)==FG_ERR_LIMIT);free(understated);}m->ranks[1].scratch_bytes=sealed_scratch;CHECK(fg_manifest_write(manifest_path,m,&err)==FG_OK);free(m);}f=fopen(manifest_path,"r+b");CHECK(f!=NULL);if(f){CHECK(fseek(f,(long)offsetof(fg_manifest,source_sha256),SEEK_SET)==0);int c=fgetc(f);CHECK(c!=EOF);CHECK(fseek(f,-1,SEEK_CUR)==0);fputc(c^1,f);fclose(f);m=malloc(sizeof(*m));if(m){CHECK(fg_manifest_read(manifest_path,m,&err)==FG_ERR_MISMATCH);free(m);}}unlink(manifest_path);char p[160];for(unsigned r=0;r<8;r++){snprintf(p,sizeof(p),"%s/rank-%02u.fgw",dir,r);unlink(p);}snprintf(p,sizeof(p),"%s/ngram.iq4nl",dir);unlink(p);rmdir(dir);unlink(source);}
 
 static void test_q38_math(void){
@@ -742,4 +860,4 @@ static void test_output_history_protocol(void){
     CHECK(fg_output_history_decode(&decoded,storage,8u,wire,bytes,&err)==FG_ERR_FORMAT);
 }
 
-int main(void){test_sha();test_topology();test_profile();test_expert_map();test_expert_map_file();test_expert_map_single();test_expert_map_owners();test_sealed_expert_map();test_deployment_profile();test_native_262k_profile_geometry();test_protocol();test_layer_protocol();test_decode_layer_protocol();test_qsa_block_protocol();test_qsa_page_protocol();test_prefill_chunk_frontiers();test_qsa_locality_metrics();test_output_protocol();test_output_history_protocol();test_ngram_protocol();test_ngram();test_ngram_suffix();test_ngram_planner_batch_capacity();test_qsa_scratch_geometry();test_qsa_state();test_qsa_state_failed_create_cleanup();test_qsa_state_batch();test_qsa_state_write_batch();test_qsa_replica_queue();test_lazy_qsa_clear_barrier();test_prefill_storage_geometry();test_qsa_page_cache();test_q38_math();test_cooked_q8();test_pack_cooked_q8();test_pack_cooked_experts();test_decode_protocol();test_prefill_protocol();test_pack();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}
+int main(void){test_sha();test_topology();test_profile();test_expert_map();test_expert_map_file();test_expert_map_single();test_expert_map_owners();test_sealed_expert_map();test_deployment_profile();test_native_262k_profile_geometry();test_protocol();test_layer_protocol();test_decode_layer_protocol();test_qsa_block_protocol();test_qsa_page_protocol();test_prefill_chunk_frontiers();test_qsa_locality_metrics();test_output_protocol();test_output_history_protocol();test_ngram_protocol();test_ngram();test_ngram_suffix();test_ngram_planner_batch_capacity();test_qsa_scratch_geometry();test_qsa_state();test_qsa_state_failed_create_cleanup();test_qsa_state_batch();test_qsa_state_write_batch();test_qsa_replica_queue();test_lazy_qsa_clear_barrier();test_prefill_storage_geometry();test_qsa_page_cache();test_q38_math();test_cooked_q8();test_pack_cooked_q8();test_pack_cooked_experts();test_decode_protocol();test_prefill_protocol();test_pack();test_pack_tower();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}
