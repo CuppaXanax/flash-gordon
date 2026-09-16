@@ -32,7 +32,7 @@ qualified pack and the stored expert metadata are untouched.
   * down/reduce: 32 lanes, **two adjacent rows per lane** share one scale
     word, one fifth-bit word and one activation read.  Load instructions per
     layer drop **224,000 -> 128,000 (-43%)** on Q5_1 and **-33%** on cooked
-    Q8_0; L1 request bytes drop ~40%.
+    Q8_0, and requested L1 bytes drop ~40%.
   * gate/up: the next block's two K-quant words are **issued one block early**
     (rolling double buffer) so a wave keeps the DRAM stream in flight while it
     decodes the current block.  Load count unchanged; +~12 loop-carried values.
@@ -145,7 +145,8 @@ The cooked Q8_0 branch gives each lane two four-value words of a row block
 Accounting per layer (wave-level load instructions, Q5_1):
 **224,000 -> 128,000 (-42.9%)**; per 32 values the lane now issues 8 loads
 (2 quant `uvec2`, 1 scale `uvec2`, 1 fifth-bit `uvec2`, 4 activation `vec4`)
-instead of 14.  L1 request bytes per layer drop 2.56 -> 1.54 MB (-40%).
+instead of 14.  Requested L1 bytes per layer drop 81.9 -> 49.2 MB (-40%;
+this is request traffic including the broadcast repeats, not DRAM bytes).
 Cooked Q8_0: **384,000 -> 256,000 (-33.3%)**.
 
 ### 3.2 `1da0af1` gate/up: one-block-ahead K-quant prefetch
