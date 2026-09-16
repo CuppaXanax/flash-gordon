@@ -737,6 +737,12 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
     fg_layer_work *work=&context->decode_work;
     fg_status status=fg_decode_layer_work_decode(work,manifest->protocol_version,
         payload,bytes,err);
+    if(status!=FG_OK)for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(work->hyper[i])){
+        fg_error_set(err,FG_ERR_FORMAT,
+            "rank %u received non-finite decode work from rank %u token=%u layer=%u element=%u value=%g",
+            self,peer,work->token_index,work->layer,i,work->hyper[i]);
+        break;
+    }
     uint64_t request=fg_frame_request_id(header);
     bool has_ngram=(work->flags&FG_LAYER_WORK_HAS_NGRAM)!=0u;
     if(status==FG_OK&&(!session_id||request!=session_id||peer!=work->source_rank||
@@ -4123,6 +4129,13 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
     for(uint32_t axis=0;axis<3u;axis++)work->position[axis]=token_index;
     if(status==FG_OK)status=fg_vk_tensor_read(input,0,work->hyper,
         (uint64_t)FG_HYPER_WIDTH*4u,err);
+    if(status==FG_OK)for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(work->hyper[i])){
+        fg_error_set(err,FG_ERR_FORMAT,
+            "rank 0 embedding for token %u produced non-finite hidden at element %u value=%g",
+            (uint32_t)history[history_count-1u],i,work->hyper[i]);
+        status=FG_ERR_FORMAT;
+        break;
+    }
     if(status==FG_OK&&ngram_view){
         status=fg_vk_tensor_read(ngram_view,0,work->ngram_embedding,
             (uint64_t)FG_NGRAM_EMBED_VALUES*4u,err);
@@ -4784,6 +4797,8 @@ static fg_status runtime_generate_tokens(
         if(status!=FG_OK)break;
         runtime->history[runtime->history_count++]=(int32_t)next;generated++;
         state_mutated=true;
+        if(generate_trace)fprintf(stderr,"GENERATE_TOKEN n=%u id=%u logit=%.6g\n",
+            generated,next,logit);
         status=coordinator_decode_token(&runtime->coordinator,runtime->history,
             runtime->history_count,(uint32_t)runtime->history_count-1u,&next,&logit,err);
         if(generate_trace)gt_decode+=dispatch_ts()-t_mark;
