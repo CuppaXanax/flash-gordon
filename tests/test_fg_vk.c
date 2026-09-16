@@ -997,6 +997,7 @@ static int test_group_norm(void){
     for(uint32_t i=0;i<TOTAL;i++){x[i]=sinf((float)i*0.007f)+0.1f;w[i]=cosf((float)i*0.003f)*0.05f;}fg_q38_group_rms_norm(ref,x,w,GROUPS,WIDTH,1e-6f);
     fg_vk_tensor *gx=tensor(x,TOTAL*4u),*gw=tensor(w,TOTAL*4u),*gy=tensor(NULL,TOTAL*4u);int ok=gx&&gw&&gy&&fg_vk_group_rms_norm(context,gy,gx,gw,WIDTH,GROUPS,1,1e-6f,&error)==FG_OK&&fg_vk_tensor_read(gy,0,got,TOTAL*4u,&error)==FG_OK;
     for(uint32_t i=0;ok&&i<TOTAL;i++)if(fabsf(got[i]-ref[i])>2e-5f)ok=0;
+    if(getenv("FG_RMS_HASH")){uint64_t hash=1469598103934665603ull;const uint8_t *bytes=(const uint8_t *)got;for(uint32_t i=0;i<TOTAL*4u;i++){hash^=bytes[i];hash*=1099511628211ull;}fprintf(stderr,"GROUP_NORM_HASH %016llx\n",(unsigned long long)hash);}
     fg_vk_tensor_destroy(gy);fg_vk_tensor_destroy(gw);fg_vk_tensor_destroy(gx);free(ref);free(got);free(w);free(x);return ok;
 }
 
@@ -2679,6 +2680,46 @@ static int test_ple_decode(void){
     fg_vk_tensor *gk=tensor(key,HYPER*4u),*gq=tensor(query,HYPER*4u),*gv=tensor(value,HIDDEN*4u),*gg=tensor(NULL,HYPER*4u),*gn=tensor(normalized,HYPER*4u),*gw=tensor(weight,HYPER*16u),*gs=tensor(state,HYPER*HISTORY*4u),*go=tensor(NULL,HYPER*4u),*gl=tensor(left,HYPER*4u),*ga=tensor(NULL,HYPER*4u);int ok=gk&&gq&&gv&&gg&&gn&&gw&&gs&&go&&gl&&ga&&fg_vk_ple_gate(context,gg,gk,gq,gv,&error)==FG_OK&&fg_vk_tensor_read(gg,0,got,HYPER*4u,&error)==FG_OK;for(uint32_t i=0;ok&&i<HYPER;i++)if(fabsf(got[i]-gated[i])>2e-5f){fprintf(stderr,"PLE gate %u GPU=%g CPU=%g\n",i,got[i],gated[i]);ok=0;}if(ok)ok=fg_vk_ple_conv_decode(context,go,gs,gg,gn,gw,&error)==FG_OK&&fg_vk_tensor_read(go,0,got,HYPER*4u,&error)==FG_OK&&fg_vk_tensor_read(gs,0,state,HYPER*HISTORY*4u,&error)==FG_OK;for(uint32_t i=0;ok&&i<HYPER;i++)if(fabsf(got[i]-ple_expected[i])>2e-5f){fprintf(stderr,"PLE conv %u GPU=%g CPU=%g\n",i,got[i],ple_expected[i]);ok=0;}for(uint32_t i=0;ok&&i<HYPER*HISTORY;i+=37u)if(state[i]!=state_expected[i]){fprintf(stderr,"PLE state %u GPU=%g CPU=%g\n",i,state[i],state_expected[i]);ok=0;}if(ok)ok=fg_vk_add_f32(context,ga,gl,go,HYPER,&error)==FG_OK&&fg_vk_tensor_read(ga,0,got,HYPER*4u,&error)==FG_OK;for(uint32_t i=0;ok&&i<HYPER;i++)if(fabsf(got[i]-sum_expected[i])>2e-5f){fprintf(stderr,"PLE add %u GPU=%g CPU=%g\n",i,got[i],sum_expected[i]);ok=0;}fg_vk_tensor_destroy(ga);fg_vk_tensor_destroy(gl);fg_vk_tensor_destroy(go);fg_vk_tensor_destroy(gs);fg_vk_tensor_destroy(gw);fg_vk_tensor_destroy(gn);fg_vk_tensor_destroy(gg);fg_vk_tensor_destroy(gv);fg_vk_tensor_destroy(gq);fg_vk_tensor_destroy(gk);free(sum_expected);free(left);free(got);free(ple_expected);free(state_expected);free(state);free(weight);free(normalized);free(gated);free(value);free(query);free(key);return ok;
 }
 
+static int test_ple_conv_add_parity(void){
+    enum{HIDDEN=2560,HYPER=10240,HISTORY=9};
+    float *gated=malloc(HYPER*4u),*normalized=malloc(HYPER*4u),*weight=malloc(HYPER*4u*4u),
+          *state_seq=malloc(HYPER*HISTORY*4u),*state_fused=malloc(HYPER*HISTORY*4u),
+          *state_got=malloc(HYPER*HISTORY*4u),*hyper=malloc(HYPER*4u),
+          *out_seq=malloc(HYPER*4u),*out_fused=malloc(HYPER*4u);
+    if(!gated||!normalized||!weight||!state_seq||!state_fused||!state_got||!hyper||!out_seq||!out_fused){
+        free(out_fused);free(out_seq);free(hyper);free(state_got);free(state_fused);free(state_seq);
+        free(weight);free(normalized);free(gated);return 0;
+    }
+    for(uint32_t i=0;i<HYPER;i++){
+        gated[i]=sinf((float)i*0.0021f);normalized[i]=sinf((float)i*0.0031f)*0.5f;
+        hyper[i]=cosf((float)i*0.0043f);
+        for(uint32_t k=0;k<4u;k++)weight[i*4u+k]=0.1f*cosf((float)(i*4u+k)*0.0013f);
+        for(uint32_t h=0;h<HISTORY;h++)state_seq[i*HISTORY+h]=0.03f*sinf((float)(i*HISTORY+h)*0.0007f);
+    }
+    memcpy(state_fused,state_seq,HYPER*HISTORY*4u);
+    fg_vk_tensor *gg=tensor(gated,HYPER*4u),*gn=tensor(normalized,HYPER*4u),*gw=tensor(weight,HYPER*16u),
+        *gsa=tensor(state_seq,HYPER*HISTORY*4u),*gsb=tensor(state_fused,HYPER*HISTORY*4u),
+        *gh=tensor(hyper,HYPER*4u),*gc=tensor(NULL,HYPER*4u),*go=tensor(NULL,HYPER*4u),
+        *gf=tensor(NULL,HYPER*4u);
+    int ok=gg&&gn&&gw&&gsa&&gsb&&gh&&gc&&go&&gf&&
+        fg_vk_ple_conv_decode(context,gc,gsa,gg,gn,gw,&error)==FG_OK&&
+        fg_vk_add_f32(context,go,gh,gc,HYPER,&error)==FG_OK&&
+        fg_vk_ple_conv_decode_add(context,gf,gsb,gg,gn,gw,gh,&error)==FG_OK&&
+        fg_vk_tensor_read(go,0,out_seq,HYPER*4u,&error)==FG_OK&&
+        fg_vk_tensor_read(gf,0,out_fused,HYPER*4u,&error)==FG_OK&&
+        fg_vk_tensor_read(gsa,0,state_seq,HYPER*HISTORY*4u,&error)==FG_OK&&
+        fg_vk_tensor_read(gsb,0,state_got,HYPER*HISTORY*4u,&error)==FG_OK;
+    for(uint32_t i=0;ok&&i<HYPER;i++)
+        if(memcmp(&out_fused[i],&out_seq[i],sizeof(float))!=0){fprintf(stderr,"PLE conv add %u fused=%g sequence=%g\n",i,out_fused[i],out_seq[i]);ok=0;}
+    for(uint32_t i=0;ok&&i<HYPER*HISTORY;i++)
+        if(memcmp(&state_got[i],&state_seq[i],sizeof(float))!=0){fprintf(stderr,"PLE conv add state %u fused=%g sequence=%g\n",i,state_got[i],state_seq[i]);ok=0;break;}
+    fg_vk_tensor_destroy(gf);fg_vk_tensor_destroy(go);fg_vk_tensor_destroy(gc);fg_vk_tensor_destroy(gh);
+    fg_vk_tensor_destroy(gsb);fg_vk_tensor_destroy(gsa);fg_vk_tensor_destroy(gw);fg_vk_tensor_destroy(gn);
+    fg_vk_tensor_destroy(gg);
+    free(out_fused);free(out_seq);free(hyper);free(state_got);free(state_fused);free(state_seq);
+    free(weight);free(normalized);free(gated);return ok;
+}
+
 static int test_ple_prefill_scan_tokens(uint32_t tokens){
     const uint32_t TOKENS=tokens;enum{HIDDEN=2560,HYPER=10240,HISTORY=9};float *key=malloc(TOKENS*HYPER*4u),*query=malloc(TOKENS*HYPER*4u),*value=malloc(TOKENS*HIDDEN*4u),*normalized=malloc(TOKENS*HYPER*4u),*weight=malloc(HYPER*4u*4u),*state_initial=malloc(HYPER*HISTORY*4u),*gate_sequential=malloc(TOKENS*HYPER*4u),*gate_batched=malloc(TOKENS*HYPER*4u),*conv_sequential=malloc(TOKENS*HYPER*4u),*conv_batched=malloc(TOKENS*HYPER*4u),*state_sequential=malloc(HYPER*HISTORY*4u),*state_batched=malloc(HYPER*HISTORY*4u);if(!key||!query||!value||!normalized||!weight||!state_initial||!gate_sequential||!gate_batched||!conv_sequential||!conv_batched||!state_sequential||!state_batched)return 0;
     for(uint32_t i=0;i<TOKENS*HYPER;i++){key[i]=sinf((float)i*0.003f);query[i]=cosf((float)i*0.004f);normalized[i]=sinf((float)i*0.005f)*0.5f;}for(uint32_t i=0;i<TOKENS*HIDDEN;i++)value[i]=cosf((float)i*0.007f);for(uint32_t i=0;i<HYPER*4u;i++)weight[i]=0.1f*cosf((float)i*0.0011f);for(uint32_t i=0;i<HYPER*HISTORY;i++)state_initial[i]=0.02f*sinf((float)i*0.0003f);
@@ -3127,6 +3168,48 @@ static int test_q8_decode_shape_parity(void){
     return ok;
 }
 
+static int test_q8_split_silu_parity(void){
+    enum{INPUT=10240,ROWS=320,SPLITS=8};
+    uint32_t blocks=INPUT/FG_QK8_0;
+    uint64_t source_row=(uint64_t)blocks*FG_Q8_0_BLOCK_BYTES,source_bytes=(uint64_t)ROWS*source_row,
+             cooked_bytes=fg_q8_0_cooked_matrix_bytes(INPUT,ROWS);
+    float *source=malloc((size_t)INPUT*ROWS*4u),*values=malloc((size_t)INPUT*4u);
+    uint8_t *raw=malloc((size_t)source_bytes),*cooked=malloc((size_t)cooked_bytes);
+    float *low_ref=malloc((size_t)ROWS*4u),*low_fused=malloc((size_t)ROWS*4u),
+          *active_ref=malloc((size_t)ROWS*4u),*active_fused=malloc((size_t)ROWS*4u);
+    if(!source||!values||!raw||!cooked||!low_ref||!low_fused||!active_ref||!active_fused){
+        free(active_fused);free(active_ref);free(low_fused);free(low_ref);
+        free(cooked);free(raw);free(values);free(source);return 0;
+    }
+    for(uint32_t row=0;row<ROWS;row++)
+        for(uint32_t i=0;i<INPUT;i++)
+            source[(uint64_t)row*INPUT+i]=sinf((float)((uint64_t)row*INPUT+i)*0.0041f)*0.5f+cosf((float)i*0.017f);
+    for(uint32_t row=0;row<ROWS;row++)fg_quantize_q8_0(source+(uint64_t)row*INPUT,raw+(uint64_t)row*source_row,INPUT);
+    for(uint32_t i=0;i<INPUT;i++)values[i]=sinf((float)(i+3u)*0.013f)+0.1f*cosf((float)i*0.007f);
+    int ok=fg_cook_q8_0_rows(raw,cooked,cooked_bytes,INPUT,ROWS);
+    fg_vk_tensor *w=ok?tensor(cooked,cooked_bytes):NULL,*x=ok?tensor(values,(uint64_t)INPUT*4u):NULL,
+        *low=ok?tensor(NULL,(uint64_t)ROWS*4u):NULL,*active=ok?tensor(NULL,(uint64_t)ROWS*4u):NULL,
+        *low_b=ok?tensor(NULL,(uint64_t)ROWS*4u):NULL,*active_b=ok?tensor(NULL,(uint64_t)ROWS*4u):NULL,
+        *partials_a=ok?tensor(NULL,(uint64_t)ROWS*SPLITS*4u):NULL,
+        *partials_b=ok?tensor(NULL,(uint64_t)ROWS*SPLITS*4u):NULL;
+    if(w)fg_vk_tensor_set_format(w,FG_VK_TENSOR_FORMAT_Q8_0_COOKED);
+    ok=ok&&w&&x&&low&&active&&low_b&&active_b&&partials_a&&partials_b;
+    if(ok)ok=fg_vk_dense_q8_0_cooked_split(context,low,partials_a,w,x,INPUT,ROWS,1u,SPLITS,1.0f,&error)==FG_OK;
+    if(ok)ok=fg_vk_silu_scaled(context,active,low,ROWS,0.25f,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_read(low,0,low_ref,(uint64_t)ROWS*4u,&error)==FG_OK&&fg_vk_tensor_read(active,0,active_ref,(uint64_t)ROWS*4u,&error)==FG_OK;
+    if(ok)ok=fg_vk_dense_q8_0_cooked_split_silu(context,low_b,active_b,partials_b,w,x,INPUT,ROWS,1u,SPLITS,1.0f,0.25f,&error)==FG_OK;
+    if(ok)ok=fg_vk_tensor_read(low_b,0,low_fused,(uint64_t)ROWS*4u,&error)==FG_OK&&fg_vk_tensor_read(active_b,0,active_fused,(uint64_t)ROWS*4u,&error)==FG_OK;
+    for(uint32_t row=0;ok&&row<ROWS;row++){
+        if(memcmp(&low_fused[row],&low_ref[row],sizeof(float))!=0){fprintf(stderr,"split silu low row=%u fused=%g reference=%g\n",row,low_fused[row],low_ref[row]);ok=0;}
+        if(memcmp(&active_fused[row],&active_ref[row],sizeof(float))!=0){fprintf(stderr,"split silu active row=%u fused=%g reference=%g\n",row,active_fused[row],active_ref[row]);ok=0;}
+    }
+    fg_vk_tensor_destroy(partials_b);fg_vk_tensor_destroy(partials_a);fg_vk_tensor_destroy(active_b);
+    fg_vk_tensor_destroy(low_b);fg_vk_tensor_destroy(active);fg_vk_tensor_destroy(low);
+    fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);
+    free(active_fused);free(active_ref);free(low_fused);free(low_ref);
+    free(cooked);free(raw);free(values);free(source);return ok;
+}
+
 static int run_test(const char *name,int (*fn)(void)){if(!test_selected(name))return 1;selected_test_count++;fprintf(stderr,"  [%s] ... ",name);fflush(stderr);int ok=fn();fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 static int run_test_i(const char *name,int (*fn)(int),int arg){if(!test_selected(name))return 1;selected_test_count++;fprintf(stderr,"  [%s(%d)] ... ",name,arg);fflush(stderr);int ok=fn(arg);fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 int main(void){if(fg_vk_open(&context,&error)!=FG_OK){fprintf(stderr,"Vulkan unavailable: %s\n",error.message);return 77;}fprintf(stderr,"Flash Gordon Vulkan device: %s\n",fg_vk_device_name(context));int ok=1;
@@ -3143,6 +3226,7 @@ ok=run_test("q8_subgroup_benchmark",test_q8_subgroup_benchmark)&&ok;
 ok=run_test("q8_cooked_benchmark",test_q8_cooked_benchmark)&&ok;
 ok=run_test("q8_cooked_prefill_parity",test_q8_cooked_prefill_parity)&&ok;
 ok=run_test("q8_decode_shape_parity",test_q8_decode_shape_parity)&&ok;
+ok=run_test("q8_split_silu_parity",test_q8_split_silu_parity)&&ok;
 ok=run_test("q8_cooked_prefill_sweep",test_q8_cooked_prefill_sweep)&&ok;
 ok=run_test("q8_embedding",test_q8_embedding)&&ok;
 ok=run_test("hc_finalize",test_hc_finalize)&&ok;
@@ -3153,6 +3237,7 @@ ok=run_test("ngram_direct_lookup",test_ngram_direct_lookup)&&ok;
 ok=run_test("ngram_resident",test_ngram_resident)&&ok;
 ok=run_test("ngram_prefill_lookup",test_ngram_prefill_lookup)&&ok;
 ok=run_test("ple_decode",test_ple_decode)&&ok;
+ok=run_test("ple_conv_add_parity",test_ple_conv_add_parity)&&ok;
 ok=run_test("ple_prefill_scan",test_ple_prefill_scan)&&ok;
 ok=run_test("ple_prefill_t1_compat",test_ple_prefill_t1_compat)&&ok;
 ok=run_test("qsa_quant_and_bf16",test_qsa_quant_and_bf16)&&ok;

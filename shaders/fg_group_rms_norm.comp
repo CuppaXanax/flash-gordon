@@ -2,4 +2,34 @@
 layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
 layout(set=0,binding=0)readonly buffer Input{float x[];};layout(set=0,binding=1)readonly buffer Weight{float w[];};layout(set=0,binding=2)writeonly buffer Output{float y[];};
 layout(push_constant)uniform Push{uint width;uint groups;uint n_tok;float eps;}pc;shared float sums[256];
-void main(){uint tid=gl_LocalInvocationID.x,g=gl_WorkGroupID.x,t=gl_WorkGroupID.y;if(g>=pc.groups||t>=pc.n_tok)return;uint base=(t*pc.groups+g)*pc.width;float ss=0.0;for(uint i=tid;i<pc.width;i+=256u)ss=fma(x[base+i],x[base+i],ss);sums[tid]=ss;barrier();for(uint stride=128u;stride>0u;stride>>=1u){if(tid<stride)sums[tid]+=sums[tid+stride];barrier();}float scale=inversesqrt(sums[0]/float(pc.width)+pc.eps);for(uint i=tid;i<pc.width;i+=256u)y[base+i]=x[base+i]*scale*w[g*pc.width+i];}
+void main(){
+    uint tid=gl_LocalInvocationID.x,g=gl_WorkGroupID.x,t=gl_WorkGroupID.y;
+    if(g>=pc.groups||t>=pc.n_tok)return;
+    uint base=(t*pc.groups+g)*pc.width;
+    float ss=0.0;
+    if(pc.width==2560u){
+        float v0=x[base+tid],v1=x[base+256u+tid],v2=x[base+512u+tid],v3=x[base+768u+tid],v4=x[base+1024u+tid];
+        float v5=x[base+1280u+tid],v6=x[base+1536u+tid],v7=x[base+1792u+tid],v8=x[base+2048u+tid],v9=x[base+2304u+tid];
+        ss=fma(v0,v0,ss);ss=fma(v1,v1,ss);ss=fma(v2,v2,ss);ss=fma(v3,v3,ss);ss=fma(v4,v4,ss);
+        ss=fma(v5,v5,ss);ss=fma(v6,v6,ss);ss=fma(v7,v7,ss);ss=fma(v8,v8,ss);ss=fma(v9,v9,ss);
+        sums[tid]=ss;barrier();
+        for(uint stride=128u;stride>0u;stride>>=1u){if(tid<stride)sums[tid]+=sums[tid+stride];barrier();}
+        float scale=inversesqrt(sums[0]/float(pc.width)+pc.eps);
+        y[base+tid]=v0*scale*w[g*pc.width+tid];
+        y[base+256u+tid]=v1*scale*w[g*pc.width+256u+tid];
+        y[base+512u+tid]=v2*scale*w[g*pc.width+512u+tid];
+        y[base+768u+tid]=v3*scale*w[g*pc.width+768u+tid];
+        y[base+1024u+tid]=v4*scale*w[g*pc.width+1024u+tid];
+        y[base+1280u+tid]=v5*scale*w[g*pc.width+1280u+tid];
+        y[base+1536u+tid]=v6*scale*w[g*pc.width+1536u+tid];
+        y[base+1792u+tid]=v7*scale*w[g*pc.width+1792u+tid];
+        y[base+2048u+tid]=v8*scale*w[g*pc.width+2048u+tid];
+        y[base+2304u+tid]=v9*scale*w[g*pc.width+2304u+tid];
+    }else{
+        for(uint i=tid;i<pc.width;i+=256u)ss=fma(x[base+i],x[base+i],ss);
+        sums[tid]=ss;barrier();
+        for(uint stride=128u;stride>0u;stride>>=1u){if(tid<stride)sums[tid]+=sums[tid+stride];barrier();}
+        float scale=inversesqrt(sums[0]/float(pc.width)+pc.eps);
+        for(uint i=tid;i<pc.width;i+=256u)y[base+i]=x[base+i]*scale*w[g*pc.width+i];
+    }
+}

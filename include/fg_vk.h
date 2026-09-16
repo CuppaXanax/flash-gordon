@@ -179,6 +179,13 @@ fg_status fg_vk_dense_q8_0_cooked_split(fg_vk_context *context,fg_vk_tensor *out
                                         const fg_vk_tensor *input,uint32_t input_width,
                                         uint32_t output_width,uint32_t tokens,uint32_t splits,
                                         float scale,fg_error *err);
+fg_status fg_vk_dense_q8_0_cooked_split_silu(fg_vk_context *context,fg_vk_tensor *low,
+                                             fg_vk_tensor *active,fg_vk_tensor *partials,
+                                             const fg_vk_tensor *weights,
+                                             const fg_vk_tensor *input,uint32_t input_width,
+                                             uint32_t output_width,uint32_t tokens,
+                                             uint32_t splits,float scale,float input_scale,
+                                             fg_error *err);
 fg_status fg_vk_embedding_q8_0(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *weights,
                                uint32_t token,uint32_t width,uint32_t rows,uint32_t copies,fg_error *err);
 fg_status fg_vk_embedding_q8_0_batch(fg_vk_context *context,fg_vk_tensor *output,
@@ -225,6 +232,10 @@ fg_status fg_vk_ple_conv_decode(fg_vk_context *context,fg_vk_tensor *output,fg_v
 fg_status fg_vk_ple_conv_prefill(fg_vk_context *context,fg_vk_tensor *output,fg_vk_tensor *state,
                                  const fg_vk_tensor *gated,const fg_vk_tensor *normalized,
                                  const fg_vk_tensor *weight,uint32_t tokens,fg_error *err);
+fg_status fg_vk_ple_conv_decode_add(fg_vk_context *context,fg_vk_tensor *output,fg_vk_tensor *state,
+                                    const fg_vk_tensor *gated,const fg_vk_tensor *normalized,
+                                    const fg_vk_tensor *weight,const fg_vk_tensor *hyper,
+                                    fg_error *err);
 fg_status fg_vk_add_f32(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *left,
                         const fg_vk_tensor *right,uint32_t values,fg_error *err);
 fg_status fg_vk_apply_penalties(fg_vk_context *context,fg_vk_tensor *logits,
