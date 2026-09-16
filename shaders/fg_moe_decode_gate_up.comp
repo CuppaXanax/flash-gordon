@@ -98,17 +98,17 @@ int sum32(uint packed) {
    group accumulators.  The activation word conversions are shared between
    gate and up. */
 #define FG_KWORD(W, G5V, U5V) { \
-    uint gl = gcw[W] & 0x0f0f0f0fu; \
-    uint gh = (gcw[W] >> 4u) & 0x0f0f0f0fu; \
-    uint ul = ucw[W] & 0x0f0f0f0fu; \
-    uint uh = (ucw[W] >> 4u) & 0x0f0f0f0fu; \
+    uint gl = gqw[W] & 0x0f0f0f0fu; \
+    uint gh = (gqw[W] >> 4u) & 0x0f0f0f0fu; \
+    uint ul = uqw[W] & 0x0f0f0f0fu; \
+    uint uh = (uqw[W] >> 4u) & 0x0f0f0f0fu; \
     if (G5V) { \
-        gl |= ((ghc[W] >> group_a) & 0x01010101u) << 4u; \
-        gh |= ((ghc[W] >> group_b) & 0x01010101u) << 4u; \
+        gl |= ((ghw[W] >> group_a) & 0x01010101u) << 4u; \
+        gh |= ((ghw[W] >> group_b) & 0x01010101u) << 4u; \
     } \
     if (U5V) { \
-        ul |= ((uhc[W] >> group_a) & 0x01010101u) << 4u; \
-        uh |= ((uhc[W] >> group_b) & 0x01010101u) << 4u; \
+        ul |= ((uhw[W] >> group_a) & 0x01010101u) << 4u; \
+        uh |= ((uhw[W] >> group_b) & 0x01010101u) << 4u; \
     } \
     vec4 avw = vec4(unpack8(int(aw##W))); \
     vec4 bvw = vec4(unpack8(int(bw##W))); \
@@ -117,15 +117,12 @@ int sum32(uint packed) {
 
 /* The Q4_K/Q5_K block loop, duplicated per gate/up type by the uniform
    branch in main so no runtime type test sits inside the loop.  All offsets
-   are per-lane constants advanced by a fixed per-block stride.  The projection
-   words of block b+1 are issued at the top of block b's body, so a wave keeps
-   the next K-quant word pair in flight while it decodes the current block;
-   the guarded tail load never runs past the expert. */
+   are per-lane constants advanced by a fixed per-block stride. */
 #define FG_KPAIR(G5V, U5V) { \
-    uint gq_cur = ((gate_row_base + gate_quant_offset + tile_row_k * 128u) >> 4u) + lane; \
-    uint uq_cur = ((up_row_base + up_quant_offset + tile_row_k * 128u) >> 4u) + lane; \
-    uint gh_cur = ((gate_row_base + 128u + tile_row_k * 32u) >> 4u) + sub; \
-    uint uh_cur = ((up_row_base + 128u + tile_row_k * 32u) >> 4u) + sub; \
+    uint gq_vec = ((gate_row_base + gate_quant_offset + tile_row_k * 128u) >> 4u) + lane; \
+    uint uq_vec = ((up_row_base + up_quant_offset + tile_row_k * 128u) >> 4u) + lane; \
+    uint gh_vec = ((gate_row_base + 128u + tile_row_k * 32u) >> 4u) + sub; \
+    uint uh_vec = ((up_row_base + 128u + tile_row_k * 32u) >> 4u) + sub; \
     uint gd_word = (gate_row_base + tile_row_k * 4u) >> 2u; \
     uint ud_word = (up_row_base + tile_row_k * 4u) >> 2u; \
     uint gm_word = (gate_row_base + 32u + tile_row_k * 12u) >> 2u; \
@@ -134,25 +131,7 @@ int sum32(uint packed) {
     uint uq_step = up_block_bytes >> 4u; \
     uint gss = gate_block_bytes >> 2u; \
     uint uss = up_block_bytes >> 2u; \
-    uvec4 gqw = gwv[gq_cur]; \
-    uvec4 uqw = uwv[uq_cur]; \
-    uvec4 ghw = uvec4(0u); \
-    uvec4 uhw = uvec4(0u); \
-    if (G5V) ghw = gwv[gh_cur]; \
-    if (U5V) uhw = uwv[uh_cur]; \
     for (uint block = 0u; block < pc.blocks; block++) { \
-        uvec4 gcw = gqw; \
-        uvec4 ucw = uqw; \
-        uvec4 ghc = ghw; \
-        uvec4 uhc = uhw; \
-        gq_cur += gq_step; uq_cur += uq_step; \
-        gh_cur += gq_step; uh_cur += uq_step; \
-        if (block + 1u < pc.blocks) { \
-            gqw = gwv[gq_cur]; \
-            uqw = uwv[uq_cur]; \
-            if (G5V) ghw = gwv[gh_cur]; \
-            if (U5V) uhw = uwv[uh_cur]; \
-        } \
         uint gbw = gd_word + block * gss; \
         uint ubw = ud_word + block * uss; \
         vec2 gdm = unpackHalf2x16(gws[gbw]); \
@@ -167,6 +146,12 @@ int sum32(uint packed) {
         vec2 gmb = scale_min(gm0, gm1, gm2, group_b); \
         vec2 uma = scale_min(um0, um1, um2, group_a); \
         vec2 umb = scale_min(um0, um1, um2, group_b); \
+        uvec4 gqw = gwv[gq_vec + block * gq_step]; \
+        uvec4 uqw = uwv[uq_vec + block * uq_step]; \
+        uvec4 ghw = uvec4(0u); \
+        uvec4 uhw = uvec4(0u); \
+        if (G5V) ghw = gwv[gh_vec + block * gq_step]; \
+        if (U5V) uhw = uwv[uh_vec + block * uq_step]; \
         uint act_vec = (block * Q8K_WORDS) >> 1u; \
         uvec2 a01 = q8p[act_vec + act_a0]; \
         uvec2 a23 = q8p[act_vec + act_a0 + 1u]; \
