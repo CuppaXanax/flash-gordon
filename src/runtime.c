@@ -48,25 +48,14 @@ static bool decode_ring_requested(void){
     return !(disabled&&*disabled&&strcmp(disabled,"0")==0);
 }
 static bool decode_ring_trace_enabled(void){const char *enabled=getenv("FG_DECODE_RING_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
-/* Chained ring blocks are the default: one submission and one fence per block
- * owner instead of a submit/fence/host-routing round trip per layer.  Set
- * FG_DECODE_CHAIN=0 to fall back to the per-layer owner machine. */
-static bool decode_chain_requested(void){
-    const char *disabled=getenv("FG_DECODE_CHAIN");
-    return !(disabled&&*disabled&&strcmp(disabled,"0")==0);
-}
 /* Direct final-block -> output-owner handoff: rank 0 ships the sampler config
  * for a decode token up front and the last block owner ships the hidden
  * straight to the output owner, so the 40 KiB never round-trips through rank 0.
- * Set FG_DECODE_DIRECT_OUTPUT=0 to restore the rank-0 relay route.  Both the
- * coordinator and the last block owner derive the route from the manifest, so
- * the env must match on every rank or the token will never be sampled. */
-static bool decode_direct_output_requested(void){
-    const char *disabled=getenv("FG_DECODE_DIRECT_OUTPUT");
-    return !(disabled&&*disabled&&strcmp(disabled,"0")==0);
-}
+ * Both the coordinator and the last block owner derive the route from the
+ * manifest, and the rank-0 relay remains the fallback for topologies where the
+ * output owner or the last block owner is rank 0. */
 static bool decode_direct_output_eligible(const fg_manifest *manifest){
-    if(!manifest||!decode_direct_output_requested())return false;
+    if(!manifest)return false;
     uint32_t owner=fg_output_owner_rank(manifest);
     uint32_t last=manifest->layer_owner[FG_LAYER_COUNT-1u];
     return owner!=0u&&last!=0u&&owner!=last;
@@ -534,7 +523,7 @@ static fg_status chained_decode_expert(void *opaque,uint32_t layer,
  * ring pack) and a fusable gate/up/down pair. */
 static bool decode_block_chain_eligible(fg_expert_executor *expert,
     const fg_manifest *manifest,uint32_t rank,uint32_t first,uint32_t last){
-    if(!decode_chain_requested()||!expert)return false;
+    if(!expert)return false;
     for(uint32_t layer=first;layer<=last;layer++){
         if(fg_expert_local_count(manifest,layer,rank)!=FG_EXPERT_COUNT)return false;
         fg_error probe={0};

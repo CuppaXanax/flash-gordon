@@ -141,7 +141,7 @@ typedef enum fg_message_type {
      * token on the control channel, and the final block owner ships the 40 KiB
      * hyper state straight to the output owner under FG_MSG_OUTPUT_HIDDEN.
      * Both sides must agree, so the direct route is selected from the manifest
-     * (final owner != output owner) plus the FG_DECODE_DIRECT_OUTPUT env. */
+     * (final owner != output owner); the rank-0 relay is the fallback. */
     FG_MSG_OUTPUT_CONFIG = 46,
     FG_MSG_OUTPUT_HIDDEN = 47,
     /* Split output head: the final block owner also ships the same 40 KiB hyper
