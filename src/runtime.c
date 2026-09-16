@@ -5123,6 +5123,8 @@ fg_status fg_bench_main(const char *path,fg_error *err){
     /* Layout vs access experiment: A (current) / B (wide scalar) / C (vec4) */
     status=fg_vk_bench_stream_abc(vk,err);
     if(status!=FG_OK){fg_vk_close(vk);return status;}
+    status=fg_vk_bench_cooked_layout(vk,err);
+    if(status!=FG_OK){fg_vk_close(vk);return status;}
 
     fprintf(stderr,"\n--- Wall-clock reference (includes CPU overhead) ---\n");
     /* Production decode matmul dimensions: {in_dim, out_dim, label} */

@@ -536,5 +536,6 @@ fg_status fg_vk_moe_prefill_reduce(fg_vk_context *context,fg_vk_tensor *output,
 fg_status fg_vk_bench_dense_q8(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_bench_decompose(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_bench_stream_abc(fg_vk_context *context,fg_error *err);
+fg_status fg_vk_bench_cooked_layout(fg_vk_context *context,fg_error *err);
 
 #endif
