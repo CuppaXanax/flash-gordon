@@ -57,6 +57,29 @@ const uint PARTS = 4u;
 
 shared float partial[64];
 
+#define FG_DOWN_BLOCK(SM_OFF, Q_OFF, IN_OFF) { \
+                vec2 sm = unpackHalf2x16(wb[sm_word + SM_OFF]); \
+                uint hw = wb[hw_word + SM_OFF]; \
+                uvec2 q = wv[qt_uvec + Q_OFF]; \
+                vec4 dmx = vec4(sm.x); \
+                vec4 dmy = vec4(sm.y); \
+                uint q0 = q.x; \
+                uint q1 = q.y; \
+                uint lo0 = q0 & 0x0f0f0f0fu; \
+                uint hi0 = (q0 >> 4u) & 0x0f0f0f0fu; \
+                uint lo1 = q1 & 0x0f0f0f0fu; \
+                uint hi1 = (q1 >> 4u) & 0x0f0f0f0fu; \
+                vec4 w0 = fma(dmx, vec4(unpack8(int(lo0 | spread4((hw >> bit_base) & 15u)))), dmy); \
+                vec4 w1 = fma(dmx, vec4(unpack8(int(hi0 | spread4((hw >> (16u + bit_base)) & 15u)))), dmy); \
+                vec4 w2 = fma(dmx, vec4(unpack8(int(lo1 | spread4((hw >> (bit_base + 4u)) & 15u)))), dmy); \
+                vec4 w3 = fma(dmx, vec4(unpack8(int(hi1 | spread4((hw >> (20u + bit_base)) & 15u)))), dmy); \
+                vec4 i0 = x4[in_vec + IN_OFF]; \
+                vec4 i4 = x4[in_vec + IN_OFF + 4u]; \
+                vec4 i1 = x4[in_vec + IN_OFF + 1u]; \
+                vec4 i5 = x4[in_vec + IN_OFF + 5u]; \
+                slot_acc += dot(w0, i0) + dot(w1, i4); \
+                slot_acc += dot(w2, i1) + dot(w3, i5); }
+
 /* Spread four consecutive fifth bits into the high nibble of four bytes so a
    single unpack8 yields four five-bit values. */
 uint spread4(uint bits) {
@@ -147,32 +170,27 @@ void main() {
             uint qt_uvec = ((row_base + 128u + tile_row * 16u) >> 3u) + parity * 48u + seg;
             uint in_vec = input_base + parity * 8u + seg * 2u;
             uint bit_base = seg * 8u;
-            for (uint block = parity; block < pc.blocks; block += 2u) {
-                vec2 sm = unpackHalf2x16(wb[sm_word]);
-                uint hw = wb[hw_word];
-                uvec2 q = wv[qt_uvec];
-                vec4 dmx = vec4(sm.x);
-                vec4 dmy = vec4(sm.y);
-                uint q0 = q.x;
-                uint q1 = q.y;
-                uint lo0 = q0 & 0x0f0f0f0fu;
-                uint hi0 = (q0 >> 4u) & 0x0f0f0f0fu;
-                uint lo1 = q1 & 0x0f0f0f0fu;
-                uint hi1 = (q1 >> 4u) & 0x0f0f0f0fu;
-                vec4 w0 = fma(dmx, vec4(unpack8(int(lo0 | spread4((hw >> bit_base) & 15u)))), dmy);
-                vec4 w1 = fma(dmx, vec4(unpack8(int(hi0 | spread4((hw >> (16u + bit_base)) & 15u)))), dmy);
-                vec4 w2 = fma(dmx, vec4(unpack8(int(lo1 | spread4((hw >> (bit_base + 4u)) & 15u)))), dmy);
-                vec4 w3 = fma(dmx, vec4(unpack8(int(hi1 | spread4((hw >> (20u + bit_base)) & 15u)))), dmy);
-                vec4 i0 = x4[in_vec];
-                vec4 i4 = x4[in_vec + 4u];
-                vec4 i1 = x4[in_vec + 1u];
-                vec4 i5 = x4[in_vec + 5u];
-                slot_acc += dot(w0, i0) + dot(w1, i4);
-                slot_acc += dot(w2, i1) + dot(w3, i5);
-                sm_word += 192u;
-                hw_word += 192u;
-                qt_uvec += 96u;
-                in_vec += 16u;
+            uint block = parity;
+            for (; block + 6u < pc.blocks; block += 8u) {
+                FG_DOWN_BLOCK(0u, 0u, 0u)
+                FG_DOWN_BLOCK(192u, 96u, 16u)
+                FG_DOWN_BLOCK(384u, 192u, 32u)
+                FG_DOWN_BLOCK(576u, 288u, 48u)
+                sm_word += 768u;
+                hw_word += 768u;
+                qt_uvec += 384u;
+                in_vec += 64u;
+            }
+            for (; block + 2u < pc.blocks; block += 4u) {
+                FG_DOWN_BLOCK(0u, 0u, 0u)
+                FG_DOWN_BLOCK(192u, 96u, 16u)
+                sm_word += 384u;
+                hw_word += 384u;
+                qt_uvec += 192u;
+                in_vec += 32u;
+            }
+            if (block < pc.blocks) {
+                FG_DOWN_BLOCK(0u, 0u, 0u)
             }
         } else {
             uint row_bytes = pc.blocks * 34u;
