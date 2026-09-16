@@ -24,8 +24,6 @@ static uint16_t swap16(uint16_t x){return (uint16_t)((x>>8)|(x<<8));}
 static uint64_t fabric_ns(void){struct timespec value;clock_gettime(CLOCK_REALTIME,&value);return (uint64_t)value.tv_sec*UINT64_C(1000000000)+(uint64_t)value.tv_nsec;}
 static uint64_t monotonic_ns(void){struct timespec value;clock_gettime(CLOCK_MONOTONIC,&value);return (uint64_t)value.tv_sec*UINT64_C(1000000000)+(uint64_t)value.tv_nsec;}
 static void close_fd(int *fd){if(*fd>=0){close(*fd);*fd=-1;}}
-static bool direct_send_enabled(void){const char *value=getenv("FG_FABRIC_DIRECT_SEND");return value&&*value&&strcmp(value,"0")!=0;}
-static bool direct_recv_enabled(void){const char *value=getenv("FG_FABRIC_DIRECT_RECV");return value&&*value&&strcmp(value,"0")!=0;}
 static bool fabric_profile_enabled(void){
     static bool initialized=false,enabled=false;
     if(!initialized){
@@ -170,7 +168,7 @@ static fg_status fabric_send(fg_fabric *f,uint32_t peer,fg_fabric_class cls,
     bool profile=fabric_profile_enabled();
     uint64_t profile_start=profile?monotonic_ns():0u;
     pthread_mutex_lock(&channel->send_mutex);
-    bool direct=force_direct||direct_send_enabled();
+    bool direct=force_direct;
     if(bytes&&bytes<=65536u-sizeof(h)){
         uint8_t combined[65536u];memcpy(combined,&h,sizeof(h));
         memcpy(combined+sizeof(h),payload,bytes);
@@ -201,7 +199,6 @@ fg_status fg_fabric_send_direct(fg_fabric *f,uint32_t peer,fg_fabric_class cls,
                                 const void *payload,uint32_t bytes,fg_error *err){
     return fabric_send(f,peer,cls,type,req,seq,flags,payload,bytes,true,err);
 }
-fg_status fg_fabric_send_batch(fg_fabric *f,const fg_fabric_send_item *items,uint32_t count,fg_error *err){if(!f||!items||!count||count>=FG_RANK_COUNT){fg_error_set(err,FG_ERR_ARGUMENT,"invalid fabric send batch");return FG_ERR_ARGUMENT;}bool profile=fabric_profile_enabled();uint64_t profile_start=profile?monotonic_ns():0u;uint32_t sizes[FG_RANK_COUNT]={0},offsets[FG_RANK_COUNT]={0};uint64_t total=0;fg_status status=FG_OK;for(uint32_t i=0;i<count;i++){const fg_fabric_send_item *item=&items[i];if(item->peer>=FG_RANK_COUNT||item->peer==f->rank||item->cls>FG_FABRIC_BULK||item->bytes>65536u-sizeof(fg_frame_header)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid fabric send batch item %u",i);return FG_ERR_ARGUMENT;}for(uint32_t j=0;j<i;j++)if(items[j].peer==item->peer&&items[j].cls==item->cls){fg_error_set(err,FG_ERR_ARGUMENT,"duplicate fabric send batch channel");return FG_ERR_ARGUMENT;}sizes[i]=(uint32_t)sizeof(fg_frame_header)+item->bytes;offsets[i]=(uint32_t)total;total+=sizes[i];}uint8_t *frames=malloc((size_t)total);if(!frames){fg_error_set(err,FG_ERR_OOM,"allocate fabric send batch");return FG_ERR_OOM;}for(uint32_t i=0;i<count;i++)pthread_mutex_lock(&f->peer[items[i].peer][items[i].cls].send_mutex);for(uint32_t i=0;status==FG_OK&&i<count;i++){const fg_fabric_send_item *item=&items[i];fg_frame_header *header=(fg_frame_header *)(frames+offsets[i]);status=fg_frame_encode_version(header,f->protocol_version,item->type,item->request_id,item->sequence,item->flags,item->payload,item->bytes,err);if(status==FG_OK&&item->bytes)memcpy((uint8_t *)header+sizeof(*header),item->payload,item->bytes);if(status==FG_OK)status=fg_uring_prep_send(f->ring,f->peer[item->peer][item->cls].fixed_slot,header,sizes[i],i+1u,err);}if(status==FG_OK)status=fg_fabric_io_flush(f,count,err);fg_uring_cqe completions[FG_RANK_COUNT];uint32_t completed=0;bool seen[FG_RANK_COUNT]={0};if(status==FG_OK)status=fg_fabric_io_reap(f,count,completions,FG_RANK_COUNT,&completed,err);for(uint32_t i=0;status==FG_OK&&i<completed;i++){uint64_t tag=completions[i].tag;if(!tag||tag>count||seen[tag-1u]||completions[i].result<=0||completions[i].result>(int32_t)sizes[tag-1u]){fg_error_set(err,FG_ERR_MISMATCH,"invalid fabric send batch completion");status=FG_ERR_MISMATCH;break;}uint32_t index=(uint32_t)tag-1u;seen[index]=true;uint32_t sent=(uint32_t)completions[i].result;if(sent<sizes[index])status=fg_uring_send_all(f->ring,f->peer[items[index].peer][items[index].cls].fixed_slot,frames+offsets[index]+sent,sizes[index]-sent,err);}uint64_t profile_end=profile?monotonic_ns():0u;for(uint32_t i=count;i>0;i--)pthread_mutex_unlock(&f->peer[items[i-1u].peer][items[i-1u].cls].send_mutex);free(frames);if(profile)for(uint32_t i=0;i<count;i++)fabric_profile_send_status(f,items[i].peer,items[i].cls,items[i].type,items[i].bytes,profile_start,profile_end,"io_uring_batch",count,true,status);return status;}
 fg_status fg_fabric_recv_timed(fg_fabric *f,uint32_t peer,fg_fabric_class cls,
                                fg_frame_header *h,void *payload,uint32_t cap,
                                uint32_t *bytes,fg_fabric_recv_timing *timing,
@@ -212,12 +209,7 @@ fg_status fg_fabric_recv_timed(fg_fabric *f,uint32_t peer,fg_fabric_class cls,
     }
     bool profile=fabric_profile_enabled();
     uint64_t profile_start=profile?monotonic_ns():0u;
-    bool direct=direct_recv_enabled();fg_status rc=FG_OK;
-    if(direct&&!sync_all(f->peer[peer][cls].fd,h,sizeof(*h),false)){
-        fg_error_set(err,FG_ERR_IO,"direct receive header from rank %u: %s",peer,
-                     strerror(errno?errno:ECONNRESET));rc=FG_ERR_IO;
-    }else if(!direct)
-        rc=fg_uring_recv_all(f->ring,f->peer[peer][cls].fixed_slot,h,sizeof(*h),err);
+    fg_status rc=fg_uring_recv_all(f->ring,f->peer[peer][cls].fixed_slot,h,sizeof(*h),err);
     if(timing)timing->header_end_ns=fabric_ns();
     if(profile&&timing){
         if(!timing->profile_poll_start_ns)timing->profile_poll_start_ns=profile_start;
@@ -233,10 +225,7 @@ fg_status fg_fabric_recv_timed(fg_fabric *f,uint32_t peer,fg_fabric_class cls,
         fg_error_set(err,FG_ERR_LIMIT,"fabric payload %u exceeds receive buffer %u",n,cap);
         rc=FG_ERR_LIMIT;
     }
-    if(rc==FG_OK&&n&&direct&&!sync_all(f->peer[peer][cls].fd,payload,n,false)){
-        fg_error_set(err,FG_ERR_IO,"direct receive payload from rank %u: %s",peer,
-                     strerror(errno?errno:ECONNRESET));rc=FG_ERR_IO;
-    }else if(rc==FG_OK&&n&&!direct)
+    if(rc==FG_OK&&n)
         rc=fg_uring_recv_all(f->ring,f->peer[peer][cls].fixed_slot,payload,n,err);
     if(timing)timing->payload_end_ns=fabric_ns();
     if(profile&&timing)timing->profile_payload_end_ns=monotonic_ns();
@@ -244,7 +233,7 @@ fg_status fg_fabric_recv_timed(fg_fabric *f,uint32_t peer,fg_fabric_class cls,
     if(timing)timing->validate_end_ns=fabric_ns();
     if(profile&&timing)timing->profile_validate_end_ns=monotonic_ns();
     if(profile)fabric_profile_recv(f,peer,cls,h,n,profile_start,
-                                   monotonic_ns(),timing,direct,rc);
+                                   monotonic_ns(),timing,false,rc);
     return rc;
 }
 fg_status fg_fabric_recv(fg_fabric *f,uint32_t peer,fg_fabric_class cls,fg_frame_header *h,void *payload,uint32_t cap,uint32_t *bytes,fg_error *err){return fg_fabric_recv_timed(f,peer,cls,h,payload,cap,bytes,NULL,err);}
