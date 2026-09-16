@@ -2459,7 +2459,6 @@ static uint32_t coordinator_qsa_cache_pages(const fg_runtime_options *options){
         (FG_LAYER_COUNT/4u);
 }
 
-#define FG_COORDINATOR_HC_INJECT_PIECES 24u
 #define FG_COORDINATOR_HC_DOWN_SPLITS 8u
 
 static uint64_t coordinator_physical_memory_bytes(void){
@@ -2509,11 +2508,12 @@ static uint64_t coordinator_available_memory_bytes(void){
     return 0;
 }
 
-static uint64_t coordinator_owner_transient_reclaim(uint32_t tokens){
+static uint64_t coordinator_owner_transient_reclaim(uint32_t tokens,
+                                                    uint32_t hc_inject_pieces){
     return (uint64_t)tokens*10240u*4u+(uint64_t)tokens*320u*4u+
            (uint64_t)FG_COORDINATOR_HC_DOWN_SPLITS*320u*4u+
                (uint64_t)tokens*320u*4u+(uint64_t)tokens*10240u*4u+
-           (uint64_t)FG_COORDINATOR_HC_INJECT_PIECES*4u*
+           (uint64_t)hc_inject_pieces*4u*
                tokens*4u+(uint64_t)tokens*2560u*4u+(uint64_t)tokens*4u+
            (uint64_t)tokens*FG_EXPERT_COUNT*4u+(uint64_t)tokens*640u*4u*3u+
            (uint64_t)tokens*FG_HIDDEN_SIZE*4u+(uint64_t)tokens*4u+
@@ -2667,7 +2667,8 @@ static void coordinator_memory_report(const fg_coordinator *coordinator){
     uint64_t projected_requested=coordinator_saturating_add(startup_requested,
                                                             deferred_peak);
     uint64_t owner_transient=coordinator_owner_transient_reclaim(
-        coordinator->manifest->prefill_microbatch);
+        coordinator->manifest->prefill_microbatch,
+        fg_vk_hc_inject_pieces(fg_model_vk(coordinator->model)));
     uint64_t qsa_reclaim=coordinator_qsa_aux_reclaim(logical);
     uint64_t layer_reclaim=(uint64_t)coordinator->manifest->prefill_microbatch*
         (FG_HYPER_WIDTH*4u+FG_NGRAM_EMBED_VALUES*4u);

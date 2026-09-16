@@ -65,7 +65,6 @@ static fg_status finish_batch(fg_vk_context *vk,fg_status status,fg_error *err){
     return status;
 }
 
-#define FG_HC_INJECT_PIECES 24u
 #define FG_HC_DOWN_SPLITS 8u
 _Static_assert(FG_Q38_PREFILL_TILE_WORDS==FG_VK_PREFILL_TILE_WORDS,
                "owner grouped prefill tile geometry");
@@ -107,6 +106,7 @@ typedef struct fg_owner_decode_slot {
 struct fg_owner_executor {
     fg_model *model;
     uint32_t max_tokens;
+    uint32_t hc_inject_pieces;
     bool replicated;
     fg_vk_tensor *hyper_norm,*low,*hc_down_partials,*low_active,*up_logits,*inject_partials,*mixed,*injection,*hyper_output,*hyper_output_b;
     fg_vk_tensor *router_logits,*activation_q8k,*shared_gate,*shared_up,*shared_mid,*shared_output,*shared_scalar,*reduced;
@@ -194,7 +194,7 @@ static fg_status create_transient_views(fg_owner_executor *executor,fg_error *er
     TRANSIENT(up_logits,(uint64_t)tokens*10240u*4u);
     TRANSIENT(low,(uint64_t)tokens*320u*4u);
     TRANSIENT(low_active,(uint64_t)tokens*320u*4u);
-    TRANSIENT(inject_partials,(uint64_t)tokens*FG_HC_INJECT_PIECES*4u*4u);
+    TRANSIENT(inject_partials,(uint64_t)tokens*executor->hc_inject_pieces*4u*4u);
     TRANSIENT(hc_down_partials,(uint64_t)FG_HC_DOWN_SPLITS*320u*4u);
     TRANSIENT(router_logits,(uint64_t)tokens*FG_EXPERT_COUNT*4u);
     TRANSIENT(shared_gate,(uint64_t)tokens*640u*4u);
@@ -259,6 +259,7 @@ static fg_status owner_executor_create_impl(fg_owner_executor **out,fg_model *mo
                                             bool replicated,fg_error *err){
     if(!out||!model){fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner executor arguments");return FG_ERR_ARGUMENT;}*out=NULL;
     fg_owner_executor *executor=calloc(1,sizeof(*executor));if(!executor){fg_error_set(err,FG_ERR_OOM,"allocate owner executor");return FG_ERR_OOM;}executor->model=model;fg_vk_context *vk=fg_model_vk(model);
+    executor->hc_inject_pieces=fg_vk_hc_inject_pieces(vk);
     const fg_manifest *manifest=fg_model_manifest(model);executor->max_tokens=manifest->prefill_microbatch;executor->replicated=replicated;if(!executor->max_tokens||executor->max_tokens>FG_PREFILL_MAX_TOKENS){fg_owner_executor_destroy(executor);fg_error_set(err,FG_ERR_MISMATCH,"manifest prefill microbatch exceeds owner executor limit");return FG_ERR_MISMATCH;}uint64_t tokens=executor->max_tokens;
     fg_status status=fg_vk_tensor_create(vk,(uint64_t)10240u*tokens*4u,&executor->hyper_output,err);
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)10240u*tokens*4u,
@@ -425,7 +426,7 @@ static fg_status gr_read_batch_into(fg_owner_executor *e,uint32_t layer,bool ffn
             (unsigned)fg_vk_tensor_get_format(up_weight),(unsigned)token_count);
     }
     bool fused_down=token_count==1u&&fg_vk_tensor_get_format(down_weight)==FG_VK_TENSOR_FORMAT_Q8_0_COOKED;
-    fg_status status=fg_vk_begin(vk,err);if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->hyper_norm,hyper_input,norm_weight,FG_HIDDEN_SIZE,4u,token_count,1e-6f,err);if(status==FG_OK)status=fg_vk_hc_inject_partial(vk,e->inject_partials,e->hyper_norm,inject_weight,FG_HIDDEN_SIZE,4u,token_count,FG_HC_INJECT_PIECES,err);if(status==FG_OK&&fused_down){fg_vk_next_dispatch_independent(vk);status=fg_vk_dense_q8_0_cooked_split_silu(vk,e->low,e->low_active,e->hc_down_partials,down_weight,e->hyper_norm,10240u,320u,1u,FG_HC_DOWN_SPLITS,1.0f,0.25f,err);}else if(status==FG_OK){status=dense_prefill(e,e->low,down_weight,e->hyper_norm,10240u,320u,token_count,1.0f,err);if(status==FG_OK)status=fg_vk_silu_scaled(vk,e->low_active,e->low,token_count*320u,0.25f,err);}if(status==FG_OK)status=dense_prefill(e,e->up_logits,up_weight,e->low_active,320u,10240u,token_count,1.0f,err);if(status==FG_OK)status=fg_vk_gr_mix_partial(vk,e->mixed,injection_tensor,e->hyper_norm,e->up_logits,e->inject_partials,FG_HIDDEN_SIZE,4u,token_count,FG_HC_INJECT_PIECES,err);status=finish_batch(vk,status,err);if(status==FG_OK){*mixed=e->mixed;*residual=hyper_input;*injection=injection_tensor;}return status;
+    fg_status status=fg_vk_begin(vk,err);if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->hyper_norm,hyper_input,norm_weight,FG_HIDDEN_SIZE,4u,token_count,1e-6f,err);if(status==FG_OK)status=fg_vk_hc_inject_partial(vk,e->inject_partials,e->hyper_norm,inject_weight,FG_HIDDEN_SIZE,4u,token_count,e->hc_inject_pieces,err);if(status==FG_OK&&fused_down){fg_vk_next_dispatch_independent(vk);status=fg_vk_dense_q8_0_cooked_split_silu(vk,e->low,e->low_active,e->hc_down_partials,down_weight,e->hyper_norm,10240u,320u,1u,FG_HC_DOWN_SPLITS,1.0f,0.25f,err);}else if(status==FG_OK){status=dense_prefill(e,e->low,down_weight,e->hyper_norm,10240u,320u,token_count,1.0f,err);if(status==FG_OK)status=fg_vk_silu_scaled(vk,e->low_active,e->low,token_count*320u,0.25f,err);}if(status==FG_OK)status=dense_prefill(e,e->up_logits,up_weight,e->low_active,320u,10240u,token_count,1.0f,err);if(status==FG_OK)status=fg_vk_gr_mix_partial(vk,e->mixed,injection_tensor,e->hyper_norm,e->up_logits,e->inject_partials,FG_HIDDEN_SIZE,4u,token_count,e->hc_inject_pieces,err);status=finish_batch(vk,status,err);if(status==FG_OK){*mixed=e->mixed;*residual=hyper_input;*injection=injection_tensor;}return status;
 }
 fg_status fg_owner_gr_read_batch(fg_owner_executor *e,uint32_t layer,bool ffn,const fg_vk_tensor *hyper_input,uint32_t token_count,fg_vk_tensor **mixed,const fg_vk_tensor **residual,fg_vk_tensor **injection,fg_error *err){return gr_read_batch_into(e,layer,ffn,hyper_input,token_count,e?e->injection:NULL,mixed,residual,injection,err);}
 
@@ -912,7 +913,7 @@ static fg_status decode_layer_begin_impl(fg_owner_executor *e,uint32_t slot,uint
         numerics_trace_values_local("A_NORM",rank,layer,fg_vk_tensor_map(e->hyper_norm),10240u);
         numerics_trace_values_local("A_LOW",rank,layer,fg_vk_tensor_map(e->low),320u);
         numerics_trace_values_local("A_UP",rank,layer,fg_vk_tensor_map(e->up_logits),10240u);
-        numerics_trace_values_local("A_PART",rank,layer,fg_vk_tensor_map(e->inject_partials),FG_HC_INJECT_PIECES*4u);
+        numerics_trace_values_local("A_PART",rank,layer,fg_vk_tensor_map(e->inject_partials),e->hc_inject_pieces*4u);
         numerics_trace_values_local("A_MIX",rank,layer,fg_vk_tensor_map(mixed),FG_HIDDEN_SIZE);
         numerics_trace_values_local("A_INJ",rank,layer,fg_vk_tensor_map(injection),FG_GROUP_SIZE);
     }
@@ -950,7 +951,7 @@ static fg_status decode_layer_begin_impl(fg_owner_executor *e,uint32_t slot,uint
         numerics_trace_values_local("SYNC1_UP",fg_model_rank(e->model),layer,
             fg_vk_tensor_map(e->up_logits),FG_HIDDEN_SIZE*4u);
         numerics_trace_values_local("SYNC1_PART",fg_model_rank(e->model),layer,
-            fg_vk_tensor_map(e->inject_partials),FG_HC_INJECT_PIECES*4u);
+            fg_vk_tensor_map(e->inject_partials),e->hc_inject_pieces*4u);
         numerics_trace_values_local("SYNC1_QKV",fg_model_rank(e->model),layer,
             fg_vk_tensor_map(e->gdn_qkv),10240u);
         numerics_trace_values_local("SYNC1_CONV",fg_model_rank(e->model),layer,

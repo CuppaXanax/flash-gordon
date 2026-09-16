@@ -70,6 +70,8 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err);
 void fg_vk_close(fg_vk_context *context);
 const char *fg_vk_device_name(const fg_vk_context *context);
 bool fg_vk_integer_dot_product_enabled(const fg_vk_context *context);
+uint32_t fg_vk_active_compute_units(const fg_vk_context *context);
+uint32_t fg_vk_hc_inject_pieces(const fg_vk_context *context);
 
 fg_status fg_vk_profile_begin(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_profile_set_scope(fg_vk_context *context,const char *scope,fg_error *err);

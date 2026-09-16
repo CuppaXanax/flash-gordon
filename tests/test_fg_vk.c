@@ -844,6 +844,13 @@ static int test_qsa_prefill_chunk_liveness(void){
     return ok;
 }
 
+static int test_compute_unit_pieces(void){
+    uint32_t units=fg_vk_active_compute_units(context);
+    uint32_t maximum=FG_HIDDEN_SIZE*FG_GROUP_SIZE/256u;
+    uint32_t expected=units&&units<maximum?units:maximum;
+    return units<=256u&&fg_vk_hc_inject_pieces(context)==expected;
+}
+
 static int test_output_topk(void){
     enum{COUNT=FG_Q38_VOCAB_SIZE,FIRST=(COUNT+4095)/4096*512};float *scores=malloc((size_t)COUNT*4u),top_scores[4];uint32_t *ids=malloc((size_t)COUNT*4u),top_ids[4];if(!scores||!ids){free(ids);free(scores);return 0;}for(uint32_t i=0;i<COUNT;i++){scores[i]=-(float)i;ids[i]=i;}scores[12345]=100.0f;scores[23456]=99.0f;scores[34567]=98.0f;scores[45678]=NAN;fg_vk_tensor *input_scores=tensor(scores,(uint64_t)COUNT*4u),*input_ids=tensor(ids,(uint64_t)COUNT*4u),*scratch_scores[2]={tensor(NULL,(uint64_t)FIRST*4u),tensor(NULL,(uint64_t)FIRST*4u)},*scratch_ids[2]={tensor(NULL,(uint64_t)FIRST*4u),tensor(NULL,(uint64_t)FIRST*4u)};uint32_t count=COUNT,slot=0;int ok=input_scores&&input_ids&&scratch_scores[0]&&scratch_scores[1]&&scratch_ids[0]&&scratch_ids[1]&&fg_vk_begin(context,&error)==FG_OK;const fg_vk_tensor *source_scores=input_scores,*source_ids=input_ids;while(ok&&count>512u){uint32_t next=0;ok=fg_vk_topk_reduce(context,scratch_scores[slot],scratch_ids[slot],source_scores,source_ids,count,&next,&error)==FG_OK;source_scores=scratch_scores[slot];source_ids=scratch_ids[slot];count=next;slot^=1u;}if(ok)ok=fg_vk_end(context,&error)==FG_OK&&count==512u&&fg_vk_tensor_read(source_scores,0,top_scores,sizeof(top_scores),&error)==FG_OK&&fg_vk_tensor_read(source_ids,0,top_ids,sizeof(top_ids),&error)==FG_OK&&top_ids[0]==45678u&&!isfinite(top_scores[0])&&top_ids[1]==12345u&&top_ids[2]==23456u&&top_ids[3]==34567u&&top_scores[1]==100.0f&&top_scores[2]==99.0f&&top_scores[3]==98.0f;else if(fg_vk_batch_active(context))fg_vk_end(context,&error);fg_vk_tensor_destroy(scratch_ids[1]);fg_vk_tensor_destroy(scratch_ids[0]);fg_vk_tensor_destroy(scratch_scores[1]);fg_vk_tensor_destroy(scratch_scores[0]);fg_vk_tensor_destroy(input_ids);fg_vk_tensor_destroy(input_scores);free(ids);free(scores);return ok;
 }
@@ -3413,6 +3420,7 @@ ok=run_test("gdn_chunked_prefill_decode_compat",test_gdn_chunked_prefill_decode_
 ok=run_test("qsa_indexer",test_qsa_indexer)&&ok;
 ok=run_test("qsa_segmented_index_score",test_qsa_segmented_index_score)&&ok;
 ok=run_test("qsa_prefill_chunk_liveness",test_qsa_prefill_chunk_liveness)&&ok;
+ok=run_test("compute_unit_pieces",test_compute_unit_pieces)&&ok;
 ok=run_test("output_topk",test_output_topk)&&ok;
 ok=run_test("topk_reduce_chunked",test_topk_reduce_chunked)&&ok;
 ok=run_test("generation_topk_selector",test_generation_topk_selector)&&ok;

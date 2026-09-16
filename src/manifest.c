@@ -189,7 +189,7 @@ void fg_manifest_init(fg_manifest *manifest){
     manifest->header_bytes=(uint32_t)sizeof(*manifest);
     manifest->rank_count=FG_RANK_COUNT;manifest->layer_count=FG_LAYER_COUNT;
     manifest->expert_count=FG_EXPERT_COUNT;manifest->hidden_size=FG_HIDDEN_SIZE;
-    manifest->top_k=FG_TOP_K;manifest->required_cu=FG_REQUIRED_CU;
+    manifest->top_k=FG_TOP_K;
     manifest->native_context=FG_NATIVE_CONTEXT;manifest->max_context=FG_MAX_CONTEXT;
     manifest->prefill_microbatch=FG_DEFAULT_MICROBATCH;
     manifest->prefill_window=FG_DEFAULT_WINDOW;
@@ -262,9 +262,6 @@ fg_status fg_manifest_validate(const fg_manifest *manifest,fg_error *err){
     if(!manifest->native_context||manifest->native_context>manifest->max_context||
        manifest->max_context>FG_MAX_CONTEXT){
         fg_error_set(err,FG_ERR_FORMAT,"manifest context limits are invalid");return FG_ERR_FORMAT;
-    }
-    if(manifest->required_cu!=24&&manifest->required_cu!=40){
-        fg_error_set(err,FG_ERR_FORMAT,"required CU count must be 24 or 40");return FG_ERR_FORMAT;
     }
     if(manifest->prefill_microbatch!=128&&manifest->prefill_microbatch!=256&&
        manifest->prefill_microbatch!=512){
