@@ -1163,6 +1163,7 @@ static fg_status tower_pack_open(const char *directory,tower_pack *pack,fg_error
         return FG_ERR_IO;
     }
     pack->map=map;
+    madvise(map,(size_t)pack->bytes,MADV_SEQUENTIAL);
     return FG_OK;
 }
 
