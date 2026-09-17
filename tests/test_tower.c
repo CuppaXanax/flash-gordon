@@ -423,6 +423,59 @@ static void test_vulkan_stages(void){
     free((void *)weights.blocks[0].ffn_down_weight);free((void *)weights.blocks[0].ffn_down_bias);
 }
 
+static void test_quant_matmul(void){
+    fg_error err={0};
+    fg_tower_vk *tower=NULL;
+    if(fg_tower_vk_open(&tower,&err)!=FG_OK){
+        printf("quant matmul: SKIP (%s)\n",err.message);
+        return;
+    }
+    const uint32_t tokens=16u,outputs=96u,width=64u;
+    float *weights=malloc((size_t)outputs*width*sizeof(float));
+    float *input=malloc((size_t)tokens*width*sizeof(float));
+    float *reference=malloc((size_t)tokens*outputs*sizeof(float));
+    float *gpu=malloc((size_t)tokens*outputs*sizeof(float));
+    float *dequant=malloc((size_t)outputs*width*sizeof(float));
+    CHECK(weights&&input&&reference&&gpu&&dequant);
+    if(weights&&input&&reference&&gpu&&dequant){
+        fill_random(weights,(size_t)outputs*width,0.5f);
+        fill_random(input,(size_t)tokens*width,1.0f);
+        const uint32_t types[2]={8u,1u};
+        for(uint32_t index=0;index<2u;index++){
+            const uint32_t ggml_type=types[index];
+            uint64_t weight_bytes=ggml_type==8u?
+                ((uint64_t)outputs*width/FG_QK8_0)*FG_Q8_0_BLOCK_BYTES:
+                (uint64_t)outputs*width*sizeof(uint16_t);
+            uint8_t *quant=calloc(1,(size_t)weight_bytes);
+            CHECK(quant!=NULL);
+            if(!quant)continue;
+            if(ggml_type==8u)fg_quantize_q8_0(weights,quant,(uint64_t)outputs*width);
+            else{
+                uint16_t *half=(uint16_t *)quant;
+                for(uint64_t i=0;i<(uint64_t)outputs*width;i++)half[i]=fg_f32_to_f16(weights[i]);
+            }
+            CHECK(fg_tower_dequantize(quant,weight_bytes,ggml_type,(uint64_t)outputs*width,
+                                      dequant,&err)==FG_OK);
+            for(uint32_t n=0;n<tokens;n++)
+                for(uint32_t m=0;m<outputs;m++){
+                    double acc=0.0;
+                    for(uint32_t k=0;k<width;k++)
+                        acc+=(double)dequant[(size_t)m*width+k]*input[(size_t)n*width+k];
+                    reference[(size_t)n*outputs+m]=(float)acc;
+                }
+            CHECK(fg_tower_vk_debug_matmul(tower,ggml_type,quant,weight_bytes,input,tokens,
+                                           outputs,width,gpu,&err)==FG_OK);
+            const double cosine=cosine_similarity(reference,gpu,(size_t)tokens*outputs);
+            printf("quant matmul type %u: cosine=%.9f relative=%.3e\n",ggml_type,cosine,
+                   relative_error(gpu,reference,(size_t)tokens*outputs));
+            CHECK(cosine>=0.999999);
+            free(quant);
+        }
+    }
+    free(dequant);free(gpu);free(reference);free(input);free(weights);
+    fg_tower_vk_close(tower);
+}
+
 /* ---------- real tower pack probe ---------- */
 
 static uint8_t *read_file(const char *path,uint64_t *bytes,fg_error *err){
@@ -717,6 +770,12 @@ static int probe_stream_only(const char *tower_dir,const char *image_path,uint32
         printf("stream-only repeat %u: %.1f ms cosine=%.9f identical=%s\n",repeat+1,
                again.forward_ms,cosine_similarity(first,second,values),
                memcmp(first,second,values*sizeof(float))==0?"yes":"no");
+        printf("stream-only repeat %u stages: preprocess=%.1f setup=%.1f host=%.1f "
+               "upload=%.1f compute=%.1f weight_mb=%.1f resident_mb=%.1f hit_mb=%.1f\n",
+               repeat+1,again.preprocess_ms,again.setup_ms,again.host_ms,again.upload_ms,
+               again.compute_ms,(double)again.weight_bytes/1048576.0,
+               (double)again.resident_bytes/1048576.0,
+               (double)again.resident_hit_bytes/1048576.0);
         free(second);
         second=NULL;
     }
@@ -1013,6 +1072,7 @@ int main(int argc,char **argv){
     test_positions();
     test_cpu_forward();
     test_vulkan_stages();
+    test_quant_matmul();
     if(failures){fprintf(stderr,"%d tower test(s) failed\n",failures);return 1;}
     puts("tower tests: PASS");
     return 0;

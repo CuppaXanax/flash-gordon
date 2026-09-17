@@ -46,6 +46,9 @@ fg_status fg_tower_vk_debug_rope(fg_tower_vk *tower,float *qkv,uint32_t tokens,
                                  uint32_t grid_width,fg_error *err);
 fg_status fg_tower_vk_debug_attention(fg_tower_vk *tower,const float *qkv,uint32_t tokens,
                                       float *output,fg_error *err);
+fg_status fg_tower_vk_debug_matmul(fg_tower_vk *tower,uint32_t ggml_type,const void *weights,
+                                   uint64_t weight_bytes,const float *input,uint32_t tokens,
+                                   uint32_t outputs,uint32_t width,float *output,fg_error *err);
 
 fg_status fg_tower_vision_forward(const char *tower_dir,const uint8_t *image_bytes,
                                   uint64_t image_length,float **embeddings,

@@ -1,6 +1,6 @@
 #version 460
 layout(local_size_x=16,local_size_y=16,local_size_z=1)in;
-layout(set=0,binding=0)readonly buffer Weights{float weight_value[];};
+layout(set=0,binding=0)readonly buffer Weights{uint weight_word[];};
 layout(set=0,binding=1)readonly buffer Input{float input_value[];};
 layout(set=0,binding=2)writeonly buffer Output{float output_value[];};
 layout(push_constant)uniform Push{uint tokens;uint outputs;uint width;uint stride;uint m_offset;}pc;
@@ -12,6 +12,7 @@ void main(){
     uint ln=gl_LocalInvocationID.y;
     uint m_base=gl_WorkGroupID.x*64u;
     uint n_base=gl_WorkGroupID.y*64u;
+    uint row_bytes=(pc.width>>5u)*34u;
     float a00=0.0;float a01=0.0;float a02=0.0;float a03=0.0;
     float a10=0.0;float a11=0.0;float a12=0.0;float a13=0.0;
     float a20=0.0;float a21=0.0;float a22=0.0;float a23=0.0;
@@ -22,16 +23,25 @@ void main(){
             uint m=m_base+r;
             uint kk=k0+c*4u;
             vec4 v=vec4(0.0);
-            if(m<pc.outputs){
-                if(kk+3u<pc.width)v=vec4(weight_value[m*pc.width+kk],
-                                        weight_value[m*pc.width+kk+1u],
-                                        weight_value[m*pc.width+kk+2u],
-                                        weight_value[m*pc.width+kk+3u]);
-                else{
-                    if(kk<pc.width)v.x=weight_value[m*pc.width+kk];
-                    if(kk+1u<pc.width)v.y=weight_value[m*pc.width+kk+1u];
-                    if(kk+2u<pc.width)v.z=weight_value[m*pc.width+kk+2u];
-                }
+            if(m<pc.outputs&&kk+3u<pc.width){
+                uint block=kk>>5u;
+                uint within=kk&31u;
+                uint base=m*row_bytes+block*34u;
+                uint sw=weight_word[base>>2u];
+                uint so=(base&3u)*8u;
+                uint sr=(sw>>so)&0xFFFFu;
+                if(so==24u)sr=(sw>>24u)|((weight_word[(base>>2u)+1u]&0xFFu)<<8u);
+                float scale=unpackHalf2x16(sr).x;
+                uint byte_off=base+2u+within;
+                uint w0=weight_word[byte_off>>2u];
+                uint w1=weight_word[(byte_off>>2u)+1u];
+                uint sh=(byte_off&3u)*8u;
+                uint packed=(sh==0u)?w0:((w0>>sh)|(w1<<(32u-sh)));
+                int q0=int(packed&0xFFu);q0-=(q0>=128)?256:0;
+                int q1=int((packed>>8u)&0xFFu);q1-=(q1>=128)?256:0;
+                int q2=int((packed>>16u)&0xFFu);q2-=(q2>=128)?256:0;
+                int q3=int(packed>>24u);q3-=(q3>=128)?256:0;
+                v=vec4(scale*float(q0),scale*float(q1),scale*float(q2),scale*float(q3));
             }
             tile_w[r][c]=v;
         }

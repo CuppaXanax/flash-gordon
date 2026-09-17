@@ -1,6 +1,6 @@
 #version 460
 layout(local_size_x=16,local_size_y=16,local_size_z=1)in;
-layout(set=0,binding=0)readonly buffer Weights{float weight_value[];};
+layout(set=0,binding=0)readonly buffer Weights{uint weight_word[];};
 layout(set=0,binding=1)readonly buffer Input{float input_value[];};
 layout(set=0,binding=2)writeonly buffer Output{float output_value[];};
 layout(push_constant)uniform Push{uint tokens;uint outputs;uint width;uint stride;uint m_offset;}pc;
@@ -22,16 +22,12 @@ void main(){
             uint m=m_base+r;
             uint kk=k0+c*4u;
             vec4 v=vec4(0.0);
-            if(m<pc.outputs){
-                if(kk+3u<pc.width)v=vec4(weight_value[m*pc.width+kk],
-                                        weight_value[m*pc.width+kk+1u],
-                                        weight_value[m*pc.width+kk+2u],
-                                        weight_value[m*pc.width+kk+3u]);
-                else{
-                    if(kk<pc.width)v.x=weight_value[m*pc.width+kk];
-                    if(kk+1u<pc.width)v.y=weight_value[m*pc.width+kk+1u];
-                    if(kk+2u<pc.width)v.z=weight_value[m*pc.width+kk+2u];
-                }
+            if(m<pc.outputs&&kk+3u<pc.width){
+                uint word=(m*pc.width+kk)>>1u;
+                uvec2 hw=uvec2(weight_word[word],weight_word[word+1u]);
+                vec2 lo=unpackHalf2x16(hw.x);
+                vec2 hi=unpackHalf2x16(hw.y);
+                v=vec4(lo.x,lo.y,hi.x,hi.y);
             }
             tile_w[r][c]=v;
         }
