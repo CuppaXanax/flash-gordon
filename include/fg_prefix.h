@@ -23,6 +23,17 @@ typedef struct fg_prefix_plan {
     fg_prefix_reset_reason reset_reason;
 } fg_prefix_plan;
 
+typedef enum fg_prefix_continuation_mode {
+    FG_PREFIX_CONTINUATION_NONE = 0,
+    FG_PREFIX_CONTINUATION_STORED,
+    FG_PREFIX_CONTINUATION_SYNTHESIZED
+} fg_prefix_continuation_mode;
+
+fg_prefix_continuation_mode fg_prefix_select_continuation(
+    bool pending_eos_valid, uint32_t pending_eos_token, uint32_t next_token,
+    bool next_token_valid, uint32_t eos_token,
+    size_t pending_boundary_bytes, size_t rendered_history_length);
+
 fg_status fg_prefix_plan_tokens(const int32_t *history, size_t history_count,
                                 bool next_token_valid, const uint32_t *transcript,
                                 size_t transcript_count,

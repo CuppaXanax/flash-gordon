@@ -17,6 +17,18 @@ const char *fg_prefix_reset_reason_name(fg_prefix_reset_reason reason) {
     }
 }
 
+fg_prefix_continuation_mode fg_prefix_select_continuation(
+    bool pending_eos_valid, uint32_t pending_eos_token, uint32_t next_token,
+    bool next_token_valid, uint32_t eos_token,
+    size_t pending_boundary_bytes, size_t rendered_history_length) {
+    if (next_token_valid && pending_eos_valid && pending_eos_token == next_token &&
+        pending_eos_token == eos_token && pending_boundary_bytes &&
+        pending_boundary_bytes <= rendered_history_length)
+        return FG_PREFIX_CONTINUATION_STORED;
+    if (next_token_valid) return FG_PREFIX_CONTINUATION_SYNTHESIZED;
+    return FG_PREFIX_CONTINUATION_NONE;
+}
+
 fg_status fg_prefix_plan_tokens(const int32_t *history, size_t history_count,
                                 bool next_token_valid, const uint32_t *transcript,
                                 size_t transcript_count,

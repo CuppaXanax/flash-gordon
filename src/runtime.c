@@ -5319,71 +5319,98 @@ fg_status fg_runtime_generate_continuation(
     fg_generation_stats *stats,fg_error *err){
     if(prefix_miss)*prefix_miss=false;
     if(!runtime||!public_transcript||!continuation||!runtime->rendered_history||
-       !runtime->pending_eos_valid||!runtime->next_token_valid||
-       runtime->pending_eos_token!=runtime->next_token||
-       runtime->pending_eos_token!=fg_tokenizer_eos(runtime_tokenizer(runtime))||
-       !runtime->pending_boundary_bytes||
-       runtime->pending_boundary_bytes>runtime->rendered_history_length){
+       !runtime->next_token_valid){
         if(prefix_miss)*prefix_miss=true;
         fg_error_set(err,FG_ERR_UNAVAILABLE,
-                     "runtime has no reusable pending EOS continuation frontier");
+                     "runtime has no reusable continuation frontier");
         return FG_ERR_UNAVAILABLE;
     }
+    fg_tokenizer *tokenizer=runtime_tokenizer(runtime);
+    uint32_t eos_token=fg_tokenizer_eos(tokenizer);
+    fg_prefix_continuation_mode mode=fg_prefix_select_continuation(
+        runtime->pending_eos_valid,runtime->pending_eos_token,runtime->next_token,
+        runtime->next_token_valid,eos_token,runtime->pending_boundary_bytes,
+        runtime->rendered_history_length);
+    if(mode==FG_PREFIX_CONTINUATION_NONE){
+        if(prefix_miss)*prefix_miss=true;
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "runtime has no reusable continuation frontier");
+        return FG_ERR_UNAVAILABLE;
+    }
+    bool synthesized=mode==FG_PREFIX_CONTINUATION_SYNTHESIZED;
     const char *eos_text=NULL;
     size_t eos_bytes=0;
-    fg_status status=fg_tokenizer_token(runtime_tokenizer(runtime),
-                                        runtime->pending_eos_token,&eos_text,
+    fg_status status=fg_tokenizer_token(tokenizer,eos_token,&eos_text,
                                         &eos_bytes,NULL,err);
-    const char *boundary=runtime->rendered_history+
-        runtime->rendered_history_length-runtime->pending_boundary_bytes;
-    if(status==FG_OK&&
-       (runtime->pending_boundary_bytes!=eos_bytes+1u||
-        memcmp(boundary,eos_text,eos_bytes)||boundary[eos_bytes]!='\n')){
-        fg_error_set(err,FG_ERR_MISMATCH,
-                     "runtime pending EOS transcript boundary is inconsistent");
-        status=FG_ERR_MISMATCH;
+    const char *boundary=NULL;
+    size_t boundary_bytes=0;
+    if(status==FG_OK&&!synthesized){
+        boundary=runtime->rendered_history+
+            runtime->rendered_history_length-runtime->pending_boundary_bytes;
+        boundary_bytes=runtime->pending_boundary_bytes;
+        if(boundary_bytes!=eos_bytes+1u||
+           memcmp(boundary,eos_text,eos_bytes)||boundary[eos_bytes]!='\n'){
+            fg_error_set(err,FG_ERR_MISMATCH,
+                         "runtime pending EOS transcript boundary is inconsistent");
+            status=FG_ERR_MISMATCH;
+        }
     }
+    if(status==FG_OK&&synthesized)boundary_bytes=eos_bytes+1u;
     size_t continuation_length=strlen(continuation);
-    if(status==FG_OK&&
-       continuation_length>SIZE_MAX-runtime->rendered_history_length-1u){
-        fg_error_set(err,FG_ERR_LIMIT,"runtime transcript continuation exceeds address space");
-        status=FG_ERR_LIMIT;
+    size_t transcript_boundary=synthesized?boundary_bytes:0u;
+    size_t head_length=0;
+    if(status==FG_OK){
+        head_length=runtime->rendered_history_length+transcript_boundary;
+        if(head_length<runtime->rendered_history_length||
+           continuation_length>SIZE_MAX-head_length-1u){
+            fg_error_set(err,FG_ERR_LIMIT,
+                         "runtime transcript continuation exceeds address space");
+            status=FG_ERR_LIMIT;
+        }
     }
-    size_t combined_length=0;
-    if(status==FG_OK)
-        combined_length=runtime->rendered_history_length+continuation_length;
-    char *combined=status==FG_OK?malloc(combined_length+1u):NULL;
+    char *combined=status==FG_OK?malloc(head_length+continuation_length+1u):NULL;
     if(status==FG_OK&&!combined){
         fg_error_set(err,FG_ERR_OOM,"build runtime transcript continuation");
         status=FG_ERR_OOM;
     }
     if(status==FG_OK){
-        memcpy(combined,runtime->rendered_history,runtime->rendered_history_length);
-        memcpy(combined+runtime->rendered_history_length,continuation,
-               continuation_length+1u);
+        char *cursor=combined;
+        memcpy(cursor,runtime->rendered_history,runtime->rendered_history_length);
+        cursor+=runtime->rendered_history_length;
+        if(synthesized){
+            memcpy(cursor,eos_text,eos_bytes);
+            cursor[eos_bytes]='\n';
+            cursor+=boundary_bytes;
+        }
+        memcpy(cursor,continuation,continuation_length+1u);
     }
 
     size_t suffix_length=0;
-    if(status==FG_OK)
-        suffix_length=runtime->pending_boundary_bytes+continuation_length;
+    if(status==FG_OK&&continuation_length<=SIZE_MAX-boundary_bytes-1u)
+        suffix_length=boundary_bytes+continuation_length;
+    else if(status==FG_OK){
+        fg_error_set(err,FG_ERR_LIMIT,"runtime transcript continuation exceeds address space");
+        status=FG_ERR_LIMIT;
+    }
     char *suffix=status==FG_OK?malloc(suffix_length+1u):NULL;
     if(status==FG_OK&&!suffix){
         fg_error_set(err,FG_ERR_OOM,"build pending EOS continuation suffix");
         status=FG_ERR_OOM;
     }
     if(status==FG_OK){
-        memcpy(suffix,boundary,runtime->pending_boundary_bytes);
-        memcpy(suffix+runtime->pending_boundary_bytes,continuation,
-               continuation_length+1u);
+        if(synthesized){
+            memcpy(suffix,eos_text,eos_bytes);
+            suffix[eos_bytes]='\n';
+        }else memcpy(suffix,boundary,boundary_bytes);
+        memcpy(suffix+boundary_bytes,continuation,continuation_length+1u);
     }
 
     fg_tokens suffix_tokens={0},prompt={0};
     if(status==FG_OK)
-        status=fg_tokenizer_encode(runtime_tokenizer(runtime),suffix,true,
-                                   &suffix_tokens,err);
+        status=fg_tokenizer_encode(tokenizer,suffix,true,&suffix_tokens,err);
     if(status==FG_OK)
         status=fg_prefix_build_continuation_tokens(
-            runtime->history,runtime->history_count,runtime->pending_eos_token,
+            runtime->history,runtime->history_count,eos_token,
             suffix_tokens.data,suffix_tokens.count,&prompt.data,&prompt.count,err);
     prompt.capacity=prompt.count;
     if(status==FG_OK){

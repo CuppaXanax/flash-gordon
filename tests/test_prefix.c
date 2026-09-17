@@ -121,6 +121,37 @@ static void test_continuation_preserves_authoritative_model_tokens(void) {
     CHECK(count == 0);
 }
 
+static void test_continuation_mode_selection(void) {
+    CHECK(fg_prefix_select_continuation(true, 248046, 248046, true, 248046,
+                                        12, 4096) == FG_PREFIX_CONTINUATION_STORED);
+    CHECK(fg_prefix_select_continuation(true, 248046, 77, true, 248046,
+                                        12, 4096) == FG_PREFIX_CONTINUATION_SYNTHESIZED);
+    CHECK(fg_prefix_select_continuation(false, 0, 77, true, 248046,
+                                        0, 4096) == FG_PREFIX_CONTINUATION_SYNTHESIZED);
+    CHECK(fg_prefix_select_continuation(true, 248046, 248046, true, 248046,
+                                        0, 4096) == FG_PREFIX_CONTINUATION_SYNTHESIZED);
+    CHECK(fg_prefix_select_continuation(true, 248046, 248046, true, 248046,
+                                        5000, 4096) == FG_PREFIX_CONTINUATION_SYNTHESIZED);
+    CHECK(fg_prefix_select_continuation(false, 0, 0, false, 248046,
+                                        0, 4096) == FG_PREFIX_CONTINUATION_NONE);
+    CHECK(fg_prefix_select_continuation(true, 248046, 248046, false, 248046,
+                                        12, 4096) == FG_PREFIX_CONTINUATION_NONE);
+}
+
+static void test_synthesized_boundary_continuation_tokens(void) {
+    const int32_t history[] = {10, 20, 30};
+    const uint32_t suffix[] = {248046, 198, 248045, 872, 99};
+    uint32_t *tokens = NULL;
+    size_t count = 0;
+    fg_error err = {0};
+    CHECK(fg_prefix_build_continuation_tokens(history, 3, 248046, suffix, 5,
+                                              &tokens, &count, &err) == FG_OK);
+    CHECK(count == 8);
+    CHECK(tokens && tokens[3] == 248046);
+    CHECK(tokens && !memcmp(tokens + 3, suffix, sizeof(suffix)));
+    free(tokens);
+}
+
 int main(void) {
     test_prefix_hit_uses_authoritative_full_tokens();
     test_exact_frontier_needs_no_prefill();
@@ -128,6 +159,8 @@ int main(void) {
     test_tool_loop_and_reasoning_are_token_identity();
     test_restart_reset_and_unavailable_frontier();
     test_continuation_preserves_authoritative_model_tokens();
+    test_continuation_mode_selection();
+    test_synthesized_boundary_continuation_tokens();
     CHECK(!strcmp(fg_prefix_reset_reason_name(FG_PREFIX_RESET_TOKEN_MISMATCH),
                   "token-mismatch"));
     CHECK(!strcmp(fg_prefix_reset_reason_name(FG_PREFIX_RESET_PUBLIC_MISMATCH),
