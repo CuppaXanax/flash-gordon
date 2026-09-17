@@ -1,7 +1,8 @@
 # Tool metadata and prefix continuation
 
 Date: 2026-09-17. Status: implemented on `fix/tool-churn-continuation`
-(`d4ced43`), local gates green, fleet A/B pending.
+(base `0a76474`, evidence snapshot `bebc16f`), local gates green, fleet A/B
+pending.
 
 ## Problem
 
