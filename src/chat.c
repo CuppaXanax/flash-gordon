@@ -273,8 +273,19 @@ static void tool_arguments_free(tool_argument *arguments, size_t count) {
     free(arguments);
 }
 
-static bool text_has_chatml_control(const char *text) {
-    return text && (strstr(text, "<|im_start|>") || strstr(text, "<|im_end|>"));
+static fg_status buffer_append_text(fg_text_buffer *buffer, const char *text, fg_error *err) {
+    static const char zero_width[] = "\xe2\x80\x8b";
+    if (!text) return FG_OK;
+    const char *cursor = text;
+    const char *marker;
+    while ((marker = strstr(cursor, "<|")) != NULL) {
+        fg_status status = buffer_append_n(buffer, cursor, (size_t)(marker - cursor) + 2u, err);
+        if (status != FG_OK) return status;
+        status = buffer_append(buffer, zero_width, err);
+        if (status != FG_OK) return status;
+        cursor = marker + 2;
+    }
+    return buffer_append(buffer, cursor, err);
 }
 
 static bool valid_qwen_tag_value(const char *text, bool allow_empty) {
@@ -297,15 +308,13 @@ static fg_status append_tool_argument(fg_text_buffer *buffer, tool_argument *arg
         fg_text_buffer decoded = {0};
         status = append_decoded_json_string(&decoded, argument->value_start + 1,
                                             argument->value_end - 1, err);
-        if (status == FG_OK && text_has_chatml_control(decoded.data)) {
-            fg_error_set(err, FG_ERR_ARGUMENT,
-                         "tool argument strings cannot contain reserved ChatML controls");
-            status = FG_ERR_ARGUMENT;
-        }
-        if (status == FG_OK) status = buffer_append(buffer, decoded.data, err);
+        if (status == FG_OK) status = buffer_append_text(buffer, decoded.data, err);
         free(decoded.data);
     } else if (status == FG_OK) {
-        status = append_minified_json(buffer, argument->value_start, argument->value_end, err);
+        fg_text_buffer minified = {0};
+        status = append_minified_json(&minified, argument->value_start, argument->value_end, err);
+        if (status == FG_OK) status = buffer_append_text(buffer, minified.data, err);
+        free(minified.data);
     }
     if (status == FG_OK) status = buffer_append(buffer, "\n</parameter>\n", err);
     if (status == FG_OK) argument->used = true;
@@ -609,7 +618,7 @@ static fg_status append_message(fg_text_buffer *buffer, const fg_chat_message *m
         if (status == FG_OK) status = buffer_append(buffer, role_is_system(role) ? "system\n" :
                                                                              "user\n",
                                                     err);
-        if (status == FG_OK) status = buffer_append(buffer, content, err);
+        if (status == FG_OK) status = buffer_append_text(buffer, content, err);
         if (status == FG_OK) status = buffer_append(buffer, "<|im_end|>\n", err);
         return status;
     }
@@ -617,10 +626,10 @@ static fg_status append_message(fg_text_buffer *buffer, const fg_chat_message *m
         status = buffer_append(buffer, "<|im_start|>assistant\n", err);
         if (status == FG_OK && message->reasoning && message->reasoning[0]) {
             status = buffer_append(buffer, "<think>\n", err);
-            if (status == FG_OK) status = buffer_append(buffer, message->reasoning, err);
+            if (status == FG_OK) status = buffer_append_text(buffer, message->reasoning, err);
             if (status == FG_OK) status = buffer_append(buffer, "\n</think>\n\n", err);
         }
-        if (status == FG_OK) status = buffer_append(buffer, content, err);
+        if (status == FG_OK) status = buffer_append_text(buffer, content, err);
         for (size_t i = 0; status == FG_OK && i < message->tool_call_count; i++) {
             const fg_chat_tool_call *call = &message->tool_calls[i];
             if (i || has_trimmed_content(content))
@@ -638,9 +647,9 @@ static fg_status append_message(fg_text_buffer *buffer, const fg_chat_message *m
         return status;
     }
     status = buffer_append(buffer, "<|im_start|>user\n[", err);
-    if (status == FG_OK) status = buffer_append(buffer, role, err);
+    if (status == FG_OK) status = buffer_append_text(buffer, role, err);
     if (status == FG_OK) status = buffer_append(buffer, "]: ", err);
-    if (status == FG_OK) status = buffer_append(buffer, content, err);
+    if (status == FG_OK) status = buffer_append_text(buffer, content, err);
     if (status == FG_OK) status = buffer_append(buffer, "<|im_end|>\n", err);
     return status;
 }
@@ -660,19 +669,15 @@ static fg_status chat_render(const fg_chat_message *messages, size_t message_cou
     }
     for (size_t i = 0; i < message_count; i++) {
         const fg_chat_message *message = &messages[i];
-        if ((message->tool_call_count && !message->tool_calls) ||
-            text_has_chatml_control(message->content) ||
-            text_has_chatml_control(message->reasoning)) {
-            fg_error_set(err, FG_ERR_ARGUMENT,
-                         "message text cannot contain reserved ChatML control tokens");
+        if (message->tool_call_count && !message->tool_calls) {
+            fg_error_set(err, FG_ERR_ARGUMENT, "chat renderer received invalid arguments");
             return FG_ERR_ARGUMENT;
         }
         for (size_t j = 0; j < message->tool_call_count; j++) {
             const fg_chat_tool_call *call = &message->tool_calls[j];
-            if (!valid_qwen_tag_value(call->name, false) ||
-                text_has_chatml_control(call->arguments_json)) {
+            if (!valid_qwen_tag_value(call->name, false)) {
                 fg_error_set(err, FG_ERR_ARGUMENT,
-                             "tool calls contain invalid Qwen or ChatML control text");
+                             "tool calls contain invalid Qwen tag text");
                 return FG_ERR_ARGUMENT;
             }
         }
