@@ -53,7 +53,7 @@ tests/test_sampler: tests/test_sampler.c src/sampler.o src/util.o
 test-sampler: tests/test_sampler
 	./tests/test_sampler
 
-test: tests/test_prefill_collective tests/test_core tests/test_session tests/test_prefix tests/test_chat tests/test_chat_runtime tests/test_api tests/test_ngram_deployment tests/test_prefill_dispatch
+test: tests/test_prefill_collective tests/test_core tests/test_session tests/test_prefix tests/test_chat tests/test_chat_runtime tests/test_api tests/test_ngram_deployment tests/test_prefill_dispatch tests/test_video
 	./tests/test_core
 	./tests/test_session
 	./tests/test_prefix
@@ -63,6 +63,7 @@ test: tests/test_prefill_collective tests/test_core tests/test_session tests/tes
 	./tests/test_ngram_deployment
 	./tests/test_prefill_dispatch
 	./tests/test_prefill_collective || test $$? -eq 77
+	./tests/test_video
 	bash tests/test_ep_trace_validator.sh
 
 shaders: $(FG_SHADER_OUT)
@@ -146,6 +147,6 @@ test-gdn-fleet: tests/test_fg_vk
 	done
 
 clean:
-	rm -f tests/test_prefill_collective flash-gordon $(OBJ) $(DEP) vendor/*.o vendor/*.d tests/*.o tests/test_core tests/test_session tests/test_prefix tests/test_chat tests/test_chat_runtime tests/test_api tests/test_sampler tests/test_ngram_deployment tests/test_expert_prefill tests/test_qsa_prefill tests/test_owner_reduce tests/test_prefill_dispatch tests/test_expert_prefill.d tests/test_prefill_dispatch.d tests/test_fg_vk tests/test_hc_down_split tests/test_model_load tests/test_qsa_model_load tests/test_tokenizer tests/test_fabric vulkan/*.spv
+	rm -f tests/test_prefill_collective flash-gordon $(OBJ) $(DEP) vendor/*.o vendor/*.d tests/*.o tests/test_core tests/test_session tests/test_prefix tests/test_chat tests/test_chat_runtime tests/test_api tests/test_sampler tests/test_ngram_deployment tests/test_expert_prefill tests/test_qsa_prefill tests/test_owner_reduce tests/test_prefill_dispatch tests/test_expert_prefill.d tests/test_prefill_dispatch.d tests/test_fg_vk tests/test_hc_down_split tests/test_model_load tests/test_qsa_model_load tests/test_tokenizer tests/test_fabric tests/test_video vulkan/*.spv
 
 -include $(DEP) tests/test_expert_prefill.d tests/test_prefill_dispatch.d
