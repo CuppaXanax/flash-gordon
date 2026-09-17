@@ -37,6 +37,7 @@ tests/test_fg_ledger
 tests/test_qsa_model_load
 tests/test_sampler
 tests/test_tower
+tests/test_video
 
 # Python test bytecode
 tools/__pycache__/

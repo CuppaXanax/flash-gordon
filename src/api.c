@@ -1,6 +1,7 @@
 #include "fg_api.h"
 #include "fg_chat.h"
 #include "fg_runtime.h"
+#include "fg_video.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -76,10 +77,16 @@ typedef struct http_request {
     size_t body_length;
 } http_request;
 
-typedef struct api_image {
+typedef struct api_media {
+    uint32_t kind;
     uint8_t *data;
     size_t length;
-} api_image;
+    uint8_t **frames;
+    size_t *frame_lengths;
+    size_t frame_count;
+    double fps;
+    uint32_t max_frames;
+} api_media;
 
 typedef struct api_chat_request {
     fg_chat_message *messages;
@@ -91,9 +98,9 @@ typedef struct api_chat_request {
     uint32_t max_tokens;
     bool stream;
     fg_sampler_config sampler;
-    api_image *images;
-    size_t image_count;
-    size_t image_capacity;
+    api_media *media;
+    size_t media_count;
+    size_t media_capacity;
 } api_chat_request;
 
 typedef struct api_public_session {
@@ -703,35 +710,61 @@ static fg_status api_base64_decode(const char *text,size_t length,uint8_t **outp
     return FG_OK;
 }
 
-static fg_status api_request_add_image(api_chat_request *request,uint8_t *data,size_t length,
-                                       fg_error *err){
-    if(request->image_count==request->image_capacity){
-        const size_t capacity=request->image_capacity?request->image_capacity*2u:2u;
-        api_image *grown=realloc(request->images,capacity*sizeof(*grown));
+static api_media *api_request_media_slot(api_chat_request *request,fg_error *err){
+    if(request->media_count==request->media_capacity){
+        const size_t capacity=request->media_capacity?request->media_capacity*2u:2u;
+        api_media *grown=realloc(request->media,capacity*sizeof(*grown));
         if(!grown){
-            free(data);
-            fg_error_set(err,FG_ERR_OOM,"grow API image list");
-            return FG_ERR_OOM;
+            fg_error_set(err,FG_ERR_OOM,"grow API media list");
+            return NULL;
         }
-        request->images=grown;
-        request->image_capacity=capacity;
+        request->media=grown;
+        request->media_capacity=capacity;
     }
-    request->images[request->image_count].data=data;
-    request->images[request->image_count].length=length;
-    request->image_count++;
+    api_media *slot=&request->media[request->media_count++];
+    memset(slot,0,sizeof(*slot));
+    return slot;
+}
+
+static fg_status api_request_add_media(api_chat_request *request,uint32_t kind,uint8_t *data,
+                                       size_t length,fg_error *err){
+    api_media *slot=api_request_media_slot(request,err);
+    if(!slot){
+        free(data);
+        return FG_ERR_OOM;
+    }
+    slot->kind=kind;
+    slot->data=data;
+    slot->length=length;
     return FG_OK;
 }
 
-static fg_status api_decode_image_url(const char *url,uint8_t **data,size_t *length,
-                                      fg_error *err){
+static fg_status api_request_add_video_frames(api_chat_request *request,uint8_t **frames,
+                                              size_t *frame_lengths,size_t frame_count,
+                                              double fps,uint32_t max_frames,fg_error *err){
+    api_media *slot=api_request_media_slot(request,err);
+    if(!slot)return FG_ERR_OOM;
+    slot->kind=FG_RUNTIME_MEDIA_VIDEO_FRAMES;
+    slot->frames=frames;
+    slot->frame_lengths=frame_lengths;
+    slot->frame_count=frame_count;
+    slot->fps=fps;
+    slot->max_frames=max_frames;
+    return FG_OK;
+}
+
+static fg_status api_decode_media_url(const char *url,uint32_t kind,const char *name,
+                                      uint8_t **data,size_t *length,fg_error *err){
+    const bool video=kind==FG_RUNTIME_MEDIA_VIDEO;
     if(!url||strncmp(url,"data:",5u)!=0){
         fg_error_set(err,FG_ERR_ARGUMENT,
-                     "image_url must be a base64 data: URL; http(s) image URLs are not supported");
+                     "%s must be a base64 data: URL; http(s) %s URLs are not supported",
+                     name,name);
         return FG_ERR_ARGUMENT;
     }
     const char *comma=strchr(url,',');
     if(!comma){
-        fg_error_set(err,FG_ERR_ARGUMENT,"image_url data URL has no payload");
+        fg_error_set(err,FG_ERR_ARGUMENT,"%s data URL has no payload",name);
         return FG_ERR_ARGUMENT;
     }
     const char *header=url+5u;
@@ -740,23 +773,31 @@ static fg_status api_decode_image_url(const char *url,uint8_t **data,size_t *len
     const size_t mime_length=semi?(size_t)(semi-header):header_length;
     char mime[64];
     if(!mime_length||mime_length>=sizeof(mime)){
-        fg_error_set(err,FG_ERR_ARGUMENT,"image_url data URL has an invalid media type");
+        fg_error_set(err,FG_ERR_ARGUMENT,"%s data URL has an invalid media type",name);
         return FG_ERR_ARGUMENT;
     }
     memcpy(mime,header,mime_length);
     mime[mime_length]=0;
-    if(strcmp(mime,"image/png")&&strcmp(mime,"image/jpeg")&&strcmp(mime,"image/jpg")){
+    if(video){
+        if(strcmp(mime,"video/mp4")&&strcmp(mime,"video/webm")&&strcmp(mime,"video/x-matroska")){
+            fg_error_set(err,FG_ERR_ARGUMENT,
+                         "unsupported video media type '%s' (use video/mp4 or video/webm)",mime);
+            return FG_ERR_ARGUMENT;
+        }
+    }else if(strcmp(mime,"image/png")&&strcmp(mime,"image/jpeg")&&strcmp(mime,"image/jpg")){
         fg_error_set(err,FG_ERR_ARGUMENT,
                      "unsupported image media type '%s' (use image/png or image/jpeg)",mime);
         return FG_ERR_ARGUMENT;
     }
     if(!semi||!strstr(semi,"base64")){
-        fg_error_set(err,FG_ERR_ARGUMENT,"image_url data URL must be base64 encoded");
+        fg_error_set(err,FG_ERR_ARGUMENT,"%s data URL must be base64 encoded",name);
         return FG_ERR_ARGUMENT;
     }
     const char *payload=comma+1u;
     return api_base64_decode(payload,strlen(payload),data,length,err);
 }
+
+static bool number_is_integer(double value);
 
 static fg_status message_content_parts(const json_value *content,const char **output,
                                        api_chat_request *request,fg_error *err){
@@ -764,16 +805,18 @@ static fg_status message_content_parts(const json_value *content,const char **ou
        content->type!=JSON_ARRAY){
         return message_content_text(content,output,err);
     }
-    bool has_image=false;
+    bool has_media=false;
     for(size_t i=0;i<content->as.array.count;i++){
         json_value *part=content->as.array.items[i];
         json_value *type=json_object_get(part,"type");
-        if(type&&type->type==JSON_STRING&&!strcmp(type->as.string,"image_url")){
-            has_image=true;
+        if(type&&type->type==JSON_STRING&&
+           (!strcmp(type->as.string,"image_url")||!strcmp(type->as.string,"video_url")||
+            !strcmp(type->as.string,"video_frames"))){
+            has_media=true;
             break;
         }
     }
-    if(!has_image)return message_content_text(content,output,err);
+    if(!has_media)return message_content_text(content,output,err);
     api_buffer text={0};
     fg_status status=FG_OK;
     for(size_t i=0;status==FG_OK&&i<content->as.array.count;i++){
@@ -798,25 +841,115 @@ static fg_status message_content_parts(const json_value *content,const char **ou
             status=buffer_append(&text,value->as.string,err);
             continue;
         }
-        if(!strcmp(type->as.string,"image_url")){
-            json_value *image_url=json_object_get(part,"image_url");
+        if(!strcmp(type->as.string,"video_frames")){
+            json_value *frames_field=json_object_get(part,"video_frames");
+            if(!frames_field||frames_field->type!=JSON_OBJECT){
+                fg_error_set(err,FG_ERR_ARGUMENT,
+                             "video_frames parts require a video_frames object");
+                status=FG_ERR_ARGUMENT;
+                break;
+            }
+            json_value *frames_json=json_object_get(frames_field,"frames");
+            if(!frames_json||frames_json->type!=JSON_ARRAY||!frames_json->as.array.count){
+                fg_error_set(err,FG_ERR_ARGUMENT,
+                             "video_frames requires a non-empty frames array");
+                status=FG_ERR_ARGUMENT;
+                break;
+            }
+            const size_t count=frames_json->as.array.count;
+            if(count>FG_VIDEO_MAX_INPUT_FRAMES){
+                fg_error_set(err,FG_ERR_LIMIT,"video_frames accepts at most %u frames",
+                             FG_VIDEO_MAX_INPUT_FRAMES);
+                status=FG_ERR_LIMIT;
+                break;
+            }
+            json_value *fps_json=json_object_get(frames_field,"fps");
+            double fps=FG_VIDEO_FPS_TARGET;
+            if(fps_json){
+                if(fps_json->type!=JSON_NUMBER||!isfinite(fps_json->as.number)||
+                   !(fps_json->as.number>0.0)||fps_json->as.number>1000.0){
+                    fg_error_set(err,FG_ERR_ARGUMENT,
+                                 "video_frames fps must be a positive number");
+                    status=FG_ERR_ARGUMENT;
+                    break;
+                }
+                fps=fps_json->as.number;
+            }
+            json_value *max_json=json_object_get(frames_field,"max_frames");
+            uint32_t max_frames=FG_VIDEO_MAX_FRAMES;
+            if(max_json){
+                if(max_json->type!=JSON_NUMBER||!number_is_integer(max_json->as.number)||
+                   max_json->as.number<1.0||max_json->as.number>FG_VIDEO_MAX_FRAMES){
+                    fg_error_set(err,FG_ERR_ARGUMENT,
+                                 "video_frames max_frames must be an integer from 1 through %u",
+                                 FG_VIDEO_MAX_FRAMES);
+                    status=FG_ERR_ARGUMENT;
+                    break;
+                }
+                max_frames=(uint32_t)max_json->as.number;
+            }
+            uint8_t **frames=malloc(count*sizeof(*frames));
+            size_t *frame_lengths=malloc(count*sizeof(*frame_lengths));
+            if(!frames||!frame_lengths){
+                free(frame_lengths);
+                free(frames);
+                fg_error_set(err,FG_ERR_OOM,"allocate video frame list");
+                status=FG_ERR_OOM;
+                break;
+            }
+            memset(frames,0,count*sizeof(*frames));
+            memset(frame_lengths,0,count*sizeof(*frame_lengths));
+            for(size_t frame=0;status==FG_OK&&frame<count;frame++){
+                json_value *item=frames_json->as.array.items[frame];
+                if(!item||item->type!=JSON_STRING){
+                    fg_error_set(err,FG_ERR_ARGUMENT,
+                                 "video_frames frames must be base64 image data URLs");
+                    status=FG_ERR_ARGUMENT;
+                    break;
+                }
+                status=api_decode_media_url(item->as.string,FG_RUNTIME_MEDIA_IMAGE,
+                                            "video_frames frame",&frames[frame],
+                                            &frame_lengths[frame],err);
+            }
+            if(status==FG_OK)
+                status=api_request_add_video_frames(request,frames,frame_lengths,count,fps,
+                                                    max_frames,err);
+            if(status!=FG_OK){
+                for(size_t frame=0;frame<count;frame++)free(frames[frame]);
+                free(frames);
+                free(frame_lengths);
+                break;
+            }
+            status=buffer_append(&text,"<|vision_start|><|video_pad|><|vision_end|>",err);
+            continue;
+        }
+        if(!strcmp(type->as.string,"image_url")||!strcmp(type->as.string,"video_url")){
+            const bool video=!strcmp(type->as.string,"video_url");
+            const char *field=video?"video_url":"image_url";
+            json_value *media_url=json_object_get(part,field);
             const char *url=NULL;
-            if(image_url&&image_url->type==JSON_STRING)url=image_url->as.string;
-            else if(image_url&&image_url->type==JSON_OBJECT){
-                json_value *nested=json_object_get(image_url,"url");
+            if(media_url&&media_url->type==JSON_STRING)url=media_url->as.string;
+            else if(media_url&&media_url->type==JSON_OBJECT){
+                json_value *nested=json_object_get(media_url,"url");
                 if(nested&&nested->type==JSON_STRING)url=nested->as.string;
-            }else if(image_url&&image_url->type==JSON_NULL)url=NULL;
+            }else if(media_url&&media_url->type==JSON_NULL)url=NULL;
             if(!url){
-                fg_error_set(err,FG_ERR_ARGUMENT,"image_url parts require image_url.url");
+                fg_error_set(err,FG_ERR_ARGUMENT,"%s parts require %s.url",field,field);
                 status=FG_ERR_ARGUMENT;
                 break;
             }
             uint8_t *data=NULL;
             size_t length=0;
-            status=api_decode_image_url(url,&data,&length,err);
+            status=api_decode_media_url(url,video?FG_RUNTIME_MEDIA_VIDEO:FG_RUNTIME_MEDIA_IMAGE,
+                                        field,&data,&length,err);
             if(status==FG_OK)
-                status=api_request_add_image(request,data,length,err);
-            if(status==FG_OK)status=buffer_append(&text,"<|vision_start|><|image_pad|><|vision_end|>",err);
+                status=api_request_add_media(request,
+                                             video?FG_RUNTIME_MEDIA_VIDEO:FG_RUNTIME_MEDIA_IMAGE,
+                                             data,length,err);
+            if(status==FG_OK)
+                status=buffer_append(&text,video?
+                                     "<|vision_start|><|video_pad|><|vision_end|>":
+                                     "<|vision_start|><|image_pad|><|vision_end|>",err);
             if(status!=FG_OK)free(data);
             continue;
         }
@@ -941,8 +1074,14 @@ static void api_chat_request_free(api_chat_request *request) {
         free((void *)request->messages[i].tool_calls);
     }
     free(request->messages);
-    for (size_t i = 0; i < request->image_count; i++) free(request->images[i].data);
-    free(request->images);
+    for (size_t i = 0; i < request->media_count; i++) {
+        for (size_t frame = 0; frame < request->media[i].frame_count; frame++)
+            free(request->media[i].frames[frame]);
+        free(request->media[i].frames);
+        free(request->media[i].frame_lengths);
+        free(request->media[i].data);
+    }
+    free(request->media);
     for (size_t i = 0; i < request->tool_schema_count; i++) free(request->tool_schemas[i]);
     free(request->tool_schemas);
     free(request->tool_choice_name);
@@ -2316,6 +2455,9 @@ static fg_status handle_models(int fd, fg_runtime *runtime, fg_error *err) {
     const char *model = fg_runtime_model_name(runtime);
     const char *mtp = fg_runtime_mtp_capability(runtime) == FG_MTP_CAPABILITY_ENABLED ?
         "true" : "false";
+    const char *image = fg_runtime_vision_available(runtime) ? "true" : "false";
+    const char *video = fg_runtime_video_available(runtime) ? "true" : "false";
+    const char *video_frames = fg_runtime_video_frames_available(runtime) ? "true" : "false";
     api_buffer body = {0};
     fg_status status = buffer_append(&body, "{\"object\":\"list\",\"data\":[{\"id\":", err);
     if (status == FG_OK) status = buffer_append_json_string(&body, model, strlen(model), err);
@@ -2325,8 +2467,9 @@ static fg_status handle_models(int fd, fg_runtime *runtime, fg_error *err) {
                               ",\"object\":\"model\",\"created\":0,\"owned_by\":"
                               "\"flash-gordon\",\"capabilities\":{\"native_context\":%u,"
                               "\"experimental_context\":0,\"tools\":true,\"mtp\":%s,"
-                              "\"image\":false,\"video\":false}}]}",
-                              fg_runtime_context_limit(runtime), mtp);
+                              "\"image\":%s,\"video\":%s,\"video_frames\":%s}}]}",
+                              fg_runtime_context_limit(runtime), mtp, image, video,
+                              video_frames);
         if (length < 0 || (size_t)length >= sizeof(capabilities)) {
             fg_error_set(err, FG_ERR_LIMIT, "model capabilities exceed response buffer");
             status = FG_ERR_LIMIT;
@@ -2355,13 +2498,29 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     fg_status status =
         parse_chat_request(root, fg_runtime_model_name(runtime), &request, err);
     json_free(root);
-    if (status == FG_OK && request.image_count && !fg_runtime_vision_available(runtime)) {
-        fg_error send_err = {0};
-        send_error_response(fd, 400u,
-                            "image input is not available on this deployment "
-                            "(vision tower pack missing)", &send_err);
-        api_chat_request_free(&request);
-        return FG_OK;
+    if (status == FG_OK && request.media_count) {
+        bool needs_video = false;
+        bool needs_frames = false;
+        for (size_t i = 0; i < request.media_count; i++) {
+            if (request.media[i].kind == FG_RUNTIME_MEDIA_VIDEO) needs_video = true;
+            if (request.media[i].kind == FG_RUNTIME_MEDIA_VIDEO_FRAMES) needs_frames = true;
+        }
+        const char *message = NULL;
+        if (!fg_runtime_vision_available(runtime))
+            message = "media input is not available on this deployment "
+                      "(vision tower pack missing)";
+        else if (needs_frames && !fg_runtime_video_frames_available(runtime))
+            message = "video frame input is not available on this deployment "
+                      "(tower temporal token entry missing)";
+        else if (needs_video && !fg_runtime_video_available(runtime))
+            message = "MP4 video input is not available on this deployment "
+                      "(static ffmpeg/ffprobe or the tower temporal token entry is missing)";
+        if (message) {
+            fg_error send_err = {0};
+            send_error_response(fd, 400u, message, &send_err);
+            api_chat_request_free(&request);
+            return FG_OK;
+        }
     }
     if (status != FG_OK) {
         char message[sizeof(err->message)];
@@ -2398,7 +2557,7 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     }
     status = fg_chat_render(request.messages, request.message_count, &render_options,
                             &rendered, err);
-    bool public_continuation=status==FG_OK&&request.image_count==0&&
+    bool public_continuation=status==FG_OK&&request.media_count==0&&
         api_public_session_prefix(public_session,&request);
     char *rendered_continuation=NULL;
     if(status==FG_OK&&public_session->valid&&!public_continuation){
@@ -2434,21 +2593,27 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     if(status==FG_OK)status=fg_runtime_set_sampler(runtime,&request.sampler,err);
     if(status==FG_OK){
         generation_attempted=true;
-        if(request.image_count){
-            fg_runtime_image *images=calloc(request.image_count,sizeof(*images));
-            if(!images){
-                fg_error_set(err,FG_ERR_OOM,"allocate vision request images");
+        if(request.media_count){
+            fg_runtime_media *media=calloc(request.media_count,sizeof(*media));
+            if(!media){
+                fg_error_set(err,FG_ERR_OOM,"allocate vision request media");
                 status=FG_ERR_OOM;
             }else{
-                for(size_t image=0;image<request.image_count;image++){
-                    images[image].bytes=request.images[image].data;
-                    images[image].length=request.images[image].length;
+                for(size_t item=0;item<request.media_count;item++){
+                    media[item].kind=request.media[item].kind;
+                    media[item].bytes=request.media[item].data;
+                    media[item].length=request.media[item].length;
+                    media[item].frames=(const uint8_t *const *)request.media[item].frames;
+                    media[item].frame_lengths=request.media[item].frame_lengths;
+                    media[item].frame_count=(uint32_t)request.media[item].frame_count;
+                    media[item].fps=request.media[item].fps;
+                    media[item].max_frames=request.media[item].max_frames;
                 }
-                status=fg_runtime_generate_vision(runtime,rendered,images,
-                                                  (uint32_t)request.image_count,
+                status=fg_runtime_generate_vision(runtime,rendered,media,
+                                                  (uint32_t)request.media_count,
                                                   request.max_tokens,api_token,&generation,
                                                   api_interrupted,NULL,&stats,err);
-                free(images);
+                free(media);
             }
         }else if(public_continuation){
             bool prefix_miss=false;
@@ -2487,13 +2652,14 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
                 "request %s: mode %s, prefix %s, reused %u, reset %s, "
                 "prefill %u/%u tokens "
                 "%.2f tok/s, generation %u tokens %.2f tok/s, context %u/%u "
-                "images %u image-tokens %u tower %.2f s\n",
+                "media %u image-tokens %u video-tokens %u video-frames %u tower %.2f s\n",
                 id,fg_execution_mode_name(stats.execution_mode),
                 stats.prefix_cache_hit?"hit":"miss",stats.reused_tokens,
                 fg_prefix_reset_reason_name(stats.reset_reason),stats.prefilled_tokens,
                 stats.prompt_tokens,prefill_tps,stats.generated_tokens,decode_tps,
                 stats.context_tokens,fg_runtime_context_limit(runtime),
-                (unsigned)request.image_count,stats.image_tokens,stats.tower_seconds);
+                (unsigned)request.media_count,stats.image_tokens,stats.video_tokens,
+                stats.video_frames,stats.tower_seconds);
     }
     const char *finish_reason = generated.tool_call_count ? "tool_calls" :
         (stats.generated_tokens >= request.max_tokens ? "length" : "stop");
@@ -2505,7 +2671,7 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
             status = send_completion(&generation, &generated, &stats, finish_reason, err);
         if(status==FG_OK){
             api_public_session_free(public_session);
-            if(request.image_count==0){
+            if(request.media_count==0){
                 *public_session=pending_session;
                 memset(&pending_session,0,sizeof(pending_session));
             }

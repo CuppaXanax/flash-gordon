@@ -78,6 +78,8 @@ typedef struct fg_generation_stats {
     uint32_t generated_tokens;
     uint32_t context_tokens;
     uint32_t image_tokens;
+    uint32_t video_tokens;
+    uint32_t video_frames;
     bool prefix_cache_hit;
     bool exact_frontier;
     fg_prefix_reset_reason reset_reason;
@@ -90,10 +92,22 @@ typedef fg_status (*fg_token_callback)(void *context,uint32_t token,const char *
                                       size_t bytes,fg_error *err);
 typedef bool (*fg_interrupt_fn)(void *context);
 
-typedef struct fg_runtime_image {
+enum {
+    FG_RUNTIME_MEDIA_IMAGE = 1u,
+    FG_RUNTIME_MEDIA_VIDEO = 2u,
+    FG_RUNTIME_MEDIA_VIDEO_FRAMES = 3u
+};
+
+typedef struct fg_runtime_media {
+    uint32_t kind;
     const uint8_t *bytes;
     size_t length;
-} fg_runtime_image;
+    const uint8_t *const *frames;
+    const size_t *frame_lengths;
+    uint32_t frame_count;
+    double fps;
+    uint32_t max_frames;
+} fg_runtime_media;
 
 void fg_runtime_options_init(fg_runtime_options *options);
 const fg_runtime_profile_definition *fg_runtime_profile_definition_get(uint32_t profile);
@@ -130,12 +144,14 @@ fg_status fg_runtime_generate_continuation(
     fg_interrupt_fn interrupted,void *interrupt_context,
     fg_generation_stats *stats,fg_error *err);
 fg_status fg_runtime_generate_vision(fg_runtime *runtime,const char *transcript,
-                                     const fg_runtime_image *images,uint32_t image_count,
+                                     const fg_runtime_media *media,uint32_t media_count,
                                      uint32_t max_tokens,
                                      fg_token_callback callback,void *callback_context,
                                      fg_interrupt_fn interrupted,void *interrupt_context,
                                      fg_generation_stats *stats,fg_error *err);
 bool fg_runtime_vision_available(const fg_runtime *runtime);
+bool fg_runtime_video_available(const fg_runtime *runtime);
+bool fg_runtime_video_frames_available(const fg_runtime *runtime);
 uint32_t fg_runtime_context_tokens(const fg_runtime *runtime);
 uint32_t fg_runtime_context_limit(const fg_runtime *runtime);
 const char *fg_runtime_model_name(const fg_runtime *runtime);

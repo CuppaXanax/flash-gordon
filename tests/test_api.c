@@ -231,25 +231,55 @@ fg_status fg_runtime_generate_continuation(
 }
 
 static bool test_vision_available = false;
+static bool test_video_available = false;
+static bool test_video_frames_available = false;
 static uint32_t test_vision_calls = 0;
+static uint32_t test_vision_media = 0;
 static uint32_t test_vision_images = 0;
+static uint32_t test_vision_videos = 0;
+static uint32_t test_vision_video_frames = 0;
+static uint32_t test_vision_video_frame_count = 0;
 static size_t test_vision_bytes = 0;
 
 bool fg_runtime_vision_available(const fg_runtime *runtime) {
-    (void)runtime;
-    return test_vision_available;
+    return runtime != NULL && test_vision_available;
+}
+
+bool fg_runtime_video_available(const fg_runtime *runtime) {
+    return runtime != NULL && test_video_available;
+}
+
+bool fg_runtime_video_frames_available(const fg_runtime *runtime) {
+    return runtime != NULL && test_video_frames_available;
 }
 
 fg_status fg_runtime_generate_vision(fg_runtime *runtime,const char *transcript,
-                                     const fg_runtime_image *images,uint32_t image_count,
+                                     const fg_runtime_media *media,uint32_t media_count,
                                      uint32_t max_tokens,fg_token_callback callback,
                                      void *callback_context,fg_interrupt_fn interrupted,
                                      void *interrupt_context,fg_generation_stats *stats,
                                      fg_error *err) {
     test_vision_calls++;
-    test_vision_images = image_count;
+    test_vision_media = media_count;
+    test_vision_images = 0;
+    test_vision_videos = 0;
+    test_vision_video_frames = 0;
+    test_vision_video_frame_count = 0;
     test_vision_bytes = 0;
-    for (uint32_t i = 0; i < image_count; i++) test_vision_bytes += images[i].length;
+    for (uint32_t i = 0; i < media_count; i++) {
+        if (media[i].kind == FG_RUNTIME_MEDIA_VIDEO) {
+            test_vision_videos++;
+            test_vision_bytes += media[i].length;
+        } else if (media[i].kind == FG_RUNTIME_MEDIA_VIDEO_FRAMES) {
+            test_vision_video_frames++;
+            test_vision_video_frame_count += media[i].frame_count;
+            for (uint32_t f = 0; f < media[i].frame_count; f++)
+                test_vision_bytes += media[i].frame_lengths[f];
+        } else {
+            test_vision_images++;
+            test_vision_bytes += media[i].length;
+        }
+    }
     fg_status status = fg_runtime_generate(runtime, transcript, max_tokens, callback,
                                            callback_context, interrupted, interrupt_context,
                                            stats, err);
@@ -390,10 +420,11 @@ static void test_image_content_parts(void) {
     CHECK(root != NULL);
     api_chat_request request = {0};
     CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &request, &err) == FG_OK);
-    CHECK(request.image_count == 1u);
-    CHECK(request.images[0].length > 50u);
-    CHECK(request.images[0].data[0] == 0x89u && request.images[0].data[1] == 'P' &&
-          request.images[0].data[2] == 'N' && request.images[0].data[3] == 'G');
+    CHECK(request.media_count == 1u);
+    CHECK(request.media[0].kind == FG_RUNTIME_MEDIA_IMAGE);
+    CHECK(request.media[0].length > 50u);
+    CHECK(request.media[0].data[0] == 0x89u && request.media[0].data[1] == 'P' &&
+          request.media[0].data[2] == 'N' && request.media[0].data[3] == 'G');
     CHECK(request.messages[0].content &&
           !strncmp(request.messages[0].content, "what is this? <|vision_start|>", 30u));
     CHECK(request.messages[0].content &&
@@ -407,7 +438,7 @@ static void test_image_content_parts(void) {
     CHECK(root != NULL);
     api_chat_request plain_request = {0};
     CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &plain_request, &err) == FG_OK);
-    CHECK(plain_request.image_count == 0u);
+    CHECK(plain_request.media_count == 0u);
     CHECK(!strcmp(plain_request.messages[0].content, "plain text"));
     CHECK(!strstr(plain_request.messages[0].content, "<|vision"));
     api_chat_request_free(&plain_request);
@@ -448,6 +479,290 @@ static void test_image_content_parts(void) {
     CHECK(strstr(err.message, "base64") != NULL);
     api_chat_request_free(&broken_request);
     json_free(root);
+}
+
+static void test_video_content_parts(void) {
+    char body[4096];
+    snprintf(body, sizeof(body),
+             "{\"messages\":[{\"role\":\"user\",\"content\":["
+             "{\"type\":\"text\",\"text\":\"what happens? \"},"
+             "{\"type\":\"video_url\",\"video_url\":{\"url\":\"data:video/mp4;base64,AAAA\"}}]}]}");
+    fg_error err = {0};
+    json_value *root = parse_json_body(body, strlen(body), &err);
+    CHECK(root != NULL);
+    api_chat_request request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &request, &err) == FG_OK);
+    CHECK(request.media_count == 1u);
+    CHECK(request.media[0].kind == FG_RUNTIME_MEDIA_VIDEO);
+    CHECK(request.media[0].length == 3u);
+    CHECK(request.messages[0].content &&
+          !strncmp(request.messages[0].content, "what happens? <|vision_start|>", 30u));
+    CHECK(request.messages[0].content &&
+          strstr(request.messages[0].content, "<|video_pad|><|vision_end|>"));
+    api_chat_request_free(&request);
+    json_free(root);
+
+    const char *http_url =
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"video_url\",\"video_url\":{\"url\":\"https://example.com/a.mp4\"}}]}]}";
+    root = parse_json_body(http_url, strlen(http_url), &err);
+    CHECK(root != NULL);
+    api_chat_request http_request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &http_request, &err) ==
+          FG_ERR_ARGUMENT);
+    CHECK(strstr(err.message, "video_url") != NULL);
+    CHECK(strstr(err.message, "http(s)") != NULL);
+    api_chat_request_free(&http_request);
+    json_free(root);
+
+    const char *bad_type =
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"video_url\",\"video_url\":{\"url\":\"data:video/quicktime;base64,AAAA\"}}]}]}";
+    root = parse_json_body(bad_type, strlen(bad_type), &err);
+    CHECK(root != NULL);
+    api_chat_request bad_request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &bad_request, &err) ==
+          FG_ERR_ARGUMENT);
+    CHECK(strstr(err.message, "media type") != NULL);
+    api_chat_request_free(&bad_request);
+    json_free(root);
+
+    const char *broken =
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"video_url\",\"video_url\":{\"url\":\"data:video/mp4;base64,!!!!\"}}]}]}";
+    root = parse_json_body(broken, strlen(broken), &err);
+    CHECK(root != NULL);
+    api_chat_request broken_request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &broken_request, &err) ==
+          FG_ERR_ARGUMENT);
+    CHECK(strstr(err.message, "base64") != NULL);
+    api_chat_request_free(&broken_request);
+    json_free(root);
+}
+
+static void test_video_http_flow(void) {
+    const char *body =
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"video_url\",\"video_url\":{\"url\":\"data:video/mp4;base64,AAAA\"}},"
+        "{\"type\":\"text\",\"text\":\"describe this\"}]}]}";
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    test_vision_available = true;
+    test_video_available = false;
+    test_vision_calls = 0;
+    char *response = run_chat_request(&runtime, &session, body, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "400 Bad Request"));
+    CHECK(response && strstr(response, "MP4 video input is not available"));
+    CHECK(test_vision_calls == 0u);
+    free(response);
+    test_video_available = true;
+    response = run_chat_request(&runtime, &session, body, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "200 OK"));
+    CHECK(test_vision_calls == 1u);
+    CHECK(test_vision_media == 1u);
+    CHECK(test_vision_videos == 1u);
+    CHECK(test_vision_images == 0u);
+    CHECK(test_vision_bytes == 3u);
+    CHECK(!session.valid);
+    free(response);
+    test_vision_available = false;
+    test_video_available = false;
+}
+
+static void test_video_frames_content_parts(void) {
+    char body[8192];
+    snprintf(body, sizeof(body),
+             "{\"messages\":[{\"role\":\"user\",\"content\":["
+             "{\"type\":\"text\",\"text\":\"what happens? \"},"
+             "{\"type\":\"video_frames\",\"video_frames\":{\"frames\":["
+             "\"data:image/png;base64,%s\",\"data:image/png;base64,%s\"],"
+             "\"fps\":4.0,\"max_frames\":2}}]}]}",
+             test_png_base64, test_png_base64);
+    fg_error err = {0};
+    json_value *root = parse_json_body(body, strlen(body), &err);
+    CHECK(root != NULL);
+    api_chat_request request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &request, &err) == FG_OK);
+    CHECK(request.media_count == 1u);
+    CHECK(request.media[0].kind == FG_RUNTIME_MEDIA_VIDEO_FRAMES);
+    CHECK(request.media[0].frame_count == 2u);
+    CHECK(request.media[0].frame_lengths[0] > 50u);
+    CHECK(request.media[0].frame_lengths[1] > 50u);
+    CHECK(request.media[0].frames[0][0] == 0x89u && request.media[0].frames[0][1] == 'P');
+    CHECK(request.media[0].fps == 4.0);
+    CHECK(request.media[0].max_frames == 2u);
+    CHECK(request.messages[0].content &&
+          !strncmp(request.messages[0].content, "what happens? <|vision_start|>", 30u));
+    CHECK(request.messages[0].content &&
+          strstr(request.messages[0].content, "<|video_pad|><|vision_end|>"));
+    api_chat_request_free(&request);
+    json_free(root);
+
+    const char *plain_frames =
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"video_frames\",\"video_frames\":{\"frames\":[\"data:image/png;base64,AAAA\"]}}]}]}";
+    root = parse_json_body(plain_frames, strlen(plain_frames), &err);
+    CHECK(root != NULL);
+    api_chat_request default_request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &default_request, &err) == FG_OK);
+    CHECK(default_request.media[0].fps == 2.0);
+    CHECK(default_request.media[0].max_frames == 8u);
+    api_chat_request_free(&default_request);
+    json_free(root);
+
+    const char *missing_object =
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"video_frames\",\"video_frames\":[]}]}]}";
+    root = parse_json_body(missing_object, strlen(missing_object), &err);
+    CHECK(root != NULL);
+    api_chat_request missing_request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &missing_request, &err) ==
+          FG_ERR_ARGUMENT);
+    CHECK(strstr(err.message, "video_frames object") != NULL);
+    api_chat_request_free(&missing_request);
+    json_free(root);
+
+    const char *empty_frames =
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"video_frames\",\"video_frames\":{\"frames\":[]}}]}]}";
+    root = parse_json_body(empty_frames, strlen(empty_frames), &err);
+    CHECK(root != NULL);
+    api_chat_request empty_request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &empty_request, &err) ==
+          FG_ERR_ARGUMENT);
+    CHECK(strstr(err.message, "non-empty frames") != NULL);
+    api_chat_request_free(&empty_request);
+    json_free(root);
+
+    const char *non_string =
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"video_frames\",\"video_frames\":{\"frames\":[7]}}]}]}";
+    root = parse_json_body(non_string, strlen(non_string), &err);
+    CHECK(root != NULL);
+    api_chat_request non_string_request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &non_string_request, &err) ==
+          FG_ERR_ARGUMENT);
+    CHECK(strstr(err.message, "base64 image data URLs") != NULL);
+    api_chat_request_free(&non_string_request);
+    json_free(root);
+
+    const char *http_frame =
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"video_frames\",\"video_frames\":{\"frames\":[\"https://example.com/a.png\"]}}]}]}";
+    root = parse_json_body(http_frame, strlen(http_frame), &err);
+    CHECK(root != NULL);
+    api_chat_request http_request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &http_request, &err) ==
+          FG_ERR_ARGUMENT);
+    CHECK(strstr(err.message, "video_frames frame") != NULL);
+    CHECK(strstr(err.message, "http(s)") != NULL);
+    api_chat_request_free(&http_request);
+    json_free(root);
+
+    const char *bad_fps =
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"video_frames\",\"video_frames\":{\"frames\":[\"data:image/png;base64,AAAA\"],"
+        "\"fps\":0}}]}]}";
+    root = parse_json_body(bad_fps, strlen(bad_fps), &err);
+    CHECK(root != NULL);
+    api_chat_request bad_fps_request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &bad_fps_request, &err) ==
+          FG_ERR_ARGUMENT);
+    CHECK(strstr(err.message, "fps") != NULL);
+    api_chat_request_free(&bad_fps_request);
+    json_free(root);
+
+    const char *bad_max =
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"video_frames\",\"video_frames\":{\"frames\":[\"data:image/png;base64,AAAA\"],"
+        "\"max_frames\":99}}]}]}";
+    root = parse_json_body(bad_max, strlen(bad_max), &err);
+    CHECK(root != NULL);
+    api_chat_request bad_max_request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &bad_max_request, &err) ==
+          FG_ERR_ARGUMENT);
+    CHECK(strstr(err.message, "max_frames") != NULL);
+    api_chat_request_free(&bad_max_request);
+    json_free(root);
+
+    const char *mixed =
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"video_frames\",\"video_frames\":{\"frames\":[\"data:image/png;base64,AAAA\"]}},"
+        "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,AAAA\"}}]}]}";
+    root = parse_json_body(mixed, strlen(mixed), &err);
+    CHECK(root != NULL);
+    api_chat_request mixed_request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &mixed_request, &err) == FG_OK);
+    CHECK(mixed_request.media_count == 2u);
+    CHECK(mixed_request.media[0].kind == FG_RUNTIME_MEDIA_VIDEO_FRAMES);
+    CHECK(mixed_request.media[1].kind == FG_RUNTIME_MEDIA_IMAGE);
+    CHECK(mixed_request.messages[0].content &&
+          strstr(mixed_request.messages[0].content, "<|video_pad|>") != NULL);
+    api_chat_request_free(&mixed_request);
+    json_free(root);
+}
+
+static void test_video_frames_too_many(void) {
+    char *body = malloc(65536);
+    CHECK(body != NULL);
+    if (!body) return;
+    size_t offset = (size_t)snprintf(body, 65536,
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"video_frames\",\"video_frames\":{\"frames\":[");
+    for (size_t i = 0; i < 257u; i++) {
+        offset += (size_t)snprintf(body + offset, 65536 - offset, "%s\"data:image/png;base64,AA\"",
+                                   i ? "," : "");
+    }
+    snprintf(body + offset, 65536 - offset, "]}}]}]}");
+    fg_error err = {0};
+    json_value *root = parse_json_body(body, strlen(body), &err);
+    CHECK(root != NULL);
+    api_chat_request request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &request, &err) == FG_ERR_LIMIT);
+    CHECK(strstr(err.message, "at most") != NULL);
+    api_chat_request_free(&request);
+    json_free(root);
+    free(body);
+}
+
+static void test_video_frames_http_flow(void) {
+    char body[8192];
+    snprintf(body, sizeof(body),
+             "{\"messages\":[{\"role\":\"user\",\"content\":["
+             "{\"type\":\"video_frames\",\"video_frames\":{\"frames\":["
+             "\"data:image/png;base64,%s\",\"data:image/png;base64,%s\"],\"fps\":2.0}},"
+             "{\"type\":\"text\",\"text\":\"describe this\"}]}]}",
+             test_png_base64, test_png_base64);
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    test_vision_available = true;
+    test_video_frames_available = false;
+    test_vision_calls = 0;
+    char *response = run_chat_request(&runtime, &session, body, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "400 Bad Request"));
+    CHECK(response && strstr(response, "video frame input is not available"));
+    CHECK(test_vision_calls == 0u);
+    free(response);
+    test_video_frames_available = true;
+    response = run_chat_request(&runtime, &session, body, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "200 OK"));
+    CHECK(test_vision_calls == 1u);
+    CHECK(test_vision_media == 1u);
+    CHECK(test_vision_video_frames == 1u);
+    CHECK(test_vision_video_frame_count == 2u);
+    CHECK(test_vision_images == 0u);
+    CHECK(test_vision_videos == 0u);
+    CHECK(test_vision_bytes > 100u);
+    CHECK(!session.valid);
+    free(response);
+    test_vision_available = false;
+    test_video_frames_available = false;
 }
 
 static void test_unknown_tool_result_rejected(void) {
@@ -1341,6 +1656,9 @@ int main(void) {
     test_openai_tools_request();
     test_openai_structured_text_content();
     test_image_content_parts();
+    test_video_content_parts();
+    test_video_frames_content_parts();
+    test_video_frames_too_many();
     test_unknown_tool_result_rejected();
     test_tool_choice_modes();
     test_history_reasoning_and_empty_calls();
@@ -1360,6 +1678,8 @@ int main(void) {
     test_live_prefix_tool_loop();
     test_divergent_tool_request_clears_prefix_metadata();
     test_image_http_flow();
+    test_video_http_flow();
+    test_video_frames_http_flow();
     test_failed_generation_fails_closed();
     if (failures) fprintf(stderr, "%d API test(s) failed\n", failures);
     return failures ? 1 : 0;

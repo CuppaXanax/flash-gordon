@@ -14,6 +14,7 @@
 #include "fg_qsa_state.h"
 #include "fg_tokenizer.h"
 #include "fg_tower_vk.h"
+#include "fg_video.h"
 #include "fg_uring.h"
 
 #include <arpa/inet.h>
@@ -3247,6 +3248,7 @@ typedef struct fg_vision_span {
     uint32_t token_count;
     uint32_t grid_width;
     uint32_t grid_height;
+    uint32_t groups;
 } fg_vision_span;
 
 typedef struct fg_vision_prompt {
@@ -3258,6 +3260,7 @@ typedef struct fg_vision_prompt {
 
 #define FG_VISION_START_TOKEN 248053u
 #define FG_VISION_IMAGE_TOKEN 248056u
+#define FG_VISION_VIDEO_TOKEN 248057u
 #define FG_VISION_END_TOKEN 248054u
 
 static void vision_fill_positions(const fg_vision_prompt *vision,uint32_t first_token,
@@ -4941,17 +4944,26 @@ static fg_status vision_tokens_append(fg_tokens *tokens,const uint32_t *values,
 }
 
 static fg_status vision_encode_transcript(const fg_tokenizer *tokenizer,const char *transcript,
-                                          uint32_t image_count,fg_tokens *tokens,fg_error *err){
-    static const char marker[]="<|vision_start|><|image_pad|><|vision_end|>";
-    const size_t marker_length=sizeof(marker)-1u;
-    const uint32_t special[3]={FG_VISION_START_TOKEN,FG_VISION_IMAGE_TOKEN,FG_VISION_END_TOKEN};
+                                          uint32_t media_count,fg_tokens *tokens,fg_error *err){
+    static const char image_marker[]="<|vision_start|><|image_pad|><|vision_end|>";
+    static const char video_marker[]="<|vision_start|><|video_pad|><|vision_end|>";
     const uint32_t bos=fg_tokenizer_bos(tokenizer);
     const bool add_bos=fg_tokenizer_add_bos(tokenizer);
     memset(tokens,0,sizeof(*tokens));
     const char *cursor=transcript;
     uint32_t placeholders=0;
     for(;;){
-        const char *found=strstr(cursor,marker);
+        const char *image_found=strstr(cursor,image_marker);
+        const char *video_found=strstr(cursor,video_marker);
+        const char *found=NULL;
+        const char *marker=NULL;
+        if(image_found&&(!video_found||image_found<video_found)){
+            found=image_found;
+            marker=image_marker;
+        }else if(video_found){
+            found=video_found;
+            marker=video_marker;
+        }
         const size_t segment=found?(size_t)(found-cursor):strlen(cursor);
         if(segment){
             char *text=malloc(segment+1u);
@@ -4979,18 +4991,21 @@ static fg_status vision_encode_transcript(const fg_tokenizer *tokenizer,const ch
             }
         }
         if(!found)break;
+        const uint32_t special[3]={FG_VISION_START_TOKEN,
+            strcmp(marker,image_marker)?FG_VISION_VIDEO_TOKEN:FG_VISION_IMAGE_TOKEN,
+            FG_VISION_END_TOKEN};
         fg_status status=vision_tokens_append(tokens,special,3u,err);
         if(status!=FG_OK){
             fg_tokens_free(tokens);
             return status;
         }
         placeholders++;
-        cursor=found+marker_length;
+        cursor=found+strlen(marker);
     }
-    if(placeholders!=image_count){
+    if(placeholders!=media_count){
         fg_tokens_free(tokens);
         fg_error_set(err,FG_ERR_FORMAT,
-                     "image placeholder count does not match the request image count");
+                     "media placeholder count does not match the request media count");
         return FG_ERR_FORMAT;
     }
     return FG_OK;
@@ -5005,116 +5020,208 @@ bool fg_runtime_vision_available(const fg_runtime *runtime){
 }
 
 fg_status fg_runtime_generate_vision(fg_runtime *runtime,const char *transcript,
-                                     const fg_runtime_image *images,uint32_t image_count,
+                                     const fg_runtime_media *media,uint32_t media_count,
                                      uint32_t max_tokens,
                                      fg_token_callback callback,void *callback_context,
                                      fg_interrupt_fn interrupted,void *interrupt_context,
                                      fg_generation_stats *stats,fg_error *err){
-    if(!runtime||!transcript||!images||!image_count||!callback||!max_tokens){
+    if(!runtime||!transcript||!media||!media_count||!callback||!max_tokens){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid vision generation arguments");
         return FG_ERR_ARGUMENT;
     }
     if(!fg_runtime_vision_available(runtime)){
         fg_error_set(err,FG_ERR_UNAVAILABLE,
-                     "image input is not available: the vision tower pack is missing "
+                     "media input is not available: the vision tower pack is missing "
                      "from the deployment directory");
         return FG_ERR_UNAVAILABLE;
     }
-    float **embeddings=calloc(image_count,sizeof(*embeddings));
-    uint32_t *merged=calloc(image_count,sizeof(*merged));
-    uint32_t *grid_width=calloc(image_count,sizeof(*grid_width));
-    uint32_t *grid_height=calloc(image_count,sizeof(*grid_height));
-    fg_status status=(embeddings&&merged&&grid_width&&grid_height)?FG_OK:FG_ERR_OOM;
+    for(uint32_t item=0;item<media_count;item++){
+        if(media[item].kind==FG_RUNTIME_MEDIA_VIDEO&&!fg_runtime_video_available(runtime)){
+            fg_error_set(err,FG_ERR_UNAVAILABLE,
+                         "MP4 video input is not available: static ffmpeg/ffprobe or the "
+                         "tower temporal token entry is missing from this deployment");
+            return FG_ERR_UNAVAILABLE;
+        }
+        if(media[item].kind==FG_RUNTIME_MEDIA_VIDEO_FRAMES&&
+           !fg_runtime_video_frames_available(runtime)){
+            fg_error_set(err,FG_ERR_UNAVAILABLE,
+                         "video frame input is not available: the tower temporal token "
+                         "entry is missing from this deployment");
+            return FG_ERR_UNAVAILABLE;
+        }
+        if(media[item].kind==FG_RUNTIME_MEDIA_VIDEO_FRAMES&&
+           (!media[item].frames||!media[item].frame_lengths||!media[item].frame_count)){
+            fg_error_set(err,FG_ERR_ARGUMENT,"video frame input requires at least one frame");
+            return FG_ERR_ARGUMENT;
+        }
+        if(media[item].kind!=FG_RUNTIME_MEDIA_IMAGE&&
+           media[item].kind!=FG_RUNTIME_MEDIA_VIDEO&&
+           media[item].kind!=FG_RUNTIME_MEDIA_VIDEO_FRAMES){
+            fg_error_set(err,FG_ERR_ARGUMENT,"unsupported media kind %u",media[item].kind);
+            return FG_ERR_ARGUMENT;
+        }
+    }
+    float **embeddings=calloc(media_count,sizeof(*embeddings));
+    uint32_t *merged=calloc(media_count,sizeof(*merged));
+    uint32_t *grid_width=calloc(media_count,sizeof(*grid_width));
+    uint32_t *grid_height=calloc(media_count,sizeof(*grid_height));
+    uint32_t *groups=calloc(media_count,sizeof(*groups));
+    fg_status status=(embeddings&&merged&&grid_width&&grid_height&&groups)?FG_OK:FG_ERR_OOM;
     if(status!=FG_OK)
-        fg_error_set(err,status,"allocate vision image state");
+        fg_error_set(err,status,"allocate vision media state");
     double tower_seconds=0.0;
-    for(uint32_t image=0;status==FG_OK&&image<image_count;image++){
+    uint32_t video_frame_count=0;
+    for(uint32_t item=0;status==FG_OK&&item<media_count;item++){
         fg_tower_vk_stats tower_stats={0};
-        status=fg_tower_vision_forward(runtime->coordinator.directory,images[image].bytes,
-                                       (uint64_t)images[image].length,&embeddings[image],
-                                       &merged[image],&grid_width[image],&grid_height[image],
-                                       &tower_stats,err);
+        if(media[item].kind==FG_RUNTIME_MEDIA_IMAGE){
+            groups[item]=1u;
+            status=fg_tower_vision_forward(runtime->coordinator.directory,media[item].bytes,
+                                           (uint64_t)media[item].length,&embeddings[item],
+                                           &merged[item],&grid_width[item],&grid_height[item],
+                                           &tower_stats,err);
+        }else if(media[item].kind==FG_RUNTIME_MEDIA_VIDEO){
+            fg_video_clip clip={0};
+            status=fg_video_forward(runtime->coordinator.directory,media[item].bytes,
+                                    media[item].length,NULL,&clip,&tower_stats,err);
+            if(status==FG_OK){
+                embeddings[item]=clip.embeddings;
+                merged[item]=clip.token_count;
+                grid_width[item]=clip.grid_width;
+                grid_height[item]=clip.grid_height;
+                groups[item]=clip.pair_count;
+                video_frame_count+=clip.frame_count;
+            }
+        }else{
+            fg_video_options options;
+            fg_video_options_defaults(&options);
+            if(media[item].max_frames)options.max_frames=media[item].max_frames;
+            fg_video_clip clip={0};
+            status=fg_video_frames_forward(runtime->coordinator.directory,media[item].frames,
+                                           media[item].frame_lengths,media[item].frame_count,
+                                           media[item].fps,&options,&clip,&tower_stats,err);
+            if(status==FG_OK){
+                embeddings[item]=clip.embeddings;
+                merged[item]=clip.token_count;
+                grid_width[item]=clip.grid_width;
+                grid_height[item]=clip.grid_height;
+                groups[item]=clip.pair_count;
+                video_frame_count+=clip.frame_count;
+            }
+        }
         tower_seconds+=tower_stats.forward_ms/1000.0;
     }
     fg_tokens prompt={0};
     if(status==FG_OK)
-        status=vision_encode_transcript(runtime_tokenizer(runtime),transcript,image_count,
+        status=vision_encode_transcript(runtime_tokenizer(runtime),transcript,media_count,
                                         &prompt,err);
     uint32_t *expanded=NULL,*positions=NULL;
     fg_vision_span *spans=NULL;
     const float **span_embeddings=NULL;
     size_t expanded_count=0;
-    uint32_t image_tokens=0;
-    if(status==FG_OK){
-        size_t placeholders=0;
-        for(size_t i=0;i<prompt.count;i++)if(prompt.data[i]==FG_VISION_IMAGE_TOKEN)placeholders++;
-        if(placeholders!=image_count){
-            fg_error_set(err,FG_ERR_FORMAT,
-                         "image placeholder count does not match the request image count");
-            status=FG_ERR_FORMAT;
-        }
-    }
+    uint32_t image_tokens=0,video_tokens=0;
     if(status==FG_OK){
         uint32_t seen=0;
+        size_t placeholders=0;
         for(size_t i=0;i<prompt.count;i++){
-            if(prompt.data[i]==FG_VISION_IMAGE_TOKEN&&seen<image_count){
-                if(i==0||prompt.data[i-1u]!=FG_VISION_START_TOKEN){
-                    fg_error_set(err,FG_ERR_FORMAT,
-                                 "image placeholder is missing a vision_start token");
-                    status=FG_ERR_FORMAT;
-                    break;
-                }
-                expanded_count+=merged[seen];
-                seen++;
-            }else expanded_count++;
+            const uint32_t token=prompt.data[i];
+            if(token!=FG_VISION_IMAGE_TOKEN&&token!=FG_VISION_VIDEO_TOKEN)continue;
+            placeholders++;
+            const bool matches=seen<media_count&&
+                (token==FG_VISION_IMAGE_TOKEN?media[seen].kind==FG_RUNTIME_MEDIA_IMAGE:
+                 (media[seen].kind==FG_RUNTIME_MEDIA_VIDEO||
+                  media[seen].kind==FG_RUNTIME_MEDIA_VIDEO_FRAMES));
+            if(!matches){
+                fg_error_set(err,FG_ERR_FORMAT,
+                             "media placeholder order does not match the request media order");
+                status=FG_ERR_FORMAT;
+                break;
+            }
+            expanded_count+=merged[seen];
+            seen++;
             if(expanded_count>FG_MAX_CONTEXT||expanded_count>UINT32_MAX){
                 fg_error_set(err,FG_ERR_LIMIT,"expanded vision prompt exceeds the context limit");
                 status=FG_ERR_LIMIT;
                 break;
             }
         }
+        if(status==FG_OK&&seen!=media_count){
+            fg_error_set(err,FG_ERR_FORMAT,
+                         "media placeholder count does not match the request media count");
+            status=FG_ERR_FORMAT;
+        }
     }
     if(status==FG_OK){
         expanded=malloc(expanded_count*sizeof(*expanded));
         positions=malloc(expanded_count*3u*sizeof(*positions));
-        spans=calloc(image_count,sizeof(*spans));
-        span_embeddings=calloc(image_count,sizeof(*span_embeddings));
+        spans=calloc(media_count,sizeof(*spans));
+        span_embeddings=calloc(media_count,sizeof(*span_embeddings));
         if(!expanded||!positions||!spans||!span_embeddings){
             status=FG_ERR_OOM;
             fg_error_set(err,status,"allocate expanded vision prompt");
         }
     }
     if(status==FG_OK){
-        uint32_t out=0,position=0,image=0;
-        for(size_t i=0;i<prompt.count;i++){
-            const uint32_t token=prompt.data[i];
+        uint32_t out=0,position=0,item=0;
+        size_t cursor=0;
+        while(cursor<prompt.count){
+            const uint32_t token=prompt.data[cursor];
             if(token==FG_VISION_IMAGE_TOKEN){
-                const uint32_t count=merged[image];
-                spans[image]=(fg_vision_span){.token_begin=out,.token_count=count,
-                    .grid_width=grid_width[image],.grid_height=grid_height[image]};
-                span_embeddings[image]=embeddings[image];
+                if(cursor==0||prompt.data[cursor-1u]!=FG_VISION_START_TOKEN){
+                    fg_error_set(err,FG_ERR_FORMAT,
+                                 "image placeholder is missing a vision_start token");
+                    status=FG_ERR_FORMAT;
+                    break;
+                }
+                const uint32_t count=merged[item];
+                spans[item]=(fg_vision_span){.token_begin=out,.token_count=count,
+                    .grid_width=grid_width[item],.grid_height=grid_height[item],.groups=1u};
+                span_embeddings[item]=embeddings[item];
                 for(uint32_t k=0;k<count;k++){
                     expanded[out+k]=FG_VISION_IMAGE_TOKEN;
                     positions[(size_t)(out+k)*3u]=position;
-                    positions[(size_t)(out+k)*3u+1u]=position+k/grid_width[image];
-                    positions[(size_t)(out+k)*3u+2u]=position+k%grid_width[image];
+                    positions[(size_t)(out+k)*3u+1u]=position+k/grid_width[item];
+                    positions[(size_t)(out+k)*3u+2u]=position+k%grid_width[item];
                 }
                 out+=count;
                 image_tokens+=count;
-                position+=grid_width[image]>grid_height[image]?
-                    grid_width[image]:grid_height[image];
-                image++;
-            }else{
-                expanded[out]=token;
-                positions[(size_t)out*3u]=position;
-                positions[(size_t)out*3u+1u]=position;
-                positions[(size_t)out*3u+2u]=position;
-                out++;position++;
+                position+=grid_width[item]>grid_height[item]?
+                    grid_width[item]:grid_height[item];
+                cursor++;
+                item++;
+                continue;
             }
+            if(token==FG_VISION_VIDEO_TOKEN){
+                if(cursor==0||prompt.data[cursor-1u]!=FG_VISION_START_TOKEN){
+                    fg_error_set(err,FG_ERR_FORMAT,
+                                 "video placeholder is missing a vision_start token");
+                    status=FG_ERR_FORMAT;
+                    break;
+                }
+                const uint32_t count=merged[item];
+                spans[item]=(fg_vision_span){.token_begin=out,.token_count=count,
+                    .grid_width=grid_width[item],.grid_height=grid_height[item],
+                    .groups=groups[item]};
+                span_embeddings[item]=embeddings[item];
+                for(uint32_t k=0;k<count;k++)expanded[out+k]=FG_VISION_VIDEO_TOKEN;
+                position=fg_video_positions(positions+out*3u,count,grid_width[item],
+                                            grid_height[item],groups[item],position);
+                out+=count;
+                video_tokens+=count;
+                cursor++;
+                item++;
+                continue;
+            }
+            expanded[out]=token;
+            positions[(size_t)out*3u]=position;
+            positions[(size_t)out*3u+1u]=position;
+            positions[(size_t)out*3u+2u]=position;
+            out++;
+            position++;
+            cursor++;
         }
     }
     fg_vision_prompt vision={.positions=positions,.embeddings=span_embeddings,.spans=spans,
-                             .span_count=image_count};
+                             .span_count=media_count};
     fg_tokens vision_tokens={.data=expanded,.count=expanded_count,.capacity=expanded_count};
     if(status==FG_OK)
         status=runtime_generate_tokens(runtime,transcript,&vision_tokens,false,NULL,&vision,
@@ -5122,19 +5229,33 @@ fg_status fg_runtime_generate_vision(fg_runtime *runtime,const char *transcript,
                                        interrupt_context,stats,err);
     if(status==FG_OK&&stats){
         stats->image_tokens=image_tokens;
+        stats->video_tokens=video_tokens;
+        stats->video_frames=video_frame_count;
         stats->tower_seconds=tower_seconds;
     }
-    for(uint32_t image=0;image<image_count;image++)free(embeddings?embeddings[image]:NULL);
+    for(uint32_t item=0;item<media_count;item++)free(embeddings?embeddings[item]:NULL);
     free(span_embeddings);
     free(spans);
     free(positions);
     free(expanded);
     fg_tokens_free(&prompt);
+    free(groups);
     free(grid_height);
     free(grid_width);
     free(merged);
     free(embeddings);
     return status;
+}
+
+bool fg_runtime_video_available(const fg_runtime *runtime){
+    if(!runtime||!runtime->coordinator.directory)return false;
+    return fg_runtime_vision_available(runtime)&&
+        fg_video_mp4_available(runtime->coordinator.directory);
+}
+
+bool fg_runtime_video_frames_available(const fg_runtime *runtime){
+    if(!runtime||!runtime->coordinator.directory)return false;
+    return fg_runtime_vision_available(runtime)&&fg_video_available();
 }
 
 static size_t runtime_first_token_mismatch(const fg_tokens *left,const fg_tokens *right){
