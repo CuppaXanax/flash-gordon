@@ -1,4 +1,6 @@
 #include "fg_tower.h"
+#include "fg_quant.h"
+#include "stb_image.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -8,6 +10,7 @@
 typedef struct resample_plan {
     uint32_t kernel;
     uint32_t *first;
+    uint32_t *count;
     float *weights;
 } resample_plan;
 
@@ -110,8 +113,10 @@ static fg_status resample_plan_build(uint32_t in_size,uint32_t out_size,double s
     const uint32_t kernel=(uint32_t)ceil(radius)*2u+1u;
     plan->kernel=kernel;
     plan->first=calloc(out_size,sizeof(*plan->first));
+    plan->count=calloc(out_size,sizeof(*plan->count));
     plan->weights=calloc((size_t)out_size*kernel,sizeof(*plan->weights));
-    if(!plan->first||!plan->weights){
+    if(!plan->first||!plan->count||!plan->weights){
+        free(plan->count);
         free(plan->first);
         free(plan->weights);
         fg_error_set(err,FG_ERR_OOM,"allocate tower resample plan");
@@ -126,6 +131,7 @@ static fg_status resample_plan_build(uint32_t in_size,uint32_t out_size,double s
         int last=(int)(center+radius+0.5);
         if(last>(int)in_size)last=(int)in_size;
         plan->first[xx]=(uint32_t)first;
+        plan->count[xx]=(uint32_t)(last-first);
         double total=0.0;
         for(int x=first;x<last;x++){
             const double w=resample_filter(((double)x-center+0.5)*step);
@@ -140,8 +146,10 @@ static fg_status resample_plan_build(uint32_t in_size,uint32_t out_size,double s
 }
 
 static void resample_plan_free(resample_plan *plan){
+    free(plan->count);
     free(plan->first);
     free(plan->weights);
+    plan->count=NULL;
     plan->first=NULL;
     plan->weights=NULL;
 }
@@ -152,7 +160,7 @@ static void resample_line(const float *src,const resample_plan *plan,
         const float *row=src+plan->first[xx];
         const float *w=plan->weights+(size_t)xx*plan->kernel;
         float acc=0.0f;
-        for(uint32_t k=0;k<plan->kernel;k++)acc+=row[k]*w[k];
+        for(uint32_t k=0;k<plan->count[xx];k++)acc+=row[k]*w[k];
         dst[xx]=acc;
     }
 }
@@ -533,4 +541,78 @@ fg_status fg_tower_forward_cpu(const fg_tower_weights *weights,const float *toke
     }
     free(t);free(x);
     return status;
+}
+
+fg_status fg_tower_dequantize(const uint8_t *data,uint64_t bytes,uint32_t ggml_type,
+                              uint64_t values,float *out,fg_error *err){
+    if(!data||!out){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid tower dequantize request");
+        return FG_ERR_ARGUMENT;
+    }
+    if(ggml_type==0u){
+        if(bytes!=values*sizeof(float)){
+            fg_error_set(err,FG_ERR_FORMAT,"tower F32 tensor size mismatch");
+            return FG_ERR_FORMAT;
+        }
+        memcpy(out,data,(size_t)bytes);
+        return FG_OK;
+    }
+    if(ggml_type==1u){
+        if(bytes!=values*sizeof(uint16_t)){
+            fg_error_set(err,FG_ERR_FORMAT,"tower F16 tensor size mismatch");
+            return FG_ERR_FORMAT;
+        }
+        const uint16_t *source=(const uint16_t *)data;
+        for(uint64_t i=0;i<values;i++)out[i]=fg_f16_to_f32(source[i]);
+        return FG_OK;
+    }
+    if(ggml_type==8u){
+        if(values%FG_QK8_0||bytes!=(values/FG_QK8_0)*FG_Q8_0_BLOCK_BYTES){
+            fg_error_set(err,FG_ERR_FORMAT,"tower Q8_0 tensor size mismatch");
+            return FG_ERR_FORMAT;
+        }
+        const uint8_t *block=data;
+        for(uint64_t i=0;i<values;i+=FG_QK8_0){
+            const float scale=fg_f16_to_f32((uint16_t)(block[0]|(block[1]<<8)));
+            for(uint32_t j=0;j<FG_QK8_0;j++)
+                out[i+j]=scale*(float)(int8_t)block[2u+j];
+            block+=FG_Q8_0_BLOCK_BYTES;
+        }
+        return FG_OK;
+    }
+    fg_error_set(err,FG_ERR_FORMAT,"tower tensor type %u is unsupported",ggml_type);
+    return FG_ERR_FORMAT;
+}
+
+fg_status fg_tower_image_decode(const uint8_t *data,uint64_t bytes,uint8_t **rgb,
+                                uint32_t *width,uint32_t *height,fg_error *err){
+    if(!data||!bytes||!rgb||!width||!height||bytes>INT32_MAX){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid tower image decode request");
+        return FG_ERR_ARGUMENT;
+    }
+    int decoded_width=0,decoded_height=0,channels=0;
+    stbi_uc *pixels=stbi_load_from_memory(data,(int)bytes,&decoded_width,&decoded_height,
+                                          &channels,3);
+    if(!pixels||decoded_width<=0||decoded_height<=0){
+        fg_error_set(err,FG_ERR_FORMAT,"image decode failed");
+        stbi_image_free(pixels);
+        return FG_ERR_FORMAT;
+    }
+    const uint64_t count=(uint64_t)decoded_width*decoded_height*3u;
+    uint8_t *planar=malloc((size_t)count);
+    if(!planar){
+        stbi_image_free(pixels);
+        fg_error_set(err,FG_ERR_OOM,"allocate decoded image plane");
+        return FG_ERR_OOM;
+    }
+    for(uint32_t y=0;y<(uint32_t)decoded_height;y++)
+        for(uint32_t x=0;x<(uint32_t)decoded_width;x++)
+            for(uint32_t c=0;c<3u;c++)
+                planar[((size_t)c*decoded_height+y)*decoded_width+x]=
+                    pixels[((size_t)y*decoded_width+x)*3u+c];
+    stbi_image_free(pixels);
+    *rgb=planar;
+    *width=(uint32_t)decoded_width;
+    *height=(uint32_t)decoded_height;
+    return FG_OK;
 }

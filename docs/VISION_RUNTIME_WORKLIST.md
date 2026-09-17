@@ -6,6 +6,67 @@ official mmproj). Round 1 landed the acquisition and the packer split; this file
 pins the layout decision and the exact kernel/preprocessing/integration work
 that rounds 2-3 must execute.
 
+## 0a. Round-3 partial: streaming tower and image decode (local, verified)
+
+Landed but not yet wired into the serving runtime:
+
+- `vendor/stb_image.h` (+ `vendor/stb_image_impl.c`): single-header PNG/JPEG
+  decode, isolated in one translation unit. `fg_tower_image_decode` converts to
+  the planar RGB layout the preprocessing expects.
+- `fg_tower_vision_forward` (`src/tower_vk.c`): one-call vision path. It
+  decodes the image, runs smart_resize (image pixel bounds), normalize, bicubic
+  resize, patchify, then runs the tower with **per-stage weight streaming**:
+  `tower.fgm` plus an mmap of `tower.fgw`, one tensor dequantized into a
+  transient host buffer (~20 MiB peak), uploaded to a transient device buffer,
+  used, and freed after the stage submission. The merger (fc1/fc2) is
+  dispatched in 1024-row chunks (peak device ~19 MiB per chunk) instead of
+  holding the 85 MiB fc1 matrix. This keeps the tower inside rank 0's ~200 MiB
+  Vulkan slack when the ring is loaded; the round-2 full-upload path needed
+  ~1.9 GiB and only ran with the ring quiesced.
+- `shaders/fg_tower_matmul.comp`: 4x4 register tile plus `stride`/`m_offset`
+  push fields so chunked weight slices can write into a larger output.
+- `src/tower.c`: fixed a resample-plan read past the row end (weighted by zero,
+  but undefined and caught by ASan); `fg_tower_dequantize` moved out of the
+  test.
+- Verified on llvmpipe: `tests/test_tower --stream-cpu` runs the streaming path
+  in a process with no other tower context and matches the CPU reference at
+  cosine 1.000000000 (320x224 image, 280 patch tokens, 70 merged). Stage parity
+  tests unchanged (patch/pos 1.0, block 1.0 rel 6e-8, merger 1.0).
+
+Caveat found while testing: running the streaming path while a second tower
+Vulkan context is alive in the same process gave a small numeric divergence
+under lavapipe; with the stream as the only tower context it is exact. The
+serving runtime will have the ring Vulkan context plus the tower context in one
+process, so the first real-GPU deployment must re-verify this path before
+trusting outputs (the two contexts are independent devices; this may be a
+lavapipe-only artifact).
+
+## 0b. Remaining for vision end-to-end
+
+1. API content parts (`src/api.c`): parse `[{type:"text",text},{type:"image_url",
+   image_url:{url:"data:image/png;base64,..."}}]`, base64-decode, reject
+   http(s) URLs and malformed payloads with 4xx, and reject image content with a
+   clear 4xx when the pack directory has no `tower.fgm`. Text-only requests must
+   keep the existing byte path.
+2. Prompt expansion: render `<|vision_start|><|image_pad|><|vision_end|>` (ids
+   248053/248056/248054) into the message content; the tokenizer already
+   recognizes these as special tokens. Expand the single `<|image_pad|>` into
+   `merged_tokens` copies of 248056 and emit the vision positions for the span.
+3. Embeddings injection: after `fg_vk_embedding_q8_0_batch` in the prefill
+   pipeline, overwrite the image-token rows of the owner prefill input with the
+   tower embeddings (layout is `[token][copy][2560]`, same vector for every
+   copy). PLE needs no change: the expanded stream carries token id 248056, so
+   the N-gram hashing already uses the image pad id.
+4. Positions (`coordinator_prefill_pipeline*`): replace the current
+   `first_token+i` for all axes with the Qwen-VL M-RoPE scheme for image spans:
+   `t = pos_0`, `x = pos_0 + (i % grid_w)`, `y = pos_0 + (i / grid_w)`, and
+   advance the running position by `max(grid_w, grid_h)` after the span. The
+   3-axis plumbing and the interleaved-rope math already exist in the
+   owner/QSA paths.
+5. Deployment: copy `tower.fgm`/`tower.fgw` into the rank-0 pack directory,
+   then run the standard deploy recipe and the image probe
+   (`tests/test_tower --stream-cpu`) on the blade before serving traffic.
+
 ## 0. Round-2 status
 
 Landed (standalone tower path; the ring sources are not wired to any of it):

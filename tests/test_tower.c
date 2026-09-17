@@ -678,8 +678,9 @@ static uint8_t *probe_load_ppm(const char *path,uint32_t *width,uint32_t *height
     return planar;
 }
 
-static int probe_run(const char *tower_dir,const char *image_path,uint32_t repeats,bool cpu_ref,
-                     bool layer_sweep,int layer_limit,bool smoke){
+static int probe_run(const char *tower_dir,const char *image_path,uint32_t repeats,
+                     bool cpu_ref,bool layer_sweep,int layer_limit,bool smoke,bool stream,
+                     bool stream_cpu){
     fg_error err={0};
     fg_tower_weights weights={0};
     probe_owned owned={0};
@@ -706,7 +707,10 @@ static int probe_run(const char *tower_dir,const char *image_path,uint32_t repea
         normalized=malloc((size_t)width*height*3u*sizeof(float));
         resized=malloc((size_t)resized_width*resized_height*3u*sizeof(float));
         tokens=malloc((size_t)geometry.tokens*FG_TOWER_TOKEN_VALUES*sizeof(float));
-        if(!normalized||!resized||!tokens)status=FG_ERR_OOM;
+        if(!normalized||!resized||!tokens){
+            status=FG_ERR_OOM;
+            fg_error_set(&err,FG_ERR_OOM,"allocate probe preprocessing buffers");
+        }
     }
     if(status==FG_OK)status=fg_tower_normalize_image(image,width,height,normalized,&err);
     if(status==FG_OK)status=fg_tower_resize_bicubic(normalized,width,height,resized,
@@ -725,6 +729,31 @@ static int probe_run(const char *tower_dir,const char *image_path,uint32_t repea
     printf("probe image %ux%u -> %ux%u grid=%ux%u tokens=%u merged=%u\n",width,height,
            resized_width,resized_height,geometry.grid_width,geometry.grid_height,
            geometry.tokens,geometry.merged_tokens);
+    if(stream_cpu){
+        const size_t counts=(size_t)geometry.merged_tokens*FG_TOWER_OUT_HIDDEN;
+        float *cpu_embed=malloc(counts*sizeof(float));
+        uint64_t raw_bytes=0;
+        uint8_t *raw=read_file(image_path,&raw_bytes,&err);
+        float *streamed=NULL;
+        uint32_t stream_merged=0,stream_grid_w=0,stream_grid_h=0;
+        fg_tower_vk_stats stream_stats={0};
+        fg_status cpu_status=cpu_embed?fg_tower_forward_cpu(&weights,tokens,&geometry,cpu_embed,
+                                                            &err):FG_ERR_OOM;
+        fg_status stream_status=raw?fg_tower_vision_forward(tower_dir,raw,raw_bytes,&streamed,
+            &stream_merged,&stream_grid_w,&stream_grid_h,&stream_stats,&err):FG_ERR_IO;
+        if(cpu_status==FG_OK&&stream_status==FG_OK)
+            printf("stream/cpu: %.1f ms cosine=%.9f merged=%u\n",stream_stats.forward_ms,
+                   cosine_similarity(cpu_embed,streamed,counts),stream_merged);
+        else
+            fprintf(stderr,"stream/cpu: cpu=%s stream=%s\n",cpu_status==FG_OK?"ok":"fail",
+                    stream_status==FG_OK?"ok":err.message);
+        free(streamed);
+        free(raw);
+        free(cpu_embed);
+        free(tokens);
+        probe_owned_free(&owned);
+        return (cpu_status==FG_OK&&stream_status==FG_OK)?0:1;
+    }
     fg_tower_vk *tower=NULL;
     if(fg_tower_vk_open(&tower,&err)!=FG_OK){
         fprintf(stderr,"probe: %s\n",err.message);
@@ -793,6 +822,33 @@ static int probe_run(const char *tower_dir,const char *image_path,uint32_t repea
         free(second);free(first);free(tokens);probe_owned_free(&owned);
         return staged==FG_OK?0:1;
     }
+    if(stream){
+        uint64_t raw_bytes=0;
+        uint8_t *raw=read_file(image_path,&raw_bytes,&err);
+        if(!raw){
+            fprintf(stderr,"stream image read: %s\n",err.message);
+        }else{
+            float *streamed=NULL;
+            uint32_t stream_merged=0,stream_grid_w=0,stream_grid_h=0;
+            fg_tower_vk_stats stream_stats={0};
+            fg_status stream_status=fg_tower_vision_forward(tower_dir,raw,raw_bytes,&streamed,
+                &stream_merged,&stream_grid_w,&stream_grid_h,&stream_stats,&err);
+            if(stream_status!=FG_OK){
+                fprintf(stderr,"stream forward: %s\n",err.message);
+            }else{
+                double stream_norm=0.0;
+                for(size_t i=0;i<(size_t)stream_merged*FG_TOWER_OUT_HIDDEN;i++)
+                    stream_norm+=(double)streamed[i]*streamed[i];
+                printf("stream forward: %.1f ms dispatches=%u merged=%u grid=%ux%u norm=%.4f "
+                       "cosine=%.9f\n",stream_stats.forward_ms,stream_stats.dispatches,
+                       stream_merged,stream_grid_w,stream_grid_h,sqrt(stream_norm),
+                       stream_merged==geometry.merged_tokens?
+                           cosine_similarity(first,streamed,embedding_values):0.0);
+                free(streamed);
+            }
+            free(raw);
+        }
+    }
     fg_tower_vk_stats stats={0};
     status=fg_tower_vk_run(tower,device_weights,tokens,&geometry,first,&stats,&err);
     if(status!=FG_OK){
@@ -802,8 +858,7 @@ static int probe_run(const char *tower_dir,const char *image_path,uint32_t repea
                upload_ms,stats.dispatches,all_finite(first,embedding_values)?"yes":"no");
         double norm=0.0;
         for(size_t i=0;i<embedding_values;i++)norm+=(double)first[i]*first[i];
-        printf("probe embedding norm=%.4f first=%.6f\n",sqrt(norm),
-               first[0]);
+        printf("probe embedding norm=%.4f first=%.6f\n",sqrt(norm),first[0]);
         for(uint32_t repeat=0;repeat<repeats&&status==FG_OK;repeat++){
             fg_tower_vk_stats again={0};
             status=fg_tower_vk_run(tower,device_weights,tokens,&geometry,second,&again,&err);
@@ -876,7 +931,7 @@ static int probe_run(const char *tower_dir,const char *image_path,uint32_t repea
 int main(int argc,char **argv){
     const char *tower_dir=NULL,*image_path=NULL;
     uint32_t repeats=1u;
-    bool cpu_ref=false,layer_sweep=false,smoke=false;
+    bool cpu_ref=false,layer_sweep=false,smoke=false,stream=false,stream_cpu=false;
     int layer_limit=-1;
     for(int i=1;i<argc;i++){
         if(!strcmp(argv[i],"--tower-dir")&&i+1<argc)tower_dir=argv[++i];
@@ -885,6 +940,8 @@ int main(int argc,char **argv){
         else if(!strcmp(argv[i],"--cpu"))cpu_ref=true;
         else if(!strcmp(argv[i],"--layer-sweep"))layer_sweep=true;
         else if(!strcmp(argv[i],"--smoke"))smoke=true;
+        else if(!strcmp(argv[i],"--stream"))stream=true;
+        else if(!strcmp(argv[i],"--stream-cpu"))stream_cpu=true;
         else if(!strcmp(argv[i],"--layers")&&i+1<argc)layer_limit=atoi(argv[++i]);
         else{
             fprintf(stderr,"usage: test_tower [--tower-dir DIR --image FILE [--repeat N] "
@@ -893,7 +950,7 @@ int main(int argc,char **argv){
         }
     }
     if(tower_dir&&image_path)
-        return probe_run(tower_dir,image_path,repeats,cpu_ref,layer_sweep,layer_limit,smoke);
+        return probe_run(tower_dir,image_path,repeats,cpu_ref,layer_sweep,layer_limit,smoke,stream,stream_cpu);
     test_smart_resize();
     test_geometry_and_patchify();
     test_resize_reference();

@@ -85,6 +85,10 @@ fg_status fg_tower_position_embeddings(const float *position_weight,
 fg_status fg_tower_forward_cpu(const fg_tower_weights *weights,const float *tokens,
                                const fg_tower_geometry *geometry,float *embeddings,
                                fg_error *err);
+fg_status fg_tower_dequantize(const uint8_t *data,uint64_t bytes,uint32_t ggml_type,
+                              uint64_t values,float *out,fg_error *err);
+fg_status fg_tower_image_decode(const uint8_t *data,uint64_t bytes,uint8_t **rgb,
+                                uint32_t *width,uint32_t *height,fg_error *err);
 fg_status fg_tower_embed_cpu(const fg_tower_weights *weights,const float *tokens,
                              const fg_tower_geometry *geometry,float *hidden,fg_error *err);
 fg_status fg_tower_block_cpu(const fg_tower_block_weights *weights,const float *input,

@@ -3,7 +3,7 @@ layout(local_size_x=16,local_size_y=16,local_size_z=1)in;
 layout(set=0,binding=0)readonly buffer Weights{float weight_value[];};
 layout(set=0,binding=1)readonly buffer Input{float input_value[];};
 layout(set=0,binding=2)writeonly buffer Output{float output_value[];};
-layout(push_constant)uniform Push{uint tokens;uint outputs;uint width;}pc;
+layout(push_constant)uniform Push{uint tokens;uint outputs;uint width;uint stride;uint m_offset;}pc;
 void main(){
     uint m0=gl_WorkGroupID.x*64u+gl_LocalInvocationID.x*4u;
     uint n0=gl_WorkGroupID.y*64u+gl_LocalInvocationID.y*4u;
@@ -34,27 +34,27 @@ void main(){
         a30+=w3*x0;a31+=w3*x1;a32+=w3*x2;a33+=w3*x3;
     }
     if(m0<pc.outputs){
-        if(n0<pc.tokens)output_value[n0*pc.outputs+m0]=a00;
-        if(n1<pc.tokens)output_value[n1*pc.outputs+m0]=a01;
-        if(n2<pc.tokens)output_value[n2*pc.outputs+m0]=a02;
-        if(n3<pc.tokens)output_value[n3*pc.outputs+m0]=a03;
+        if(n0<pc.tokens)output_value[n0*pc.stride+pc.m_offset+m0]=a00;
+        if(n1<pc.tokens)output_value[n1*pc.stride+pc.m_offset+m0]=a01;
+        if(n2<pc.tokens)output_value[n2*pc.stride+pc.m_offset+m0]=a02;
+        if(n3<pc.tokens)output_value[n3*pc.stride+pc.m_offset+m0]=a03;
     }
     if(m1<pc.outputs){
-        if(n0<pc.tokens)output_value[n0*pc.outputs+m1]=a10;
-        if(n1<pc.tokens)output_value[n1*pc.outputs+m1]=a11;
-        if(n2<pc.tokens)output_value[n2*pc.outputs+m1]=a12;
-        if(n3<pc.tokens)output_value[n3*pc.outputs+m1]=a13;
+        if(n0<pc.tokens)output_value[n0*pc.stride+pc.m_offset+m1]=a10;
+        if(n1<pc.tokens)output_value[n1*pc.stride+pc.m_offset+m1]=a11;
+        if(n2<pc.tokens)output_value[n2*pc.stride+pc.m_offset+m1]=a12;
+        if(n3<pc.tokens)output_value[n3*pc.stride+pc.m_offset+m1]=a13;
     }
     if(m2<pc.outputs){
-        if(n0<pc.tokens)output_value[n0*pc.outputs+m2]=a20;
-        if(n1<pc.tokens)output_value[n1*pc.outputs+m2]=a21;
-        if(n2<pc.tokens)output_value[n2*pc.outputs+m2]=a22;
-        if(n3<pc.tokens)output_value[n3*pc.outputs+m2]=a23;
+        if(n0<pc.tokens)output_value[n0*pc.stride+pc.m_offset+m2]=a20;
+        if(n1<pc.tokens)output_value[n1*pc.stride+pc.m_offset+m2]=a21;
+        if(n2<pc.tokens)output_value[n2*pc.stride+pc.m_offset+m2]=a22;
+        if(n3<pc.tokens)output_value[n3*pc.stride+pc.m_offset+m2]=a23;
     }
     if(m3<pc.outputs){
-        if(n0<pc.tokens)output_value[n0*pc.outputs+m3]=a30;
-        if(n1<pc.tokens)output_value[n1*pc.outputs+m3]=a31;
-        if(n2<pc.tokens)output_value[n2*pc.outputs+m3]=a32;
-        if(n3<pc.tokens)output_value[n3*pc.outputs+m3]=a33;
+        if(n0<pc.tokens)output_value[n0*pc.stride+pc.m_offset+m3]=a30;
+        if(n1<pc.tokens)output_value[n1*pc.stride+pc.m_offset+m3]=a31;
+        if(n2<pc.tokens)output_value[n2*pc.stride+pc.m_offset+m3]=a32;
+        if(n3<pc.tokens)output_value[n3*pc.stride+pc.m_offset+m3]=a33;
     }
 }

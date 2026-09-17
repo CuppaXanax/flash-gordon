@@ -52,3 +52,5 @@ vulkan/*.spv
 .DS_Store
 
 tests/test_prefill_collective
+vendor/*.o
+vendor/*.d
