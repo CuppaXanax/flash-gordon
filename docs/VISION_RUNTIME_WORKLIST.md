@@ -107,6 +107,44 @@ scope.
   tuning for the quant matmuls, PNG/JPEG variants beyond the common subset and
   exact mtmd preprocessing parity; video handling and token budget policy.
 
+## 0d. Round-5 video input (frames-first, local)
+
+Design: the frames path is the core; MP4 is an optional capability-gated
+convenience. No package installs and no hard ffmpeg dependency.
+
+- **API surface** (`src/api.c`): a `video_frames` content part carries an
+  ordered list of base64 PNG/JPEG data URLs plus `fps` (capture rate of the
+  sequence; default 2.0) and `max_frames` (default and cap 8). The group is
+  rendered as one `<|vision_start|><|video_pad|><|vision_end|>` span. A
+  `video_url` part still accepts base64 MP4/WebM/MKV, but only when static
+  ffmpeg/ffprobe binaries are present in `<deployment>/tools` or PATH; the
+  fleet's Fedora ffmpeg 8.1.2 satisfies this, and absence produces a 400 that
+  names the requirement. `/v1/models` reports `image`, `video` (MP4) and
+  `video_frames` capabilities separately.
+- **Preprocessing** (`src/video.c`): `fg_video_select_frames` decimates the
+  sequence toward the 2 fps target (time-based indices, first frame always
+  kept, `max_frames` bound); each selected frame is decoded with the image
+  decoder, smart_resized under the video pixel bounds
+  (`FG_TOWER_VIDEO_MIN_PIXELS`..`max_pixels`), normalized and bicubic
+  resampled to a common target; frames are paired into 6-channel temporal
+  super-frames (odd count repeats the last); token count is
+  `ceil(F/2) * W/32 * H/32`; decoder positions use the merged grid with
+  `t = pos0 + g*max(nx,ny)`, `h/w` inside the frame grid, and the running
+  position advancing by `max(nx,ny)` per temporal group (Qwen per-frame span
+  semantics with temporal M-RoPE).
+- **Tower boundary**: the host packs each pair's tokens as
+  `[frame A patch (768) | frame B patch (768)]` and calls a weak
+  `fg_tower_vision_forward_tokens()` entry; deployments without it gate video
+  off. The exact tower-side contract is the TODO in the round-5 report
+  (`bc-250-dbg/results/video-*`): per pair, patch-embed with the temporal
+  weight slice applied to the first/second frame half, then the ordinary
+  position embedding, 27 blocks, post-LN and merger over the pair's spatial
+  grid; output is pair-major.
+- **Text/image isolation**: the image media branch is source-identical to
+  round 4 (the frames branch is a separate arm); the image and text test suites
+  pass unchanged.
+
+
 ## 1. Round-1 pack decision: separate tower pack
 
 **Decision: the tower is a separate pack** (`tower.fgw` payload + `tower.fgm`

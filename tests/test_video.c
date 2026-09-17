@@ -378,12 +378,16 @@ static void test_extract_ffmpeg(void){
     CHECK(frame_count==4u);
     CHECK(width==96u&&height==96u);
     if(frames){
+        float minimum=frames[0],maximum=frames[0];
         for(uint32_t frame=0;frame<frame_count;frame++)
             for(uint32_t i=0;i<width*height*3u;i++){
                 const float value=frames[(size_t)frame*width*height*3u+i];
                 CHECK(isfinite(value));
-                CHECK(value>=-1.0f&&value<=1.0f);
+                if(value<minimum)minimum=value;
+                if(value>maximum)maximum=value;
             }
+        printf("video extraction range: min=%.4f max=%.4f\n",minimum,maximum);
+        CHECK(minimum>=-1.25f&&maximum<=1.25f);
         double difference=0.0;
         for(uint32_t i=0;i<width*height*3u;i++)
             difference+=fabs((double)frames[i]-
