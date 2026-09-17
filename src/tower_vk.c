@@ -55,6 +55,8 @@ struct fg_tower_vk {
     tower_kernel rope;
     tower_kernel attention;
     tower_kernel position;
+    uint32_t memory_type;
+    bool memory_type_valid;
     char device_name[256];
 };
 
@@ -114,6 +116,9 @@ typedef struct push_position {
 typedef struct tower_timing {
     double host_ms;
     double upload_ms;
+    double alloc_ms;
+    double read_ms;
+    double write_ms;
     double compute_ms;
     uint64_t upload_bytes;
     uint64_t resident_bytes;
@@ -143,23 +148,27 @@ static fg_status tower_buffer_create(fg_tower_vk *tower,uint64_t bytes,tower_buf
     if(result!=VK_SUCCESS)return tower_vk_error(err,"create buffer",result);
     VkMemoryRequirements requirements;
     vkGetBufferMemoryRequirements(tower->device,buffer->buffer,&requirements);
-    VkPhysicalDeviceMemoryProperties properties;
-    vkGetPhysicalDeviceMemoryProperties(tower->physical,&properties);
-    uint32_t memory_type=UINT32_MAX;
-    for(uint32_t i=0;i<properties.memoryTypeCount;i++)
-        if((requirements.memoryTypeBits&(1u<<i))&&
-           (properties.memoryTypes[i].propertyFlags&
-            (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))==
-            (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){
-            memory_type=i;
-            break;
-        }
-    if(memory_type==UINT32_MAX){
+    if(!tower->memory_type_valid){
+        VkPhysicalDeviceMemoryProperties properties;
+        vkGetPhysicalDeviceMemoryProperties(tower->physical,&properties);
+        tower->memory_type=UINT32_MAX;
+        for(uint32_t i=0;i<properties.memoryTypeCount;i++)
+            if((properties.memoryTypes[i].propertyFlags&
+                (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))==
+                (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){
+                tower->memory_type=i;
+                break;
+            }
+        tower->memory_type_valid=true;
+    }
+    if(tower->memory_type==UINT32_MAX||
+       !(requirements.memoryTypeBits&(1u<<tower->memory_type))){
         vkDestroyBuffer(tower->device,buffer->buffer,NULL);
         buffer->buffer=VK_NULL_HANDLE;
         fg_error_set(err,FG_ERR_UNAVAILABLE,"tower Vulkan has no host coherent memory type");
         return FG_ERR_UNAVAILABLE;
     }
+    const uint32_t memory_type=tower->memory_type;
     VkMemoryAllocateInfo allocation={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
                                      .allocationSize=requirements.size,
                                      .memoryTypeIndex=memory_type};
@@ -1255,6 +1264,19 @@ static fg_status tower_pack_slice(const tower_pack *pack,const char *name,uint32
     return FG_OK;
 }
 
+static void tower_pack_populate(const tower_pack *pack,const void *data,uint64_t bytes){
+    if(!pack||!pack->map||!data||!bytes)return;
+    const uintptr_t begin=(uintptr_t)data;
+    const uintptr_t end=begin+bytes;
+    const uintptr_t map_begin=(uintptr_t)pack->map;
+    const uintptr_t map_end=map_begin+pack->bytes;
+    if(begin<map_begin||end>map_end)return;
+#ifdef MADV_POPULATE_READ
+    if(madvise((void *)data,(size_t)bytes,MADV_POPULATE_READ)==0)return;
+#endif
+    posix_fadvise(pack->fd,(off_t)(begin-map_begin),(off_t)bytes,POSIX_FADV_WILLNEED);
+}
+
 typedef struct tower_cache_entry {
     uint64_t key;
     tower_buffer buffer;
@@ -1262,11 +1284,19 @@ typedef struct tower_cache_entry {
     struct tower_cache_entry *next;
 } tower_cache_entry;
 
+typedef struct tower_scratch {
+    tower_buffer buffer;
+    uint64_t bytes;
+    bool used;
+    struct tower_scratch *next;
+} tower_scratch;
+
 typedef struct tower_weight {
     tower_buffer buffer;
     uint32_t ggml_type;
     uint32_t width;
     bool resident;
+    tower_scratch *scratch;
 } tower_weight;
 
 typedef struct tower_session {
@@ -1277,9 +1307,14 @@ typedef struct tower_session {
     tower_cache_entry *entries;
     uint64_t resident_bytes;
     uint64_t budget_bytes;
+    tower_scratch *scratch;
+    uint64_t scratch_bytes;
 } tower_session;
 
-#define FG_TOWER_RESIDENT_RESERVE (96ull<<20)
+#define FG_TOWER_RESIDENT_RESERVE (64ull<<20)
+#define FG_TOWER_RESIDENT_CEILING (160ull<<20)
+#define FG_TOWER_SCRATCH_CEILING (48ull<<20)
+#define FG_TOWER_SCRATCH_QUANTUM (64ull<<10)
 
 static pthread_mutex_t tower_session_lock=PTHREAD_MUTEX_INITIALIZER;
 static tower_session tower_session_state;
@@ -1310,9 +1345,54 @@ static void tower_session_close(tower_session *session){
         free(entry);
         entry=next;
     }
+    tower_scratch *scratch=session->scratch;
+    while(scratch){
+        tower_scratch *next=scratch->next;
+        tower_buffer_destroy(session->tower,&scratch->buffer);
+        free(scratch);
+        scratch=next;
+    }
     fg_tower_vk_close(session->tower);
     tower_pack_close(&session->pack);
     memset(session,0,sizeof(*session));
+}
+
+static void tower_cache_trim(tower_session *session){
+    while(session->entries&&session->resident_bytes>session->budget_bytes){
+        tower_cache_entry **cursor=NULL,*victim=NULL;
+        for(tower_cache_entry **link=&session->entries;*link;link=&(*link)->next)
+            if(!victim||(*link)->bytes<victim->bytes){victim=*link;cursor=link;}
+        if(!victim)break;
+        *cursor=victim->next;
+        session->resident_bytes-=victim->bytes;
+        tower_buffer_destroy(session->tower,&victim->buffer);
+        free(victim);
+    }
+}
+
+static void tower_scratch_trim(tower_session *session){
+    while(session->scratch_bytes>FG_TOWER_SCRATCH_CEILING){
+        tower_scratch **cursor=NULL,*victim=NULL;
+        for(tower_scratch **link=&session->scratch;*link;link=&(*link)->next)
+            if(!(*link)->used&&(!victim||(*link)->bytes<victim->bytes)){victim=*link;cursor=link;}
+        if(!victim)break;
+        *cursor=victim->next;
+        session->scratch_bytes-=victim->bytes;
+        tower_buffer_destroy(session->tower,&victim->buffer);
+        free(victim);
+    }
+}
+
+static void tower_budget_refresh(tower_session *session){
+    const uint64_t available=tower_mem_available();
+    uint64_t budget=0;
+    if(available>FG_TOWER_RESIDENT_RESERVE)
+        budget=available-FG_TOWER_RESIDENT_RESERVE;
+    if(budget>session->pack.bytes)budget=session->pack.bytes;
+    else if(budget>FG_TOWER_RESIDENT_CEILING)budget=FG_TOWER_RESIDENT_CEILING;
+    session->budget_bytes=budget;
+    tower_cache_trim(session);
+    tower_scratch_trim(session);
 }
 
 static fg_status tower_session_open(tower_session *session,const char *directory,fg_error *err){
@@ -1330,11 +1410,8 @@ static fg_status tower_session_open(tower_session *session,const char *directory
         memset(session,0,sizeof(*session));
         return status;
     }
-    const uint64_t available=tower_mem_available();
-    uint64_t budget=available>FG_TOWER_RESIDENT_RESERVE?available-FG_TOWER_RESIDENT_RESERVE:0;
-    if(budget>session->pack.bytes)budget=session->pack.bytes;
-    session->budget_bytes=budget;
     session->open=true;
+    tower_budget_refresh(session);
     return FG_OK;
 }
 
@@ -1344,16 +1421,67 @@ static tower_cache_entry *tower_cache_find(tower_session *session,uint64_t key){
     return NULL;
 }
 
+static tower_scratch *tower_scratch_slot(tower_session *session,uint64_t bytes){
+    tower_scratch *slot=NULL;
+    for(tower_scratch *entry=session->scratch;entry;entry=entry->next)
+        if(!entry->used&&entry->bytes>=bytes&&(!slot||entry->bytes<slot->bytes))slot=entry;
+    return slot;
+}
+
+static fg_status tower_scratch_admit(tower_session *session,const void *data,uint64_t bytes,
+                                     tower_weight *weight,tower_timing *timing,fg_error *err){
+    tower_scratch *slot=tower_scratch_slot(session,bytes);
+    if(!slot){
+        slot=calloc(1,sizeof(*slot));
+        if(!slot){
+            fg_error_set(err,FG_ERR_OOM,"allocate tower scratch slot");
+            return FG_ERR_OOM;
+        }
+        uint64_t capacity=(bytes+FG_TOWER_SCRATCH_QUANTUM-1ull)&~(FG_TOWER_SCRATCH_QUANTUM-1ull);
+        const double alloc_begin=timing?tower_now_ms():0.0;
+        fg_status status=tower_buffer_create(session->tower,capacity+4u,&slot->buffer,err);
+        if(timing)timing->alloc_ms+=tower_now_ms()-alloc_begin;
+        if(status!=FG_OK){
+            free(slot);
+            return status;
+        }
+        slot->bytes=capacity;
+        slot->next=session->scratch;
+        session->scratch=slot;
+        session->scratch_bytes+=capacity;
+    }
+    slot->used=true;
+    weight->buffer=slot->buffer;
+    weight->resident=false;
+    weight->scratch=slot;
+    const double write_begin=timing?tower_now_ms():0.0;
+    fg_status status=tower_buffer_write(session->tower,&slot->buffer,data,bytes,err);
+    if(status!=FG_OK)slot->used=false;
+    if(timing){
+        timing->write_ms+=tower_now_ms()-write_begin;
+        if(status==FG_OK)timing->upload_bytes+=bytes;
+    }
+    return status;
+}
+
 static fg_status tower_weight_admit(tower_session *session,uint64_t key,const void *data,
                                     uint64_t bytes,tower_weight *weight,tower_timing *timing,
                                     fg_error *err){
-    const double write_begin=timing?tower_now_ms():0.0;
+    const double begin=timing?tower_now_ms():0.0;
+    tower_pack_populate(&session->pack,data,bytes);
+    if(timing)timing->read_ms+=tower_now_ms()-begin;
+    fg_status status;
     if(session->budget_bytes&&session->resident_bytes+bytes<=session->budget_bytes){
         tower_cache_entry *created=calloc(1,sizeof(*created));
         if(created){
+            const double alloc_begin=timing?tower_now_ms():0.0;
             fg_status admit=tower_buffer_create(session->tower,bytes+4u,&created->buffer,err);
-            if(admit==FG_OK)
+            if(timing)timing->alloc_ms+=tower_now_ms()-alloc_begin;
+            if(admit==FG_OK){
+                const double write_begin=timing?tower_now_ms():0.0;
                 admit=tower_buffer_write(session->tower,&created->buffer,data,bytes,err);
+                if(timing)timing->write_ms+=tower_now_ms()-write_begin;
+            }
             if(admit==FG_OK){
                 created->key=key;
                 created->bytes=bytes;
@@ -1363,9 +1491,9 @@ static fg_status tower_weight_admit(tower_session *session,uint64_t key,const vo
                 weight->buffer=created->buffer;
                 weight->resident=true;
                 if(timing){
-                    timing->upload_ms+=tower_now_ms()-write_begin;
                     timing->upload_bytes+=bytes;
                     timing->resident_bytes+=bytes;
+                    timing->upload_ms+=tower_now_ms()-begin;
                 }
                 return FG_OK;
             }
@@ -1375,12 +1503,8 @@ static fg_status tower_weight_admit(tower_session *session,uint64_t key,const vo
         session->budget_bytes=session->resident_bytes;
         memset(err,0,sizeof(*err));
     }
-    fg_status status=tower_buffer_create(session->tower,bytes+4u,&weight->buffer,err);
-    if(status==FG_OK)status=tower_buffer_write(session->tower,&weight->buffer,data,bytes,err);
-    if(status==FG_OK&&timing){
-        timing->upload_ms+=tower_now_ms()-write_begin;
-        timing->upload_bytes+=bytes;
-    }
+    status=tower_scratch_admit(session,data,bytes,weight,timing,err);
+    if(timing&&status==FG_OK)timing->upload_ms+=tower_now_ms()-begin;
     return status;
 }
 
@@ -1411,7 +1535,8 @@ static fg_status tower_weight_acquire(tower_session *session,const char *name,ui
 }
 
 static void tower_weight_release(tower_session *session,tower_weight *weight){
-    if(!weight->resident)tower_buffer_destroy(session->tower,&weight->buffer);
+    if(weight->scratch)weight->scratch->used=false;
+    else if(!weight->resident)tower_buffer_destroy(session->tower,&weight->buffer);
     memset(weight,0,sizeof(*weight));
 }
 
@@ -1679,6 +1804,7 @@ fg_status fg_tower_vision_forward(const char *tower_dir,const uint8_t *image_byt
     }
     fg_tower_vk *tower=session->tower;
     if(status==FG_OK)status=tower_prepare(tower,err);
+    if(status==FG_OK)tower_budget_refresh(session);
     const double setup_ms=tower_now_ms()-setup_begin;
     const uint32_t n=geometry.tokens;
     const uint32_t merged=geometry.merged_tokens;
@@ -1769,6 +1895,7 @@ fg_status fg_tower_vision_forward(const char *tower_dir,const uint8_t *image_byt
     tower_weight_release(session,&mm2_bias);tower_weight_release(session,&fc2);
     tower_weight_release(session,&mm0_bias);tower_weight_release(session,&fc1);
     tower_weight_release(session,&post_b);tower_weight_release(session,&post_w);
+    tower_scratch_trim(session);
     if(status==FG_OK){
         host_embeddings=malloc((size_t)merged*FG_TOWER_OUT_HIDDEN*sizeof(float));
         if(!host_embeddings){
@@ -1786,9 +1913,14 @@ fg_status fg_tower_vision_forward(const char *tower_dir,const uint8_t *image_byt
         stats->setup_ms=setup_ms;
         stats->host_ms=timing.host_ms;
         stats->compute_ms=timing.compute_ms;
+        stats->alloc_ms=timing.alloc_ms;
+        stats->read_ms=timing.read_ms;
+        stats->write_ms=timing.write_ms;
         stats->weight_bytes=timing.upload_bytes;
         stats->resident_bytes=timing.resident_bytes;
         stats->resident_hit_bytes=timing.resident_hit_bytes;
+        stats->cache_budget_bytes=session->budget_bytes;
+        stats->scratch_bytes=session->scratch_bytes;
     }
     if(status!=FG_OK){
         free(host_embeddings);

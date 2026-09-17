@@ -755,10 +755,14 @@ static int probe_stream_only(const char *tower_dir,const char *image_path,uint32
     printf("stream-only: %.1f ms dispatches=%u merged=%u grid=%ux%u finite=%s norm=%.4f\n",
            stats.forward_ms,stats.dispatches,merged,grid_width,grid_height,
            all_finite(first,values)?"yes":"no",sqrt(norm));
-    printf("stream-only stages: preprocess=%.1f setup=%.1f host=%.1f upload=%.1f "
-           "compute=%.1f weight_mb=%.1f\n",
-           stats.preprocess_ms,stats.setup_ms,stats.host_ms,stats.upload_ms,
-           stats.compute_ms,(double)stats.weight_bytes/1048576.0);
+    printf("stream-only stages: preprocess=%.1f setup=%.1f host=%.1f alloc=%.1f read=%.1f "
+           "write=%.1f upload=%.1f compute=%.1f weight_mb=%.1f budget_mb=%.1f "
+           "resident_mb=%.1f hit_mb=%.1f scratch_mb=%.1f\n",
+           stats.preprocess_ms,stats.setup_ms,stats.host_ms,stats.alloc_ms,stats.read_ms,
+           stats.write_ms,stats.upload_ms,stats.compute_ms,
+           (double)stats.weight_bytes/1048576.0,(double)stats.cache_budget_bytes/1048576.0,
+           (double)stats.resident_bytes/1048576.0,(double)stats.resident_hit_bytes/1048576.0,
+           (double)stats.scratch_bytes/1048576.0);
     for(uint32_t repeat=0;repeat<repeats&&status==FG_OK;repeat++){
         fg_tower_vk_stats again={0};
         status=fg_tower_vision_forward(tower_dir,raw,raw_bytes,&second,&merged,&grid_width,
@@ -770,12 +774,16 @@ static int probe_stream_only(const char *tower_dir,const char *image_path,uint32
         printf("stream-only repeat %u: %.1f ms cosine=%.9f identical=%s\n",repeat+1,
                again.forward_ms,cosine_similarity(first,second,values),
                memcmp(first,second,values*sizeof(float))==0?"yes":"no");
-        printf("stream-only repeat %u stages: preprocess=%.1f setup=%.1f host=%.1f "
-               "upload=%.1f compute=%.1f weight_mb=%.1f resident_mb=%.1f hit_mb=%.1f\n",
-               repeat+1,again.preprocess_ms,again.setup_ms,again.host_ms,again.upload_ms,
-               again.compute_ms,(double)again.weight_bytes/1048576.0,
+        printf("stream-only repeat %u stages: preprocess=%.1f setup=%.1f host=%.1f alloc=%.1f "
+               "read=%.1f write=%.1f upload=%.1f compute=%.1f weight_mb=%.1f budget_mb=%.1f "
+               "resident_mb=%.1f hit_mb=%.1f scratch_mb=%.1f\n",
+               repeat+1,again.preprocess_ms,again.setup_ms,again.host_ms,again.alloc_ms,
+               again.read_ms,again.write_ms,again.upload_ms,again.compute_ms,
+               (double)again.weight_bytes/1048576.0,
+               (double)again.cache_budget_bytes/1048576.0,
                (double)again.resident_bytes/1048576.0,
-               (double)again.resident_hit_bytes/1048576.0);
+               (double)again.resident_hit_bytes/1048576.0,
+               (double)again.scratch_bytes/1048576.0);
         free(second);
         second=NULL;
     }
@@ -928,38 +936,6 @@ static int probe_run(const char *tower_dir,const char *image_path,uint32_t repea
         free(second);free(first);free(tokens);probe_owned_free(&owned);
         return staged==FG_OK?0:1;
     }
-    if(stream){
-        uint64_t raw_bytes=0;
-        uint8_t *raw=read_file(image_path,&raw_bytes,&err);
-        if(!raw){
-            fprintf(stderr,"stream image read: %s\n",err.message);
-        }else{
-            float *streamed=NULL;
-            uint32_t stream_merged=0,stream_grid_w=0,stream_grid_h=0;
-            fg_tower_vk_stats stream_stats={0};
-            fg_status stream_status=fg_tower_vision_forward(tower_dir,raw,raw_bytes,&streamed,
-                &stream_merged,&stream_grid_w,&stream_grid_h,&stream_stats,&err);
-            if(stream_status!=FG_OK){
-                fprintf(stderr,"stream forward: %s\n",err.message);
-            }else{
-                double stream_norm=0.0;
-                for(size_t i=0;i<(size_t)stream_merged*FG_TOWER_OUT_HIDDEN;i++)
-                    stream_norm+=(double)streamed[i]*streamed[i];
-                printf("stream forward: %.1f ms dispatches=%u merged=%u grid=%ux%u norm=%.4f "
-                       "cosine=%.9f\n",stream_stats.forward_ms,stream_stats.dispatches,
-                       stream_merged,stream_grid_w,stream_grid_h,sqrt(stream_norm),
-                       stream_merged==geometry.merged_tokens?
-                           cosine_similarity(first,streamed,embedding_values):0.0);
-                printf("stream forward stages: preprocess=%.1f setup=%.1f host=%.1f "
-                       "upload=%.1f compute=%.1f weight_mb=%.1f\n",
-                       stream_stats.preprocess_ms,stream_stats.setup_ms,stream_stats.host_ms,
-                       stream_stats.upload_ms,stream_stats.compute_ms,
-                       (double)stream_stats.weight_bytes/1048576.0);
-                free(streamed);
-            }
-            free(raw);
-        }
-    }
     fg_tower_vk_stats stats={0};
     status=fg_tower_vk_run(tower,device_weights,tokens,&geometry,first,&stats,&err);
     if(status!=FG_OK){
@@ -996,6 +972,48 @@ static int probe_run(const char *tower_dir,const char *image_path,uint32_t repea
                 else
                     fprintf(stderr,"probe cpu reference: %s\n",err.message);
                 free(cpu_embeddings);
+            }
+        }
+        if(stream&&status==FG_OK){
+            uint64_t raw_bytes=0;
+            uint8_t *raw=read_file(image_path,&raw_bytes,&err);
+            if(!raw){
+                fprintf(stderr,"stream image read: %s\n",err.message);
+            }else{
+                float *streamed=NULL;
+                uint32_t stream_merged=0,stream_grid_w=0,stream_grid_h=0;
+                fg_tower_vk_stats stream_stats={0};
+                fg_status stream_status=fg_tower_vision_forward(tower_dir,raw,raw_bytes,&streamed,
+                    &stream_merged,&stream_grid_w,&stream_grid_h,&stream_stats,&err);
+                if(stream_status!=FG_OK){
+                    fprintf(stderr,"stream forward: %s\n",err.message);
+                }else{
+                    double stream_norm=0.0;
+                    double stream_cosine=0.0;
+                    if(stream_merged==geometry.merged_tokens){
+                        for(size_t i=0;i<(size_t)stream_merged*FG_TOWER_OUT_HIDDEN;i++)
+                            stream_norm+=(double)streamed[i]*streamed[i];
+                        stream_cosine=cosine_similarity(first,streamed,embedding_values);
+                    }
+                    printf("stream forward: %.1f ms dispatches=%u merged=%u grid=%ux%u norm=%.4f "
+                           "cosine=%.9f identical=%s\n",stream_stats.forward_ms,
+                           stream_stats.dispatches,stream_merged,stream_grid_w,stream_grid_h,
+                           sqrt(stream_norm),stream_cosine,
+                           memcmp(first,streamed,embedding_values*sizeof(float))==0?"yes":"no");
+                    printf("stream forward stages: preprocess=%.1f setup=%.1f host=%.1f alloc=%.1f "
+                           "read=%.1f write=%.1f upload=%.1f compute=%.1f weight_mb=%.1f "
+                           "budget_mb=%.1f resident_mb=%.1f hit_mb=%.1f scratch_mb=%.1f\n",
+                           stream_stats.preprocess_ms,stream_stats.setup_ms,stream_stats.host_ms,
+                           stream_stats.alloc_ms,stream_stats.read_ms,stream_stats.write_ms,
+                           stream_stats.upload_ms,stream_stats.compute_ms,
+                           (double)stream_stats.weight_bytes/1048576.0,
+                           (double)stream_stats.cache_budget_bytes/1048576.0,
+                           (double)stream_stats.resident_bytes/1048576.0,
+                           (double)stream_stats.resident_hit_bytes/1048576.0,
+                           (double)stream_stats.scratch_bytes/1048576.0);
+                    free(streamed);
+                }
+                free(raw);
             }
         }
         if(layer_sweep&&status==FG_OK){
