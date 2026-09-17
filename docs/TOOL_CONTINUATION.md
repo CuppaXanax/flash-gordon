@@ -105,7 +105,10 @@ agent's work). With the fix built and serving on rank 0:
 
 ```powershell
 & 'D:\looking-glass-labs\bc-250-dbg\test-fg-openai-tools.ps1' -BaseUrl http://192.168.42.42:8080/v1
-pwsh -NoProfile -File 'D:\looking-glass-labs\bc-250-dbg\results\tool-churn-20260917-1422\tool-churn-ab.ps1' -FillerRepeats 5200
+pwsh -NoProfile -File 'D:\looking-glass-labs\bc-250-dbg\fleet\prefix-continuation-turn.ps1' `
+    -FillerRepeats 4000 -Turns 4
+pwsh -NoProfile -File 'D:\looking-glass-labs\bc-250-dbg\results\tool-churn-20260917-1422\tool-churn-ab.ps1' `
+    -FillerRepeats 5200
 ```
 
 Expected: turn 2 (clock added, `tool_choice` named) reports
