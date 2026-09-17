@@ -781,7 +781,8 @@ static fg_status api_decode_media_url(const char *url,uint32_t kind,const char *
     if(video){
         if(strcmp(mime,"video/mp4")&&strcmp(mime,"video/webm")&&strcmp(mime,"video/x-matroska")){
             fg_error_set(err,FG_ERR_ARGUMENT,
-                         "unsupported video media type '%s' (use video/mp4 or video/webm)",mime);
+                         "unsupported video media type '%s' "
+                         "(use video/mp4, video/webm or video/x-matroska)",mime);
             return FG_ERR_ARGUMENT;
         }
     }else if(strcmp(mime,"image/png")&&strcmp(mime,"image/jpeg")&&strcmp(mime,"image/jpg")){
