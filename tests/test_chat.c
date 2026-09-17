@@ -322,6 +322,198 @@ static void test_history_argument_unicode(void) {
     free(actual);
 }
 
+static const char *update_weather_schema =
+    "{\"name\":\"weather\",\"parameters\":{\"type\":\"object\",\"properties\":{"
+    "\"city\":{\"type\":\"string\"}}}}";
+static const char *update_clock_schema =
+    "{\"name\":\"clock\",\"parameters\":{\"type\":\"object\",\"properties\":{"
+    "\"zone\":{\"type\":\"string\"}}}}";
+static const char *update_weather_wide_schema =
+    "{\"name\":\"weather\",\"parameters\":{\"type\":\"object\",\"properties\":{"
+    "\"city\":{\"type\":\"string\"},\"days\":{\"type\":\"integer\"}}}}";
+
+static char *render_tool_update(const fg_chat_render_options *previous,
+                                const fg_chat_render_options *current) {
+    fg_error err = {0};
+    char *text = NULL;
+    if (fg_chat_render_tool_update(previous, current, &text, &err) != FG_OK) {
+        fprintf(stderr, "tool update render failed: %s\n", err.message);
+        failures++;
+    }
+    return text;
+}
+
+static void test_tool_update_unchanged_is_empty(void) {
+    const char *schemas[] = {update_weather_schema, update_clock_schema};
+    const char *reordered[] = {update_clock_schema, update_weather_schema};
+    fg_chat_render_options previous = {.tool_schemas = schemas, .tool_schema_count = 2};
+    fg_chat_render_options current = {.tool_schemas = schemas, .tool_schema_count = 2};
+    char *actual = render_tool_update(&previous, &current);
+    if (actual) {
+        fprintf(stderr, "FAIL %s:%d unchanged tools produced an update\n", __FILE__,
+                __LINE__);
+        failures++;
+    }
+    free(actual);
+    current.tool_schemas = reordered;
+    actual = render_tool_update(&previous, &current);
+    if (actual) {
+        fprintf(stderr, "FAIL %s:%d reordered tools produced an update\n", __FILE__,
+                __LINE__);
+        failures++;
+    }
+    free(actual);
+    fg_chat_render_options none = {0};
+    fg_chat_render_options none_again = {.tool_choice = FG_CHAT_TOOL_NONE};
+    actual = render_tool_update(&none, &none_again);
+    if (actual) {
+        fprintf(stderr, "FAIL %s:%d empty tool sets produced an update\n", __FILE__,
+                __LINE__);
+        failures++;
+    }
+    free(actual);
+    actual = render_tool_update(NULL, &none);
+    if (actual) {
+        fprintf(stderr, "FAIL %s:%d null previous produced an update\n", __FILE__,
+                __LINE__);
+        failures++;
+    }
+    free(actual);
+}
+
+static void test_tool_update_choice_transition(void) {
+    const char *schemas[] = {update_weather_schema};
+    fg_chat_render_options previous = {.tool_schemas = schemas, .tool_schema_count = 1};
+    fg_chat_render_options current = {.tool_schemas = schemas, .tool_schema_count = 1};
+    current.tool_choice = FG_CHAT_TOOL_REQUIRED;
+    char *actual = render_tool_update(&previous, &current);
+    CHECK_EQUAL(actual,
+                "<|im_start|>system\n"
+                "# Tools\n\nTool configuration updated for this turn."
+                "\n\nTool choice constraint: You must call one or more available functions. "
+                "Do not answer directly."
+                "<|im_end|>\n");
+    previous.tool_choice = FG_CHAT_TOOL_REQUIRED;
+    current.tool_choice = FG_CHAT_TOOL_AUTO;
+    actual = render_tool_update(&previous, &current);
+    CHECK_EQUAL(actual,
+                "<|im_start|>system\n"
+                "# Tools\n\nTool configuration updated for this turn."
+                "\n\nTool choice constraint: Tool calls are optional this turn. Call a "
+                "function only if needed; otherwise answer the user directly."
+                "<|im_end|>\n");
+    previous.tool_choice = FG_CHAT_TOOL_AUTO;
+    current.tool_choice = FG_CHAT_TOOL_NAMED;
+    current.tool_choice_name = "weather";
+    actual = render_tool_update(&previous, &current);
+    CHECK_EQUAL(actual,
+                "<|im_start|>system\n"
+                "# Tools\n\nTool configuration updated for this turn."
+                "\n\nTool choice constraint: You must call only the function \"weather\". "
+                "Do not call any other function."
+                "<|im_end|>\n");
+}
+
+static void test_tool_update_added_and_removed(void) {
+    const char *previous_schemas[] = {update_weather_schema};
+    const char *added_schemas[] = {update_weather_schema, update_clock_schema};
+    const char *updated_schemas[] = {update_weather_wide_schema};
+    const char *both_schemas[] = {update_weather_schema, update_clock_schema};
+    fg_chat_render_options previous = {.tool_schemas = previous_schemas,
+                                       .tool_schema_count = 1};
+    fg_chat_render_options current = {.tool_schemas = added_schemas, .tool_schema_count = 2};
+    char *actual = render_tool_update(&previous, &current);
+    CHECK_EQUAL(actual,
+                "<|im_start|>system\n"
+                "# Tools\n\nTool configuration updated for this turn."
+                "\n\nThe following functions are now available or have updated "
+                "definitions:\n\n<tools>\n"
+                "{\"name\":\"clock\",\"parameters\":{\"type\":\"object\",\"properties\":{"
+                "\"zone\":{\"type\":\"string\"}}}}\n"
+                "</tools>"
+                "<|im_end|>\n");
+    previous.tool_schemas = both_schemas;
+    previous.tool_schema_count = 2;
+    current.tool_schemas = updated_schemas;
+    current.tool_schema_count = 1;
+    actual = render_tool_update(&previous, &current);
+    CHECK_EQUAL(actual,
+                "<|im_start|>system\n"
+                "# Tools\n\nTool configuration updated for this turn."
+                "\n\nThe following functions are now available or have updated "
+                "definitions:\n\n<tools>\n"
+                "{\"name\":\"weather\",\"parameters\":{\"type\":\"object\",\"properties\":{"
+                "\"city\":{\"type\":\"string\"},\"days\":{\"type\":\"integer\"}}}}\n"
+                "</tools>"
+                "\n\nThe following functions are no longer available: clock."
+                "<|im_end|>\n");
+    previous.tool_schemas = previous_schemas;
+    previous.tool_schema_count = 1;
+    current.tool_schemas = previous_schemas;
+    current.tool_schema_count = 0;
+    actual = render_tool_update(&previous, &current);
+    CHECK_EQUAL(actual,
+                "<|im_start|>system\n"
+                "# Tools\n\nNo functions are available for this turn. Do not call any "
+                "function; answer the user directly."
+                "<|im_end|>\n");
+    fg_chat_render_options previous_none = {0};
+    current.tool_schemas = previous_schemas;
+    current.tool_schema_count = 1;
+    actual = render_tool_update(&previous_none, &current);
+    if (!actual || strncmp(actual, "<|im_start|>system\n# Tools\n\nYou have access to the "
+                                   "following functions:\n\n<tools>\n",
+                           strlen("<|im_start|>system\n# Tools\n\nYou have access to the "
+                                  "following functions:\n\n<tools>\n")) ||
+        !strstr(actual, update_weather_schema) ||
+        !strstr(actual,
+                "Function calls MUST follow the specified format: an inner "
+                "<function=...></function> block must be nested within "
+                "<tool_call></tool_call> XML tags.") ||
+        !strstr(actual, "</IMPORTANT><|im_end|>\n")) {
+        fprintf(stderr, "FAIL %s:%d full tool declaration update\n", __FILE__, __LINE__);
+        failures++;
+    }
+    free(actual);
+}
+
+static void test_unchanged_tools_continuation_is_byte_identical(void) {
+    const char *schemas[] = {update_weather_schema};
+    const fg_chat_message messages[] = {
+        {.role = "tool", .content = "20 C", .tool_call_id = "call_1"},
+    };
+    const fg_chat_render_options options = {
+        .tool_schemas = schemas,
+        .tool_schema_count = 1,
+    };
+    fg_error err = {0};
+    char *continuation = NULL;
+    if (fg_chat_render_continuation(messages, 1, &options, &continuation, &err) != FG_OK) {
+        fprintf(stderr, "continuation render failed: %s\n", err.message);
+        failures++;
+        return;
+    }
+    CHECK_EQUAL(continuation,
+                "<|im_start|>user\n"
+                "<tool_response>\n20 C\n</tool_response><|im_end|>\n"
+                "<|im_start|>assistant\n<think>\n");
+    char *update = render_tool_update(&options, &options);
+    if (update) {
+        fprintf(stderr, "FAIL %s:%d unchanged continuation tools produced an update\n",
+                __FILE__, __LINE__);
+        failures++;
+    }
+    free(update);
+    char *full = render(messages, 1, &options);
+    if (!full || strncmp(full, "<|im_start|>system\n# Tools\n\nYou have access",
+                         strlen("<|im_start|>system\n# Tools\n\nYou have access")) ||
+        !strstr(full, update_weather_schema)) {
+        fprintf(stderr, "FAIL %s:%d unchanged full render drifted\n", __FILE__, __LINE__);
+        failures++;
+    }
+    free(full);
+}
+
 static void test_generated_tool_parser(void) {
     const char *text =
         "private reasoning\n</think>\n\n"
@@ -434,6 +626,10 @@ int main(void) {
     test_tool_choice_enforcement();
     test_none_without_declared_tools();
     test_history_argument_unicode();
+    test_tool_update_unchanged_is_empty();
+    test_tool_update_choice_transition();
+    test_tool_update_added_and_removed();
+    test_unchanged_tools_continuation_is_byte_identical();
     test_generated_tool_parser();
     test_generated_json_argument_values();
     test_generated_sentinel_filtering();

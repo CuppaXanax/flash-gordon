@@ -547,9 +547,39 @@ static bool has_trimmed_content(const char *text) {
     return false;
 }
 
-static fg_status append_tools_prompt(fg_text_buffer *buffer,
-                                     const fg_chat_render_options *options,
-                                     fg_error *err) {
+static fg_status validate_tool_options(const fg_chat_render_options *options,
+                                       fg_error *err) {
+    if (!options) return FG_OK;
+    if ((options->tool_schema_count && !options->tool_schemas) ||
+        (options->tool_choice == FG_CHAT_TOOL_NAMED &&
+         (!options->tool_choice_name || !options->tool_choice_name[0])) ||
+        ((options->tool_choice == FG_CHAT_TOOL_REQUIRED ||
+          options->tool_choice == FG_CHAT_TOOL_NAMED) &&
+         !options->tool_schema_count)) {
+        fg_error_set(err, FG_ERR_ARGUMENT, "chat renderer received invalid arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    if (options->tool_choice_name &&
+        (strstr(options->tool_choice_name, "<|im_start|>") ||
+         strstr(options->tool_choice_name, "<|im_end|>"))) {
+        fg_error_set(err, FG_ERR_ARGUMENT,
+                     "tool choice name cannot contain reserved ChatML control tokens");
+        return FG_ERR_ARGUMENT;
+    }
+    for (size_t i = 0; i < options->tool_schema_count; i++) {
+        const char *schema = options->tool_schemas[i];
+        if (schema && (strstr(schema, "<|im_start|>") || strstr(schema, "<|im_end|>"))) {
+            fg_error_set(err, FG_ERR_ARGUMENT,
+                         "tool schemas cannot contain reserved ChatML control tokens");
+            return FG_ERR_ARGUMENT;
+        }
+    }
+    return FG_OK;
+}
+
+static fg_status append_tools_declaration(fg_text_buffer *buffer,
+                                          const fg_chat_render_options *options,
+                                          fg_error *err) {
     fg_status status = buffer_append(
         buffer, "# Tools\n\nYou have access to the following functions:\n\n<tools>\n", err);
     for (size_t i = 0; status == FG_OK && i < options->tool_schema_count; i++) {
@@ -557,9 +587,12 @@ static fg_status append_tools_prompt(fg_text_buffer *buffer,
         if (status == FG_OK) status = buffer_append(buffer, options->tool_schemas[i], err);
     }
     if (status != FG_OK) return status;
-    status = buffer_append(
+    return buffer_append(buffer, "\n</tools>\n\n", err);
+}
+
+static fg_status append_tools_protocol(fg_text_buffer *buffer, fg_error *err) {
+    return buffer_append(
         buffer,
-        "\n</tools>\n\n"
         "If you choose to call a function ONLY reply in the following format with NO suffix:\n\n"
         "<tool_call>\n"
         "<function=example_function_name>\n"
@@ -586,7 +619,11 @@ static fg_status append_tools_prompt(fg_text_buffer *buffer,
         "without any tool call.\n"
         "</IMPORTANT>",
         err);
-    if (status != FG_OK) return status;
+}
+
+static fg_status append_tool_choice_constraint(fg_text_buffer *buffer,
+                                               const fg_chat_render_options *options,
+                                               fg_error *err) {
     if (options->tool_choice == FG_CHAT_TOOL_NONE)
         return buffer_append(
             buffer,
@@ -599,13 +636,160 @@ static fg_status append_tools_prompt(fg_text_buffer *buffer,
             "Do not answer directly.",
             err);
     if (options->tool_choice == FG_CHAT_TOOL_NAMED) {
-        status = buffer_append(
+        fg_status status = buffer_append(
             buffer, "\n\nTool choice constraint: You must call only the function \"", err);
         if (status == FG_OK) status = buffer_append(buffer, options->tool_choice_name, err);
         if (status == FG_OK)
             status = buffer_append(buffer, "\". Do not call any other function.", err);
+        return status;
     }
+    return FG_OK;
+}
+
+static fg_status append_tools_prompt(fg_text_buffer *buffer,
+                                     const fg_chat_render_options *options,
+                                     fg_error *err) {
+    fg_status status = append_tools_declaration(buffer, options, err);
+    if (status == FG_OK) status = append_tools_protocol(buffer, err);
+    if (status == FG_OK) status = append_tool_choice_constraint(buffer, options, err);
     return status;
+}
+
+static char *tool_schema_name(const char *schema) {
+    const char *name_start = NULL, *name_end = NULL;
+    if (!schema || !json_object_member(schema, "name", &name_start, &name_end) ||
+        *name_start != '"')
+        return NULL;
+    fg_text_buffer decoded = {0};
+    fg_error ignored = {0};
+    if (append_decoded_json_string(&decoded, name_start + 1, name_end - 1, &ignored) !=
+        FG_OK) {
+        free(decoded.data);
+        return NULL;
+    }
+    if (!decoded.data) {
+        decoded.data = strdup("");
+        if (!decoded.data) return NULL;
+    }
+    return decoded.data;
+}
+
+static bool schema_lists_equal(const fg_chat_render_options *left,
+                               const fg_chat_render_options *right) {
+    if (left->tool_schema_count != right->tool_schema_count) return false;
+    for (size_t i = 0; i < left->tool_schema_count; i++) {
+        bool found = false;
+        for (size_t j = 0; j < right->tool_schema_count && !found; j++)
+            found = !strcmp(left->tool_schemas[i], right->tool_schemas[j]);
+        if (!found) return false;
+    }
+    return true;
+}
+
+static bool named_choices_equal(const fg_chat_render_options *left,
+                                const fg_chat_render_options *right) {
+    return !strcmp(left->tool_choice_name ? left->tool_choice_name : "",
+                   right->tool_choice_name ? right->tool_choice_name : "");
+}
+
+static bool tool_metadata_equal(const fg_chat_render_options *left,
+                                const fg_chat_render_options *right) {
+    if (left->tool_choice != right->tool_choice) return false;
+    if (left->tool_choice == FG_CHAT_TOOL_NAMED && !named_choices_equal(left, right))
+        return false;
+    return schema_lists_equal(left, right);
+}
+
+fg_status fg_chat_render_tool_update(const fg_chat_render_options *previous,
+                                     const fg_chat_render_options *current,
+                                     char **rendered, fg_error *err) {
+    static const fg_chat_render_options no_tools = {0};
+    if (!rendered || !current) {
+        fg_error_set(err, FG_ERR_ARGUMENT, "chat tool update requires current options");
+        return FG_ERR_ARGUMENT;
+    }
+    *rendered = NULL;
+    fg_status status = validate_tool_options(current, err);
+    if (status != FG_OK) return status;
+    if (!previous) previous = &no_tools;
+    if (tool_metadata_equal(previous, current)) return FG_OK;
+    if (!previous->tool_schema_count && !current->tool_schema_count) return FG_OK;
+    fg_text_buffer buffer = {0};
+    status = buffer_append(&buffer, "<|im_start|>system\n", err);
+    if (status == FG_OK && !previous->tool_schema_count) {
+        status = append_tools_prompt(&buffer, current, err);
+    } else if (status == FG_OK && !current->tool_schema_count) {
+        status = buffer_append(
+            &buffer,
+            "# Tools\n\nNo functions are available for this turn. Do not call any function; "
+            "answer the user directly.",
+            err);
+    } else if (status == FG_OK) {
+        status = buffer_append(
+            &buffer, "# Tools\n\nTool configuration updated for this turn.", err);
+        bool listed = false;
+        for (size_t i = 0; status == FG_OK && i < current->tool_schema_count; i++) {
+            const char *schema = current->tool_schemas[i];
+            bool present = false;
+            for (size_t j = 0; j < previous->tool_schema_count && !present; j++)
+                present = !strcmp(schema, previous->tool_schemas[j]);
+            if (present) continue;
+            if (!listed) {
+                status = buffer_append(
+                    &buffer,
+                    "\n\nThe following functions are now available or have updated "
+                    "definitions:\n\n<tools>\n",
+                    err);
+                listed = true;
+            } else {
+                status = buffer_append(&buffer, "\n", err);
+            }
+            if (status == FG_OK) status = buffer_append(&buffer, schema, err);
+        }
+        if (status == FG_OK && listed) status = buffer_append(&buffer, "\n</tools>", err);
+        bool removed = false;
+        for (size_t i = 0; status == FG_OK && i < previous->tool_schema_count; i++) {
+            char *name = tool_schema_name(previous->tool_schemas[i]);
+            if (!name) continue;
+            bool present = false;
+            for (size_t j = 0; j < current->tool_schema_count && !present; j++) {
+                char *current_name = tool_schema_name(current->tool_schemas[j]);
+                present = current_name && !strcmp(name, current_name);
+                free(current_name);
+            }
+            if (!present) {
+                status = buffer_append(
+                    &buffer,
+                    removed ? ", "
+                            : "\n\nThe following functions are no longer available: ",
+                    err);
+                removed = true;
+                if (status == FG_OK) status = buffer_append(&buffer, name, err);
+            }
+            free(name);
+        }
+        if (status == FG_OK && removed) status = buffer_append(&buffer, ".", err);
+        if (status == FG_OK &&
+            (previous->tool_choice != current->tool_choice ||
+             (current->tool_choice == FG_CHAT_TOOL_NAMED &&
+              !named_choices_equal(previous, current)))) {
+            if (current->tool_choice == FG_CHAT_TOOL_AUTO)
+                status = buffer_append(
+                    &buffer,
+                    "\n\nTool choice constraint: Tool calls are optional this turn. Call a "
+                    "function only if needed; otherwise answer the user directly.",
+                    err);
+            else
+                status = append_tool_choice_constraint(&buffer, current, err);
+        }
+    }
+    if (status == FG_OK) status = buffer_append(&buffer, "<|im_end|>\n", err);
+    if (status != FG_OK) {
+        free(buffer.data);
+        return status;
+    }
+    *rendered = buffer.data;
+    return FG_OK;
 }
 
 static fg_status append_message(fg_text_buffer *buffer, const fg_chat_message *message,
@@ -658,13 +842,9 @@ static fg_status chat_render(const fg_chat_message *messages, size_t message_cou
                              const fg_chat_render_options *options, bool continuation,
                              char **rendered, fg_error *err) {
     if (!rendered || (message_count && !messages) ||
-        (options && options->tool_schema_count && !options->tool_schemas) ||
-        (options && options->tool_choice == FG_CHAT_TOOL_NAMED &&
-         (!options->tool_choice_name || !options->tool_choice_name[0])) ||
-        (options && (options->tool_choice == FG_CHAT_TOOL_REQUIRED ||
-                    options->tool_choice == FG_CHAT_TOOL_NAMED) &&
-         !options->tool_schema_count)) {
-        fg_error_set(err, FG_ERR_ARGUMENT, "chat renderer received invalid arguments");
+        validate_tool_options(options, err) != FG_OK) {
+        if (err && !err->message[0])
+            fg_error_set(err, FG_ERR_ARGUMENT, "chat renderer received invalid arguments");
         return FG_ERR_ARGUMENT;
     }
     for (size_t i = 0; i < message_count; i++) {
@@ -678,23 +858,6 @@ static fg_status chat_render(const fg_chat_message *messages, size_t message_cou
             if (!valid_qwen_tag_value(call->name, false)) {
                 fg_error_set(err, FG_ERR_ARGUMENT,
                              "tool calls contain invalid Qwen tag text");
-                return FG_ERR_ARGUMENT;
-            }
-        }
-    }
-    if (options) {
-        if (options->tool_choice_name &&
-            (strstr(options->tool_choice_name, "<|im_start|>") ||
-             strstr(options->tool_choice_name, "<|im_end|>"))) {
-            fg_error_set(err, FG_ERR_ARGUMENT,
-                         "tool choice name cannot contain reserved ChatML control tokens");
-            return FG_ERR_ARGUMENT;
-        }
-        for (size_t i = 0; i < options->tool_schema_count; i++) {
-            const char *schema = options->tool_schemas[i];
-            if (schema && (strstr(schema, "<|im_start|>") || strstr(schema, "<|im_end|>"))) {
-                fg_error_set(err, FG_ERR_ARGUMENT,
-                             "tool schemas cannot contain reserved ChatML control tokens");
                 return FG_ERR_ARGUMENT;
             }
         }

@@ -1476,6 +1476,224 @@ static void test_divergent_tool_request_clears_prefix_metadata(void) {
     fg_runtime_close(&runtime);
 }
 
+static const char *tool_update_weather_request =
+    "\"tools\":[{\"type\":\"function\",\"function\":{"
+    "\"name\":\"weather\",\"parameters\":{\"type\":\"object\",\"properties\":{"
+    "\"city\":{\"type\":\"string\"}}}}}],";
+
+static const char *tool_update_weather_clock_request =
+    "\"tools\":["
+    "{\"type\":\"function\",\"function\":{"
+    "\"name\":\"weather\",\"parameters\":{\"type\":\"object\",\"properties\":{"
+    "\"city\":{\"type\":\"string\"}}}}},"
+    "{\"type\":\"function\",\"function\":{"
+    "\"name\":\"clock\",\"parameters\":{\"type\":\"object\",\"properties\":{"
+    "\"zone\":{\"type\":\"string\"}}}}}],";
+
+static void test_tool_choice_change_continues_prefix(void) {
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    fg_error err = {0};
+    api_buffer body = {0};
+    CHECK(buffer_append(&body, "{", &err) == FG_OK);
+    CHECK(buffer_append(&body, tool_update_weather_request, &err) == FG_OK);
+    CHECK(buffer_append(&body,
+                        "\"messages\":[{\"role\":\"user\",\"content\":\"weather?\"}]}",
+                        &err) == FG_OK);
+    char *response = run_chat_request(&runtime, &session, body.data, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: miss\r\n"));
+    CHECK(session.valid);
+    free(body.data);
+    free(response);
+
+    size_t prior_evaluated = runtime.evaluated_length;
+    uint32_t prior_resets = runtime.reset_count;
+    runtime.generated =
+        "hidden\n</think>\n\n"
+        "<tool_call>\n<function=weather>\n"
+        "<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>";
+
+    api_buffer second = {0};
+    CHECK(buffer_append(&second, "{", &err) == FG_OK);
+    CHECK(buffer_append(&second, tool_update_weather_request, &err) == FG_OK);
+    CHECK(buffer_append(&second, "\"tool_choice\":\"required\",", &err) == FG_OK);
+    CHECK(buffer_append(&second,
+                        "\"messages\":["
+                        "{\"role\":\"user\",\"content\":\"weather?\"},"
+                        "{\"role\":\"assistant\",\"content\":\"answer\"},"
+                        "{\"role\":\"user\",\"content\":\"next\"}]}",
+                        &err) == FG_OK);
+    response = run_chat_request(&runtime, &session, second.data, &status);
+    free(second.data);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "200 OK"));
+    CHECK(response && strstr(response, "\"finish_reason\":\"tool_calls\""));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: hit\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: none\r\n"));
+    CHECK(runtime.reset_count == prior_resets);
+    char reused_header[96];
+    snprintf(reused_header, sizeof(reused_header),
+             "X-Flash-Gordon-Reused-Tokens: %zu\r\n", prior_evaluated);
+    CHECK(response && strstr(response, reused_header));
+    CHECK(runtime.history &&
+          strstr(runtime.history,
+                 "answer<|im_end|>\n"
+                 "<|im_start|>system\n"
+                 "# Tools\n\nTool configuration updated for this turn."
+                 "\n\nTool choice constraint: You must call one or more available functions. "
+                 "Do not answer directly.<|im_end|>\n"
+                 "<|im_start|>user\nnext<|im_end|>\n"
+                 "<|im_start|>assistant\n<think>\n"));
+    free(response);
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
+}
+
+static void test_tool_added_continues_prefix(void) {
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    fg_error err = {0};
+    api_buffer body = {0};
+    CHECK(buffer_append(&body, "{", &err) == FG_OK);
+    CHECK(buffer_append(&body, tool_update_weather_request, &err) == FG_OK);
+    CHECK(buffer_append(&body,
+                        "\"messages\":[{\"role\":\"user\",\"content\":\"weather?\"}]}",
+                        &err) == FG_OK);
+    char *response = run_chat_request(&runtime, &session, body.data, &status);
+    CHECK(status == FG_OK);
+    CHECK(session.valid);
+    free(body.data);
+    free(response);
+
+    size_t prior_evaluated = runtime.evaluated_length;
+    uint32_t prior_resets = runtime.reset_count;
+    api_buffer second = {0};
+    CHECK(buffer_append(&second, "{", &err) == FG_OK);
+    CHECK(buffer_append(&second, tool_update_weather_clock_request, &err) == FG_OK);
+    CHECK(buffer_append(&second,
+                        "\"messages\":["
+                        "{\"role\":\"user\",\"content\":\"weather?\"},"
+                        "{\"role\":\"assistant\",\"content\":\"answer\"},"
+                        "{\"role\":\"user\",\"content\":\"next\"}]}",
+                        &err) == FG_OK);
+    response = run_chat_request(&runtime, &session, second.data, &status);
+    free(second.data);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: hit\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: none\r\n"));
+    CHECK(runtime.reset_count == prior_resets);
+    char reused_header[96];
+    snprintf(reused_header, sizeof(reused_header),
+             "X-Flash-Gordon-Reused-Tokens: %zu\r\n", prior_evaluated);
+    CHECK(response && strstr(response, reused_header));
+    CHECK(runtime.history &&
+          strstr(runtime.history,
+                 "answer<|im_end|>\n"
+                 "<|im_start|>system\n"
+                 "# Tools\n\nTool configuration updated for this turn."
+                 "\n\nThe following functions are now available or have updated "
+                 "definitions:\n\n<tools>\n"
+                 "{\"name\":\"clock\",\"parameters\":{\"type\":\"object\",\"properties\":{"
+                 "\"zone\":{\"type\":\"string\"}}}}\n"
+                 "</tools><|im_end|>\n"
+                 "<|im_start|>user\nnext<|im_end|>\n"
+                 "<|im_start|>assistant\n<think>\n"));
+    CHECK(runtime.history && !strstr(runtime.history, "no longer available"));
+    free(response);
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
+}
+
+static void test_tool_removed_continues_prefix(void) {
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    fg_error err = {0};
+    api_buffer body = {0};
+    CHECK(buffer_append(&body, "{", &err) == FG_OK);
+    CHECK(buffer_append(&body, tool_update_weather_clock_request, &err) == FG_OK);
+    CHECK(buffer_append(&body,
+                        "\"messages\":[{\"role\":\"user\",\"content\":\"time?\"}]}",
+                        &err) == FG_OK);
+    char *response = run_chat_request(&runtime, &session, body.data, &status);
+    CHECK(status == FG_OK);
+    CHECK(session.valid);
+    free(body.data);
+    free(response);
+
+    uint32_t prior_resets = runtime.reset_count;
+    api_buffer second = {0};
+    CHECK(buffer_append(&second, "{", &err) == FG_OK);
+    CHECK(buffer_append(&second, tool_update_weather_request, &err) == FG_OK);
+    CHECK(buffer_append(&second,
+                        "\"messages\":["
+                        "{\"role\":\"user\",\"content\":\"time?\"},"
+                        "{\"role\":\"assistant\",\"content\":\"answer\"},"
+                        "{\"role\":\"user\",\"content\":\"next\"}]}",
+                        &err) == FG_OK);
+    response = run_chat_request(&runtime, &session, second.data, &status);
+    free(second.data);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: hit\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: none\r\n"));
+    CHECK(runtime.reset_count == prior_resets);
+    CHECK(runtime.history &&
+          strstr(runtime.history,
+                 "answer<|im_end|>\n"
+                 "<|im_start|>system\n"
+                 "# Tools\n\nTool configuration updated for this turn."
+                 "\n\nThe following functions are no longer available: clock.<|im_end|>\n"
+                 "<|im_start|>user\nnext<|im_end|>\n"
+                 "<|im_start|>assistant\n<think>\n"));
+    CHECK(runtime.history && !strstr(runtime.history, "now available or have updated"));
+    free(response);
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
+}
+
+static void test_tool_change_with_tampered_history_resets(void) {
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    fg_error err = {0};
+    api_buffer body = {0};
+    CHECK(buffer_append(&body, "{", &err) == FG_OK);
+    CHECK(buffer_append(&body, tool_update_weather_request, &err) == FG_OK);
+    CHECK(buffer_append(&body,
+                        "\"messages\":[{\"role\":\"user\",\"content\":\"weather?\"}]}",
+                        &err) == FG_OK);
+    char *response = run_chat_request(&runtime, &session, body.data, &status);
+    CHECK(status == FG_OK);
+    CHECK(session.valid);
+    free(body.data);
+    free(response);
+
+    uint32_t prior_resets = runtime.reset_count;
+    response = run_chat_request(
+        &runtime, &session,
+        "{"
+        "\"tools\":["
+        "{\"type\":\"function\",\"function\":{"
+        "\"name\":\"weather\",\"parameters\":{\"type\":\"object\",\"properties\":{"
+        "\"city\":{\"type\":\"string\"}}}}},"
+        "{\"type\":\"function\",\"function\":{"
+        "\"name\":\"clock\",\"parameters\":{\"type\":\"object\",\"properties\":{"
+        "\"zone\":{\"type\":\"string\"}}}}}],"
+        "\"messages\":[{\"role\":\"user\",\"content\":\"different\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: miss\r\n"));
+    CHECK(response &&
+          strstr(response, "X-Flash-Gordon-Reset-Reason: public-history-mismatch\r\n"));
+    CHECK(runtime.reset_count == prior_resets + 1u);
+    free(response);
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
+}
+
 static void test_failed_generation_fails_closed(void) {
     fg_runtime runtime = {
         .empty_reason = FG_PREFIX_RESET_COLD_START,
@@ -1681,21 +1899,21 @@ static void test_public_session_mismatch_reasons(void) {
     CHECK(!reason[0]);
 
     request.tool_choice = FG_CHAT_TOOL_REQUIRED;
-    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
-    CHECK(!strcmp(reason, "choice=auto->required"));
+    CHECK(api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!reason[0]);
 
     request.tool_choice = FG_CHAT_TOOL_AUTO;
     const char *extra_schemas[] = {"{\"name\":\"weather\"}", "{\"name\":\"forecast\"}"};
     request.tool_schema_count = 2;
     request.tool_schemas = (char **)extra_schemas;
-    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
-    CHECK(!strcmp(reason, "schemas=1->2"));
+    CHECK(api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!reason[0]);
 
     const char *changed_schemas[] = {"{\"name\":\"weather\",\"extra\":true}"};
     request.tool_schema_count = 1;
     request.tool_schemas = (char **)changed_schemas;
-    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
-    CHECK(!strcmp(reason, "schemas[0]"));
+    CHECK(api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!reason[0]);
 
     request.tool_schemas = (char **)stored_schemas;
     request_messages[1].content = "different";
@@ -1734,6 +1952,10 @@ int main(void) {
     test_live_prefix_tool_loop();
     test_divergent_tool_request_clears_prefix_metadata();
     test_public_session_mismatch_reasons();
+    test_tool_choice_change_continues_prefix();
+    test_tool_added_continues_prefix();
+    test_tool_removed_continues_prefix();
+    test_tool_change_with_tampered_history_resets();
     test_image_http_flow();
     test_video_http_flow();
     test_video_frames_http_flow();

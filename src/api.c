@@ -1108,16 +1108,6 @@ static void api_mismatch(char *reason,size_t reason_size,const char *format,...)
     va_end(args);
 }
 
-static const char *api_tool_choice_label(fg_chat_tool_choice choice) {
-    switch(choice){
-        case FG_CHAT_TOOL_AUTO:return "auto";
-        case FG_CHAT_TOOL_NONE:return "none";
-        case FG_CHAT_TOOL_REQUIRED:return "required";
-        case FG_CHAT_TOOL_NAMED:return "named";
-        default:return "unknown";
-    }
-}
-
 static bool api_message_equal(size_t index,const fg_chat_message *left,
                               const fg_chat_message *right,char *reason,
                               size_t reason_size) {
@@ -1162,34 +1152,11 @@ static bool api_public_session_prefix(const api_public_session *session,
                                       char *reason,size_t reason_size) {
     if(reason&&reason_size)reason[0]=0;
     if(!session||!session->valid)return false;
-    if(session->transcript.tool_schema_count!=request->tool_schema_count){
-        api_mismatch(reason,reason_size,"schemas=%zu->%zu",
-                     session->transcript.tool_schema_count,request->tool_schema_count);
-        return false;
-    }
-    if(session->transcript.tool_choice!=request->tool_choice){
-        api_mismatch(reason,reason_size,"choice=%s->%s",
-                     api_tool_choice_label(session->transcript.tool_choice),
-                     api_tool_choice_label(request->tool_choice));
-        return false;
-    }
-    if(!api_text_equal(session->transcript.tool_choice_name,request->tool_choice_name)){
-        api_mismatch(reason,reason_size,"choice_name=%s->%s",
-                     session->transcript.tool_choice_name?
-                         session->transcript.tool_choice_name:"",
-                     request->tool_choice_name?request->tool_choice_name:"");
-        return false;
-    }
     if(request->message_count<session->transcript.message_count){
         api_mismatch(reason,reason_size,"messages=%zu->%zu",
                      session->transcript.message_count,request->message_count);
         return false;
     }
-    for(size_t i=0;i<request->tool_schema_count;i++)
-        if(strcmp(session->transcript.tool_schemas[i],request->tool_schemas[i])){
-            api_mismatch(reason,reason_size,"schemas[%zu]",i);
-            return false;
-        }
     for(size_t i=0;i<session->transcript.message_count;i++)
         if(!api_message_equal(i,&session->transcript.messages[i],
                               &request->messages[i],reason,reason_size))
@@ -2643,6 +2610,33 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
         status=fg_chat_render_continuation(request.messages+previous,
                                            request.message_count-previous,
                                            &render_options,&rendered_continuation,err);
+        if(status==FG_OK){
+            fg_chat_render_options previous_options={
+                .tool_schemas=(const char *const *)public_session->transcript.tool_schemas,
+                .tool_schema_count=public_session->transcript.tool_schema_count,
+                .tool_choice=public_session->transcript.tool_choice,
+                .tool_choice_name=public_session->transcript.tool_choice_name,
+            };
+            char *tool_update=NULL;
+            status=fg_chat_render_tool_update(&previous_options,&render_options,
+                                              &tool_update,err);
+            if(status==FG_OK&&tool_update){
+                size_t update_length=strlen(tool_update);
+                size_t continuation_length=strlen(rendered_continuation);
+                char *combined=malloc(update_length+continuation_length+1u);
+                if(!combined){
+                    fg_error_set(err,FG_ERR_OOM,"allocate tool update continuation");
+                    status=FG_ERR_OOM;
+                }else{
+                    memcpy(combined,tool_update,update_length);
+                    memcpy(combined+update_length,rendered_continuation,
+                           continuation_length+1u);
+                    free(rendered_continuation);
+                    rendered_continuation=combined;
+                }
+            }
+            free(tool_update);
+        }
     }
     char id[96];
     snprintf(id, sizeof(id), "chatcmpl-fg-%lld-%llu", (long long)time(NULL),
