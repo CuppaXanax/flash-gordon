@@ -710,6 +710,7 @@ fg_status fg_chat_render_tool_update(const fg_chat_render_options *previous,
     }
     *rendered = NULL;
     fg_status status = validate_tool_options(current, err);
+    if (status == FG_OK) status = validate_tool_options(previous, err);
     if (status != FG_OK) return status;
     if (!previous) previous = &no_tools;
     if (tool_metadata_equal(previous, current)) return FG_OK;
