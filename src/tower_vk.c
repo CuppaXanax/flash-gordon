@@ -1,10 +1,13 @@
 #include "fg_tower_vk.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <vulkan/vulkan.h>
 
@@ -206,6 +209,36 @@ static fg_status tower_buffer_write(fg_tower_vk *tower,tower_buffer *buffer,cons
     if(result!=VK_SUCCESS)return tower_vk_error(err,"map buffer",result);
     memcpy(mapped,data,(size_t)bytes);
     vkUnmapMemory(tower->device,buffer->memory);
+    return FG_OK;
+}
+
+static fg_status tower_buffer_read_file(fg_tower_vk *tower,tower_buffer *buffer,int fd,
+                                        uint64_t offset,uint64_t bytes,fg_error *err){
+    if(bytes>buffer->bytes){
+        fg_error_set(err,FG_ERR_ARGUMENT,"tower buffer read exceeds allocation");
+        return FG_ERR_ARGUMENT;
+    }
+    void *mapped=NULL;
+    VkResult result=vkMapMemory(tower->device,buffer->memory,0,buffer->bytes,0,&mapped);
+    if(result!=VK_SUCCESS)return tower_vk_error(err,"map buffer for pack read",result);
+    uint64_t done=0;
+    while(done<bytes){
+        ssize_t count=pread(fd,(uint8_t *)mapped+done,(size_t)(bytes-done),(off_t)(offset+done));
+        if(count<0){
+            if(errno==EINTR)continue;
+            vkUnmapMemory(tower->device,buffer->memory);
+            fg_error_set(err,FG_ERR_IO,"tower pack read failed: %s",strerror(errno));
+            return FG_ERR_IO;
+        }
+        if(count==0)break;
+        done+=(uint64_t)count;
+    }
+    vkUnmapMemory(tower->device,buffer->memory);
+    if(done!=bytes){
+        fg_error_set(err,FG_ERR_IO,"tower pack read is short (%llu of %llu bytes)",
+                     (unsigned long long)done,(unsigned long long)bytes);
+        return FG_ERR_IO;
+    }
     return FG_OK;
 }
 
@@ -1223,6 +1256,7 @@ static fg_status tower_pack_shape(const fg_tensor_record *record,uint32_t *width
 
 typedef struct tower_slice {
     const uint8_t *data;
+    uint64_t offset;
     uint64_t bytes;
     uint32_t width;
     uint32_t rows;
@@ -1256,20 +1290,13 @@ static fg_status tower_pack_slice(const tower_pack *pack,const char *name,uint32
         return FG_ERR_FORMAT;
     }
     slice->data=pack->map+offset;
+    slice->offset=offset;
     slice->bytes=bytes;
     slice->width=width;
     slice->rows=row_count;
     slice->row_bytes=row_bytes;
     slice->ggml_type=record->ggml_type;
     return FG_OK;
-}
-
-static void tower_pack_prefetch(const tower_pack *pack,const void *data,uint64_t bytes){
-    if(!pack||!pack->map||!data||!bytes)return;
-    const uintptr_t begin=(uintptr_t)data;
-    const uintptr_t map_begin=(uintptr_t)pack->map;
-    if(begin<map_begin||begin+bytes>map_begin+pack->bytes)return;
-    posix_fadvise(pack->fd,(off_t)(begin-map_begin),(off_t)bytes,POSIX_FADV_WILLNEED);
 }
 
 typedef struct tower_cache_entry {
@@ -1427,8 +1454,25 @@ static tower_scratch *tower_scratch_slot(tower_session *session,uint64_t bytes){
     return slot;
 }
 
-static fg_status tower_scratch_admit(tower_session *session,const void *data,uint64_t bytes,
-                                     tower_weight *weight,tower_timing *timing,fg_error *err){
+static fg_status tower_buffer_fill(tower_session *session,tower_buffer *buffer,const void *data,
+                                   uint64_t file_offset,uint64_t bytes,tower_timing *timing,
+                                   fg_error *err){
+    if(data){
+        const double write_begin=timing?tower_now_ms():0.0;
+        fg_status status=tower_buffer_write(session->tower,buffer,data,bytes,err);
+        if(timing)timing->write_ms+=tower_now_ms()-write_begin;
+        return status;
+    }
+    const double read_begin=timing?tower_now_ms():0.0;
+    fg_status status=tower_buffer_read_file(session->tower,buffer,session->pack.fd,file_offset,
+                                            bytes,err);
+    if(timing)timing->read_ms+=tower_now_ms()-read_begin;
+    return status;
+}
+
+static fg_status tower_scratch_admit(tower_session *session,const void *data,
+                                     uint64_t file_offset,uint64_t bytes,tower_weight *weight,
+                                     tower_timing *timing,fg_error *err){
     tower_scratch *slot=tower_scratch_slot(session,bytes);
     if(!slot){
         slot=calloc(1,sizeof(*slot));
@@ -1453,22 +1497,16 @@ static fg_status tower_scratch_admit(tower_session *session,const void *data,uin
     weight->buffer=slot->buffer;
     weight->resident=false;
     weight->scratch=slot;
-    const double write_begin=timing?tower_now_ms():0.0;
-    fg_status status=tower_buffer_write(session->tower,&slot->buffer,data,bytes,err);
+    fg_status status=tower_buffer_fill(session,&slot->buffer,data,file_offset,bytes,timing,err);
     if(status!=FG_OK)slot->used=false;
-    if(timing){
-        timing->write_ms+=tower_now_ms()-write_begin;
-        if(status==FG_OK)timing->upload_bytes+=bytes;
-    }
+    else if(timing)timing->upload_bytes+=bytes;
     return status;
 }
 
 static fg_status tower_weight_admit(tower_session *session,uint64_t key,const void *data,
-                                    uint64_t bytes,tower_weight *weight,tower_timing *timing,
-                                    fg_error *err){
+                                    uint64_t file_offset,uint64_t bytes,tower_weight *weight,
+                                    tower_timing *timing,fg_error *err){
     const double begin=timing?tower_now_ms():0.0;
-    tower_pack_prefetch(&session->pack,data,bytes);
-    if(timing)timing->read_ms+=tower_now_ms()-begin;
     fg_status status;
     if(session->budget_bytes&&session->resident_bytes+bytes<=session->budget_bytes){
         tower_cache_entry *created=calloc(1,sizeof(*created));
@@ -1476,11 +1514,8 @@ static fg_status tower_weight_admit(tower_session *session,uint64_t key,const vo
             const double alloc_begin=timing?tower_now_ms():0.0;
             fg_status admit=tower_buffer_create(session->tower,bytes+4u,&created->buffer,err);
             if(timing)timing->alloc_ms+=tower_now_ms()-alloc_begin;
-            if(admit==FG_OK){
-                const double write_begin=timing?tower_now_ms():0.0;
-                admit=tower_buffer_write(session->tower,&created->buffer,data,bytes,err);
-                if(timing)timing->write_ms+=tower_now_ms()-write_begin;
-            }
+            if(admit==FG_OK)
+                admit=tower_buffer_fill(session,&created->buffer,data,file_offset,bytes,timing,err);
             if(admit==FG_OK){
                 created->key=key;
                 created->bytes=bytes;
@@ -1502,7 +1537,7 @@ static fg_status tower_weight_admit(tower_session *session,uint64_t key,const vo
         session->budget_bytes=session->resident_bytes;
         memset(err,0,sizeof(*err));
     }
-    status=tower_scratch_admit(session,data,bytes,weight,timing,err);
+    status=tower_scratch_admit(session,data,file_offset,bytes,weight,timing,err);
     if(timing&&status==FG_OK)timing->upload_ms+=tower_now_ms()-begin;
     return status;
 }
@@ -1530,7 +1565,7 @@ static fg_status tower_weight_acquire(tower_session *session,const char *name,ui
         if(timing)timing->resident_hit_bytes+=slice.bytes;
         return FG_OK;
     }
-    return tower_weight_admit(session,key,slice.data,slice.bytes,weight,timing,err);
+    return tower_weight_admit(session,key,NULL,slice.offset,slice.bytes,weight,timing,err);
 }
 
 static void tower_weight_release(tower_session *session,tower_weight *weight){
@@ -1597,7 +1632,7 @@ static fg_status tower_weight_patch_acquire(tower_session *session,tower_weight 
                        second+(size_t)row*FG_TOWER_PATCH_VALUES,
                        FG_TOWER_PATCH_VALUES*sizeof(float));
             }
-            status=tower_weight_admit(session,key,combined,
+            status=tower_weight_admit(session,key,combined,0u,
                 (uint64_t)FG_TOWER_HIDDEN*FG_TOWER_TOKEN_VALUES*sizeof(float),weight,timing,err);
             free(combined);
         }
