@@ -41,78 +41,56 @@ process, so the first real-GPU deployment must re-verify this path before
 trusting outputs (the two contexts are independent devices; this may be a
 lavapipe-only artifact).
 
-## 0b. Remaining for vision end-to-end
+## 0b. Round-4: image path end-to-end (deployed)
 
-1. API content parts (`src/api.c`): parse `[{type:"text",text},{type:"image_url",
-   image_url:{url:"data:image/png;base64,..."}}]`, base64-decode, reject
-   http(s) URLs and malformed payloads with 4xx, and reject image content with a
-   clear 4xx when the pack directory has no `tower.fgm`. Text-only requests must
-   keep the existing byte path.
-2. Prompt expansion: render `<|vision_start|><|image_pad|><|vision_end|>` (ids
-   248053/248056/248054) into the message content; the tokenizer already
-   recognizes these as special tokens. Expand the single `<|image_pad|>` into
-   `merged_tokens` copies of 248056 and emit the vision positions for the span.
-3. Embeddings injection: after `fg_vk_embedding_q8_0_batch` in the prefill
-   pipeline, overwrite the image-token rows of the owner prefill input with the
-   tower embeddings (layout is `[token][copy][2560]`, same vector for every
-   copy). PLE needs no change: the expanded stream carries token id 248056, so
-   the N-gram hashing already uses the image pad id.
-4. Positions (`coordinator_prefill_pipeline*`): replace the current
-   `first_token+i` for all axes with the Qwen-VL M-RoPE scheme for image spans:
-   `t = pos_0`, `x = pos_0 + (i % grid_w)`, `y = pos_0 + (i / grid_w)`, and
-   advance the running position by `max(grid_w, grid_h)` after the span. The
-   3-axis plumbing and the interleaved-rope math already exist in the
-   owner/QSA paths.
-5. Deployment: copy `tower.fgm`/`tower.fgw` into the rank-0 pack directory,
-   then run the standard deploy recipe and the image probe
-   (`tests/test_tower --stream-cpu`) on the blade before serving traffic.
+Implemented and validated:
 
-## 0. Round-2 status
+- **API content parts** (`src/api.c`): `content` arrays accept `text` and
+  `image_url` parts. `image_url.url` must be a base64 data URL with
+  `image/png` or `image/jpeg`; http(s) URLs, other media types and malformed
+  base64 fail as 400 with a precise message, as does any image content when the
+  tower pack is absent (capability gate: `${pack_dir}/tower.fgm` exists).
+  Text-only requests take the unchanged code path.
+- **Prompt expansion** (`fg_runtime_generate_vision`): the API renders each
+  image part as `<|vision_start|><|image_pad|><|vision_end|>` in the message
+  content; the runtime splits the rendered transcript on that marker, encodes
+  the text segments (BOS only once), and appends the 248053/248056/248054 ids.
+  The single placeholder expands to `(W/32)*(H/32)` image tokens (the tower's
+  merged token count). Splitting avoids relying on the tokenizer's
+  piece-boundary special-token matching.
+- **Embeddings override**: after `fg_vk_embedding_q8_0_batch`, the image-token
+  rows of the owner prefill input are overwritten with the tower embeddings for
+  every hyper-connection copy (`[token][copy][2560]` layout). PLE needs no
+  change: the expanded stream carries token id 248056, so the N-gram hashing
+  already uses the image pad id.
+- **Image M-RoPE positions**: image tokens get `t = pos0`,
+  `h = pos0 + i/grid_w`, `w = pos0 + i%grid_w`, and the running position
+  advances by `max(grid_w, grid_h)` after the span, matching the reference
+  decoder positions for Qwen-VL style images.
+- **Capability gating**: vision requests force a cold start and do not commit a
+  continuation session (image embeddings cannot be re-derived from text
+  history), so a later text-only request resets cleanly.
+- **Tower placement**: the tower runs in the rank-0 API process with its own
+  Vulkan context and per-stage weight streaming (~20 MiB transient host/device,
+  1024-row chunked merger), which fits the rank-0 slack with the ring loaded.
 
-Landed (standalone tower path; the ring sources are not wired to any of it):
+Validated on the fleet: a 256x256 red-square/blue-border PNG answered "Red"
+and "Blue" through `/v1/chat/completions`; tower 3.0 s for 64 image tokens,
+ring prefill 93 tokens at 39-44 tok/s, decode ~16 tok/s. Text-path gates,
+battery and the 6-stage soak passed unchanged.
 
-- `src/tower.c`: `smart_resize` (align 32, min/max pixels), Pillow-compatible
-  bicubic resize (separate two-pass float implementation), `(x/255-0.5)/0.5`
-  normalization, patchify (patch 16, temporal 2, 2x2 merge ordering: token =
-  group*4 + dy*2 + dx), vision positions (slots 0..3 = y,x,y,x), bilinear
-  align-corners position embeddings, and the full CPU reference forward
-  (embed, 27 blocks, post-LN, merger) with float accumulation.
-- `src/tower_vk.c` + `shaders/fg_tower_{matmul,bias,gelu,add,layernorm,
-  rope_vision,attention,pos_embd}.comp`: a standalone Vulkan context and the
-  tower kernels. The matmul is 4x4 register-tiled (one output tile per thread,
-  clamped tail reads) and the forward is submitted per stage (patch, one
-  submission per block, post-LN+merger) so no single queue submission runs long
-  enough to trip the gfx ring watchdog. The layer norm and attention kernels
-  compute their statistics redundantly per thread (no shared-memory
-  reductions) - the first reduction-based versions diverged on real-weight
-  data (attention cosine 0.797) and were replaced for determinism.
-- `tests/test_tower.c` (`make test-tower`): preprocessing reference checks
-  (max abs diff 2e-7), patch ordering, positions, CPU determinism, and stage
-  parity against the CPU reference. Measured on llvmpipe: patch/pos cosine
-  1.000000000, one block cosine 1.0 (relative 6e-8), merger cosine 1.0
-  (relative 3e-7). With the real mmproj pack (320x224 image, 280 patch tokens,
-  70 merged), the full 27-block GPU run is byte-repeatable and the CPU
-  reference matches at cosine 1.000000000.
-- Real-GPU run (BC-250, RADV GFX1013, ring quiesced, standalone): full
-  27-block tower 1115.8 ms first run (399 ms of that upload) and 1084.5-1090.5 ms
-  on repeats, finite and byte-identical across repeats; the embedding norm
-  matches the CPU/lavapipe run exactly. First-cut numbers before tiling were
-  ~3.2 s, which also tripped the gfx ring watchdog - both are fixed.
-- Real-weight probe: `tests/test_tower --tower-dir DIR --image FILE.ppm
-  [--repeat N] [--cpu] [--layer-sweep]`. It dequantizes `tower.fgw`
-  (F32/F16/Q8_0) and runs the full tower in one call (442 dispatches).
+v1 limits: one image set per request; images are not persisted across turns
+(a multi-turn request that resends a past image placeholder without its bytes
+is rejected); http(s) and non-PNG/JPEG payloads are rejected; video is out of
+scope.
 
-Remaining in this workstream:
+## 0c. Remaining performance work
 
-- Quant-native kernels: the probe dequantizes F32 on the host (about 1.8 GiB);
-  the in-service tower should read Q8_0/F16 weights directly in-kernel.
-- Occupancy/performance: the first-cut matmul is one output per thread; the
-  attention kernel caps at 4096 patch tokens. Both need the dense-kernel
-  treatment before production placement on rank 0.
-- Preprocessing: PNG/JPEG decode (the probe reads P6 PPM) and exact parity
-  against llama.cpp `mtmd` (`smart_resize` bounds, bicubic details).
-- Then the round-3 integration items in section 3 (prompt expansion,
-  embeddings-only prefill, PLE image-token hashing, API parts).
+- Quant-native tower kernels (Q8_0/F16 in-kernel) to drop the host dequant and
+  the per-request weight streaming (~3.0 s vs the 1.1 s full-resident path).
+- Production attention kernel for >4096 patch tokens, occupancy tuning.
+- PNG/JPEG variants beyond the common subset and exact mtmd preprocessing
+  parity; video handling and token budget policy.
 
 ## 1. Round-1 pack decision: separate tower pack
 
