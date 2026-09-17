@@ -84,13 +84,28 @@ v1 limits: one image set per request; images are not persisted across turns
 is rejected); http(s) and non-PNG/JPEG payloads are rejected; video is out of
 scope.
 
-## 0c. Remaining performance work
+## 0c. Round 5: quant-native tower execution (landed)
 
-- Quant-native tower kernels (Q8_0/F16 in-kernel) to drop the host dequant and
-  the per-request weight streaming (~3.0 s vs the 1.1 s full-resident path).
-- Production attention kernel for >4096 patch tokens, occupancy tuning.
-- PNG/JPEG variants beyond the common subset and exact mtmd preprocessing
-  parity; video handling and token budget policy.
+- **Device-side dequant**: `fg_tower_matmul_q8_0.comp` and
+  `fg_tower_matmul_f16.comp` consume the GGUF-native Q8_0/F16 bytes directly
+  (LDS tiles, per-block scale); the streaming path no longer dequantizes
+  tensors on the host. `fg_tower_matmul.spv` remains for F32 stages
+  (patch embed, norms, biases, position embedding).
+- **Persistent session**: the tower keeps one Vulkan context, pipeline set
+  and weight cache across requests in the API process (`fg_tower_vision_forward`).
+- **Bounded residency**: quantized tensors are cached in device buffers with
+  an adaptive per-request budget derived from system availability; eviction is
+  smallest-first at idle request boundaries and the streaming path remains the
+  fallback when the budget is zero (ring-loaded states).
+- **Streaming reads**: tensors are acquired in pack-offset order and read with
+  `pread` straight into mapped device buffers (one copy), instead of mmap page
+  faults per page.
+- Block execution is double-buffered: the next layer's weights are acquired
+  while the current layer is on the GPU; descriptor sets are pooled per
+  request.
+- Remaining: production attention kernel for >4096 patch tokens, occupancy
+  tuning for the quant matmuls, PNG/JPEG variants beyond the common subset and
+  exact mtmd preprocessing parity; video handling and token budget policy.
 
 ## 1. Round-1 pack decision: separate tower pack
 
