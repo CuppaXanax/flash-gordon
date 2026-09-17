@@ -11,6 +11,13 @@ typedef struct fg_tower_vk_stats {
     uint32_t dispatches;
     double upload_ms;
     double forward_ms;
+    double preprocess_ms;
+    double setup_ms;
+    double host_ms;
+    double compute_ms;
+    uint64_t weight_bytes;
+    uint64_t resident_bytes;
+    uint64_t resident_hit_bytes;
 } fg_tower_vk_stats;
 
 fg_status fg_tower_vk_open(fg_tower_vk **out,fg_error *err);

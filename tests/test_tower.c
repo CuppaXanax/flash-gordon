@@ -702,6 +702,10 @@ static int probe_stream_only(const char *tower_dir,const char *image_path,uint32
     printf("stream-only: %.1f ms dispatches=%u merged=%u grid=%ux%u finite=%s norm=%.4f\n",
            stats.forward_ms,stats.dispatches,merged,grid_width,grid_height,
            all_finite(first,values)?"yes":"no",sqrt(norm));
+    printf("stream-only stages: preprocess=%.1f setup=%.1f host=%.1f upload=%.1f "
+           "compute=%.1f weight_mb=%.1f\n",
+           stats.preprocess_ms,stats.setup_ms,stats.host_ms,stats.upload_ms,
+           stats.compute_ms,(double)stats.weight_bytes/1048576.0);
     for(uint32_t repeat=0;repeat<repeats&&status==FG_OK;repeat++){
         fg_tower_vk_stats again={0};
         status=fg_tower_vision_forward(tower_dir,raw,raw_bytes,&second,&merged,&grid_width,
@@ -887,6 +891,11 @@ static int probe_run(const char *tower_dir,const char *image_path,uint32_t repea
                        stream_merged,stream_grid_w,stream_grid_h,sqrt(stream_norm),
                        stream_merged==geometry.merged_tokens?
                            cosine_similarity(first,streamed,embedding_values):0.0);
+                printf("stream forward stages: preprocess=%.1f setup=%.1f host=%.1f "
+                       "upload=%.1f compute=%.1f weight_mb=%.1f\n",
+                       stream_stats.preprocess_ms,stream_stats.setup_ms,stream_stats.host_ms,
+                       stream_stats.upload_ms,stream_stats.compute_ms,
+                       (double)stream_stats.weight_bytes/1048576.0);
                 free(streamed);
             }
             free(raw);
@@ -897,8 +906,9 @@ static int probe_run(const char *tower_dir,const char *image_path,uint32_t repea
     if(status!=FG_OK){
         fprintf(stderr,"probe run: %s\n",err.message);
     }else{
-        printf("probe run: %.1f ms upload=%.1f ms dispatches=%u finite=%s\n",stats.forward_ms,
-               upload_ms,stats.dispatches,all_finite(first,embedding_values)?"yes":"no");
+        printf("probe run: %.1f ms upload=%.1f ms compute=%.1f ms dispatches=%u finite=%s\n",
+               stats.forward_ms,upload_ms,stats.compute_ms,stats.dispatches,
+               all_finite(first,embedding_values)?"yes":"no");
         double norm=0.0;
         for(size_t i=0;i<embedding_values;i++)norm+=(double)first[i]*first[i];
         printf("probe embedding norm=%.4f first=%.6f\n",sqrt(norm),first[0]);

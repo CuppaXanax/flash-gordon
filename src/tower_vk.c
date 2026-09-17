@@ -109,6 +109,15 @@ typedef struct push_position {
     uint32_t grid_height;
 } push_position;
 
+typedef struct tower_timing {
+    double host_ms;
+    double upload_ms;
+    double compute_ms;
+    uint64_t upload_bytes;
+    uint64_t resident_bytes;
+    uint64_t resident_hit_bytes;
+} tower_timing;
+
 static double tower_now_ms(void){
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC,&now);
@@ -745,7 +754,8 @@ static fg_status tower_begin(fg_tower_vk *tower,fg_error *err){
     return FG_OK;
 }
 
-static fg_status tower_submit(fg_tower_vk *tower,fg_error *err){
+static fg_status tower_submit(fg_tower_vk *tower,tower_timing *timing,fg_error *err){
+    const double begin=timing?tower_now_ms():0.0;
     VkResult result=vkEndCommandBuffer(tower->command);
     if(result!=VK_SUCCESS)return tower_vk_error(err,"end command buffer",result);
     VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1u,
@@ -754,6 +764,7 @@ static fg_status tower_submit(fg_tower_vk *tower,fg_error *err){
     if(result!=VK_SUCCESS)return tower_vk_error(err,"submit",result);
     result=vkWaitForFences(tower->device,1,&tower->fence,VK_TRUE,UINT64_MAX);
     if(result!=VK_SUCCESS)return tower_vk_error(err,"wait",result);
+    if(timing)timing->compute_ms+=tower_now_ms()-begin;
     return FG_OK;
 }
 
@@ -767,6 +778,7 @@ fg_status fg_tower_vk_run_patch(fg_tower_vk *tower,const fg_tower_vk_weights *we
     }
     const uint32_t n=geometry->tokens;
     const double begin=tower_now_ms();
+    tower_timing timing={0};
     tower_buffer token_buffer={0},x={0},t={0};
     fg_status status=tower_buffer_create(tower,(uint64_t)n*FG_TOWER_TOKEN_VALUES*sizeof(float),
                                          &token_buffer,err);
@@ -778,13 +790,14 @@ fg_status fg_tower_vk_run_patch(fg_tower_vk *tower,const fg_tower_vk_weights *we
                                                 &t,err);
     if(status==FG_OK)status=tower_begin(tower,err);
     if(status==FG_OK)status=tower_record_patch(tower,weights,&token_buffer,&x,&t,geometry,err);
-    if(status==FG_OK)status=tower_submit(tower,err);
+    if(status==FG_OK)status=tower_submit(tower,&timing,err);
     if(status==FG_OK)status=tower_buffer_read(tower,&x,hidden,
         (uint64_t)n*FG_TOWER_HIDDEN*sizeof(float),err);
     if(stats){
         stats->dispatches=4u;
         stats->forward_ms=tower_now_ms()-begin;
         stats->upload_ms=0.0;
+        stats->compute_ms=timing.compute_ms;
     }
     tower_buffer_destroy(tower,&t);
     tower_buffer_destroy(tower,&x);
@@ -802,6 +815,7 @@ fg_status fg_tower_vk_run_block(fg_tower_vk *tower,const fg_tower_vk_weights *we
         return FG_ERR_ARGUMENT;
     }
     const double begin=tower_now_ms();
+    tower_timing timing={0};
     tower_buffer x={0},t={0},qkv={0},up={0},attn={0},block={0};
     fg_status status=tower_buffer_create(tower,(uint64_t)tokens*FG_TOWER_HIDDEN*sizeof(float),
                                          &x,err);
@@ -820,13 +834,14 @@ fg_status fg_tower_vk_run_block(fg_tower_vk *tower,const fg_tower_vk_weights *we
     if(status==FG_OK)status=tower_begin(tower,err);
     if(status==FG_OK)status=tower_record_block(tower,&weights->blocks[layer],&x,&t,&qkv,&up,
                                                &attn,&block,tokens,grid_width,err);
-    if(status==FG_OK)status=tower_submit(tower,err);
+    if(status==FG_OK)status=tower_submit(tower,&timing,err);
     if(status==FG_OK)status=tower_buffer_read(tower,&x,output,
         (uint64_t)tokens*FG_TOWER_HIDDEN*sizeof(float),err);
     if(stats){
         stats->dispatches=16u;
         stats->forward_ms=tower_now_ms()-begin;
         stats->upload_ms=0.0;
+        stats->compute_ms=timing.compute_ms;
     }
     tower_buffer_destroy(tower,&block);
     tower_buffer_destroy(tower,&attn);
@@ -845,6 +860,7 @@ fg_status fg_tower_vk_run_merger(fg_tower_vk *tower,const fg_tower_vk_weights *w
         return FG_ERR_ARGUMENT;
     }
     const double begin=tower_now_ms();
+    tower_timing timing={0};
     tower_buffer t={0},block={0},out={0};
     fg_status status=tower_buffer_create(tower,
         (uint64_t)merged_tokens*FG_TOWER_MERGED_WIDTH*sizeof(float),&t,err);
@@ -856,13 +872,14 @@ fg_status fg_tower_vk_run_merger(fg_tower_vk *tower,const fg_tower_vk_weights *w
         (uint64_t)merged_tokens*FG_TOWER_OUT_HIDDEN*sizeof(float),&out,err);
     if(status==FG_OK)status=tower_begin(tower,err);
     if(status==FG_OK)status=tower_record_merger(tower,weights,&t,&block,&out,merged_tokens,err);
-    if(status==FG_OK)status=tower_submit(tower,err);
+    if(status==FG_OK)status=tower_submit(tower,&timing,err);
     if(status==FG_OK)status=tower_buffer_read(tower,&out,embeddings,
         (uint64_t)merged_tokens*FG_TOWER_OUT_HIDDEN*sizeof(float),err);
     if(stats){
         stats->dispatches=6u;
         stats->forward_ms=tower_now_ms()-begin;
         stats->upload_ms=0.0;
+        stats->compute_ms=timing.compute_ms;
     }
     tower_buffer_destroy(tower,&out);
     tower_buffer_destroy(tower,&block);
@@ -881,6 +898,7 @@ fg_status fg_tower_vk_run(fg_tower_vk *tower,const fg_tower_vk_weights *weights,
     const uint32_t n=geometry->tokens;
     const uint32_t merged=geometry->merged_tokens;
     const double begin=tower_now_ms();
+    tower_timing timing={0};
     tower_buffer token_buffer={0},x={0},t={0},qkv={0},up={0},attn={0},block={0},out={0};
     fg_status status=tower_buffer_create(tower,(uint64_t)n*FG_TOWER_TOKEN_VALUES*sizeof(float),
                                          &token_buffer,err);
@@ -902,13 +920,13 @@ fg_status fg_tower_vk_run(fg_tower_vk *tower,const fg_tower_vk_weights *weights,
         (uint64_t)merged*FG_TOWER_OUT_HIDDEN*sizeof(float),&out,err);
     if(status==FG_OK)status=tower_begin(tower,err);
     if(status==FG_OK)status=tower_record_patch(tower,weights,&token_buffer,&x,&t,geometry,err);
-    if(status==FG_OK)status=tower_submit(tower,err);
+    if(status==FG_OK)status=tower_submit(tower,&timing,err);
     for(uint32_t layer=0;layer<FG_TOWER_LAYERS&&status==FG_OK;layer++){
         status=tower_begin(tower,err);
         if(status==FG_OK)
             status=tower_record_block(tower,&weights->blocks[layer],&x,&t,&qkv,&up,&attn,&block,
                                       n,geometry->grid_width,err);
-        if(status==FG_OK)status=tower_submit(tower,err);
+        if(status==FG_OK)status=tower_submit(tower,&timing,err);
     }
     if(status==FG_OK){
         status=tower_begin(tower,err);
@@ -916,7 +934,7 @@ fg_status fg_tower_vk_run(fg_tower_vk *tower,const fg_tower_vk_weights *weights,
                                                          &weights->post_ln_bias,&t,n,
                                                          FG_TOWER_HIDDEN,err);
         if(status==FG_OK)status=tower_record_merger(tower,weights,&t,&block,&out,merged,err);
-        if(status==FG_OK)status=tower_submit(tower,err);
+        if(status==FG_OK)status=tower_submit(tower,&timing,err);
     }
     if(status==FG_OK)status=tower_buffer_read(tower,&out,embeddings,
         (uint64_t)merged*FG_TOWER_OUT_HIDDEN*sizeof(float),err);
@@ -924,6 +942,7 @@ fg_status fg_tower_vk_run(fg_tower_vk *tower,const fg_tower_vk_weights *weights,
         stats->dispatches=4u+FG_TOWER_LAYERS*16u+6u;
         stats->forward_ms=tower_now_ms()-begin;
         stats->upload_ms=0.0;
+        stats->compute_ms=timing.compute_ms;
     }
     tower_buffer_destroy(tower,&out);
     tower_buffer_destroy(tower,&block);
@@ -943,6 +962,7 @@ fg_status fg_tower_vk_debug_layernorm(fg_tower_vk *tower,const float *input,cons
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid tower layernorm debug request");
         return FG_ERR_ARGUMENT;
     }
+    tower_timing timing={0};
     tower_buffer in={0},weights={0},biases={0},out={0};
     fg_status status=tower_buffer_create(tower,(uint64_t)rows*width*sizeof(float),&in,err);
     if(status==FG_OK)status=tower_buffer_write(tower,&in,input,
@@ -957,7 +977,7 @@ fg_status fg_tower_vk_debug_layernorm(fg_tower_vk *tower,const float *input,cons
     if(status==FG_OK)status=tower_begin(tower,err);
     if(status==FG_OK)status=tower_dispatch_layernorm(tower,&in,&weights,&biases,&out,rows,width,
                                                      err);
-    if(status==FG_OK)status=tower_submit(tower,err);
+    if(status==FG_OK)status=tower_submit(tower,&timing,err);
     if(status==FG_OK)status=tower_buffer_read(tower,&out,output,
                                               (uint64_t)rows*width*sizeof(float),err);
     tower_buffer_destroy(tower,&out);
@@ -973,6 +993,7 @@ fg_status fg_tower_vk_debug_rope(fg_tower_vk *tower,float *qkv,uint32_t tokens,
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid tower rope debug request");
         return FG_ERR_ARGUMENT;
     }
+    tower_timing timing={0};
     tower_buffer buffer={0};
     fg_status status=tower_buffer_create(tower,(uint64_t)tokens*FG_TOWER_QKV_WIDTH*sizeof(float),
                                          &buffer,err);
@@ -982,7 +1003,7 @@ fg_status fg_tower_vk_debug_rope(fg_tower_vk *tower,float *qkv,uint32_t tokens,
     if(status==FG_OK)status=tower_dispatch_rope(tower,&buffer,tokens,grid_width,0u,err);
     if(status==FG_OK)status=tower_dispatch_rope(tower,&buffer,tokens,grid_width,
                                                 FG_TOWER_HIDDEN,err);
-    if(status==FG_OK)status=tower_submit(tower,err);
+    if(status==FG_OK)status=tower_submit(tower,&timing,err);
     if(status==FG_OK)status=tower_buffer_read(tower,&buffer,qkv,
         (uint64_t)tokens*FG_TOWER_QKV_WIDTH*sizeof(float),err);
     tower_buffer_destroy(tower,&buffer);
@@ -995,6 +1016,7 @@ fg_status fg_tower_vk_debug_attention(fg_tower_vk *tower,const float *qkv,uint32
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid tower attention debug request");
         return FG_ERR_ARGUMENT;
     }
+    tower_timing timing={0};
     tower_buffer in={0},out={0};
     fg_status status=tower_buffer_create(tower,(uint64_t)tokens*FG_TOWER_QKV_WIDTH*sizeof(float),
                                          &in,err);
@@ -1004,7 +1026,7 @@ fg_status fg_tower_vk_debug_attention(fg_tower_vk *tower,const float *qkv,uint32
         (uint64_t)tokens*FG_TOWER_HIDDEN*sizeof(float),&out,err);
     if(status==FG_OK)status=tower_begin(tower,err);
     if(status==FG_OK)status=tower_dispatch_attention(tower,&in,&out,tokens,err);
-    if(status==FG_OK)status=tower_submit(tower,err);
+    if(status==FG_OK)status=tower_submit(tower,&timing,err);
     if(status==FG_OK)status=tower_buffer_read(tower,&out,output,
         (uint64_t)tokens*FG_TOWER_HIDDEN*sizeof(float),err);
     tower_buffer_destroy(tower,&out);
@@ -1161,10 +1183,12 @@ static fg_status tower_pack_bind_rows(const tower_pack *pack,const char *name,
 
 static fg_status tower_stream_tensor(fg_tower_vk *tower,const tower_pack *pack,const char *name,
                                      uint64_t expect,uint32_t first_row,uint32_t row_count,
-                                     tower_buffer *buffer,fg_error *err){
+                                     tower_buffer *buffer,tower_timing *timing,fg_error *err){
     float *host=NULL;
     uint32_t width=0;
+    const double bind_begin=timing?tower_now_ms():0.0;
     fg_status status=tower_pack_bind_rows(pack,name,first_row,row_count,&host,&width,err);
+    if(timing)timing->host_ms+=tower_now_ms()-bind_begin;
     if(status==FG_OK&&(uint64_t)row_count*width!=expect){
         fg_error_set(err,FG_ERR_FORMAT,"tower tensor %s slice has %llu values, expected %llu",
                      name,(unsigned long long)((uint64_t)row_count*width),
@@ -1172,7 +1196,14 @@ static fg_status tower_stream_tensor(fg_tower_vk *tower,const tower_pack *pack,c
         status=FG_ERR_FORMAT;
     }
     if(status==FG_OK)status=tower_buffer_create(tower,expect*sizeof(float),buffer,err);
-    if(status==FG_OK)status=tower_buffer_write(tower,buffer,host,expect*sizeof(float),err);
+    if(status==FG_OK&&timing){
+        const double write_begin=tower_now_ms();
+        status=tower_buffer_write(tower,buffer,host,expect*sizeof(float),err);
+        timing->upload_ms+=tower_now_ms()-write_begin;
+        timing->upload_bytes+=(uint64_t)expect*sizeof(float);
+    }else if(status==FG_OK){
+        status=tower_buffer_write(tower,buffer,host,expect*sizeof(float),err);
+    }
     free(host);
     return status;
 }
@@ -1200,12 +1231,14 @@ static fg_status tower_bind_whole(const tower_pack *pack,const char *name,uint64
 }
 
 static fg_status tower_stream_patch_weight(fg_tower_vk *tower,const tower_pack *pack,
-                                           tower_buffer *buffer,fg_error *err){
+                                           tower_buffer *buffer,tower_timing *timing,fg_error *err){
     float *first=NULL,*second=NULL;
+    const double bind_begin=timing?tower_now_ms():0.0;
     fg_status status=tower_bind_whole(pack,"v.patch_embd.weight",
                                       (uint64_t)FG_TOWER_HIDDEN*FG_TOWER_PATCH_VALUES,&first,err);
     if(status==FG_OK)status=tower_bind_whole(pack,"v.patch_embd.weight.1",
                                              (uint64_t)FG_TOWER_HIDDEN*FG_TOWER_PATCH_VALUES,&second,err);
+    if(timing)timing->host_ms+=tower_now_ms()-bind_begin;
     if(status==FG_OK){
         status=tower_buffer_create(tower,(uint64_t)FG_TOWER_HIDDEN*FG_TOWER_TOKEN_VALUES*
                                          sizeof(float),buffer,err);
@@ -1224,8 +1257,13 @@ static fg_status tower_stream_patch_weight(fg_tower_vk *tower,const tower_pack *
                        second+(size_t)row*FG_TOWER_PATCH_VALUES,
                        FG_TOWER_PATCH_VALUES*sizeof(float));
             }
+            const double write_begin=timing?tower_now_ms():0.0;
             status=tower_buffer_write(tower,buffer,combined,
                 (uint64_t)FG_TOWER_HIDDEN*FG_TOWER_TOKEN_VALUES*sizeof(float),err);
+            if(timing){
+                timing->upload_ms+=tower_now_ms()-write_begin;
+                timing->upload_bytes+=(uint64_t)FG_TOWER_HIDDEN*FG_TOWER_TOKEN_VALUES*sizeof(float);
+            }
             free(combined);
         }
     }
@@ -1237,15 +1275,15 @@ static fg_status tower_stream_patch_weight(fg_tower_vk *tower,const tower_pack *
 static fg_status tower_record_patch_stream(fg_tower_vk *tower,const tower_pack *pack,
                                            const tower_buffer *token_buffer,tower_buffer *x,
                                            tower_buffer *t,const fg_tower_geometry *geometry,
-                                           fg_error *err){
+                                           tower_timing *timing,fg_error *err){
     const uint32_t n=geometry->tokens;
     tower_buffer patch_weight={0},patch_bias={0},position={0};
-    fg_status status=tower_stream_patch_weight(tower,pack,&patch_weight,err);
+    fg_status status=tower_stream_patch_weight(tower,pack,&patch_weight,timing,err);
     if(status==FG_OK)status=tower_stream_tensor(tower,pack,"v.patch_embd.bias",FG_TOWER_HIDDEN,
-                                                0u,1u,&patch_bias,err);
+                                                0u,1u,&patch_bias,timing,err);
     if(status==FG_OK)status=tower_stream_tensor(tower,pack,"v.position_embd.weight",
         (uint64_t)FG_TOWER_POS_GRID*FG_TOWER_POS_GRID*FG_TOWER_HIDDEN,0u,
-        FG_TOWER_POS_GRID*FG_TOWER_POS_GRID,&position,err);
+        FG_TOWER_POS_GRID*FG_TOWER_POS_GRID,&position,timing,err);
     if(status==FG_OK){
         fg_status dispatch=tower_dispatch_matmul(tower,&patch_weight,token_buffer,x,n,
                                                  FG_TOWER_HIDDEN,FG_TOWER_TOKEN_VALUES,err);
@@ -1253,7 +1291,7 @@ static fg_status tower_record_patch_stream(fg_tower_vk *tower,const tower_pack *
                                                         FG_TOWER_HIDDEN,err);
         if(dispatch==FG_OK)dispatch=tower_dispatch_position(tower,&position,t,geometry,err);
         if(dispatch==FG_OK)dispatch=tower_dispatch_add(tower,x,t,x,n*FG_TOWER_HIDDEN,err);
-        if(dispatch==FG_OK)dispatch=tower_submit(tower,err);
+        if(dispatch==FG_OK)dispatch=tower_submit(tower,timing,err);
         status=dispatch;
     }
     tower_buffer_destroy(tower,&position);
@@ -1266,39 +1304,39 @@ static fg_status tower_record_block_stream(fg_tower_vk *tower,const tower_pack *
                                            uint32_t layer,const tower_buffer *x,tower_buffer *t,
                                            tower_buffer *qkv,tower_buffer *up,tower_buffer *attn,
                                            tower_buffer *block,uint32_t tokens,uint32_t grid_width,
-                                           fg_error *err){
+                                           tower_timing *timing,fg_error *err){
     tower_buffer ln1_w={0},ln1_b={0},ln2_w={0},ln2_b={0},qkv_w={0},qkv_b={0};
     tower_buffer out_w={0},out_b={0},up_w={0},up_b={0},down_w={0},down_b={0};
     char name[FG_TENSOR_NAME_MAX];
     fg_status status=FG_OK;
     snprintf(name,sizeof(name),"v.blk.%u.ln1.weight",layer);
-    status=tower_stream_tensor(tower,pack,name,FG_TOWER_HIDDEN,0u,1u,&ln1_w,err);
+    status=tower_stream_tensor(tower,pack,name,FG_TOWER_HIDDEN,0u,1u,&ln1_w,timing,err);
     if(status==FG_OK){snprintf(name,sizeof(name),"v.blk.%u.ln1.bias",layer);
-        status=tower_stream_tensor(tower,pack,name,FG_TOWER_HIDDEN,0u,1u,&ln1_b,err);}
+        status=tower_stream_tensor(tower,pack,name,FG_TOWER_HIDDEN,0u,1u,&ln1_b,timing,err);}
     if(status==FG_OK){snprintf(name,sizeof(name),"v.blk.%u.ln2.weight",layer);
-        status=tower_stream_tensor(tower,pack,name,FG_TOWER_HIDDEN,0u,1u,&ln2_w,err);}
+        status=tower_stream_tensor(tower,pack,name,FG_TOWER_HIDDEN,0u,1u,&ln2_w,timing,err);}
     if(status==FG_OK){snprintf(name,sizeof(name),"v.blk.%u.ln2.bias",layer);
-        status=tower_stream_tensor(tower,pack,name,FG_TOWER_HIDDEN,0u,1u,&ln2_b,err);}
+        status=tower_stream_tensor(tower,pack,name,FG_TOWER_HIDDEN,0u,1u,&ln2_b,timing,err);}
     if(status==FG_OK){snprintf(name,sizeof(name),"v.blk.%u.attn_qkv.weight",layer);
         status=tower_stream_tensor(tower,pack,name,(uint64_t)FG_TOWER_QKV_WIDTH*FG_TOWER_HIDDEN,
-                                   0u,FG_TOWER_QKV_WIDTH,&qkv_w,err);}
+                                   0u,FG_TOWER_QKV_WIDTH,&qkv_w,timing,err);}
     if(status==FG_OK){snprintf(name,sizeof(name),"v.blk.%u.attn_qkv.bias",layer);
-        status=tower_stream_tensor(tower,pack,name,FG_TOWER_QKV_WIDTH,0u,1u,&qkv_b,err);}
+        status=tower_stream_tensor(tower,pack,name,FG_TOWER_QKV_WIDTH,0u,1u,&qkv_b,timing,err);}
     if(status==FG_OK){snprintf(name,sizeof(name),"v.blk.%u.attn_out.weight",layer);
         status=tower_stream_tensor(tower,pack,name,(uint64_t)FG_TOWER_HIDDEN*FG_TOWER_HIDDEN,
-                                   0u,FG_TOWER_HIDDEN,&out_w,err);}
+                                   0u,FG_TOWER_HIDDEN,&out_w,timing,err);}
     if(status==FG_OK){snprintf(name,sizeof(name),"v.blk.%u.attn_out.bias",layer);
-        status=tower_stream_tensor(tower,pack,name,FG_TOWER_HIDDEN,0u,1u,&out_b,err);}
+        status=tower_stream_tensor(tower,pack,name,FG_TOWER_HIDDEN,0u,1u,&out_b,timing,err);}
     if(status==FG_OK){snprintf(name,sizeof(name),"v.blk.%u.ffn_up.weight",layer);
         status=tower_stream_tensor(tower,pack,name,(uint64_t)FG_TOWER_MLP*FG_TOWER_HIDDEN,
-                                   0u,FG_TOWER_MLP,&up_w,err);}
+                                   0u,FG_TOWER_MLP,&up_w,timing,err);}
     if(status==FG_OK){snprintf(name,sizeof(name),"v.blk.%u.ffn_up.bias",layer);
-        status=tower_stream_tensor(tower,pack,name,FG_TOWER_MLP,0u,1u,&up_b,err);}
+        status=tower_stream_tensor(tower,pack,name,FG_TOWER_MLP,0u,1u,&up_b,timing,err);}
     if(status==FG_OK){snprintf(name,sizeof(name),"v.blk.%u.ffn_down.weight",layer);
         status=tower_stream_tensor(tower,pack,name,(uint64_t)FG_TOWER_HIDDEN*FG_TOWER_MLP,
-                                   0u,FG_TOWER_HIDDEN,&down_w,err);}
+                                   0u,FG_TOWER_HIDDEN,&down_w,timing,err);}
     if(status==FG_OK){snprintf(name,sizeof(name),"v.blk.%u.ffn_down.bias",layer);
-        status=tower_stream_tensor(tower,pack,name,FG_TOWER_HIDDEN,0u,1u,&down_b,err);}
+        status=tower_stream_tensor(tower,pack,name,FG_TOWER_HIDDEN,0u,1u,&down_b,timing,err);}
     if(status==FG_OK){
         fg_status dispatch=tower_dispatch_layernorm(tower,x,&ln1_w,&ln1_b,t,tokens,
                                                     FG_TOWER_HIDDEN,err);
@@ -1330,7 +1368,7 @@ static fg_status tower_record_block_stream(fg_tower_vk *tower,const tower_pack *
                                                         tokens*FG_TOWER_HIDDEN,FG_TOWER_HIDDEN,err);
         if(dispatch==FG_OK)dispatch=tower_dispatch_add(tower,(tower_buffer *)x,block,
                                                        (tower_buffer *)x,tokens*FG_TOWER_HIDDEN,err);
-        if(dispatch==FG_OK)dispatch=tower_submit(tower,err);
+        if(dispatch==FG_OK)dispatch=tower_submit(tower,timing,err);
         status=dispatch;
     }
     tower_buffer_destroy(tower,&down_b);tower_buffer_destroy(tower,&down_w);
@@ -1353,6 +1391,7 @@ fg_status fg_tower_vision_forward(const char *tower_dir,const uint8_t *image_byt
         return FG_ERR_ARGUMENT;
     }
     *embeddings=NULL;
+    const double preprocess_begin=tower_now_ms();
     uint8_t *image=NULL;
     uint32_t image_width=0,image_height=0;
     fg_status status=fg_tower_image_decode(image_bytes,image_length,&image,&image_width,
@@ -1382,10 +1421,12 @@ fg_status fg_tower_vision_forward(const char *tower_dir,const uint8_t *image_byt
     free(image);
     free(normalized);
     free(resized);
+    const double preprocess_ms=tower_now_ms()-preprocess_begin;
     if(status!=FG_OK){
         free(tokens);
         return status;
     }
+    const double setup_begin=tower_now_ms();
     tower_pack *pack=malloc(sizeof(*pack));
     if(!pack){
         free(tokens);
@@ -1395,6 +1436,7 @@ fg_status fg_tower_vision_forward(const char *tower_dir,const uint8_t *image_byt
     status=tower_pack_open(tower_dir,pack,err);
     fg_tower_vk *tower=NULL;
     if(status==FG_OK)status=fg_tower_vk_open(&tower,err);
+    const double setup_ms=tower_now_ms()-setup_begin;
     const uint32_t n=geometry.tokens;
     const uint32_t merged=geometry.merged_tokens;
     tower_buffer token_buffer={0},x={0},t={0},qkv={0},up={0},attn={0},block={0},out={0};
@@ -1418,25 +1460,27 @@ fg_status fg_tower_vision_forward(const char *tower_dir,const uint8_t *image_byt
     if(status==FG_OK)status=tower_buffer_create(tower,
         (uint64_t)merged*FG_TOWER_OUT_HIDDEN*sizeof(float),&out,err);
     const double begin=tower_now_ms();
+    tower_timing timing={0};
     uint32_t dispatches=0;
     if(status==FG_OK){
         status=tower_begin(tower,err);
         if(status==FG_OK)status=tower_record_patch_stream(tower,pack,&token_buffer,&x,&t,
-                                                          &geometry,err);
+                                                          &geometry,&timing,err);
         if(status==FG_OK)dispatches+=4u;
     }
     for(uint32_t layer=0;layer<FG_TOWER_LAYERS&&status==FG_OK;layer++){
         status=tower_begin(tower,err);
         if(status==FG_OK)status=tower_record_block_stream(tower,pack,layer,&x,&t,&qkv,&up,
-                                                          &attn,&block,n,geometry.grid_width,err);
+                                                          &attn,&block,n,geometry.grid_width,
+                                                          &timing,err);
         if(status==FG_OK)dispatches+=16u;
     }
     if(status==FG_OK){
         tower_buffer post_w={0},post_b={0};
         status=tower_stream_tensor(tower,pack,"v.post_ln.weight",FG_TOWER_HIDDEN,0u,1u,&post_w,
-                                   err);
+                                   &timing,err);
         if(status==FG_OK)status=tower_stream_tensor(tower,pack,"v.post_ln.bias",FG_TOWER_HIDDEN,
-                                                    0u,1u,&post_b,err);
+                                                    0u,1u,&post_b,&timing,err);
         if(status==FG_OK)status=tower_begin(tower,err);
         if(status==FG_OK)status=tower_dispatch_layernorm(tower,&x,&post_w,&post_b,&t,n,
                                                          FG_TOWER_HIDDEN,err);
@@ -1450,7 +1494,7 @@ fg_status fg_tower_vision_forward(const char *tower_dir,const uint8_t *image_byt
                 tower_buffer *slice=&transient[transient_count];
                 status=tower_stream_tensor(tower,pack,"mm.0.weight",
                                            (uint64_t)rows*FG_TOWER_MERGED_WIDTH,base,rows,
-                                           slice,err);
+                                           slice,&timing,err);
                 if(status==FG_OK)transient_count++;
                 if(status==FG_OK)status=tower_dispatch_matmul_rows(tower,slice,&t,&block,merged,
                                                                    rows,FG_TOWER_MERGED_WIDTH,
@@ -1460,7 +1504,7 @@ fg_status fg_tower_vision_forward(const char *tower_dir,const uint8_t *image_byt
         if(status==FG_OK){
             tower_buffer *bias=&transient[transient_count];
             status=tower_stream_tensor(tower,pack,"mm.0.bias",FG_TOWER_MERGED_WIDTH,0u,1u,bias,
-                                       err);
+                                       &timing,err);
             if(status==FG_OK)transient_count++;
             if(status==FG_OK)status=tower_dispatch_bias(tower,&block,bias,
                                                         merged*FG_TOWER_MERGED_WIDTH,
@@ -1476,7 +1520,7 @@ fg_status fg_tower_vision_forward(const char *tower_dir,const uint8_t *image_byt
                 tower_buffer *slice=&transient[transient_count];
                 status=tower_stream_tensor(tower,pack,"mm.2.weight",
                                            (uint64_t)rows*FG_TOWER_MERGED_WIDTH,base,rows,
-                                           slice,err);
+                                           slice,&timing,err);
                 if(status==FG_OK)transient_count++;
                 if(status==FG_OK)status=tower_dispatch_matmul_rows(tower,slice,&block,&out,merged,
                                                                    rows,FG_TOWER_MERGED_WIDTH,
@@ -1485,13 +1529,14 @@ fg_status fg_tower_vision_forward(const char *tower_dir,const uint8_t *image_byt
         }
         if(status==FG_OK){
             tower_buffer *bias=&transient[transient_count];
-            status=tower_stream_tensor(tower,pack,"mm.2.bias",FG_TOWER_OUT_HIDDEN,0u,1u,bias,err);
+            status=tower_stream_tensor(tower,pack,"mm.2.bias",FG_TOWER_OUT_HIDDEN,0u,1u,bias,
+                                       &timing,err);
             if(status==FG_OK)transient_count++;
             if(status==FG_OK)status=tower_dispatch_bias(tower,&out,bias,
                                                         merged*FG_TOWER_OUT_HIDDEN,
                                                         FG_TOWER_OUT_HIDDEN,err);
         }
-        if(status==FG_OK)status=tower_submit(tower,err);
+        if(status==FG_OK)status=tower_submit(tower,&timing,err);
         if(status==FG_OK)dispatches+=8u;
         for(uint32_t i=0;i<transient_count;i++)tower_buffer_destroy(tower,&transient[i]);
         tower_buffer_destroy(tower,&post_b);
@@ -1509,7 +1554,12 @@ fg_status fg_tower_vision_forward(const char *tower_dir,const uint8_t *image_byt
     if(stats){
         stats->dispatches=dispatches;
         stats->forward_ms=tower_now_ms()-begin;
-        stats->upload_ms=0.0;
+        stats->upload_ms=timing.upload_ms;
+        stats->preprocess_ms=preprocess_ms;
+        stats->setup_ms=setup_ms;
+        stats->host_ms=timing.host_ms;
+        stats->compute_ms=timing.compute_ms;
+        stats->weight_bytes=timing.upload_bytes;
     }
     if(status!=FG_OK){
         free(host_embeddings);
