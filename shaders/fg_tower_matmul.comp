@@ -5,12 +5,56 @@ layout(set=0,binding=1)readonly buffer Input{float input_value[];};
 layout(set=0,binding=2)writeonly buffer Output{float output_value[];};
 layout(push_constant)uniform Push{uint tokens;uint outputs;uint width;}pc;
 void main(){
-    uint token=gl_GlobalInvocationID.y;
-    uint output_index=gl_GlobalInvocationID.x;
-    if(token>=pc.tokens||output_index>=pc.outputs)return;
-    uint input_base=token*pc.width;
-    uint weight_base=output_index*pc.width;
-    float accumulator=0.0;
-    for(uint i=0;i<pc.width;i++)accumulator+=weight_value[weight_base+i]*input_value[input_base+i];
-    output_value[token*pc.outputs+output_index]=accumulator;
+    uint m0=gl_WorkGroupID.x*64u+gl_LocalInvocationID.x*4u;
+    uint n0=gl_WorkGroupID.y*64u+gl_LocalInvocationID.y*4u;
+    uint m1=m0+1u;uint m2=m0+2u;uint m3=m0+3u;
+    uint n1=n0+1u;uint n2=n0+2u;uint n3=n0+3u;
+    uint m_last=pc.outputs-1u;
+    uint n_last=pc.tokens-1u;
+    uint mr0=min(m0,m_last);uint mr1=min(m1,m_last);
+    uint mr2=min(m2,m_last);uint mr3=min(m3,m_last);
+    uint nr0=min(n0,n_last);uint nr1=min(n1,n_last);
+    uint nr2=min(n2,n_last);uint nr3=min(n3,n_last);
+    float a00=0.0;float a01=0.0;float a02=0.0;float a03=0.0;
+    float a10=0.0;float a11=0.0;float a12=0.0;float a13=0.0;
+    float a20=0.0;float a21=0.0;float a22=0.0;float a23=0.0;
+    float a30=0.0;float a31=0.0;float a32=0.0;float a33=0.0;
+    for(uint k=0;k<pc.width;k++){
+        float w0=weight_value[mr0*pc.width+k];
+        float w1=weight_value[mr1*pc.width+k];
+        float w2=weight_value[mr2*pc.width+k];
+        float w3=weight_value[mr3*pc.width+k];
+        float x0=input_value[nr0*pc.width+k];
+        float x1=input_value[nr1*pc.width+k];
+        float x2=input_value[nr2*pc.width+k];
+        float x3=input_value[nr3*pc.width+k];
+        a00+=w0*x0;a01+=w0*x1;a02+=w0*x2;a03+=w0*x3;
+        a10+=w1*x0;a11+=w1*x1;a12+=w1*x2;a13+=w1*x3;
+        a20+=w2*x0;a21+=w2*x1;a22+=w2*x2;a23+=w2*x3;
+        a30+=w3*x0;a31+=w3*x1;a32+=w3*x2;a33+=w3*x3;
+    }
+    if(m0<pc.outputs){
+        if(n0<pc.tokens)output_value[n0*pc.outputs+m0]=a00;
+        if(n1<pc.tokens)output_value[n1*pc.outputs+m0]=a01;
+        if(n2<pc.tokens)output_value[n2*pc.outputs+m0]=a02;
+        if(n3<pc.tokens)output_value[n3*pc.outputs+m0]=a03;
+    }
+    if(m1<pc.outputs){
+        if(n0<pc.tokens)output_value[n0*pc.outputs+m1]=a10;
+        if(n1<pc.tokens)output_value[n1*pc.outputs+m1]=a11;
+        if(n2<pc.tokens)output_value[n2*pc.outputs+m1]=a12;
+        if(n3<pc.tokens)output_value[n3*pc.outputs+m1]=a13;
+    }
+    if(m2<pc.outputs){
+        if(n0<pc.tokens)output_value[n0*pc.outputs+m2]=a20;
+        if(n1<pc.tokens)output_value[n1*pc.outputs+m2]=a21;
+        if(n2<pc.tokens)output_value[n2*pc.outputs+m2]=a22;
+        if(n3<pc.tokens)output_value[n3*pc.outputs+m2]=a23;
+    }
+    if(m3<pc.outputs){
+        if(n0<pc.tokens)output_value[n0*pc.outputs+m3]=a30;
+        if(n1<pc.tokens)output_value[n1*pc.outputs+m3]=a31;
+        if(n2<pc.tokens)output_value[n2*pc.outputs+m3]=a32;
+        if(n3<pc.tokens)output_value[n3*pc.outputs+m3]=a33;
+    }
 }

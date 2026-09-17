@@ -588,7 +588,7 @@ static fg_status tower_dispatch_matmul(fg_tower_vk *tower,const tower_buffer *we
     tower_buffer *buffers[3]={(tower_buffer *)weights,(tower_buffer *)input,output};
     push_matmul push={tokens,outputs,width};
     return tower_dispatch(tower,&tower->matmul,buffers,3u,&push,sizeof(push),
-                          (outputs+15u)/16u,(tokens+15u)/16u,1u,err);
+                          (outputs+63u)/64u,(tokens+63u)/64u,1u,err);
 }
 
 static fg_status tower_dispatch_bias(fg_tower_vk *tower,tower_buffer *values,
@@ -892,14 +892,22 @@ fg_status fg_tower_vk_run(fg_tower_vk *tower,const fg_tower_vk_weights *weights,
         (uint64_t)merged*FG_TOWER_OUT_HIDDEN*sizeof(float),&out,err);
     if(status==FG_OK)status=tower_begin(tower,err);
     if(status==FG_OK)status=tower_record_patch(tower,weights,&token_buffer,&x,&t,geometry,err);
-    for(uint32_t layer=0;layer<FG_TOWER_LAYERS&&status==FG_OK;layer++)
-        status=tower_record_block(tower,&weights->blocks[layer],&x,&t,&qkv,&up,&attn,&block,
-                                  n,geometry->grid_width,err);
-    if(status==FG_OK)status=tower_dispatch_layernorm(tower,&x,&weights->post_ln_weight,
-                                                    &weights->post_ln_bias,&t,n,FG_TOWER_HIDDEN,
-                                                    err);
-    if(status==FG_OK)status=tower_record_merger(tower,weights,&t,&block,&out,merged,err);
     if(status==FG_OK)status=tower_submit(tower,err);
+    for(uint32_t layer=0;layer<FG_TOWER_LAYERS&&status==FG_OK;layer++){
+        status=tower_begin(tower,err);
+        if(status==FG_OK)
+            status=tower_record_block(tower,&weights->blocks[layer],&x,&t,&qkv,&up,&attn,&block,
+                                      n,geometry->grid_width,err);
+        if(status==FG_OK)status=tower_submit(tower,err);
+    }
+    if(status==FG_OK){
+        status=tower_begin(tower,err);
+        if(status==FG_OK)status=tower_dispatch_layernorm(tower,&x,&weights->post_ln_weight,
+                                                         &weights->post_ln_bias,&t,n,
+                                                         FG_TOWER_HIDDEN,err);
+        if(status==FG_OK)status=tower_record_merger(tower,weights,&t,&block,&out,merged,err);
+        if(status==FG_OK)status=tower_submit(tower,err);
+    }
     if(status==FG_OK)status=tower_buffer_read(tower,&out,embeddings,
         (uint64_t)merged*FG_TOWER_OUT_HIDDEN*sizeof(float),err);
     if(stats){

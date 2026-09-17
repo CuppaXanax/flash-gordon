@@ -679,7 +679,7 @@ static uint8_t *probe_load_ppm(const char *path,uint32_t *width,uint32_t *height
 }
 
 static int probe_run(const char *tower_dir,const char *image_path,uint32_t repeats,bool cpu_ref,
-                     bool layer_sweep){
+                     bool layer_sweep,int layer_limit,bool smoke){
     fg_error err={0};
     fg_tower_weights weights={0};
     probe_owned owned={0};
@@ -753,6 +753,45 @@ static int probe_run(const char *tower_dir,const char *image_path,uint32_t repea
         free(tokens);
         probe_owned_free(&owned);
         return 1;
+    }
+    if(smoke){
+        float values[256];
+        for(uint32_t i=0;i<256u;i++)values[i]=(float)i*0.01f-1.0f;
+        fg_status smoke_status=fg_tower_vk_debug_layernorm(tower,values,values,values,1u,256u,
+                                                           first,&err);
+        printf("smoke layernorm: %s finite=%s\n",smoke_status==FG_OK?"ok":"fail",
+               smoke_status==FG_OK?(all_finite(first,256u)?"yes":"no"):"n/a");
+        fg_tower_vk_weights_destroy(tower,device_weights);
+        fg_tower_vk_close(tower);
+        free(second);free(first);free(tokens);probe_owned_free(&owned);
+        return smoke_status==FG_OK?0:1;
+    }
+    if(layer_limit>=0){
+        const size_t hidden_values=(size_t)geometry.tokens*FG_TOWER_HIDDEN;
+        float *hidden=malloc(hidden_values*sizeof(float));
+        fg_status staged=FG_OK;
+        fg_tower_vk_stats stage_stats={0};
+        if(hidden){
+            staged=fg_tower_vk_run_patch(tower,device_weights,tokens,&geometry,hidden,
+                                         &stage_stats,&err);
+            printf("staged patch: %s %.1f ms finite=%s\n",staged==FG_OK?"ok":"fail",
+                   stage_stats.forward_ms,staged==FG_OK&&all_finite(hidden,hidden_values)
+                   ?"yes":"no");
+            for(int layer=0;layer<layer_limit&&staged==FG_OK;layer++){
+                staged=fg_tower_vk_run_block(tower,device_weights,(uint32_t)layer,hidden,
+                                             geometry.tokens,geometry.grid_width,hidden,
+                                             &stage_stats,&err);
+                printf("staged block %d: %s %.1f ms finite=%s\n",layer,
+                       staged==FG_OK?"ok":"fail",stage_stats.forward_ms,
+                       staged==FG_OK&&all_finite(hidden,hidden_values)?"yes":"no");
+            }
+            if(staged!=FG_OK)fprintf(stderr,"staged: %s\n",err.message);
+            free(hidden);
+        }
+        fg_tower_vk_weights_destroy(tower,device_weights);
+        fg_tower_vk_close(tower);
+        free(second);free(first);free(tokens);probe_owned_free(&owned);
+        return staged==FG_OK?0:1;
     }
     fg_tower_vk_stats stats={0};
     status=fg_tower_vk_run(tower,device_weights,tokens,&geometry,first,&stats,&err);
@@ -837,20 +876,24 @@ static int probe_run(const char *tower_dir,const char *image_path,uint32_t repea
 int main(int argc,char **argv){
     const char *tower_dir=NULL,*image_path=NULL;
     uint32_t repeats=1u;
-    bool cpu_ref=false,layer_sweep=false;
+    bool cpu_ref=false,layer_sweep=false,smoke=false;
+    int layer_limit=-1;
     for(int i=1;i<argc;i++){
         if(!strcmp(argv[i],"--tower-dir")&&i+1<argc)tower_dir=argv[++i];
         else if(!strcmp(argv[i],"--image")&&i+1<argc)image_path=argv[++i];
         else if(!strcmp(argv[i],"--repeat")&&i+1<argc)repeats=(uint32_t)strtoul(argv[++i],NULL,10);
         else if(!strcmp(argv[i],"--cpu"))cpu_ref=true;
         else if(!strcmp(argv[i],"--layer-sweep"))layer_sweep=true;
+        else if(!strcmp(argv[i],"--smoke"))smoke=true;
+        else if(!strcmp(argv[i],"--layers")&&i+1<argc)layer_limit=atoi(argv[++i]);
         else{
             fprintf(stderr,"usage: test_tower [--tower-dir DIR --image FILE [--repeat N] "
-                           "[--cpu] [--layer-sweep]]\n");
+                           "[--cpu] [--layer-sweep] [--smoke] [--layers N]]\n");
             return 2;
         }
     }
-    if(tower_dir&&image_path)return probe_run(tower_dir,image_path,repeats,cpu_ref,layer_sweep);
+    if(tower_dir&&image_path)
+        return probe_run(tower_dir,image_path,repeats,cpu_ref,layer_sweep,layer_limit,smoke);
     test_smart_resize();
     test_geometry_and_patchify();
     test_resize_reference();

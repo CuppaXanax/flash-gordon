@@ -18,10 +18,13 @@ Landed (standalone tower path; the ring sources are not wired to any of it):
   (embed, 27 blocks, post-LN, merger) with float accumulation.
 - `src/tower_vk.c` + `shaders/fg_tower_{matmul,bias,gelu,add,layernorm,
   rope_vision,attention,pos_embd}.comp`: a standalone Vulkan context and the
-  tower kernels. The layer norm and attention kernels compute their statistics
-  redundantly per thread (no shared-memory reductions) - the first
-  reduction-based versions diverged on real-weight data (attention cosine
-  0.797) and were replaced for determinism.
+  tower kernels. The matmul is 4x4 register-tiled (one output tile per thread,
+  clamped tail reads) and the forward is submitted per stage (patch, one
+  submission per block, post-LN+merger) so no single queue submission runs long
+  enough to trip the gfx ring watchdog. The layer norm and attention kernels
+  compute their statistics redundantly per thread (no shared-memory
+  reductions) - the first reduction-based versions diverged on real-weight
+  data (attention cosine 0.797) and were replaced for determinism.
 - `tests/test_tower.c` (`make test-tower`): preprocessing reference checks
   (max abs diff 2e-7), patch ordering, positions, CPU determinism, and stage
   parity against the CPU reference. Measured on llvmpipe: patch/pos cosine
@@ -29,6 +32,11 @@ Landed (standalone tower path; the ring sources are not wired to any of it):
   (relative 3e-7). With the real mmproj pack (320x224 image, 280 patch tokens,
   70 merged), the full 27-block GPU run is byte-repeatable and the CPU
   reference matches at cosine 1.000000000.
+- Real-GPU run (BC-250, RADV GFX1013, ring quiesced, standalone): full
+  27-block tower 1115.8 ms first run (399 ms of that upload) and 1084.5-1090.5 ms
+  on repeats, finite and byte-identical across repeats; the embedding norm
+  matches the CPU/lavapipe run exactly. First-cut numbers before tiling were
+  ~3.2 s, which also tripped the gfx ring watchdog - both are fixed.
 - Real-weight probe: `tests/test_tower --tower-dir DIR --image FILE.ppm
   [--repeat N] [--cpu] [--layer-sweep]`. It dequantizes `tower.fgw`
   (F32/F16/Q8_0) and runs the full tower in one call (442 dispatches).
