@@ -13,6 +13,7 @@
 #include "fg_qsa_replica.h"
 #include "fg_qsa_state.h"
 #include "fg_tokenizer.h"
+#include "fg_tower_vk.h"
 #include "fg_uring.h"
 
 #include <arpa/inet.h>
@@ -3241,12 +3242,66 @@ static fg_status coordinator_begin_session(fg_coordinator *coordinator,fg_error 
 }
 
 /* All-local prefill: process all 48 layers on the coordinator */
-static fg_status coordinator_prefill_microbatch(fg_coordinator *coordinator,const uint32_t *token_ids,uint32_t first_token,uint16_t token_count,const fg_vk_tensor *ngram_embeddings,fg_vk_tensor **output,fg_error *err){
+typedef struct fg_vision_span {
+    uint32_t token_begin;
+    uint32_t token_count;
+    uint32_t grid_width;
+    uint32_t grid_height;
+} fg_vision_span;
+
+typedef struct fg_vision_prompt {
+    const uint32_t *positions;
+    const float *const *embeddings;
+    const fg_vision_span *spans;
+    uint32_t span_count;
+} fg_vision_prompt;
+
+#define FG_VISION_START_TOKEN 248053u
+#define FG_VISION_IMAGE_TOKEN 248056u
+#define FG_VISION_END_TOKEN 248054u
+
+static void vision_fill_positions(const fg_vision_prompt *vision,uint32_t first_token,
+                                  uint32_t token_count,uint32_t *positions){
+    if(!vision){
+        for(uint32_t i=0;i<token_count;i++)
+            for(uint32_t axis=0;axis<3u;axis++)positions[(uint64_t)i*3u+axis]=first_token+i;
+        return;
+    }
+    memcpy(positions,vision->positions+(size_t)first_token*3u,
+           (size_t)token_count*3u*sizeof(uint32_t));
+}
+
+static fg_status vision_apply_embeddings(fg_vk_tensor *input,const fg_vision_prompt *vision,
+                                         uint32_t first_token,uint32_t token_count,
+                                         fg_error *err){
+    if(!vision)return FG_OK;
+    for(uint32_t span_index=0;span_index<vision->span_count;span_index++){
+        const fg_vision_span *span=&vision->spans[span_index];
+        uint32_t begin=span->token_begin>first_token?span->token_begin:first_token;
+        uint32_t span_end=span->token_begin+span->token_count;
+        uint32_t end=span_end<first_token+token_count?span_end:first_token+token_count;
+        for(uint32_t token=begin;token<end;token++){
+            const uint32_t local=token-first_token;
+            const float *row=vision->embeddings[span_index]+
+                (size_t)(token-span->token_begin)*FG_HIDDEN_SIZE;
+            for(uint32_t copy=0;copy<FG_Q38_HYPER_COUNT;copy++){
+                const uint64_t offset=((uint64_t)local*FG_HYPER_WIDTH+
+                    (uint64_t)copy*FG_HIDDEN_SIZE)*sizeof(float);
+                fg_status status=fg_vk_tensor_write(input,offset,row,
+                                                    FG_HIDDEN_SIZE*sizeof(float),err);
+                if(status!=FG_OK)return status;
+            }
+        }
+    }
+    return FG_OK;
+}
+
+static fg_status coordinator_prefill_microbatch(fg_coordinator *coordinator,const uint32_t *token_ids,uint32_t first_token,uint16_t token_count,const fg_vk_tensor *ngram_embeddings,const fg_vision_prompt *vision,fg_vk_tensor **output,fg_error *err){
     if(!coordinator||!token_ids||!token_count||token_count>coordinator->manifest->prefill_microbatch||!ngram_embeddings||!output||token_count>coordinator->manifest->max_context||first_token>coordinator->manifest->max_context-token_count){fg_error_set(err,FG_ERR_ARGUMENT,"invalid coordinator prefill microbatch");return FG_ERR_ARGUMENT;}
     prefill_layer_buffers *buffers=&coordinator->prefill_layer[0];
     for(uint32_t i=0;i<token_count;i++){if(token_ids[i]>=FG_Q38_VOCAB_SIZE){fg_error_set(err,FG_ERR_FORMAT,"prefill token %u is outside Qwen3.8 vocabulary",i);return FG_ERR_FORMAT;}buffers->positions[i]=token_ids[i];}
     fg_status status=fg_vk_tensor_write(buffers->token_tensor,0,buffers->positions,(uint64_t)token_count*4u,err);
-    for(uint32_t i=0;i<token_count;i++){for(uint32_t axis=0;axis<3u;axis++){buffers->positions[(uint64_t)i*3u+axis]=first_token+i;}}
+    vision_fill_positions(vision,first_token,token_count,buffers->positions);
     fg_vk_tensor *embedding=fg_model_tensor(coordinator->model,"token_embd.weight");
     if(status==FG_OK&&!embedding){fg_error_set(err,FG_ERR_MISMATCH,"coordinator is missing token_embd.weight");status=FG_ERR_MISMATCH;}
     fg_vk_tensor *initial=fg_owner_prefill_input(coordinator->owner);
@@ -3255,6 +3310,7 @@ static fg_status coordinator_prefill_microbatch(fg_coordinator *coordinator,cons
         status=FG_ERR_MISMATCH;
     }
     if(status==FG_OK){status=fg_vk_embedding_q8_0_batch(fg_model_vk(coordinator->model),initial,embedding,buffers->token_tensor,token_count,FG_HIDDEN_SIZE,FG_Q38_VOCAB_SIZE,FG_Q38_HYPER_COUNT,err);}
+    if(status==FG_OK)status=vision_apply_embeddings(initial,vision,first_token,token_count,err);
     fg_vk_tensor *current=initial;
     for(uint32_t layer=0;status==FG_OK&&layer<FG_LAYER_COUNT;layer++){
         struct timespec layer_start,layer_end;bool profiling=fg_vk_profile_active(fg_model_vk(coordinator->model));if(profiling)clock_gettime(CLOCK_MONOTONIC,&layer_start);
@@ -3402,7 +3458,7 @@ static fg_status coordinator_sync_gdn_state(fg_coordinator *coordinator,
  * blocked sending to it. */
 static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
     const int32_t *history,size_t history_count,const uint32_t *token_ids,
-    uint32_t first_token,uint32_t token_count,bool *profiled,
+    uint32_t first_token,uint32_t token_count,const fg_vision_prompt *vision,bool *profiled,
     fg_vk_tensor **output,fg_error *err){
     (void)profiled;
     if(!coordinator||!history||!token_ids||!token_count||!output||
@@ -3479,9 +3535,7 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
             prefill_layer_buffers *layer=&coordinator->prefill_layer[f];
             status=fg_vk_tensor_write(layer->token_tensor,0,token_ids+chunk*microbatch,
                 (uint64_t)chunk_tokens*4u,err);
-            for(uint32_t i=0;status==FG_OK&&i<chunk_tokens;i++)
-                for(uint32_t axis=0;axis<3u;axis++)
-                    slot->positions[i*3u+axis]=chunk_first+i;
+            if(status==FG_OK)vision_fill_positions(vision,chunk_first,chunk_tokens,slot->positions);
             fg_vk_tensor *input=fg_owner_prefill_input_slot(coordinator->owner,0u);
             if(status==FG_OK&&!input){
                 fg_error_set(err,FG_ERR_UNAVAILABLE,"ring prefill input slot is unavailable");
@@ -3490,6 +3544,7 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
             if(status==FG_OK)status=fg_vk_embedding_q8_0_batch(vk,input,embedding,
                 layer->token_tensor,chunk_tokens,FG_HIDDEN_SIZE,FG_Q38_VOCAB_SIZE,
                 FG_Q38_HYPER_COUNT,err);
+            if(status==FG_OK)status=vision_apply_embeddings(input,vision,chunk_first,chunk_tokens,err);
             fg_vk_tensor *ngram_view=NULL;
             if(status==FG_OK)status=fg_ngram_store_lookup_prefill(coordinator->ngram,
                 history,history_count,chunk_first,chunk_tokens,&ngram_view,err);
@@ -3659,11 +3714,11 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
 
 static fg_status coordinator_prefill_pipeline(fg_coordinator *coordinator,
     const int32_t *history,size_t history_count,const uint32_t *token_ids,
-    uint32_t first_token,uint32_t token_count,bool *profiled,
+    uint32_t first_token,uint32_t token_count,const fg_vision_prompt *vision,bool *profiled,
     fg_vk_tensor **output,fg_error *err){
     if(coordinator&&coordinator->ring_prefill)
         return coordinator_prefill_pipeline_ring(coordinator,history,history_count,token_ids,
-            first_token,token_count,profiled,output,err);
+            first_token,token_count,vision,profiled,output,err);
     if(!coordinator||!history||!token_ids||!token_count||!output||
        token_count>coordinator->manifest->max_context||
        first_token>coordinator->manifest->max_context-token_count){
@@ -3695,9 +3750,10 @@ static fg_status coordinator_prefill_pipeline(fg_coordinator *coordinator,
             if(!counts[f])continue;
             prefill_layer_buffers *layer=&coordinator->prefill_layer[f];
             status=fg_vk_tensor_write(layer->token_tensor,0,token_ids+base+offsets[f],(uint64_t)counts[f]*4u,err);
-            if(status==FG_OK){for(uint32_t i=0;i<counts[f];i++)for(uint32_t axis=0;axis<3u;axis++)layer->positions[(uint64_t)i*3u+axis]=first+offsets[f]+i;}
+            if(status==FG_OK)vision_fill_positions(vision,first+offsets[f],counts[f],layer->positions);
             if(status==FG_OK)inputs[f]=fg_owner_prefill_input_slot(coordinator->owner,f);
             if(status==FG_OK)status=fg_vk_embedding_q8_0_batch(vk,inputs[f],embedding,layer->token_tensor,counts[f],FG_HIDDEN_SIZE,FG_Q38_VOCAB_SIZE,FG_Q38_HYPER_COUNT,err);
+            if(status==FG_OK)status=vision_apply_embeddings(inputs[f],vision,first+offsets[f],counts[f],err);
         }
         prefill_dispatch_context contexts[FG_PREFILL_FRAMES];
         prefill_frame frames[FG_PREFILL_FRAMES];
@@ -4637,7 +4693,7 @@ static fg_tokenizer *runtime_tokenizer(const fg_runtime *runtime){
 
 static fg_status runtime_generate_tokens(
     fg_runtime *runtime,const char *transcript,const fg_tokens *prompt,
-    bool require_prefix_hit,bool *prefix_miss,
+    bool require_prefix_hit,bool *prefix_miss,const fg_vision_prompt *vision,
     uint32_t max_tokens,
     fg_token_callback callback,void *callback_context,
     fg_interrupt_fn interrupted,void *interrupt_context,
@@ -4658,6 +4714,11 @@ static fg_status runtime_generate_tokens(
     if(status==FG_OK)status=fg_prefix_plan_tokens(
         runtime->history,runtime->history_count,runtime->next_token_valid,
         prompt->data,prompt->count,runtime->empty_reason,&plan,err);
+    if(status==FG_OK&&vision){
+        plan.hit=false;plan.exact_frontier=false;plan.reused_tokens=0;
+        plan.prefill_offset=0;plan.prefill_tokens=prompt->count;
+        plan.reset_reason=FG_PREFIX_RESET_COLD_START;
+    }
     /* Ring prefill advances GDN/PLE/QSA state on the block owners.  With ring
      * decode those owners remain authoritative across requests, so a request
      * whose history extends the previous one can resume from the recorded
@@ -4735,7 +4796,7 @@ static fg_status runtime_generate_tokens(
     if(status==FG_OK&&prefill_offset<prompt->count)
         status=coordinator_prefill_pipeline(&runtime->coordinator,runtime->history,
             runtime->history_count,prompt->data+(size_t)prefill_offset,
-            (uint32_t)prefill_offset,(uint32_t)(prompt->count-prefill_offset),
+            (uint32_t)prefill_offset,(uint32_t)(prompt->count-prefill_offset),vision,
             &runtime->prefill_profiled,&prefill_output,err);
     prefill_worker_buffers_release_result_wire(&runtime->coordinator.prefill_expert[0]);
     prefill_worker_buffers_release_result_wire(&runtime->coordinator.prefill_expert[1]);
@@ -4854,10 +4915,150 @@ fg_status fg_runtime_generate(fg_runtime *runtime,const char *transcript,uint32_
     if(status==FG_ERR_ARGUMENT)
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident generation arguments");
     if(status==FG_OK)
-        status=runtime_generate_tokens(runtime,transcript,&prompt,false,NULL,max_tokens,
+        status=runtime_generate_tokens(runtime,transcript,&prompt,false,NULL,NULL,max_tokens,
                                        callback,callback_context,interrupted,
                                        interrupt_context,stats,err);
     fg_tokens_free(&prompt);
+    return status;
+}
+
+bool fg_runtime_vision_available(const fg_runtime *runtime){
+    if(!runtime||!runtime->coordinator.directory)return false;
+    char path[1200];
+    if(snprintf(path,sizeof(path),"%s/tower.fgm",runtime->coordinator.directory)>=
+       (int)sizeof(path))return false;
+    return access(path,R_OK)==0;
+}
+
+fg_status fg_runtime_generate_vision(fg_runtime *runtime,const char *transcript,
+                                     const fg_runtime_image *images,uint32_t image_count,
+                                     uint32_t max_tokens,
+                                     fg_token_callback callback,void *callback_context,
+                                     fg_interrupt_fn interrupted,void *interrupt_context,
+                                     fg_generation_stats *stats,fg_error *err){
+    if(!runtime||!transcript||!images||!image_count||!callback||!max_tokens){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid vision generation arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    if(!fg_runtime_vision_available(runtime)){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "image input is not available: the vision tower pack is missing "
+                     "from the deployment directory");
+        return FG_ERR_UNAVAILABLE;
+    }
+    float **embeddings=calloc(image_count,sizeof(*embeddings));
+    uint32_t *merged=calloc(image_count,sizeof(*merged));
+    uint32_t *grid_width=calloc(image_count,sizeof(*grid_width));
+    uint32_t *grid_height=calloc(image_count,sizeof(*grid_height));
+    fg_status status=(embeddings&&merged&&grid_width&&grid_height)?FG_OK:FG_ERR_OOM;
+    if(status!=FG_OK)
+        fg_error_set(err,status,"allocate vision image state");
+    double tower_seconds=0.0;
+    for(uint32_t image=0;status==FG_OK&&image<image_count;image++){
+        fg_tower_vk_stats tower_stats={0};
+        status=fg_tower_vision_forward(runtime->coordinator.directory,images[image].bytes,
+                                       (uint64_t)images[image].length,&embeddings[image],
+                                       &merged[image],&grid_width[image],&grid_height[image],
+                                       &tower_stats,err);
+        tower_seconds+=tower_stats.forward_ms/1000.0;
+    }
+    fg_tokens prompt={0};
+    if(status==FG_OK)
+        status=fg_tokenizer_encode(runtime_tokenizer(runtime),transcript,true,&prompt,err);
+    uint32_t *expanded=NULL,*positions=NULL;
+    fg_vision_span *spans=NULL;
+    const float **span_embeddings=NULL;
+    size_t expanded_count=0;
+    uint32_t image_tokens=0;
+    if(status==FG_OK){
+        size_t placeholders=0;
+        for(size_t i=0;i<prompt.count;i++)if(prompt.data[i]==FG_VISION_IMAGE_TOKEN)placeholders++;
+        if(placeholders!=image_count){
+            fg_error_set(err,FG_ERR_FORMAT,
+                         "image placeholder count does not match the request image count");
+            status=FG_ERR_FORMAT;
+        }
+    }
+    if(status==FG_OK){
+        uint32_t seen=0;
+        for(size_t i=0;i<prompt.count;i++){
+            if(prompt.data[i]==FG_VISION_IMAGE_TOKEN&&seen<image_count){
+                if(i==0||prompt.data[i-1u]!=FG_VISION_START_TOKEN){
+                    fg_error_set(err,FG_ERR_FORMAT,
+                                 "image placeholder is missing a vision_start token");
+                    status=FG_ERR_FORMAT;
+                    break;
+                }
+                expanded_count+=merged[seen];
+                seen++;
+            }else expanded_count++;
+            if(expanded_count>FG_MAX_CONTEXT||expanded_count>UINT32_MAX){
+                fg_error_set(err,FG_ERR_LIMIT,"expanded vision prompt exceeds the context limit");
+                status=FG_ERR_LIMIT;
+                break;
+            }
+        }
+    }
+    if(status==FG_OK){
+        expanded=malloc(expanded_count*sizeof(*expanded));
+        positions=malloc(expanded_count*3u*sizeof(*positions));
+        spans=calloc(image_count,sizeof(*spans));
+        span_embeddings=calloc(image_count,sizeof(*span_embeddings));
+        if(!expanded||!positions||!spans||!span_embeddings){
+            status=FG_ERR_OOM;
+            fg_error_set(err,status,"allocate expanded vision prompt");
+        }
+    }
+    if(status==FG_OK){
+        uint32_t out=0,position=0,image=0;
+        for(size_t i=0;i<prompt.count;i++){
+            const uint32_t token=prompt.data[i];
+            if(token==FG_VISION_IMAGE_TOKEN){
+                const uint32_t count=merged[image];
+                spans[image]=(fg_vision_span){.token_begin=out,.token_count=count,
+                    .grid_width=grid_width[image],.grid_height=grid_height[image]};
+                span_embeddings[image]=embeddings[image];
+                for(uint32_t k=0;k<count;k++){
+                    expanded[out+k]=FG_VISION_IMAGE_TOKEN;
+                    positions[(size_t)(out+k)*3u]=position;
+                    positions[(size_t)(out+k)*3u+1u]=position+k/grid_width[image];
+                    positions[(size_t)(out+k)*3u+2u]=position+k%grid_width[image];
+                }
+                out+=count;
+                image_tokens+=count;
+                position+=grid_width[image]>grid_height[image]?
+                    grid_width[image]:grid_height[image];
+                image++;
+            }else{
+                expanded[out]=token;
+                positions[(size_t)out*3u]=position;
+                positions[(size_t)out*3u+1u]=position;
+                positions[(size_t)out*3u+2u]=position;
+                out++;position++;
+            }
+        }
+    }
+    fg_vision_prompt vision={.positions=positions,.embeddings=span_embeddings,.spans=spans,
+                             .span_count=image_count};
+    fg_tokens vision_tokens={.data=expanded,.count=expanded_count,.capacity=expanded_count};
+    if(status==FG_OK)
+        status=runtime_generate_tokens(runtime,transcript,&vision_tokens,false,NULL,&vision,
+                                       max_tokens,callback,callback_context,interrupted,
+                                       interrupt_context,stats,err);
+    if(status==FG_OK&&stats){
+        stats->image_tokens=image_tokens;
+        stats->tower_seconds=tower_seconds;
+    }
+    for(uint32_t image=0;image<image_count;image++)free(embeddings?embeddings[image]:NULL);
+    free(span_embeddings);
+    free(spans);
+    free(positions);
+    free(expanded);
+    fg_tokens_free(&prompt);
+    free(grid_height);
+    free(grid_width);
+    free(merged);
+    free(embeddings);
     return status;
 }
 
@@ -4992,7 +5193,7 @@ fg_status fg_runtime_generate_continuation(
         runtime_trace_continuation(runtime,public_transcript,combined,
                                    &suffix_tokens,&prompt);
         status=runtime_generate_tokens(
-            runtime,combined,&prompt,true,prefix_miss,max_tokens,callback,
+            runtime,combined,&prompt,true,prefix_miss,NULL,max_tokens,callback,
             callback_context,interrupted,interrupt_context,stats,err);
     }
     free(suffix);
@@ -5154,7 +5355,7 @@ fg_status fg_eval_main(const char *path,const char *prompt,uint32_t generate,fg_
     if(status==FG_OK&&!history){
         fg_error_set(err,FG_ERR_OOM,"allocate eval token history");status=FG_ERR_OOM;
     }
-    for(size_t i=0;status==FG_OK&&i<prompt_tokens.count;i++){history[i]=(int32_t)prompt_tokens.data[i];}uint32_t next=0;float logit=0.0f;struct timespec start,end;fg_vk_tensor *prefill_output=NULL;if(status==FG_OK)clock_gettime(CLOCK_MONOTONIC,&start);for(uint32_t first=0;status==FG_OK&&first<prompt_tokens.count;){uint32_t count=(uint32_t)(prompt_tokens.count-first);if(count>manifest->prefill_microbatch)count=manifest->prefill_microbatch;fg_vk_tensor *ngram_batch=NULL;status=fg_ngram_store_lookup_prefill(coordinator.ngram,history,prompt_tokens.count,first,count,&ngram_batch,err);if(status==FG_OK)status=coordinator_prefill_microbatch(&coordinator,prompt_tokens.data+first,first,(uint16_t)count,ngram_batch,&prefill_output,err);first+=count;}prefill_worker_buffers_release_result_wire(&coordinator.prefill_expert[0]);prefill_worker_buffers_release_result_wire(&coordinator.prefill_expert[1]);prefill_worker_buffers_release_result_wire(&coordinator.prefill_expert[2]);fg_vk_tensor *last_hyper=NULL;if(status==FG_OK){uint32_t final_count=(uint32_t)(prompt_tokens.count%manifest->prefill_microbatch);if(!final_count)final_count=manifest->prefill_microbatch;status=fg_vk_tensor_view(prefill_output,(uint64_t)(final_count-1u)*FG_HYPER_WIDTH*4u,FG_HYPER_WIDTH*4u,&last_hyper,err);}if(status==FG_OK)status=coordinator_output(&coordinator,(uint32_t)prompt_tokens.count-1u,last_hyper,&next,&logit,err);fg_vk_tensor_destroy(last_hyper);if(status==FG_OK){clock_gettime(CLOCK_MONOTONIC,&end);double seconds=(double)(end.tv_sec-start.tv_sec)+(double)(end.tv_nsec-start.tv_nsec)*1e-9;fprintf(stderr,"prefill: %zu tokens in %.3f s (%.2f tok/s), next=%u logit=%g\n",prompt_tokens.count,seconds,(double)prompt_tokens.count/seconds,next,logit);}
+    for(size_t i=0;status==FG_OK&&i<prompt_tokens.count;i++){history[i]=(int32_t)prompt_tokens.data[i];}uint32_t next=0;float logit=0.0f;struct timespec start,end;fg_vk_tensor *prefill_output=NULL;if(status==FG_OK)clock_gettime(CLOCK_MONOTONIC,&start);for(uint32_t first=0;status==FG_OK&&first<prompt_tokens.count;){uint32_t count=(uint32_t)(prompt_tokens.count-first);if(count>manifest->prefill_microbatch)count=manifest->prefill_microbatch;fg_vk_tensor *ngram_batch=NULL;status=fg_ngram_store_lookup_prefill(coordinator.ngram,history,prompt_tokens.count,first,count,&ngram_batch,err);if(status==FG_OK)status=coordinator_prefill_microbatch(&coordinator,prompt_tokens.data+first,first,(uint16_t)count,ngram_batch,NULL,&prefill_output,err);first+=count;}prefill_worker_buffers_release_result_wire(&coordinator.prefill_expert[0]);prefill_worker_buffers_release_result_wire(&coordinator.prefill_expert[1]);prefill_worker_buffers_release_result_wire(&coordinator.prefill_expert[2]);fg_vk_tensor *last_hyper=NULL;if(status==FG_OK){uint32_t final_count=(uint32_t)(prompt_tokens.count%manifest->prefill_microbatch);if(!final_count)final_count=manifest->prefill_microbatch;status=fg_vk_tensor_view(prefill_output,(uint64_t)(final_count-1u)*FG_HYPER_WIDTH*4u,FG_HYPER_WIDTH*4u,&last_hyper,err);}if(status==FG_OK)status=coordinator_output(&coordinator,(uint32_t)prompt_tokens.count-1u,last_hyper,&next,&logit,err);fg_vk_tensor_destroy(last_hyper);if(status==FG_OK){clock_gettime(CLOCK_MONOTONIC,&end);double seconds=(double)(end.tv_sec-start.tv_sec)+(double)(end.tv_nsec-start.tv_nsec)*1e-9;fprintf(stderr,"prefill: %zu tokens in %.3f s (%.2f tok/s), next=%u logit=%g\n",prompt_tokens.count,seconds,(double)prompt_tokens.count/seconds,next,logit);}
     size_t history_count=prompt_tokens.count;struct timespec decode_start,decode_tok;clock_gettime(CLOCK_MONOTONIC,&decode_start);for(uint32_t generated=0;status==FG_OK&&generated<generate;generated++){char decoded[4096];size_t bytes=0;status=fg_tokenizer_decode_token(coordinator.tokenizer,next,decoded,sizeof(decoded),&bytes,err);if(status!=FG_OK)break;clock_gettime(CLOCK_MONOTONIC,&decode_tok);double tok_elapsed=(double)(decode_tok.tv_sec-decode_start.tv_sec)+(double)(decode_tok.tv_nsec-decode_start.tv_nsec)*1e-9;double tok_per_sec=generated>0?(double)generated/tok_elapsed:0.0;fprintf(stderr,"decode[%u]: token=%u logit=%.4f (%.3f s, avg %.2f tok/s)\n",generated,next,logit,tok_elapsed,tok_per_sec);fwrite(decoded,1,bytes,stdout);fflush(stdout);if(next==fg_tokenizer_eos(coordinator.tokenizer)||generated+1u==generate)break;history[history_count++]=(int32_t)next;status=coordinator_decode_token_local(&coordinator,history,history_count,(uint32_t)(history_count-1u),&next,&logit,err);}if(status==FG_OK){clock_gettime(CLOCK_MONOTONIC,&decode_tok);double total=(double)(decode_tok.tv_sec-decode_start.tv_sec)+(double)(decode_tok.tv_nsec-decode_start.tv_nsec)*1e-9;fprintf(stderr,"decode complete: %.2f tok/s avg\n",total>0?(double)(generate)/total:0.0);fputc('\n',stdout);}
     free(history);
     fg_tokens_free(&prompt_tokens);

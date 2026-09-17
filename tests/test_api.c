@@ -230,6 +230,36 @@ fg_status fg_runtime_generate_continuation(
     return status;
 }
 
+static bool test_vision_available = false;
+static uint32_t test_vision_calls = 0;
+static uint32_t test_vision_images = 0;
+static size_t test_vision_bytes = 0;
+
+bool fg_runtime_vision_available(const fg_runtime *runtime) {
+    (void)runtime;
+    return test_vision_available;
+}
+
+fg_status fg_runtime_generate_vision(fg_runtime *runtime,const char *transcript,
+                                     const fg_runtime_image *images,uint32_t image_count,
+                                     uint32_t max_tokens,fg_token_callback callback,
+                                     void *callback_context,fg_interrupt_fn interrupted,
+                                     void *interrupt_context,fg_generation_stats *stats,
+                                     fg_error *err) {
+    test_vision_calls++;
+    test_vision_images = image_count;
+    test_vision_bytes = 0;
+    for (uint32_t i = 0; i < image_count; i++) test_vision_bytes += images[i].length;
+    fg_status status = fg_runtime_generate(runtime, transcript, max_tokens, callback,
+                                           callback_context, interrupted, interrupt_context,
+                                           stats, err);
+    if (status == FG_OK && stats) {
+        stats->image_tokens = 4u;
+        stats->tower_seconds = 1.1;
+    }
+    return status;
+}
+
 uint32_t fg_runtime_context_tokens(const fg_runtime *runtime) {
     return runtime ? (uint32_t)runtime->evaluated_length : 0;
 }
@@ -341,6 +371,82 @@ static void test_openai_structured_text_content(void) {
     CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &request, &err) == FG_ERR_ARGUMENT);
     CHECK(strstr(err.message, "image_url") != NULL);
     api_chat_request_free(&request);
+    json_free(root);
+}
+
+static const char test_png_base64[] =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAA"
+    "AABJRU5ErkJggg==";
+
+static void test_image_content_parts(void) {
+    char body[4096];
+    snprintf(body, sizeof(body),
+             "{\"messages\":[{\"role\":\"user\",\"content\":["
+             "{\"type\":\"text\",\"text\":\"what is this? \"},"
+             "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%s\"}}]}]}",
+             test_png_base64);
+    fg_error err = {0};
+    json_value *root = parse_json_body(body, strlen(body), &err);
+    CHECK(root != NULL);
+    api_chat_request request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &request, &err) == FG_OK);
+    CHECK(request.image_count == 1u);
+    CHECK(request.images[0].length > 50u);
+    CHECK(request.images[0].data[0] == 0x89u && request.images[0].data[1] == 'P' &&
+          request.images[0].data[2] == 'N' && request.images[0].data[3] == 'G');
+    CHECK(request.messages[0].content &&
+          !strncmp(request.messages[0].content, "what is this? <|vision_start|>", 30u));
+    CHECK(request.messages[0].content &&
+          strstr(request.messages[0].content, "<|image_pad|><|vision_end|>"));
+    api_chat_request_free(&request);
+    json_free(root);
+
+    const char *plain =
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"plain text\"}]}";
+    root = parse_json_body(plain, strlen(plain), &err);
+    CHECK(root != NULL);
+    api_chat_request plain_request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &plain_request, &err) == FG_OK);
+    CHECK(plain_request.image_count == 0u);
+    CHECK(!strcmp(plain_request.messages[0].content, "plain text"));
+    CHECK(!strstr(plain_request.messages[0].content, "<|vision"));
+    api_chat_request_free(&plain_request);
+    json_free(root);
+
+    const char *http_url =
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"image_url\",\"image_url\":{\"url\":\"https://example.com/a.png\"}}]}]}";
+    root = parse_json_body(http_url, strlen(http_url), &err);
+    CHECK(root != NULL);
+    api_chat_request http_request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &http_request, &err) ==
+          FG_ERR_ARGUMENT);
+    CHECK(strstr(err.message, "http(s)") != NULL);
+    api_chat_request_free(&http_request);
+    json_free(root);
+
+    const char *webp =
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/webp;base64,AAAA\"}}]}]}";
+    root = parse_json_body(webp, strlen(webp), &err);
+    CHECK(root != NULL);
+    api_chat_request webp_request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &webp_request, &err) ==
+          FG_ERR_ARGUMENT);
+    CHECK(strstr(err.message, "media type") != NULL);
+    api_chat_request_free(&webp_request);
+    json_free(root);
+
+    const char *broken =
+        "{\"messages\":[{\"role\":\"user\",\"content\":["
+        "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,!!!!\"}}]}]}";
+    root = parse_json_body(broken, strlen(broken), &err);
+    CHECK(root != NULL);
+    api_chat_request broken_request = {0};
+    CHECK(parse_chat_request(root, "Qwen3.8-Flash-Next", &broken_request, &err) ==
+          FG_ERR_ARGUMENT);
+    CHECK(strstr(err.message, "base64") != NULL);
+    api_chat_request_free(&broken_request);
     json_free(root);
 }
 
@@ -967,6 +1073,36 @@ static void test_live_prefix_tool_loop(void) {
     fg_runtime_close(&runtime);
 }
 
+static void test_image_http_flow(void) {
+    char body[4096];
+    snprintf(body, sizeof(body),
+             "{\"messages\":[{\"role\":\"user\",\"content\":["
+             "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%s\"}},"
+             "{\"type\":\"text\",\"text\":\"describe this\"}]}]}",
+             test_png_base64);
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    test_vision_available = false;
+    test_vision_calls = 0;
+    char *response = run_chat_request(&runtime, &session, body, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "400 Bad Request"));
+    CHECK(response && strstr(response, "vision tower pack missing"));
+    CHECK(test_vision_calls == 0u);
+    free(response);
+    test_vision_available = true;
+    response = run_chat_request(&runtime, &session, body, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "200 OK"));
+    CHECK(test_vision_calls == 1u);
+    CHECK(test_vision_images == 1u);
+    CHECK(test_vision_bytes > 50u);
+    CHECK(!session.valid);
+    free(response);
+    test_vision_available = false;
+}
+
 static void test_divergent_tool_request_clears_prefix_metadata(void) {
     fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
     api_public_session session = {0};
@@ -1204,6 +1340,7 @@ static void test_streamed_unclosed_reasoning_flushed(void) {
 int main(void) {
     test_openai_tools_request();
     test_openai_structured_text_content();
+    test_image_content_parts();
     test_unknown_tool_result_rejected();
     test_tool_choice_modes();
     test_history_reasoning_and_empty_calls();
@@ -1222,6 +1359,7 @@ int main(void) {
     test_live_prefix_hit_divergence_and_reset();
     test_live_prefix_tool_loop();
     test_divergent_tool_request_clears_prefix_metadata();
+    test_image_http_flow();
     test_failed_generation_fails_closed();
     if (failures) fprintf(stderr, "%d API test(s) failed\n", failures);
     return failures ? 1 : 0;

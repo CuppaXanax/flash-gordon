@@ -76,6 +76,11 @@ typedef struct http_request {
     size_t body_length;
 } http_request;
 
+typedef struct api_image {
+    uint8_t *data;
+    size_t length;
+} api_image;
+
 typedef struct api_chat_request {
     fg_chat_message *messages;
     size_t message_count;
@@ -86,6 +91,9 @@ typedef struct api_chat_request {
     uint32_t max_tokens;
     bool stream;
     fg_sampler_config sampler;
+    api_image *images;
+    size_t image_count;
+    size_t image_capacity;
 } api_chat_request;
 
 typedef struct api_public_session {
@@ -652,6 +660,182 @@ static fg_status message_content_text(const json_value *content,const char **out
     *output=text.data;return FG_OK;
 }
 
+static int api_base64_value(unsigned char character){
+    if(character>='A'&&character<='Z')return character-'A';
+    if(character>='a'&&character<='z')return character-'a'+26;
+    if(character>='0'&&character<='9')return character-'0'+52;
+    if(character=='+')return 62;
+    if(character=='/')return 63;
+    return -1;
+}
+
+static fg_status api_base64_decode(const char *text,size_t length,uint8_t **output,
+                                   size_t *output_length,fg_error *err){
+    if(!text||!output||!output_length||length==0||length%4u){
+        fg_error_set(err,FG_ERR_ARGUMENT,"image payload is not valid base64");
+        return FG_ERR_ARGUMENT;
+    }
+    uint8_t *decoded=malloc(length/4u*3u);
+    if(!decoded){
+        fg_error_set(err,FG_ERR_OOM,"allocate decoded image payload");
+        return FG_ERR_OOM;
+    }
+    size_t produced=0;
+    for(size_t i=0;i<length;i+=4u){
+        const int a=api_base64_value((unsigned char)text[i]);
+        const int b=api_base64_value((unsigned char)text[i+1u]);
+        const bool pad_c=text[i+2u]=='=';
+        const bool pad_d=text[i+3u]=='=';
+        const int c=pad_c?-2:api_base64_value((unsigned char)text[i+2u]);
+        const int d=pad_d?-2:api_base64_value((unsigned char)text[i+3u]);
+        if(a<0||b<0||c==-1||d==-1||(pad_c&&(!pad_d||i+4u!=length))||
+           (!pad_c&&pad_d&&i+4u!=length)){
+            free(decoded);
+            fg_error_set(err,FG_ERR_ARGUMENT,"image payload is not valid base64");
+            return FG_ERR_ARGUMENT;
+        }
+        decoded[produced++]=(uint8_t)((a<<2)|(b>>4));
+        if(!pad_c)decoded[produced++]=(uint8_t)(((b&15)<<4)|(c>>2));
+        if(!pad_d)decoded[produced++]=(uint8_t)(((c&3)<<6)|d);
+    }
+    *output=decoded;
+    *output_length=produced;
+    return FG_OK;
+}
+
+static fg_status api_request_add_image(api_chat_request *request,uint8_t *data,size_t length,
+                                       fg_error *err){
+    if(request->image_count==request->image_capacity){
+        const size_t capacity=request->image_capacity?request->image_capacity*2u:2u;
+        api_image *grown=realloc(request->images,capacity*sizeof(*grown));
+        if(!grown){
+            free(data);
+            fg_error_set(err,FG_ERR_OOM,"grow API image list");
+            return FG_ERR_OOM;
+        }
+        request->images=grown;
+        request->image_capacity=capacity;
+    }
+    request->images[request->image_count].data=data;
+    request->images[request->image_count].length=length;
+    request->image_count++;
+    return FG_OK;
+}
+
+static fg_status api_decode_image_url(const char *url,uint8_t **data,size_t *length,
+                                      fg_error *err){
+    if(!url||strncmp(url,"data:",5u)!=0){
+        fg_error_set(err,FG_ERR_ARGUMENT,
+                     "image_url must be a base64 data: URL; http(s) image URLs are not supported");
+        return FG_ERR_ARGUMENT;
+    }
+    const char *comma=strchr(url,',');
+    if(!comma){
+        fg_error_set(err,FG_ERR_ARGUMENT,"image_url data URL has no payload");
+        return FG_ERR_ARGUMENT;
+    }
+    const char *header=url+5u;
+    const size_t header_length=(size_t)(comma-header);
+    const char *semi=memchr(header,';',header_length);
+    const size_t mime_length=semi?(size_t)(semi-header):header_length;
+    char mime[64];
+    if(!mime_length||mime_length>=sizeof(mime)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"image_url data URL has an invalid media type");
+        return FG_ERR_ARGUMENT;
+    }
+    memcpy(mime,header,mime_length);
+    mime[mime_length]=0;
+    if(strcmp(mime,"image/png")&&strcmp(mime,"image/jpeg")&&strcmp(mime,"image/jpg")){
+        fg_error_set(err,FG_ERR_ARGUMENT,
+                     "unsupported image media type '%s' (use image/png or image/jpeg)",mime);
+        return FG_ERR_ARGUMENT;
+    }
+    if(!semi||!strstr(semi,"base64")){
+        fg_error_set(err,FG_ERR_ARGUMENT,"image_url data URL must be base64 encoded");
+        return FG_ERR_ARGUMENT;
+    }
+    const char *payload=comma+1u;
+    return api_base64_decode(payload,strlen(payload),data,length,err);
+}
+
+static fg_status message_content_parts(const json_value *content,const char **output,
+                                       api_chat_request *request,fg_error *err){
+    if(!content||content->type==JSON_NULL||content->type==JSON_STRING||
+       content->type!=JSON_ARRAY){
+        return message_content_text(content,output,err);
+    }
+    bool has_image=false;
+    for(size_t i=0;i<content->as.array.count;i++){
+        json_value *part=content->as.array.items[i];
+        json_value *type=json_object_get(part,"type");
+        if(type&&type->type==JSON_STRING&&!strcmp(type->as.string,"image_url")){
+            has_image=true;
+            break;
+        }
+    }
+    if(!has_image)return message_content_text(content,output,err);
+    api_buffer text={0};
+    fg_status status=FG_OK;
+    for(size_t i=0;status==FG_OK&&i<content->as.array.count;i++){
+        json_value *part=content->as.array.items[i];
+        json_value *type=json_object_get(part,"type");
+        if(part&&part->type==JSON_STRING){
+            status=buffer_append(&text,part->as.string,err);
+            continue;
+        }
+        if(!part||part->type!=JSON_OBJECT||!type||type->type!=JSON_STRING){
+            fg_error_set(err,FG_ERR_ARGUMENT,"message content array requires typed parts");
+            status=FG_ERR_ARGUMENT;
+            break;
+        }
+        if(!strcmp(type->as.string,"text")||!strcmp(type->as.string,"input_text")){
+            json_value *value=json_object_get(part,"text");
+            if(!value||value->type!=JSON_STRING){
+                fg_error_set(err,FG_ERR_ARGUMENT,"text content parts require a text string");
+                status=FG_ERR_ARGUMENT;
+                break;
+            }
+            status=buffer_append(&text,value->as.string,err);
+            continue;
+        }
+        if(!strcmp(type->as.string,"image_url")){
+            json_value *image_url=json_object_get(part,"image_url");
+            const char *url=NULL;
+            if(image_url&&image_url->type==JSON_STRING)url=image_url->as.string;
+            else if(image_url&&image_url->type==JSON_OBJECT){
+                json_value *nested=json_object_get(image_url,"url");
+                if(nested&&nested->type==JSON_STRING)url=nested->as.string;
+            }else if(image_url&&image_url->type==JSON_NULL)url=NULL;
+            if(!url){
+                fg_error_set(err,FG_ERR_ARGUMENT,"image_url parts require image_url.url");
+                status=FG_ERR_ARGUMENT;
+                break;
+            }
+            uint8_t *data=NULL;
+            size_t length=0;
+            status=api_decode_image_url(url,&data,&length,err);
+            if(status==FG_OK)
+                status=api_request_add_image(request,data,length,err);
+            if(status==FG_OK)status=buffer_append(&text,"<|vision_start|><|image_pad|><|vision_end|>",err);
+            if(status!=FG_OK)free(data);
+            continue;
+        }
+        fg_error_set(err,FG_ERR_ARGUMENT,"message content part type '%s' is unsupported",
+                     type->as.string);
+        status=FG_ERR_ARGUMENT;
+    }
+    if(status==FG_OK&&!text.data){
+        text.data=strdup("");
+        if(!text.data){
+            fg_error_set(err,FG_ERR_OOM,"copy empty message content array");
+            status=FG_ERR_OOM;
+        }
+    }
+    if(status!=FG_OK){free(text.data);return status;}
+    *output=text.data;
+    return FG_OK;
+}
+
 static bool json_object_has(const json_value *object, const char *name) {
     return json_object_get(object, name) != NULL;
 }
@@ -757,6 +941,8 @@ static void api_chat_request_free(api_chat_request *request) {
         free((void *)request->messages[i].tool_calls);
     }
     free(request->messages);
+    for (size_t i = 0; i < request->image_count; i++) free(request->images[i].data);
+    free(request->images);
     for (size_t i = 0; i < request->tool_schema_count; i++) free(request->tool_schemas[i]);
     free(request->tool_schemas);
     free(request->tool_choice_name);
@@ -1277,7 +1463,7 @@ static fg_status parse_chat_request(const json_value *root, const char *runtime_
             return FG_ERR_ARGUMENT;
         }
         request->messages[i].role = strdup(accepted_role);
-        fg_status content_status=message_content_text(content,&request->messages[i].content,err);
+        fg_status content_status=message_content_parts(content,&request->messages[i].content,request,err);
         request->message_count++;
         if (!request->messages[i].role || content_status!=FG_OK) {
             if(content_status==FG_OK)
@@ -2169,6 +2355,14 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     fg_status status =
         parse_chat_request(root, fg_runtime_model_name(runtime), &request, err);
     json_free(root);
+    if (status == FG_OK && request.image_count && !fg_runtime_vision_available(runtime)) {
+        fg_error send_err = {0};
+        send_error_response(fd, 400u,
+                            "image input is not available on this deployment "
+                            "(vision tower pack missing)", &send_err);
+        api_chat_request_free(&request);
+        return FG_OK;
+    }
     if (status != FG_OK) {
         char message[sizeof(err->message)];
         snprintf(message, sizeof(message), "%s", err->message);
@@ -2204,7 +2398,7 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     }
     status = fg_chat_render(request.messages, request.message_count, &render_options,
                             &rendered, err);
-    bool public_continuation=status==FG_OK&&
+    bool public_continuation=status==FG_OK&&request.image_count==0&&
         api_public_session_prefix(public_session,&request);
     char *rendered_continuation=NULL;
     if(status==FG_OK&&public_session->valid&&!public_continuation){
@@ -2240,7 +2434,23 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     if(status==FG_OK)status=fg_runtime_set_sampler(runtime,&request.sampler,err);
     if(status==FG_OK){
         generation_attempted=true;
-        if(public_continuation){
+        if(request.image_count){
+            fg_runtime_image *images=calloc(request.image_count,sizeof(*images));
+            if(!images){
+                fg_error_set(err,FG_ERR_OOM,"allocate vision request images");
+                status=FG_ERR_OOM;
+            }else{
+                for(size_t image=0;image<request.image_count;image++){
+                    images[image].bytes=request.images[image].data;
+                    images[image].length=request.images[image].length;
+                }
+                status=fg_runtime_generate_vision(runtime,rendered,images,
+                                                  (uint32_t)request.image_count,
+                                                  request.max_tokens,api_token,&generation,
+                                                  api_interrupted,NULL,&stats,err);
+                free(images);
+            }
+        }else if(public_continuation){
             bool prefix_miss=false;
             status=fg_runtime_generate_continuation(
                 runtime,rendered,rendered_continuation,&prefix_miss,request.max_tokens,
@@ -2276,12 +2486,14 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
         fprintf(stderr,
                 "request %s: mode %s, prefix %s, reused %u, reset %s, "
                 "prefill %u/%u tokens "
-                "%.2f tok/s, generation %u tokens %.2f tok/s, context %u/%u\n",
+                "%.2f tok/s, generation %u tokens %.2f tok/s, context %u/%u "
+                "images %u image-tokens %u tower %.2f s\n",
                 id,fg_execution_mode_name(stats.execution_mode),
                 stats.prefix_cache_hit?"hit":"miss",stats.reused_tokens,
                 fg_prefix_reset_reason_name(stats.reset_reason),stats.prefilled_tokens,
                 stats.prompt_tokens,prefill_tps,stats.generated_tokens,decode_tps,
-                stats.context_tokens,fg_runtime_context_limit(runtime));
+                stats.context_tokens,fg_runtime_context_limit(runtime),
+                (unsigned)request.image_count,stats.image_tokens,stats.tower_seconds);
     }
     const char *finish_reason = generated.tool_call_count ? "tool_calls" :
         (stats.generated_tokens >= request.max_tokens ? "length" : "stop");
@@ -2293,8 +2505,10 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
             status = send_completion(&generation, &generated, &stats, finish_reason, err);
         if(status==FG_OK){
             api_public_session_free(public_session);
-            *public_session=pending_session;
-            memset(&pending_session,0,sizeof(pending_session));
+            if(request.image_count==0){
+                *public_session=pending_session;
+                memset(&pending_session,0,sizeof(pending_session));
+            }
             response_committed=true;
         }
     } else {

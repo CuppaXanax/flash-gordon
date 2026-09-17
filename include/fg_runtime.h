@@ -77,16 +77,23 @@ typedef struct fg_generation_stats {
     uint32_t reused_tokens;
     uint32_t generated_tokens;
     uint32_t context_tokens;
+    uint32_t image_tokens;
     bool prefix_cache_hit;
     bool exact_frontier;
     fg_prefix_reset_reason reset_reason;
     fg_execution_mode execution_mode;
     double prefill_seconds;
     double decode_seconds;
+    double tower_seconds;
 } fg_generation_stats;
 typedef fg_status (*fg_token_callback)(void *context,uint32_t token,const char *text,
                                       size_t bytes,fg_error *err);
 typedef bool (*fg_interrupt_fn)(void *context);
+
+typedef struct fg_runtime_image {
+    const uint8_t *bytes;
+    size_t length;
+} fg_runtime_image;
 
 void fg_runtime_options_init(fg_runtime_options *options);
 const fg_runtime_profile_definition *fg_runtime_profile_definition_get(uint32_t profile);
@@ -122,6 +129,13 @@ fg_status fg_runtime_generate_continuation(
     fg_token_callback callback,void *callback_context,
     fg_interrupt_fn interrupted,void *interrupt_context,
     fg_generation_stats *stats,fg_error *err);
+fg_status fg_runtime_generate_vision(fg_runtime *runtime,const char *transcript,
+                                     const fg_runtime_image *images,uint32_t image_count,
+                                     uint32_t max_tokens,
+                                     fg_token_callback callback,void *callback_context,
+                                     fg_interrupt_fn interrupted,void *interrupt_context,
+                                     fg_generation_stats *stats,fg_error *err);
+bool fg_runtime_vision_available(const fg_runtime *runtime);
 uint32_t fg_runtime_context_tokens(const fg_runtime *runtime);
 uint32_t fg_runtime_context_limit(const fg_runtime *runtime);
 const char *fg_runtime_model_name(const fg_runtime *runtime);
