@@ -1,0 +1,16 @@
+#version 460
+layout(local_size_x=16,local_size_y=16,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Weights{float weight_value[];};
+layout(set=0,binding=1)readonly buffer Input{float input_value[];};
+layout(set=0,binding=2)writeonly buffer Output{float output_value[];};
+layout(push_constant)uniform Push{uint tokens;uint outputs;uint width;}pc;
+void main(){
+    uint token=gl_GlobalInvocationID.y;
+    uint output_index=gl_GlobalInvocationID.x;
+    if(token>=pc.tokens||output_index>=pc.outputs)return;
+    uint input_base=token*pc.width;
+    uint weight_base=output_index*pc.width;
+    float accumulator=0.0;
+    for(uint i=0;i<pc.width;i++)accumulator+=weight_value[weight_base+i]*input_value[input_base+i];
+    output_value[token*pc.outputs+output_index]=accumulator;
+}

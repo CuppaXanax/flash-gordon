@@ -1,0 +1,10 @@
+#version 460
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)buffer Values{float value[];};
+layout(set=0,binding=1)readonly buffer Bias{float bias_value[];};
+layout(push_constant)uniform Push{uint count;uint width;}pc;
+void main(){
+    uint index=gl_GlobalInvocationID.x;
+    if(index>=pc.count)return;
+    value[index]+=bias_value[index%pc.width];
+}

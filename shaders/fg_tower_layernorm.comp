@@ -1,0 +1,24 @@
+#version 460
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Input{float input_value[];};
+layout(set=0,binding=1)readonly buffer Weight{float weight_value[];};
+layout(set=0,binding=2)readonly buffer Bias{float bias_value[];};
+layout(set=0,binding=3)writeonly buffer Output{float output_value[];};
+layout(push_constant)uniform Push{uint rows;uint width;float epsilon;}pc;
+void main(){
+    uint row=gl_WorkGroupID.x;
+    uint tid=gl_LocalInvocationID.x;
+    uint base=row*pc.width;
+    float sum=0.0;
+    for(uint i=0;i<pc.width;i++)sum+=input_value[base+i];
+    float mean=sum/float(pc.width);
+    float variance=0.0;
+    for(uint i=0;i<pc.width;i++){
+        float d=input_value[base+i]-mean;
+        variance+=d*d;
+    }
+    variance/=float(pc.width);
+    float scale=inversesqrt(variance+pc.epsilon);
+    for(uint i=tid;i<pc.width;i+=256u)
+        output_value[base+i]=(input_value[base+i]-mean)*scale*weight_value[i]+bias_value[i];
+}

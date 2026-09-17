@@ -4,7 +4,46 @@ Date: 2026-09-16. Companion to `docs/MULTIMODAL_MTP_SCOPING.md` (architecture
 verified against the Qwen3.8-Flash-Next checkpoint, llama.cpp master, and the
 official mmproj). Round 1 landed the acquisition and the packer split; this file
 pins the layout decision and the exact kernel/preprocessing/integration work
-that rounds 2-3 must execute. No tower kernels exist yet.
+that rounds 2-3 must execute.
+
+## 0. Round-2 status
+
+Landed (standalone tower path; the ring sources are not wired to any of it):
+
+- `src/tower.c`: `smart_resize` (align 32, min/max pixels), Pillow-compatible
+  bicubic resize (separate two-pass float implementation), `(x/255-0.5)/0.5`
+  normalization, patchify (patch 16, temporal 2, 2x2 merge ordering: token =
+  group*4 + dy*2 + dx), vision positions (slots 0..3 = y,x,y,x), bilinear
+  align-corners position embeddings, and the full CPU reference forward
+  (embed, 27 blocks, post-LN, merger) with float accumulation.
+- `src/tower_vk.c` + `shaders/fg_tower_{matmul,bias,gelu,add,layernorm,
+  rope_vision,attention,pos_embd}.comp`: a standalone Vulkan context and the
+  tower kernels. The layer norm and attention kernels compute their statistics
+  redundantly per thread (no shared-memory reductions) - the first
+  reduction-based versions diverged on real-weight data (attention cosine
+  0.797) and were replaced for determinism.
+- `tests/test_tower.c` (`make test-tower`): preprocessing reference checks
+  (max abs diff 2e-7), patch ordering, positions, CPU determinism, and stage
+  parity against the CPU reference. Measured on llvmpipe: patch/pos cosine
+  1.000000000, one block cosine 1.0 (relative 6e-8), merger cosine 1.0
+  (relative 3e-7). With the real mmproj pack (320x224 image, 280 patch tokens,
+  70 merged), the full 27-block GPU run is byte-repeatable and the CPU
+  reference matches at cosine 1.000000000.
+- Real-weight probe: `tests/test_tower --tower-dir DIR --image FILE.ppm
+  [--repeat N] [--cpu] [--layer-sweep]`. It dequantizes `tower.fgw`
+  (F32/F16/Q8_0) and runs the full tower in one call (442 dispatches).
+
+Remaining in this workstream:
+
+- Quant-native kernels: the probe dequantizes F32 on the host (about 1.8 GiB);
+  the in-service tower should read Q8_0/F16 weights directly in-kernel.
+- Occupancy/performance: the first-cut matmul is one output per thread; the
+  attention kernel caps at 4096 patch tokens. Both need the dense-kernel
+  treatment before production placement on rank 0.
+- Preprocessing: PNG/JPEG decode (the probe reads P6 PPM) and exact parity
+  against llama.cpp `mtmd` (`smart_resize` bounds, bicubic details).
+- Then the round-3 integration items in section 3 (prompt expansion,
+  embeddings-only prefill, PLE image-token hashing, API parts).
 
 ## 1. Round-1 pack decision: separate tower pack
 

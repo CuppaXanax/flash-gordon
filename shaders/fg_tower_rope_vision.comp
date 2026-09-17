@@ -1,0 +1,32 @@
+#version 460
+layout(local_size_x=64,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)buffer Qkv{float qkv_value[];};
+layout(push_constant)uniform Push{uint tokens;uint grid_width;uint section;}pc;
+const uint HEADS=16u;
+const uint HEAD_DIM=72u;
+const uint PAIRS=36u;
+const uint SECTION_PAIRS=18u;
+const uint QKV_WIDTH=3456u;
+const uint MERGE=2u;
+const uint MERGED=4u;
+void main(){
+    uint index=gl_GlobalInvocationID.x;
+    if(index>=pc.tokens*HEADS*PAIRS)return;
+    uint pair=index%PAIRS;
+    uint head=(index/PAIRS)%HEADS;
+    uint token=index/(PAIRS*HEADS);
+    uint half_width=pc.grid_width/MERGE;
+    uint group=token/MERGED;
+    uint inner=token%MERGED;
+    float px=float((group%half_width)*MERGE+(inner%MERGE));
+    float py=float((group/half_width)*MERGE+(inner/MERGE));
+    float position=(pair<SECTION_PAIRS)?py:px;
+    float theta=position*pow(10000.0,-2.0*float(pair%SECTION_PAIRS)/36.0);
+    float cosine=cos(theta);
+    float sine=sin(theta);
+    uint base=token*QKV_WIDTH+pc.section+head*HEAD_DIM;
+    float x0=qkv_value[base+pair];
+    float x1=qkv_value[base+pair+PAIRS];
+    qkv_value[base+pair]=x0*cosine-x1*sine;
+    qkv_value[base+pair+PAIRS]=x0*sine+x1*cosine;
+}

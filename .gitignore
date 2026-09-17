@@ -36,6 +36,7 @@ tests/bench_bc250_qsa_curve
 tests/test_fg_ledger
 tests/test_qsa_model_load
 tests/test_sampler
+tests/test_tower
 
 # Python test bytecode
 tools/__pycache__/

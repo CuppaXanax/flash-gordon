@@ -1,0 +1,33 @@
+#version 460
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Position{float position_value[];};
+layout(set=0,binding=1)writeonly buffer Output{float output_value[];};
+layout(push_constant)uniform Push{uint tokens;uint grid_width;uint grid_height;}pc;
+const uint GRID=48u;
+const uint HIDDEN=1152u;
+const uint MERGE=2u;
+const uint MERGED=4u;
+void main(){
+    uint index=gl_GlobalInvocationID.x;
+    if(index>=pc.tokens*HIDDEN)return;
+    uint channel=index%HIDDEN;
+    uint token=index/HIDDEN;
+    uint half_width=pc.grid_width/MERGE;
+    uint group=token/MERGED;
+    uint inner=token%MERGED;
+    uint x=(group%half_width)*MERGE+(inner%MERGE);
+    uint y=(group/half_width)*MERGE+(inner/MERGE);
+    float fx=(pc.grid_width>1u)?float(x)*float(GRID-1u)/float(pc.grid_width-1u):0.0;
+    float fy=(pc.grid_height>1u)?float(y)*float(GRID-1u)/float(pc.grid_height-1u):0.0;
+    uint x0=uint(floor(fx));
+    uint y0=uint(floor(fy));
+    uint x1=min(x0+1u,GRID-1u);
+    uint y1=min(y0+1u,GRID-1u);
+    float delta_x=fx-float(x0);
+    float delta_y=fy-float(y0);
+    float p00=position_value[(y0*GRID+x0)*HIDDEN+channel];
+    float p01=position_value[(y0*GRID+x1)*HIDDEN+channel];
+    float p10=position_value[(y1*GRID+x0)*HIDDEN+channel];
+    float p11=position_value[(y1*GRID+x1)*HIDDEN+channel];
+    output_value[index]=mix(mix(p00,p01,delta_x),mix(p10,p11,delta_x),delta_y);
+}

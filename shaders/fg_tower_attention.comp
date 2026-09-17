@@ -1,0 +1,38 @@
+#version 460
+layout(local_size_x=128,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Qkv{float qkv_value[];};
+layout(set=0,binding=1)writeonly buffer Output{float output_value[];};
+layout(push_constant)uniform Push{uint tokens;float scale;}pc;
+const uint HEADS=16u;
+const uint HEAD_DIM=72u;
+const uint HIDDEN=1152u;
+const uint QKV_WIDTH=3456u;
+shared float scores[4096];
+void main(){
+    uint workgroup=gl_WorkGroupID.x;
+    uint token=workgroup/HEADS;
+    uint head=workgroup%HEADS;
+    uint tid=gl_LocalInvocationID.x;
+    uint tokens=pc.tokens;
+    uint query_base=token*QKV_WIDTH+head*HEAD_DIM;
+    for(uint j=tid;j<tokens;j+=128u){
+        uint key_base=j*QKV_WIDTH+HIDDEN+head*HEAD_DIM;
+        float accumulator=0.0;
+        for(uint d=0;d<HEAD_DIM;d++)accumulator+=qkv_value[query_base+d]*qkv_value[key_base+d];
+        scores[j]=accumulator*pc.scale;
+    }
+    barrier();
+    float maximum=-1.0e30;
+    for(uint j=0;j<tokens;j++)maximum=max(maximum,scores[j]);
+    float total=0.0;
+    for(uint j=0;j<tokens;j++)total+=exp(scores[j]-maximum);
+    float inverse=1.0/total;
+    if(tid<HEAD_DIM){
+        float accumulator=0.0;
+        for(uint j=0;j<tokens;j++){
+            uint value_base=j*QKV_WIDTH+2u*HIDDEN+head*HEAD_DIM;
+            accumulator+=(exp(scores[j]-maximum)*inverse)*qkv_value[value_base+tid];
+        }
+        output_value[token*HIDDEN+head*HEAD_DIM+tid]=accumulator;
+    }
+}
