@@ -1016,6 +1016,55 @@ static int probe_run(const char *tower_dir,const char *image_path,uint32_t repea
                 free(raw);
             }
         }
+        if(status==FG_OK){
+            float *temporal=NULL;
+            fg_tower_vk_stats temporal_stats={0};
+            fg_status temporal_status=fg_tower_vision_forward_tokens(tower_dir,tokens,
+                geometry.tokens,1u,&geometry,&temporal,&temporal_stats,&err);
+            if(temporal_status!=FG_OK){
+                fprintf(stderr,"temporal tokens: %s\n",err.message);
+            }else{
+                printf("temporal tokens 1 pair: %.1f ms dispatches=%u cosine=%.9f identical=%s\n",
+                       temporal_stats.forward_ms,temporal_stats.dispatches,
+                       cosine_similarity(first,temporal,embedding_values),
+                       memcmp(first,temporal,embedding_values*sizeof(float))==0?"yes":"no");
+                free(temporal);
+            }
+        }
+        if(cpu_ref&&status==FG_OK){
+            const size_t pair_values=(size_t)geometry.tokens*FG_TOWER_TOKEN_VALUES;
+            float *pairs=malloc(2u*pair_values*sizeof(float));
+            float *gpu_pairs=malloc(2u*embedding_values*sizeof(float));
+            float *cpu_pair0=malloc(embedding_values*sizeof(float));
+            float *cpu_pair1=malloc(embedding_values*sizeof(float));
+            if(pairs&&gpu_pairs&&cpu_pair0&&cpu_pair1){
+                memcpy(pairs,tokens,pair_values*sizeof(float));
+                memcpy(pairs+pair_values,tokens,pair_values*sizeof(float));
+                for(size_t i=0;i<pair_values;i++)
+                    if(i%FG_TOWER_TOKEN_VALUES>=FG_TOWER_PATCH_VALUES)
+                        pairs[pair_values+i]=-pairs[pair_values+i];
+                fg_tower_vk_stats pair_stats={0};
+                fg_status pair_status=fg_tower_vision_forward_tokens(tower_dir,pairs,
+                    geometry.tokens,2u,&geometry,&gpu_pairs,&pair_stats,&err);
+                if(pair_status==FG_OK)pair_status=fg_tower_forward_cpu(&weights,pairs,&geometry,
+                                                                       cpu_pair0,&err);
+                if(pair_status==FG_OK)pair_status=fg_tower_forward_cpu(&weights,pairs+pair_values,
+                                                                       &geometry,cpu_pair1,&err);
+                if(pair_status!=FG_OK){
+                    fprintf(stderr,"temporal pairs: %s\n",err.message);
+                }else{
+                    printf("temporal pairs 2x: %.1f ms dispatches=%u pair0_cpu=%.9f pair1_cpu=%.9f "
+                           "pair1_differs=%s pair0_identical=%s\n",pair_stats.forward_ms,
+                           pair_stats.dispatches,
+                           cosine_similarity(gpu_pairs,cpu_pair0,embedding_values),
+                           cosine_similarity(gpu_pairs+embedding_values,cpu_pair1,embedding_values),
+                           memcmp(gpu_pairs,gpu_pairs+embedding_values,
+                                  embedding_values*sizeof(float))!=0?"yes":"no",
+                           memcmp(first,gpu_pairs,embedding_values*sizeof(float))==0?"yes":"no");
+                }
+            }
+            free(cpu_pair1);free(cpu_pair0);free(gpu_pairs);free(pairs);
+        }
         if(layer_sweep&&status==FG_OK){
             const size_t hidden_values=(size_t)geometry.tokens*FG_TOWER_HIDDEN;
             float *cpu_hidden=malloc(hidden_values*sizeof(float));

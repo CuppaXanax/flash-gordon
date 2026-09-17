@@ -11,6 +11,8 @@
 
 #include <vulkan/vulkan.h>
 
+#define FG_TOWER_MAX_PAIRS 16u
+
 typedef struct tower_buffer {
     VkBuffer buffer;
     VkDeviceMemory memory;
@@ -1799,6 +1801,241 @@ static void tower_block_stream_release(tower_session *session,
     tower_weight_release(session,&weights->ln1_b);tower_weight_release(session,&weights->ln1_w);
 }
 
+typedef struct tower_vision_buffers {
+    tower_buffer token;
+    tower_buffer x;
+    tower_buffer t;
+    tower_buffer qkv;
+    tower_buffer up;
+    tower_buffer attn;
+    tower_buffer block;
+    tower_buffer out;
+} tower_vision_buffers;
+
+static void tower_vision_buffers_destroy(fg_tower_vk *tower,tower_vision_buffers *buffers){
+    tower_buffer_destroy(tower,&buffers->out);
+    tower_buffer_destroy(tower,&buffers->block);
+    tower_buffer_destroy(tower,&buffers->attn);
+    tower_buffer_destroy(tower,&buffers->up);
+    tower_buffer_destroy(tower,&buffers->qkv);
+    tower_buffer_destroy(tower,&buffers->t);
+    tower_buffer_destroy(tower,&buffers->x);
+    tower_buffer_destroy(tower,&buffers->token);
+}
+
+static fg_status tower_vision_buffers_create(fg_tower_vk *tower,const fg_tower_geometry *geometry,
+                                             tower_vision_buffers *buffers,fg_error *err){
+    const uint32_t n=geometry->tokens;
+    const uint32_t merged=geometry->merged_tokens;
+    fg_status status=tower_buffer_create(tower,(uint64_t)n*FG_TOWER_TOKEN_VALUES*sizeof(float),
+                                         &buffers->token,err);
+    if(status==FG_OK)status=tower_buffer_create(tower,(uint64_t)n*FG_TOWER_HIDDEN*sizeof(float),
+                                                &buffers->x,err);
+    if(status==FG_OK)status=tower_buffer_create(tower,(uint64_t)n*FG_TOWER_HIDDEN*sizeof(float),
+                                                &buffers->t,err);
+    if(status==FG_OK)status=tower_buffer_create(tower,
+        (uint64_t)n*FG_TOWER_QKV_WIDTH*sizeof(float),&buffers->qkv,err);
+    if(status==FG_OK)status=tower_buffer_create(tower,(uint64_t)n*FG_TOWER_MLP*sizeof(float),
+                                                &buffers->up,err);
+    if(status==FG_OK)status=tower_buffer_create(tower,(uint64_t)n*FG_TOWER_HIDDEN*sizeof(float),
+                                                &buffers->attn,err);
+    if(status==FG_OK)status=tower_buffer_create(tower,(uint64_t)n*FG_TOWER_HIDDEN*sizeof(float),
+                                                &buffers->block,err);
+    if(status==FG_OK)status=tower_buffer_create(tower,
+        (uint64_t)merged*FG_TOWER_OUT_HIDDEN*sizeof(float),&buffers->out,err);
+    if(status!=FG_OK)tower_vision_buffers_destroy(tower,buffers);
+    return status;
+}
+
+static fg_status tower_vision_pair_record(tower_session *session,tower_vision_buffers *buffers,
+                                          const fg_tower_geometry *geometry,
+                                          tower_timing *timing,uint32_t *dispatches,
+                                          fg_error *err){
+    fg_tower_vk *tower=session->tower;
+    const uint32_t n=geometry->tokens;
+    const uint32_t merged=geometry->merged_tokens;
+    tower_block_stream_weights block_weights[2];
+    memset(block_weights,0,sizeof(block_weights));
+    tower_weight post_w={0},post_b={0},fc1={0},mm0_bias={0},fc2={0},mm2_bias={0};
+    fg_status status=tower_begin(tower,err);
+    if(status==FG_OK)status=tower_record_patch_stream(session,&buffers->token,&buffers->x,
+                                                      &buffers->t,geometry,timing,err);
+    if(status==FG_OK)*dispatches+=4u;
+    if(status==FG_OK)status=tower_block_stream_acquire(session,0u,&block_weights[0],timing,err);
+    if(status==FG_OK)status=tower_begin(tower,err);
+    if(status==FG_OK)status=tower_record_block_stream(session,&block_weights[0],&buffers->x,
+                                                      &buffers->t,&buffers->qkv,&buffers->up,
+                                                      &buffers->attn,&buffers->block,n,
+                                                      geometry->grid_width,err);
+    if(status==FG_OK)*dispatches+=16u;
+    if(status==FG_OK)status=tower_submit_async(tower,err);
+    for(uint32_t layer=1u;layer<FG_TOWER_LAYERS&&status==FG_OK;layer++){
+        const uint32_t current=layer&1u;
+        status=tower_block_stream_acquire(session,layer,&block_weights[current],timing,err);
+        if(status==FG_OK)status=tower_wait(tower,timing,err);
+        if(status==FG_OK)tower_block_stream_release(session,&block_weights[current^1u]);
+        if(status==FG_OK)status=tower_begin(tower,err);
+        if(status==FG_OK)status=tower_record_block_stream(session,&block_weights[current],
+                                                          &buffers->x,&buffers->t,&buffers->qkv,
+                                                          &buffers->up,&buffers->attn,
+                                                          &buffers->block,n,
+                                                          geometry->grid_width,err);
+        if(status==FG_OK)*dispatches+=16u;
+        if(status==FG_OK)status=tower_submit_async(tower,err);
+    }
+    if(status==FG_OK){
+        tower_weight_request requests[6]={
+            {"v.post_ln.weight",&post_w,1u,FG_TOWER_HIDDEN,0u},
+            {"v.post_ln.bias",&post_b,1u,FG_TOWER_HIDDEN,0u},
+            {"mm.0.weight",&fc1,FG_TOWER_MERGED_WIDTH,
+             (uint64_t)FG_TOWER_MERGED_WIDTH*FG_TOWER_MERGED_WIDTH,0u},
+            {"mm.0.bias",&mm0_bias,1u,FG_TOWER_MERGED_WIDTH,0u},
+            {"mm.2.weight",&fc2,FG_TOWER_OUT_HIDDEN,
+             (uint64_t)FG_TOWER_OUT_HIDDEN*FG_TOWER_MERGED_WIDTH,0u},
+            {"mm.2.bias",&mm2_bias,1u,FG_TOWER_OUT_HIDDEN,0u}
+        };
+        status=tower_weights_acquire_sorted(session,requests,6u,timing,err);
+    }
+    if(status==FG_OK)status=tower_wait(tower,timing,err);
+    if(status==FG_OK)tower_block_stream_release(session,&block_weights[(FG_TOWER_LAYERS-1u)&1u]);
+    if(status==FG_OK)status=tower_begin(tower,err);
+    if(status==FG_OK)status=tower_dispatch_layernorm(tower,&buffers->x,&post_w.buffer,
+                                                     &post_b.buffer,&buffers->t,n,
+                                                     FG_TOWER_HIDDEN,err);
+    if(status==FG_OK)status=tower_dispatch_matmul(tower,&fc1.buffer,&buffers->t,&buffers->block,
+                                                  merged,FG_TOWER_MERGED_WIDTH,
+                                                  FG_TOWER_MERGED_WIDTH,fc1.ggml_type,err);
+    if(status==FG_OK)status=tower_dispatch_bias(tower,&buffers->block,&mm0_bias.buffer,
+                                                merged*FG_TOWER_MERGED_WIDTH,
+                                                FG_TOWER_MERGED_WIDTH,err);
+    if(status==FG_OK)status=tower_dispatch_gelu(tower,&buffers->block,
+                                                merged*FG_TOWER_MERGED_WIDTH,err);
+    if(status==FG_OK)status=tower_dispatch_matmul(tower,&fc2.buffer,&buffers->block,
+                                                  &buffers->out,merged,FG_TOWER_OUT_HIDDEN,
+                                                  FG_TOWER_MERGED_WIDTH,fc2.ggml_type,err);
+    if(status==FG_OK)status=tower_dispatch_bias(tower,&buffers->out,&mm2_bias.buffer,
+                                                merged*FG_TOWER_OUT_HIDDEN,FG_TOWER_OUT_HIDDEN,err);
+    if(status==FG_OK)status=tower_submit(tower,timing,err);
+    if(status==FG_OK)*dispatches+=8u;
+    if(status!=FG_OK)tower_queue_idle(tower);
+    tower_block_stream_release(session,&block_weights[0]);
+    tower_block_stream_release(session,&block_weights[1]);
+    tower_weight_release(session,&mm2_bias);tower_weight_release(session,&fc2);
+    tower_weight_release(session,&mm0_bias);tower_weight_release(session,&fc1);
+    tower_weight_release(session,&post_b);tower_weight_release(session,&post_w);
+    return status;
+}
+
+static fg_status tower_vision_pairs_forward(const char *tower_dir,const float *tokens,
+                                            uint32_t tokens_per_pair,uint32_t pair_count,
+                                            const fg_tower_geometry *geometry,float **embeddings,
+                                            double preprocess_ms,fg_tower_vk_stats *stats,
+                                            fg_error *err){
+    if(!tower_dir||!tokens||!geometry||!embeddings||!pair_count||!tokens_per_pair){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid tower pair forward");
+        return FG_ERR_ARGUMENT;
+    }
+    if(!geometry->grid_width||!geometry->grid_height||
+       geometry->grid_width%FG_TOWER_MERGE||geometry->grid_height%FG_TOWER_MERGE||
+       (uint64_t)geometry->grid_width*geometry->grid_height!=geometry->tokens||
+       geometry->merged_tokens!=geometry->tokens/FG_TOWER_MERGE_FACTOR||
+       geometry->tokens>4096u||tokens_per_pair!=geometry->tokens){
+        fg_error_set(err,FG_ERR_FORMAT,"tower pair geometry is invalid");
+        return FG_ERR_FORMAT;
+    }
+    if(pair_count>FG_TOWER_MAX_PAIRS){
+        fg_error_set(err,FG_ERR_LIMIT,"tower pair count %u exceeds %u",pair_count,
+                     FG_TOWER_MAX_PAIRS);
+        return FG_ERR_LIMIT;
+    }
+    fg_status status=FG_OK;
+    const uint32_t n=geometry->tokens;
+    const uint32_t merged=geometry->merged_tokens;
+    const size_t token_values=(size_t)n*FG_TOWER_TOKEN_VALUES;
+    const size_t output_values=(size_t)merged*FG_TOWER_OUT_HIDDEN;
+    float *destination=*embeddings;
+    const bool provided=destination!=NULL;
+    if(!destination){
+        destination=malloc((size_t)pair_count*output_values*sizeof(float));
+        if(!destination){
+            fg_error_set(err,FG_ERR_OOM,"allocate tower pair embeddings");
+            return FG_ERR_OOM;
+        }
+    }
+    const double setup_begin=tower_now_ms();
+    pthread_mutex_lock(&tower_session_lock);
+    tower_session *session=&tower_session_state;
+    if(session->open&&strcmp(session->directory,tower_dir)){
+        tower_session_close(session);
+    }
+    if(!session->open){
+        status=tower_session_open(session,tower_dir,err);
+        if(status!=FG_OK){
+            pthread_mutex_unlock(&tower_session_lock);
+            if(!provided)free(destination);
+            return status;
+        }
+    }
+    fg_tower_vk *tower=session->tower;
+    if(status==FG_OK)status=tower_prepare(tower,err);
+    if(status==FG_OK)tower_budget_refresh(session);
+    const double setup_ms=tower_now_ms()-setup_begin;
+    tower_vision_buffers buffers;
+    memset(&buffers,0,sizeof(buffers));
+    if(status==FG_OK)status=tower_vision_buffers_create(tower,geometry,&buffers,err);
+    const double begin=tower_now_ms();
+    tower_timing timing={0};
+    uint32_t dispatches=0;
+    if(status==FG_OK)status=tower_begin(tower,err);
+    for(uint32_t pair=0u;pair<pair_count&&status==FG_OK;pair++){
+        const float *pair_tokens=tokens+(size_t)pair*token_values;
+        const double write_begin=tower_now_ms();
+        status=tower_buffer_write(tower,&buffers.token,pair_tokens,
+                                  (uint64_t)token_values*sizeof(float),err);
+        timing.write_ms+=tower_now_ms()-write_begin;
+        if(status==FG_OK)timing.upload_bytes+=(uint64_t)token_values*sizeof(float);
+        if(status==FG_OK)status=tower_vision_pair_record(session,&buffers,geometry,&timing,
+                                                         &dispatches,err);
+        if(status==FG_OK)status=tower_buffer_read(tower,&buffers.out,
+                                                  destination+(size_t)pair*output_values,
+                                                  (uint64_t)output_values*sizeof(float),err);
+    }
+    tower_scratch_trim(session);
+    tower_vision_buffers_destroy(tower,&buffers);
+    pthread_mutex_unlock(&tower_session_lock);
+    if(stats){
+        stats->dispatches=dispatches;
+        stats->forward_ms=tower_now_ms()-begin;
+        stats->upload_ms=timing.upload_ms;
+        stats->preprocess_ms=preprocess_ms;
+        stats->setup_ms=setup_ms;
+        stats->host_ms=timing.host_ms;
+        stats->compute_ms=timing.compute_ms;
+        stats->alloc_ms=timing.alloc_ms;
+        stats->read_ms=timing.read_ms;
+        stats->write_ms=timing.write_ms;
+        stats->weight_bytes=timing.upload_bytes;
+        stats->resident_bytes=timing.resident_bytes;
+        stats->resident_hit_bytes=timing.resident_hit_bytes;
+        stats->cache_budget_bytes=session->budget_bytes;
+        stats->scratch_bytes=session->scratch_bytes;
+    }
+    if(status!=FG_OK){
+        if(!provided)free(destination);
+        return status;
+    }
+    *embeddings=destination;
+    return FG_OK;
+}
+
+fg_status fg_tower_vision_forward_tokens(const char *tower_dir,const float *tokens,
+                                         uint32_t tokens_per_pair,uint32_t pair_count,
+                                         const fg_tower_geometry *geometry,float **embeddings,
+                                         fg_tower_vk_stats *stats,fg_error *err){
+    return tower_vision_pairs_forward(tower_dir,tokens,tokens_per_pair,pair_count,geometry,
+                                      embeddings,0.0,stats,err);
+}
+
 fg_status fg_tower_vision_forward(const char *tower_dir,const uint8_t *image_bytes,
                                   uint64_t image_length,float **embeddings,
                                   uint32_t *merged_tokens,uint32_t *grid_width,
@@ -1845,156 +2082,11 @@ fg_status fg_tower_vision_forward(const char *tower_dir,const uint8_t *image_byt
         free(tokens);
         return status;
     }
-    const double setup_begin=tower_now_ms();
-    pthread_mutex_lock(&tower_session_lock);
-    tower_session *session=&tower_session_state;
-    if(session->open&&strcmp(session->directory,tower_dir)){
-        tower_session_close(session);
-    }
-    if(!session->open){
-        status=tower_session_open(session,tower_dir,err);
-        if(status!=FG_OK){
-            pthread_mutex_unlock(&tower_session_lock);
-            free(tokens);
-            return status;
-        }
-    }
-    fg_tower_vk *tower=session->tower;
-    if(status==FG_OK)status=tower_prepare(tower,err);
-    if(status==FG_OK)tower_budget_refresh(session);
-    const double setup_ms=tower_now_ms()-setup_begin;
-    const uint32_t n=geometry.tokens;
-    const uint32_t merged=geometry.merged_tokens;
-    tower_buffer token_buffer={0},x={0},t={0},qkv={0},up={0},attn={0},block={0},out={0};
-    float *host_embeddings=NULL;
-    if(status==FG_OK)status=tower_buffer_create(tower,(uint64_t)n*FG_TOWER_TOKEN_VALUES*
-                                                sizeof(float),&token_buffer,err);
-    if(status==FG_OK)status=tower_buffer_write(tower,&token_buffer,tokens,
-        (uint64_t)n*FG_TOWER_TOKEN_VALUES*sizeof(float),err);
-    if(status==FG_OK)status=tower_buffer_create(tower,(uint64_t)n*FG_TOWER_HIDDEN*sizeof(float),
-                                                &x,err);
-    if(status==FG_OK)status=tower_buffer_create(tower,(uint64_t)n*FG_TOWER_HIDDEN*sizeof(float),
-                                                &t,err);
-    if(status==FG_OK)status=tower_buffer_create(tower,(uint64_t)n*FG_TOWER_QKV_WIDTH*sizeof(float),
-                                                &qkv,err);
-    if(status==FG_OK)status=tower_buffer_create(tower,(uint64_t)n*FG_TOWER_MLP*sizeof(float),
-                                                &up,err);
-    if(status==FG_OK)status=tower_buffer_create(tower,(uint64_t)n*FG_TOWER_HIDDEN*sizeof(float),
-                                                &attn,err);
-    if(status==FG_OK)status=tower_buffer_create(tower,(uint64_t)n*FG_TOWER_HIDDEN*sizeof(float),
-                                                &block,err);
-    if(status==FG_OK)status=tower_buffer_create(tower,
-        (uint64_t)merged*FG_TOWER_OUT_HIDDEN*sizeof(float),&out,err);
-    const double begin=tower_now_ms();
-    tower_timing timing={0};
-    uint32_t dispatches=0;
-    tower_block_stream_weights block_weights[2];
-    memset(block_weights,0,sizeof(block_weights));
-    tower_weight post_w={0},post_b={0},fc1={0},mm0_bias={0},fc2={0},mm2_bias={0};
-    if(status==FG_OK)status=tower_begin(tower,err);
-    if(status==FG_OK)status=tower_record_patch_stream(session,&token_buffer,&x,&t,&geometry,
-                                                      &timing,err);
-    if(status==FG_OK)dispatches+=4u;
-    if(status==FG_OK)status=tower_block_stream_acquire(session,0u,&block_weights[0],&timing,err);
-    if(status==FG_OK)status=tower_begin(tower,err);
-    if(status==FG_OK)status=tower_record_block_stream(session,&block_weights[0],&x,&t,&qkv,&up,
-                                                      &attn,&block,n,geometry.grid_width,err);
-    if(status==FG_OK)dispatches+=16u;
-    if(status==FG_OK)status=tower_submit_async(tower,err);
-    for(uint32_t layer=1u;layer<FG_TOWER_LAYERS&&status==FG_OK;layer++){
-        const uint32_t current=layer&1u;
-        status=tower_block_stream_acquire(session,layer,&block_weights[current],&timing,err);
-        if(status==FG_OK)status=tower_wait(tower,&timing,err);
-        if(status==FG_OK)tower_block_stream_release(session,&block_weights[current^1u]);
-        if(status==FG_OK)status=tower_begin(tower,err);
-        if(status==FG_OK)status=tower_record_block_stream(session,&block_weights[current],&x,&t,
-                                                          &qkv,&up,&attn,&block,n,
-                                                          geometry.grid_width,err);
-        if(status==FG_OK)dispatches+=16u;
-        if(status==FG_OK)status=tower_submit_async(tower,err);
-    }
-    if(status==FG_OK){
-        tower_weight_request requests[6]={
-            {"v.post_ln.weight",&post_w,1u,FG_TOWER_HIDDEN,0u},
-            {"v.post_ln.bias",&post_b,1u,FG_TOWER_HIDDEN,0u},
-            {"mm.0.weight",&fc1,FG_TOWER_MERGED_WIDTH,
-             (uint64_t)FG_TOWER_MERGED_WIDTH*FG_TOWER_MERGED_WIDTH,0u},
-            {"mm.0.bias",&mm0_bias,1u,FG_TOWER_MERGED_WIDTH,0u},
-            {"mm.2.weight",&fc2,FG_TOWER_OUT_HIDDEN,
-             (uint64_t)FG_TOWER_OUT_HIDDEN*FG_TOWER_MERGED_WIDTH,0u},
-            {"mm.2.bias",&mm2_bias,1u,FG_TOWER_OUT_HIDDEN,0u}
-        };
-        status=tower_weights_acquire_sorted(session,requests,6u,&timing,err);
-    }
-    if(status==FG_OK)status=tower_wait(tower,&timing,err);
-    if(status==FG_OK)tower_block_stream_release(session,&block_weights[(FG_TOWER_LAYERS-1u)&1u]);
-    if(status==FG_OK)status=tower_begin(tower,err);
-    if(status==FG_OK)status=tower_dispatch_layernorm(tower,&x,&post_w.buffer,&post_b.buffer,&t,n,
-                                                     FG_TOWER_HIDDEN,err);
-    if(status==FG_OK)status=tower_dispatch_matmul(tower,&fc1.buffer,&t,&block,merged,
-                                                  FG_TOWER_MERGED_WIDTH,FG_TOWER_MERGED_WIDTH,
-                                                  fc1.ggml_type,err);
-    if(status==FG_OK)status=tower_dispatch_bias(tower,&block,&mm0_bias.buffer,
-                                                merged*FG_TOWER_MERGED_WIDTH,
-                                                FG_TOWER_MERGED_WIDTH,err);
-    if(status==FG_OK)status=tower_dispatch_gelu(tower,&block,merged*FG_TOWER_MERGED_WIDTH,err);
-    if(status==FG_OK)status=tower_dispatch_matmul(tower,&fc2.buffer,&block,&out,merged,
-                                                  FG_TOWER_OUT_HIDDEN,FG_TOWER_MERGED_WIDTH,
-                                                  fc2.ggml_type,err);
-    if(status==FG_OK)status=tower_dispatch_bias(tower,&out,&mm2_bias.buffer,
-                                                merged*FG_TOWER_OUT_HIDDEN,FG_TOWER_OUT_HIDDEN,err);
-    if(status==FG_OK)status=tower_submit(tower,&timing,err);
-    if(status==FG_OK)dispatches+=8u;
-    if(status!=FG_OK)tower_queue_idle(tower);
-    tower_block_stream_release(session,&block_weights[0]);
-    tower_block_stream_release(session,&block_weights[1]);
-    tower_weight_release(session,&mm2_bias);tower_weight_release(session,&fc2);
-    tower_weight_release(session,&mm0_bias);tower_weight_release(session,&fc1);
-    tower_weight_release(session,&post_b);tower_weight_release(session,&post_w);
-    tower_scratch_trim(session);
-    if(status==FG_OK){
-        host_embeddings=malloc((size_t)merged*FG_TOWER_OUT_HIDDEN*sizeof(float));
-        if(!host_embeddings){
-            status=FG_ERR_OOM;
-            fg_error_set(err,FG_ERR_OOM,"allocate tower embeddings");
-        }
-    }
-    if(status==FG_OK)status=tower_buffer_read(tower,&out,host_embeddings,
-        (uint64_t)merged*FG_TOWER_OUT_HIDDEN*sizeof(float),err);
-    if(stats){
-        stats->dispatches=dispatches;
-        stats->forward_ms=tower_now_ms()-begin;
-        stats->upload_ms=timing.upload_ms;
-        stats->preprocess_ms=preprocess_ms;
-        stats->setup_ms=setup_ms;
-        stats->host_ms=timing.host_ms;
-        stats->compute_ms=timing.compute_ms;
-        stats->alloc_ms=timing.alloc_ms;
-        stats->read_ms=timing.read_ms;
-        stats->write_ms=timing.write_ms;
-        stats->weight_bytes=timing.upload_bytes;
-        stats->resident_bytes=timing.resident_bytes;
-        stats->resident_hit_bytes=timing.resident_hit_bytes;
-        stats->cache_budget_bytes=session->budget_bytes;
-        stats->scratch_bytes=session->scratch_bytes;
-    }
-    if(status!=FG_OK){
-        free(host_embeddings);
-        host_embeddings=NULL;
-    }
-    tower_buffer_destroy(tower,&out);
-    tower_buffer_destroy(tower,&block);
-    tower_buffer_destroy(tower,&attn);
-    tower_buffer_destroy(tower,&up);
-    tower_buffer_destroy(tower,&qkv);
-    tower_buffer_destroy(tower,&t);
-    tower_buffer_destroy(tower,&x);
-    tower_buffer_destroy(tower,&token_buffer);
-    pthread_mutex_unlock(&tower_session_lock);
+    fg_status forward=tower_vision_pairs_forward(tower_dir,tokens,geometry.tokens,1u,
+                                                 &geometry,embeddings,preprocess_ms,stats,err);
     free(tokens);
-    if(status!=FG_OK)return status;
-    *embeddings=host_embeddings;
-    *merged_tokens=merged;
+    if(forward!=FG_OK)return forward;
+    *merged_tokens=geometry.merged_tokens;
     *grid_width=geometry.grid_width;
     *grid_height=geometry.grid_height;
     return FG_OK;

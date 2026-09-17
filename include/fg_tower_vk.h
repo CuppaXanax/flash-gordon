@@ -61,4 +61,9 @@ fg_status fg_tower_vision_forward(const char *tower_dir,const uint8_t *image_byt
                                   uint32_t *grid_height,fg_tower_vk_stats *stats,
                                   fg_error *err);
 
+fg_status fg_tower_vision_forward_tokens(const char *tower_dir,const float *tokens,
+                                         uint32_t tokens_per_pair,uint32_t pair_count,
+                                         const fg_tower_geometry *geometry,float **embeddings,
+                                         fg_tower_vk_stats *stats,fg_error *err);
+
 #endif
