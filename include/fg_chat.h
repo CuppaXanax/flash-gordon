@@ -54,6 +54,10 @@ fg_status fg_chat_render_continuation(const fg_chat_message *messages, size_t me
 fg_status fg_chat_render_tool_update(const fg_chat_render_options *previous,
                                      const fg_chat_render_options *current,
                                      char **rendered, fg_error *err);
+fg_status fg_chat_render_system_update(const fg_chat_message *previous, size_t previous_count,
+                                       const fg_chat_message *current, size_t current_count,
+                                       char **rendered, fg_error *err);
+size_t fg_chat_leading_system_count(const fg_chat_message *messages, size_t message_count);
 fg_status fg_chat_parse_generated(const char *text, bool thinking,
                                   fg_chat_generated *generated, fg_error *err);
 void fg_chat_generated_free(fg_chat_generated *generated);

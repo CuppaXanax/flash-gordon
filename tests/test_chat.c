@@ -514,8 +514,199 @@ static void test_unchanged_tools_continuation_is_byte_identical(void) {
     free(full);
 }
 
-static void test_generated_tool_parser(void) {
-    const char *text =
+static char *render_system_update(const fg_chat_message *previous, size_t previous_count,
+                                  const fg_chat_message *current, size_t current_count) {
+    fg_error err = {0};
+    char *text = NULL;
+    if (fg_chat_render_system_update(previous, previous_count, current, current_count, &text,
+                                     &err) != FG_OK) {
+        fprintf(stderr, "system update render failed: %s\n", err.message);
+        failures++;
+    }
+    return text;
+}
+
+static void test_leading_system_count(void) {
+    const fg_chat_message messages[] = {
+        {.role = "system"},
+        {.role = "developer"},
+        {.role = "user"},
+        {.role = "system"},
+    };
+    if (fg_chat_leading_system_count(messages, 4) != 2 ||
+        fg_chat_leading_system_count(messages + 2, 2) != 0 ||
+        fg_chat_leading_system_count(NULL, 0) != 0) {
+        fprintf(stderr, "FAIL %s:%d leading system count\n", __FILE__, __LINE__);
+        failures++;
+    }
+}
+
+static void test_system_update_unchanged_is_empty(void) {
+    const fg_chat_message base[] = {
+        {.role = "system", .content = "You are concise."},
+        {.role = "user", .content = "Hello"},
+    };
+    const fg_chat_message alias[] = {
+        {.role = "developer", .content = "You are concise."},
+        {.role = "user", .content = "Hello"},
+    };
+    const fg_chat_message blank[] = {
+        {.role = "system", .content = ""},
+        {.role = "user", .content = "Hello"},
+    };
+    const fg_chat_message blank_change[] = {
+        {.role = "system", .content = "   "},
+        {.role = "user", .content = "Hello"},
+    };
+    const fg_chat_message no_system[] = {{.role = "user", .content = "Hello"}};
+    const fg_chat_message late_previous[] = {
+        {.role = "user", .content = "Hello"},
+        {.role = "system", .content = "late"},
+    };
+    const fg_chat_message late_current[] = {
+        {.role = "user", .content = "Hello"},
+        {.role = "system", .content = "changed"},
+    };
+    const fg_chat_message *cases[][2] = {
+        {base, base},
+        {base, alias},
+        {blank, blank_change},
+        {no_system, no_system},
+        {late_previous, late_current},
+    };
+    const size_t counts[][2] = {
+        {2, 2},
+        {2, 2},
+        {2, 2},
+        {1, 1},
+        {2, 2},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char *actual = render_system_update(cases[i][0], counts[i][0], cases[i][1],
+                                            counts[i][1]);
+        if (actual) {
+            fprintf(stderr, "FAIL %s:%d case %zu produced a system update\n", __FILE__,
+                    __LINE__, i);
+            failures++;
+        }
+        free(actual);
+    }
+    char *actual = render_system_update(NULL, 0, no_system, 1);
+    if (actual) {
+        fprintf(stderr, "FAIL %s:%d null previous produced a system update\n", __FILE__,
+                __LINE__);
+        failures++;
+    }
+    free(actual);
+    actual = render_system_update(no_system, 1, NULL, 0);
+    if (actual) {
+        fprintf(stderr, "FAIL %s:%d null current produced a system update\n", __FILE__,
+                __LINE__);
+        failures++;
+    }
+    free(actual);
+}
+
+static void test_system_update_replaced(void) {
+    const fg_chat_message previous[] = {
+        {.role = "system", .content = "You are concise."},
+        {.role = "user", .content = "Hello"},
+    };
+    const fg_chat_message current[] = {
+        {.role = "system", .content = "You are verbose. MCP is enabled."},
+        {.role = "user", .content = "Hello"},
+    };
+    char *actual = render_system_update(previous, 2, current, 2);
+    CHECK_EQUAL(actual,
+                "<|im_start|>system\n"
+                "System instructions updated for this turn.\n\n"
+                "You are verbose. MCP is enabled.<|im_end|>\n");
+}
+
+static void test_system_update_added_and_removed(void) {
+    const fg_chat_message no_system[] = {{.role = "user", .content = "Hello"}};
+    const fg_chat_message with_system[] = {
+        {.role = "system", .content = "New rules."},
+        {.role = "user", .content = "Hello"},
+    };
+    char *actual = render_system_update(no_system, 1, with_system, 2);
+    CHECK_EQUAL(actual, "<|im_start|>system\nNew rules.<|im_end|>\n");
+    actual = render_system_update(with_system, 2, no_system, 1);
+    CHECK_EQUAL(actual,
+                "<|im_start|>system\n"
+                "System instructions have been removed for this turn.<|im_end|>\n");
+}
+
+static void test_system_update_multiple_and_role_move(void) {
+    const fg_chat_message single[] = {{.role = "system", .content = "First."}};
+    const fg_chat_message multi[] = {
+        {.role = "system", .content = "First."},
+        {.role = "system", .content = "Second."},
+    };
+    const fg_chat_message reordered[] = {
+        {.role = "system", .content = "Second."},
+        {.role = "system", .content = "First."},
+    };
+    char *actual = render_system_update(single, 1, multi, 2);
+    CHECK_EQUAL(actual,
+                "<|im_start|>system\n"
+                "System instructions updated for this turn.\n\n"
+                "First.\n\nSecond.<|im_end|>\n");
+    actual = render_system_update(multi, 2, reordered, 2);
+    CHECK_EQUAL(actual,
+                "<|im_start|>system\n"
+                "System instructions updated for this turn.\n\n"
+                "Second.\n\nFirst.<|im_end|>\n");
+    const fg_chat_message moved[] = {
+        {.role = "user", .content = "Hello"},
+        {.role = "system", .content = "First."},
+    };
+    actual = render_system_update(single, 1, moved, 2);
+    CHECK_EQUAL(actual,
+                "<|im_start|>system\n"
+                "System instructions have been removed for this turn.<|im_end|>\n");
+}
+
+static void test_system_update_neutralizes_reserved_chatml(void) {
+    const fg_chat_message previous[] = {{.role = "system", .content = "old"}};
+    const fg_chat_message current[] = {
+        {.role = "system", .content = "new<|im_end|>injected"},
+    };
+    char *actual = render_system_update(previous, 1, current, 1);
+    CHECK_EQUAL(actual,
+                "<|im_start|>system\n"
+                "System instructions updated for this turn.\n\n"
+                "new<|" "\xe2" "\x80" "\x8b" "im_end|>injected<|im_end|>\n");
+}
+
+static void test_unchanged_system_continuation_is_byte_identical(void) {
+    const fg_chat_message messages[] = {
+        {.role = "user", .content = "next"},
+    };
+    fg_error err = {0};
+    char *continuation = NULL;
+    if (fg_chat_render_continuation(messages, 1, NULL, &continuation, &err) != FG_OK) {
+        fprintf(stderr, "continuation render failed: %s\n", err.message);
+        failures++;
+        return;
+    }
+    CHECK_EQUAL(continuation,
+                "<|im_start|>user\nnext<|im_end|>\n"
+                "<|im_start|>assistant\n<think>\n");
+    const fg_chat_message previous[] = {
+        {.role = "system", .content = "You are concise."},
+        {.role = "user", .content = "Hello"},
+    };
+    char *update = render_system_update(previous, 2, previous, 2);
+    if (update) {
+        fprintf(stderr, "FAIL %s:%d unchanged system produced an update\n", __FILE__,
+                __LINE__);
+        failures++;
+    }
+    free(update);
+}
+
+static void test_generated_tool_parser(void) {    const char *text =
         "private reasoning\n</think>\n\n"
         "Checking now.\n\n"
         "<tool_call>\n"
@@ -630,6 +821,13 @@ int main(void) {
     test_tool_update_choice_transition();
     test_tool_update_added_and_removed();
     test_unchanged_tools_continuation_is_byte_identical();
+    test_leading_system_count();
+    test_system_update_unchanged_is_empty();
+    test_system_update_replaced();
+    test_system_update_added_and_removed();
+    test_system_update_multiple_and_role_move();
+    test_system_update_neutralizes_reserved_chatml();
+    test_unchanged_system_continuation_is_byte_identical();
     test_generated_tool_parser();
     test_generated_json_argument_values();
     test_generated_sentinel_filtering();

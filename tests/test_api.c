@@ -1706,6 +1706,241 @@ static void test_tool_change_with_tampered_history_resets(void) {
     fg_runtime_close(&runtime);
 }
 
+static void test_system_change_continues_prefix(void) {
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    char *response = run_chat_request(
+        &runtime, &session,
+        "{\"messages\":["
+        "{\"role\":\"system\",\"content\":\"Base rules.\"},"
+        "{\"role\":\"user\",\"content\":\"hello\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(session.valid);
+    free(response);
+
+    size_t prior_evaluated = runtime.evaluated_length;
+    uint32_t prior_resets = runtime.reset_count;
+    response = run_chat_request(
+        &runtime, &session,
+        "{\"messages\":["
+        "{\"role\":\"system\",\"content\":\"Base rules. Extra MCP rules.\"},"
+        "{\"role\":\"user\",\"content\":\"hello\"},"
+        "{\"role\":\"assistant\",\"content\":\"answer\"},"
+        "{\"role\":\"user\",\"content\":\"next\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: hit\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: none\r\n"));
+    CHECK(runtime.reset_count == prior_resets);
+    char reused_header[96];
+    snprintf(reused_header, sizeof(reused_header),
+             "X-Flash-Gordon-Reused-Tokens: %zu\r\n", prior_evaluated);
+    CHECK(response && strstr(response, reused_header));
+    CHECK(runtime.history &&
+          strstr(runtime.history,
+                 "answer<|im_end|>\n"
+                 "<|im_start|>system\n"
+                 "System instructions updated for this turn.\n\n"
+                 "Base rules. Extra MCP rules.<|im_end|>\n"
+                 "<|im_start|>user\nnext<|im_end|>\n"
+                 "<|im_start|>assistant\n<think>\n"));
+    free(response);
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
+}
+
+static void test_system_added_continues_prefix(void) {
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    char *response = run_chat_request(
+        &runtime, &session,
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(session.valid);
+    free(response);
+
+    size_t prior_evaluated = runtime.evaluated_length;
+    uint32_t prior_resets = runtime.reset_count;
+    response = run_chat_request(
+        &runtime, &session,
+        "{\"messages\":["
+        "{\"role\":\"system\",\"content\":\"New rules.\"},"
+        "{\"role\":\"user\",\"content\":\"hello\"},"
+        "{\"role\":\"assistant\",\"content\":\"answer\"},"
+        "{\"role\":\"user\",\"content\":\"next\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: hit\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: none\r\n"));
+    CHECK(runtime.reset_count == prior_resets);
+    char reused_header[96];
+    snprintf(reused_header, sizeof(reused_header),
+             "X-Flash-Gordon-Reused-Tokens: %zu\r\n", prior_evaluated);
+    CHECK(response && strstr(response, reused_header));
+    CHECK(runtime.history &&
+          strstr(runtime.history,
+                 "answer<|im_end|>\n"
+                 "<|im_start|>system\nNew rules.<|im_end|>\n"
+                 "<|im_start|>user\nnext<|im_end|>\n"
+                 "<|im_start|>assistant\n<think>\n"));
+    free(response);
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
+}
+
+static void test_system_removed_continues_prefix(void) {
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    char *response = run_chat_request(
+        &runtime, &session,
+        "{\"messages\":["
+        "{\"role\":\"system\",\"content\":\"Old rules.\"},"
+        "{\"role\":\"user\",\"content\":\"hello\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(session.valid);
+    free(response);
+
+    size_t prior_evaluated = runtime.evaluated_length;
+    uint32_t prior_resets = runtime.reset_count;
+    response = run_chat_request(
+        &runtime, &session,
+        "{\"messages\":["
+        "{\"role\":\"user\",\"content\":\"hello\"},"
+        "{\"role\":\"assistant\",\"content\":\"answer\"},"
+        "{\"role\":\"user\",\"content\":\"next\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: hit\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: none\r\n"));
+    CHECK(runtime.reset_count == prior_resets);
+    char reused_header[96];
+    snprintf(reused_header, sizeof(reused_header),
+             "X-Flash-Gordon-Reused-Tokens: %zu\r\n", prior_evaluated);
+    CHECK(response && strstr(response, reused_header));
+    CHECK(runtime.history &&
+          strstr(runtime.history,
+                 "answer<|im_end|>\n"
+                 "<|im_start|>system\n"
+                 "System instructions have been removed for this turn.<|im_end|>\n"
+                 "<|im_start|>user\nnext<|im_end|>\n"
+                 "<|im_start|>assistant\n<think>\n"));
+    free(response);
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
+}
+
+static void test_system_unchanged_continuation_is_byte_identical(void) {
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    char *response = run_chat_request(
+        &runtime, &session,
+        "{\"messages\":["
+        "{\"role\":\"system\",\"content\":\"Base rules.\"},"
+        "{\"role\":\"user\",\"content\":\"hello\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(session.valid);
+    free(response);
+
+    size_t prior_evaluated = runtime.evaluated_length;
+    uint32_t prior_resets = runtime.reset_count;
+    response = run_chat_request(
+        &runtime, &session,
+        "{\"messages\":["
+        "{\"role\":\"system\",\"content\":\"Base rules.\"},"
+        "{\"role\":\"user\",\"content\":\"hello\"},"
+        "{\"role\":\"assistant\",\"content\":\"answer\"},"
+        "{\"role\":\"user\",\"content\":\"next\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: hit\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: none\r\n"));
+    CHECK(runtime.reset_count == prior_resets);
+    char reused_header[96];
+    snprintf(reused_header, sizeof(reused_header),
+             "X-Flash-Gordon-Reused-Tokens: %zu\r\n", prior_evaluated);
+    CHECK(response && strstr(response, reused_header));
+    CHECK(runtime.history &&
+          strstr(runtime.history,
+                 "answer<|im_end|>\n"
+                 "<|im_start|>user\nnext<|im_end|>\n"
+                 "<|im_start|>assistant\n<think>\n"));
+    CHECK(runtime.history && !strstr(runtime.history, "System instructions"));
+    free(response);
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
+}
+
+static void test_system_change_with_tampered_history_resets(void) {
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    char *response = run_chat_request(
+        &runtime, &session,
+        "{\"messages\":["
+        "{\"role\":\"system\",\"content\":\"Base rules.\"},"
+        "{\"role\":\"user\",\"content\":\"hello\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(session.valid);
+    free(response);
+
+    uint32_t prior_resets = runtime.reset_count;
+    response = run_chat_request(
+        &runtime, &session,
+        "{\"messages\":["
+        "{\"role\":\"system\",\"content\":\"New rules.\"},"
+        "{\"role\":\"user\",\"content\":\"tampered\"},"
+        "{\"role\":\"assistant\",\"content\":\"answer\"},"
+        "{\"role\":\"user\",\"content\":\"next\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: miss\r\n"));
+    CHECK(response &&
+          strstr(response, "X-Flash-Gordon-Reset-Reason: public-history-mismatch\r\n"));
+    CHECK(runtime.reset_count == prior_resets + 1u);
+    CHECK(runtime.history && !strstr(runtime.history, "System instructions"));
+    free(response);
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
+}
+
+static void test_system_shrink_resets(void) {
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    char *response = run_chat_request(
+        &runtime, &session,
+        "{\"messages\":["
+        "{\"role\":\"system\",\"content\":\"Base rules.\"},"
+        "{\"role\":\"user\",\"content\":\"hello\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(session.valid);
+    free(response);
+
+    uint32_t prior_resets = runtime.reset_count;
+    response = run_chat_request(
+        &runtime, &session,
+        "{\"messages\":[{\"role\":\"system\",\"content\":\"New rules.\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: miss\r\n"));
+    CHECK(response &&
+          strstr(response, "X-Flash-Gordon-Reset-Reason: public-history-mismatch\r\n"));
+    CHECK(runtime.reset_count == prior_resets + 1u);
+    free(response);
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
+}
+
 static void test_failed_generation_fails_closed(void) {
     fg_runtime runtime = {
         .empty_reason = FG_PREFIX_RESET_COLD_START,
@@ -1960,6 +2195,113 @@ static void test_public_session_mismatch_reasons(void) {
     CHECK(!strcmp(reason, "messages=2->1"));
 }
 
+static void test_public_session_system_delta_rules(void) {
+    fg_chat_message stored[] = {
+        {.role = "system", .content = "old rules"},
+        {.role = "user", .content = "hello"},
+        {.role = "assistant", .content = "answer"},
+    };
+    api_public_session session = {.valid = true};
+    session.transcript.message_count = 3;
+    session.transcript.messages = stored;
+
+    api_chat_request request = {0};
+    char reason[192] = {0};
+
+    fg_chat_message changed[] = {
+        {.role = "system", .content = "new rules"},
+        {.role = "user", .content = "hello"},
+        {.role = "assistant", .content = "answer"},
+        {.role = "user", .content = "next"},
+    };
+    request.message_count = 4;
+    request.messages = changed;
+    CHECK(api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!reason[0]);
+
+    fg_chat_message removed[] = {
+        {.role = "user", .content = "hello"},
+        {.role = "assistant", .content = "answer"},
+        {.role = "user", .content = "next"},
+    };
+    request.message_count = 3;
+    request.messages = removed;
+    CHECK(api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!reason[0]);
+
+    fg_chat_message added[] = {
+        {.role = "system", .content = "a"},
+        {.role = "system", .content = "b"},
+        {.role = "user", .content = "hello"},
+        {.role = "assistant", .content = "answer"},
+        {.role = "user", .content = "next"},
+    };
+    request.message_count = 5;
+    request.messages = added;
+    CHECK(api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!reason[0]);
+
+    fg_chat_message reordered[] = {
+        {.role = "developer", .content = "new rules"},
+        {.role = "user", .content = "hello"},
+        {.role = "assistant", .content = "answer"},
+        {.role = "user", .content = "next"},
+    };
+    request.message_count = 4;
+    request.messages = reordered;
+    CHECK(api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!reason[0]);
+
+    fg_chat_message replay[] = {
+        {.role = "system", .content = "new rules"},
+        {.role = "user", .content = "hello"},
+        {.role = "assistant", .content = "answer"},
+    };
+    request.message_count = 3;
+    request.messages = replay;
+    CHECK(api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!reason[0]);
+
+    fg_chat_message moved[] = {
+        {.role = "user", .content = "hello"},
+        {.role = "system", .content = "old rules"},
+        {.role = "assistant", .content = "answer"},
+        {.role = "user", .content = "next"},
+    };
+    request.message_count = 4;
+    request.messages = moved;
+    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!strcmp(reason, "message[1].role"));
+
+    fg_chat_message edited_user[] = {
+        {.role = "system", .content = "new rules"},
+        {.role = "user", .content = "tampered"},
+        {.role = "assistant", .content = "answer"},
+        {.role = "user", .content = "next"},
+    };
+    request.message_count = 4;
+    request.messages = edited_user;
+    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!strcmp(reason, "message[1].content"));
+
+    fg_chat_message edited_assistant[] = {
+        {.role = "system", .content = "new rules"},
+        {.role = "user", .content = "hello"},
+        {.role = "assistant", .content = "tampered"},
+        {.role = "user", .content = "next"},
+    };
+    request.message_count = 4;
+    request.messages = edited_assistant;
+    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!strcmp(reason, "message[2].content"));
+
+    fg_chat_message shrink[] = {{.role = "system", .content = "new rules"}};
+    request.message_count = 1;
+    request.messages = shrink;
+    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!strcmp(reason, "messages=3->1"));
+}
+
 int main(void) {
     test_openai_tools_request();
     test_openai_structured_text_content();
@@ -1986,10 +2328,17 @@ int main(void) {
     test_live_prefix_tool_loop();
     test_divergent_tool_request_clears_prefix_metadata();
     test_public_session_mismatch_reasons();
+    test_public_session_system_delta_rules();
     test_tool_choice_change_continues_prefix();
     test_tool_added_continues_prefix();
     test_tool_removed_continues_prefix();
     test_tool_change_with_tampered_history_resets();
+    test_system_change_continues_prefix();
+    test_system_added_continues_prefix();
+    test_system_removed_continues_prefix();
+    test_system_unchanged_continuation_is_byte_identical();
+    test_system_change_with_tampered_history_resets();
+    test_system_shrink_resets();
     test_image_http_flow();
     test_video_http_flow();
     test_video_frames_http_flow();

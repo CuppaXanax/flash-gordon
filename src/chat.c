@@ -793,6 +793,77 @@ fg_status fg_chat_render_tool_update(const fg_chat_render_options *previous,
     return FG_OK;
 }
 
+size_t fg_chat_leading_system_count(const fg_chat_message *messages, size_t message_count) {
+    size_t count = 0;
+    while (messages && count < message_count && role_is_system(messages[count].role)) count++;
+    return count;
+}
+
+static fg_status append_leading_system_text(fg_text_buffer *buffer,
+                                            const fg_chat_message *messages,
+                                            size_t message_count, fg_error *err) {
+    size_t count = fg_chat_leading_system_count(messages, message_count);
+    bool first = true;
+    for (size_t i = 0; i < count; i++) {
+        const char *content = messages[i].content;
+        if (!has_trimmed_content(content)) continue;
+        fg_status status = FG_OK;
+        if (!first) status = buffer_append(buffer, "\n\n", err);
+        if (status == FG_OK) status = buffer_append(buffer, content, err);
+        if (status != FG_OK) return status;
+        first = false;
+    }
+    return FG_OK;
+}
+
+fg_status fg_chat_render_system_update(const fg_chat_message *previous, size_t previous_count,
+                                       const fg_chat_message *current, size_t current_count,
+                                       char **rendered, fg_error *err) {
+    if (!rendered) {
+        fg_error_set(err, FG_ERR_ARGUMENT,
+                     "chat system update requires an output pointer");
+        return FG_ERR_ARGUMENT;
+    }
+    *rendered = NULL;
+    fg_text_buffer previous_text = {0}, current_text = {0};
+    fg_status status = append_leading_system_text(&previous_text, previous, previous_count, err);
+    if (status == FG_OK)
+        status = append_leading_system_text(&current_text, current, current_count, err);
+    if (status != FG_OK) {
+        free(previous_text.data);
+        free(current_text.data);
+        return status;
+    }
+    const char *before = previous_text.data ? previous_text.data : "";
+    const char *after = current_text.data ? current_text.data : "";
+    if (before[0] || after[0]) {
+        if (strcmp(before, after)) {
+            fg_text_buffer buffer = {0};
+            status = buffer_append(&buffer, "<|im_start|>system\n", err);
+            if (status == FG_OK && !after[0])
+                status = buffer_append(
+                    &buffer, "System instructions have been removed for this turn.", err);
+            if (status == FG_OK && after[0]) {
+                if (before[0])
+                    status = buffer_append(
+                        &buffer, "System instructions updated for this turn.\n\n", err);
+                if (status == FG_OK) status = buffer_append_text(&buffer, after, err);
+            }
+            if (status == FG_OK) status = buffer_append(&buffer, "<|im_end|>\n", err);
+            if (status != FG_OK) {
+                free(buffer.data);
+                free(previous_text.data);
+                free(current_text.data);
+                return status;
+            }
+            *rendered = buffer.data;
+        }
+    }
+    free(previous_text.data);
+    free(current_text.data);
+    return FG_OK;
+}
+
 static fg_status append_message(fg_text_buffer *buffer, const fg_chat_message *message,
                                 const fg_chat_render_options *options, fg_error *err) {
     const char *role = message->role ? message->role : "";

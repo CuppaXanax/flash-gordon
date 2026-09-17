@@ -1157,10 +1157,16 @@ static bool api_public_session_prefix(const api_public_session *session,
                      session->transcript.message_count,request->message_count);
         return false;
     }
-    for(size_t i=0;i<session->transcript.message_count;i++)
-        if(!api_message_equal(i,&session->transcript.messages[i],
-                              &request->messages[i],reason,reason_size))
+    size_t previous_system=fg_chat_leading_system_count(session->transcript.messages,
+                                                        session->transcript.message_count);
+    size_t current_system=fg_chat_leading_system_count(request->messages,
+                                                       request->message_count);
+    for(size_t i=previous_system;i<session->transcript.message_count;i++){
+        size_t current=current_system+(i-previous_system);
+        if(!api_message_equal(current,&session->transcript.messages[i],
+                              &request->messages[current],reason,reason_size))
             return false;
+    }
     return true;
 }
 
@@ -2625,8 +2631,15 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     }
     if(public_continuation){
         size_t previous=public_session->transcript.message_count;
-        status=fg_chat_render_continuation(request.messages+previous,
-                                           request.message_count-previous,
+        size_t previous_system=fg_chat_leading_system_count(
+            public_session->transcript.messages,previous);
+        size_t current_system=fg_chat_leading_system_count(request.messages,
+                                                           request.message_count);
+        size_t skip=previous;
+        if(current_system>=previous_system)skip+=current_system-previous_system;
+        else skip-=previous_system-current_system;
+        status=fg_chat_render_continuation(request.messages+skip,
+                                           request.message_count-skip,
                                            &render_options,&rendered_continuation,err);
         if(status==FG_OK){
             fg_chat_render_options previous_options={
@@ -2654,6 +2667,28 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
                 }
             }
             free(tool_update);
+        }
+        if(status==FG_OK){
+            char *system_update=NULL;
+            status=fg_chat_render_system_update(public_session->transcript.messages,previous,
+                                                request.messages,request.message_count,
+                                                &system_update,err);
+            if(status==FG_OK&&system_update){
+                size_t update_length=strlen(system_update);
+                size_t continuation_length=strlen(rendered_continuation);
+                char *combined=malloc(update_length+continuation_length+1u);
+                if(!combined){
+                    fg_error_set(err,FG_ERR_OOM,"allocate system update continuation");
+                    status=FG_ERR_OOM;
+                }else{
+                    memcpy(combined,system_update,update_length);
+                    memcpy(combined+update_length,rendered_continuation,
+                           continuation_length+1u);
+                    free(rendered_continuation);
+                    rendered_continuation=combined;
+                }
+            }
+            free(system_update);
         }
     }
     char id[96];
