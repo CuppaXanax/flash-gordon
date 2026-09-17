@@ -3,6 +3,29 @@
 You are the post-compaction me. Read this top to bottom before touching anything.
 Everything here is measured, not hoped. The fleet is healthy right now; keep it that way.
 
+## 0ab. VISION TOWER READY (2026-09-17)
+
+Images AND video are live end-to-end on the fleet (deployed SHA `11f406ff`, merged
+`a850a43`). `/v1/models` reports `image/video/video_frames`; API takes OpenAI-style
+content parts - `image_url` (base64 PNG/JPEG), `video_frames` (ordered frames +
+fps/max_frames), and `video_url` MP4 gated on ffmpeg (8.1.2 already on the blades).
+The tower pack (`tower.fgw`/`tower.fgm`, 334 tensors, HAS_VISION) streams from disk;
+the serving ring pack is untouched.
+
+- **Tower perf:** 3.0 s -> **0.71-0.88 s streaming** per 64-token image, **0.30 s
+  resident**; the streaming bottleneck was the name-sorted pack read order
+  (`blk.0, blk.1, blk.10...` vs numeric acquisition: 217 backward jumps); fixed with
+  offset-sorted `pread` into mapped device buffers. Bounded LRU residency keeps
+  58-160 MB on rank 0. Parity cosine 1.000000000, repeats byte-identical
+  (image/temporal/pairs all run the same pair pipeline).
+- **Video numbers:** 8 frames @2 fps (256 tokens): wall 9.1 s, tower 3.2 s;
+  MP4 testsrc 6 s: 9.4 s wall; **Big Buck Bunny 360p 10 s clip: 880 tokens, wall
+  19.2 s, tower 9.7 s, prefill 904 @163 TPS** - coherent scene descriptions.
+- **Text path untouched:** gates/battery/soak all in band; soak PASS.
+- **Limitations (future):** per-pair tower cost scales with pair token count
+  (long/high-res clips are tower-bound; cross-pair batched attention is the fix);
+  media requests cold-start (no image/video history persistence across turns).
+
 ## 0aa. THINKING CRASH FIXED + REASONING_CONTENT EMITTED (2026-09-16)
 
 Two birds, one root cause hunt (`fix/thinking-and-reasoning`, merged `e7fb96d`):
