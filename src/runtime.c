@@ -5123,7 +5123,10 @@ fg_status fg_runtime_generate_vision(fg_runtime *runtime,const char *transcript,
         uint32_t seen=0;
         for(size_t i=0;i<prompt.count;i++){
             const uint32_t token=prompt.data[i];
-            if(token!=FG_VISION_IMAGE_TOKEN&&token!=FG_VISION_VIDEO_TOKEN)continue;
+            if(token!=FG_VISION_IMAGE_TOKEN&&token!=FG_VISION_VIDEO_TOKEN){
+                expanded_count++;
+                continue;
+            }
             const bool matches=seen<media_count&&
                 (token==FG_VISION_IMAGE_TOKEN?media[seen].kind==FG_RUNTIME_MEDIA_IMAGE:
                  (media[seen].kind==FG_RUNTIME_MEDIA_VIDEO||

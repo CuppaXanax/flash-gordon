@@ -20,7 +20,7 @@ flash-gordon: $(OBJ)
 tests/test_core: tests/test_core.o $(TEST_COMMON)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
-tests/test_tower: tests/test_tower.o src/tower.o src/tower_vk.o vendor/stb_image_impl.o $(TEST_COMMON) | shaders
+tests/test_tower: tests/test_tower.o src/tower.o src/tower_vk.o src/video.o vendor/stb_image_impl.o $(TEST_COMMON) | shaders
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
 test-tower: tests/test_tower

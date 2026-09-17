@@ -2,6 +2,7 @@
 #include "fg_quant.h"
 #include "fg_tower.h"
 #include "fg_tower_vk.h"
+#include "fg_video.h"
 
 #include <errno.h>
 #include <math.h>
@@ -1107,11 +1108,74 @@ static int probe_run(const char *tower_dir,const char *image_path,uint32_t repea
     return status==FG_OK?0:1;
 }
 
+static int probe_video(const char *tower_dir,char **paths,uint32_t count,double fps){
+    fg_error err={0};
+    uint8_t **frames=calloc(count,sizeof(*frames));
+    size_t *lengths=calloc(count,sizeof(*lengths));
+    if(!frames||!lengths){
+        free(lengths);free(frames);
+        fprintf(stderr,"video frames: OOM\n");
+        return 1;
+    }
+    int rc=0;
+    for(uint32_t i=0;i<count&&!rc;i++){
+        uint64_t bytes=0;
+        frames[i]=read_file(paths[i],&bytes,&err);
+        if(!frames[i]){
+            fprintf(stderr,"video frame %u: %s\n",i,err.message);
+            rc=1;
+            break;
+        }
+        lengths[i]=(size_t)bytes;
+    }
+    if(!rc){
+        fg_video_options options;
+        fg_video_options_defaults(&options);
+        options.fps=fps;
+        fg_video_clip clip={0};
+        fg_tower_vk_stats stats={0};
+        const double begin=probe_now_ms();
+        fg_status status=fg_video_frames_forward(tower_dir,(const uint8_t *const *)frames,lengths,
+                                                 count,fps,&options,&clip,&stats,&err);
+        const double wall=probe_now_ms()-begin;
+        if(status!=FG_OK){
+            fprintf(stderr,"video frames: %s\n",err.message);
+            rc=1;
+        }else{
+            const size_t values=(size_t)clip.token_count*FG_TOWER_OUT_HIDDEN;
+            double norm=0.0;
+            bool finite=true;
+            for(size_t i=0;i<values;i++){
+                norm+=(double)clip.embeddings[i]*clip.embeddings[i];
+                if(!isfinite(clip.embeddings[i]))finite=false;
+            }
+            printf("video frames: wall=%.1f tower=%.1f setup=%.1f pair_host=%.1f pairs=%u "
+                   "tokens=%u grid=%ux%u frames=%u dispatches=%u finite=%s norm=%.4f\n",wall,
+                   stats.forward_ms,stats.setup_ms,wall-stats.forward_ms-stats.setup_ms,
+                   clip.pair_count,clip.token_count,clip.grid_width,clip.grid_height,
+                   clip.frame_count,stats.dispatches,finite?"yes":"no",sqrt(norm));
+            double first_norm=0.0;
+            for(size_t i=0;i<(size_t)clip.tokens_per_pair*FG_TOWER_OUT_HIDDEN;i++)
+                first_norm+=(double)clip.embeddings[i]*clip.embeddings[i];
+            printf("video frames pair0: norm=%.4f first=%.6f\n",sqrt(first_norm),
+                   clip.embeddings[0]);
+            free(clip.embeddings);
+        }
+    }
+    for(uint32_t i=0;i<count;i++)free(frames[i]);
+    free(lengths);
+    free(frames);
+    return rc;
+}
+
 int main(int argc,char **argv){
     const char *tower_dir=NULL,*image_path=NULL;
     uint32_t repeats=1u;
     bool cpu_ref=false,layer_sweep=false,smoke=false,stream=false,stream_cpu=false,stream_only=false;
     int layer_limit=-1;
+    char **video_paths=NULL;
+    uint32_t video_count=0;
+    double video_fps=2.0;
     for(int i=1;i<argc;i++){
         if(!strcmp(argv[i],"--tower-dir")&&i+1<argc)tower_dir=argv[++i];
         else if(!strcmp(argv[i],"--image")&&i+1<argc)image_path=argv[++i];
@@ -1123,12 +1187,21 @@ int main(int argc,char **argv){
         else if(!strcmp(argv[i],"--stream-cpu"))stream_cpu=true;
         else if(!strcmp(argv[i],"--stream-only"))stream_only=true;
         else if(!strcmp(argv[i],"--layers")&&i+1<argc)layer_limit=atoi(argv[++i]);
+        else if(!strcmp(argv[i],"--video-frames")&&i+1<argc){
+            video_fps=strtod(argv[++i],NULL);
+            video_paths=argv+i+1;
+            video_count=(uint32_t)(argc-i-1);
+            break;
+        }
         else{
             fprintf(stderr,"usage: test_tower [--tower-dir DIR --image FILE [--repeat N] "
-                           "[--cpu] [--layer-sweep] [--smoke] [--layers N]]\n");
+                           "[--cpu] [--layer-sweep] [--smoke] [--layers N]] "
+                           "[--tower-dir DIR --video-frames FPS FILE...]\n");
             return 2;
         }
     }
+    if(video_count&&tower_dir)
+        return probe_video(tower_dir,video_paths,video_count,video_fps);
     if(stream_only&&tower_dir&&image_path)
         return probe_stream_only(tower_dir,image_path,repeats);
     if(tower_dir&&image_path)
