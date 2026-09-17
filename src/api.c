@@ -1102,7 +1102,6 @@ static bool api_text_equal(const char *left,const char *right) {
 static bool api_message_equal(const fg_chat_message *left,const fg_chat_message *right) {
     if(!api_text_equal(left->role,right->role)||
        !api_text_equal(left->content,right->content)||
-       !api_text_equal(left->reasoning,right->reasoning)||
        !api_text_equal(left->tool_call_id,right->tool_call_id)||
        left->tool_call_count!=right->tool_call_count)return false;
     for(size_t i=0;i<left->tool_call_count;i++){
