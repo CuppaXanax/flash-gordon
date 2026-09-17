@@ -105,7 +105,7 @@ scope.
   request.
 - Remaining: production attention kernel for >4096 patch tokens, occupancy
   tuning for the quant matmuls, PNG/JPEG variants beyond the common subset and
-  exact mtmd preprocessing parity; video handling and token budget policy.
+  exact mtmd preprocessing parity; video token budget policy.
 
 ## 0d. Round-5 video input (frames-first, local)
 
@@ -133,13 +133,16 @@ convenience. No package installs and no hard ffmpeg dependency.
   position advancing by `max(nx,ny)` per temporal group (Qwen per-frame span
   semantics with temporal M-RoPE).
 - **Tower boundary**: the host packs each pair's tokens as
-  `[frame A patch (768) | frame B patch (768)]` and calls a weak
-  `fg_tower_vision_forward_tokens()` entry; deployments without it gate video
-  off. The exact tower-side contract is the TODO in the round-5 report
-  (`bc-250-dbg/results/video-*`): per pair, patch-embed with the temporal
-  weight slice applied to the first/second frame half, then the ordinary
-  position embedding, 27 blocks, post-LN and merger over the pair's spatial
-  grid; output is pair-major.
+  `[frame A patch (768) | frame B patch (768)]` and calls
+  `fg_tower_vision_forward_tokens()` (`src/tower_vk.c`); deployments without
+  the entry gate video off (weak symbol). Per pair the patch embed applies
+  `v.patch_embd.weight` to the first half and `v.patch_embd.weight.1` to the
+  second, then the ordinary learned position embedding, the 27 blocks,
+  post-LN and merger run over the pair's spatial grid, and the result is
+  written pair-major. Pairs stream one at a time through the shared tower
+  session (same weight cache and streaming envelope as images). The image
+  entry routes through the same pair pipeline with one pair, so image output
+  is unchanged.
 - **Text/image isolation**: the image media branch is source-identical to
   round 4 (the frames branch is a separate arm); the image and text test suites
   pass unchanged.
