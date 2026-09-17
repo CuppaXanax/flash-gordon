@@ -989,3 +989,26 @@ developing; the user approved eviction on demand.
 
 The user's goal, in their words: Qwen running at interactive coding speeds, Frontier-
 class intelligence on their own hardware. The ring is the hill. Climb it.
+
+## 0ad. PREFIX CONTINUITY V2 - DIAGNOSTICS, CUT TURNS, TOOL CHURN (2026-09-17)
+
+Three long-standing continuation gaps closed (merged `75bf18d`, fleet build
+`cd5bdba9`, live dir `20260917-tool-delta`):
+
+- **Diagnostic**: a rejected client history now logs one `SESSION_MISMATCH <check>`
+  line naming the first failing sub-check (`schemas=a->b`, `schemas[i]`,
+  `choice=a->b`, `choice_name`, `messages=a->b`, `message[i].<field>`,
+  `message[i].tool_calls[j].<field>`). Reproduced live for all four classes.
+- **max_tokens continuation**: when the previous turn was cut by the token cap
+  (no EOS), the runtime synthesizes the boundary instead of refusing; cut turns
+  now continue with `prefix hit, reused N` (proved with chained cut turns).
+- **Tool churn**: tool-set/choice changes no longer force a full re-prefill. The
+  head stays stable; a tool-delta `<|im_start|>system` block is rendered into the
+  continuation suffix only when metadata changes, and the session comparison
+  keys on the message prefix (tool changes tolerated; message tampering still
+  `public-history-mismatch`). Byte-identical renders when tools are unchanged.
+
+**Measured (52K context, tool added + `tool_choice` flipped to named):**
+baseline 52,451 tokens prefilled / 143.1 s / miss -> fix **131 prefilled,
+52,373 reused / 5.25 s / hit**. Tool remove: hit. Tampered earlier message:
+still rejected. Gates + battery + soak PASS.
