@@ -10,6 +10,7 @@
 #include <netdb.h>
 #include <poll.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1099,31 +1100,100 @@ static bool api_text_equal(const char *left,const char *right) {
     return !strcmp(left ? left : "",right ? right : "");
 }
 
-static bool api_message_equal(const fg_chat_message *left,const fg_chat_message *right) {
-    if(!api_text_equal(left->role,right->role)||
-       !api_text_equal(left->content,right->content)||
-       !api_text_equal(left->tool_call_id,right->tool_call_id)||
-       left->tool_call_count!=right->tool_call_count)return false;
+static void api_mismatch(char *reason,size_t reason_size,const char *format,...) {
+    if(!reason||!reason_size)return;
+    va_list args;
+    va_start(args,format);
+    vsnprintf(reason,reason_size,format,args);
+    va_end(args);
+}
+
+static const char *api_tool_choice_label(fg_chat_tool_choice choice) {
+    switch(choice){
+        case FG_CHAT_TOOL_AUTO:return "auto";
+        case FG_CHAT_TOOL_NONE:return "none";
+        case FG_CHAT_TOOL_REQUIRED:return "required";
+        case FG_CHAT_TOOL_NAMED:return "named";
+        default:return "unknown";
+    }
+}
+
+static bool api_message_equal(size_t index,const fg_chat_message *left,
+                              const fg_chat_message *right,char *reason,
+                              size_t reason_size) {
+    if(!api_text_equal(left->role,right->role)){
+        api_mismatch(reason,reason_size,"message[%zu].role",index);
+        return false;
+    }
+    if(!api_text_equal(left->content,right->content)){
+        api_mismatch(reason,reason_size,"message[%zu].content",index);
+        return false;
+    }
+    if(!api_text_equal(left->tool_call_id,right->tool_call_id)){
+        api_mismatch(reason,reason_size,"message[%zu].tool_call_id",index);
+        return false;
+    }
+    if(left->tool_call_count!=right->tool_call_count){
+        api_mismatch(reason,reason_size,"message[%zu].tool_calls=%zu->%zu",index,
+                     left->tool_call_count,right->tool_call_count);
+        return false;
+    }
     for(size_t i=0;i<left->tool_call_count;i++){
         const fg_chat_tool_call *a=&left->tool_calls[i],*b=&right->tool_calls[i];
-        if(!api_text_equal(a->id,b->id)||!api_text_equal(a->name,b->name)||
-           !api_text_equal(a->arguments_json,b->arguments_json))return false;
+        if(!api_text_equal(a->id,b->id)){
+            api_mismatch(reason,reason_size,"message[%zu].tool_calls[%zu].id",index,i);
+            return false;
+        }
+        if(!api_text_equal(a->name,b->name)){
+            api_mismatch(reason,reason_size,"message[%zu].tool_calls[%zu].name",index,i);
+            return false;
+        }
+        if(!api_text_equal(a->arguments_json,b->arguments_json)){
+            api_mismatch(reason,reason_size,
+                         "message[%zu].tool_calls[%zu].arguments_json",index,i);
+            return false;
+        }
     }
     return true;
 }
 
 static bool api_public_session_prefix(const api_public_session *session,
-                                      const api_chat_request *request) {
-    if(!session||!session->valid||
-       session->transcript.tool_schema_count!=request->tool_schema_count||
-       session->transcript.tool_choice!=request->tool_choice||
-       !api_text_equal(session->transcript.tool_choice_name,request->tool_choice_name)||
-       request->message_count<session->transcript.message_count)return false;
+                                      const api_chat_request *request,
+                                      char *reason,size_t reason_size) {
+    if(reason&&reason_size)reason[0]=0;
+    if(!session||!session->valid)return false;
+    if(session->transcript.tool_schema_count!=request->tool_schema_count){
+        api_mismatch(reason,reason_size,"schemas=%zu->%zu",
+                     session->transcript.tool_schema_count,request->tool_schema_count);
+        return false;
+    }
+    if(session->transcript.tool_choice!=request->tool_choice){
+        api_mismatch(reason,reason_size,"choice=%s->%s",
+                     api_tool_choice_label(session->transcript.tool_choice),
+                     api_tool_choice_label(request->tool_choice));
+        return false;
+    }
+    if(!api_text_equal(session->transcript.tool_choice_name,request->tool_choice_name)){
+        api_mismatch(reason,reason_size,"choice_name=%s->%s",
+                     session->transcript.tool_choice_name?
+                         session->transcript.tool_choice_name:"",
+                     request->tool_choice_name?request->tool_choice_name:"");
+        return false;
+    }
+    if(request->message_count<session->transcript.message_count){
+        api_mismatch(reason,reason_size,"messages=%zu->%zu",
+                     session->transcript.message_count,request->message_count);
+        return false;
+    }
     for(size_t i=0;i<request->tool_schema_count;i++)
-        if(strcmp(session->transcript.tool_schemas[i],request->tool_schemas[i]))return false;
+        if(strcmp(session->transcript.tool_schemas[i],request->tool_schemas[i])){
+            api_mismatch(reason,reason_size,"schemas[%zu]",i);
+            return false;
+        }
     for(size_t i=0;i<session->transcript.message_count;i++)
-        if(!api_message_equal(&session->transcript.messages[i],
-                              &request->messages[i]))return false;
+        if(!api_message_equal(i,&session->transcript.messages[i],
+                              &request->messages[i],reason,reason_size))
+            return false;
     return true;
 }
 
@@ -2557,10 +2627,14 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     }
     status = fg_chat_render(request.messages, request.message_count, &render_options,
                             &rendered, err);
+    char session_mismatch[192]={0};
     bool public_continuation=status==FG_OK&&request.media_count==0&&
-        api_public_session_prefix(public_session,&request);
+        api_public_session_prefix(public_session,&request,session_mismatch,
+                                  sizeof(session_mismatch));
     char *rendered_continuation=NULL;
     if(status==FG_OK&&public_session->valid&&!public_continuation){
+        if(session_mismatch[0])
+            fprintf(stderr,"SESSION_MISMATCH %s\n",session_mismatch);
         api_public_session_free(public_session);
         status=fg_runtime_reset_public_history(runtime,err);
     }

@@ -1652,6 +1652,62 @@ static void test_streamed_unclosed_reasoning_flushed(void) {
     close(sockets[1]);
 }
 
+static void test_public_session_mismatch_reasons(void) {
+    fg_chat_message stored_messages[] = {
+        {.role = "user", .content = "hello"},
+        {.role = "assistant", .content = "answer"},
+    };
+    const char *stored_schemas[] = {"{\"name\":\"weather\"}"};
+    api_public_session session = {.valid = true};
+    session.transcript.message_count = 2;
+    session.transcript.messages = stored_messages;
+    session.transcript.tool_schema_count = 1;
+    session.transcript.tool_schemas = (char **)stored_schemas;
+    session.transcript.tool_choice = FG_CHAT_TOOL_AUTO;
+
+    fg_chat_message request_messages[] = {
+        {.role = "user", .content = "hello"},
+        {.role = "assistant", .content = "answer"},
+    };
+    api_chat_request request = {0};
+    request.message_count = 2;
+    request.messages = request_messages;
+    request.tool_schema_count = 1;
+    request.tool_schemas = (char **)stored_schemas;
+    request.tool_choice = FG_CHAT_TOOL_AUTO;
+
+    char reason[192] = {0};
+    CHECK(api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!reason[0]);
+
+    request.tool_choice = FG_CHAT_TOOL_REQUIRED;
+    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!strcmp(reason, "choice=auto->required"));
+
+    request.tool_choice = FG_CHAT_TOOL_AUTO;
+    const char *extra_schemas[] = {"{\"name\":\"weather\"}", "{\"name\":\"forecast\"}"};
+    request.tool_schema_count = 2;
+    request.tool_schemas = (char **)extra_schemas;
+    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!strcmp(reason, "schemas=1->2"));
+
+    const char *changed_schemas[] = {"{\"name\":\"weather\",\"extra\":true}"};
+    request.tool_schema_count = 1;
+    request.tool_schemas = (char **)changed_schemas;
+    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!strcmp(reason, "schemas[0]"));
+
+    request.tool_schemas = (char **)stored_schemas;
+    request_messages[1].content = "different";
+    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!strcmp(reason, "message[1].content"));
+
+    request_messages[1].content = "answer";
+    request.message_count = 1;
+    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!strcmp(reason, "messages=2->1"));
+}
+
 int main(void) {
     test_openai_tools_request();
     test_openai_structured_text_content();
@@ -1677,6 +1733,7 @@ int main(void) {
     test_live_prefix_hit_divergence_and_reset();
     test_live_prefix_tool_loop();
     test_divergent_tool_request_clears_prefix_metadata();
+    test_public_session_mismatch_reasons();
     test_image_http_flow();
     test_video_http_flow();
     test_video_frames_http_flow();
