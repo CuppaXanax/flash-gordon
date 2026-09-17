@@ -678,6 +678,49 @@ static uint8_t *probe_load_ppm(const char *path,uint32_t *width,uint32_t *height
     return planar;
 }
 
+static int probe_stream_only(const char *tower_dir,const char *image_path,uint32_t repeats){
+    fg_error err={0};
+    uint64_t raw_bytes=0;
+    uint8_t *raw=read_file(image_path,&raw_bytes,&err);
+    if(!raw){
+        fprintf(stderr,"stream-only: %s\n",err.message);
+        return 1;
+    }
+    float *first=NULL,*second=NULL;
+    uint32_t merged=0,grid_width=0,grid_height=0;
+    fg_tower_vk_stats stats={0};
+    fg_status status=fg_tower_vision_forward(tower_dir,raw,raw_bytes,&first,&merged,&grid_width,
+                                             &grid_height,&stats,&err);
+    if(status!=FG_OK){
+        fprintf(stderr,"stream-only: %s\n",err.message);
+        free(raw);
+        return 1;
+    }
+    const size_t values=(size_t)merged*FG_TOWER_OUT_HIDDEN;
+    double norm=0.0;
+    for(size_t i=0;i<values;i++)norm+=(double)first[i]*first[i];
+    printf("stream-only: %.1f ms dispatches=%u merged=%u grid=%ux%u finite=%s norm=%.4f\n",
+           stats.forward_ms,stats.dispatches,merged,grid_width,grid_height,
+           all_finite(first,values)?"yes":"no",sqrt(norm));
+    for(uint32_t repeat=0;repeat<repeats&&status==FG_OK;repeat++){
+        fg_tower_vk_stats again={0};
+        status=fg_tower_vision_forward(tower_dir,raw,raw_bytes,&second,&merged,&grid_width,
+                                       &grid_height,&again,&err);
+        if(status!=FG_OK){
+            fprintf(stderr,"stream-only repeat: %s\n",err.message);
+            break;
+        }
+        printf("stream-only repeat %u: %.1f ms cosine=%.9f identical=%s\n",repeat+1,
+               again.forward_ms,cosine_similarity(first,second,values),
+               memcmp(first,second,values*sizeof(float))==0?"yes":"no");
+        free(second);
+        second=NULL;
+    }
+    free(first);
+    free(raw);
+    return status==FG_OK?0:1;
+}
+
 static int probe_run(const char *tower_dir,const char *image_path,uint32_t repeats,
                      bool cpu_ref,bool layer_sweep,int layer_limit,bool smoke,bool stream,
                      bool stream_cpu){
@@ -931,7 +974,7 @@ static int probe_run(const char *tower_dir,const char *image_path,uint32_t repea
 int main(int argc,char **argv){
     const char *tower_dir=NULL,*image_path=NULL;
     uint32_t repeats=1u;
-    bool cpu_ref=false,layer_sweep=false,smoke=false,stream=false,stream_cpu=false;
+    bool cpu_ref=false,layer_sweep=false,smoke=false,stream=false,stream_cpu=false,stream_only=false;
     int layer_limit=-1;
     for(int i=1;i<argc;i++){
         if(!strcmp(argv[i],"--tower-dir")&&i+1<argc)tower_dir=argv[++i];
@@ -942,6 +985,7 @@ int main(int argc,char **argv){
         else if(!strcmp(argv[i],"--smoke"))smoke=true;
         else if(!strcmp(argv[i],"--stream"))stream=true;
         else if(!strcmp(argv[i],"--stream-cpu"))stream_cpu=true;
+        else if(!strcmp(argv[i],"--stream-only"))stream_only=true;
         else if(!strcmp(argv[i],"--layers")&&i+1<argc)layer_limit=atoi(argv[++i]);
         else{
             fprintf(stderr,"usage: test_tower [--tower-dir DIR --image FILE [--repeat N] "
@@ -949,6 +993,8 @@ int main(int argc,char **argv){
             return 2;
         }
     }
+    if(stream_only&&tower_dir&&image_path)
+        return probe_stream_only(tower_dir,image_path,repeats);
     if(tower_dir&&image_path)
         return probe_run(tower_dir,image_path,repeats,cpu_ref,layer_sweep,layer_limit,smoke,stream,stream_cpu);
     test_smart_resize();

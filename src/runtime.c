@@ -4922,6 +4922,80 @@ fg_status fg_runtime_generate(fg_runtime *runtime,const char *transcript,uint32_
     return status;
 }
 
+static fg_status vision_tokens_append(fg_tokens *tokens,const uint32_t *values,
+                                       size_t count,fg_error *err){
+    if(tokens->count+count>tokens->capacity){
+        size_t capacity=tokens->capacity?tokens->capacity:256u;
+        while(capacity<tokens->count+count)capacity*=2u;
+        uint32_t *grown=realloc(tokens->data,capacity*sizeof(*grown));
+        if(!grown){
+            fg_error_set(err,FG_ERR_OOM,"grow vision prompt tokens");
+            return FG_ERR_OOM;
+        }
+        tokens->data=grown;
+        tokens->capacity=capacity;
+    }
+    memcpy(tokens->data+tokens->count,values,count*sizeof(*values));
+    tokens->count+=count;
+    return FG_OK;
+}
+
+static fg_status vision_encode_transcript(const fg_tokenizer *tokenizer,const char *transcript,
+                                          uint32_t image_count,fg_tokens *tokens,fg_error *err){
+    static const char marker[]="<|vision_start|><|image_pad|><|vision_end|>";
+    const size_t marker_length=sizeof(marker)-1u;
+    const uint32_t special[3]={FG_VISION_START_TOKEN,FG_VISION_IMAGE_TOKEN,FG_VISION_END_TOKEN};
+    const uint32_t bos=fg_tokenizer_bos(tokenizer);
+    const bool add_bos=fg_tokenizer_add_bos(tokenizer);
+    memset(tokens,0,sizeof(*tokens));
+    const char *cursor=transcript;
+    uint32_t placeholders=0;
+    for(;;){
+        const char *found=strstr(cursor,marker);
+        const size_t segment=found?(size_t)(found-cursor):strlen(cursor);
+        if(segment){
+            char *text=malloc(segment+1u);
+            if(!text){
+                fg_error_set(err,FG_ERR_OOM,"allocate vision transcript segment");
+                fg_tokens_free(tokens);
+                return FG_ERR_OOM;
+            }
+            memcpy(text,cursor,segment);
+            text[segment]=0;
+            fg_tokens piece={0};
+            fg_status status=fg_tokenizer_encode(tokenizer,text,true,&piece,err);
+            free(text);
+            if(status!=FG_OK){
+                fg_tokens_free(&piece);
+                fg_tokens_free(tokens);
+                return status;
+            }
+            size_t first=(add_bos&&tokens->count==0&&piece.count&&piece.data[0]==bos)?1u:0u;
+            status=vision_tokens_append(tokens,piece.data+first,piece.count-first,err);
+            fg_tokens_free(&piece);
+            if(status!=FG_OK){
+                fg_tokens_free(tokens);
+                return status;
+            }
+        }
+        if(!found)break;
+        fg_status status=vision_tokens_append(tokens,special,3u,err);
+        if(status!=FG_OK){
+            fg_tokens_free(tokens);
+            return status;
+        }
+        placeholders++;
+        cursor=found+marker_length;
+    }
+    if(placeholders!=image_count){
+        fg_tokens_free(tokens);
+        fg_error_set(err,FG_ERR_FORMAT,
+                     "image placeholder count does not match the request image count");
+        return FG_ERR_FORMAT;
+    }
+    return FG_OK;
+}
+
 bool fg_runtime_vision_available(const fg_runtime *runtime){
     if(!runtime||!runtime->coordinator.directory)return false;
     char path[1200];
@@ -4964,7 +5038,8 @@ fg_status fg_runtime_generate_vision(fg_runtime *runtime,const char *transcript,
     }
     fg_tokens prompt={0};
     if(status==FG_OK)
-        status=fg_tokenizer_encode(runtime_tokenizer(runtime),transcript,true,&prompt,err);
+        status=vision_encode_transcript(runtime_tokenizer(runtime),transcript,image_count,
+                                        &prompt,err);
     uint32_t *expanded=NULL,*positions=NULL;
     fg_vision_span *spans=NULL;
     const float **span_embeddings=NULL;
