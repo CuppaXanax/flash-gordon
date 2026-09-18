@@ -1360,6 +1360,28 @@ static void test_chunked_request_body(void) {
     close(sockets[1]);
 }
 
+static void test_stale_error_not_reused_on_bad_json(void) {
+    int sockets[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    fg_error err = {0};
+    fg_error_set(&err, FG_ERR_INTERRUPTED,
+                 "prefill interrupted after 17152 of 26943 tokens");
+    http_request http = {
+        .body = (char *)"{1}",
+        .body_length = 3u,
+    };
+    fg_status status = handle_chat_completions(sockets[0], NULL, NULL, &http, &err);
+    CHECK(status == FG_OK);
+    shutdown(sockets[0], SHUT_WR);
+    char *response = read_socket_response(sockets[1]);
+    CHECK(response && strstr(response, "400 Bad Request"));
+    CHECK(response && strstr(response, "invalid JSON object"));
+    CHECK(response && !strstr(response, "prefill interrupted"));
+    free(response);
+    close(sockets[0]);
+    close(sockets[1]);
+}
+
 static void test_json_nul_and_member_limit(void) {
     const char *nul =
         "{\"messages\":[{\"role\":\"user\",\"content\":\"a\\u0000b\"}]}";
@@ -2625,6 +2647,7 @@ int main(void) {
     test_nonstream_gets_no_keepalive();
     test_busy_service_connections();
     test_chunked_request_body();
+    test_stale_error_not_reused_on_bad_json();
     test_json_nul_and_member_limit();
     test_client_socket_timeouts();
     test_model_capabilities();

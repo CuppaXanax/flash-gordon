@@ -2832,6 +2832,7 @@ static void api_service_pending_connections(int listener, fg_runtime *runtime) {
 static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
                                          api_public_session *public_session,
                                          const http_request *http, fg_error *err) {
+    memset(err, 0, sizeof(*err));
     json_value *root = parse_json_body(http->body, http->body_length, err);
     if (!root) {
         char message[sizeof(err->message)];
