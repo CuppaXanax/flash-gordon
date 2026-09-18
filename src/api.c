@@ -24,6 +24,9 @@
 #define FG_API_MAX_OBJECT_MEMBERS 256u
 #define FG_API_IO_TIMEOUT_SECONDS 30
 #define FG_API_DEFAULT_MAX_TOKENS 512u
+#define FG_API_STREAM_KEEPALIVE_SECONDS 10.0
+#define FG_API_BUSY_PROBE_BUDGET_SECONDS 0.5
+#define FG_API_BUSY_PROBE_MAX_CONNECTIONS 8u
 
 typedef struct api_buffer {
     char *data;
@@ -127,13 +130,24 @@ typedef struct api_generation {
     size_t utf8_reasoning_pending_length;
     size_t reasoning_emitted;
     size_t streamed_tool_calls;
+    double last_stream_write;
+    int listener;
+    fg_runtime *runtime;
 } api_generation;
 
 static volatile sig_atomic_t api_stop_requested;
 static unsigned long long api_request_sequence;
+static int api_listener_fd = -1;
 
 static int utf8_unit(const unsigned char *text,size_t available,size_t *bytes);
 static void tool_call_id(const api_generation *generation,size_t index,char output[128]);
+static void api_service_pending_connections(int listener, fg_runtime *runtime);
+
+static double api_monotonic_seconds(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (double)now.tv_sec + (double)now.tv_nsec / 1000000000.0;
+}
 
 static fg_status buffer_reserve(api_buffer *buffer, size_t extra, fg_error *err) {
     if (extra > SIZE_MAX - buffer->length - 1u) {
@@ -242,6 +256,7 @@ static const char *http_reason(unsigned status) {
         case 411: return "Length Required";
         case 413: return "Content Too Large";
         case 415: return "Unsupported Media Type";
+        case 503: return "Service Unavailable";
         default: return "Internal Server Error";
     }
 }
@@ -1698,6 +1713,139 @@ static bool header_name_equal(const char *line, size_t name_length, const char *
     return true;
 }
 
+static bool header_value_equal(const char *value, size_t length, const char *wanted) {
+    while (length && isspace((unsigned char)value[length - 1u])) length--;
+    size_t wanted_length = strlen(wanted);
+    if (length != wanted_length) return false;
+    for (size_t i = 0; i < length; i++)
+        if (tolower((unsigned char)value[i]) != tolower((unsigned char)wanted[i])) return false;
+    return true;
+}
+
+static fg_status http_input_receive(int fd, api_buffer *input, unsigned *http_status,
+                                    fg_error *err) {
+    if (input->length >= FG_API_MAX_REQUEST_BYTES) {
+        *http_status = 413u;
+        fg_error_set(err, FG_ERR_LIMIT, "HTTP request exceeds 32 MiB");
+        return FG_ERR_LIMIT;
+    }
+    size_t chunk = FG_API_MAX_REQUEST_BYTES - input->length;
+    if (chunk > 8192u) chunk = 8192u;
+    fg_status status = buffer_reserve(input, chunk, err);
+    if (status != FG_OK) return status;
+    ssize_t received;
+    for (;;) {
+        received = recv(fd, input->data + input->length, chunk, 0);
+        if (received >= 0 || errno != EINTR || api_stop_requested) break;
+    }
+    if (received < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            *http_status = 408u;
+            fg_error_set(err, FG_ERR_IO, "HTTP body read timed out");
+        } else if (errno == EINTR) {
+            fg_error_set(err, FG_ERR_IO, "HTTP body interrupted by shutdown");
+        } else {
+            fg_error_set(err, FG_ERR_IO, "receive HTTP body: %s", strerror(errno));
+        }
+        return FG_ERR_IO;
+    }
+    if (!received) {
+        fg_error_set(err, FG_ERR_FORMAT, "client closed before HTTP body completed");
+        return FG_ERR_FORMAT;
+    }
+    input->length += (size_t)received;
+    input->data[input->length] = 0;
+    return FG_OK;
+}
+
+static size_t chunked_size_line_end(const api_buffer *input, size_t cursor) {
+    for (size_t i = cursor; i + 1u < input->length; i++)
+        if (input->data[i] == '\r' && input->data[i + 1u] == '\n') return i;
+    return SIZE_MAX;
+}
+
+static fg_status chunked_body_receive(int fd, api_buffer *input, size_t cursor,
+                                      char **body, size_t *body_length,
+                                      unsigned *http_status, fg_error *err) {
+    api_buffer decoded = {0};
+    for (;;) {
+        size_t line_end = chunked_size_line_end(input, cursor);
+        while (line_end == SIZE_MAX) {
+            fg_status received = http_input_receive(fd, input, http_status, err);
+            if (received != FG_OK) {
+                free(decoded.data);
+                return received;
+            }
+            line_end = chunked_size_line_end(input, cursor);
+        }
+        size_t hex_begin = cursor, hex_end = cursor;
+        while (hex_end < line_end && isxdigit((unsigned char)input->data[hex_end])) hex_end++;
+        if (hex_end == hex_begin) {
+            *http_status = 400u;
+            fg_error_set(err, FG_ERR_FORMAT, "invalid chunk size");
+            free(decoded.data);
+            return FG_ERR_FORMAT;
+        }
+        unsigned long long size = 0;
+        for (size_t i = hex_begin; i < hex_end; i++) {
+            int digit = json_hex(input->data[i]);
+            size = size * 16u + (unsigned long long)digit;
+            if (size > FG_API_MAX_REQUEST_BYTES) {
+                *http_status = 413u;
+                fg_error_set(err, FG_ERR_LIMIT, "chunked HTTP request exceeds 32 MiB");
+                free(decoded.data);
+                return FG_ERR_LIMIT;
+            }
+        }
+        cursor = line_end + 2u;
+        if (!size) {
+            for (;;) {
+                if (cursor + 1u < input->length && input->data[cursor] == '\r' &&
+                    input->data[cursor + 1u] == '\n') break;
+                bool trailer_end = false;
+                for (size_t i = cursor; i + 3u < input->length; i++)
+                    if (!memcmp(input->data + i, "\r\n\r\n", 4u)) {
+                        trailer_end = true;
+                        break;
+                    }
+                if (trailer_end) break;
+                fg_status received = http_input_receive(fd, input, http_status, err);
+                if (received != FG_OK) {
+                    free(decoded.data);
+                    return received;
+                }
+            }
+            break;
+        }
+        while (input->length < cursor + size + 2u) {
+            fg_status received = http_input_receive(fd, input, http_status, err);
+            if (received != FG_OK) {
+                free(decoded.data);
+                return received;
+            }
+        }
+        if (input->data[cursor + size] != '\r' || input->data[cursor + size + 1u] != '\n') {
+            *http_status = 400u;
+            fg_error_set(err, FG_ERR_FORMAT, "malformed chunked HTTP body");
+            free(decoded.data);
+            return FG_ERR_FORMAT;
+        }
+        fg_status appended = buffer_append_n(&decoded, input->data + cursor, (size_t)size, err);
+        if (appended != FG_OK) {
+            free(decoded.data);
+            return appended;
+        }
+        cursor += (size_t)size + 2u;
+    }
+    *body = decoded.data ? decoded.data : strdup("");
+    if (!*body) {
+        fg_error_set(err, FG_ERR_OOM, "allocate HTTP body");
+        return FG_ERR_OOM;
+    }
+    *body_length = decoded.length;
+    return FG_OK;
+}
+
 static fg_status read_http_request(int fd, http_request *request, unsigned *http_status,
                                    fg_error *err) {
     memset(request, 0, sizeof(*request));
@@ -1758,6 +1906,7 @@ static fg_status read_http_request(int fd, http_request *request, unsigned *http
     }
     size_t content_length = 0;
     bool have_length = false;
+    bool chunked = false;
     bool json_content = false;
     for (char *line = line_end + 2; line < header_end;) {
         char *next = strstr(line, "\r\n");
@@ -1785,10 +1934,15 @@ static fg_status read_http_request(int fd, http_request *request, unsigned *http
             content_length = (size_t)parsed;
             have_length = true;
         } else if (header_name_equal(line, name_length, "Transfer-Encoding")) {
-            fg_error_set(err, FG_ERR_ARGUMENT,
-                         "chunked request bodies are not supported; send Content-Length");
-            free(input.data);
-            return FG_ERR_ARGUMENT;
+            size_t value_length = (size_t)(next - value);
+            if (!header_value_equal(value, value_length, "chunked")) {
+                *http_status = 400u;
+                fg_error_set(err, FG_ERR_ARGUMENT,
+                             "unsupported Transfer-Encoding; only chunked is accepted");
+                free(input.data);
+                return FG_ERR_ARGUMENT;
+            }
+            chunked = true;
         } else if (header_name_equal(line, name_length, "Content-Type")) {
             size_t value_length = (size_t)(next - value);
             json_content = value_length >= 16u &&
@@ -1797,7 +1951,14 @@ static fg_status read_http_request(int fd, http_request *request, unsigned *http
         line = next + 2;
     }
     bool body_required = !strcmp(request->method, "POST");
-    if (body_required && !have_length) {
+    if (chunked && have_length) {
+        *http_status = 400u;
+        fg_error_set(err, FG_ERR_ARGUMENT,
+                     "Content-Length and Transfer-Encoding are mutually exclusive");
+        free(input.data);
+        return FG_ERR_ARGUMENT;
+    }
+    if (body_required && !have_length && !chunked) {
         *http_status = 411u;
         fg_error_set(err, FG_ERR_ARGUMENT, "POST requires Content-Length");
         free(input.data);
@@ -1808,6 +1969,12 @@ static fg_status read_http_request(int fd, http_request *request, unsigned *http
         fg_error_set(err, FG_ERR_ARGUMENT, "POST requires application/json");
         free(input.data);
         return FG_ERR_ARGUMENT;
+    }
+    if (chunked) {
+        fg_status status = chunked_body_receive(fd, &input, header_bytes, &request->body,
+                                                &request->body_length, http_status, err);
+        free(input.data);
+        return status;
     }
     if (header_bytes + content_length > FG_API_MAX_REQUEST_BYTES) {
         *http_status = 413u;
@@ -1875,6 +2042,24 @@ static bool api_client_gone(api_generation *generation) {
            (peeked < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR);
 }
 
+static bool api_stream_tick(api_generation *generation) {
+    if (!generation || !generation->stream || generation->fd < 0) return true;
+    double now = api_monotonic_seconds();
+    if (generation->last_stream_write <= 0.0) {
+        generation->last_stream_write = now;
+        return true;
+    }
+    if (now - generation->last_stream_write < FG_API_STREAM_KEEPALIVE_SECONDS) return true;
+    generation->last_stream_write = now;
+    static const char comment[] = ": keep-alive\n\n";
+    fg_error err = {0};
+    if (send_all(generation->fd, comment, sizeof(comment) - 1u, &err) != FG_OK) {
+        generation->client_failed = true;
+        return false;
+    }
+    return true;
+}
+
 static bool api_interrupted(void *context) {
     if (api_stop_requested) return true;
     api_generation *generation = context;
@@ -1882,6 +2067,9 @@ static bool api_interrupted(void *context) {
         generation->client_failed = true;
         return true;
     }
+    if (generation && !api_stream_tick(generation)) return true;
+    if (generation && generation->listener >= 0)
+        api_service_pending_connections(generation->listener, generation->runtime);
     return false;
 }
 
@@ -1925,6 +2113,7 @@ static fg_status send_delta_field(api_generation *generation,const char *field,
     if (status == FG_OK) {
         status = send_all(generation->fd, event.data, event.length, err);
         if (status != FG_OK) generation->client_failed = true;
+        else generation->last_stream_write = api_monotonic_seconds();
     }
     free(event.data);
     return status;
@@ -2032,6 +2221,7 @@ static fg_status send_tool_call_delta(api_generation *generation,
     if (status == FG_OK) {
         status = send_all(generation->fd, event.data, event.length, err);
         if (status != FG_OK) generation->client_failed = true;
+        else generation->last_stream_write = api_monotonic_seconds();
     }
     free(event.data);
     return status;
@@ -2313,7 +2503,7 @@ static fg_status api_token(void *context, uint32_t token, const char *text, size
     return queue_visible_content(generation,generation->content.data+previous,length,false,err);
 }
 
-static fg_status send_stream_start(const api_generation *generation, fg_error *err) {
+static fg_status send_stream_start(api_generation *generation, fg_error *err) {
     api_buffer event = {0};
     fg_status status = buffer_append(&event, "data: {\"id\":", err);
     if (status == FG_OK)
@@ -2336,7 +2526,10 @@ static fg_status send_stream_start(const api_generation *generation, fg_error *e
             ",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},"
             "\"finish_reason\":null}]}\n\n",
             err);
-    if (status == FG_OK) status = send_all(generation->fd, event.data, event.length, err);
+    if (status == FG_OK) {
+        status = send_all(generation->fd, event.data, event.length, err);
+        if (status == FG_OK) generation->last_stream_write = api_monotonic_seconds();
+    }
     free(event.data);
     return status;
 }
@@ -2544,6 +2737,98 @@ static fg_status handle_models(int fd, fg_runtime *runtime, fg_error *err) {
     return status;
 }
 
+static fg_status handle_health(int fd, bool busy, fg_error *err) {
+    static const char idle_body[] = "{\"status\":\"ok\",\"busy\":false}";
+    static const char busy_body[] = "{\"status\":\"ok\",\"busy\":true}";
+    const char *body = busy ? busy_body : idle_body;
+    return send_response(fd, 200u, "application/json", body, strlen(body), err);
+}
+
+static fg_status send_busy_response(int fd, fg_error *err) {
+    static const char body[] =
+        "{\"error\":{\"message\":\"Flash Gordon is busy generating another request; "
+        "retry shortly\",\"type\":\"server_busy\"}}";
+    return send_response_with_headers(fd, 503u, "application/json", "Retry-After: 1\r\n",
+                                      body, sizeof(body) - 1u, err);
+}
+
+static bool api_probe_request(int fd, char *method, char *path, double deadline) {
+    char buffer[8192];
+    size_t length = 0;
+    char *header_end = NULL;
+    while (!header_end) {
+        if (length == sizeof(buffer)) return false;
+        double remaining = deadline - api_monotonic_seconds();
+        if (remaining <= 0.0) return false;
+        struct pollfd ready = {.fd = fd, .events = POLLIN};
+        int polled = poll(&ready, 1u, (int)(remaining * 1000.0) + 1);
+        if (polled <= 0) return false;
+        if (!(ready.revents & POLLIN)) return false;
+        ssize_t received = recv(fd, buffer + length, sizeof(buffer) - length, 0);
+        if (received <= 0) return false;
+        length += (size_t)received;
+        buffer[length] = 0;
+        header_end = find_header_end(buffer, length);
+    }
+    char *line_end = strstr(buffer, "\r\n");
+    if (!line_end) return false;
+    *line_end = 0;
+    char version[16];
+    if (sscanf(buffer, "%7s %255s %15s", method, path, version) != 3) return false;
+    return true;
+}
+
+static void api_drain_probe_socket(int fd) {
+    struct timeval timeout = {.tv_sec = 0, .tv_usec = 50000};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    char discard[4096];
+    size_t total = 0;
+    while (total < (1u << 20)) {
+        ssize_t received = recv(fd, discard, sizeof(discard), 0);
+        if (received <= 0) break;
+        total += (size_t)received;
+    }
+}
+
+static void api_serve_busy_probe(int fd, fg_runtime *runtime, double deadline) {
+    struct timeval read_timeout = {.tv_sec = 0, .tv_usec = 200000};
+    struct timeval write_timeout = {.tv_sec = 0, .tv_usec = 300000};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &read_timeout, sizeof(read_timeout));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &write_timeout, sizeof(write_timeout));
+    char method[8] = {0}, path[256] = {0};
+    fg_error err = {0};
+    if (!api_probe_request(fd, method, path, deadline)) {
+        fg_error ignored = {0};
+        send_busy_response(fd, &ignored);
+    } else if (!strcmp(method, "GET") && !strcmp(path, "/v1/models")) {
+        handle_models(fd, runtime, &err);
+    } else if (!strcmp(method, "GET") && !strcmp(path, "/health")) {
+        handle_health(fd, true, &err);
+    } else {
+        send_busy_response(fd, &err);
+    }
+    shutdown(fd, SHUT_WR);
+    api_drain_probe_socket(fd);
+}
+
+static void api_service_pending_connections(int listener, fg_runtime *runtime) {
+    if (listener < 0) return;
+    double deadline = api_monotonic_seconds() + FG_API_BUSY_PROBE_BUDGET_SECONDS;
+    unsigned served = 0;
+    for (;;) {
+        struct pollfd ready = {.fd = listener, .events = POLLIN};
+        int polled = poll(&ready, 1u, 0);
+        if (polled <= 0) break;
+        if (!(ready.revents & POLLIN)) break;
+        int client = accept(listener, NULL, NULL);
+        if (client < 0) break;
+        api_serve_busy_probe(client, runtime, deadline);
+        close(client);
+        if (++served >= FG_API_BUSY_PROBE_MAX_CONNECTIONS) break;
+        if (api_monotonic_seconds() >= deadline) break;
+    }
+}
+
 static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
                                          api_public_session *public_session,
                                          const http_request *http, fg_error *err) {
@@ -2702,6 +2987,9 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
         .created = time(NULL),
         .request = &request,
         .think_closed = render_options.think_mode == FG_CHAT_THINK_OFF,
+        .last_stream_write = api_monotonic_seconds(),
+        .listener = api_listener_fd,
+        .runtime = runtime,
     };
     bool stream_started=false;
     if (status == FG_OK && request.stream) {
@@ -2901,6 +3189,7 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
         fg_runtime_close(runtime);
         return status;
     }
+    api_listener_fd = listener;
 
     struct sigaction action = {0}, old_int = {0}, old_term = {0}, ignore_pipe = {0},
                      old_pipe = {0};
@@ -2963,6 +3252,9 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
         } else if (!strcmp(request.method, "GET") && !strcmp(request.path, "/v1/models")) {
             fg_status response_status = handle_models(client, runtime, err);
             if (response_status != FG_ERR_IO) status = response_status;
+        } else if (!strcmp(request.method, "GET") && !strcmp(request.path, "/health")) {
+            fg_status response_status = handle_health(client, false, err);
+            if (response_status != FG_ERR_IO) status = response_status;
         } else if (!strcmp(request.method, "POST") &&
                    !strcmp(request.path, "/v1/chat/completions")) {
             status = handle_chat_completions(client, runtime, &public_session,&request, err);
@@ -2977,6 +3269,7 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
         free(request.body);
         close(client);
     }
+    api_listener_fd = -1;
     close(listener);
     sigaction(SIGINT, &old_int, NULL);
     sigaction(SIGTERM, &old_term, NULL);

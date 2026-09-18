@@ -1,5 +1,7 @@
 #include "fg_runtime.h"
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1113,6 +1115,247 @@ static void test_streamed_utf8_and_sentinel_filtering(void) {
     free(response);
     free(generation.content.data);
     free(generation.visible_pending.data);
+    close(sockets[0]);
+    close(sockets[1]);
+}
+
+static void test_stream_keepalive_framing(void) {
+    int sockets[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    api_chat_request request = {0};
+    api_generation generation = {
+        .fd = sockets[0],
+        .stream = true,
+        .id = "chatcmpl-keepalive",
+        .model = "Qwen3.8-Flash-Next",
+        .created = 5,
+        .request = &request,
+        .listener = -1,
+    };
+    fg_error err = {0};
+    CHECK(send_sse_headers(sockets[0], &err) == FG_OK);
+    CHECK(send_stream_start(&generation, &err) == FG_OK);
+    const char *prefix = "</think>\nhello";
+    CHECK(api_token(&generation, 1, prefix, strlen(prefix), &err) == FG_OK);
+    CHECK(api_interrupted(&generation) == false);
+    generation.last_stream_write -= FG_API_STREAM_KEEPALIVE_SECONDS + 1.0;
+    CHECK(api_interrupted(&generation) == false);
+    CHECK(api_interrupted(&generation) == false);
+    shutdown(sockets[0], SHUT_WR);
+    char *response = read_socket_response(sockets[1]);
+    CHECK(response != NULL);
+    if (response) {
+        const char *comment = strstr(response, ": keep-alive\n\n");
+        CHECK(comment != NULL);
+        CHECK(strstr(response, "data: {\"id\":\"chatcmpl-keepalive\"") != NULL);
+        CHECK(strstr(response, "\"content\":\"hello\"") != NULL);
+        if (comment) {
+            /* exactly one comment, and it starts on a fresh SSE line after a
+             * completed frame (never inside a data frame). */
+            CHECK(strstr(comment + 1, ": keep-alive") == NULL);
+            CHECK(comment >= response + 2u);
+            CHECK(comment[-1] == '\n' && comment[-2] == '\n');
+            const char *next = comment + sizeof(": keep-alive\n\n") - 1u;
+            CHECK(*next == 0 || !strncmp(next, "data: ", 6u));
+        }
+    }
+    free(response);
+    free(generation.content.data);
+    free(generation.visible_pending.data);
+    close(sockets[0]);
+    close(sockets[1]);
+}
+
+static void test_stream_keepalive_stops_on_gone_client(void) {
+    int sockets[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    api_generation generation = {
+        .fd = sockets[0],
+        .stream = true,
+        .id = "chatcmpl-gone",
+        .model = "Qwen3.8-Flash-Next",
+        .created = 6,
+        .listener = -1,
+    };
+    generation.last_stream_write =
+        api_monotonic_seconds() - FG_API_STREAM_KEEPALIVE_SECONDS - 1.0;
+    close(sockets[1]);
+    CHECK(api_interrupted(&generation) == true);
+    CHECK(generation.client_failed == true);
+    close(sockets[0]);
+}
+
+static void test_nonstream_gets_no_keepalive(void) {
+    int sockets[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    api_generation generation = {
+        .fd = sockets[0],
+        .stream = false,
+        .id = "chatcmpl-silent",
+        .model = "Qwen3.8-Flash-Next",
+        .created = 7,
+        .listener = -1,
+    };
+    generation.last_stream_write =
+        api_monotonic_seconds() - FG_API_STREAM_KEEPALIVE_SECONDS - 1.0;
+    CHECK(api_interrupted(&generation) == false);
+    shutdown(sockets[0], SHUT_WR);
+    char *response = read_socket_response(sockets[1]);
+    CHECK(response == NULL || response[0] == 0);
+    free(response);
+    close(sockets[0]);
+    close(sockets[1]);
+}
+
+static int busy_probe_listen(int *listener, struct sockaddr_in *address) {
+    *listener = socket(AF_INET, SOCK_STREAM, 0);
+    if (*listener < 0) return -1;
+    int enabled = 1;
+    setsockopt(*listener, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
+    memset(address, 0, sizeof(*address));
+    address->sin_family = AF_INET;
+    address->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address->sin_port = 0;
+    if (bind(*listener, (struct sockaddr *)address, sizeof(*address)) != 0) return -1;
+    if (listen(*listener, 4) != 0) return -1;
+    socklen_t length = sizeof(*address);
+    return getsockname(*listener, (struct sockaddr *)address, &length);
+}
+
+static char *busy_probe_roundtrip(int listener, const struct sockaddr_in *address,
+                                  const char *request) {
+    int client = socket(AF_INET, SOCK_STREAM, 0);
+    CHECK(client >= 0);
+    CHECK(connect(client, (const struct sockaddr *)address, sizeof(*address)) == 0);
+    CHECK(send(client, request, strlen(request), 0) == (ssize_t)strlen(request));
+    api_service_pending_connections(listener, NULL);
+    shutdown(client, SHUT_WR);
+    char *response = read_socket_response(client);
+    close(client);
+    return response;
+}
+
+static void test_busy_service_connections(void) {
+    int listener = -1;
+    struct sockaddr_in address;
+    CHECK(busy_probe_listen(&listener, &address) == 0);
+
+    char *response = busy_probe_roundtrip(listener, &address,
+        "GET /v1/models HTTP/1.1\r\nHost: fg\r\n\r\n");
+    CHECK(response && strstr(response, "HTTP/1.1 200 OK"));
+    CHECK(response && strstr(response, "Qwen3.8-Flash-Next"));
+    free(response);
+
+    response = busy_probe_roundtrip(listener, &address,
+        "GET /health HTTP/1.1\r\nHost: fg\r\n\r\n");
+    CHECK(response && strstr(response, "HTTP/1.1 200 OK"));
+    CHECK(response && strstr(response, "\"busy\":true"));
+    free(response);
+
+    response = busy_probe_roundtrip(listener, &address,
+        "POST /v1/chat/completions HTTP/1.1\r\nHost: fg\r\n"
+        "Content-Type: application/json\r\nContent-Length: 2\r\n\r\n{}");
+    CHECK(response && strstr(response, "HTTP/1.1 503 Service Unavailable"));
+    CHECK(response && strstr(response, "Retry-After: 1\r\n"));
+    CHECK(response && strstr(response, "\"type\":\"server_busy\""));
+    free(response);
+
+    response = busy_probe_roundtrip(listener, &address, "GARBAGE\r\n\r\n");
+    CHECK(response && strstr(response, "HTTP/1.1 503 Service Unavailable"));
+    free(response);
+
+    int silent = socket(AF_INET, SOCK_STREAM, 0);
+    CHECK(silent >= 0);
+    CHECK(connect(silent, (const struct sockaddr *)&address, sizeof(address)) == 0);
+    api_service_pending_connections(listener, NULL);
+    shutdown(silent, SHUT_WR);
+    response = read_socket_response(silent);
+    CHECK(response && strstr(response, "HTTP/1.1 503 Service Unavailable"));
+    free(response);
+    close(silent);
+
+    close(listener);
+}
+
+static void write_request_bytes(int fd, const char *text) {
+    CHECK(send(fd, text, strlen(text), 0) == (ssize_t)strlen(text));
+}
+
+static void test_chunked_request_body(void) {
+    int sockets[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    const char *body = "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+    api_buffer wire = {0};
+    fg_error err = {0};
+    CHECK(buffer_append(&wire,
+        "POST /v1/chat/completions HTTP/1.1\r\nHost: fg\r\n"
+        "Content-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n",
+        &err) == FG_OK);
+    size_t body_length = strlen(body);
+    for (size_t offset = 0; offset < body_length; offset += 7u) {
+        size_t chunk = body_length - offset;
+        if (chunk > 7u) chunk = 7u;
+        char header[32];
+        snprintf(header, sizeof(header), "%zx\r\n", chunk);
+        CHECK(buffer_append(&wire, header, &err) == FG_OK);
+        CHECK(buffer_append_n(&wire, body + offset, chunk, &err) == FG_OK);
+        CHECK(buffer_append(&wire, "\r\n", &err) == FG_OK);
+    }
+    CHECK(buffer_append(&wire, "0\r\n\r\n", &err) == FG_OK);
+    write_request_bytes(sockets[1], wire.data);
+    free(wire.data);
+    http_request request = {0};
+    unsigned http_status = 0u;
+    CHECK(read_http_request(sockets[0], &request, &http_status, &err) == FG_OK);
+    CHECK(!strcmp(request.method, "POST"));
+    CHECK(!strcmp(request.path, "/v1/chat/completions"));
+    CHECK(request.body_length == body_length);
+    CHECK(request.body && !memcmp(request.body, body, body_length));
+    free(request.body);
+
+    const char *cl = "POST /v1/chat/completions HTTP/1.1\r\n"
+                     "Content-Type: application/json\r\nContent-Length: 2\r\n\r\n{}";
+    write_request_bytes(sockets[1], cl);
+    memset(&request, 0, sizeof(request));
+    http_status = 0u;
+    memset(&err, 0, sizeof(err));
+    CHECK(read_http_request(sockets[0], &request, &http_status, &err) == FG_OK);
+    CHECK(request.body_length == 2u && !memcmp(request.body, "{}", 2u));
+    free(request.body);
+
+    const char *both = "POST /v1/chat/completions HTTP/1.1\r\n"
+                       "Content-Type: application/json\r\nContent-Length: 2\r\n"
+                       "Transfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
+    write_request_bytes(sockets[1], both);
+    memset(&request, 0, sizeof(request));
+    http_status = 0u;
+    memset(&err, 0, sizeof(err));
+    CHECK(read_http_request(sockets[0], &request, &http_status, &err) == FG_ERR_ARGUMENT);
+    CHECK(http_status == 400u);
+    free(request.body);
+
+    const char *gzip = "POST /v1/chat/completions HTTP/1.1\r\n"
+                       "Content-Type: application/json\r\n"
+                       "Transfer-Encoding: gzip\r\n\r\n";
+    write_request_bytes(sockets[1], gzip);
+    memset(&request, 0, sizeof(request));
+    http_status = 0u;
+    memset(&err, 0, sizeof(err));
+    CHECK(read_http_request(sockets[0], &request, &http_status, &err) == FG_ERR_ARGUMENT);
+    CHECK(http_status == 400u);
+    free(request.body);
+
+    const char *malformed = "POST /v1/chat/completions HTTP/1.1\r\n"
+                            "Content-Type: application/json\r\n"
+                            "Transfer-Encoding: chunked\r\n\r\nzz\r\n{}";
+    write_request_bytes(sockets[1], malformed);
+    memset(&request, 0, sizeof(request));
+    http_status = 0u;
+    memset(&err, 0, sizeof(err));
+    CHECK(read_http_request(sockets[0], &request, &http_status, &err) == FG_ERR_FORMAT);
+    CHECK(http_status == 400u);
+    free(request.body);
+
     close(sockets[0]);
     close(sockets[1]);
 }
@@ -2377,6 +2620,11 @@ int main(void) {
     test_streamed_unclosed_reasoning_flushed();
     test_streamed_incomplete_tags_do_not_leak();
     test_streamed_utf8_and_sentinel_filtering();
+    test_stream_keepalive_framing();
+    test_stream_keepalive_stops_on_gone_client();
+    test_nonstream_gets_no_keepalive();
+    test_busy_service_connections();
+    test_chunked_request_body();
     test_json_nul_and_member_limit();
     test_client_socket_timeouts();
     test_model_capabilities();
