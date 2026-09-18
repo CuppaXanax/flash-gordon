@@ -189,6 +189,13 @@ offset/escaping format) and streamed-content identity against
 `fg_chat_parse_generated` for sentinel, split-token, CRLF, no-sentinel and
 no-think generation.
 
+Fleet-validated 2026-09-17. Closes the deep-index `message[i].content`
+prefix-miss class: trailing-newline echo continuation `hit` (`reused` = full
+prefix), exact echo `hit`, real edit `miss` + `public-history-mismatch` with
+the detailed line; gates, battery, soak and the abort/retry, tool-delta and
+system-delta probes unchanged. Evidence
+`bc-250-dbg/results/cmpfix-20260917-2123/`.
+
 ## Validation
 
 Local (WSL Ubuntu 24.04, gcc 13.3):
