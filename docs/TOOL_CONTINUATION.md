@@ -187,4 +187,3 @@ history) reports `X-Flash-Gordon-Prefix-Cache: hit`,
 `X-Flash-Gordon-Reset-Reason: none`, reused tokens close to the turn-1 prompt
 size, a single `<|im_start|>system` delta block in the suffix, and a sane
 answer; a tampered turn still reports `miss` + `public-history-mismatch`.
-
