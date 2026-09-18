@@ -1031,3 +1031,26 @@ Merged `8c8cea3` (fleet build `03511029`, live dir `20260917-sysdelta`):
   (reused 20032, prefilled 66); removed 62.8 s -> 1.5 s; added -> 1.6 s;
   combined system+tool delta -> 3.2 s. Tamper/shrink still `miss`.
 - Gates + battery + soak PASS on the combined build.
+
+## 0af. HTTP ROBUSTNESS - KEEP-ALIVE COMMENTS + BUSY-SERVE (2026-09-17)
+
+Merged (binary `6ead9d2a`, live dir `20260917-http-robust`). The API was a
+silent single-slot server: `Connection: close` on every response, no bytes
+between the SSE role frame and the first generated token (minutes of silence at
+60-70K context -> Node/undici body timeouts -> Pi `Error: terminated` mid
+prefill), no listener service while generating, and chunked request bodies
+rejected.
+
+- **SSE keep-alives:** `: keep-alive` emitted between frames when a streaming
+  request is idle >10 s (hooked into the existing per-chunk interrupt check;
+  never mid-frame; send failure = client-gone abort path). Raw evidence:
+  comments at 10.1/21.1/32.1/43.2 s during a 27K prefill.
+- **Busy-serve:** the listener is drained non-blockingly at chunk/decode
+  boundaries; `GET /v1/models` and `/health` answer 200 during generation, other
+  requests get `503 + Retry-After: 1` (single-session semantics unchanged).
+- **Chunked request bodies** accepted (was 400); CL+TE conflicts rejected.
+- Also fixed a stale-error echo after aborts (400s now carry the real message).
+- Abort/retry unchanged: kill -> abort in 2.5 s, retry `prefix hit, reused 14336`.
+- Preserved: gates [12]/[Paris], battery in band, soak PASS.
+- Deliberately skipped: HTTP socket keep-alive/reuse (a single-threaded accept
+  loop would block on idle sockets; close-per-response retained).
