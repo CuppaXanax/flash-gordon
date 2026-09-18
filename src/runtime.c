@@ -3462,7 +3462,8 @@ static fg_status coordinator_sync_gdn_state(fg_coordinator *coordinator,
 static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
     const int32_t *history,size_t history_count,const uint32_t *token_ids,
     uint32_t first_token,uint32_t token_count,const fg_vision_prompt *vision,bool *profiled,
-    fg_vk_tensor **output,fg_error *err){
+    fg_interrupt_fn interrupted,void *interrupt_context,
+    fg_vk_tensor **output,uint32_t *prefilled_tokens,fg_error *err){
     (void)profiled;
     if(!coordinator||!history||!token_ids||!token_count||!output||
        token_count>coordinator->manifest->max_context||
@@ -3514,12 +3515,16 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
         }
     }
     uint32_t total_chunks=(token_count+microbatch-1u)/microbatch;
-    uint32_t next_chunk=0,in_flight=0,completed=0;
+    uint32_t next_chunk=0,in_flight=0,completed=0,prefilled=0;
     fg_vk_tensor *last_output=NULL;
     bool ring_trace=getenv("FG_RING_TRACE")!=NULL;
+    bool aborted=false;
     double ring_t0=dispatch_ts();
     while(status==FG_OK&&completed<total_chunks){
         if(next_chunk<total_chunks&&in_flight<FG_PREFILL_FRAMES){
+            if(!aborted&&interrupted&&interrupted(interrupt_context))aborted=true;
+            if(aborted&&!in_flight)break;
+            if(aborted)goto receive;
             uint32_t chunk=next_chunk,f=chunk%FG_PREFILL_FRAMES;
             ring_slot *slot=&slots[f];
             if(slot->active){
@@ -3570,6 +3575,7 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
             }
             continue;
         }
+        receive:;
         uint32_t peer=0,bytes=0;fg_frame_header header;
         status=fg_fabric_recv_any(coordinator->fabric,FG_FABRIC_BULK,&peer,&header,
             receive_wire,receive_capacity,&bytes,err);
@@ -3696,7 +3702,17 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
             break;
         }
     }
-    if(status==FG_OK)status=coordinator_warm_qsa_drain(coordinator,err);
+    if(status==FG_OK&&aborted){
+        prefilled=completed*microbatch;
+        if(prefilled>token_count)prefilled=token_count;
+        fg_error_set(err,FG_ERR_INTERRUPTED,"prefill interrupted after %u of %u tokens",
+                     prefilled,token_count);
+        status=FG_ERR_INTERRUPTED;
+    }
+    if(status==FG_OK||status==FG_ERR_INTERRUPTED){
+        fg_status drain=coordinator_warm_qsa_drain(coordinator,err);
+        if(drain!=FG_OK)status=drain;
+    }
     if(status==FG_OK)*output=last_output;
     /* Decode on rank 0 attaches to owners' committed state; the mirror did not
      * compute most QSA layers, so advance its committed counters to the
@@ -3712,16 +3728,19 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
         first_token+token_count,err);
     free(positions_scratch);free(positions);free(ngram_host);free(hyper_host);
     free(result_wire);free(work_wire);free(receive_wire);
+    if(prefilled_tokens)*prefilled_tokens=prefilled;
     return status;
 }
 
 static fg_status coordinator_prefill_pipeline(fg_coordinator *coordinator,
     const int32_t *history,size_t history_count,const uint32_t *token_ids,
     uint32_t first_token,uint32_t token_count,const fg_vision_prompt *vision,bool *profiled,
-    fg_vk_tensor **output,fg_error *err){
+    fg_interrupt_fn interrupted,void *interrupt_context,
+    fg_vk_tensor **output,uint32_t *prefilled_tokens,fg_error *err){
     if(coordinator&&coordinator->ring_prefill)
         return coordinator_prefill_pipeline_ring(coordinator,history,history_count,token_ids,
-            first_token,token_count,vision,profiled,output,err);
+            first_token,token_count,vision,profiled,interrupted,interrupt_context,
+            output,prefilled_tokens,err);
     if(!coordinator||!history||!token_ids||!token_count||!output||
        token_count>coordinator->manifest->max_context||
        first_token>coordinator->manifest->max_context-token_count){
@@ -3731,7 +3750,14 @@ static fg_status coordinator_prefill_pipeline(fg_coordinator *coordinator,
     fg_vk_tensor *embedding=fg_model_tensor(coordinator->model,"token_embd.weight");
     if(!embedding){fg_error_set(err,FG_ERR_MISMATCH,"coordinator is missing token_embd.weight");return FG_ERR_MISMATCH;}
     fg_vk_tensor *last=NULL;fg_status status=FG_OK;
+    uint32_t prefilled=0;
     for(uint32_t base=0;status==FG_OK&&base<token_count;base+=FG_PREFILL_FRAMES*microbatch){
+        if(interrupted&&interrupted(interrupt_context)){
+            fg_error_set(err,FG_ERR_INTERRUPTED,"prefill interrupted after %u of %u tokens",
+                         prefilled,token_count);
+            status=FG_ERR_INTERRUPTED;
+            break;
+        }
         uint32_t counts[FG_PREFILL_FRAMES]={0},offsets[FG_PREFILL_FRAMES]={0},consumed=0;
         for(uint32_t f=0;f<FG_PREFILL_FRAMES;f++){
             uint32_t remaining=token_count-base-consumed;
@@ -3819,9 +3845,14 @@ static fg_status coordinator_prefill_pipeline(fg_coordinator *coordinator,
         if(status==FG_OK)status=coordinator_publish_qsa_pages(coordinator,first,counts[0],err);
         for(uint32_t f=1;status==FG_OK&&f<FG_PREFILL_FRAMES;f++)
             if(counts[f])status=coordinator_publish_qsa_pages(coordinator,first+offsets[f],counts[f],err);
-        if(status==FG_OK){for(uint32_t f=0;f<FG_PREFILL_FRAMES;f++)if(counts[f])last=cur[f];}
+        if(status==FG_OK){
+            for(uint32_t f=0;f<FG_PREFILL_FRAMES;f++)if(counts[f])last=cur[f];
+            prefilled=base+consumed;
+            if(prefilled>token_count)prefilled=token_count;
+        }
     }
     if(status==FG_OK)*output=last;
+    if(prefilled_tokens)*prefilled_tokens=prefilled;
     return status;
 }
 
@@ -4792,6 +4823,7 @@ static fg_status runtime_generate_tokens(
     uint32_t next=runtime->next_token;
     float logit=runtime->next_logit;
     fg_vk_tensor *prefill_output=NULL;
+    uint32_t prefilled_pipeline=0;
     if(prefill_offset<prompt->count){
         state_mutated=true;
         clock_gettime(CLOCK_MONOTONIC,&prefill_start);
@@ -4800,7 +4832,9 @@ static fg_status runtime_generate_tokens(
         status=coordinator_prefill_pipeline(&runtime->coordinator,runtime->history,
             runtime->history_count,prompt->data+(size_t)prefill_offset,
             (uint32_t)prefill_offset,(uint32_t)(prompt->count-prefill_offset),vision,
-            &runtime->prefill_profiled,&prefill_output,err);
+            &runtime->prefill_profiled,interrupted,interrupt_context,&prefill_output,
+            &prefilled_pipeline,err);
+    if(prefill_offset<prompt->count)clock_gettime(CLOCK_MONOTONIC,&prefill_end);
     prefill_worker_buffers_release_result_wire(&runtime->coordinator.prefill_expert[0]);
     prefill_worker_buffers_release_result_wire(&runtime->coordinator.prefill_expert[1]);
     prefill_worker_buffers_release_result_wire(&runtime->coordinator.prefill_expert[2]);
@@ -4887,6 +4921,21 @@ static fg_status runtime_generate_tokens(
             stats->generated_tokens=generated;
             stats->context_tokens=(uint32_t)runtime->history_count;
             stats->decode_seconds=elapsed_seconds(&decode_start,&decode_end);
+        }
+    }else if(status==FG_ERR_INTERRUPTED&&prefill_offset<prompt->count&&
+             transport_ready(&runtime->coordinator.transport_state)){
+        size_t achieved=prefill_offset+(size_t)prefilled_pipeline;
+        if(achieved>prompt->count)achieved=prompt->count;
+        runtime->history_count=achieved;
+        runtime->state_frontier=(uint32_t)achieved;
+        runtime->next_token_valid=false;
+        runtime->next_token=0;
+        runtime->next_logit=0.0f;
+        runtime->empty_reason=FG_PREFIX_RESET_NONE;
+        if(stats){
+            stats->prefilled_tokens=(uint32_t)(achieved-prefill_offset);
+            stats->context_tokens=(uint32_t)achieved;
+            stats->prefill_seconds=elapsed_seconds(&prefill_start,&prefill_end);
         }
     }else if(state_mutated&&transport_ready(&runtime->coordinator.transport_state)){
         fg_error reset_error={0};

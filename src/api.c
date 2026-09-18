@@ -1856,9 +1856,26 @@ static void api_signal_handler(int signal_number) {
     api_stop_requested = 1;
 }
 
+static bool api_client_gone(api_generation *generation) {
+    if (!generation || generation->fd < 0) return false;
+    struct pollfd probe = {.fd = generation->fd, .events = POLLIN};
+    int ready = poll(&probe, 1u, 0);
+    if (ready <= 0) return false;
+    if (probe.revents & (POLLERR | POLLHUP | POLLRDHUP)) return true;
+    if (!(probe.revents & (POLLIN | POLLRDNORM))) return false;
+    char byte = 0;
+    ssize_t peeked = recv(generation->fd, &byte, 1u, MSG_PEEK | MSG_DONTWAIT);
+    return peeked == 0 || (peeked < 0 && errno != EAGAIN && errno != EWOULDBLOCK);
+}
+
 static bool api_interrupted(void *context) {
-    (void)context;
-    return api_stop_requested != 0;
+    if (api_stop_requested) return true;
+    api_generation *generation = context;
+    if (generation && api_client_gone(generation)) {
+        generation->client_failed = true;
+        return true;
+    }
+    return false;
 }
 
 static fg_status send_sse_headers(int fd, fg_error *err) {
@@ -2680,14 +2697,14 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
                 status=fg_runtime_generate_vision(runtime,rendered,media,
                                                   (uint32_t)request.media_count,
                                                   request.max_tokens,api_token,&generation,
-                                                  api_interrupted,NULL,&stats,err);
+                                                  api_interrupted,&generation,&stats,err);
                 free(media);
             }
         }else if(public_continuation){
             bool prefix_miss=false;
             status=fg_runtime_generate_continuation(
                 runtime,rendered,rendered_continuation,&prefix_miss,request.max_tokens,
-                api_token,&generation,api_interrupted,NULL,&stats,err);
+                api_token,&generation,api_interrupted,&generation,&stats,err);
             if(status==FG_ERR_UNAVAILABLE&&prefix_miss){
                 memset(&stats,0,sizeof(stats));
                 memset(err,0,sizeof(*err));
@@ -2695,11 +2712,11 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
                 status=fg_runtime_reset(runtime,err);
                 if(status==FG_OK)
                     status=fg_runtime_generate(runtime,rendered,request.max_tokens,api_token,
-                                               &generation,api_interrupted,NULL,&stats,err);
+                                               &generation,api_interrupted,&generation,&stats,err);
             }
         }else{
             status=fg_runtime_generate(runtime,rendered,request.max_tokens,api_token,
-                                       &generation,api_interrupted,NULL,&stats,err);
+                                       &generation,api_interrupted,&generation,&stats,err);
         }
     }
     fg_chat_generated generated={0};
@@ -2766,12 +2783,18 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     if(generation_attempted&&!response_committed){
         fg_error reset_error={0};
         api_public_session_free(public_session);
-        if(fg_runtime_reset_failure(runtime,&reset_error)!=FG_OK){
+        if(status!=FG_ERR_INTERRUPTED&&
+           fg_runtime_reset_failure(runtime,&reset_error)!=FG_OK){
             *err=reset_error;
             return reset_error.code;
         }
     }
-    if (generation.client_failed ||
+    if(status==FG_ERR_INTERRUPTED)
+        fprintf(stderr,"request %s: prefill interrupted after %u/%u tokens, "
+                "frontier %u, %.1f s, client_failed %d\n",
+                id,stats.prefilled_tokens,stats.prompt_tokens,stats.context_tokens,
+                stats.prefill_seconds,generation.client_failed?1:0);
+    if (generation.client_failed || status == FG_ERR_INTERRUPTED ||
         (status == FG_ERR_IO && stats.prompt_tokens + stats.generated_tokens > 0u))
         return FG_OK;
     if (status == FG_ERR_ARGUMENT || status == FG_ERR_FORMAT || status == FG_ERR_LIMIT)

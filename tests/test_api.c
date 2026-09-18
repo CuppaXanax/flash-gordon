@@ -30,6 +30,7 @@ struct fg_runtime {
     bool fail_after_prefill;
     bool force_continuation_miss;
     bool require_clean_generation;
+    bool interrupt_prefill;
     uint32_t reset_count;
     uint32_t sampler_set_count;
     fg_sampler_config last_sampler;
@@ -130,6 +131,17 @@ fg_status fg_runtime_generate(fg_runtime *runtime, const char *rendered_transcri
     if (!runtime) {
         fg_error_set(err, FG_ERR_UNAVAILABLE, "test runtime");
         return FG_ERR_UNAVAILABLE;
+    }
+    if (runtime->interrupt_prefill) {
+        runtime->interrupt_prefill = false;
+        if (stats) {
+            stats->prompt_tokens = 2048u;
+            stats->prefilled_tokens = 512u;
+            stats->context_tokens = 512u;
+            stats->prefill_seconds = 2.0;
+        }
+        fg_error_set(err, FG_ERR_INTERRUPTED, "injected prefill interrupt");
+        return FG_ERR_INTERRUPTED;
     }
     if (runtime->require_clean_generation && runtime->history_length) {
         fg_error_set(err, FG_ERR_MISMATCH,
@@ -1737,6 +1749,28 @@ static void test_failed_generation_fails_closed(void) {
     fg_runtime_close(&runtime);
 }
 
+static void test_interrupted_prefill_keeps_resume_state(void) {
+    fg_runtime runtime = {
+        .empty_reason = FG_PREFIX_RESET_COLD_START,
+    };
+    api_public_session session={0};
+    fg_status status = FG_OK;
+    runtime.interrupt_prefill = true;
+    char *response = run_chat_request(
+        &runtime, &session,
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"large\"}]}",
+        &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "500 Internal Server Error"));
+    CHECK(response && strstr(response, "injected prefill interrupt"));
+    CHECK(runtime.reset_count == 0u);
+    CHECK(runtime.empty_reason == FG_PREFIX_RESET_COLD_START);
+    CHECK(!session.valid);
+    free(response);
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
+}
+
 static void test_nonstream_reasoning_content(void) {
     fg_runtime runtime = {
         .generated = "private steps\n</think>\n\nVisible answer",
@@ -1960,6 +1994,7 @@ int main(void) {
     test_video_http_flow();
     test_video_frames_http_flow();
     test_failed_generation_fails_closed();
+    test_interrupted_prefill_keeps_resume_state();
     if (failures) fprintf(stderr, "%d API test(s) failed\n", failures);
     return failures ? 1 : 0;
 }

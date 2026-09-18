@@ -50,7 +50,8 @@ typedef enum fg_status {
     FG_ERR_MISMATCH = 5,
     FG_ERR_OOM = 6,
     FG_ERR_UNAVAILABLE = 7,
-    FG_ERR_LIMIT = 8
+    FG_ERR_LIMIT = 8,
+    FG_ERR_INTERRUPTED = 9
 } fg_status;
 
 typedef struct fg_error {
