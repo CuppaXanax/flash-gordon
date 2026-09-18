@@ -1865,7 +1865,8 @@ static bool api_client_gone(api_generation *generation) {
     if (!(probe.revents & (POLLIN | POLLRDNORM))) return false;
     char byte = 0;
     ssize_t peeked = recv(generation->fd, &byte, 1u, MSG_PEEK | MSG_DONTWAIT);
-    return peeked == 0 || (peeked < 0 && errno != EAGAIN && errno != EWOULDBLOCK);
+    return peeked == 0 ||
+           (peeked < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR);
 }
 
 static bool api_interrupted(void *context) {
