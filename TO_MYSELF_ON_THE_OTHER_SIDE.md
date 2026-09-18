@@ -1012,3 +1012,22 @@ Three long-standing continuation gaps closed (merged `75bf18d`, fleet build
 baseline 52,451 tokens prefilled / 143.1 s / miss -> fix **131 prefilled,
 52,373 reused / 5.25 s / hit**. Tool remove: hit. Tampered earlier message:
 still rejected. Gates + battery + soak PASS.
+
+## 0ae. ABORT/RETRY + SYSTEM-DELTA CONTINUATION (2026-09-17)
+
+Merged `8c8cea3` (fleet build `03511029`, live dir `20260917-sysdelta`):
+
+- **Client abort:** both prefill pipelines now check the interrupt between
+  microbatches -> `FG_ERR_INTERRUPTED` with the contiguous frontier preserved;
+  the API skips the failure reset for client aborts (genuine errors still
+  reset). Dead-client stop latency 2.4-2.9 s (before: the ring kept prefilling
+  a dead request for 6+ minutes and the retry restarted from zero). Retries now
+  resume: `prefix hit, reused 4992/5248/10624` with suffix-only prefill.
+- **System-message deltas:** the leading system run is delta-eligible
+  (change/add/remove/reorder) and renders as a system block in the continuation
+  suffix - Pi's MCP toggling no longer costs a full re-prefill. History shrink
+  and message tampering still reset; unchanged-system renders are byte-identical.
+- **Measured A/B (20K context):** system changed miss/54.4 s -> **hit/1.8 s**
+  (reused 20032, prefilled 66); removed 62.8 s -> 1.5 s; added -> 1.6 s;
+  combined system+tool delta -> 3.2 s. Tamper/shrink still `miss`.
+- Gates + battery + soak PASS on the combined build.
