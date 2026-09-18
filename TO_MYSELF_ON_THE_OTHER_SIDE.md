@@ -1058,3 +1058,27 @@ rejected.
   to take HTTP I/O off rank 0's token critical path (the current chunk-hook
   servicing means socket work and token servicing share frame time; that
   coupling is a defect, not a design).
+
+## 0ag. CONTENT MISMATCH ROOT CAUSE - EMITTER/PARSER ASYMMETRY (2026-09-18)
+
+Merged `50328b3` (fleet binary `1572e516`, live dir `20260917-cmpfix`). The
+remaining `message[i].content` prefix misses - each costing a 78-99K full
+re-prefill (6-7 minutes) in the owner's session - were OUR asymmetry:
+`fg_chat_parse_generated` strips trailing whitespace (and leading CR/LF after
+`</think>`) when storing the assistant message, but the streamer SENT those
+characters. A streaming client echoing its reassembled content therefore
+diverged by one trailing byte -> reset -> full prefill, repeatedly.
+
+- **Root fix:** streamed deltas now byte-match the stored parse (test
+  `test_streamed_content_matches_stored` pins sentinel/trailing, split-token,
+  CRLF, no-sentinel, no-think cases).
+- **Safety net:** `api_content_equal` tolerates leading/trailing whitespace,
+  whitespace-only<->empty and CRLF/lone-CR vs LF; interior edits and any
+  changed/added/removed/reordered text still reset. Rules in
+  `docs/TOOL_CONTINUATION.md`.
+- **Diagnostic upgraded:** `SESSION_MISMATCH message[i].content@off stored="..."
+  echoed="..."` (48-byte escaped snippets) - the live t4 edit logged
+  `stored="" echoed=" tampered"`.
+- Measured: trailing-newline echo `hit, reused 52057` (was full re-prefill);
+  real edit `miss`; abort/retry 1.96 s; tool/system deltas unchanged; gates +
+  battery + soak PASS.
