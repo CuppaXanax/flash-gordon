@@ -1912,6 +1912,62 @@ static void test_system_change_with_tampered_history_resets(void) {
     fg_runtime_close(&runtime);
 }
 
+static void test_system_and_tool_change_continues_prefix(void) {
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    fg_error err = {0};
+    api_buffer body = {0};
+    CHECK(buffer_append(&body, "{", &err) == FG_OK);
+    CHECK(buffer_append(&body, tool_update_weather_request, &err) == FG_OK);
+    CHECK(buffer_append(&body,
+                        "\"messages\":["
+                        "{\"role\":\"system\",\"content\":\"Base rules.\"},"
+                        "{\"role\":\"user\",\"content\":\"weather?\"}]}",
+                        &err) == FG_OK);
+    char *response = run_chat_request(&runtime, &session, body.data, &status);
+    CHECK(status == FG_OK);
+    CHECK(session.valid);
+    free(body.data);
+    free(response);
+
+    uint32_t prior_resets = runtime.reset_count;
+    api_buffer second = {0};
+    CHECK(buffer_append(&second, "{", &err) == FG_OK);
+    CHECK(buffer_append(&second, tool_update_weather_clock_request, &err) == FG_OK);
+    CHECK(buffer_append(&second,
+                        "\"messages\":["
+                        "{\"role\":\"system\",\"content\":\"Base rules. MCP on.\"},"
+                        "{\"role\":\"user\",\"content\":\"weather?\"},"
+                        "{\"role\":\"assistant\",\"content\":\"answer\"},"
+                        "{\"role\":\"user\",\"content\":\"next\"}]}",
+                        &err) == FG_OK);
+    response = run_chat_request(&runtime, &session, second.data, &status);
+    free(second.data);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: hit\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: none\r\n"));
+    CHECK(runtime.reset_count == prior_resets);
+    CHECK(runtime.history &&
+          strstr(runtime.history,
+                 "answer<|im_end|>\n"
+                 "<|im_start|>system\n"
+                 "System instructions updated for this turn.\n\n"
+                 "Base rules. MCP on.<|im_end|>\n"
+                 "<|im_start|>system\n"
+                 "# Tools\n\nTool configuration updated for this turn."
+                 "\n\nThe following functions are now available or have updated "
+                 "definitions:\n\n<tools>\n"
+                 "{\"name\":\"clock\",\"parameters\":{\"type\":\"object\",\"properties\":{"
+                 "\"zone\":{\"type\":\"string\"}}}}\n"
+                 "</tools><|im_end|>\n"
+                 "<|im_start|>user\nnext<|im_end|>\n"
+                 "<|im_start|>assistant\n<think>\n"));
+    free(response);
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
+}
+
 static void test_system_shrink_resets(void) {
     fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
     api_public_session session = {0};
@@ -2338,6 +2394,7 @@ int main(void) {
     test_system_removed_continues_prefix();
     test_system_unchanged_continuation_is_byte_identical();
     test_system_change_with_tampered_history_resets();
+    test_system_and_tool_change_continues_prefix();
     test_system_shrink_resets();
     test_image_http_flow();
     test_video_http_flow();
