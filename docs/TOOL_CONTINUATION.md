@@ -154,6 +154,41 @@ continuation itself; the delta only announces the head-run change.
 - Text-only and vision paths untouched; media requests still reset as before.
 - No new environment flags.
 
+## Content comparison tolerance
+
+Date: 2026-09-17. Branch `fix/content-compare-tolerance` (base `5664863`).
+
+A continuation requires every session message's visible `content` to match the
+request's echo. Cosmetic whitespace variance (a trailing newline the client
+keeps while the server's parse trims it, CRLF client-side, etc.) is not history
+tampering and must not force a full re-prefill, so `api_content_equal`
+(`src/api.c`) canonicalizes both sides before comparing:
+
+| Difference | Accepted |
+|---|---|
+| leading whitespace (`isspace`: space/tab/CR/LF/vertical tab/form feed), either side | yes |
+| trailing whitespace, either side | yes |
+| `\r\n` or a lone `\r` versus `\n` inside the text | yes |
+| whitespace-only content versus empty content | yes |
+| interior whitespace amount or kind (e.g. `a b` versus `a  b`) | no |
+| changed, added, removed or reordered visible text | no |
+
+`role`, `tool_call_id` and tool-call ids/names/args stay byte-exact. On a
+rejected `content` compare the rank-0 `SESSION_MISMATCH` line carries the first
+differing byte offset plus 48-byte escaped snippets of both sides, e.g.
+`message[42].content@17 stored="..." echoed="..."`. Non-ASCII bytes are escaped
+as `\xNN`, so the line stays printable and one line long.
+
+The streaming emitter now trims exactly what the parser trims: trailing
+whitespace before `<|im_end|>` and at end of generation, and leading CR/LF
+after `</think>` even when they arrive in a later token. A compliant client's
+echo is therefore byte-identical and the tolerance is only a safety net.
+`tests/test_api.c` pins both the tolerance matrix (trailing newline, leading
+whitespace, CRLF, whitespace-only, interior-whitespace and real-edit rejects,
+offset/escaping format) and streamed-content identity against
+`fg_chat_parse_generated` for sentinel, split-token, CRLF, no-sentinel and
+no-think generation.
+
 ## Validation
 
 Local (WSL Ubuntu 24.04, gcc 13.3):
@@ -180,7 +215,16 @@ pwsh -NoProfile -File 'D:\looking-glass-labs\bc-250-dbg\results\tool-churn-20260
     -FillerRepeats 5200
 pwsh -NoProfile -File 'D:\looking-glass-labs\bc-250-dbg\results\sys-delta-20260917-1655\sys-delta-ab.ps1' `
     -FillerRepeats 5200
+pwsh -NoProfile -File 'D:\looking-glass-labs\bc-250-dbg\results\cmpfix-20260917-1830\cmpfix-ab.ps1' `
+    -FillerRepeats 5200
 ```
+
+Expected for the cmpfix script: turn 2 echoes turn 1's assistant content with a
+trailing newline appended and still reports `X-Flash-Gordon-Prefix-Cache: hit`,
+`X-Flash-Gordon-Reset-Reason: none` and reused tokens close to the turn-1 prompt
+size; the byte-exact echo reports the same; a real edit reports `miss` +
+`public-history-mismatch` with the `content@offset stored=... echoed=...` detail
+in the rank-0 log.
 
 Expected for the sys-delta script: turn 2 (system line added/removed, same
 history) reports `X-Flash-Gordon-Prefix-Cache: hit`,

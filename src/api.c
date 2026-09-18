@@ -27,6 +27,7 @@
 #define FG_API_STREAM_KEEPALIVE_SECONDS 10.0
 #define FG_API_BUSY_PROBE_BUDGET_SECONDS 0.5
 #define FG_API_BUSY_PROBE_MAX_CONNECTIONS 8u
+#define FG_API_CONTENT_SNIPPET 48u
 
 typedef struct api_buffer {
     char *data;
@@ -123,6 +124,7 @@ typedef struct api_generation {
     bool client_failed;
     bool think_closed;
     bool output_stopped;
+    bool visible_started;
     api_buffer visible_pending;
     char utf8_pending[4];
     size_t utf8_pending_length;
@@ -1115,6 +1117,61 @@ static bool api_text_equal(const char *left,const char *right) {
     return !strcmp(left ? left : "",right ? right : "");
 }
 
+static bool api_content_equal(const char *left,const char *right) {
+    const char *a=left?left:"",*b=right?right:"";
+    const char *end_a,*end_b;
+    while(*a&&isspace((unsigned char)*a))a++;
+    while(*b&&isspace((unsigned char)*b))b++;
+    end_a=a+strlen(a);end_b=b+strlen(b);
+    while(end_a>a&&isspace((unsigned char)end_a[-1]))end_a--;
+    while(end_b>b&&isspace((unsigned char)end_b[-1]))end_b--;
+    while(a<end_a&&b<end_b){
+        char ca=*a,cb=*b;
+        if(ca=='\r'){
+            if(a+1<end_a&&a[1]=='\n')a++;
+            ca='\n';
+        }
+        if(cb=='\r'){
+            if(b+1<end_b&&b[1]=='\n')b++;
+            cb='\n';
+        }
+        if(ca!=cb)return false;
+        a++;b++;
+    }
+    return a==end_a&&b==end_b;
+}
+
+static size_t api_content_diff_offset(const char *left,const char *right) {
+    size_t offset=0;
+    while(left[offset]&&left[offset]==right[offset])offset++;
+    return offset;
+}
+
+static void api_content_escape(const char *text,size_t limit,char *output,
+                               size_t output_size) {
+    static const char hex[]="0123456789abcdef";
+    size_t written=0;
+    if(!output_size)return;
+    for(size_t i=0;text[i]&&i<limit;i++){
+        unsigned char byte=(unsigned char)text[i];
+        char encoded[4];size_t length;
+        if(byte=='\\'||byte=='"'){encoded[0]='\\';encoded[1]=(char)byte;length=2u;}
+        else if(byte=='\n'){encoded[0]='\\';encoded[1]='n';length=2u;}
+        else if(byte=='\r'){encoded[0]='\\';encoded[1]='r';length=2u;}
+        else if(byte=='\t'){encoded[0]='\\';encoded[1]='t';length=2u;}
+        else if(byte>=0x20u&&byte<0x7fu){encoded[0]=(char)byte;length=1u;}
+        else{
+            encoded[0]='\\';encoded[1]='x';
+            encoded[2]=hex[byte>>4u];encoded[3]=hex[byte&15u];
+            length=4u;
+        }
+        if(written+length+1u>output_size)break;
+        memcpy(output+written,encoded,length);
+        written+=length;
+    }
+    output[written]=0;
+}
+
 static void api_mismatch(char *reason,size_t reason_size,const char *format,...) {
     if(!reason||!reason_size)return;
     va_list args;
@@ -1130,8 +1187,19 @@ static bool api_message_equal(size_t index,const fg_chat_message *left,
         api_mismatch(reason,reason_size,"message[%zu].role",index);
         return false;
     }
-    if(!api_text_equal(left->content,right->content)){
-        api_mismatch(reason,reason_size,"message[%zu].content",index);
+    if(!api_content_equal(left->content,right->content)){
+        const char *stored=left->content?left->content:"";
+        const char *echoed=right->content?right->content:"";
+        char stored_text[FG_API_CONTENT_SNIPPET*4u+1u];
+        char echoed_text[FG_API_CONTENT_SNIPPET*4u+1u];
+        size_t offset=api_content_diff_offset(stored,echoed);
+        api_content_escape(stored+offset,FG_API_CONTENT_SNIPPET,stored_text,
+                           sizeof(stored_text));
+        api_content_escape(echoed+offset,FG_API_CONTENT_SNIPPET,echoed_text,
+                           sizeof(echoed_text));
+        api_mismatch(reason,reason_size,
+                     "message[%zu].content@%zu stored=\"%s\" echoed=\"%s\"",
+                     index,offset,stored_text,echoed_text);
         return false;
     }
     if(!api_text_equal(left->tool_call_id,right->tool_call_id)){
@@ -2332,6 +2400,11 @@ static fg_status queue_visible_content(api_generation *generation,const char *te
     fg_status status=FG_OK;
     if(length)status=buffer_append_n(&generation->visible_pending,text,length,err);
     if(status!=FG_OK)return status;
+    while(!generation->visible_started&&generation->visible_pending.length){
+        char head=generation->visible_pending.data[0];
+        if(head!='\r'&&head!='\n'){generation->visible_started=true;break;}
+        pending_consume(&generation->visible_pending,1u);
+    }
     while(status==FG_OK&&generation->visible_pending.length){
         char *tool=strstr(generation->visible_pending.data,tool_start);
         char *end=strstr(generation->visible_pending.data,end_marker);
@@ -2377,6 +2450,9 @@ static fg_status queue_visible_content(api_generation *generation,const char *te
         }
         if(end&&(!tool||end<tool)){
             size_t bytes=(size_t)(end-generation->visible_pending.data);
+            while(bytes&&isspace(
+                      (unsigned char)generation->visible_pending.data[bytes-1u]))
+                bytes--;
             if(bytes)status=send_utf8_delta(generation,generation->visible_pending.data,bytes,err);
             generation->visible_pending.length=0;
             generation->visible_pending.data[0]=0;
@@ -2452,6 +2528,10 @@ static fg_status queue_visible_content(api_generation *generation,const char *te
         }
         if(final)keep=0;
         size_t flush=generation->visible_pending.length-keep;
+        if(final)
+            while(flush&&isspace(
+                      (unsigned char)generation->visible_pending.data[flush-1u]))
+                flush--;
         if(flush)status=send_utf8_delta(generation,generation->visible_pending.data,flush,err);
         if(status==FG_OK&&flush)pending_consume(&generation->visible_pending,flush);
         break;
@@ -2904,7 +2984,7 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     }
     status = fg_chat_render(request.messages, request.message_count, &render_options,
                             &rendered, err);
-    char session_mismatch[192]={0};
+    char session_mismatch[512]={0};
     bool public_continuation=status==FG_OK&&request.media_count==0&&
         api_public_session_prefix(public_session,&request,session_mismatch,
                                   sizeof(session_mismatch));

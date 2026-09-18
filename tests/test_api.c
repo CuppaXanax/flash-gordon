@@ -2460,6 +2460,101 @@ static void test_streamed_unclosed_reasoning_flushed(void) {
     close(sockets[1]);
 }
 
+static bool sse_content_equals(const char *response,const char *expected) {
+    const char *cursor=response;
+    api_buffer joined={0};
+    fg_error err={0};
+    bool ok=true;
+    while(ok&&(cursor=strstr(cursor,"data: "))!=NULL){
+        cursor+=6;
+        const char *newline=strstr(cursor,"\n");
+        if(!newline){ok=false;break;}
+        size_t length=(size_t)(newline-cursor);
+        if(length==6u&&!strncmp(cursor,"[DONE]",6u)){cursor=newline;continue;}
+        json_value *root=parse_json_body(cursor,length,&err);
+        json_value *choices=json_object_get(root,"choices");
+        json_value *choice=choices&&choices->type==JSON_ARRAY&&choices->as.array.count?
+            choices->as.array.items[0]:NULL;
+        json_value *content=json_object_get(json_object_get(choice,"delta"),"content");
+        if(content&&content->type==JSON_STRING){
+            if(buffer_append(&joined,content->as.string,&err)!=FG_OK)
+                ok=false;
+        }
+        json_free(root);
+        cursor=newline;
+    }
+    bool equal=ok&&!strcmp(joined.data?joined.data:"",expected);
+    if(!equal)
+        fprintf(stderr,"streamed content [%s] expected [%s]\n",
+                joined.data?joined.data:"",expected);
+    free(joined.data);
+    return equal;
+}
+
+static void check_streamed_content(const char *const *tokens,bool think_closed) {
+    int sockets[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    api_chat_request request = {0};
+    api_generation generation = {
+        .fd = sockets[0],
+        .stream = true,
+        .id = "chatcmpl-content",
+        .model = "Qwen3.8-Flash-Next",
+        .created = 10,
+        .request = &request,
+        .think_closed = think_closed,
+    };
+    fg_error err = {0};
+    for (size_t i = 0; tokens[i]; i++)
+        CHECK(api_token(&generation, (uint32_t)i + 1u, tokens[i], strlen(tokens[i]),
+                        &err) == FG_OK);
+    fg_chat_generated generated = {0};
+    CHECK(fg_chat_parse_generated(generation.content.data?generation.content.data:"",
+                                 !think_closed, &generated, &err) == FG_OK);
+    CHECK(send_stream_end(&generation, &generated, "stop", &err) == FG_OK);
+    shutdown(sockets[0], SHUT_WR);
+    char *response = read_socket_response(sockets[1]);
+    CHECK(response && sse_content_equals(response, generated.content));
+    free(response);
+    fg_chat_generated_free(&generated);
+    free(generation.content.data);
+    free(generation.visible_pending.data);
+    close(sockets[0]);
+    close(sockets[1]);
+}
+
+static void test_streamed_content_matches_stored(void) {
+    static const char *sentinel_trailing[] = {
+        "hidden</think>\nanswer\n\n", "<|im_end|>", NULL,
+    };
+    check_streamed_content(sentinel_trailing, false);
+
+    static const char *sentinel_split[] = {
+        "hidden</think>", "\n\nanswer\n", "<|im_end|>", NULL,
+    };
+    check_streamed_content(sentinel_split, false);
+
+    static const char *sentinel_split_trailing[] = {
+        "hidden</think>\nanswer", " \n", "<|im_end|>", NULL,
+    };
+    check_streamed_content(sentinel_split_trailing, false);
+
+    static const char *sentinel_crlf[] = {
+        "hidden</think>\r\nanswer\r\n", "<|im_end|>", NULL,
+    };
+    check_streamed_content(sentinel_crlf, false);
+
+    static const char *no_sentinel[] = {
+        "hidden</think>\n\n  answer  \n", NULL,
+    };
+    check_streamed_content(no_sentinel, false);
+
+    static const char *no_think_trailing[] = {
+        "answer", "\n\n", NULL,
+    };
+    check_streamed_content(no_think_trailing, true);
+}
+
 static void test_public_session_mismatch_reasons(void) {
     fg_chat_message stored_messages[] = {
         {.role = "user", .content = "hello"},
@@ -2508,7 +2603,8 @@ static void test_public_session_mismatch_reasons(void) {
     request.tool_schemas = (char **)stored_schemas;
     request_messages[1].content = "different";
     CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
-    CHECK(!strcmp(reason, "message[1].content"));
+    CHECK(!strcmp(reason,
+                  "message[1].content@0 stored=\"answer\" echoed=\"different\""));
 
     request_messages[1].content = "answer";
     request.message_count = 1;
@@ -2603,7 +2699,8 @@ static void test_public_session_system_delta_rules(void) {
     request.message_count = 4;
     request.messages = edited_user;
     CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
-    CHECK(!strcmp(reason, "message[1].content"));
+    CHECK(!strcmp(reason,
+                  "message[1].content@0 stored=\"hello\" echoed=\"tampered\""));
 
     fg_chat_message edited_assistant[] = {
         {.role = "system", .content = "new rules"},
@@ -2614,13 +2711,104 @@ static void test_public_session_system_delta_rules(void) {
     request.message_count = 4;
     request.messages = edited_assistant;
     CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
-    CHECK(!strcmp(reason, "message[2].content"));
+    CHECK(!strcmp(reason,
+                  "message[2].content@0 stored=\"answer\" echoed=\"tampered\""));
 
     fg_chat_message shrink[] = {{.role = "system", .content = "new rules"}};
     request.message_count = 1;
     request.messages = shrink;
     CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
     CHECK(!strcmp(reason, "messages=3->1"));
+}
+
+static void test_content_compare_tolerance(void) {
+    fg_chat_message stored[] = {
+        {.role = "user", .content = "hello"},
+        {.role = "assistant", .content = "answer"},
+    };
+    api_public_session session = {.valid = true};
+    session.transcript.message_count = 2;
+    session.transcript.messages = stored;
+
+    fg_chat_message request_messages[] = {
+        {.role = "user", .content = "hello"},
+        {.role = "assistant", .content = "answer"},
+    };
+    api_chat_request request = {0};
+    request.message_count = 2;
+    request.messages = request_messages;
+    char reason[512] = {0};
+
+    request_messages[1].content = "answer\n";
+    CHECK(api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!reason[0]);
+
+    request_messages[1].content = "answer \n\n";
+    CHECK(api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!reason[0]);
+
+    request_messages[1].content = "\r\n  answer";
+    CHECK(api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!reason[0]);
+
+    stored[1].content = "line one\nline two";
+    request_messages[1].content = "line one\r\nline two";
+    CHECK(api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!reason[0]);
+
+    request_messages[1].content = "line one\rline two";
+    CHECK(api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!reason[0]);
+
+    stored[1].content = "   \t";
+    request_messages[1].content = "\r\n \n";
+    CHECK(api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!reason[0]);
+
+    stored[1].content = "a b";
+    request_messages[1].content = "a  b";
+    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!strcmp(reason, "message[1].content@2 stored=\"b\" echoed=\" b\""));
+
+    stored[1].content = "a\r\nb";
+    request_messages[1].content = "a\r\r\nb";
+    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(reason[0]);
+
+    stored[1].content = "answer";
+    request_messages[1].content = "answer\nmore";
+    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!strcmp(reason, "message[1].content@6 stored=\"\" echoed=\"\\nmore\""));
+
+    char stored_deep[80];
+    char echoed_deep[80];
+    memset(stored_deep, 'x', 64u);
+    memset(echoed_deep, 'x', 64u);
+    stored_deep[64] = 0;
+    echoed_deep[64] = 0;
+    strcat(stored_deep, "OLD");
+    strcat(echoed_deep, "NEW");
+    stored[1].content = stored_deep;
+    request_messages[1].content = echoed_deep;
+    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!strcmp(reason, "message[1].content@64 stored=\"OLD\" echoed=\"NEW\""));
+
+    stored[1].content = "say \"hi\" now";
+    request_messages[1].content = "say \"ho\" now";
+    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!strcmp(reason,
+                  "message[1].content@6 stored=\"i\\\" now\" echoed=\"o\\\" now\""));
+
+    stored[1].content = "one\ntwo";
+    request_messages[1].content = "one\ntwo\nthree";
+    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!strcmp(reason,
+                  "message[1].content@7 stored=\"\" echoed=\"\\nthree\""));
+
+    stored[1].content = "answer";
+    request_messages[1].content = "an5wer";
+    CHECK(!api_public_session_prefix(&session, &request, reason, sizeof(reason)));
+    CHECK(!strcmp(reason, "message[1].content@2 stored=\"swer\" echoed=\"5wer\""));
 }
 
 int main(void) {
@@ -2642,6 +2830,7 @@ int main(void) {
     test_streamed_unclosed_reasoning_flushed();
     test_streamed_incomplete_tags_do_not_leak();
     test_streamed_utf8_and_sentinel_filtering();
+    test_streamed_content_matches_stored();
     test_stream_keepalive_framing();
     test_stream_keepalive_stops_on_gone_client();
     test_nonstream_gets_no_keepalive();
@@ -2656,6 +2845,7 @@ int main(void) {
     test_divergent_tool_request_clears_prefix_metadata();
     test_public_session_mismatch_reasons();
     test_public_session_system_delta_rules();
+    test_content_compare_tolerance();
     test_tool_choice_change_continues_prefix();
     test_tool_added_continues_prefix();
     test_tool_removed_continues_prefix();
