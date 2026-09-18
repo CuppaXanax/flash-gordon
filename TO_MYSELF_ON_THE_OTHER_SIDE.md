@@ -1054,3 +1054,7 @@ rejected.
 - Preserved: gates [12]/[Paris], battery in band, soak PASS.
 - Deliberately skipped: HTTP socket keep-alive/reuse (a single-threaded accept
   loop would block on idle sockets; close-per-response retained).
+- **Follow-up workstream:** `docs/API_CONCURRENCY.md` - front-end/engine split
+  to take HTTP I/O off rank 0's token critical path (the current chunk-hook
+  servicing means socket work and token servicing share frame time; that
+  coupling is a defect, not a design).
