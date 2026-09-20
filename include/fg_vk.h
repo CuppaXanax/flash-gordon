@@ -85,6 +85,7 @@ fg_status fg_vk_end(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_flush(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_static_begin(fg_vk_context *context,uint32_t slot,fg_error *err);
 fg_status fg_vk_static_end(fg_vk_context *context,uint32_t slot,fg_error *err);
+fg_status fg_vk_static_reset(fg_vk_context *context,uint32_t slot,fg_error *err);
 fg_status fg_vk_static_submit(fg_vk_context *context,uint32_t slot,fg_error *err);
 fg_status fg_vk_static_wait(fg_vk_context *context,uint32_t slot,fg_error *err);
 fg_status fg_vk_static_drain(fg_vk_context *context,fg_error *err);

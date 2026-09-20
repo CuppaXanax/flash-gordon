@@ -1167,14 +1167,50 @@ static void gdn_state_trace(fg_owner_executor *e,uint32_t layer,uint32_t token,
         (unsigned long long)state_hash_f32(r,48u*128u*128u),c[0],r[0],in?in[0]:0.0f);
 }
 
+/* Static replay stays enabled unless explicitly disabled (FG_DECODE_STATIC=0)
+ * or the Vulkan timeline profiler is active.  A recorded run must execute
+ * exactly the work of a fresh recording; the run output pointer captured at
+ * record time is reused on replay. */
 static bool chained_static_allowed(fg_vk_context *vk){
-    (void)vk;
-    /* Static replay is parked: a run recorded once and replayed after many
-     * tokens diverges from a freshly recorded run (non-finite layer-0 state at
-     * token 81 on the thinking repro), while re-recording each token and the
-     * fully dynamic path both match.  Correctness wins over the per-token
-     * recording cost until the replay divergence is understood. */
-    return false;
+    const char *value=getenv("FG_DECODE_STATIC");
+    if(value&&*value&&strcmp(value,"0")==0)return false;
+    if(vk&&fg_vk_profile_active(vk))return false;
+    return true;
+}
+
+/* Diagnostic: re-record every N tokens (FG_STATIC_RERECORD=N) to bisect the
+ * staleness horizon; 0 or unset keeps the recorded run. */
+static uint32_t static_rerecord_period(void){
+    static int period=-1;
+    if(period<0){
+        const char *value=getenv("FG_STATIC_RERECORD");
+        period=(value&&*value)?atoi(value):0;
+        if(period<=0)period=0;
+    }
+    return (uint32_t)period;
+}
+static bool static_check_enabled(void){
+    const char *value=getenv("FG_STATIC_CHECK");
+    return value&&*value&&strcmp(value,"0")!=0;
+}
+static fg_status static_run_check(fg_owner_executor *e,fg_vk_context *vk,uint32_t slot,
+    uint32_t token,fg_error *err){
+    fg_status status=fg_vk_static_wait(vk,slot,err);
+    if(status!=FG_OK)return status;
+    const fg_vk_tensor *output=e->static_run_output[slot];
+    const float *values=output?fg_vk_tensor_map((fg_vk_tensor *)output):NULL;
+    int32_t first_bad=-1;
+    if(values)for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)
+        if(!isfinite(values[i])){first_bad=(int32_t)i;break;}
+    fprintf(stderr,"FG_STATIC_RUN rank=%u token=%u slot=%u finite=%d first_bad=%d f0=%g\n",
+        fg_model_rank(e->model),token,slot,first_bad<0,first_bad,values?values[0]:0.0f);
+    if(first_bad>=0){
+        fg_error_set(err,FG_ERR_FORMAT,
+            "rank %u static run slot %u token %u produced non-finite hidden at element %d value=%g",
+            fg_model_rank(e->model),slot,token,first_bad,values[first_bad]);
+        return FG_ERR_FORMAT;
+    }
+    return FG_OK;
 }
 
 /* One text layer: PLE, GR read, GDN or QSA, GR write, GR read, router, shared
@@ -1293,7 +1329,11 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
         while(run_last+1u<=last_layer&&((run_last+1u)&3u)!=3u)run_last++;
         uint32_t slot=0u;
         for(uint32_t l=first_layer;l<layer;l++)if((l&3u)==3u)slot++;
-        if(static_allowed&&slot<FG_VK_STATIC_SLOTS&&fg_vk_static_recorded(vk,slot)){
+        uint32_t rerecord=static_rerecord_period();
+        if(status==FG_OK&&static_allowed&&slot<FG_VK_STATIC_SLOTS&&rerecord&&
+           (token%rerecord)==0u)
+            status=fg_vk_static_reset(vk,slot,err);
+        if(status==FG_OK&&static_allowed&&slot<FG_VK_STATIC_SLOTS&&fg_vk_static_recorded(vk,slot)){
             if(frame_trace_enabled()){
                 const fg_vk_tensor *cur=current;
                 for(uint32_t l=layer;l<=run_last;l++){
@@ -1307,7 +1347,9 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
             }
             if(e->static_run_output[slot])current=e->static_run_output[slot];
             status=fg_vk_static_submit(vk,slot,err);
-        }else if(static_allowed&&slot<FG_VK_STATIC_SLOTS){
+            if(status==FG_OK&&static_check_enabled())
+                status=static_run_check(e,vk,slot,token,err);
+        }else if(status==FG_OK&&static_allowed&&slot<FG_VK_STATIC_SLOTS){
             status=fg_vk_static_begin(vk,slot,err);
             for(uint32_t l=layer;status==FG_OK&&l<=run_last;l++)
                 status=owner_record_layer(e,l,token,position,hyper_input,
@@ -1315,6 +1357,8 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
             if(status==FG_OK)status=fg_vk_static_end(vk,slot,err);
             if(status==FG_OK)status=fg_vk_static_submit(vk,slot,err);
             if(status==FG_OK)e->static_run_output[slot]=current;
+            if(status==FG_OK&&static_check_enabled())
+                status=static_run_check(e,vk,slot,token,err);
         }else{
             for(uint32_t l=layer;status==FG_OK&&l<=run_last;l++){
                 status=owner_record_layer(e,l,token,position,hyper_input,
