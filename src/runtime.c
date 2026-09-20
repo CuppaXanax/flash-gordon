@@ -724,6 +724,25 @@ static fg_status handle_prefill_layer_work(fg_fabric *fabric,fg_owner_executor *
     return status;
 }
 
+/* Fail closed on a non-finite block output where the hidden vector is already
+ * on the host for the ring handoff: the WC readback is the unavoidable cost,
+ * so scanning the staging buffer here is nearly free.  Checking the mapped
+ * device tensor element-by-element instead stalls on every write-combined
+ * line (~2 ms per block per rank on the BC-250) and cost more than replay
+ * saved.  Same guarantee: a bad block aborts the request before the hidden
+ * state is forwarded. */
+static fg_status validate_block_hidden(uint32_t rank,uint32_t token,
+    uint32_t through_layer,const float *values,fg_error *err){
+    if(!values)return FG_OK;
+    for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(values[i])){
+        fg_error_set(err,FG_ERR_FORMAT,
+            "rank %u decode block through layer %u token %u produced non-finite hidden at element %u value=%g",
+            rank,through_layer,token,i,values[i]);
+        return FG_ERR_FORMAT;
+    }
+    return FG_OK;
+}
+
 /* Execute this rank's whole layer block for one decode token and hand the hyper
  * state to the next block owner (or back to rank 0 as the final result).  The
  * block owner's own GDN/QSA/PLE state was advanced by ring prefill, so no
@@ -836,6 +855,8 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
     struct timespec t_block={0};if(trace)clock_gettime(CLOCK_MONOTONIC,&t_block);
     if(status==FG_OK)status=fg_vk_tensor_read(current,0,context->hyper_out,
         (uint64_t)FG_HYPER_WIDTH*4u,err);
+    if(status==FG_OK)status=validate_block_hidden(self,work->token_index,last,
+        context->hyper_out,err);
     struct timespec t_read={0};if(trace)clock_gettime(CLOCK_MONOTONIC,&t_read);
     numerics_trace_host("FB_OUT",self,last,work->token_index,1u,context->hyper_out);
     if(status==FG_OK)status=worker_publish_qsa_pages(context->qsa_owner,owner,self,
@@ -4333,6 +4354,8 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
             if(trace)t_own_run=dispatch_ts();
             if(status==FG_OK)status=fg_vk_tensor_read(current,0,work->hyper,
                 (uint64_t)FG_HYPER_WIDTH*4u,err);
+            if(status==FG_OK)status=validate_block_hidden(0u,work->token_index,last,
+                work->hyper,err);
             if(trace)t_own_read=dispatch_ts();
             numerics_trace_host("FB_OUT",0u,last,work->token_index,1u,work->hyper);
             if(trace)t_own_end=dispatch_ts();

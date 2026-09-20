@@ -56,19 +56,6 @@ static void numerics_trace_values_local(const char *phase,uint32_t rank,uint32_t
         (unsigned long long)count,(unsigned long long)numerics_hash_bytes(values,count*4u),
         sum,min,max,values[0],values[count-1u]);
 }
-static fg_status owner_check_block_output(uint32_t rank,uint32_t first_layer,
-    uint32_t last_layer,uint32_t token,const fg_vk_tensor *output,fg_error *err){
-    const float *values=fg_vk_tensor_map((fg_vk_tensor *)output);
-    if(!values)return FG_OK;
-    for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(values[i])){
-        fg_error_set(err,FG_ERR_FORMAT,
-            "rank %u decode block layers=%u..%u token=%u produced non-finite hidden at element %u value=%g",
-            rank,first_layer,last_layer,token,i,values[i]);
-        return FG_ERR_FORMAT;
-    }
-    return FG_OK;
-}
-
 static fg_status chained_layer_trace(uint32_t rank,fg_vk_context *vk,uint32_t layer,
     uint32_t token,const fg_vk_tensor *state,fg_error *err){
     if(!numerics_trace_enabled())return FG_OK;
@@ -1127,8 +1114,6 @@ fg_status fg_owner_decode_block(fg_owner_executor *e,uint32_t first_layer,
         if(status!=FG_OK)return status;
         current=materialized;
     }
-    fg_status check=owner_check_block_output(fg_model_rank(e->model),first_layer,last_layer,token,current,err);
-    if(check!=FG_OK)return check;
     *output=current;
     return FG_OK;
 }
@@ -1374,7 +1359,6 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
         if(fg_vk_batch_active(vk))status=finish_batch(vk,status,err);
         if(status==FG_OK)status=fg_vk_static_drain(vk,err);
     }
-    if(status==FG_OK)status=owner_check_block_output(fg_model_rank(e->model),first_layer,last_layer,token,current,err);
     if(status==FG_OK)*output=current;
     return status;
 }
