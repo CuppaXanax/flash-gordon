@@ -35,7 +35,7 @@ param(
     [string]$FleetUser = "xander",
     [int]$RequestTimeoutSec = 1800,
     [double]$MinPrefillTps = 240.0,
-    [double]$MinDecodeTps = 15.0,
+    [double]$MinDecodeTps = 22.0,
     [switch]$SkipPerf,
     [switch]$SkipRanks,
     [string]$LogPath = ""
