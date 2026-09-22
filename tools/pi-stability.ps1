@@ -5,19 +5,24 @@ Escalating-context stability gate for the Flash Gordon ring fleet.
 
 .DESCRIPTION
 Soak the live OpenAI endpoint with growing contexts, a multi-turn growing
-conversation, correctness probes, per-blade liveness checks and the perf band.
-This is the regression gate for the QSA selection boundary that killed rank 1
-with "invalid causal QSA score tile" during long ring prefills.
+conversation, correctness probes, per-blade liveness checks, the live startup
+ledger and the perf band. This is the regression gate for the QSA selection
+boundary that killed rank 1 with "invalid causal QSA score tile" during long
+ring prefills.
 
 The script never restarts the fleet: it attaches to whatever is serving
 http://192.0.2.42:8080.  Run it after every fleet deploy before handing the
-endpoint back to a user.
+endpoint back to a user.  It asserts the serving process's own FG_LEDGER line
+(as echoed in the X-Flash-Gordon-Ledger response header) against the sealed
+fleet geometry, so a deploy that changes ownership or weight bytes cannot pass
+silently.
 
 .OUTPUT FORMAT (one line per record, stable prefixes for grep):
   FGSTAB stage=<name> target=<tokens> prompt=<actual> status=PASS|FAIL content=<chars> prefill_tps=<f> decode_tps=<f> note=<text>
   FGSTAB turn=<n> prompt=<actual> status=PASS|FAIL content=<chars> prefill_tps=<f> note=<text>
   FGSTAB correctness=<name> answer=[...] status=PASS|FAIL
   FGSTAB rank=<n> alive=<0|1> status=PASS|FAIL
+  FGSTAB ledger status=PASS|FAIL blocks=<runs> wire_hops=<n> weights_total=<bytes> logical=<tokens> qsa_cache_bytes=<bytes> note=<text>
   FGSTAB perf=<name> value=<f> band=<f> status=PASS|FAIL
   FGSTAB summary stages=<n> conversation=<n> correctness=<n> ranks=<n> status=PASS|FAIL failures=<n>
 Exit code 0 only when every line says PASS.
@@ -36,8 +41,21 @@ param(
     [int]$RequestTimeoutSec = 1800,
     [double]$MinPrefillTps = 240.0,
     [double]$MinDecodeTps = 22.0,
+    # Production expert-parallel layout: rank:layer-count runs in layer order.
+    # Override only for a deliberately different placement.
+    [string]$ExpectedBlocks = "1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6",
+    # Optional exact per-rank sealed weight bytes, comma list of eight values.
+    [string]$ExpectedWeights = "",
+    [int]$ExpectedLogical = 262144,
     [switch]$SkipPerf,
     [switch]$SkipRanks,
+    [switch]$SkipLedger,
+    # TODO(WS1): the 32K QSA page-miss cliff fix is not merged yet
+    # (PERFORMANCE_BYTE_BUDGET_2026-09-15.md section 4). The probe is opt-in and
+    # reports INFO only. Once WS1 lands, enable the probe by default and set
+    # -Min32kDecodeTps to the validated 32K floor (~19-21 TPS today).
+    [switch]$Probe32kDecode,
+    [double]$Min32kDecodeTps = 0.0,
     [string]$LogPath = ""
 )
 
@@ -82,6 +100,7 @@ function Invoke-Chat {
     } catch {
         return [pscustomobject]@{ Name = $Name; Ok = $false; Status = 0; Content = ""
             PromptTokens = 0; PrefillTps = 0.0; DecodeTps = 0.0
+            Ledger = ""
             Note = "transport: $($_.Exception.Message)" }
     }
     $status = [int]$response.StatusCode
@@ -107,6 +126,9 @@ function Invoke-Chat {
         if (-not $value) { return 0 }
         [int]::Parse($value, $Invariant)
     }
+    function HeaderText([string]$headerName) {
+        return [string]$response.Headers[$headerName]
+    }
     [pscustomobject]@{
         Name = $Name
         Ok = $status -eq 200
@@ -115,6 +137,7 @@ function Invoke-Chat {
         PromptTokens = HeaderInt "X-Flash-Gordon-Prompt-Tokens"
         PrefillTps = HeaderDouble "X-Flash-Gordon-Prefill-TPS"
         DecodeTps = HeaderDouble "X-Flash-Gordon-Decode-TPS"
+        Ledger = HeaderText "X-Flash-Gordon-Ledger"
         Note = $note
     }
 }
@@ -176,6 +199,91 @@ function New-SoakContent {
     "/no_think " + ("hello " * $hello) + " Reply with one word."
 }
 
+function Test-Ledger {
+    param([object]$Result)
+    if ($SkipLedger) {
+        Write-Record "FGSTAB ledger=skipped"
+        return
+    }
+    if (-not $Result -or -not $Result.Ledger) {
+        Add-Failure "live ledger header is missing; the serving build predates the startup ledger"
+        Write-Record "FGSTAB ledger status=FAIL note=missing X-Flash-Gordon-Ledger header"
+        return
+    }
+    $line = [string]$Result.Ledger
+    $fields = @{}
+    foreach ($token in ($line -split ' ')) {
+        $split = $token.IndexOf('=')
+        if ($split -gt 0) { $fields[$token.Substring(0, $split)] = $token.Substring($split + 1) }
+    }
+    $problems = [Collections.Generic.List[string]]::new()
+    if (-not $line.StartsWith("FG_LEDGER ")) { $problems.Add("missing FG_LEDGER prefix") }
+    $expected = [ordered]@{
+        rank = "0"; ranks = "8"; layers = "48"; experts = "512"; topk = "10";
+        hidden = "2560"; layer_mode = "single"; batch = "128"; window = "2";
+        prefill_frames = "8"; ring_prefill = "1"; ring_decode = "1"
+    }
+    foreach ($key in $expected.Keys) {
+        if ([string]$fields[$key] -ne $expected[$key]) {
+            $problems.Add("$key=$([string]$fields[$key]) expected $($expected[$key])")
+        }
+    }
+    if ([string]$fields["blocks"] -ne $ExpectedBlocks) {
+        $problems.Add("blocks=$([string]$fields['blocks']) expected $ExpectedBlocks")
+    }
+    $owners = @()
+    foreach ($run in ($ExpectedBlocks -split ',')) {
+        $parts = $run -split ':'
+        if ($parts.Count -ne 2) { $owners = @(); break }
+        $owners += [int]$parts[0]
+    }
+    if ($owners.Count -gt 0) {
+        $expectedHops = 0
+        if ($owners[0] -ne 0) { $expectedHops++ }
+        $expectedHops += $owners.Count - 1
+        if ($owners[-1] -ne 4) { $expectedHops++ }
+        if ([string]$fields["wire_hops"] -ne [string]$expectedHops) {
+            $problems.Add("wire_hops=$([string]$fields['wire_hops']) expected $expectedHops")
+        }
+    }
+    $weights = @()
+    if ($fields["weights"]) { $weights = @($fields["weights"] -split ',') }
+    if ($weights.Count -ne 8) {
+        $problems.Add("weights has $($weights.Count) entries, expected 8")
+    } else {
+        foreach ($value in $weights) {
+            if ($value -notmatch '^\d+$' -or [uint64]$value -lt 1GB) {
+                $problems.Add("weight bytes '$value' are not a plausible per-rank total")
+                break
+            }
+        }
+        if ($ExpectedWeights -and ($weights -join ',') -ne $ExpectedWeights) {
+            $problems.Add("weights=$($weights -join ',') expected $ExpectedWeights")
+        }
+    }
+    if ($fields["weights_total"] -notmatch '^\d+$' -or [uint64]$fields["weights_total"] -lt 1GB) {
+        $problems.Add("weights_total=$([string]$fields['weights_total'])")
+    }
+    if ([string]$fields["logical"] -ne [string]$ExpectedLogical) {
+        $problems.Add("logical=$([string]$fields['logical']) expected $ExpectedLogical")
+    }
+    if ($fields["qsa_cache_pages"] -notmatch '^\d+$' -or [int]$fields["qsa_cache_pages"] -lt 1) {
+        $problems.Add("qsa_cache_pages=$([string]$fields['qsa_cache_pages'])")
+    }
+    if ($fields["qsa_cache_bytes"] -notmatch '^\d+$' -or [uint64]$fields["qsa_cache_bytes"] -lt 16MB) {
+        $problems.Add("qsa_cache_bytes=$([string]$fields['qsa_cache_bytes']) below the sealed 16 MiB floor")
+    }
+    $status = if ($problems.Count -eq 0) { "PASS" } else { "FAIL" }
+    if ($status -eq "FAIL") {
+        Add-Failure "ledger: $($problems -join '; ')"
+    }
+    Write-Record ("FGSTAB ledger status={0} blocks={1} wire_hops={2} weights_total={3} logical={4} qsa_cache_bytes={5} note={6}" -f
+        $status, [string]$fields["blocks"], [string]$fields["wire_hops"],
+        [string]$fields["weights_total"], [string]$fields["logical"],
+        [string]$fields["qsa_cache_bytes"],
+        $(if ($problems.Count -eq 0) { "sealed geometry matches" } else { $problems -join "; " }))
+}
+
 $started = Get-Date
 Write-Record ("FGSTAB start={0} api={1} min_prefill_tps={2} min_decode_tps={3}" -f
     $started.ToString("yyyy-MM-ddTHH:mm:ss"), $ApiUrl, $MinPrefillTps, $MinDecodeTps)
@@ -198,6 +306,13 @@ foreach ($target in $soak) {
     Write-Record ("FGSTAB stage=soak target={0} prompt={1} status={2} content={3} prefill_tps={4:F2} decode_tps={5:F2} note={6}" -f
         $target, $result.PromptTokens, $status, $contentChars, $result.PrefillTps, $result.DecodeTps, $result.Note)
     Test-Ranks
+}
+
+if ($soakResults.ContainsKey(128)) {
+    Test-Ledger -Result $soakResults[128]
+} else {
+    Add-Failure "the first soak request did not run; cannot assert the live ledger"
+    Write-Record "FGSTAB ledger status=FAIL note=no probe response"
 }
 
 $conversation = @()
@@ -256,6 +371,23 @@ if (-not $SkipPerf) {
     Write-Record ("FGSTAB perf=short_decode value={0:F2} band={1:F2} status={2}" -f
         $short.DecodeTps, $MinDecodeTps, $decodeStatus)
     Write-Record ("FGSTAB perf=short_prefill value={0:F2} status=INFO" -f $short.PrefillTps)
+    # TODO(WS1): the 32K QSA page-miss cliff fix is not merged yet. This probe
+    # is opt-in and INFO-only; once WS1 lands, run it by default and assert
+    # -Min32kDecodeTps (validated 32K floor, ~19-21 TPS on the current pack).
+    if ($Probe32kDecode) {
+        $long = Invoke-Chat -Messages @(@{ role = "user"; content = (New-SoakContent -TargetTokens 32768) }) -MaxTokens 32 -Name "32k-decode"
+        if ($Min32kDecodeTps -gt 0.0) {
+            $longStatus = if ($long.Ok -and $long.DecodeTps -ge $Min32kDecodeTps) { "PASS" } else { "FAIL" }
+            if ($longStatus -eq "FAIL") {
+                Add-Failure "32K decode $($long.DecodeTps) below $Min32kDecodeTps (status=$($long.Status) $($long.Note))"
+            }
+            Write-Record ("FGSTAB perf=32k_decode value={0:F2} band={1:F2} status={2}" -f
+                $long.DecodeTps, $Min32kDecodeTps, $longStatus)
+        } else {
+            Write-Record ("FGSTAB perf=32k_decode value={0:F2} band=TODO-WS1 status=INFO" -f
+                $long.DecodeTps)
+        }
+    }
 }
 
 Test-Ranks

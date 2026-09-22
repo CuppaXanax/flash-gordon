@@ -155,6 +155,7 @@ bool fg_runtime_video_available(const fg_runtime *runtime);
 bool fg_runtime_video_frames_available(const fg_runtime *runtime);
 uint32_t fg_runtime_context_tokens(const fg_runtime *runtime);
 uint32_t fg_runtime_context_limit(const fg_runtime *runtime);
+const char *fg_runtime_ledger(const fg_runtime *runtime);
 const char *fg_runtime_model_name(const fg_runtime *runtime);
 fg_execution_mode fg_runtime_execution_mode(const fg_runtime *runtime);
 const char *fg_execution_mode_name(fg_execution_mode mode);

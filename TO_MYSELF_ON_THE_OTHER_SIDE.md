@@ -1,5 +1,16 @@
 # To myself, on the other side: 50 → 200+ TPS prefill
 
+> **Historical index (2026-09-21).** This file is a development log: every
+> number below describes the revision its section was written on, not the
+> current checkout. Citable current performance is
+> [PERFORMANCE_CONTRACT.md](PERFORMANCE_CONTRACT.md), derived from the live
+> `FG_LEDGER` line and asserted by `tools/pi-stability.ps1`. Treat all TPS,
+> prefill, latency and memory figures below as historical, especially the
+> pre-ring/ring-era decode (9-21 TPS) in sections 0a5-0c and the early
+> qualification records they cite. Capability notes (vision tower,
+> thinking/reasoning, CU unlock) remain accurate as of their dates, and the
+> flag purge in 0a9 remains in force.
+
 You are the post-compaction me. Read this top to bottom before touching anything.
 Everything here is measured, not hoped. The fleet is healthy right now; keep it that way.
 

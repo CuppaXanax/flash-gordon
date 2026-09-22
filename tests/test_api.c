@@ -49,6 +49,16 @@ const char *fg_execution_mode_name(fg_execution_mode mode){
     return mode==FG_EXECUTION_EXPERT_PARALLEL?"expert-parallel":"unsupported";
 }
 
+static const char test_ledger_line[]=
+    "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single "
+    "ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 "
+    "wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144";
+
+const char *fg_runtime_ledger(const fg_runtime *runtime){
+    (void)runtime;
+    return test_ledger_line;
+}
+
 static fg_mtp_capability test_mtp_capability = FG_MTP_CAPABILITY_UNSUPPORTED;
 
 fg_mtp_capability fg_runtime_mtp_capability(const fg_runtime *runtime){
@@ -998,6 +1008,9 @@ static void test_nonstream_tool_response(void) {
     CHECK(response && strstr(response, "X-Flash-Gordon-Context-Tokens: 15\r\n"));
     CHECK(response && strstr(response, "X-Flash-Gordon-Prefill-TPS: 5.000000\r\n"));
     CHECK(response && strstr(response, "X-Flash-Gordon-Decode-TPS: 10.000000\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Ledger: FG_LEDGER rank=0 format=6"));
+    CHECK(response && strstr(response, "layer_mode=single ranks=8 layers=48"));
+    CHECK(response && strstr(response, "blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6"));
     CHECK(response && !strstr(response, "<tool_call>"));
     free(response);
     close(sockets[0]);

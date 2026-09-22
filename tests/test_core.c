@@ -1,4 +1,5 @@
 #include "fg_manifest.h"
+#include "fg_ledger.h"
 #include "fg_loader.h"
 #include "fg_ngram.h"
 #include "fg_pack.h"
@@ -32,6 +33,61 @@ static int failures;
 #define CHECK(x) do{if(!(x)){fprintf(stderr,"FAIL %s:%d: %s\n",__FILE__,__LINE__,#x);failures++;}}while(0)
 
 static void test_sha(void){fg_sha256 c;uint8_t d[32];char hex[65];fg_sha256_init(&c);fg_sha256_update(&c,"abc",3);fg_sha256_final(&c,d);fg_sha256_hex(d,hex);CHECK(strcmp(hex,"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")==0);}
+
+static void test_ledger(void){
+    fg_manifest *manifest=malloc(sizeof(*manifest));
+    CHECK(manifest!=NULL);
+    if(!manifest)return;
+    fg_manifest_init(manifest);
+    manifest->session.logical_context_tokens=FG_NATIVE_CONTEXT;
+    manifest->session.gpu_index_tokens=FG_NATIVE_CONTEXT;
+    manifest->session.qsa_hot_record_tokens=8192u;
+    manifest->session.host_page_cache_bytes=FG_RUNTIME_PROFILE_NATIVE_262K_PAGE_CACHE_BYTES;
+    fg_runtime_options options;
+    fg_runtime_options_init(&options);
+    options.logical_context_tokens=manifest->session.logical_context_tokens;
+    options.gpu_index_tokens=manifest->session.gpu_index_tokens;
+    options.qsa_hot_tokens=manifest->session.qsa_hot_record_tokens;
+    options.qsa_page_cache_bytes=manifest->session.host_page_cache_bytes;
+    fg_ledger_inputs inputs={.manifest=manifest,.options=&options,.rank=0u,
+        .prefill_frames=8u,.qsa_cache_pages=100u,.qsa_cache_bytes=494400u,
+        .ring_prefill=true,.ring_decode=true};
+    char line[FG_LEDGER_LINE_MAX];
+    fg_error err={0};
+    CHECK(fg_ledger_format(line,sizeof(line),&inputs,&err)==FG_OK);
+    CHECK(strncmp(line,FG_LEDGER_PREFIX " rank=0",8u)==0);
+    CHECK(strstr(line,"execution=ep layer_mode=grouped ranks=8 layers=48 experts=512 topk=10 hidden=2560")!=NULL);
+    CHECK(strstr(line,"blocks=0:1,1:1,2:1")!=NULL);
+    CHECK(strstr(line," wire_hops=48 prefill_frames=8 batch=256 window=2 ")!=NULL);
+    CHECK(strstr(line,"logical=262144 gpu_index=262144 qsa_hot=8192 qsa_cache_pages=100 qsa_cache_bytes=494400 ring_prefill=1 ring_decode=1")!=NULL);
+    CHECK(strstr(line,"sealed_context=262144 sealed_gpu_index=262144 sealed_hot=8192")!=NULL);
+    CHECK(strstr(line," manifest_sha=")!=NULL&&strstr(line," topology_sha=")!=NULL);
+    CHECK(fg_ledger_format(line,64u,&inputs,&err)==FG_ERR_LIMIT&&line[0]=='\0');
+    manifest->tensors[0].rank=0u;manifest->tensors[0].kind=FG_TENSOR_COMMON;
+    manifest->tensors[0].bytes=1000u;
+    manifest->tensors[1].rank=1u;manifest->tensors[1].kind=FG_TENSOR_ROUTED_EXPERT;
+    manifest->tensors[1].bytes=5000u;
+    manifest->tensor_count=2u;
+    CHECK(fg_ledger_format(line,sizeof(line),&inputs,&err)==FG_OK);
+    CHECK(strstr(line," weights=4096,8192,0,0,0,0,0,0 dense=4096,0,0,0,0,0,0,0 expert=0,8192,0,0,0,0,0,0 weights_total=12288")!=NULL);
+    for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){
+        uint32_t owner=layer/6u;
+        manifest->layer_owner[layer]=(uint8_t)owner;
+        for(uint32_t group=0;group<FG_GROUP_SIZE;group++)
+            manifest->layer_groups[layer][group]=(uint8_t)owner;
+        for(uint32_t expert=0;expert<FG_EXPERT_COUNT;expert++)
+            manifest->expert_rank[layer][expert]=(uint16_t)owner;
+    }
+    fg_topology_seal(manifest);
+    CHECK(fg_ledger_format(line,sizeof(line),&inputs,&err)==FG_OK);
+    CHECK(strstr(line,"layer_mode=single ")!=NULL);
+    CHECK(strstr(line," blocks=0:6,1:6,2:6,3:6,4:6,5:6,6:6,7:6 ")!=NULL);
+    CHECK(strstr(line," wire_hops=8 ")!=NULL);
+    inputs.manifest=NULL;
+    CHECK(fg_ledger_format(line,sizeof(line),&inputs,&err)==FG_ERR_ARGUMENT);
+    free(manifest);
+}
+
 static void test_topology(void){fg_manifest *m=malloc(sizeof(*m));CHECK(m!=NULL);if(!m)return;fg_manifest_init(m);for(uint32_t l=0;l<FG_LAYER_COUNT;l++){CHECK(m->layer_owner[l]==l%8);uint16_t count[8]={0};for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)count[m->expert_rank[l][e]]++;for(uint32_t g=0;g<4;g++)CHECK(count[m->layer_groups[l][g]]==128);}fg_error err={0};CHECK(fg_topology_validate(m,&err)==FG_OK);m->layer_offsets[3]=256u;fg_topology_seal(m);CHECK(fg_topology_validate(m,&err)==FG_ERR_FORMAT);m->layer_offsets[3]=0u;fg_topology_seal(m);fg_q38_account_session_state(m);uint64_t gdn_layer=(uint64_t)FG_Q38_GDN_CONV_WIDTH*16u+(uint64_t)FG_Q38_GDN_HEADS*128u*128u*4u;CHECK(m->ranks[0].kv_bytes==6u*gdn_layer);CHECK(m->ranks[0].state_file_bytes==0);CHECK(m->ranks[3].kv_bytes==(6ull*136u+12u)*FG_MAX_CONTEXT);CHECK(m->ranks[3].state_file_bytes==FG_Q38_QSA_STATE_PAGE_BYTES+6ull*(FG_MAX_CONTEXT/4u)*FG_Q38_QSA_STATE_PAGE_BYTES);CHECK(m->ranks[7].kv_bytes==m->ranks[3].kv_bytes&&m->ranks[7].state_file_bytes==m->ranks[3].state_file_bytes);free(m);}
 static void test_profile(void){fg_manifest *m=malloc(sizeof(*m));double (*p)[FG_EXPERT_COUNT]=calloc(FG_LAYER_COUNT,sizeof(*p));CHECK(m&&p);if(!m||!p){free(m);free(p);return;}fg_manifest_init(m);for(uint32_t l=0;l<FG_LAYER_COUNT;l++)for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)p[l][e]=(double)(FG_EXPERT_COUNT-e);fg_error err={0};CHECK(fg_topology_assign_profile(m,(const double (*)[FG_EXPERT_COUNT])p,&err)==FG_OK);for(uint32_t l=0;l<FG_LAYER_COUNT;l++){uint16_t count[8]={0};for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)count[m->expert_rank[l][e]]++;for(uint32_t g=0;g<4;g++)CHECK(count[m->layer_groups[l][g]]==128);}free(p);free(m);}
 static void test_expert_map(void){fg_manifest *m=malloc(sizeof(*m));uint16_t (*map)[FG_EXPERT_COUNT]=malloc(sizeof(*map)*FG_LAYER_COUNT);CHECK(m&&map);if(!m||!map){free(map);free(m);return;}fg_manifest_init(m);for(uint32_t l=0;l<FG_LAYER_COUNT;l++)for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)map[l][e]=m->layer_groups[l][(e+1u)%FG_GROUP_SIZE];fg_error err={0};CHECK(fg_topology_assign_map(m,(const uint16_t (*)[FG_EXPERT_COUNT])map,&err)==FG_OK);CHECK(m->expert_rank[0][0]==m->layer_groups[0][1]);uint16_t saved=map[0][0];map[0][0]=2u;CHECK(fg_topology_assign_map(m,(const uint16_t (*)[FG_EXPERT_COUNT])map,&err)==FG_ERR_FORMAT);CHECK(m->expert_rank[0][0]==saved);map[0][0]=map[0][1];CHECK(fg_topology_assign_map(m,(const uint16_t (*)[FG_EXPERT_COUNT])map,&err)==FG_ERR_FORMAT);CHECK(m->expert_rank[0][0]==saved);free(map);free(m);}
@@ -860,4 +916,4 @@ static void test_output_history_protocol(void){
     CHECK(fg_output_history_decode(&decoded,storage,8u,wire,bytes,&err)==FG_ERR_FORMAT);
 }
 
-int main(void){test_sha();test_topology();test_profile();test_expert_map();test_expert_map_file();test_expert_map_single();test_expert_map_owners();test_sealed_expert_map();test_deployment_profile();test_native_262k_profile_geometry();test_protocol();test_layer_protocol();test_decode_layer_protocol();test_qsa_block_protocol();test_qsa_page_protocol();test_prefill_chunk_frontiers();test_qsa_locality_metrics();test_output_protocol();test_output_history_protocol();test_ngram_protocol();test_ngram();test_ngram_suffix();test_ngram_planner_batch_capacity();test_qsa_scratch_geometry();test_qsa_state();test_qsa_state_failed_create_cleanup();test_qsa_state_batch();test_qsa_state_write_batch();test_qsa_replica_queue();test_lazy_qsa_clear_barrier();test_prefill_storage_geometry();test_qsa_page_cache();test_q38_math();test_cooked_q8();test_pack_cooked_q8();test_pack_cooked_experts();test_decode_protocol();test_prefill_protocol();test_pack();test_pack_tower();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}
+int main(void){test_sha();test_ledger();test_topology();test_profile();test_expert_map();test_expert_map_file();test_expert_map_single();test_expert_map_owners();test_sealed_expert_map();test_deployment_profile();test_native_262k_profile_geometry();test_protocol();test_layer_protocol();test_decode_layer_protocol();test_qsa_block_protocol();test_qsa_page_protocol();test_prefill_chunk_frontiers();test_qsa_locality_metrics();test_output_protocol();test_output_history_protocol();test_ngram_protocol();test_ngram();test_ngram_suffix();test_ngram_planner_batch_capacity();test_qsa_scratch_geometry();test_qsa_state();test_qsa_state_failed_create_cleanup();test_qsa_state_batch();test_qsa_state_write_batch();test_qsa_replica_queue();test_lazy_qsa_clear_barrier();test_prefill_storage_geometry();test_qsa_page_cache();test_q38_math();test_cooked_q8();test_pack_cooked_q8();test_pack_cooked_experts();test_decode_protocol();test_prefill_protocol();test_pack();test_pack_tower();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}

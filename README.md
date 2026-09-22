@@ -7,16 +7,19 @@ graph and dispatches routed experts to their owning blades. Pipeline parallelism
 has been removed; retired packs are rejected and must be repacked for EP.
 The product contract and remaining implementation work are in [PRD.md](PRD.md).
 
-The qualified expert-parallel production LKG remains
-`lkg-10.035tps-cooked-experts`, measured at 99.647 ms/token, or 10.035
-tok/s, over the final 20 unprofiled greedy frames with exact response parity
-and a complete 48-layer route trace. See
-[PERFORMANCE_TRACE_10_035TPS.md](PERFORMANCE_TRACE_10_035TPS.md) for that
+The current operating point is summarized in
+[PERFORMANCE_CONTRACT.md](PERFORMANCE_CONTRACT.md): a 6.671 GB/token
+expert-parallel byte chain with a practical warm band of 24-31 TPS, measuring
+25.5-26.5 TPS for warm short decode, 24.0-25.0 TPS at 4K context, ~23 TPS at
+16K, ~19-21 TPS at 32K and ~17 TPS at 43K. Early records such as
+`lkg-10.035tps-cooked-experts` (99.647 ms/token, or 10.035 tok/s) describe their
+measured revision and are historical, not the current operating point. See
+[PERFORMANCE_TRACE_10_035TPS.md](PERFORMANCE_TRACE_10_035TPS.md) for that early
 qualification record.
 
-The implementation owns its complete runtime boundary: artifact format, rotating expert topology, memory ledger, GGUF parser and repacker, raw io_uring storage, fail-closed wire protocol, quantization primitives, Vulkan allocation/dispatch, and Qwen3.8-specific shaders. There is no linked or vendored inference runtime. Code adapted from another project is copied into Flash Gordon, renamed and maintained here, and admitted to a production path only after model-specific reference and Vulkan parity tests pass. Qwen's published architecture and processor behavior are the semantic authority; behavior inherited from another model runtime is not. Rank and text evaluation refuse a pack until text weights, the n-gram tensor, and tokenizer are sealed into the manifest. Vision and MTP are separately flagged overlays and are not prerequisites for the sealed text profile. The runtime also exposes a resident interactive chat frontend and a deliberately
+The implementation owns its complete runtime boundary: artifact format, rotating expert topology, memory ledger, GGUF parser and repacker, raw io_uring storage, fail-closed wire protocol, quantization primitives, Vulkan allocation/dispatch, and Qwen3.8-specific shaders. Code adapted from another project is copied into Flash Gordon, renamed and maintained here, and admitted to a production path only after model-specific reference and Vulkan parity tests pass. Qwen's published architecture and processor behavior are the semantic authority; behavior inherited from another model runtime is not. Rank and text evaluation refuse a pack until text weights, the n-gram tensor, and tokenizer are sealed into the manifest. Vision and MTP are separately flagged overlays and are not prerequisites for the sealed text profile. The runtime also exposes a resident interactive chat frontend and a deliberately
 single-threaded OpenAI-compatible HTTP frontend. Both use the exact Qwen ChatML
-template and the same greedy distributed generation path as evaluation.
+template and the same distributed generation path as evaluation.
 
 ## Build and test
 
@@ -107,8 +110,9 @@ does not measure long-context performance.
 
 The server implements `GET /v1/models` and `POST /v1/chat/completions`.
 The model response includes a fail-closed capability extension reporting the
-active native context and tool support. Experimental context, MTP, image, and
-video remain reported as unavailable until their runtime paths are qualified.
+active native context and tool support. Image and video input are reported as
+available when the deployment directory contains the sealed vision tower pack;
+MTP remains reported as unavailable until its runtime path is qualified.
 Completions accept string-content system/developer, user, assistant, tool, and
 function messages; `max_tokens` or `max_completion_tokens`; and `stream`.
 Non-streaming responses are JSON and streaming responses use SSE. Thinking
@@ -128,8 +132,12 @@ runtime transcript, including server-private reasoning tokens, without sending
 `reasoning_content` or an opaque cache identifier. Any difference in the echoed
 public history fails closed to a reset and full canonical prefill.
 
-Flash Gordon currently performs greedy decoding only. Requests that select
-non-greedy sampling, custom stop sequences, or log probabilities receive a
+The API supports greedy and seeded stochastic sampling. Omitted sampler fields
+default to temperature 1.0, top-p 0.95 and top-k 20; `temperature: 0` selects
+the exact greedy path used by evaluation and interactive chat. `temperature`,
+`top_p`, `top_k`, `seed`, `presence_penalty`, `frequency_penalty` and
+`repetition_penalty` are validated and applied. Requests that select custom stop
+sequences, log probabilities, `min_p` other than 0, or `n` other than 1 receive a
 clear `400` response. The API accepts OpenAI function `tools`, `tool_choice`,
 historical assistant `tool_calls`, and tool results linked by `tool_call_id`.
 Generated native Qwen tool tags are translated into OpenAI `tool_calls` for
@@ -291,14 +299,13 @@ only to legacy v4 manifests, which keep the empty session-begin exchange and
 exact legacy layer, prefill-layer, and dormant QSA-block payload layouts. Protocol v6
 payloads carry the explicit position-axis contract. Fabric receive paths reject frames whose
 version differs from the version negotiated by the manifest handshake. The runtime uses the manifest's sealed context; new packs default to native
-context. The current changes still need an end-to-end fleet run; MTP and
-multimodal execution remain unavailable, and four-axis manifests are rejected
+context. MTP execution remains unavailable, and four-axis manifests are rejected
 before model or fleet startup.
 
 ## Qualification contract
 
 The manifest fixes the production prefill choice; runtime requests cannot change
-it. The next usability check runs the ordinary release on eight 24-CU blades
+it. The next usability check runs the ordinary release on the eight blades
 with a representative 131,072-token conversation: cold filling, an appended turn
 with prefix reuse, and sustained generation. Report time to first token, actual
 prefill work and output TPS at that history length. Short prompts are smoke tests.
@@ -308,7 +315,8 @@ manifests, topology drift, protocol mismatches and memory-cap violations.
 
 The checked-in [qualification baseline](qualification-baseline.json) and existing
 acceptance harness retain earlier measurements and API checks. They do not replace
-the 128k workload or establish performance for the revised EP path. After deploying
+the 128k workload; current performance is recorded in
+[PERFORMANCE_CONTRACT.md](PERFORMANCE_CONTRACT.md). After deploying
 a candidate, the existing
 OpenAI/tool/decode acceptance harness from PowerShell:
 
@@ -316,9 +324,10 @@ OpenAI/tool/decode acceptance harness from PowerShell:
 .\tools\qualify-openai.ps1 -BaseUrl http://192.0.2.42:8080/v1
 ```
 
-Non-streaming completion responses include `X-Flash-Gordon-*` timing and
-live-prefix headers: cache hit/miss, reused and prefilled token counts,
-exact-frontier continuation, and reset reason. These diagnostic extensions let
+Non-streaming completion responses include `X-Flash-Gordon-*` timing,
+live-prefix and live-ledger headers: cache hit/miss, reused and prefilled token
+counts, exact-frontier continuation, reset reason, and the serving process's own
+startup ledger. These diagnostic extensions let
 the harness compare engine-reported work rather than HTTP wall time; the JSON body remains
 OpenAI-compatible. The harness reads the checked-in baseline itself; callers
 cannot lower the frozen LKG threshold. It parses and reconstructs SSE deltas
