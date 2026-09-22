@@ -541,8 +541,10 @@ static fg_status open_decode_config(fg_qsa_session **out,fg_model *model,const c
     s->max_tokens=batch_size;s->fetch_pages=fetch_pages;
     s->fetch_opaque=fetch_opaque;
     /* Every rank reports the locality of the QSA layers it executes; the trace
-     * allocates nothing when FG_QSA_LOCALITY_TRACE is unset. */
-    s->locality=fg_qsa_locality_create_from_env(s->max_blocks,0u);
+     * allocates nothing when FG_QSA_LOCALITY_TRACE is unset. The one-page hot
+     * tail keeps every committed block in the LRU simulation: the diagnostic
+     * sizes the whole decode window, not just the state-file-served part. */
+    s->locality=fg_qsa_locality_create_from_env(s->max_blocks,FG_Q38_QSA_COMPRESS_RATIO);
     s->locality_prefill=qsa_locality_prefill_enabled();
     s->prefetch_enabled=qsa_prefetch_enabled();
     for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
