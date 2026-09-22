@@ -1694,6 +1694,35 @@ static uint32_t owned_qsa_layers(const fg_manifest *manifest,uint32_t rank){
     return count;
 }
 
+/* Worker record-window sizing. The default keeps the historical per-layer cap
+ * (4096 pages, 16,384 tokens); FG_QSA_WORKER_CACHE_MIB sizes the rank's whole
+ * record cache instead, so a rank that owns two QSA layers splits the window
+ * across them. The knob is bounded by the coordinator cache limits and by the
+ * layers' complete page count. */
+static uint32_t worker_qsa_cache_pages(uint32_t layers,uint32_t full_pages){
+    if(!layers)return 0u;
+    const char *value=getenv("FG_QSA_WORKER_CACHE_MIB");
+    if(value&&*value){
+        char *end=NULL;unsigned long mib=strtoul(value,&end,10);
+        if(end!=value&&*end=='\0'&&mib>0u&&
+           mib<=(FG_RUNTIME_QSA_CACHE_MAX_BYTES>>20u)){
+            uint64_t pages=((uint64_t)mib<<20u)/FG_QSA_PAGE_RECORD_BYTES;
+            uint64_t complete=(uint64_t)full_pages*layers;
+            if(pages>complete)pages=complete;
+            uint64_t floor=(uint64_t)layers*64u;
+            if(pages<floor)pages=floor;
+            if(pages>(UINT64_C(1)<<30u))pages=UINT64_C(1)<<30u;
+            return (uint32_t)pages;
+        }
+        fprintf(stderr,
+                "FG_QSA_WORKER_CACHE_MIB=%s is invalid; keeping the default QSA window\n",
+                value);
+    }
+    uint32_t capped_pages=full_pages<FG_QSA_WORKER_CACHE_PAGES?
+        full_pages:FG_QSA_WORKER_CACHE_PAGES;
+    return capped_pages*layers;
+}
+
 static fg_status worker_open_qsa_state(fg_owner_executor *owner,qsa_owner_runtime *runtime,
     const fg_manifest *manifest,const char *directory,uint32_t self,uint32_t logical,
     fg_error *err){
@@ -1707,9 +1736,7 @@ static fg_status worker_open_qsa_state(fg_owner_executor *owner,qsa_owner_runtim
     uint32_t layers=owned_qsa_layers(manifest,self);
     uint32_t full_pages=logical/FG_Q38_QSA_COMPRESS_RATIO;
     if(!full_pages)full_pages=1u;
-    uint32_t capped_pages=full_pages<FG_QSA_WORKER_CACHE_PAGES?
-        full_pages:FG_QSA_WORKER_CACHE_PAGES;
-    uint32_t cache_pages=capped_pages*layers;
+    uint32_t cache_pages=worker_qsa_cache_pages(layers,full_pages);
     return fg_owner_qsa_open_state(owner,path,logical,0u,cache_pages,
                                    manifest->prefill_microbatch,err);
 }

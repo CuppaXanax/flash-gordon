@@ -15,6 +15,20 @@
 
 static double qsa_now_ms(void){struct timespec value;clock_gettime(CLOCK_MONOTONIC,&value);return (double)value.tv_sec*1000.0+(double)value.tv_nsec/1000000.0;}
 static bool qsa_trace_enabled(void){const char *value=getenv("FG_FRAME_TRACE");return value&&*value&&strcmp(value,"0")!=0;}
+/* Locality-hint read-ahead is on by default; FG_QSA_PREFETCH=0 disables it.
+ * The hint only ever adds asynchronous state-file reads: a page that is not
+ * staged takes the unchanged synchronous fetch path. */
+static bool qsa_prefetch_enabled(void){
+    const char *value=getenv("FG_QSA_PREFETCH");
+    return !(value&&*value&&strcmp(value,"0")==0);
+}
+/* The locality report models the decode page stream; prefill selections would
+ * bury the reuse-distance distribution and cost minutes at 128K, so they are
+ * recorded only when explicitly requested. */
+static bool qsa_locality_prefill_enabled(void){
+    const char *value=getenv("FG_QSA_LOCALITY_PREFILL");
+    return value&&*value&&strcmp(value,"0")!=0;
+}
 struct fg_qsa_session {
     fg_model *model;
     fg_qsa_state *state;
@@ -48,6 +62,8 @@ struct fg_qsa_session {
     fg_qsa_page_fetch_fn fetch_pages;
     void *fetch_opaque;
     fg_qsa_locality *locality;
+    bool locality_prefill;
+    bool prefetch_enabled;
 };
 
 static fg_status make_tensor(fg_qsa_session *s,uint64_t bytes,fg_vk_tensor **out,fg_error *err){return fg_vk_tensor_create(fg_model_vk(s->model),bytes,out,err);}
@@ -524,7 +540,11 @@ static fg_status open_decode_config(fg_qsa_session **out,fg_model *model,const c
     s->model=model;s->max_context=logical_context;s->max_blocks=(logical_context+3u)/4u;
     s->max_tokens=batch_size;s->fetch_pages=fetch_pages;
     s->fetch_opaque=fetch_opaque;
-    if(coordinator)s->locality=fg_qsa_locality_create_from_env(s->max_blocks,0u);
+    /* Every rank reports the locality of the QSA layers it executes; the trace
+     * allocates nothing when FG_QSA_LOCALITY_TRACE is unset. */
+    s->locality=fg_qsa_locality_create_from_env(s->max_blocks,0u);
+    s->locality_prefill=qsa_locality_prefill_enabled();
+    s->prefetch_enabled=qsa_prefetch_enabled();
     for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
         if((coordinator&&!owned_only)||manifest->layer_owner[layer]==rank)
             s->layers[s->layer_count++]=(uint8_t)layer;
@@ -725,9 +745,19 @@ fg_status fg_qsa_session_open_state_mirror_with_scratch(
                               batch_size,scratch,owned_only,fetch_pages,fetch_opaque,err);
 }
 
-void fg_qsa_session_close(fg_qsa_session *s){if(!s)return;fg_vk_tensor_destroy(s->attn_partials);for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(s->sel_scores[i]);fg_vk_tensor_destroy(s->sel_ids[i]);}fg_vk_tensor_destroy(s->sel_result_ids);fg_vk_tensor_destroy(s->batch_records);fg_vk_tensor_destroy(s->batch_partials);fg_vk_tensor_destroy(s->batch_slots);fg_vk_tensor_destroy(s->batch_counts);for(uint32_t q=0;q<FG_QSA_PREFILL_QUERY_TILE;q++){fg_vk_tensor_destroy(s->tile_records[q]);for(uint32_t side=0;side<2u;side++){fg_vk_tensor_destroy(s->tile_scores[q][side]);fg_vk_tensor_destroy(s->tile_ids[q][side]);}}fg_qsa_locality_destroy(s->locality,"close");fg_qsa_page_cache_destroy(s->cache);free(s->select_ids);free(s->read_records);free(s->position_written);fg_vk_tensor_destroy(s->index_key_q8_view);fg_vk_tensor_destroy(s->value_q4_view);fg_vk_tensor_destroy(s->key_q8_view);fg_vk_tensor_destroy(s->attention_view);fg_vk_tensor_destroy(s->gate_view);fg_vk_tensor_destroy(s->query_view);fg_vk_tensor_destroy(s->index_query_view);fg_vk_tensor_destroy(s->token_position_view);fg_vk_tensor_destroy(s->position_view);fg_vk_tensor_destroy(s->output);fg_vk_tensor_destroy(s->attention);fg_vk_tensor_destroy(s->selected_records);fg_vk_tensor_destroy(s->select_flags);fg_vk_tensor_destroy(s->select_resolved);fg_vk_tensor_destroy(s->slot_table);for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(s->ids[i]);fg_vk_tensor_destroy(s->scores[i]);}fg_vk_tensor_destroy(s->index_key_q8);fg_vk_tensor_destroy(s->value_q4);fg_vk_tensor_destroy(s->key_q8);fg_vk_tensor_destroy(s->index_query);fg_vk_tensor_destroy(s->raw_index_key);fg_vk_tensor_destroy(s->raw_index_query);fg_vk_tensor_destroy(s->key);fg_vk_tensor_destroy(s->gate);fg_vk_tensor_destroy(s->query);fg_vk_tensor_destroy(s->raw_value);fg_vk_tensor_destroy(s->raw_key);fg_vk_tensor_destroy(s->raw_query_gate);for(uint32_t i=0;i<FG_QSA_MAX_LAYERS;i++)for(uint32_t segment=0;segment<FG_QSA_INDEX_MAX_SEGMENTS;segment++){fg_vk_tensor_destroy(s->records[i][segment]);fg_vk_tensor_destroy(s->index_keys[i][segment]);}fg_vk_tensor_destroy(s->cache_records);fg_vk_tensor_destroy(s->positions);fg_qsa_state_close(s->state);free(s);}
+static void qsa_prefetch_report(fg_qsa_session *s,const char *reason){
+    if(!s||!s->state||!s->prefetch_enabled)return;
+    uint64_t issued=0,served=0,dropped=0;
+    uint64_t live=fg_qsa_state_prefetch_stats(s->state,&issued,&served,&dropped);
+    if(!issued&&!served&&!dropped)return;
+    fprintf(stderr,"QSA_PREFETCH_SUMMARY reason=%s issued=%llu served=%llu dropped=%llu live=%llu\n",
+            reason?reason:"unknown",(unsigned long long)issued,(unsigned long long)served,
+            (unsigned long long)dropped,(unsigned long long)live);
+}
 
-fg_status fg_qsa_session_reset(fg_qsa_session *s,fg_error *err){if(!s){fg_error_set(err,FG_ERR_ARGUMENT,"QSA session reset is null");return FG_ERR_ARGUMENT;}if(s->position_written)memset(s->position_written,0,s->max_context);fg_qsa_locality_reset(s->locality,"reset");memset(s->committed,0,sizeof(s->committed));memset(s->partial,0,sizeof(s->partial));qsa_cache_reset(s);return s->state?fg_qsa_state_reset(s->state,err):FG_OK;}
+void fg_qsa_session_close(fg_qsa_session *s){if(!s)return;qsa_prefetch_report(s,"close");fg_vk_tensor_destroy(s->attn_partials);for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(s->sel_scores[i]);fg_vk_tensor_destroy(s->sel_ids[i]);}fg_vk_tensor_destroy(s->sel_result_ids);fg_vk_tensor_destroy(s->batch_records);fg_vk_tensor_destroy(s->batch_partials);fg_vk_tensor_destroy(s->batch_slots);fg_vk_tensor_destroy(s->batch_counts);for(uint32_t q=0;q<FG_QSA_PREFILL_QUERY_TILE;q++){fg_vk_tensor_destroy(s->tile_records[q]);for(uint32_t side=0;side<2u;side++){fg_vk_tensor_destroy(s->tile_scores[q][side]);fg_vk_tensor_destroy(s->tile_ids[q][side]);}}fg_qsa_locality_destroy(s->locality,"close");fg_qsa_page_cache_destroy(s->cache);free(s->select_ids);free(s->read_records);free(s->position_written);fg_vk_tensor_destroy(s->index_key_q8_view);fg_vk_tensor_destroy(s->value_q4_view);fg_vk_tensor_destroy(s->key_q8_view);fg_vk_tensor_destroy(s->attention_view);fg_vk_tensor_destroy(s->gate_view);fg_vk_tensor_destroy(s->query_view);fg_vk_tensor_destroy(s->index_query_view);fg_vk_tensor_destroy(s->token_position_view);fg_vk_tensor_destroy(s->position_view);fg_vk_tensor_destroy(s->output);fg_vk_tensor_destroy(s->attention);fg_vk_tensor_destroy(s->selected_records);fg_vk_tensor_destroy(s->select_flags);fg_vk_tensor_destroy(s->select_resolved);fg_vk_tensor_destroy(s->slot_table);for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(s->ids[i]);fg_vk_tensor_destroy(s->scores[i]);}fg_vk_tensor_destroy(s->index_key_q8);fg_vk_tensor_destroy(s->value_q4);fg_vk_tensor_destroy(s->key_q8);fg_vk_tensor_destroy(s->index_query);fg_vk_tensor_destroy(s->raw_index_key);fg_vk_tensor_destroy(s->raw_index_query);fg_vk_tensor_destroy(s->key);fg_vk_tensor_destroy(s->gate);fg_vk_tensor_destroy(s->query);fg_vk_tensor_destroy(s->raw_value);fg_vk_tensor_destroy(s->raw_key);fg_vk_tensor_destroy(s->raw_query_gate);for(uint32_t i=0;i<FG_QSA_MAX_LAYERS;i++)for(uint32_t segment=0;segment<FG_QSA_INDEX_MAX_SEGMENTS;segment++){fg_vk_tensor_destroy(s->records[i][segment]);fg_vk_tensor_destroy(s->index_keys[i][segment]);}fg_vk_tensor_destroy(s->cache_records);fg_vk_tensor_destroy(s->positions);fg_qsa_state_close(s->state);free(s);}
+
+fg_status fg_qsa_session_reset(fg_qsa_session *s,fg_error *err){if(!s){fg_error_set(err,FG_ERR_ARGUMENT,"QSA session reset is null");return FG_ERR_ARGUMENT;}qsa_prefetch_report(s,"reset");if(s->position_written)memset(s->position_written,0,s->max_context);fg_qsa_locality_reset(s->locality,"reset");memset(s->committed,0,sizeof(s->committed));memset(s->partial,0,sizeof(s->partial));qsa_cache_reset(s);return s->state?fg_qsa_state_reset(s->state,err):FG_OK;}
 
 fg_status fg_qsa_session_checkpoint(fg_qsa_session *s,fg_error *err){
     if(!s){fg_error_set(err,FG_ERR_ARGUMENT,"QSA checkpoint session is null");return FG_ERR_ARGUMENT;}
@@ -915,6 +945,38 @@ static fg_status decode_attention(fg_qsa_session *s,fg_vk_tensor *attention,
     return status;
 }
 
+/* Serve staged read-ahead pages into the record cache before a selection runs.
+ * This is a pure hint: staged pages are validated by the same CRC the state
+ * reader uses, insertions are soft (they never recycle a pinned page), and any
+ * page that is not staged falls through to the unchanged fetch path. */
+static void qsa_prefetch_reap(fg_qsa_session *s,uint32_t slot){
+    if(!s->prefetch_enabled||!s->state||!s->cache||!s->read_records)return;
+    uint32_t blocks[FG_QSA_MAX_SELECTED_BLOCKS],count=0;
+    fg_error ignored={0};
+    if(fg_qsa_state_prefetch_reap(s->state,slot,blocks,s->read_records,
+                                  FG_QSA_MAX_SELECTED_BLOCKS,&count,&ignored)!=FG_OK||!count)
+        return;
+    uint32_t layer=s->layers[slot];
+    for(uint32_t i=0;i<count;i++){
+        uint32_t cache_slot=0;
+        if(fg_qsa_page_cache_lookup(s->cache,layer,blocks[i],&cache_slot))continue;
+        bool hit=false;
+        if(qsa_cache_acquire_soft(s,layer,blocks[i],&cache_slot,&hit,&ignored)!=FG_OK)return;
+        if(cache_slot==UINT32_MAX)return; /* no evictable slot: drop the hint */
+        if(fg_vk_tensor_write(s->cache_records,
+                              (uint64_t)cache_slot*FG_QSA_PAGE_RECORD_BYTES,
+                              s->read_records+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,
+                              FG_QSA_PAGE_RECORD_BYTES,&ignored)!=FG_OK)return;
+    }
+}
+
+static void qsa_prefetch_stage(fg_qsa_session *s,uint32_t slot,
+                               const uint32_t *blocks,uint32_t block_count){
+    if(!s->prefetch_enabled||!s->state||!block_count)return;
+    fg_error ignored={0};
+    (void)fg_qsa_state_prefetch(s->state,slot,blocks,block_count,&ignored);
+}
+
 static fg_status attend_cache(fg_qsa_session *s,uint32_t slot,uint32_t tokens,
                               const fg_vk_tensor *index_query,const fg_vk_tensor *query,
                               const fg_vk_tensor *gate,fg_vk_tensor *attention,fg_error *err){
@@ -932,6 +994,7 @@ static fg_status attend_cache(fg_qsa_session *s,uint32_t slot,uint32_t tokens,
         s->slot_table&&s->select_resolved&&s->select_flags;
     bool fallback=false,resolved=false;
     if(trace)t0=qsa_now_ms();
+    qsa_prefetch_reap(s,slot);
     if(complete_blocks<=FG_QSA_MAX_SELECTED_BLOCKS){
         selected_count=complete_blocks;
         for(uint32_t i=0;i<selected_count;i++)selected[i]=i;
@@ -1010,6 +1073,10 @@ static fg_status attend_cache(fg_qsa_session *s,uint32_t slot,uint32_t tokens,
         vk,s->selected_records,s->cache_records,
         resolved?s->select_resolved:s->ids[0],0u,
         s->cache_pages*FG_Q38_QSA_COMPRESS_RATIO,selected_count,tail_start,tail,err);
+    /* Stage this token's missed pages behind the attention dispatch so a repeat
+     * miss overlaps its read with the rest of the layer instead of blocking. */
+    if(status==FG_OK&&!resolved&&missing_count)
+        qsa_prefetch_stage(s,slot,missing,missing_count);
     if(trace)t_gather=qsa_now_ms();
     uint32_t selected_tokens=selected_count*FG_Q38_QSA_COMPRESS_RATIO+tail;
     if(status==FG_OK)status=decode_attention(s,attention,query,gate,
@@ -1309,14 +1376,16 @@ static fg_status __attribute__((unused)) gather_prefill_tile(fg_qsa_session *s,u
      * bounded record slice, so even a union larger than the cache is safe. */
     for(uint32_t q=0;status==FG_OK&&q<queries;q++){
         uint32_t cache_slots[FG_QSA_MAX_SELECTED_BLOCKS],tokens=first_visible+q;
-        if(s->locality)fg_qsa_locality_record_selection(s->locality,layer,tokens,selected[q],counts[q]);
+        if(s->locality&&s->locality_prefill)
+            fg_qsa_locality_record_selection(s->locality,layer,tokens,selected[q],counts[q]);
         for(uint32_t i=0;i<counts[q];i++){
             if(selected[q][i]>=tokens/4u){
                 fg_error_set(err,FG_ERR_MISMATCH,"QSA tile selected a future block");
                 status=FG_ERR_MISMATCH;break;
             }
             bool hit=fg_qsa_page_cache_lookup(s->cache,layer,selected[q][i],&cache_slots[i]);
-            if(s->locality)fg_qsa_locality_record_cache(s->locality,layer,hit);
+            if(s->locality&&s->locality_prefill)
+                fg_qsa_locality_record_cache(s->locality,layer,hit);
             if(!hit){
                 cache_slots[i]=UINT32_MAX;
                 missing[missing_count++]=(qsa_missing_page){selected[q][i],q,i};
@@ -1398,12 +1467,14 @@ static fg_status prefill_tile_attention(fg_qsa_session *s,uint32_t slot,
     uint32_t missing_count=0;
     for(uint32_t q=0;status==FG_OK&&q<queries;q++){
         uint32_t tokens=first_visible+q;
-        if(s->locality)fg_qsa_locality_record_selection(s->locality,layer,tokens,
-            selected+(uint64_t)q*select_stride,counts[q]);
+        if(s->locality&&s->locality_prefill)
+            fg_qsa_locality_record_selection(s->locality,layer,tokens,
+                selected+(uint64_t)q*select_stride,counts[q]);
         for(uint32_t i=0;i<counts[q];i++){
             bool hit=fg_qsa_page_cache_lookup(s->cache,layer,
                 selected[(uint64_t)q*select_stride+i],&cache_slots[q][i]);
-            if(s->locality)fg_qsa_locality_record_cache(s->locality,layer,hit);
+            if(s->locality&&s->locality_prefill)
+                fg_qsa_locality_record_cache(s->locality,layer,hit);
             if(!hit){
                 cache_slots[q][i]=UINT32_MAX;
                 missing[missing_count++]=(qsa_missing_page){

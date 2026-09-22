@@ -21,10 +21,33 @@
 #error "QSA token records do not fit in one state page"
 #endif
 
-struct fg_qsa_state {int fd;fg_uring *ring;uint32_t slot,layer_count,max_context,blocks_per_layer;uint8_t layers[FG_LAYER_COUNT];uint32_t layer_tokens[FG_LAYER_COUNT];uint8_t *page_pool;};
+typedef struct fg_qsa_prefetch_slot {
+    uint32_t layer_slot,block;
+    uint64_t tag;
+    int32_t result;
+    uint8_t state; /* 0 free, 1 in flight, 2 ready, 3 failed */
+} fg_qsa_prefetch_slot;
+
+struct fg_qsa_state {
+    int fd;
+    fg_uring *ring;
+    uint32_t slot,layer_count,max_context,blocks_per_layer;
+    uint8_t layers[FG_LAYER_COUNT];
+    uint32_t layer_tokens[FG_LAYER_COUNT];
+    uint8_t *page_pool;
+    /* Advisory read-ahead ring: its own io_uring and pool so blocking read
+     * batches never share fixed resources or completion tags with a hint. */
+    fg_uring *prefetch_ring;
+    uint8_t *prefetch_pool;
+    fg_qsa_prefetch_slot prefetch[FG_QSA_PREFETCH_PAGES];
+    uint32_t prefetch_next,prefetch_live,prefetch_pending;
+    uint64_t prefetch_tag,prefetch_issued,prefetch_served,prefetch_dropped;
+    bool prefetch_disabled;
+};
 
 static void put_u32_le(uint8_t *p,uint32_t v){p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8u);p[2]=(uint8_t)(v>>16u);p[3]=(uint8_t)(v>>24u);}
 static uint32_t get_u32_le(const uint8_t *p){return (uint32_t)p[0]|((uint32_t)p[1]<<8u)|((uint32_t)p[2]<<16u)|((uint32_t)p[3]<<24u);}
+static fg_status decode_page(const fg_qsa_state *state,const uint8_t *page,uint32_t layer_slot,uint32_t block,uint8_t *records,uint32_t *committed,fg_error *err);
 
 uint64_t fg_qsa_state_required_bytes(uint32_t layers,uint32_t max_context){
     if(!layers||layers>FG_LAYER_COUNT||!max_context)return 0;
@@ -86,6 +109,20 @@ fg_status fg_qsa_state_open(fg_qsa_state **out,const char *path,const uint8_t *l
     if(status==FG_OK)status=fg_uring_register_file(state->ring,fd,&state->slot,err);
     if(status==FG_OK)status=fg_uring_register_buffer(state->ring,state->page_pool,pool_bytes,err);
     if(status==FG_OK)status=create?write_file_header(state,err):read_file_header(state,err);
+    if(status==FG_OK){
+        /* The read-ahead ring is optional: if it cannot be created the session
+         * serves every miss from the state file exactly as before. */
+        const uint64_t prefetch_bytes=(uint64_t)FG_QSA_PREFETCH_PAGES*
+            FG_Q38_QSA_STATE_PAGE_BYTES;
+        if(posix_memalign((void **)&state->prefetch_pool,FG_Q38_QSA_STATE_PAGE_BYTES,
+                          (size_t)prefetch_bytes)!=0){
+            state->prefetch_pool=NULL;
+        }else if(fg_uring_create(&state->prefetch_ring,FG_RING_STORAGE,
+                                 FG_QSA_PREFETCH_PAGES,err)!=FG_OK){
+            free(state->prefetch_pool);state->prefetch_pool=NULL;state->prefetch_ring=NULL;
+        }
+        if(!state->prefetch_pool||!state->prefetch_ring)state->prefetch_disabled=true;
+    }
     if(status!=FG_OK){
         fg_error original={.code=status};if(err)original=*err;
         if(state){fg_uring_destroy(state->ring);free(state->page_pool);free(state);}
@@ -94,7 +131,7 @@ fg_status fg_qsa_state_open(fg_qsa_state **out,const char *path,const uint8_t *l
     *out=state;return FG_OK;
 }
 
-void fg_qsa_state_close(fg_qsa_state *state){if(!state)return;fg_uring_destroy(state->ring);close(state->fd);free(state->page_pool);free(state);}
+void fg_qsa_state_close(fg_qsa_state *state){if(!state)return;fg_qsa_state_prefetch_cancel(state);fg_uring_destroy(state->prefetch_ring);free(state->prefetch_pool);fg_uring_destroy(state->ring);close(state->fd);free(state->page_pool);free(state);}
 
 fg_status fg_qsa_state_write_block(fg_qsa_state *state,uint32_t layer_slot,uint32_t block,const uint8_t *records,uint32_t committed,fg_error *err){
     if(!state||!records||layer_slot>=state->layer_count||block>=state->blocks_per_layer||committed==0||committed>FG_Q38_QSA_COMPRESS_RATIO){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA state write");return FG_ERR_ARGUMENT;}
@@ -142,7 +179,143 @@ fg_status fg_qsa_state_write_blocks(fg_qsa_state *state,uint32_t layer_slot,
 
 uint32_t fg_qsa_state_layer_tokens(const fg_qsa_state *state,uint32_t layer_slot){return state&&layer_slot<state->layer_count?state->layer_tokens[layer_slot]:0;}
 void fg_qsa_state_set_layer_tokens(fg_qsa_state *state,uint32_t layer_slot,uint32_t tokens){if(state&&layer_slot<state->layer_count)state->layer_tokens[layer_slot]=tokens;}
-fg_status fg_qsa_state_reset(fg_qsa_state *state,fg_error *err){if(!state){fg_error_set(err,FG_ERR_ARGUMENT,"QSA state reset is null");return FG_ERR_ARGUMENT;}memset(state->layer_tokens,0,sizeof(state->layer_tokens));return write_file_header(state,err);}
+fg_status fg_qsa_state_reset(fg_qsa_state *state,fg_error *err){if(!state){fg_error_set(err,FG_ERR_ARGUMENT,"QSA state reset is null");return FG_ERR_ARGUMENT;}fg_qsa_state_prefetch_cancel(state);memset(state->layer_tokens,0,sizeof(state->layer_tokens));return write_file_header(state,err);}
+
+static void prefetch_complete(fg_qsa_state *state,uint64_t tag,int32_t result){
+    for(uint32_t slot=0;slot<FG_QSA_PREFETCH_PAGES;slot++){
+        if(state->prefetch[slot].state==1u&&state->prefetch[slot].tag==tag){
+            state->prefetch[slot].result=result;
+            state->prefetch[slot].state=
+                result==(int32_t)FG_Q38_QSA_STATE_PAGE_BYTES?2u:3u;
+            return;
+        }
+    }
+}
+
+/* Stage pages in the read-ahead pool. Best-effort: a full pool, a failed prep,
+ * or a failed flush simply drops the hint; the caller's next miss reads the
+ * state file through the unchanged path. */
+fg_status fg_qsa_state_prefetch(fg_qsa_state *state,uint32_t layer_slot,
+                                const uint32_t *blocks,uint32_t block_count,fg_error *err){
+    if(!state||!blocks||!block_count||layer_slot>=state->layer_count){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA prefetch request");
+        return FG_ERR_ARGUMENT;
+    }
+    if(state->prefetch_disabled||!state->prefetch_ring)return FG_OK;
+    fg_error ignored={0};
+    for(uint32_t i=0;i<block_count;i++){
+        uint32_t block=blocks[i];
+        if(block>=state->blocks_per_layer)continue;
+        bool duplicate=false;
+        for(uint32_t slot=0;slot<FG_QSA_PREFETCH_PAGES;slot++)
+            if(state->prefetch[slot].state&&
+               state->prefetch[slot].layer_slot==layer_slot&&
+               state->prefetch[slot].block==block){duplicate=true;break;}
+        if(duplicate)continue;
+        uint32_t chosen=UINT32_MAX;
+        for(uint32_t offset=0;offset<FG_QSA_PREFETCH_PAGES;offset++){
+            uint32_t slot=(state->prefetch_next+offset)%FG_QSA_PREFETCH_PAGES;
+            if(!state->prefetch[slot].state){chosen=slot;break;}
+        }
+        if(chosen==UINT32_MAX)break; /* pool is full: drop the remaining hints */
+        uint8_t *buffer=state->prefetch_pool+
+            (uint64_t)chosen*FG_Q38_QSA_STATE_PAGE_BYTES;
+        uint64_t tag=++state->prefetch_tag;
+        if(fg_uring_prep_read(state->prefetch_ring,state->fd,buffer,
+                              FG_Q38_QSA_STATE_PAGE_BYTES,
+                              page_offset(state,layer_slot,block),tag,&ignored)!=FG_OK)
+            break;
+        state->prefetch[chosen]=(fg_qsa_prefetch_slot){layer_slot,block,tag,0,1u};
+        state->prefetch_next=(chosen+1u)%FG_QSA_PREFETCH_PAGES;
+        state->prefetch_pending++;
+    }
+    if(!state->prefetch_pending)return FG_OK;
+    if(fg_uring_flush(state->prefetch_ring,state->prefetch_pending,&ignored)!=FG_OK){
+        /* Unflushed SQEs are never seen by the kernel; abandon the hint ring. */
+        state->prefetch_disabled=true;state->prefetch_pending=0;
+        memset(state->prefetch,0,sizeof(state->prefetch));
+        return FG_OK;
+    }
+    state->prefetch_live+=state->prefetch_pending;
+    state->prefetch_issued+=state->prefetch_pending;
+    state->prefetch_pending=0;
+    return FG_OK;
+}
+
+/* Move every completion the CQ already holds, then hand back the ready pages of
+ * this layer. Pages that fail their CRC or that do not fit the caller's buffer
+ * stay out of the result set; nothing here can fail a request. */
+fg_status fg_qsa_state_prefetch_reap(fg_qsa_state *state,uint32_t layer_slot,
+                                     uint32_t *blocks,uint8_t *records,uint32_t capacity,
+                                     uint32_t *block_count,fg_error *err){
+    if(!state||!blocks||!records||!capacity||!block_count||
+       layer_slot>=state->layer_count){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA prefetch reap request");
+        return FG_ERR_ARGUMENT;
+    }
+    *block_count=0;
+    if(state->prefetch_disabled||!state->prefetch_ring)return FG_OK;
+    fg_error ignored={0};
+    fg_uring_cqe completed[FG_QSA_PREFETCH_PAGES];
+    uint32_t ready=0;
+    if(fg_uring_peek(state->prefetch_ring,completed,FG_QSA_PREFETCH_PAGES,&ready,&ignored)
+       !=FG_OK)return FG_OK;
+    for(uint32_t i=0;i<ready;i++)prefetch_complete(state,completed[i].tag,completed[i].result);
+    for(uint32_t slot=0;slot<FG_QSA_PREFETCH_PAGES&&*block_count<capacity;slot++){
+        fg_qsa_prefetch_slot *entry=&state->prefetch[slot];
+        if(!entry->state)continue;
+        if(entry->state==3u){
+            entry->state=0u;
+            if(state->prefetch_live)state->prefetch_live--;
+            state->prefetch_dropped++;
+            continue;
+        }
+        if(entry->state!=2u||entry->layer_slot!=layer_slot)continue;
+        uint32_t committed=0;
+        fg_error decode_error={0};
+        const uint8_t *page=state->prefetch_pool+
+            (uint64_t)slot*FG_Q38_QSA_STATE_PAGE_BYTES;
+        if(decode_page(state,page,entry->layer_slot,entry->block,
+                       records+(uint64_t)*block_count*FG_QSA_PAGE_RECORD_BYTES,
+                       &committed,&decode_error)!=FG_OK){
+            entry->state=0u;
+            if(state->prefetch_live)state->prefetch_live--;
+            state->prefetch_dropped++;
+            continue;
+        }
+        blocks[*block_count]=entry->block;
+        (*block_count)++;
+        entry->state=0u;
+        if(state->prefetch_live)state->prefetch_live--;
+        state->prefetch_served++;
+    }
+    return FG_OK;
+}
+
+void fg_qsa_state_prefetch_cancel(fg_qsa_state *state){
+    if(!state||!state->prefetch_ring)return;
+    if(state->prefetch_live){
+        fg_error ignored={0};
+        fg_uring_cqe completed[FG_QSA_PREFETCH_PAGES];
+        uint32_t count=state->prefetch_live;
+        if(count>FG_QSA_PREFETCH_PAGES)count=FG_QSA_PREFETCH_PAGES;
+        if(fg_uring_reap(state->prefetch_ring,count,completed,FG_QSA_PREFETCH_PAGES,
+                         &count,&ignored)!=FG_OK){
+            /* The ring cannot be drained; abandon it with the pool below. */
+            state->prefetch_disabled=true;
+        }
+    }
+    state->prefetch_live=0;state->prefetch_pending=0;
+    memset(state->prefetch,0,sizeof(state->prefetch));
+}
+
+uint64_t fg_qsa_state_prefetch_stats(const fg_qsa_state *state,uint64_t *issued,
+                                     uint64_t *served,uint64_t *dropped){
+    if(issued)*issued=state?state->prefetch_issued:0u;
+    if(served)*served=state?state->prefetch_served:0u;
+    if(dropped)*dropped=state?state->prefetch_dropped:0u;
+    return state?state->prefetch_live:0u;
+}
 
 static fg_status decode_page(const fg_qsa_state *state,const uint8_t *page,uint32_t layer_slot,uint32_t block,uint8_t *records,uint32_t *committed,fg_error *err){uint32_t count=get_u32_le(page+16u),bytes=count*FG_Q38_QSA_TOKEN_RECORD_BYTES;if(get_u32_le(page)!=FG_QSA_PAGE_MAGIC||get_u32_le(page+4u)!=FG_QSA_PAGE_VERSION||get_u32_le(page+8u)!=state->layers[layer_slot]||get_u32_le(page+12u)!=block||count==0||count>FG_Q38_QSA_COMPRESS_RATIO||get_u32_le(page+20u)!=fg_crc32c(page+FG_QSA_PAGE_HEADER_BYTES,bytes)){fg_error_set(err,FG_ERR_MISMATCH,"stale, torn, or corrupt QSA state page layer=%u block=%u frontier=%u want_layer=%u want_block=%u magic=%u version=%u count=%u crc=%u",state?state->layers[layer_slot]:0u,block,state?state->layer_tokens[layer_slot]:0u,get_u32_le(page+8u),get_u32_le(page+12u),get_u32_le(page),get_u32_le(page+4u),count,get_u32_le(page+20u));return FG_ERR_MISMATCH;}memcpy(records,page+FG_QSA_PAGE_HEADER_BYTES,bytes);if(count<FG_Q38_QSA_COMPRESS_RATIO)memset(records+(uint64_t)count*FG_Q38_QSA_TOKEN_RECORD_BYTES,0,(FG_Q38_QSA_COMPRESS_RATIO-count)*FG_Q38_QSA_TOKEN_RECORD_BYTES);*committed=count;return FG_OK;}
 

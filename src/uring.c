@@ -131,6 +131,24 @@ fg_status fg_uring_prep_recv(fg_uring *r,uint32_t slot,void *buf,uint32_t bytes,
     atomic_store_explicit((_Atomic unsigned *)r->sq_tail,tail+1,memory_order_release);
     return FG_OK;
 }
+fg_status fg_uring_prep_read(fg_uring *r,int fd,void *buf,uint32_t bytes,uint64_t offset,uint64_t tag,fg_error *err){
+    if(!r||fd<0||!buf||!bytes){fg_error_set(err,FG_ERR_ARGUMENT,"invalid async read arguments");return FG_ERR_ARGUMENT;}
+    unsigned tail=atomic_load_explicit((_Atomic unsigned *)r->sq_tail,memory_order_relaxed);
+    unsigned head=atomic_load_explicit((_Atomic unsigned *)r->sq_head,memory_order_acquire);
+    if(tail-head>=*r->sq_entries){fg_error_set(err,FG_ERR_LIMIT,"SQ full in prep_read");return FG_ERR_LIMIT;}
+    unsigned index=tail&*r->sq_mask;
+    struct io_uring_sqe *sqe=&r->sqes[index];
+    memset(sqe,0,sizeof(*sqe));
+    sqe->opcode=IORING_OP_READ;
+    sqe->fd=fd;
+    sqe->addr=(uint64_t)(uintptr_t)buf;
+    sqe->len=bytes;
+    sqe->off=offset;
+    sqe->user_data=tag;
+    r->sq_array[index]=index;
+    atomic_store_explicit((_Atomic unsigned *)r->sq_tail,tail+1,memory_order_release);
+    return FG_OK;
+}
 fg_status fg_uring_flush(fg_uring *r,uint32_t pending,fg_error *err){
     if(!r||!pending){fg_error_set(err,FG_ERR_ARGUMENT,"invalid flush arguments");return FG_ERR_ARGUMENT;}
     if(uring_enter(r->fd,pending,0,0)<0){fg_error_set(err,FG_ERR_IO,"io_uring flush: %s",strerror(errno));return FG_ERR_IO;}
@@ -157,6 +175,21 @@ fg_status fg_uring_reap(fg_uring *r,uint32_t min_count,fg_uring_cqe *out,uint32_
     }
     return FG_OK;
 }
+fg_status fg_uring_peek(fg_uring *r,fg_uring_cqe *out,uint32_t capacity,uint32_t *completed,fg_error *err){
+    if(!r||!out||!capacity||!completed){fg_error_set(err,FG_ERR_ARGUMENT,"invalid peek arguments");return FG_ERR_ARGUMENT;}
+    *completed=0;
+    unsigned cq_head=atomic_load_explicit((_Atomic unsigned *)r->cq_head,memory_order_acquire);
+    unsigned cq_tail=atomic_load_explicit((_Atomic unsigned *)r->cq_tail,memory_order_acquire);
+    while(cq_head<cq_tail&&*completed<capacity){
+        struct io_uring_cqe *cqe=&r->cqes[cq_head&*r->cq_mask];
+        out[*completed].tag=cqe->user_data;
+        out[*completed].result=cqe->res;
+        (*completed)++;
+        cq_head++;
+    }
+    if(*completed)atomic_store_explicit((_Atomic unsigned *)r->cq_head,cq_head,memory_order_release);
+    return FG_OK;
+}
 uint64_t fg_uring_host_bytes(const fg_uring *r){
     if(!r)return 0u;
     uint64_t bytes=sizeof(*r)+r->sqes_bytes;
@@ -169,6 +202,6 @@ struct fg_uring{int unavailable;};
 fg_status fg_uring_create(fg_uring **out,fg_ring_class c,uint32_t n,fg_error *e){(void)out;(void)c;(void)n;fg_error_set(e,FG_ERR_UNAVAILABLE,"Flash Gordon requires Linux io_uring");return FG_ERR_UNAVAILABLE;}
 void fg_uring_destroy(fg_uring *r){(void)r;}fg_status fg_uring_register_file(fg_uring*r,int f,uint32_t*s,fg_error*e){(void)r;(void)f;(void)s;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_register_buffer(fg_uring*r,void*b,uint64_t n,fg_error*e){(void)r;(void)b;(void)n;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_pread(fg_uring*r,uint32_t s,void*b,uint32_t n,uint64_t o,fg_error*e){(void)r;(void)s;(void)b;(void)n;(void)o;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_pread_batch(fg_uring*r,uint32_t s,const fg_uring_read*q,uint32_t n,fg_error*e){(void)r;(void)s;(void)q;(void)n;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_pwrite_batch(fg_uring*r,uint32_t s,const fg_uring_read*q,uint32_t n,fg_error*e){(void)r;(void)s;(void)q;(void)n;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_pwrite(fg_uring*r,uint32_t s,const void*b,uint32_t n,uint64_t o,fg_error*e){(void)r;(void)s;(void)b;(void)n;(void)o;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_send_all(fg_uring*r,uint32_t s,const void*b,uint32_t n,fg_error*e){(void)r;(void)s;(void)b;(void)n;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_recv_all(fg_uring*r,uint32_t s,void*b,uint32_t n,fg_error*e){(void)r;(void)s;(void)b;(void)n;return fg_uring_create(NULL,0,0,e);}
 fg_status fg_uring_pread_batch_results(fg_uring*r,uint32_t s,const fg_uring_read*q,uint32_t n,int32_t*x,uint32_t c,fg_error*e){(void)r;(void)s;(void)q;(void)n;(void)x;(void)c;return fg_uring_create(NULL,0,0,e);}
-fg_status fg_uring_prep_recv(fg_uring*r,uint32_t s,void*b,uint32_t n,uint64_t t,fg_error*e){(void)r;(void)s;(void)b;(void)n;(void)t;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_flush(fg_uring*r,uint32_t n,fg_error*e){(void)r;(void)n;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_reap(fg_uring*r,uint32_t m,fg_uring_cqe*o,uint32_t c,uint32_t*d,fg_error*e){(void)r;(void)m;(void)o;(void)c;(void)d;return fg_uring_create(NULL,0,0,e);}
+fg_status fg_uring_prep_recv(fg_uring*r,uint32_t s,void*b,uint32_t n,uint64_t t,fg_error*e){(void)r;(void)s;(void)b;(void)n;(void)t;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_prep_read(fg_uring*r,int f,void*b,uint32_t n,uint64_t o,uint64_t t,fg_error*e){(void)r;(void)f;(void)b;(void)n;(void)o;(void)t;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_flush(fg_uring*r,uint32_t n,fg_error*e){(void)r;(void)n;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_reap(fg_uring*r,uint32_t m,fg_uring_cqe*o,uint32_t c,uint32_t*d,fg_error*e){(void)r;(void)m;(void)o;(void)c;(void)d;return fg_uring_create(NULL,0,0,e);}fg_status fg_uring_peek(fg_uring*r,fg_uring_cqe*o,uint32_t c,uint32_t*d,fg_error*e){(void)r;(void)o;(void)c;(void)d;return fg_uring_create(NULL,0,0,e);}
 uint64_t fg_uring_host_bytes(const fg_uring*r){(void)r;return 0u;}
 #endif

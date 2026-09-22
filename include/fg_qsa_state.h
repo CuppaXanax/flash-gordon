@@ -5,6 +5,7 @@
 
 typedef struct fg_qsa_state fg_qsa_state;
 #define FG_QSA_MAX_SELECTED_BLOCKS 512u
+#define FG_QSA_PREFETCH_PAGES 256u
 
 fg_status fg_qsa_state_open(fg_qsa_state **out,const char *path,const uint8_t *layers,
                             uint32_t layer_count,uint32_t max_context,bool create,
@@ -26,6 +27,18 @@ uint64_t fg_qsa_state_required_bytes(uint32_t layer_count,uint32_t max_context);
 uint32_t fg_qsa_state_layer_tokens(const fg_qsa_state *state,uint32_t layer_slot);
 void fg_qsa_state_set_layer_tokens(fg_qsa_state *state,uint32_t layer_slot,uint32_t tokens);
 fg_status fg_qsa_state_reset(fg_qsa_state *state,fg_error *err);
+/* Advisory read-ahead: stage pages asynchronously so a later miss can be served
+ * from host memory instead of the state file. Every function is best-effort and
+ * never changes the read path's result; callers must treat a staged page as a
+ * cache hint and fall back to fg_qsa_state_read_blocks on any miss. */
+fg_status fg_qsa_state_prefetch(fg_qsa_state *state,uint32_t layer_slot,
+                                const uint32_t *blocks,uint32_t block_count,fg_error *err);
+fg_status fg_qsa_state_prefetch_reap(fg_qsa_state *state,uint32_t layer_slot,
+                                     uint32_t *blocks,uint8_t *records,uint32_t capacity,
+                                     uint32_t *block_count,fg_error *err);
+void fg_qsa_state_prefetch_cancel(fg_qsa_state *state);
+uint64_t fg_qsa_state_prefetch_stats(const fg_qsa_state *state,uint64_t *issued,
+                                     uint64_t *served,uint64_t *dropped);
 void fg_qsa_encode_token_record(const float key[FG_Q38_ATTN_KV_WIDTH],
                                 const float value[FG_Q38_ATTN_KV_WIDTH],
                                 uint8_t record[FG_Q38_QSA_TOKEN_RECORD_BYTES]);
