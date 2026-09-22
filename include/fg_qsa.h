@@ -26,10 +26,12 @@ fg_status fg_qsa_submit_host_reads(fg_vk_context *vk,fg_error *err);
 /* Largest block window in one index-score dispatch (device workgroup limits). */
 #define FG_QSA_SELECT_WINDOW_BLOCKS 16384u
 #define FG_QSA_ATTENTION_SPLITS 8u
-/* Per-layer worker record cache: hot selection window plus recent writes.
- * Evicted pages are served from the authoritative state file, so this bounds
- * the Vulkan allocation instead of mirroring the whole logical context. */
-#define FG_QSA_WORKER_CACHE_PAGES 4096u
+/* Per-rank worker record window: sized past the measured locality knee (32 MiB
+ * reuse distance) so the complete per-layer page set stays resident, split
+ * across the QSA layers the rank owns. Evicted pages are served from the
+ * authoritative state file, so this bounds the Vulkan allocation instead of
+ * mirroring the whole logical context. */
+#define FG_QSA_WORKER_CACHE_MIB 320u
 /* Selected records live beside projections and residual inputs in the shared
  * attention arena. Scale the query tile with its sealed microbatch capacity. */
 static inline uint32_t fg_qsa_query_tile_size(uint32_t batch_size){

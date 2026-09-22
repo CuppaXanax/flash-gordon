@@ -59,11 +59,9 @@ session-level cold reset (`fg_runtime_reset`) is unchanged.
 | `FG_NGRAM_VERIFY` | unset (off) | Verified n-gram row comparison for the `FG_PROFILE_TOKEN` token. | profiling |
 | `FG_QSA_WARM_TRACE` | unset (off) | QSA cache warming trace. | profiling |
 | `FG_NGRAM_LOCALITY_TRACE` | unset (off) | n-gram locality summary. | profiling |
-| `FG_QSA_LOCALITY_TRACE` | unset (off) | QSA locality report on every rank: `summary` at reset/close, `token` adds one keyed digest per QSA layer/token. Models the decode page stream (prefill selections are excluded); allocates nothing when off. | profiling |
+| `FG_QSA_LOCALITY_TRACE` | unset (off) | QSA locality report on every rank: `summary` at reset/close, `token` adds one keyed digest per QSA layer/token. Append `+prefill` to include prefill selections (slow and noisy at long context). Models the decode page stream by default; allocates nothing when off. | profiling |
 | `FG_QSA_LOCALITY_MIB` | `16,32,64,128,256,512,1024` | Comma-list of curve budgets used by the locality report. | profiling |
-| `FG_QSA_LOCALITY_PREFILL` | unset (off) | Include prefill selections in the locality report. Slow and noisy at long context; only for prefill-specific studies. | variant (opt-in) |
-| `FG_QSA_WORKER_CACHE_MIB` | unset (default per-layer cap) | Per-rank QSA record window on a worker, in MiB, split across the QSA layers that rank owns. Overrides the historical `FG_QSA_WORKER_CACHE_PAGES` cap; bounded by 512 MiB and by the layers' complete page count. | variant (opt-in) |
-| `FG_QSA_PREFETCH` | unset (on) | Locality-hint read-ahead: stage this token's missed record pages asynchronously so a repeat miss is served from host memory. `0` disables it. Pure hint; a page that is not staged takes the unchanged synchronous fetch path. | opt-out |
+| `FG_QSA_PREFETCH_TRACE` | unset (off) | QSA read-ahead staging trace (pages staged/served/dropped). | profiling |
 | `FG_BLOCK_BENCH` | unset (off) | Offline block-service bench; exits after printing per-layer wall times. | test/bench |
 | `FG_SHADER_DIR` | `vulkan` | Directory containing the SPIR-V files. | test/ops |
 

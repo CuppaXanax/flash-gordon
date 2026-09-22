@@ -1694,33 +1694,22 @@ static uint32_t owned_qsa_layers(const fg_manifest *manifest,uint32_t rank){
     return count;
 }
 
-/* Worker record-window sizing. The default keeps the historical per-layer cap
- * (4096 pages, 16,384 tokens); FG_QSA_WORKER_CACHE_MIB sizes the rank's whole
- * record cache instead, so a rank that owns two QSA layers splits the window
- * across them. The knob is bounded by the coordinator cache limits and by the
- * layers' complete page count. */
+/* Worker record-window sizing: 320 MiB per rank (past the measured locality
+ * knee, full per-layer residency), split across the QSA layers that rank owns,
+ * bounded by the coordinator cache limits and by the layers' complete page
+ * count. */
 static uint32_t worker_qsa_cache_pages(uint32_t layers,uint32_t full_pages){
     if(!layers)return 0u;
-    const char *value=getenv("FG_QSA_WORKER_CACHE_MIB");
-    if(value&&*value){
-        char *end=NULL;unsigned long mib=strtoul(value,&end,10);
-        if(end!=value&&*end=='\0'&&mib>0u&&
-           mib<=(FG_RUNTIME_QSA_CACHE_MAX_BYTES>>20u)){
-            uint64_t pages=((uint64_t)mib<<20u)/FG_QSA_PAGE_RECORD_BYTES;
-            uint64_t complete=(uint64_t)full_pages*layers;
-            if(pages>complete)pages=complete;
-            uint64_t floor=(uint64_t)layers*64u;
-            if(pages<floor)pages=floor;
-            if(pages>(UINT64_C(1)<<30u))pages=UINT64_C(1)<<30u;
-            return (uint32_t)pages;
-        }
-        fprintf(stderr,
-                "FG_QSA_WORKER_CACHE_MIB=%s is invalid; keeping the default QSA window\n",
-                value);
-    }
-    uint32_t capped_pages=full_pages<FG_QSA_WORKER_CACHE_PAGES?
-        full_pages:FG_QSA_WORKER_CACHE_PAGES;
-    return capped_pages*layers;
+    uint64_t mib=FG_QSA_WORKER_CACHE_MIB;
+    if(mib>(FG_RUNTIME_QSA_CACHE_MAX_BYTES>>20u))
+        mib=FG_RUNTIME_QSA_CACHE_MAX_BYTES>>20u;
+    uint64_t pages=(mib<<20u)/FG_QSA_PAGE_RECORD_BYTES;
+    uint64_t complete=(uint64_t)full_pages*layers;
+    if(pages>complete)pages=complete;
+    uint64_t floor=(uint64_t)layers*64u;
+    if(pages<floor)pages=floor;
+    if(pages>(UINT64_C(1)<<30u))pages=UINT64_C(1)<<30u;
+    return (uint32_t)pages;
 }
 
 static fg_status worker_open_qsa_state(fg_owner_executor *owner,qsa_owner_runtime *runtime,

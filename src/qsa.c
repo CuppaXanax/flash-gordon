@@ -15,19 +15,13 @@
 
 static double qsa_now_ms(void){struct timespec value;clock_gettime(CLOCK_MONOTONIC,&value);return (double)value.tv_sec*1000.0+(double)value.tv_nsec/1000000.0;}
 static bool qsa_trace_enabled(void){const char *value=getenv("FG_FRAME_TRACE");return value&&*value&&strcmp(value,"0")!=0;}
-/* Locality-hint read-ahead is on by default; FG_QSA_PREFETCH=0 disables it.
- * The hint only ever adds asynchronous state-file reads: a page that is not
- * staged takes the unchanged synchronous fetch path. */
-static bool qsa_prefetch_enabled(void){
-    const char *value=getenv("FG_QSA_PREFETCH");
-    return !(value&&*value&&strcmp(value,"0")==0);
-}
 /* The locality report models the decode page stream; prefill selections would
  * bury the reuse-distance distribution and cost minutes at 128K, so they are
- * recorded only when explicitly requested. */
+ * recorded only when FG_QSA_LOCALITY_TRACE requests them (for example
+ * token+prefill). */
 static bool qsa_locality_prefill_enabled(void){
-    const char *value=getenv("FG_QSA_LOCALITY_PREFILL");
-    return value&&*value&&strcmp(value,"0")!=0;
+    const char *value=getenv("FG_QSA_LOCALITY_TRACE");
+    return value&&strstr(value,"prefill")!=NULL;
 }
 struct fg_qsa_session {
     fg_model *model;
@@ -546,7 +540,7 @@ static fg_status open_decode_config(fg_qsa_session **out,fg_model *model,const c
      * sizes the whole decode window, not just the state-file-served part. */
     s->locality=fg_qsa_locality_create_from_env(s->max_blocks,FG_Q38_QSA_COMPRESS_RATIO);
     s->locality_prefill=qsa_locality_prefill_enabled();
-    s->prefetch_enabled=qsa_prefetch_enabled();
+    s->prefetch_enabled=true;
     for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
         if((coordinator&&!owned_only)||manifest->layer_owner[layer]==rank)
             s->layers[s->layer_count++]=(uint8_t)layer;

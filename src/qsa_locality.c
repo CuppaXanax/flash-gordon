@@ -155,10 +155,10 @@ fg_qsa_locality *fg_qsa_locality_create_from_env(uint32_t max_blocks,uint32_t ho
     const char *value=getenv("FG_QSA_LOCALITY_TRACE");
     if(!value||!*value)return NULL;
     fg_qsa_locality_mode mode;
-    if(!strcmp(value,"summary"))mode=FG_QSA_LOCALITY_SUMMARY;
-    else if(!strcmp(value,"token"))mode=FG_QSA_LOCALITY_TOKEN;
+    if(strstr(value,"summary"))mode=FG_QSA_LOCALITY_SUMMARY;
+    else if(strstr(value,"token"))mode=FG_QSA_LOCALITY_TOKEN;
     else{
-        fprintf(stderr,"FG_QSA_LOCALITY_TRACE must be summary or token; locality trace disabled\n");
+        fprintf(stderr,"FG_QSA_LOCALITY_TRACE must be summary or token (optionally +prefill); locality trace disabled\n");
         return NULL;
     }
     uint32_t budgets[FG_QSA_LOCALITY_MAX_BUDGETS];
