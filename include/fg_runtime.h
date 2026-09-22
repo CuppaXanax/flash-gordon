@@ -9,12 +9,13 @@
 #include <string.h>
 
 /* Both ring halves must be active for the executor to spend its Vulkan budget
- * on the layers this rank actually executes. */
+ * on the layers this rank actually executes.  The ring is the default fast
+ * path; set FG_PREFILL_RING=0 or FG_DECODE_RING=0 to opt out. */
 static inline bool fg_runtime_ring_enabled(void){
     const char *prefill=getenv("FG_PREFILL_RING");
     const char *decode=getenv("FG_DECODE_RING");
-    return prefill&&*prefill&&strcmp(prefill,"0")!=0&&
-           decode&&*decode&&strcmp(decode,"0")!=0;
+    return !(prefill&&*prefill&&strcmp(prefill,"0")==0)&&
+           !(decode&&*decode&&strcmp(decode,"0")==0);
 }
 
 typedef struct fg_runtime fg_runtime;

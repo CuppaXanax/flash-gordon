@@ -40,7 +40,8 @@ static void output_split_trace(const char *what,uint32_t rank,uint32_t token,uin
 
 static bool token_profile_requested(uint32_t token){const char *requested=getenv("FG_PROFILE_TOKEN");char value[16];if(!requested||!*requested)return false;snprintf(value,sizeof(value),"%u",token);return strcmp(requested,value)==0;}
 static bool prefill_profile_requested(void){const char *enabled=getenv("FG_PREFILL_PROFILE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
-static bool prefill_ring_requested(void){const char *enabled=getenv("FG_PREFILL_RING");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
+/* Ring prefill is the default fast path; FG_PREFILL_RING=0 opts out. */
+static bool prefill_ring_requested(void){const char *disabled=getenv("FG_PREFILL_RING");return !(disabled&&*disabled&&strcmp(disabled,"0")==0);}
 /* Ring decode is the default whenever ring prefill is active: it beats the
  * legacy expert-parallel decode on sustained 4K and short prompts.  Set
  * FG_DECODE_RING=0 to opt back into the legacy replay. */
@@ -1002,9 +1003,10 @@ static bool block_bench_requested(void){
     return value&&*value&&strcmp(value,"0")!=0;
 }
 
+/* Workers own their layers by default (ring path); FG_WORKER_OWNER=0 opts out. */
 static bool worker_owner_enabled(void){
-    const char *value=getenv("FG_WORKER_OWNER");
-    return value&&*value&&strcmp(value,"0")!=0;
+    const char *disabled=getenv("FG_WORKER_OWNER");
+    return !(disabled&&*disabled&&strcmp(disabled,"0")==0);
 }
 
 /* Offline block-service bench: run this rank's owned GDN layers over a sealed
