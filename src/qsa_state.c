@@ -5,6 +5,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -43,6 +44,7 @@ struct fg_qsa_state {
     uint32_t prefetch_next,prefetch_live,prefetch_pending;
     uint64_t prefetch_tag,prefetch_issued,prefetch_served,prefetch_dropped;
     bool prefetch_disabled;
+    bool prefetch_abandoned;
 };
 
 static void put_u32_le(uint8_t *p,uint32_t v){p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8u);p[2]=(uint8_t)(v>>16u);p[3]=(uint8_t)(v>>24u);}
@@ -131,7 +133,7 @@ fg_status fg_qsa_state_open(fg_qsa_state **out,const char *path,const uint8_t *l
     *out=state;return FG_OK;
 }
 
-void fg_qsa_state_close(fg_qsa_state *state){if(!state)return;fg_qsa_state_prefetch_cancel(state);fg_uring_destroy(state->prefetch_ring);free(state->prefetch_pool);fg_uring_destroy(state->ring);close(state->fd);free(state->page_pool);free(state);}
+void fg_qsa_state_close(fg_qsa_state *state){if(!state)return;fg_qsa_state_prefetch_cancel(state);if(!state->prefetch_abandoned){fg_uring_destroy(state->prefetch_ring);free(state->prefetch_pool);}fg_uring_destroy(state->ring);close(state->fd);free(state->page_pool);free(state);}
 
 fg_status fg_qsa_state_write_block(fg_qsa_state *state,uint32_t layer_slot,uint32_t block,const uint8_t *records,uint32_t committed,fg_error *err){
     if(!state||!records||layer_slot>=state->layer_count||block>=state->blocks_per_layer||committed==0||committed>FG_Q38_QSA_COMPRESS_RATIO){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA state write");return FG_ERR_ARGUMENT;}
@@ -192,6 +194,11 @@ static void prefetch_complete(fg_qsa_state *state,uint64_t tag,int32_t result){
     }
 }
 
+static bool prefetch_trace_enabled(void){
+    const char *value=getenv("FG_QSA_PREFETCH_TRACE");
+    return value&&*value&&strcmp(value,"0")!=0;
+}
+
 /* Stage pages in the read-ahead pool. Best-effort: a full pool, a failed prep,
  * or a failed flush simply drops the hint; the caller's next miss reads the
  * state file through the unchanged path. */
@@ -238,6 +245,9 @@ fg_status fg_qsa_state_prefetch(fg_qsa_state *state,uint32_t layer_slot,
     }
     state->prefetch_live+=state->prefetch_pending;
     state->prefetch_issued+=state->prefetch_pending;
+    if(prefetch_trace_enabled())
+        fprintf(stderr,"QSA_PREFETCH_SUBMIT layer=%u pages=%u live=%u\n",
+                layer_slot,state->prefetch_pending,state->prefetch_live);
     state->prefetch_pending=0;
     return FG_OK;
 }
@@ -261,6 +271,9 @@ fg_status fg_qsa_state_prefetch_reap(fg_qsa_state *state,uint32_t layer_slot,
     if(fg_uring_peek(state->prefetch_ring,completed,FG_QSA_PREFETCH_PAGES,&ready,&ignored)
        !=FG_OK)return FG_OK;
     for(uint32_t i=0;i<ready;i++)prefetch_complete(state,completed[i].tag,completed[i].result);
+    if(prefetch_trace_enabled()&&ready)
+        fprintf(stderr,"QSA_PREFETCH_REAP layer=%u completions=%u live=%u\n",
+                layer_slot,ready,state->prefetch_live);
     for(uint32_t slot=0;slot<FG_QSA_PREFETCH_PAGES&&*block_count<capacity;slot++){
         fg_qsa_prefetch_slot *entry=&state->prefetch[slot];
         if(!entry->state)continue;
@@ -294,16 +307,32 @@ fg_status fg_qsa_state_prefetch_reap(fg_qsa_state *state,uint32_t layer_slot,
 
 void fg_qsa_state_prefetch_cancel(fg_qsa_state *state){
     if(!state||!state->prefetch_ring)return;
-    if(state->prefetch_live){
-        fg_error ignored={0};
+    /* Only slots still in flight own a kernel completion; ready slots already
+     * had their CQE consumed by a reap. Waiting for the wrong count would wedge
+     * a session reset, so count state==1 explicitly. */
+    uint32_t in_flight=0;
+    for(uint32_t slot=0;slot<FG_QSA_PREFETCH_PAGES;slot++)
+        if(state->prefetch[slot].state==1u)in_flight++;
+    fg_error ignored={0};
+    for(uint32_t spins=0;spins<250u&&in_flight;spins++){
         fg_uring_cqe completed[FG_QSA_PREFETCH_PAGES];
-        uint32_t count=state->prefetch_live;
-        if(count>FG_QSA_PREFETCH_PAGES)count=FG_QSA_PREFETCH_PAGES;
-        if(fg_uring_reap(state->prefetch_ring,count,completed,FG_QSA_PREFETCH_PAGES,
-                         &count,&ignored)!=FG_OK){
-            /* The ring cannot be drained; abandon it with the pool below. */
-            state->prefetch_disabled=true;
-        }
+        uint32_t ready=0;
+        if(fg_uring_peek(state->prefetch_ring,completed,FG_QSA_PREFETCH_PAGES,&ready,
+                         &ignored)!=FG_OK)break;
+        if(!ready){usleep(2000);continue;}
+        for(uint32_t i=0;i<ready;i++)
+            prefetch_complete(state,completed[i].tag,completed[i].result);
+        in_flight=0;
+        for(uint32_t slot=0;slot<FG_QSA_PREFETCH_PAGES;slot++)
+            if(state->prefetch[slot].state==1u)in_flight++;
+    }
+    if(in_flight){
+        /* The ring will not drain. Abandon it: the kernel may still write the
+         * pool, so neither the pool nor the ring may be freed. A hint ring that
+         * cannot complete costs one bounded leak, never a stuck session. */
+        state->prefetch_disabled=true;
+        state->prefetch_abandoned=true;
+        return;
     }
     state->prefetch_live=0;state->prefetch_pending=0;
     memset(state->prefetch,0,sizeof(state->prefetch));

@@ -151,7 +151,12 @@ fg_status fg_uring_prep_read(fg_uring *r,int fd,void *buf,uint32_t bytes,uint64_
 }
 fg_status fg_uring_flush(fg_uring *r,uint32_t pending,fg_error *err){
     if(!r||!pending){fg_error_set(err,FG_ERR_ARGUMENT,"invalid flush arguments");return FG_ERR_ARGUMENT;}
-    if(uring_enter(r->fd,pending,0,0)<0){fg_error_set(err,FG_ERR_IO,"io_uring flush: %s",strerror(errno));return FG_ERR_IO;}
+    int submitted=uring_enter(r->fd,pending,0,0);
+    if(submitted<0){fg_error_set(err,FG_ERR_IO,"io_uring flush: %s",strerror(errno));return FG_ERR_IO;}
+    if((uint32_t)submitted!=pending){
+        fg_error_set(err,FG_ERR_IO,"io_uring flush submitted %d of %u",submitted,pending);
+        return FG_ERR_IO;
+    }
     return FG_OK;
 }
 fg_status fg_uring_reap(fg_uring *r,uint32_t min_count,fg_uring_cqe *out,uint32_t capacity,uint32_t *completed,fg_error *err){
