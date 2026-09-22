@@ -54,6 +54,7 @@ test-sampler: tests/test_sampler
 	./tests/test_sampler
 
 test: tests/test_prefill_collective tests/test_core tests/test_session tests/test_prefix tests/test_chat tests/test_chat_runtime tests/test_api tests/test_ngram_deployment tests/test_prefill_dispatch tests/test_video
+	@bash tools/check-flags.sh
 	./tests/test_core
 	./tests/test_session
 	./tests/test_prefix

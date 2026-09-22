@@ -1,27 +1,39 @@
 # Flash Gordon environment flags
 
 Every `FG_*` environment variable read by the runtime, the packer, or the test
-binaries. Unknown `FG_*` variables are ignored.
+binaries. Unknown `FG_*` variables are ignored. `tools/check-flags.sh` enforces
+this file against the code: every flag read in `src/`, `include/` or `tests/`
+must have a row here, a live row must name a flag the code reads, and the read
+set must equal the checked-in expected set in that script. A new flag cannot
+merge without a row here and an explicit expected-set update.
+
+Policy (PRD, "Canonical build and execution"): performance behavior must be a
+default or a CLI option. Environment variables are reserved for
+diagnostics/profiling, bisection opt-outs that restore an alternate path on the
+same binary, and test/packer tooling. No environment variable may be required to
+reach the validated operating point.
 
 Status values:
 
-- **validated default** - part of the qualified configuration; the reference
-  start configuration sets it and the numbers are measured with it on.
-- **opt-out** - on by default; setting it to `0` restores the alternate path.
-  Kept as a control so a regression can be bisected on the same binary.
+- **validated default** - unset runs the validated configuration; the flag is a
+  bisection opt-out whose `0` value restores the alternate path. The reference
+  numbers are measured with it unset.
 - **variant (opt-in)** - off by default; only enable for a specific experiment.
+  A variant must not be required for the validated operating point.
 - **profiling** - diagnostics only; no numeric effect when off (some traces
   force a GPU synchronization and are not throughput-representative).
 - **test/bench** - read by test binaries or bench tools only; the serving
   binary ignores them.
+- **packer option** - packer-time placement/artifact knob.
+- **test/ops** - deployment/test plumbing (for example the shader directory).
 
 ## Execution and routing
 
 | Flag | Default | Effect | Status |
 |---|---|---|---|
-| `FG_PREFILL_RING` | unset (off); reference config sets `1` on rank 0 | Layer-ring prefill. The ring executor activates only when both ring halves are non-zero. | validated default |
-| `FG_DECODE_RING` | unset (decode half enabled); reference config sets `1` | Layer-ring decode. `0` restores the legacy expert-parallel decode replay. | validated default |
-| `FG_WORKER_OWNER` | unset (off); reference worker config sets `1` | Worker-side owner executor. | validated default |
+| `FG_PREFILL_RING` | `1` | Layer-ring prefill. `0` restores the non-ring prefill path. | validated default |
+| `FG_DECODE_RING` | `1` | Layer-ring decode. `0` restores the legacy expert-parallel decode replay. | validated default |
+| `FG_WORKER_OWNER` | `1` | Worker-side owner executor. `0` opts out. | validated default |
 | `FG_PACK_EMBED_RANK` | rank 7 | Packer placement override for `token_embd.weight` (0-7). | packer option |
 
 Prefix continuation (resuming exact token-prefix extensions from the recorded
@@ -65,6 +77,15 @@ session-level cold reset (`fg_runtime_reset`) is unchanged.
 | `FG_BLOCK_BENCH` | unset (off) | Offline block-service bench; exits after printing per-layer wall times. | test/bench |
 | `FG_SHADER_DIR` | `vulkan` | Directory containing the SPIR-V files. | test/ops |
 
+## Static replay
+
+| Flag | Default | Effect | Status |
+|---|---|---|---|
+| `FG_DECODE_STATIC` | `1` | Static recorded replay for chained ring blocks. `0` disables it; a Vulkan profile or numeric trace also disables it. | validated default |
+| `FG_STATIC_RERECORD` | unset (off) | Re-record the replay run every N tokens (0/unset keeps the recorded run) to bisect the staleness horizon. | profiling |
+| `FG_STATIC_CHECK` | unset (off) | Per-token finite-output check of the replayed static run. | profiling |
+| `FG_SET_TRACE` | unset (off) | Trace the first dynamic descriptor-epoch crossing into the static set range. | profiling |
+
 ## Test and bench flags (test binaries only)
 
 | Flag | Effect |
@@ -93,7 +114,6 @@ These no longer exist in the code; setting them has no effect.
 | `FG_DENSE_R8_WAVE_SPLIT` | Gated rows8 dense variant; lost its fleet A/B (regression). | No; the validated rows8 kernel is unconditional. |
 | `FG_DENSE_R8_PAIR` | Gated 32-block rows8 pair variant; lost its fleet A/B (regression). | No; the validated rows8 kernel is unconditional. |
 | `FG_DECODE_PIPELINE` | Async decode submission pipeline is unconditional; the descriptor-epoch discipline stays. | No. |
-| `FG_DECODE_STATIC` | Static recorded replay is unconditional; it still auto-disables under profiling or numeric tracing. | No. |
 | `FG_DECODE_CHAIN` | Chained ring blocks are unconditional; the per-layer owner machine remains only as the eligibility fallback for packs without whole-slab experts. | No. |
 | `FG_DECODE_DIRECT_OUTPUT` | Direct final-block handoff is selected from the topology; the rank-0 relay remains the fallback when the route is not eligible. | No. |
 | `FG_DECODE_EXPERT_LEGACY` | The fused expert pair is unconditional; the generic projection path remains for layouts that cannot fuse. | No. |

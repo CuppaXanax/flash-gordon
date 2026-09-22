@@ -6,16 +6,18 @@ Escalating-context stability gate for the Flash Gordon ring fleet.
 .DESCRIPTION
 Soak the live OpenAI endpoint with growing contexts, a multi-turn growing
 conversation, correctness probes, per-blade liveness checks, the live startup
-ledger and the perf band. This is the regression gate for the QSA selection
-boundary that killed rank 1 with "invalid causal QSA score tile" during long
-ring prefills.
+ledger, the 32K decode band and the perf band. This is the regression gate for
+the QSA selection boundary that killed rank 1 with "invalid causal QSA score
+tile" during long ring prefills.
 
 The script never restarts the fleet: it attaches to whatever is serving
 http://192.0.2.42:8080.  Run it after every fleet deploy before handing the
 endpoint back to a user.  It asserts the serving process's own FG_LEDGER line
 (as echoed in the X-Flash-Gordon-Ledger response header) against the sealed
 fleet geometry, so a deploy that changes ownership or weight bytes cannot pass
-silently.
+silently.  The 32K decode probe asserts 21.0 TPS over 32 generated tokens:
+the pre-WS1 QSA page-miss cliff measured 19.80 TPS there and the post-WS1 build
+measures 22.54, so a cliff recurrence fails while thermal spread passes.
 
 .OUTPUT FORMAT (one line per record, stable prefixes for grep):
   FGSTAB stage=<name> target=<tokens> prompt=<actual> status=PASS|FAIL content=<chars> prefill_tps=<f> decode_tps=<f> note=<text>
@@ -23,7 +25,7 @@ silently.
   FGSTAB correctness=<name> answer=[...] status=PASS|FAIL
   FGSTAB rank=<n> alive=<0|1> status=PASS|FAIL
   FGSTAB ledger status=PASS|FAIL blocks=<runs> wire_hops=<n> weights_total=<bytes> logical=<tokens> qsa_cache_bytes=<bytes> note=<text>
-  FGSTAB perf=<name> value=<f> band=<f> status=PASS|FAIL
+  FGSTAB perf=<name> value=<f> band=<f> status=PASS|FAIL [completion=<n>]
   FGSTAB summary stages=<n> conversation=<n> correctness=<n> ranks=<n> status=PASS|FAIL failures=<n>
 Exit code 0 only when every line says PASS.
 
@@ -31,6 +33,9 @@ Exit code 0 only when every line says PASS.
 pwsh -NoProfile -File tools/pi-stability.ps1
 .EXAMPLE
 pwsh -NoProfile -File tools/pi-stability.ps1 -SkipPerf
+.EXAMPLE
+pwsh -NoProfile -File tools/pi-stability.ps1 -SkipLedger
+# (use -SkipLedger when the serving build predates the ledger header)
 #>
 [CmdletBinding()]
 param(
@@ -50,12 +55,14 @@ param(
     [switch]$SkipPerf,
     [switch]$SkipRanks,
     [switch]$SkipLedger,
-    # TODO(WS1): the 32K QSA page-miss cliff fix is not merged yet
-    # (PERFORMANCE_BYTE_BUDGET_2026-09-15.md section 4). The probe is opt-in and
-    # reports INFO only. Once WS1 lands, enable the probe by default and set
-    # -Min32kDecodeTps to the validated 32K floor (~19-21 TPS today).
+    # 32K decode band. The pre-WS1 QSA page-miss cliff measured 19.80 TPS over
+    # 32 generated tokens at 32K; the post-WS1 build measures 22.54. The floor
+    # is 21.0, midway, so a cliff recurrence fails while thermal spread passes.
+    # The probe runs with the perf block by default; -Skip32kDecode opts out
+    # and -Probe32kDecode is retained to force it.
     [switch]$Probe32kDecode,
-    [double]$Min32kDecodeTps = 0.0,
+    [switch]$Skip32kDecode,
+    [double]$Min32kDecodeTps = 21.0,
     [string]$LogPath = ""
 )
 
@@ -99,7 +106,7 @@ function Invoke-Chat {
             -TimeoutSec $RequestTimeoutSec -SkipHttpErrorCheck
     } catch {
         return [pscustomobject]@{ Name = $Name; Ok = $false; Status = 0; Content = ""
-            PromptTokens = 0; PrefillTps = 0.0; DecodeTps = 0.0
+            PromptTokens = 0; CompletionTokens = 0; PrefillTps = 0.0; DecodeTps = 0.0
             Ledger = ""
             Note = "transport: $($_.Exception.Message)" }
     }
@@ -135,6 +142,7 @@ function Invoke-Chat {
         Status = $status
         Content = $content
         PromptTokens = HeaderInt "X-Flash-Gordon-Prompt-Tokens"
+        CompletionTokens = HeaderInt "X-Flash-Gordon-Completion-Tokens"
         PrefillTps = HeaderDouble "X-Flash-Gordon-Prefill-TPS"
         DecodeTps = HeaderDouble "X-Flash-Gordon-Decode-TPS"
         Ledger = HeaderText "X-Flash-Gordon-Ledger"
@@ -197,6 +205,15 @@ function New-SoakContent {
     # triggered the "invalid causal QSA score tile" boundary death.
     $hello = [Math]::Max(90, $TargetTokens - 19)
     "/no_think " + ("hello " * $hello) + " Reply with one word."
+}
+
+function New-LongDecodeContent {
+    param([int]$TargetTokens)
+    # The one-word soak prompt stops after a single token, which would measure
+    # first-token latency instead of sustained decode. The list request keeps
+    # generating to max_tokens, so the 32K band is a 32-token measurement.
+    $hello = [Math]::Max(90, $TargetTokens - 19)
+    "/no_think " + ("hello " * $hello) + " List 32 distinct GPU inference terms separated by commas."
 }
 
 function Test-Ledger {
@@ -371,21 +388,29 @@ if (-not $SkipPerf) {
     Write-Record ("FGSTAB perf=short_decode value={0:F2} band={1:F2} status={2}" -f
         $short.DecodeTps, $MinDecodeTps, $decodeStatus)
     Write-Record ("FGSTAB perf=short_prefill value={0:F2} status=INFO" -f $short.PrefillTps)
-    # TODO(WS1): the 32K QSA page-miss cliff fix is not merged yet. This probe
-    # is opt-in and INFO-only; once WS1 lands, run it by default and assert
-    # -Min32kDecodeTps (validated 32K floor, ~19-21 TPS on the current pack).
-    if ($Probe32kDecode) {
-        $long = Invoke-Chat -Messages @(@{ role = "user"; content = (New-SoakContent -TargetTokens 32768) }) -MaxTokens 32 -Name "32k-decode"
-        if ($Min32kDecodeTps -gt 0.0) {
-            $longStatus = if ($long.Ok -and $long.DecodeTps -ge $Min32kDecodeTps) { "PASS" } else { "FAIL" }
+    # 32K decode band. Method: 32 generated tokens from a ~32K-token prompt on
+    # a warm process, engine-reported decode TPS. The pre-WS1 QSA page-miss
+    # cliff measured 19.80 TPS at 32K (PERFORMANCE_BYTE_BUDGET_2026-09-15.md
+    # section 4) and the post-WS1 build measures 22.54, so the floor is 21.0.
+    # Runs by default; -Skip32kDecode opts out, -Probe32kDecode forces.
+    if ($Probe32kDecode -or -not $Skip32kDecode) {
+        $long = Invoke-Chat -Messages @(@{ role = "user"; content = (New-LongDecodeContent -TargetTokens 32768) }) -MaxTokens 32 -Name "32k-decode"
+        if (-not $long.Ok) {
+            Add-Failure "32K decode probe failed: status=$($long.Status) $($long.Note)"
+            Write-Record "FGSTAB perf=32k_decode value=0.00 band=$Min32kDecodeTps status=FAIL completion=0"
+        } elseif ($long.CompletionTokens -lt 32) {
+            Add-Failure "32K decode probe generated $($long.CompletionTokens) of 32 tokens; the band requires a sustained 32-token decode"
+            Write-Record "FGSTAB perf=32k_decode value=$($long.DecodeTps.ToString('F2', $Invariant)) band=$Min32kDecodeTps status=FAIL completion=$($long.CompletionTokens)"
+        } elseif ($Min32kDecodeTps -gt 0.0) {
+            $longStatus = if ($long.DecodeTps -ge $Min32kDecodeTps) { "PASS" } else { "FAIL" }
             if ($longStatus -eq "FAIL") {
                 Add-Failure "32K decode $($long.DecodeTps) below $Min32kDecodeTps (status=$($long.Status) $($long.Note))"
             }
-            Write-Record ("FGSTAB perf=32k_decode value={0:F2} band={1:F2} status={2}" -f
-                $long.DecodeTps, $Min32kDecodeTps, $longStatus)
+            Write-Record ("FGSTAB perf=32k_decode value={0:F2} band={1:F2} status={2} completion={3}" -f
+                $long.DecodeTps, $Min32kDecodeTps, $longStatus, $long.CompletionTokens)
         } else {
-            Write-Record ("FGSTAB perf=32k_decode value={0:F2} band=TODO-WS1 status=INFO" -f
-                $long.DecodeTps)
+            Write-Record ("FGSTAB perf=32k_decode value={0:F2} band=none status=INFO completion={1}" -f
+                $long.DecodeTps, $long.CompletionTokens)
         }
     }
 }

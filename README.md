@@ -10,8 +10,8 @@ The product contract and remaining implementation work are in [PRD.md](PRD.md).
 The current operating point is summarized in
 [PERFORMANCE_CONTRACT.md](PERFORMANCE_CONTRACT.md): a 6.671 GB/token
 expert-parallel byte chain with a practical warm band of 24-31 TPS, measuring
-25.5-26.5 TPS for warm short decode, 24.0-25.0 TPS at 4K context, ~23 TPS at
-16K, ~19-21 TPS at 32K and ~17 TPS at 43K. Early records such as
+26.05 TPS for warm short decode, 24.02 TPS at 4K context, 22.96 TPS at 16K,
+22.54 TPS at 32K, 21.19 TPS at 64K and 17.02 TPS at 151K. Early records such as
 `lkg-10.035tps-cooked-experts` (99.647 ms/token, or 10.035 tok/s) describe their
 measured revision and are historical, not the current operating point. See
 [PERFORMANCE_TRACE_10_035TPS.md](PERFORMANCE_TRACE_10_035TPS.md) for that early
@@ -32,8 +32,13 @@ make test-vulkan
 The default `make` builds the executable and shaders with the release settings.
 The loader verifies weights and selects supported cooked layouts automatically;
 no experimental compiler build or weight-cooking environment switch is required.
-Historical performance records describe their measured revisions, not a fresh
-qualification of the current checkout.
+Performance behavior is a default or a CLI option; environment variables are
+diagnostics, bisection opt-outs or test/packer tooling only. Every `FG_*`
+variable the code reads is listed with a status in
+[docs/FLAGS.md](docs/FLAGS.md), and `tools/check-flags.sh` (run by `make test`)
+fails if the code and that file disagree. Historical performance records
+describe their measured revisions, not a fresh qualification of the current
+checkout.
 
 The build requires Linux headers with io_uring support, Vulkan headers and loader, and `glslangValidator`. It does not require liburing. The Vulkan suite executes production-dimension Qwen grouped-RMS, gated-residual, dense Q8_0, and routed-expert Q5_1 parity oracles. The core suite also validates the machine-readable 48-layer expert-parallel fleet-trace contract and proves corrupted expert coverage fails closed.
 
