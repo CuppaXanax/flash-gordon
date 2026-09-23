@@ -150,6 +150,16 @@ fg_status fg_runtime_generate_vision(fg_runtime *runtime,const char *transcript,
                                      fg_token_callback callback,void *callback_context,
                                      fg_interrupt_fn interrupted,void *interrupt_context,
                                      fg_generation_stats *stats,fg_error *err);
+/* Continue a stored session whose new suffix media are the tower inputs; the
+ * prefix media stay in the reused owner state.  `media` holds only the new
+ * suffix media, in transcript order. */
+fg_status fg_runtime_generate_vision_continuation(
+    fg_runtime *runtime,const char *public_transcript,const char *continuation,
+    const fg_runtime_media *media,uint32_t media_count,
+    bool *prefix_miss,uint32_t max_tokens,
+    fg_token_callback callback,void *callback_context,
+    fg_interrupt_fn interrupted,void *interrupt_context,
+    fg_generation_stats *stats,fg_error *err);
 bool fg_runtime_vision_available(const fg_runtime *runtime);
 bool fg_runtime_video_available(const fg_runtime *runtime);
 bool fg_runtime_video_frames_available(const fg_runtime *runtime);
