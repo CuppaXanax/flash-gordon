@@ -177,12 +177,18 @@ fleet window so it can be validated against the real pack:
    `fg_owner_qsa_decode`; allocate slot 0 exactly as today and slot 1 only when
    the executor is created with two slots (`fg_owner_executor_create` gains a
    slot-count variant; existing callers keep 1).
-2. **QSA namespace** (`src/qsa_owner.c`, `include/fg_qsa_owner.h`): per-slot
+2. **Session control handlers** (`src/runtime.c`): `FG_OWNER_SESSION_PREPARE`,
+   `_COMMIT` and `_RESTORE` are admitted by the protocol but only `_BEGIN` /
+   `_READY` are handled today. The batch step's device hooks are these
+   messages: prepare snapshots the owner's per-slot GDN/PLE/QSA frontier,
+   commit makes it permanent, restore rolls it back. The existing abort/retry
+   frontier (`a8bc1ee`, merged) is the coordinator-side precedent.
+3. **QSA namespace** (`src/qsa_owner.c`, `include/fg_qsa_owner.h`): per-slot
    `next_token[FG_LAYER_COUNT]` guards and a `session_slot` tag on
    `FG_MSG_QSA_PAGE_APPEND` / `BARRIER` / `FETCH` so a page belongs to one
    sequence's state file. Worker state paths become
    `qsa-owner-rank-%02u-s%u.state`.
-3. **Runtime batch step** (`src/runtime.c`): a `coordinator_decode_batch_ring`
+4. **Runtime batch step** (`src/runtime.c`): a `coordinator_decode_batch_ring`
    that embeds B tokens (one `fg_owner_prefill_input_slot` per state slot),
    sends one `FG_MSG_DECODE_BATCH_WORK` per block owner, runs the local block
    per slot, and returns one `FG_MSG_DECODE_BATCH_RESULT`; worker
@@ -190,16 +196,16 @@ fleet window so it can be validated against the real pack:
    `fg_owner_decode_block*` with the slot's `active_session`. Call
    `step_begin` before the first send and `step_commit`/`step_restore` after
    the final result.
-4. **Static replay**: chained blocks record against slot-0 tensors. For
+5. **Static replay**: chained blocks record against slot-0 tensors. For
    `state_slot != 0` the fleet wiring must either disable static replay or
    record per-slot static runs (`FG_VK_STATIC_SLOTS` exists).
-5. **Output head / split**: the direct 4-way handoff is one token per message.
+6. **Output head / split**: the direct 4-way handoff is one token per message.
    At B>=2 either add slot arrays to `FG_MSG_OUTPUT_*` or fall back to the
    rank-0 relay; the relay is correct and only costs the existing 3.9 ms.
-6. **Sampler history**: `fg_output_history` on rank 4 is a single session's
+7. **Sampler history**: `fg_output_history` on rank 4 is a single session's
    token history (penalties). Per-session output history is required for
    isolation; until then B>=2 is limited to penalty-free sampler configs.
-7. **Test-only harness**: a `flash-gordon depth-b-selftest` subcommand (CLI,
+8. **Test-only harness**: a `flash-gordon depth-b-selftest` subcommand (CLI,
    not an env flag) that runs two canned conversations sequentially at B=1 and
    interleaved at B=2 and compares token ids, logits bits and per-session state
    digests. This is the executable B=2 parity gate.

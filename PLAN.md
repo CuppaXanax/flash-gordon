@@ -26,7 +26,7 @@ The orchestrator owns the window; this plan is the request.
 | # | Task | Acceptance |
 |---|---|---|
 | 0.1 | Owner session slots (`src/owner.c`) | `fg_owner_executor_create_slots(...,2)` allocates slot 1 GDN/PLE/QSA; existing callers allocate slot 0 only; `FG_GDN_DIAG` digests for slot 0 unchanged vs baseline |
-| 0.2 | QSA per-slot namespace | two state files per worker rank (`...-s0.state`, `...-s1.state`); page append/barrier/fetch carry the session tag; per-slot guard frontiers |
+| 0.2 | Owner PREPARE/COMMIT/RESTORE handlers + QSA per-slot namespace | session-control ops snapshot/commit/roll back the per-slot GDN/PLE/QSA frontier; two state files per worker rank (`...-s0.state`, `...-s1.state`); page append/barrier/fetch carry the session tag; per-slot guard frontiers |
 | 0.3 | Runtime batch step | `depth-b-selftest` runs; batch messages observed in `FG_FRAME_TRACE` only at depth 2; no batch id at depth 1 |
 | 0.4 | Static replay | disabled for `state_slot != 0` (or per-slot static runs); `FG_DECODE_STATIC=1` default still valid for slot 0 |
 | 0.5 | Output/sampler | penalty-free sampler enforced at B>=2 until per-session output history lands; relay path (no direct split) used for B>=2 |
