@@ -254,6 +254,20 @@ stored digest at the same media index.
   transcript).  A prefix miss on either continuation path falls back to the
   cold vision path with every media item, so no stale prefix survives a reset.
 
+### Cold-replay equivalence caveat
+
+A continuation reuses the raw generated token stream.  For `/no_think`
+requests the renderer puts a closed `<think>\n\n</think>\n\n` block in the
+assistant prompt, so that block is part of the reused history; a cold replay
+of the client's *echoed* messages (visible content only) renders no block and
+is therefore a different transcript.  To compare like with like, a cold replay
+must prefix the closed block to the echoed assistant turns.  With that prefix
+the replay tokenizes to exactly the continuation prefix and greedy output is
+identical (validated on a mixed text/image conversation; without it the model
+can answer differently or stop early on the same input).  This is the same
+response-format artifact that already applies to text-only `/no_think`
+continuations; it is not specific to media.
+
 ## Validation
 
 Local (WSL Ubuntu 24.04, gcc 13.3):
