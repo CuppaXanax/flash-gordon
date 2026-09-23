@@ -131,6 +131,7 @@ static bool message_type_supported(uint16_t version,fg_message_type type){
        type<=FG_MSG_OUTPUT_HISTORY_ACK)return true;
     if(version>=6u&&type>=FG_MSG_GDN_STATE_FETCH&&type<=FG_MSG_OUTPUT_HIDDEN)return true;
     if(version>=6u&&type>=FG_MSG_OUTPUT_SLICE&&type<=FG_MSG_OUTPUT_SLICE_HIDDEN)return true;
+    if(version>=6u&&type>=FG_MSG_DECODE_BATCH_WORK&&type<=FG_MSG_DECODE_BATCH_RESULT)return true;
     return version>=6u&&type>=FG_MSG_SESSION_PREPARE&&type<=FG_MSG_SESSION_RESTORED;
 }
 
@@ -413,6 +414,232 @@ fg_status fg_decode_layer_result_encode(uint8_t output[FG_DECODE_LAYER_RESULT_BY
 fg_status fg_decode_layer_result_decode(fg_layer_result *result,const uint8_t *payload,
                                         uint32_t bytes,fg_error *err){
     return fg_layer_result_decode(result,payload,bytes,err);
+}
+
+static uint32_t decode_batch_axes(fg_position_mode mode){return mode==FG_POSITION_FOUR_AXIS?4u:3u;}
+
+static fg_status validate_decode_batch_work(const fg_decode_batch_work *work,fg_error *err){
+    if(!work||work->layer>=FG_LAYER_COUNT||work->source_rank>=FG_RANK_COUNT||
+       work->destination_rank>=FG_RANK_COUNT||
+       (work->flags&~(FG_LAYER_WORK_HAS_NGRAM|FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY))||
+       ((work->flags&FG_LAYER_WORK_HAS_NGRAM)&&work->layer>1u)||
+       !work->slot_count||work->slot_count>FG_DECODE_BATCH_MAX_SLOTS||
+       work->position_mode>FG_POSITION_FOUR_AXIS){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid decode batch work header");
+        return FG_ERR_FORMAT;
+    }
+    for(uint32_t slot=0;slot<work->slot_count;slot++){
+        const fg_decode_batch_slot_work *entry=&work->slots[slot];
+        if(!entry->hyper||entry->state_slot>=FG_DECODE_BATCH_MAX_SLOTS||
+           entry->token_index>=FG_MAX_CONTEXT||
+           (work->position_mode==FG_POSITION_TEXT&&entry->position[3])){
+            fg_error_set(err,FG_ERR_FORMAT,"invalid decode batch work slot %u",slot);
+            return FG_ERR_FORMAT;
+        }
+        for(uint32_t other=0;other<slot;other++)if(
+            work->slots[other].state_slot==entry->state_slot){
+            fg_error_set(err,FG_ERR_FORMAT,
+                "decode batch slots %u and %u share owner state slot %u",
+                other,slot,entry->state_slot);
+            return FG_ERR_FORMAT;
+        }
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(entry->hyper[i])){
+            fg_error_set(err,FG_ERR_FORMAT,
+                "non-finite decode batch work slot %u hidden at %u",slot,i);
+            return FG_ERR_FORMAT;
+        }
+        if(work->flags&FG_LAYER_WORK_HAS_NGRAM){
+            if(!entry->ngram_embedding){
+                fg_error_set(err,FG_ERR_FORMAT,
+                    "decode batch work slot %u has no n-gram storage",slot);
+                return FG_ERR_FORMAT;
+            }
+            for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++)
+                if(!isfinite(entry->ngram_embedding[i])){
+                    fg_error_set(err,FG_ERR_FORMAT,
+                        "non-finite decode batch work slot %u n-gram at %u",slot,i);
+                    return FG_ERR_FORMAT;
+                }
+        }
+    }
+    return FG_OK;
+}
+
+static fg_status validate_decode_batch_result(const fg_decode_batch_result *result,fg_error *err){
+    if(!result||result->layer>=FG_LAYER_COUNT||result->source_rank>=FG_RANK_COUNT||
+       result->destination_rank>=FG_RANK_COUNT||result->flags||!result->slot_count||
+       result->slot_count>FG_DECODE_BATCH_MAX_SLOTS){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid decode batch result header");
+        return FG_ERR_FORMAT;
+    }
+    for(uint32_t slot=0;slot<result->slot_count;slot++){
+        if(result->slots[slot].token_index>=FG_MAX_CONTEXT){
+            fg_error_set(err,FG_ERR_FORMAT,"invalid decode batch result slot %u",slot);
+            return FG_ERR_FORMAT;
+        }
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)
+            if(!isfinite(result->slots[slot].hyper[i])){
+                fg_error_set(err,FG_ERR_FORMAT,
+                    "non-finite decode batch result slot %u hidden at %u",slot,i);
+                return FG_ERR_FORMAT;
+            }
+    }
+    return FG_OK;
+}
+
+fg_status fg_decode_batch_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                      uint16_t protocol_version,
+                                      const fg_decode_batch_work *work,fg_error *err){
+    if(!output||!bytes||!fg_protocol_version_supported(protocol_version)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid decode batch work output or protocol");
+        return FG_ERR_ARGUMENT;
+    }
+    if(protocol_version<FG_PROTOCOL_VERSION){
+        fg_error_set(err,FG_ERR_MISMATCH,"batched decode requires protocol 6");
+        return FG_ERR_MISMATCH;
+    }
+    fg_status status=validate_decode_batch_work(work,err);
+    if(status!=FG_OK)return status;
+    uint32_t axes=decode_batch_axes(work->position_mode);
+    uint64_t slot_bytes=FG_DECODE_BATCH_SLOT_HEADER_BYTES+axes*4u+FG_HYPER_WIDTH*4u+
+        ((work->flags&FG_LAYER_WORK_HAS_NGRAM)?FG_NGRAM_EMBED_VALUES*4u:0u);
+    uint64_t required=FG_DECODE_BATCH_HEADER_BYTES+(uint64_t)work->slot_count*slot_bytes;
+    if(required>FG_MAX_FRAME_BYTES||required>capacity){
+        fg_error_set(err,FG_ERR_LIMIT,"decode batch work buffer is too small");
+        return FG_ERR_LIMIT;
+    }
+    memset(output,0,FG_DECODE_BATCH_HEADER_BYTES);
+    output[0]=work->layer;output[1]=work->source_rank;output[2]=work->destination_rank;
+    output[3]=work->flags;put_u16_be(output+8u,work->slot_count);
+    output[10]=(uint8_t)work->position_mode;output[11]=(uint8_t)axes;
+    uint32_t offset=FG_DECODE_BATCH_HEADER_BYTES;
+    for(uint32_t slot=0;slot<work->slot_count;slot++){
+        const fg_decode_batch_slot_work *entry=&work->slots[slot];
+        put_u32_be(output+offset,entry->token_index);offset+=4u;
+        put_u32_be(output+offset,entry->state_slot);offset+=4u;
+        for(uint32_t axis=0;axis<axes;axis++,offset+=4u)
+            put_u32_be(output+offset,entry->position[axis]);
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++,offset+=4u)
+            put_f32_be(output+offset,entry->hyper[i]);
+        if(work->flags&FG_LAYER_WORK_HAS_NGRAM)
+            for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++,offset+=4u)
+                put_f32_be(output+offset,entry->ngram_embedding[i]);
+    }
+    *bytes=(uint32_t)required;
+    return FG_OK;
+}
+
+fg_status fg_decode_batch_work_decode(fg_decode_batch_work *work,uint16_t protocol_version,
+                                      float *hyper_storage,uint64_t hyper_capacity_values,
+                                      float *ngram_storage,uint64_t ngram_capacity_values,
+                                      const uint8_t *payload,uint32_t bytes,fg_error *err){
+    if(!work||!hyper_storage||!payload||!fg_protocol_version_supported(protocol_version)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid decode batch work input or protocol");
+        return FG_ERR_ARGUMENT;
+    }
+    if(protocol_version<FG_PROTOCOL_VERSION||bytes<FG_DECODE_BATCH_HEADER_BYTES){
+        fg_error_set(err,FG_ERR_FORMAT,"batched decode work is shorter than protocol 6 minimum");
+        return FG_ERR_FORMAT;
+    }
+    uint8_t flags=payload[3];
+    uint16_t slot_count=get_u16_be(payload+8u);
+    fg_position_mode mode=(fg_position_mode)payload[10];
+    uint32_t axes=payload[11];
+    uint32_t slot_bytes=FG_DECODE_BATCH_SLOT_HEADER_BYTES+axes*4u+FG_HYPER_WIDTH*4u+
+        ((flags&FG_LAYER_WORK_HAS_NGRAM)?FG_NGRAM_EMBED_VALUES*4u:0u);
+    uint64_t required=FG_DECODE_BATCH_HEADER_BYTES+(uint64_t)slot_count*slot_bytes;
+    uint64_t hyper_values=(uint64_t)slot_count*FG_HYPER_WIDTH;
+    uint64_t ngram_values=(flags&FG_LAYER_WORK_HAS_NGRAM)?
+        (uint64_t)slot_count*FG_NGRAM_EMBED_VALUES:0u;
+    if(get_u32_be(payload+4u)||get_u16_be(payload+12u)||get_u16_be(payload+14u)||
+       !slot_count||slot_count>FG_DECODE_BATCH_MAX_SLOTS||required!=bytes||
+       mode>FG_POSITION_FOUR_AXIS||axes!=decode_batch_axes(mode)||
+       hyper_capacity_values<hyper_values||
+       (ngram_values&&(!ngram_storage||ngram_capacity_values<ngram_values))){
+        fg_error_set(err,FG_ERR_FORMAT,
+            "invalid decode batch work size, reserved bytes, or storage capacity");
+        return FG_ERR_FORMAT;
+    }
+    memset(work,0,sizeof(*work));
+    work->layer=payload[0];work->source_rank=payload[1];work->destination_rank=payload[2];
+    work->flags=flags;work->position_mode=mode;work->slot_count=slot_count;
+    uint32_t offset=FG_DECODE_BATCH_HEADER_BYTES;
+    for(uint32_t slot=0;slot<slot_count;slot++){
+        fg_decode_batch_slot_work *entry=&work->slots[slot];
+        entry->token_index=get_u32_be(payload+offset);offset+=4u;
+        entry->state_slot=get_u32_be(payload+offset);offset+=4u;
+        for(uint32_t axis=0;axis<axes;axis++,offset+=4u)
+            entry->position[axis]=get_u32_be(payload+offset);
+        entry->hyper=hyper_storage+(uint64_t)slot*FG_HYPER_WIDTH;
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++,offset+=4u)
+            hyper_storage[(uint64_t)slot*FG_HYPER_WIDTH+i]=get_f32_be(payload+offset);
+        if(flags&FG_LAYER_WORK_HAS_NGRAM){
+            entry->ngram_embedding=ngram_storage+(uint64_t)slot*FG_NGRAM_EMBED_VALUES;
+            for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++,offset+=4u)
+                ngram_storage[(uint64_t)slot*FG_NGRAM_EMBED_VALUES+i]=
+                    get_f32_be(payload+offset);
+        }
+    }
+    return validate_decode_batch_work(work,err);
+}
+
+fg_status fg_decode_batch_result_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                        const fg_decode_batch_result *result,fg_error *err){
+    if(!output||!bytes){
+        fg_error_set(err,FG_ERR_ARGUMENT,"decode batch result output is null");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_status status=validate_decode_batch_result(result,err);
+    if(status!=FG_OK)return status;
+    uint64_t required=FG_DECODE_BATCH_HEADER_BYTES+
+        (uint64_t)result->slot_count*(4u+FG_HYPER_WIDTH*4u);
+    if(required>FG_MAX_FRAME_BYTES||required>capacity){
+        fg_error_set(err,FG_ERR_LIMIT,"decode batch result buffer is too small");
+        return FG_ERR_LIMIT;
+    }
+    memset(output,0,FG_DECODE_BATCH_HEADER_BYTES);
+    output[0]=result->layer;output[1]=result->source_rank;output[2]=result->destination_rank;
+    put_u16_be(output+8u,result->slot_count);
+    uint32_t offset=FG_DECODE_BATCH_HEADER_BYTES;
+    for(uint32_t slot=0;slot<result->slot_count;slot++){
+        put_u32_be(output+offset,result->slots[slot].token_index);offset+=4u;
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++,offset+=4u)
+            put_f32_be(output+offset,result->slots[slot].hyper[i]);
+    }
+    *bytes=(uint32_t)required;
+    return FG_OK;
+}
+
+fg_status fg_decode_batch_result_decode(fg_decode_batch_result *result,
+                                        const uint8_t *payload,uint32_t bytes,fg_error *err){
+    if(!result||!payload){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid decode batch result input");
+        return FG_ERR_ARGUMENT;
+    }
+    if(bytes<FG_DECODE_BATCH_HEADER_BYTES){
+        fg_error_set(err,FG_ERR_FORMAT,"decode batch result is shorter than its header");
+        return FG_ERR_FORMAT;
+    }
+    uint16_t slot_count=get_u16_be(payload+8u);
+    uint64_t required=FG_DECODE_BATCH_HEADER_BYTES+
+        (uint64_t)slot_count*(4u+FG_HYPER_WIDTH*4u);
+    if(payload[3]||get_u32_be(payload+4u)||get_u16_be(payload+10u)||
+       get_u32_be(payload+12u)||!slot_count||slot_count>FG_DECODE_BATCH_MAX_SLOTS||
+       required!=bytes){
+        fg_error_set(err,FG_ERR_FORMAT,
+            "invalid decode batch result size, reserved bytes, or slot count");
+        return FG_ERR_FORMAT;
+    }
+    memset(result,0,sizeof(*result));
+    result->layer=payload[0];result->source_rank=payload[1];result->destination_rank=payload[2];
+    result->slot_count=slot_count;
+    uint32_t offset=FG_DECODE_BATCH_HEADER_BYTES;
+    for(uint32_t slot=0;slot<slot_count;slot++){
+        result->slots[slot].token_index=get_u32_be(payload+offset);offset+=4u;
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++,offset+=4u)
+            result->slots[slot].hyper[i]=get_f32_be(payload+offset);
+    }
+    return validate_decode_batch_result(result,err);
 }
 
 fg_status fg_output_slice_encode(uint8_t output[FG_DECODE_LAYER_RESULT_BYTES],

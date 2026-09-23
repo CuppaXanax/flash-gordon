@@ -26,6 +26,7 @@ tests/test_tokenizer
 tests/test_fabric
 tests/test_prefix
 tests/test_chat_runtime
+tests/test_decode_batch
 tests/test_embedding
 tests/test_ngram_deployment
 tests/test_pipeline

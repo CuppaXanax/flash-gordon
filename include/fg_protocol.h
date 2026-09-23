@@ -26,6 +26,16 @@
 #define FG_LAYER_WORK_TEXT_MAX_BYTES (FG_LAYER_WORK_BASE_BYTES+FG_NGRAM_EMBED_VALUES*4u)
 #define FG_LAYER_WORK_MAX_BYTES (FG_LAYER_WORK_FOUR_AXIS_BASE_BYTES+FG_NGRAM_EMBED_VALUES*4u)
 #define FG_LAYER_RESULT_BYTES (8u+FG_HYPER_WIDTH*4u)
+/* Depth-B ring decode: one block-owner message carries B independent sequences
+ * so a ring step reads the weights once and emits B tokens.  The single-token
+ * contract above is untouched and remains the B=1 path. */
+#define FG_DECODE_BATCH_MAX_SLOTS 2u
+#define FG_DECODE_BATCH_HEADER_BYTES 16u
+#define FG_DECODE_BATCH_SLOT_HEADER_BYTES 8u
+#define FG_DECODE_BATCH_SLOT_BYTES (FG_DECODE_BATCH_SLOT_HEADER_BYTES+4u*4u+FG_HYPER_WIDTH*4u)
+#define FG_DECODE_BATCH_SLOT_NGRAM_BYTES (FG_DECODE_BATCH_SLOT_BYTES+FG_NGRAM_EMBED_VALUES*4u)
+#define FG_DECODE_BATCH_WORK_MAX_BYTES (FG_DECODE_BATCH_HEADER_BYTES+FG_DECODE_BATCH_MAX_SLOTS*FG_DECODE_BATCH_SLOT_NGRAM_BYTES)
+#define FG_DECODE_BATCH_RESULT_MAX_BYTES (FG_DECODE_BATCH_HEADER_BYTES+FG_DECODE_BATCH_MAX_SLOTS*(4u+FG_HYPER_WIDTH*4u))
 #define FG_OUTPUT_WORK_HEADER_BYTES 40u
 #define FG_OUTPUT_WORK_BYTES (FG_OUTPUT_WORK_HEADER_BYTES+FG_HYPER_WIDTH*4u)
 #define FG_OUTPUT_RESULT_BYTES 16u
@@ -149,7 +159,13 @@ typedef enum fg_message_type {
      * slice and returns the per-slice argmax under FG_MSG_OUTPUT_PARTIAL. */
     FG_MSG_OUTPUT_SLICE = 48,
     FG_MSG_OUTPUT_PARTIAL = 49,
-    FG_MSG_OUTPUT_SLICE_HIDDEN = 50
+    FG_MSG_OUTPUT_SLICE_HIDDEN = 50,
+    /* Depth-B ring decode: B independent sequences ride one ring step.  The
+     * payload is a slot array of the single-token layer-work contract (one
+     * hyper vector, optional layer-1 n-gram embedding, per-slot state slot),
+     * and the result is the matching slot array of final-block hyper states. */
+    FG_MSG_DECODE_BATCH_WORK = 51,
+    FG_MSG_DECODE_BATCH_RESULT = 52
 } fg_message_type;
 
 typedef struct fg_gdn_state_fetch {
@@ -331,6 +347,41 @@ typedef struct fg_layer_result {
     uint32_t token_index;
     float hyper[FG_HYPER_WIDTH];
 } fg_layer_result;
+
+/* One sequence's slot inside a depth-B decode ring message.  `state_slot`
+ * names the owner-side per-session state namespace the token advances; it is
+ * stable across steps for a sequence and must be unique inside a message. */
+typedef struct fg_decode_batch_slot_work {
+    uint32_t token_index;
+    uint32_t state_slot;
+    uint32_t position[4];
+    const float *hyper;
+    const float *ngram_embedding;
+} fg_decode_batch_slot_work;
+
+typedef struct fg_decode_batch_work {
+    uint8_t layer;
+    uint8_t source_rank;
+    uint8_t destination_rank;
+    uint8_t flags;
+    fg_position_mode position_mode;
+    uint16_t slot_count;
+    fg_decode_batch_slot_work slots[FG_DECODE_BATCH_MAX_SLOTS];
+} fg_decode_batch_work;
+
+typedef struct fg_decode_batch_slot_result {
+    uint32_t token_index;
+    float hyper[FG_HYPER_WIDTH];
+} fg_decode_batch_slot_result;
+
+typedef struct fg_decode_batch_result {
+    uint8_t layer;
+    uint8_t source_rank;
+    uint8_t destination_rank;
+    uint8_t flags;
+    uint16_t slot_count;
+    fg_decode_batch_slot_result slots[FG_DECODE_BATCH_MAX_SLOTS];
+} fg_decode_batch_result;
 
 typedef struct fg_qsa_block_work {
     uint8_t layer;
@@ -615,6 +666,20 @@ fg_status fg_decode_layer_result_encode(uint8_t output[FG_DECODE_LAYER_RESULT_BY
                                         const fg_layer_result *result,uint32_t *bytes,fg_error *err);
 fg_status fg_decode_layer_result_decode(fg_layer_result *result,const uint8_t *payload,
                                         uint32_t bytes,fg_error *err);
+/* Depth-B batched decode wire (protocol 6+).  The work decoder fills
+ * `hyper_storage` with slot_count*FG_HYPER_WIDTH floats and, when the message
+ * carries n-grams, `ngram_storage` with slot_count*FG_NGRAM_EMBED_VALUES. */
+fg_status fg_decode_batch_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                      uint16_t protocol_version,
+                                      const fg_decode_batch_work *work,fg_error *err);
+fg_status fg_decode_batch_work_decode(fg_decode_batch_work *work,uint16_t protocol_version,
+                                      float *hyper_storage,uint64_t hyper_capacity_values,
+                                      float *ngram_storage,uint64_t ngram_capacity_values,
+                                      const uint8_t *payload,uint32_t bytes,fg_error *err);
+fg_status fg_decode_batch_result_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                        const fg_decode_batch_result *result,fg_error *err);
+fg_status fg_decode_batch_result_decode(fg_decode_batch_result *result,
+                                        const uint8_t *payload,uint32_t bytes,fg_error *err);
 fg_status fg_output_slice_encode(uint8_t output[FG_DECODE_LAYER_RESULT_BYTES],
                                  const fg_layer_result *result,uint32_t *bytes,fg_error *err);
 fg_status fg_qsa_block_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
