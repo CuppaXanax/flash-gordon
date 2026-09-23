@@ -1695,10 +1695,11 @@ static uint32_t owned_qsa_layers(const fg_manifest *manifest,uint32_t rank){
     return count;
 }
 
-/* Worker record-window sizing: 640 MiB per rank, split across the QSA layers
- * that rank owns, bounded by the coordinator cache limits and by the layers'
- * complete page count (two-layer ranks reach the full 262K context; one-layer
- * ranks clamp to their complete ~309 MiB set). */
+/* Worker record-window sizing: the validated 320 MiB per rank, split across
+ * the QSA layers that rank owns, bounded by the coordinator cache limits and
+ * by the layers' complete page count (one-layer ranks clamp to their complete
+ * ~309 MiB set). The full two-layer set needs ~618 MiB, which the fleet's
+ * host headroom does not carry. */
 static uint32_t worker_qsa_cache_pages(uint32_t layers,uint32_t full_pages){
     if(!layers)return 0u;
     uint64_t mib=FG_QSA_WORKER_CACHE_MIB;
