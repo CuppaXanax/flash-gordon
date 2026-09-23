@@ -123,7 +123,7 @@ static int test_owner_gr_prefill_boundaries(bool with_ple){
     fg_vk_tensor *block_tensor=NULL;
     if(ok){
         manifest->prefill_microbatch=max_tokens;
-        if(fg_model_open_coordinator(&model,manifest,directory,0u,&error)==
+        if(fg_model_open_coordinator(&model,manifest,directory,0u,false,&error)==
            FG_ERR_UNAVAILABLE)ok=77;
         else ok=model!=NULL;
     }
@@ -254,7 +254,7 @@ static int test_owner_prefill_failure_cleanup(void){
     fg_vk_tensor *hyper=NULL,*hidden=NULL,*embedding=NULL;
     fg_vk_tensor *probe_left=NULL,*probe_right=NULL,*probe_sum=NULL;
     if(ok){
-        fg_status status=fg_model_open_coordinator(&model,manifest,directory,0u,&error);
+        fg_status status=fg_model_open_coordinator(&model,manifest,directory,0u,false,&error);
         if(status==FG_ERR_UNAVAILABLE)ok=77;
         else ok=status==FG_OK;
     }
@@ -582,6 +582,48 @@ static int test_qsa_projection_submission(fg_vk_context *vk,fg_error *failure){
     return ok;
 }
 
+static int test_coordinator_owned_layers_mask(void){
+    char directory[96],rank0_path[128],rank1_path[128];
+    snprintf(directory,sizeof(directory),"test-coordinator-mask-%ld",(long)getpid());
+    snprintf(rank0_path,sizeof(rank0_path),"%s/rank-00.fgw",directory);
+    snprintf(rank1_path,sizeof(rank1_path),"%s/rank-01.fgw",directory);
+    if(mkdir(directory,0700)!=0){perror("mkdir");return 1;}
+    uint8_t *block=aligned_alloc(FG_ALIGNMENT,FG_ALIGNMENT);
+    if(!block){rmdir(directory);return 1;}
+    for(uint32_t i=0;i<FG_ALIGNMENT;i++)block[i]=(uint8_t)(i*7u+3u);
+    int ok=write_rank(rank0_path,block,2u)&&write_rank(rank1_path,block,1u);
+    fg_manifest *manifest=malloc(sizeof(*manifest));fg_error error={0};
+    if(!manifest)ok=0;
+    if(ok){
+        fg_manifest_init(manifest);
+        ok=add_common(manifest,"token_embd.weight",0u,0u,block,&error);
+        if(ok)ok=add_common(manifest,"blk.0.attn_qkv.weight",0u,FG_ALIGNMENT,block,&error);
+        if(ok)ok=add_common(manifest,"blk.1.attn_qkv.weight",1u,0u,block,&error);
+    }
+    fg_model *masked=NULL,*full=NULL;
+    fg_status status=ok?fg_model_open_coordinator(&masked,manifest,directory,0u,true,&error):
+                        FG_ERR_FORMAT;
+    if(status==FG_ERR_UNAVAILABLE){
+        fprintf(stderr,"SKIP coordinator owned-layer mask: %s\n",error.message);
+        free(manifest);free(block);unlink(rank1_path);unlink(rank0_path);rmdir(directory);
+        return 77;
+    }
+    ok=ok&&status==FG_OK;
+    /* Round-robin topology owns layer 0 on rank 0 and layer 1 on rank 1: the
+     * ring-mode coordinator keeps its own layer and the global token embedding,
+     * and masks the other rank's shard out of the arena. */
+    if(ok)ok=fg_model_tensor(masked,"token_embd.weight")!=NULL&&
+             fg_model_tensor(masked,"blk.0.attn_qkv.weight")!=NULL&&
+             fg_model_tensor(masked,"blk.1.attn_qkv.weight")==NULL;
+    if(ok)ok=fg_model_open_coordinator(&full,manifest,directory,0u,false,&error)==FG_OK&&
+             fg_model_tensor(full,"blk.1.attn_qkv.weight")!=NULL&&
+             fg_model_weight_bytes(masked)<fg_model_weight_bytes(full);
+    fg_model_close(full);fg_model_close(masked);
+    free(manifest);free(block);unlink(rank1_path);unlink(rank0_path);rmdir(directory);
+    if(!ok)fprintf(stderr,"coordinator owned-layer mask test failed: %s\n",error.message);
+    return ok?0:1;
+}
+
 int main(void){
     const char *filter=getenv("DS4_REMOTE_TEST_FILTER");
     bool geometry_only=filter&&strcmp(filter,"qsa_resident_geometry")==0;
@@ -597,6 +639,9 @@ int main(void){
         puts("QSA resident geometry and ledger arithmetic: PASS");
         return 0;
     }
+    int mask_test=test_coordinator_owned_layers_mask();
+    if(mask_test==1)return 1;
+    if(mask_test==77)fprintf(stderr,"SKIP coordinator owned-layer mask: Vulkan unavailable\n");
     int owner_prefill=test_owner_gr_prefill_boundaries(false);
     if(owner_prefill==0)owner_prefill=test_owner_gr_prefill_boundaries(true);
     if(owner_prefill==1)return 1;
@@ -633,7 +678,7 @@ int main(void){
     fg_expert_executor *expert_executor=NULL;
     fg_owner_executor *owner_executor=NULL;
     if(ok)phase="coordinator model open";
-    fg_status status=ok?fg_model_open_coordinator(&coordinator,manifest,directory,0u,&error):
+    fg_status status=ok?fg_model_open_coordinator(&coordinator,manifest,directory,0u,false,&error):
                         FG_ERR_FORMAT;
     if(status==FG_ERR_UNAVAILABLE){
         fprintf(stderr,"SKIP QSA owner model placement: %s\n",error.message);

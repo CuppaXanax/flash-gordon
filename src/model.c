@@ -80,6 +80,17 @@ static bool qsa_service_weight(const fg_tensor_record *record){
         if(strcmp(suffix,suffixes[i])==0)return true;
     return false;
 }
+/* Ring-mode coordinator placement: the replicated loader reads every rank's
+ * common shard, but rank 0 executes only the layers the manifest assigns to it
+ * plus the global tensors (token embedding, output head).  Keep just those
+ * common tensors mapped so a full-size vision request has allocation room.
+ * The worker layout and the non-ring (all-layer) coordinator load are
+ * unchanged, and no tensor bytes are modified, so numerics stay bit-identical. */
+static bool coordinator_common(const fg_manifest *manifest,
+                               const fg_tensor_record *record,uint32_t rank){
+    if(record->kind!=FG_TENSOR_COMMON)return false;
+    return record->layer>=FG_LAYER_COUNT||manifest->layer_owner[record->layer]==rank;
+}
 
 fg_status fg_model_open(fg_model **out,const fg_manifest *manifest,const char *pack_dir,uint32_t rank,fg_error *err){
     if(!out||!manifest||!pack_dir||rank>=FG_RANK_COUNT){fg_error_set(err,FG_ERR_ARGUMENT,"invalid model open arguments");return FG_ERR_ARGUMENT;}*out=NULL;uint64_t bytes=rank_high_water(manifest,rank);if(bytes==0||bytes>manifest->persistent_cap_bytes){fg_error_set(err,FG_ERR_LIMIT,"rank %u weight arena is invalid or exceeds persistent cap",rank);return FG_ERR_LIMIT;}
@@ -96,20 +107,30 @@ void fg_model_close(fg_model *model){if(!model)return;if(model->tensor){for(uint
 
 /* Expert-parallel model loading: loads ALL shared weights from ALL rank files,
    plus this rank's expert weights, into a single combined arena.  Every rank
-   can then process all 48 layers locally — only MoE dispatch goes to the network. */
+   can then process all 48 layers locally — only MoE dispatch goes to the network.
+   When owned_layers_only is set (ring-mode coordinator) the shared set narrows
+   to the rank's own layers plus the global head tensors; the arena, remap and
+   cook paths are otherwise identical. */
 static fg_status model_open_replicated(fg_model **out,const fg_manifest *manifest,const char *pack_dir,
-                                       uint32_t rank,bool include_qsa,fg_error *err){
+                                       uint32_t rank,bool include_qsa,bool owned_layers_only,
+                                       fg_error *err){
     if(!out||!manifest||!pack_dir||rank>=FG_RANK_COUNT){fg_error_set(err,FG_ERR_ARGUMENT,"invalid replicated model open arguments");return FG_ERR_ARGUMENT;}*out=NULL;
     /* Phase 1: compute combined arena layout.  Walk all tensors and assign new
        offsets in the combined arena, keeping shared tensors from every rank and
        expert tensors only from this rank. */
-    uint64_t cursor=0,expert_cursor=0;
+    uint64_t cursor=0,expert_cursor=0,skipped_bytes=0;
+    uint32_t skipped_count=0;
     uint64_t *remap=calloc(manifest->tensor_count,sizeof(*remap));
     bool *included=calloc(manifest->tensor_count,sizeof(*included));
     if(!remap||!included){free(included);free(remap);fg_error_set(err,FG_ERR_OOM,"allocate replicated remap table");return FG_ERR_OOM;}
     for(uint32_t i=0;i<manifest->tensor_count;i++){
         const fg_tensor_record *t=&manifest->tensors[i];
         bool is_shared=t->kind==FG_TENSOR_COMMON&&(include_qsa||!qsa_service_weight(t));
+        if(is_shared&&owned_layers_only&&!coordinator_common(manifest,t,rank)){
+            skipped_count++;
+            skipped_bytes+=fg_align_up_u64(t->bytes,FG_ALIGNMENT);
+            continue;
+        }
         bool is_my_expert=(t->kind==FG_TENSOR_ROUTED_EXPERT&&t->rank==rank);
         /* Sealed MTP tensors live on the rank that owns the trained head and
            never take part in text-layer execution; load them only there. */
@@ -124,6 +145,10 @@ static fg_status model_open_replicated(fg_model **out,const fg_manifest *manifes
     if(!cursor&&!expert_cursor){free(included);free(remap);fg_error_set(err,FG_ERR_MISMATCH,"replicated layout produced an empty arena");return FG_ERR_MISMATCH;}
     {uint32_t probe_count=0;for(uint32_t i=0;i<manifest->tensor_count;i++)if(included[i])probe_count++;
      fprintf(stderr,"REPLICATED_PROBE shared=%llu experts=%llu included=%u rank=%u\n",(unsigned long long)cursor,(unsigned long long)expert_cursor,probe_count,rank);}
+    if(owned_layers_only)
+        fprintf(stderr,"COORDINATOR_MASK rank=%u own_layers_only=1 shared=%llu masked_tensors=%u "
+                       "masked_bytes=%llu\n",rank,(unsigned long long)cursor,skipped_count,
+                (unsigned long long)skipped_bytes);
     {uint64_t layer_experts[FG_LAYER_COUNT]={0};
      for(uint32_t i=0;i<manifest->tensor_count;i++){const fg_tensor_record *t=&manifest->tensors[i];if(t->kind==FG_TENSOR_ROUTED_EXPERT&&t->layer<FG_LAYER_COUNT)layer_experts[t->layer]+=fg_align_up_u64(t->bytes,FG_ALIGNMENT);}
      fprintf(stderr,"EXPERT_LAYER_SUMS");
@@ -192,11 +217,11 @@ static fg_status model_open_replicated(fg_model **out,const fg_manifest *manifes
 }
 fg_status fg_model_open_replicated(fg_model **out,const fg_manifest *manifest,const char *pack_dir,
                                    uint32_t rank,fg_error *err){
-    return model_open_replicated(out,manifest,pack_dir,rank,true,err);
+    return model_open_replicated(out,manifest,pack_dir,rank,true,false,err);
 }
 fg_status fg_model_open_coordinator(fg_model **out,const fg_manifest *manifest,const char *pack_dir,
-                                    uint32_t rank,fg_error *err){
-    return model_open_replicated(out,manifest,pack_dir,rank,true,err);
+                                    uint32_t rank,bool owned_layers_only,fg_error *err){
+    return model_open_replicated(out,manifest,pack_dir,rank,true,owned_layers_only,err);
 }
 fg_vk_context *fg_model_vk(fg_model *model){return model?model->vk:NULL;}
 fg_vk_tensor *fg_model_tensor(fg_model *model,const char *name){uint32_t index=find_tensor(model,name);return index==UINT32_MAX?NULL:model->tensor[index];}
