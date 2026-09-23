@@ -3256,7 +3256,15 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
                 memset(err,0,sizeof(*err));
                 api_public_session_free(public_session);
                 status=fg_runtime_reset(runtime,err);
-                if(status==FG_OK)
+                if(status==FG_OK&&request.media_count)
+                    /* All media are in the prefix; the cold fallback still has
+                     * to run the tower for them. */
+                    status=fg_runtime_generate_vision(runtime,rendered,media,
+                                                      (uint32_t)request.media_count,
+                                                      request.max_tokens,api_token,
+                                                      &generation,api_interrupted,
+                                                      &generation,&stats,err);
+                else if(status==FG_OK)
                     status=fg_runtime_generate(runtime,rendered,request.max_tokens,api_token,
                                                &generation,api_interrupted,&generation,&stats,err);
             }

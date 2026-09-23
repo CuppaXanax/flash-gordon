@@ -2006,6 +2006,33 @@ static void test_media_continuation_runtime_miss_falls_back_cold(void) {
     CHECK(session.media_count == 2u);
     free(response);
 
+    /* A text turn whose media all live in the prefix still has to cold-run the
+     * tower for them when the continuation frontier is gone. */
+    runtime.force_continuation_miss = true;
+    prior_resets = runtime.reset_count;
+    char body3[8192];
+    snprintf(body3, sizeof(body3),
+             "{\"messages\":["
+             "{\"role\":\"user\",\"content\":["
+             "{\"type\":\"text\",\"text\":\"what is this? \"},"
+             "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%s\"}}]},"
+             "{\"role\":\"assistant\",\"content\":\"answer\"},"
+             "{\"role\":\"user\",\"content\":["
+             "{\"type\":\"text\",\"text\":\"and this? \"},"
+             "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%s\"}}]},"
+             "{\"role\":\"assistant\",\"content\":\"answer\"},"
+             "{\"role\":\"user\",\"content\":\"more\"}]}",
+             test_png_base64, test_png_base64);
+    response = run_chat_request(&runtime, &session, body3, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "200 OK"));
+    CHECK(test_vision_continuation_calls == 1u);
+    CHECK(test_vision_calls == 3u);
+    CHECK(runtime.reset_count == prior_resets + 1u);
+    CHECK(session.valid);
+    CHECK(session.media_count == 2u);
+    free(response);
+
     test_vision_available = false;
     api_public_session_free(&session);
     fg_runtime_close(&runtime);
