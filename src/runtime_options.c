@@ -220,7 +220,7 @@ fg_status fg_runtime_profile_validate(const fg_runtime_options *options,
        options->qsa_page_cache_bytes>FG_RUNTIME_QSA_CACHE_MAX_BYTES||
        (options->qsa_page_cache_bytes&((UINT64_C(1)<<20u)-1u))){
         fg_error_set(err,FG_ERR_ARGUMENT,
-                     "staged QSA page cache must be a whole MiB from 16 to 512 MiB");
+                     "staged QSA page cache must be a whole MiB from 16 to 1024 MiB");
         return FG_ERR_ARGUMENT;
     }
     return FG_OK;

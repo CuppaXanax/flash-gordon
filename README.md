@@ -73,7 +73,7 @@ as 262,144/262,144/0/16 MiB; omitted runtime options use the sealed budgets.
 An explicit budget override must specify all four budgets. It accepts
 32,768, 65,536, 131,072, or 262,144 logical tokens, requires equal logical and
 GPU-index coverage and requires a whole-MiB unified record cache from 16
-through 512 MiB. Other combinations fail before fleet
+through 1024 MiB. Other combinations fail before fleet
 startup. One-shot `eval` uses the same resolved profile, rejects prompt plus
 generation beyond the logical limit, and bounds owner state to that limit.
 

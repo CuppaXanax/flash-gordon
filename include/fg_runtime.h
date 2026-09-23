@@ -22,7 +22,9 @@ typedef struct fg_runtime fg_runtime;
 #define FG_RUNTIME_BOOT_CONTEXT_TOKENS FG_MANIFEST_DEFAULT_CONTEXT_TOKENS
 #define FG_RUNTIME_QSA_HOT_TOKENS 8192u
 #define FG_RUNTIME_QSA_CACHE_MIN_BYTES (UINT64_C(16) << 20u)
-#define FG_RUNTIME_QSA_CACHE_MAX_BYTES (UINT64_C(512) << 20u)
+/* The full 262K two-layer record set is ~618 MiB, so the staged window cap
+ * must sit above it for the worker default and a full-context rank-0 request. */
+#define FG_RUNTIME_QSA_CACHE_MAX_BYTES (UINT64_C(1024) << 20u)
 #define FG_MTP_MAX_DRAFT_TOKENS 2u
 
 enum {
