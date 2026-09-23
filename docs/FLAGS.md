@@ -77,6 +77,12 @@ session-level cold reset (`fg_runtime_reset`) is unchanged.
 | `FG_BLOCK_BENCH` | unset (off) | Offline block-service bench; exits after printing per-layer wall times. | test/bench |
 | `FG_SHADER_DIR` | `vulkan` | Directory containing the SPIR-V files. | test/ops |
 
+## Vision tower
+
+| Flag | Default | Effect | Status |
+|---|---|---|---|
+| `FG_TOWER_FAIL_ALLOC` | unset (off) | One-shot fault injection: fails the nth tower buffer allocation with `VK_ERROR_OUT_OF_DEVICE_MEMORY` to exercise the vision fail-soft path. The failure uses the real allocation-failure code path. | test/ops |
+
 ## Static replay
 
 | Flag | Default | Effect | Status |

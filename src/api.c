@@ -3185,6 +3185,7 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     fg_chat_generated_free(&generated);
     free(rendered);
     free(rendered_continuation);
+    size_t request_media_count=request.media_count;
     api_chat_request_free(&request);
     api_public_session_free(&pending_session);
     if(generation_attempted&&!response_committed){
@@ -3196,6 +3197,14 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
             return reset_error.code;
         }
     }
+    /* A media request that failed before the model produced a token is a
+     * vision/tower failure (pack read, image decode, or a Vulkan allocation in
+     * the tower device).  The request already received its 5xx with the precise
+     * error; the tower session is self-healing and the runtime was reset above,
+     * so keep serving instead of taking the API down for one oversized image. */
+    if(status!=FG_OK&&request_media_count&&stats.prompt_tokens==0u&&
+       stats.generated_tokens==0u)
+        return FG_OK;
     if(status==FG_ERR_INTERRUPTED)
         fprintf(stderr,"request %s: prefill interrupted after %u/%u tokens, "
                 "frontier %u, %.1f s, client_failed %d\n",

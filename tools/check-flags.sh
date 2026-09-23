@@ -62,6 +62,7 @@ expected_code="$(printf '%s\n' \
     FG_SHADER_DIR \
     FG_STATIC_CHECK \
     FG_STATIC_RERECORD \
+    FG_TOWER_FAIL_ALLOC \
     FG_TRACE_ROUTES \
     FG_WORKER_OWNER | LC_ALL=C sort -u)"
 

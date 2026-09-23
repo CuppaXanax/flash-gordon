@@ -255,6 +255,7 @@ fg_status fg_runtime_generate_continuation(
 }
 
 static bool test_vision_available = false;
+static bool test_vision_fail = false;
 static bool test_video_available = false;
 static bool test_video_frames_available = false;
 static uint32_t test_vision_calls = 0;
@@ -303,6 +304,13 @@ fg_status fg_runtime_generate_vision(fg_runtime *runtime,const char *transcript,
             test_vision_images++;
             test_vision_bytes += media[i].length;
         }
+    }
+    /* The real tower fails before any prefill token exists; inject the same
+     * shape of failure (zero stats) at the same point. */
+    if (test_vision_fail) {
+        fg_error_set(err, FG_ERR_IO,
+                     "tower Vulkan allocate buffer memory failed (VkResult -2)");
+        return FG_ERR_IO;
     }
     fg_status status = fg_runtime_generate(runtime, transcript, max_tokens, callback,
                                            callback_context, interrupted, interrupt_context,
@@ -562,6 +570,41 @@ static void test_video_content_parts(void) {
     CHECK(strstr(err.message, "base64") != NULL);
     api_chat_request_free(&broken_request);
     json_free(root);
+}
+
+static void test_vision_failure_fails_soft(void) {
+    char body[4096];
+    snprintf(body, sizeof(body),
+             "{\"messages\":[{\"role\":\"user\",\"content\":["
+             "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%s\"}},"
+             "{\"type\":\"text\",\"text\":\"describe this\"}]}]}",
+             test_png_base64);
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START,
+                          .generated = "recovered"};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    test_vision_available = true;
+    test_vision_fail = true;
+    char *response = run_chat_request(&runtime, &session, body, &status);
+    /* The tower allocation failure must be answered with a 5xx, not exit the
+     * accept loop: handle_chat_completions reports it as consumed. */
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "500 Internal Server Error"));
+    CHECK(response && strstr(response,
+                             "tower Vulkan allocate buffer memory failed (VkResult -2)"));
+    CHECK(runtime.empty_reason == FG_PREFIX_RESET_FAILURE);
+    free(response);
+    test_vision_fail = false;
+    response = run_chat_request(&runtime, &session,
+                                "{\"messages\":[{\"role\":\"user\",\"content\":\"after\"}]}",
+                                &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "200 OK"));
+    CHECK(response && strstr(response, "\"content\":"));
+    free(response);
+    test_vision_available = false;
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
 }
 
 static void test_video_http_flow(void) {
@@ -2872,6 +2915,7 @@ int main(void) {
     test_system_shrink_resets();
     test_image_http_flow();
     test_video_http_flow();
+    test_vision_failure_fails_soft();
     test_video_frames_http_flow();
     test_failed_generation_fails_closed();
     test_interrupted_prefill_keeps_resume_state();

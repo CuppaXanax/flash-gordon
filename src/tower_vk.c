@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <math.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,20 @@
 #include <vulkan/vulkan.h>
 
 #define FG_TOWER_MAX_PAIRS 16u
+
+/* One-shot allocation fault injection for fail-soft verification:
+ * FG_TOWER_FAIL_ALLOC=<n> fails the nth tower buffer allocation of the process
+ * with VK_ERROR_OUT_OF_DEVICE_MEMORY.  Unset in production; the injected path
+ * is byte-for-byte the real allocation-failure path. */
+static bool tower_alloc_fault(void){
+    static atomic_uint attempts;
+    const char *target=getenv("FG_TOWER_FAIL_ALLOC");
+    if(!target||!*target)return false;
+    unsigned long fail=strtoul(target,NULL,10);
+    if(!fail)return false;
+    unsigned count=atomic_fetch_add(&attempts,1u)+1u;
+    return (unsigned long)count==fail;
+}
 
 typedef struct tower_buffer {
     VkBuffer buffer;
@@ -177,6 +192,11 @@ static fg_status tower_buffer_create(fg_tower_vk *tower,uint64_t bytes,tower_buf
     VkMemoryAllocateInfo allocation={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
                                      .allocationSize=requirements.size,
                                      .memoryTypeIndex=memory_type};
+    if(tower_alloc_fault()){
+        vkDestroyBuffer(tower->device,buffer->buffer,NULL);
+        buffer->buffer=VK_NULL_HANDLE;
+        return tower_vk_error(err,"allocate buffer memory",VK_ERROR_OUT_OF_DEVICE_MEMORY);
+    }
     result=vkAllocateMemory(tower->device,&allocation,NULL,&buffer->memory);
     if(result!=VK_SUCCESS){
         vkDestroyBuffer(tower->device,buffer->buffer,NULL);
