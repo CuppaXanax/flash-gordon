@@ -27,13 +27,15 @@ fg_status fg_qsa_submit_host_reads(fg_vk_context *vk,fg_error *err);
 #define FG_QSA_SELECT_WINDOW_BLOCKS 16384u
 #define FG_QSA_ATTENTION_SPLITS 8u
 /* Per-rank worker record window, split across the QSA layers the rank owns.
- * The validated 320 MiB window stays: two-layer ranks carry only ~0.2-0.9 GiB
- * of host headroom on the BC-250 fleet, so the complete two-layer 262K set
- * (~618 MiB) does not fit and a 640 MiB window OOM-killed a blade. A
- * one-layer rank still clamps to its complete ~309 MiB set. Evicted pages are
- * served from the authoritative state file, so this bounds the Vulkan
+ * 640 MiB is the validated default now that the pageable n-gram shard mode
+ * (FG_NGRAM_PAGEABLE=1) returned 3.7-3.9 GiB of host headroom per worker: the
+ * complete two-layer 262K set (~618 MiB) fits and clamps, and a one-layer
+ * rank clamps to its complete ~309 MiB set. Without that headroom a 640 MiB
+ * window swapped and gated the ring (pswpout ~103k, block_ms 4 ms -> 1.2 s),
+ * so this constant assumes the pageable worker configuration. Evicted pages
+ * are served from the authoritative state file, so this bounds the Vulkan
  * allocation instead of mirroring the whole logical context. */
-#define FG_QSA_WORKER_CACHE_MIB 320u
+#define FG_QSA_WORKER_CACHE_MIB 640u
 /* Selected records live beside projections and residual inputs in the shared
  * attention arena. Scale the query tile with its sealed microbatch capacity. */
 static inline uint32_t fg_qsa_query_tile_size(uint32_t batch_size){
