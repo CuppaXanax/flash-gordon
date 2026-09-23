@@ -2436,7 +2436,7 @@ static fg_status worker_output_handoff_flush(fg_fabric *fabric,fg_output_executo
         if(missing!=FG_OK)return missing;
         if(fg_output_slice_ways(output_slice)!=ways){
             fg_error_set(err,FG_ERR_MISMATCH,
-                "output config declares a %u-way split but this rank holds a %u-way slice executor (FG_OUTPUT_SPLIT must match on all ranks)",
+                "output config declares a %u-way split but this rank holds a %u-way slice executor (output split topology mismatch)",
                 ways,fg_output_slice_ways(output_slice));
             return FG_ERR_MISMATCH;
         }
@@ -2528,7 +2528,7 @@ static fg_status handle_output_slice_hidden(fg_fabric *fabric,fg_output_executor
     if(status!=FG_OK)return status;
     if(fg_output_slice_ways(output_slice)!=FG_OUTPUT_SPLIT_WAYS_MAX){
         fg_error_set(err,FG_ERR_MISMATCH,
-            "rank %u holds a %u-way slice executor for a 4-way output slice (FG_OUTPUT_SPLIT must match on all ranks)",
+            "rank %u holds a %u-way slice executor for a 4-way output slice (output split topology mismatch)",
             self,fg_output_slice_ways(output_slice));
         return FG_ERR_MISMATCH;
     }
@@ -2705,10 +2705,14 @@ fg_status fg_rank_main(const char *path,uint32_t rank,fg_error *err){
             fg_model_close(model);free(manifest);
             return status;
         }
-        if(status==FG_OK)status=fg_output_split_mode(&output_split_ways,err);
+        /* The 4-way output head is the operating point, not a mode: ranks
+         * 4/0/1/2 each reduce one vocabulary slice and rank 7 runs the HC
+         * chain.  A deployment without the output bundle extents on a helper
+         * rank fails at startup with the exact missing span, never silently. */
+        output_split_ways=FG_OUTPUT_SPLIT_WAYS_MAX;
         if(status==FG_OK&&rank==4u)
             status=fg_output_executor_create(&output,model,err);
-        if(status==FG_OK&&output_split_ways){
+        if(status==FG_OK){
             uint32_t way=0u,first_row=0u,rows=0u;
             if(rank==4u){
                 if(!fg_output_split_way_for_rank(output_split_ways,rank,&way)){
@@ -2725,8 +2729,7 @@ fg_status fg_rank_main(const char *path,uint32_t rank,fg_error *err){
                 status=fg_output_slice_create_foreign(&output_slice,model,directory,
                                                       output_split_ways,first_row,rows,err);
             }
-            if(status==FG_OK&&output_split_ways==FG_OUTPUT_SPLIT_WAYS_MAX&&
-               manifest->layer_owner[FG_LAYER_COUNT-1u]==rank)
+            if(status==FG_OK&&manifest->layer_owner[FG_LAYER_COUNT-1u]==rank)
                 status=fg_output_hc_create(&output_hc,model,directory,true,err);
             if(status==FG_OK)
                 fprintf(stderr,"OUTPUT_SPLIT rank=%u ways=%u slice=%u hc=%u\n",rank,
@@ -4601,7 +4604,7 @@ static fg_status coordinator_output_slice(fg_coordinator *coordinator,uint32_t p
     if(status!=FG_OK)return status;
     if(fg_output_slice_ways(coordinator->output_slice)!=FG_OUTPUT_SPLIT_WAYS_MIN){
         fg_error_set(err,FG_ERR_MISMATCH,
-                     "rank 0 holds a %u-way slice executor for a 2-way output slice (FG_OUTPUT_SPLIT must match on all ranks)",
+                     "rank 0 holds a %u-way slice executor for a 2-way output slice (output split topology mismatch)",
                      fg_output_slice_ways(coordinator->output_slice));
         return FG_ERR_MISMATCH;
     }
@@ -4635,7 +4638,7 @@ static fg_status coordinator_output_slice_hidden(fg_coordinator *coordinator,uin
     if(status!=FG_OK)return status;
     if(fg_output_slice_ways(coordinator->output_slice)!=FG_OUTPUT_SPLIT_WAYS_MAX){
         fg_error_set(err,FG_ERR_MISMATCH,
-                     "rank 0 holds a %u-way slice executor for a 4-way output slice (FG_OUTPUT_SPLIT must match on all ranks)",
+                     "rank 0 holds a %u-way slice executor for a 4-way output slice (output split topology mismatch)",
                      fg_output_slice_ways(coordinator->output_slice));
         return FG_ERR_MISMATCH;
     }
@@ -5391,18 +5394,15 @@ static fg_status coordinator_open_qsa(fg_coordinator *coordinator,const char *di
 }
 
 static fg_status coordinator_output_split_open(fg_coordinator *coordinator,fg_error *err){
-    uint32_t ways=0u;
-    fg_status status=fg_output_split_mode(&ways,err);
-    if(status!=FG_OK||!ways)return status;
-    uint32_t way=0u;
+    uint32_t ways=FG_OUTPUT_SPLIT_WAYS_MAX,way=0u;
     if(!fg_output_split_way_for_rank(ways,0u,&way)){
         fg_error_set(err,FG_ERR_MISMATCH,"rank 0 owns no slice in the %u-way output split",ways);
         return FG_ERR_MISMATCH;
     }
     uint32_t first_row=0u,rows=0u;
     fg_output_split_span(ways,way,&first_row,&rows);
-    status=fg_output_slice_create(&coordinator->output_slice,coordinator->model,ways,
-                                  first_row,rows,err);
+    fg_status status=fg_output_slice_create(&coordinator->output_slice,coordinator->model,ways,
+                                            first_row,rows,err);
     if(status==FG_OK)
         fprintf(stderr,"OUTPUT_SPLIT rank=0 ways=%u way=%u rows=%u..%u\n",ways,way,
                 first_row,first_row+rows);

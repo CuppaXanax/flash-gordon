@@ -20,25 +20,6 @@ bool fg_protocol_version_supported(uint16_t version){
     return version>=FG_PROTOCOL_MIN_VERSION&&version<=FG_PROTOCOL_MAX_VERSION;
 }
 
-fg_status fg_output_split_mode(uint32_t *ways,fg_error *err){
-    if(!ways){fg_error_set(err,FG_ERR_ARGUMENT,"output split mode output is null");return FG_ERR_ARGUMENT;}
-    const char *value=getenv("FG_OUTPUT_SPLIT");
-    *ways=0u;
-    if(!value||!*value||strcmp(value,"0")==0)return FG_OK;
-    if(strcmp(value,"1")==0||strcmp(value,"2")==0){*ways=FG_OUTPUT_SPLIT_WAYS_MIN;return FG_OK;}
-    if(strcmp(value,"4")==0){*ways=FG_OUTPUT_SPLIT_WAYS_MAX;return FG_OK;}
-    fg_error_set(err,FG_ERR_ARGUMENT,
-                 "FG_OUTPUT_SPLIT=%s is not a supported split; use 0 (off), 1 or 2 (2-way) or 4 (4-way)",
-                 value);
-    return FG_ERR_ARGUMENT;
-}
-
-bool fg_output_split_requested(void){
-    uint32_t ways=0u;fg_error ignored={0};
-    if(fg_output_split_mode(&ways,&ignored)!=FG_OK)return false;
-    return ways!=0u;
-}
-
 bool fg_output_split_way_for_rank(uint32_t ways,uint32_t rank,uint32_t *way){
     uint32_t slot=UINT32_MAX;
     if(ways==FG_OUTPUT_SPLIT_WAYS_MIN){
@@ -66,10 +47,10 @@ fg_status fg_output_split_require_slice(bool have_slice,uint32_t ways,uint32_t r
                                         fg_error *err){
     if(have_slice)return FG_OK;
     if(ways)fg_error_set(err,FG_ERR_MISMATCH,
-        "rank %u needs a %u-way slice executor but holds none (FG_OUTPUT_SPLIT must match on all ranks)",
+        "rank %u needs a %u-way slice executor but holds none (output split topology mismatch)",
         rank,ways);
     else fg_error_set(err,FG_ERR_MISMATCH,
-        "rank %u needs a slice executor but holds none (FG_OUTPUT_SPLIT must match on all ranks)",
+        "rank %u needs a slice executor but holds none (output split topology mismatch)",
         rank);
     return FG_ERR_MISMATCH;
 }

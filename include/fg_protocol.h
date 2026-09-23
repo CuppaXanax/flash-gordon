@@ -483,8 +483,6 @@ typedef struct fg_output_config {
 #define FG_OUTPUT_SPLIT_WAYS_MIN 2u
 #define FG_OUTPUT_SPLIT_WAYS_MAX 4u
 
-fg_status fg_output_split_mode(uint32_t *ways,fg_error *err);
-bool fg_output_split_requested(void);
 bool fg_output_split_way_for_rank(uint32_t ways,uint32_t rank,uint32_t *way);
 uint32_t fg_output_split_rank(uint32_t ways,uint32_t way);
 void fg_output_split_span(uint32_t ways,uint32_t way,uint32_t *first_row,uint32_t *rows);

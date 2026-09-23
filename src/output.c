@@ -82,7 +82,7 @@ static fg_status foreign_tensor_load(fg_vk_context *vk,const fg_tensor_record *r
     int fd=open(path,O_RDONLY|O_CLOEXEC);
     if(fd<0){
         fg_error_set(err,FG_ERR_IO,
-            "open %s for foreign %s (offset %llu bytes %llu): %s; FG_OUTPUT_SPLIT=4 needs the owning rank file on every slice rank",
+            "open %s for foreign %s (offset %llu bytes %llu): %s; the 4-way head split needs the owning rank file extents on every slice rank",
             path,what,(unsigned long long)(record->offset+skip),(unsigned long long)bytes,strerror(errno));
         return FG_ERR_IO;
     }

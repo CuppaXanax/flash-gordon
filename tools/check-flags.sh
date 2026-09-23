@@ -44,7 +44,6 @@ expected_code="$(printf '%s\n' \
     FG_NGRAM_PAGEABLE \
     FG_NGRAM_VERIFY \
     FG_NUMERICS_TRACE \
-    FG_OUTPUT_SPLIT \
     FG_OUTPUT_SPLIT_TRACE \
     FG_OUTPUT_TRACE \
     FG_PACK_EMBED_RANK \

@@ -3225,23 +3225,8 @@ static int test_output_split_combine(void){
 }
 
 static int test_output_split_layout(void){
-    fg_error error={0};uint32_t ways=0u,way=0u,first=0u,rows=0u;
+    uint32_t way=0u,first=0u,rows=0u;
     int ok=1;
-    unsetenv("FG_OUTPUT_SPLIT");
-    ok=ok&&fg_output_split_mode(&ways,&error)==FG_OK&&ways==0u&&!fg_output_split_requested();
-    setenv("FG_OUTPUT_SPLIT","0",1);
-    ok=ok&&fg_output_split_mode(&ways,&error)==FG_OK&&ways==0u&&!fg_output_split_requested();
-    setenv("FG_OUTPUT_SPLIT","1",1);
-    ok=ok&&fg_output_split_mode(&ways,&error)==FG_OK&&ways==2u&&fg_output_split_requested();
-    setenv("FG_OUTPUT_SPLIT","2",1);
-    ok=ok&&fg_output_split_mode(&ways,&error)==FG_OK&&ways==2u;
-    setenv("FG_OUTPUT_SPLIT","4",1);
-    ok=ok&&fg_output_split_mode(&ways,&error)==FG_OK&&ways==4u&&fg_output_split_requested();
-    setenv("FG_OUTPUT_SPLIT","3",1);
-    ok=ok&&fg_output_split_mode(&ways,&error)!=FG_OK&&error.message[0];
-    setenv("FG_OUTPUT_SPLIT","four",1);
-    ok=ok&&fg_output_split_mode(&ways,&error)!=FG_OK;
-    unsetenv("FG_OUTPUT_SPLIT");
     ok=ok&&fg_output_split_way_for_rank(2u,4u,&way)&&way==0u;
     ok=ok&&fg_output_split_way_for_rank(2u,0u,&way)&&way==1u;
     ok=ok&&!fg_output_split_way_for_rank(2u,1u,&way);
