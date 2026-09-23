@@ -1939,8 +1939,12 @@ static fg_status tower_vision_pairs_forward(const char *tower_dir,const float *t
        geometry->grid_width%FG_TOWER_MERGE||geometry->grid_height%FG_TOWER_MERGE||
        (uint64_t)geometry->grid_width*geometry->grid_height!=geometry->tokens||
        geometry->merged_tokens!=geometry->tokens/FG_TOWER_MERGE_FACTOR||
-       geometry->tokens>4096u||tokens_per_pair!=geometry->tokens){
-        fg_error_set(err,FG_ERR_FORMAT,"tower pair geometry is invalid");
+       geometry->tokens>FG_TOWER_MAX_TOKENS||tokens_per_pair!=geometry->tokens){
+        fg_error_set(err,FG_ERR_FORMAT,
+                     "tower pair geometry is invalid (tokens=%u pair=%u grid=%ux%u "
+                     "merged=%u max_tokens=%u)",
+                     geometry->tokens,tokens_per_pair,geometry->grid_width,
+                     geometry->grid_height,geometry->merged_tokens,FG_TOWER_MAX_TOKENS);
         return FG_ERR_FORMAT;
     }
     if(pair_count>FG_TOWER_MAX_PAIRS){

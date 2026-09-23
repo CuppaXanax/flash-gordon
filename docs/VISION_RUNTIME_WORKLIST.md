@@ -103,6 +103,9 @@ scope.
 - Block execution is double-buffered: the next layer's weights are acquired
   while the current layer is on the GPU; descriptor sets are pooled per
   request.
+- Vision budget: one image or one video frame is capped at 4096 vision tokens
+  (1,048,576 px at 16 px patches) by the single-pair attention kernel; larger
+  inputs are smart-resized down to fit, never rejected for size.
 - Remaining: production attention kernel for >4096 patch tokens, occupancy
   tuning for the quant matmuls, PNG/JPEG variants beyond the common subset and
   exact mtmd preprocessing parity; video token budget policy.

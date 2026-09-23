@@ -23,10 +23,15 @@
 #define FG_TOWER_ROPE_BASE 10000.0f
 #define FG_TOWER_LN_EPS 1e-6f
 #define FG_TOWER_ALIGN 32u
+/* The tower forward runs a single-pair attention kernel, so one image (or one
+ * video frame) is capped at FG_TOWER_MAX_TOKENS vision tokens. Smart-resize
+ * pixel bounds derive from that cap: 4096 tokens x 16 x 16 px = 1,048,576 px;
+ * request beyond it is downscaled, never rejected for size. */
+#define FG_TOWER_MAX_TOKENS 4096u
 #define FG_TOWER_IMAGE_MIN_PIXELS UINT64_C(65536)
-#define FG_TOWER_IMAGE_MAX_PIXELS UINT64_C(16777216)
+#define FG_TOWER_IMAGE_MAX_PIXELS ((uint64_t)FG_TOWER_MAX_TOKENS*FG_TOWER_PATCH_SIZE*FG_TOWER_PATCH_SIZE)
 #define FG_TOWER_VIDEO_MIN_PIXELS UINT64_C(4096)
-#define FG_TOWER_VIDEO_MAX_PIXELS UINT64_C(25228800)
+#define FG_TOWER_VIDEO_MAX_PIXELS ((uint64_t)FG_TOWER_MAX_TOKENS*FG_TOWER_PATCH_SIZE*FG_TOWER_PATCH_SIZE)
 
 typedef struct fg_tower_geometry {
     uint32_t image_width;
