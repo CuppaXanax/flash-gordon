@@ -259,6 +259,8 @@ static bool test_vision_fail = false;
 static bool test_video_available = false;
 static bool test_video_frames_available = false;
 static uint32_t test_vision_calls = 0;
+static uint32_t test_vision_continuation_calls = 0;
+static uint32_t test_vision_continuation_media = 0;
 static uint32_t test_vision_media = 0;
 static uint32_t test_vision_images = 0;
 static uint32_t test_vision_videos = 0;
@@ -318,6 +320,55 @@ fg_status fg_runtime_generate_vision(fg_runtime *runtime,const char *transcript,
     if (status == FG_OK && stats) {
         stats->image_tokens = 4u;
         stats->tower_seconds = 1.1;
+    }
+    return status;
+}
+
+fg_status fg_runtime_generate_vision_continuation(
+    fg_runtime *runtime,const char *public_transcript,const char *continuation,
+    const fg_runtime_media *media,uint32_t media_count,
+    bool *prefix_miss,uint32_t max_tokens,
+    fg_token_callback callback,void *callback_context,
+    fg_interrupt_fn interrupted,void *interrupt_context,
+    fg_generation_stats *stats,fg_error *err) {
+    (void)public_transcript;
+    test_vision_continuation_calls++;
+    test_vision_continuation_media = media_count;
+    test_vision_images = 0;
+    test_vision_videos = 0;
+    test_vision_video_frames = 0;
+    for (uint32_t i = 0; i < media_count; i++) {
+        if (media[i].kind == FG_RUNTIME_MEDIA_VIDEO) test_vision_videos++;
+        else if (media[i].kind == FG_RUNTIME_MEDIA_VIDEO_FRAMES) test_vision_video_frames++;
+        else test_vision_images++;
+    }
+    if (prefix_miss) *prefix_miss = false;
+    if (runtime && runtime->force_continuation_miss) {
+        runtime->force_continuation_miss = false;
+        if (prefix_miss) *prefix_miss = true;
+        fg_error_set(err, FG_ERR_UNAVAILABLE, "injected vision continuation miss");
+        return FG_ERR_UNAVAILABLE;
+    }
+    if (!runtime || !runtime->history) {
+        if (prefix_miss) *prefix_miss = true;
+        fg_error_set(err, FG_ERR_UNAVAILABLE, "fake runtime has no continuation");
+        return FG_ERR_UNAVAILABLE;
+    }
+    size_t continuation_length = strlen(continuation);
+    char *combined = malloc(runtime->history_length + continuation_length + 1u);
+    if (!combined) {
+        fg_error_set(err, FG_ERR_OOM, "build fake runtime vision continuation");
+        return FG_ERR_OOM;
+    }
+    memcpy(combined, runtime->history, runtime->history_length);
+    memcpy(combined + runtime->history_length, continuation, continuation_length + 1u);
+    fg_status status = fg_runtime_generate(runtime, combined, max_tokens, callback,
+                                           callback_context, interrupted,
+                                           interrupt_context, stats, err);
+    free(combined);
+    if (status == FG_OK && stats) {
+        stats->image_tokens = 4u;
+        stats->tower_seconds = 0.5;
     }
     return status;
 }
@@ -633,7 +684,11 @@ static void test_video_http_flow(void) {
     CHECK(test_vision_videos == 1u);
     CHECK(test_vision_images == 0u);
     CHECK(test_vision_bytes == 3u);
-    CHECK(!session.valid);
+    /* A successful media turn commits the public session like a text turn. */
+    CHECK(session.valid);
+    CHECK(session.media_count == 1u);
+    CHECK(session.media[0].kind == FG_RUNTIME_MEDIA_VIDEO);
+    api_public_session_free(&session);
     free(response);
     test_vision_available = false;
     test_video_available = false;
@@ -826,7 +881,10 @@ static void test_video_frames_http_flow(void) {
     CHECK(test_vision_images == 0u);
     CHECK(test_vision_videos == 0u);
     CHECK(test_vision_bytes > 100u);
-    CHECK(!session.valid);
+    CHECK(session.valid);
+    CHECK(session.media_count == 1u);
+    CHECK(session.media[0].kind == FG_RUNTIME_MEDIA_VIDEO_FRAMES);
+    api_public_session_free(&session);
     free(response);
     test_vision_available = false;
     test_video_frames_available = false;
@@ -1746,9 +1804,211 @@ static void test_image_http_flow(void) {
     CHECK(test_vision_calls == 1u);
     CHECK(test_vision_images == 1u);
     CHECK(test_vision_bytes > 50u);
-    CHECK(!session.valid);
+    CHECK(session.valid);
+    CHECK(session.media_count == 1u);
+    CHECK(session.media[0].kind == FG_RUNTIME_MEDIA_IMAGE);
+    api_public_session_free(&session);
     free(response);
     test_vision_available = false;
+}
+
+static void test_media_prefix_continuation_and_identity(void) {
+    /* Same base64 length, different decoded bytes (valid padding, no '='). */
+    static const char second_png_base64[] =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAA"
+        "AABJRU5ErkJgggAA";
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    test_vision_available = true;
+    test_vision_calls = 0;
+    test_vision_continuation_calls = 0;
+    test_vision_continuation_media = 0;
+
+    /* Turn 1: image + text.  The media turn must commit the session. */
+    char body[4096];
+    snprintf(body, sizeof(body),
+             "{\"messages\":[{\"role\":\"user\",\"content\":["
+             "{\"type\":\"text\",\"text\":\"what is this? \"},"
+             "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%s\"}}]}]}",
+             test_png_base64);
+    char *response = run_chat_request(&runtime, &session, body, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "200 OK"));
+    CHECK(test_vision_calls == 1u);
+    CHECK(session.valid);
+    CHECK(session.media_count == 1u);
+    free(response);
+
+    /* Turn 2: same history, new text turn.  No new media, so the text
+     * continuation path must carry the vision-prefix session. */
+    size_t prior_evaluated = runtime.evaluated_length;
+    uint32_t prior_resets = runtime.reset_count;
+    char body2[8192];
+    snprintf(body2, sizeof(body2),
+             "{\"messages\":["
+             "{\"role\":\"user\",\"content\":["
+             "{\"type\":\"text\",\"text\":\"what is this? \"},"
+             "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%s\"}}]},"
+             "{\"role\":\"assistant\",\"content\":\"answer\"},"
+             "{\"role\":\"user\",\"content\":\"and now?\"}]}",
+             test_png_base64);
+    response = run_chat_request(&runtime, &session, body2, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: hit\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: none\r\n"));
+    CHECK(runtime.reset_count == prior_resets);
+    CHECK(test_vision_calls == 1u);
+    CHECK(test_vision_continuation_calls == 0u);
+    char reused_header[96];
+    snprintf(reused_header, sizeof(reused_header),
+             "X-Flash-Gordon-Reused-Tokens: %zu\r\n", prior_evaluated);
+    CHECK(response && strstr(response, reused_header));
+    free(response);
+
+    /* Turn 3: new image in the suffix.  Only the new media goes through the
+     * vision continuation; the prefix image is reused. */
+    test_vision_continuation_calls = 0;
+    char body3[8192];
+    snprintf(body3, sizeof(body3),
+             "{\"messages\":["
+             "{\"role\":\"user\",\"content\":["
+             "{\"type\":\"text\",\"text\":\"what is this? \"},"
+             "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%s\"}}]},"
+             "{\"role\":\"assistant\",\"content\":\"answer\"},"
+             "{\"role\":\"user\",\"content\":\"and now?\"},"
+             "{\"role\":\"assistant\",\"content\":\"answer\"},"
+             "{\"role\":\"user\",\"content\":["
+             "{\"type\":\"text\",\"text\":\"and this? \"},"
+             "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%s\"}}]}]}",
+             test_png_base64, second_png_base64);
+    prior_evaluated = runtime.evaluated_length;
+    prior_resets = runtime.reset_count;
+    response = run_chat_request(&runtime, &session, body3, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "200 OK"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: hit\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: none\r\n"));
+    CHECK(runtime.reset_count == prior_resets);
+    CHECK(test_vision_calls == 1u);
+    CHECK(test_vision_continuation_calls == 1u);
+    CHECK(test_vision_continuation_media == 1u);
+    CHECK(test_vision_images == 1u);
+    CHECK(session.media_count == 2u);
+    free(response);
+
+    /* Turn 4: extend with a text turn while both images stay in the prefix.
+     * The re-sent images are identical bytes at identical positions, so the
+     * digest compare must keep the hit and run no new tower work. */
+    test_vision_continuation_calls = 0;
+    prior_resets = runtime.reset_count;
+    char body4[8192];
+    snprintf(body4, sizeof(body4),
+             "{\"messages\":["
+             "{\"role\":\"user\",\"content\":["
+             "{\"type\":\"text\",\"text\":\"what is this? \"},"
+             "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%s\"}}]},"
+             "{\"role\":\"assistant\",\"content\":\"answer\"},"
+             "{\"role\":\"user\",\"content\":\"and now?\"},"
+             "{\"role\":\"assistant\",\"content\":\"answer\"},"
+             "{\"role\":\"user\",\"content\":["
+             "{\"type\":\"text\",\"text\":\"and this? \"},"
+             "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%s\"}}]},"
+             "{\"role\":\"assistant\",\"content\":\"answer\"},"
+             "{\"role\":\"user\",\"content\":\"next\"}]}",
+             test_png_base64, second_png_base64);
+    response = run_chat_request(&runtime, &session, body4, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: hit\r\n"));
+    CHECK(response && strstr(response, "X-Flash-Gordon-Reset-Reason: none\r\n"));
+    CHECK(runtime.reset_count == prior_resets);
+    CHECK(test_vision_continuation_calls == 0u);
+    free(response);
+
+    /* Turn 5: same position, different image bytes -> digest mismatch -> full
+     * reset through the cold vision path. */
+    test_vision_calls = 0;
+    test_vision_continuation_calls = 0;
+    prior_resets = runtime.reset_count;
+    char body5[8192];
+    snprintf(body5, sizeof(body5),
+             "{\"messages\":["
+             "{\"role\":\"user\",\"content\":["
+             "{\"type\":\"text\",\"text\":\"what is this? \"},"
+             "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%s\"}}]},"
+             "{\"role\":\"assistant\",\"content\":\"answer\"},"
+             "{\"role\":\"user\",\"content\":\"and now?\"},"
+             "{\"role\":\"assistant\",\"content\":\"answer\"},"
+             "{\"role\":\"user\",\"content\":["
+             "{\"type\":\"text\",\"text\":\"and this? \"},"
+             "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%s\"}}]},"
+             "{\"role\":\"assistant\",\"content\":\"answer\"},"
+             "{\"role\":\"user\",\"content\":\"next\"},"
+             "{\"role\":\"assistant\",\"content\":\"answer\"},"
+             "{\"role\":\"user\",\"content\":\"after\"}]}",
+             second_png_base64, second_png_base64);
+    response = run_chat_request(&runtime, &session, body5, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "X-Flash-Gordon-Prefix-Cache: miss\r\n"));
+    CHECK(response &&
+          strstr(response, "X-Flash-Gordon-Reset-Reason: public-history-mismatch\r\n"));
+    CHECK(runtime.reset_count == prior_resets + 1u);
+    CHECK(test_vision_continuation_calls == 0u);
+    CHECK(test_vision_calls == 1u);
+    free(response);
+
+    test_vision_available = false;
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
+}
+
+static void test_media_continuation_runtime_miss_falls_back_cold(void) {
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    test_vision_available = true;
+    test_vision_calls = 0;
+    test_vision_continuation_calls = 0;
+
+    char body[4096];
+    snprintf(body, sizeof(body),
+             "{\"messages\":[{\"role\":\"user\",\"content\":["
+             "{\"type\":\"text\",\"text\":\"what is this? \"},"
+             "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%s\"}}]}]}",
+             test_png_base64);
+    char *response = run_chat_request(&runtime, &session, body, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "200 OK"));
+    free(response);
+
+    /* A new image suffix whose runtime continuation frontier is gone must fall
+     * back to the cold vision path with every media item. */
+    runtime.force_continuation_miss = true;
+    uint32_t prior_resets = runtime.reset_count;
+    char body2[8192];
+    snprintf(body2, sizeof(body2),
+             "{\"messages\":["
+             "{\"role\":\"user\",\"content\":["
+             "{\"type\":\"text\",\"text\":\"what is this? \"},"
+             "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%s\"}}]},"
+             "{\"role\":\"assistant\",\"content\":\"answer\"},"
+             "{\"role\":\"user\",\"content\":["
+             "{\"type\":\"text\",\"text\":\"and this? \"},"
+             "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%s\"}}]}]}",
+             test_png_base64, test_png_base64);
+    response = run_chat_request(&runtime, &session, body2, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "200 OK"));
+    CHECK(test_vision_continuation_calls == 1u);
+    CHECK(test_vision_calls == 2u);
+    CHECK(runtime.reset_count == prior_resets + 1u);
+    CHECK(session.valid);
+    CHECK(session.media_count == 2u);
+    free(response);
+
+    test_vision_available = false;
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
 }
 
 static void test_divergent_tool_request_clears_prefix_metadata(void) {
@@ -2896,6 +3156,8 @@ int main(void) {
     test_json_nul_and_member_limit();
     test_client_socket_timeouts();
     test_model_capabilities();
+    test_media_prefix_continuation_and_identity();
+    test_media_continuation_runtime_miss_falls_back_cold();
     test_live_prefix_hit_divergence_and_reset();
     test_live_prefix_tool_loop();
     test_divergent_tool_request_clears_prefix_metadata();

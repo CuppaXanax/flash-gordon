@@ -1,6 +1,7 @@
 #include "fg_api.h"
 #include "fg_chat.h"
 #include "fg_runtime.h"
+#include "fg_sha256.h"
 #include "fg_video.h"
 
 #include <ctype.h>
@@ -91,6 +92,10 @@ typedef struct api_media {
     size_t frame_count;
     double fps;
     uint32_t max_frames;
+    /* SHA-256 over the decoded payload (kind, length and bytes; frames are
+     * framed individually).  Two media items with the same marker text but
+     * different bytes must never compare equal in the session prefix. */
+    uint8_t digest[32];
 } api_media;
 
 typedef struct api_chat_request {
@@ -108,8 +113,16 @@ typedef struct api_chat_request {
     size_t media_capacity;
 } api_chat_request;
 
+typedef struct api_media_identity {
+    uint32_t kind;
+    uint8_t digest[32];
+} api_media_identity;
+
 typedef struct api_public_session {
     api_chat_request transcript;
+    /* Per-media identities of the committed transcript, in message order. */
+    api_media_identity *media;
+    size_t media_count;
     bool valid;
 } api_public_session;
 
@@ -744,6 +757,37 @@ static api_media *api_request_media_slot(api_chat_request *request,fg_error *err
     return slot;
 }
 
+static void api_digest_u32(fg_sha256 *hash,uint32_t value){
+    uint8_t bytes[4]={(uint8_t)value,(uint8_t)(value>>8u),(uint8_t)(value>>16u),
+                      (uint8_t)(value>>24u)};
+    fg_sha256_update(hash,bytes,sizeof(bytes));
+}
+
+static void api_digest_u64(fg_sha256 *hash,uint64_t value){
+    uint8_t bytes[8];
+    for(unsigned i=0;i<8u;i++)bytes[i]=(uint8_t)(value>>(8u*i));
+    fg_sha256_update(hash,bytes,sizeof(bytes));
+}
+
+static void api_media_compute_digest(api_media *media){
+    fg_sha256 hash;
+    fg_sha256_init(&hash);
+    api_digest_u32(&hash,media->kind);
+    if(media->kind==FG_RUNTIME_MEDIA_VIDEO_FRAMES){
+        api_digest_u64(&hash,(uint64_t)media->frame_count);
+        api_digest_u64(&hash,(uint64_t)(media->fps*1000.0));
+        api_digest_u32(&hash,media->max_frames);
+        for(size_t frame=0;frame<media->frame_count;frame++){
+            api_digest_u64(&hash,(uint64_t)media->frame_lengths[frame]);
+            fg_sha256_update(&hash,media->frames[frame],media->frame_lengths[frame]);
+        }
+    }else{
+        api_digest_u64(&hash,(uint64_t)media->length);
+        fg_sha256_update(&hash,media->data,media->length);
+    }
+    fg_sha256_final(&hash,media->digest);
+}
+
 static fg_status api_request_add_media(api_chat_request *request,uint32_t kind,uint8_t *data,
                                        size_t length,fg_error *err){
     api_media *slot=api_request_media_slot(request,err);
@@ -754,6 +798,7 @@ static fg_status api_request_add_media(api_chat_request *request,uint32_t kind,u
     slot->kind=kind;
     slot->data=data;
     slot->length=length;
+    api_media_compute_digest(slot);
     return FG_OK;
 }
 
@@ -768,6 +813,7 @@ static fg_status api_request_add_video_frames(api_chat_request *request,uint8_t 
     slot->frame_count=frame_count;
     slot->fps=fps;
     slot->max_frames=max_frames;
+    api_media_compute_digest(slot);
     return FG_OK;
 }
 
@@ -1110,6 +1156,9 @@ static void api_chat_request_free(api_chat_request *request) {
 static void api_public_session_free(api_public_session *session) {
     if (!session) return;
     api_chat_request_free(&session->transcript);
+    free(session->media);
+    session->media = NULL;
+    session->media_count = 0;
     session->valid = false;
 }
 
@@ -1230,6 +1279,16 @@ static bool api_message_equal(size_t index,const fg_chat_message *left,
     return true;
 }
 
+static size_t api_vision_marker_count(const char *content){
+    static const char marker[]="<|vision_start|>";
+    size_t count=0;
+    if(!content)return 0;
+    for(const char *cursor=content;(cursor=strstr(cursor,marker))!=NULL;
+        cursor+=sizeof(marker)-1u)
+        count++;
+    return count;
+}
+
 static bool api_public_session_prefix(const api_public_session *session,
                                       const api_chat_request *request,
                                       char *reason,size_t reason_size) {
@@ -1244,11 +1303,51 @@ static bool api_public_session_prefix(const api_public_session *session,
                                                         session->transcript.message_count);
     size_t current_system=fg_chat_leading_system_count(request->messages,
                                                        request->message_count);
+    /* The leading system run is delta-eligible and is not compared here, so a
+     * media marker inside it would desynchronize the per-message media index
+     * from the request media list.  Refuse the continuation instead (the
+     * request then cold-starts through the vision path). */
+    for(size_t i=0;i<previous_system;i++)
+        if(api_vision_marker_count(session->transcript.messages[i].content)){
+            api_mismatch(reason,reason_size,"system media is not continuation-safe");
+            return false;
+        }
+    for(size_t i=0;i<current_system;i++)
+        if(api_vision_marker_count(request->messages[i].content)){
+            api_mismatch(reason,reason_size,"system media is not continuation-safe");
+            return false;
+        }
+    size_t media_index=0;
     for(size_t i=previous_system;i<session->transcript.message_count;i++){
         size_t current=current_system+(i-previous_system);
         if(!api_message_equal(current,&session->transcript.messages[i],
                               &request->messages[current],reason,reason_size))
             return false;
+        /* The content compare only sees the placeholder markers, which are
+         * identical for every image.  Every marker in the compared prefix must
+         * also carry the stored payload identity, so different bytes at the
+         * same position force a reset while a re-sent image continues. */
+        size_t markers=api_vision_marker_count(session->transcript.messages[i].content);
+        for(size_t marker=0;marker<markers;marker++,media_index++){
+            if(media_index>=session->media_count||media_index>=request->media_count){
+                api_mismatch(reason,reason_size,"message[%zu].media[%zu]=count",
+                             current,marker);
+                return false;
+            }
+            const api_media_identity *stored=&session->media[media_index];
+            const api_media *echoed=&request->media[media_index];
+            if(stored->kind!=echoed->kind||
+               memcmp(stored->digest,echoed->digest,sizeof(stored->digest))){
+                api_mismatch(reason,reason_size,
+                             "message[%zu].media[%zu] kind=%u->%u digest",
+                             current,marker,stored->kind,echoed->kind);
+                return false;
+            }
+        }
+    }
+    if(media_index!=session->media_count){
+        api_mismatch(reason,reason_size,"media=%zu->%zu",session->media_count,media_index);
+        return false;
     }
     return true;
 }
@@ -1335,6 +1434,19 @@ static fg_status api_public_session_build(api_public_session *output,
     if(status==FG_OK&&request->tool_choice_name){
         copy->tool_choice_name=strdup(request->tool_choice_name);
         if(!copy->tool_choice_name){fg_error_set(err,FG_ERR_OOM,"copy public API tool choice");status=FG_ERR_OOM;}
+    }
+    if(status==FG_OK&&request->media_count){
+        api_media_identity *media=calloc(request->media_count,sizeof(*media));
+        if(!media){fg_error_set(err,FG_ERR_OOM,"copy public API media identity");status=FG_ERR_OOM;}
+        else{
+            output->media=media;
+            output->media_count=request->media_count;
+            for(size_t i=0;i<request->media_count;i++){
+                media[i].kind=request->media[i].kind;
+                memcpy(media[i].digest,request->media[i].digest,
+                       sizeof(media[i].digest));
+            }
+        }
     }
     if(status!=FG_OK){api_public_session_free(output);return status;}
     output->valid=true;
@@ -2987,7 +3099,7 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     status = fg_chat_render(request.messages, request.message_count, &render_options,
                             &rendered, err);
     char session_mismatch[512]={0};
-    bool public_continuation=status==FG_OK&&request.media_count==0&&
+    bool public_continuation=status==FG_OK&&
         api_public_session_prefix(public_session,&request,session_mismatch,
                                   sizeof(session_mismatch));
     char *rendered_continuation=NULL;
@@ -3085,8 +3197,9 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     if(status==FG_OK)status=fg_runtime_set_sampler(runtime,&request.sampler,err);
     if(status==FG_OK){
         generation_attempted=true;
+        fg_runtime_media *media=NULL;
         if(request.media_count){
-            fg_runtime_media *media=calloc(request.media_count,sizeof(*media));
+            media=calloc(request.media_count,sizeof(*media));
             if(!media){
                 fg_error_set(err,FG_ERR_OOM,"allocate vision request media");
                 status=FG_ERR_OOM;
@@ -3101,13 +3214,39 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
                     media[item].fps=request.media[item].fps;
                     media[item].max_frames=request.media[item].max_frames;
                 }
-                status=fg_runtime_generate_vision(runtime,rendered,media,
-                                                  (uint32_t)request.media_count,
-                                                  request.max_tokens,api_token,&generation,
-                                                  api_interrupted,&generation,&stats,err);
-                free(media);
             }
-        }else if(public_continuation){
+        }
+        /* The media identities of the stored session are the first
+         * `prefix_media` entries of the request media list (the prefix compare
+         * validated both their markers and their payload digests).  Only the
+         * entries after that are new suffix media and need tower work. */
+        size_t prefix_media=public_continuation?public_session->media_count:0u;
+        if(status==FG_OK&&public_continuation&&request.media_count&&
+           prefix_media<request.media_count){
+            bool prefix_miss=false;
+            status=fg_runtime_generate_vision_continuation(
+                runtime,rendered,rendered_continuation,media+prefix_media,
+                (uint32_t)(request.media_count-prefix_media),&prefix_miss,
+                request.max_tokens,api_token,&generation,api_interrupted,&generation,
+                &stats,err);
+            if(status==FG_ERR_UNAVAILABLE&&prefix_miss){
+                memset(&stats,0,sizeof(stats));
+                memset(err,0,sizeof(*err));
+                api_public_session_free(public_session);
+                status=fg_runtime_reset(runtime,err);
+                if(status==FG_OK)
+                    status=fg_runtime_generate_vision(runtime,rendered,media,
+                                                      (uint32_t)request.media_count,
+                                                      request.max_tokens,api_token,
+                                                      &generation,api_interrupted,
+                                                      &generation,&stats,err);
+            }
+        }else if(status==FG_OK&&request.media_count&&!public_continuation){
+            status=fg_runtime_generate_vision(runtime,rendered,media,
+                                              (uint32_t)request.media_count,
+                                              request.max_tokens,api_token,&generation,
+                                              api_interrupted,&generation,&stats,err);
+        }else if(status==FG_OK&&public_continuation){
             bool prefix_miss=false;
             status=fg_runtime_generate_continuation(
                 runtime,rendered,rendered_continuation,&prefix_miss,request.max_tokens,
@@ -3121,10 +3260,11 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
                     status=fg_runtime_generate(runtime,rendered,request.max_tokens,api_token,
                                                &generation,api_interrupted,&generation,&stats,err);
             }
-        }else{
+        }else if(status==FG_OK){
             status=fg_runtime_generate(runtime,rendered,request.max_tokens,api_token,
                                        &generation,api_interrupted,&generation,&stats,err);
         }
+        free(media);
     }
     fg_chat_generated generated={0};
     if(status==FG_OK)
@@ -3163,10 +3303,8 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
             status = send_completion(&generation, &generated, &stats, finish_reason, err);
         if(status==FG_OK){
             api_public_session_free(public_session);
-            if(request.media_count==0){
-                *public_session=pending_session;
-                memset(&pending_session,0,sizeof(pending_session));
-            }
+            *public_session=pending_session;
+            memset(&pending_session,0,sizeof(pending_session));
             response_committed=true;
         }
     } else {
