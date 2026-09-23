@@ -196,6 +196,64 @@ the detailed line; gates, battery, soak and the abort/retry, tool-delta and
 system-delta probes unchanged. Evidence
 `bc-250-dbg/results/cmpfix-20260917-2123/`.
 
+## Media continuation
+
+Date: 2026-09-23. Branch `feat/media-prefix-continuation` (base `428bfad`).
+
+Media requests are first-class in the prefix machinery: they continue from a
+matching session, commit their session, and prefill only the new suffix.
+
+### Problem
+
+`handle_chat_completions` gated continuation on `request.media_count == 0` and
+committed the public session only for `request.media_count == 0`.  A mixed
+conversation therefore cold-started on every image turn and the next text turn
+reset on `token-mismatch`, re-prefilling the whole context each turn (measured:
+turn 18 media 1 prefill 1443, turn 23 media 0 reset token-mismatch prefill
+27603, turn 24 media 1 prefill 28703).
+
+### Session identity
+
+The rendered content for a media message is only the marker text
+(`<|vision_start|><|image_pad|><|vision_end|>`), identical for every image, so
+`api_message_equal` alone cannot distinguish two different images at the same
+position.  Each parsed media item now carries a SHA-256 digest over
+`kind + length + decoded bytes` (video frames frame each length and payload,
+plus count/fps/max_frames), and the committed session stores the per-media
+identities in transcript order.  `api_public_session_prefix` walks the marker
+count of every compared message and requires the request digest to equal the
+stored digest at the same media index.
+
+| Session vs request | Result |
+|---|---|
+| prefix messages equal, all prefix media digests equal | continue |
+| same position, different image/video/frame bytes | reset (`public-history-mismatch`) |
+| same bytes re-sent at the same position | hit |
+| media count in the compared prefix differs from the stored identity count | reset |
+| media marker inside the delta-eligible leading system run (either side) | reset (index alignment cannot be proven) |
+
+### Runtime design
+
+- `fg_runtime.state_position` is the M-RoPE cursor after the last committed
+  token (the position the next text token would take in a cold render).  Text
+  state keeps `state_position == history_count`; a vision span advances the
+  cursor by `max(grid_width,grid_height)` while consuming `merged` tokens, so
+  media state keeps a cursor ahead of its token index.
+- A text suffix after media state prefills with that cursor
+  (`position_bias` in `runtime_generate_tokens`), and decode carries the cursor
+  instead of the raw token index, so every reused token lands at the position a
+  cold prefill of the same transcript would have used.  Text-only state has
+  `cursor == index`, so the text path is bit-for-bit unchanged.
+- `fg_runtime_generate_vision_continuation` shares the stored/synthesized EOS
+  framing with the text continuation, encodes only the suffix transcript, runs
+  the tower only for the new suffix media, expands their placeholders with the
+  tower embeddings and cursor-based M-RoPE positions, and prefills only the
+  suffix.  Prefix media stay in the reused owner state and are never
+  re-embedded.
+- A cold vision run still forces a full reset (it expands the whole
+  transcript).  A prefix miss on either continuation path falls back to the
+  cold vision path with every media item, so no stale prefix survives a reset.
+
 ## Validation
 
 Local (WSL Ubuntu 24.04, gcc 13.3):
