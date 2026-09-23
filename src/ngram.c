@@ -20,11 +20,12 @@
 typedef struct cache_entry{uint64_t offset;uint64_t stamp;bool valid;}cache_entry;
 struct fg_ngram_cache{uint8_t *data;cache_entry *entry;uint64_t stamp;};
 struct fg_ngram_store{int fd;fg_uring *ring;uint32_t slot,max_tokens,max_rows,max_blocks;uint64_t table_bytes,io_bytes;uint8_t *io_buffer;fg_ngram_cache *cache;fg_vk_context *vk;fg_vk_tensor *packed,*embedding,*embedding_view;uint32_t last_read_count;uint64_t last_read_bytes;double last_io_ms;};
-struct fg_ngram_resident{uint8_t *data;uint64_t row_begin,row_count,bytes;};
+struct fg_ngram_resident{uint8_t *data;uint8_t *map;int fd;uint64_t row_begin,row_count,bytes,hot_bytes;bool pageable;};
 static int u64_cmp(const void *a,const void *b){uint64_t x=*(const uint64_t *)a,y=*(const uint64_t *)b;return x<y?-1:x>y;}
 static double ngram_ts(void){struct timespec value;clock_gettime(CLOCK_MONOTONIC,&value);return (double)value.tv_sec*1e3+(double)value.tv_nsec*1e-6;}
 static bool ngram_trace_enabled(void){const char *enabled=getenv("FG_FRAME_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool ngram_locality_trace_enabled(void){const char *enabled=getenv("FG_NGRAM_LOCALITY_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
+static bool ngram_pageable_enabled(void){const char *enabled=getenv("FG_NGRAM_PAGEABLE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 fg_status fg_ngram_plan_reads(const uint64_t *addresses,uint32_t count,uint64_t table_bytes,fg_ngram_read *reads,uint32_t cap,uint32_t *out_count,fg_error *err){
     if((count&&!addresses)||!reads||!out_count||!table_bytes){fg_error_set(err,FG_ERR_ARGUMENT,"invalid n-gram read planner arguments");return FG_ERR_ARGUMENT;}if(count>FG_NGRAM_PREFILL_MAX_BLOCKS){fg_error_set(err,FG_ERR_LIMIT,"n-gram read planner input exceeds bounded prefill capacity");return FG_ERR_LIMIT;}
     uint64_t padded_bytes=fg_align_up_u64(table_bytes,FG_NGRAM_BLOCK_BYTES),*blocks=malloc((size_t)count*sizeof(*blocks));if(count&&!blocks){fg_error_set(err,FG_ERR_OOM,"allocate n-gram block planner");return FG_ERR_OOM;}
@@ -65,7 +66,8 @@ fg_status fg_q38_ngram_head_range(uint32_t head_begin,uint32_t head_count,uint64
 
 fg_status fg_q38_ngram_rank_range(uint32_t rank,uint64_t *row_begin,uint64_t *row_count,fg_error *err){static const uint64_t begin[FG_RANK_COUNT]={0u,0u,46666896u,93333792u,140000688u,180000846u,226667743u,273334639u},count[FG_RANK_COUNT]={0u,46666896u,46666896u,46666896u,40000158u,46666897u,46666896u,46666897u};if(!row_begin||!row_count||rank==0u||rank>=FG_RANK_COUNT){fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident n-gram rank");return FG_ERR_ARGUMENT;}*row_begin=begin[rank];*row_count=count[rank];return FG_OK;}
 
-void fg_ngram_resident_close(fg_ngram_resident *resident){if(!resident)return;if(resident->data){munlock(resident->data,(size_t)resident->bytes);free(resident->data);}free(resident);}
+void fg_ngram_resident_close(fg_ngram_resident *resident){if(!resident)return;if(resident->map){if(resident->hot_bytes)munlock(resident->map,(size_t)resident->hot_bytes);munmap(resident->map,(size_t)resident->bytes);if(resident->fd>=0)close(resident->fd);}else if(resident->data){munlock(resident->data,(size_t)resident->bytes);free(resident->data);}free(resident);}
+bool fg_ngram_resident_pageable(const fg_ngram_resident *resident){return resident&&resident->pageable;}
 
 static fg_status resident_open_impl(fg_ngram_resident **out,const char *path,
                                     uint64_t row_begin,uint64_t row_count,
@@ -98,6 +100,43 @@ static fg_status resident_open_impl(fg_ngram_resident **out,const char *path,
         return FG_ERR_OOM;
     }
     resident->row_begin=row_begin;resident->row_count=row_count;resident->bytes=bytes;
+    if(ngram_pageable_enabled()){
+        void *map=mmap(NULL,(size_t)bytes,PROT_READ,MAP_SHARED,fd,0);
+        if(map!=MAP_FAILED){
+            (void)madvise(map,(size_t)bytes,MADV_RANDOM);
+            uint64_t hot=bytes<FG_NGRAM_PAGEABLE_HOT_BYTES?bytes:FG_NGRAM_PAGEABLE_HOT_BYTES;
+            if(hot&&mlock(map,(size_t)hot)!=0){
+                fprintf(stderr,"NGRAM_PAGEABLE hot pin failed for %s: %s "
+                        "(continuing unpinned)\n",path,strerror(errno));
+                hot=0u;
+            }
+            resident->map=map;resident->fd=fd;resident->hot_bytes=hot;resident->pageable=true;
+            if(expected_sha256){
+                fg_sha256 hash;fg_sha256_init(&hash);
+                uint64_t offset=0u;
+                while(offset<bytes){
+                    size_t request=(size_t)((bytes-offset)>(8u*1024u*1024u)?
+                        8u*1024u*1024u:bytes-offset);
+                    fg_sha256_update(&hash,resident->map+offset,request);
+                    offset+=(uint64_t)request;
+                }
+                uint8_t digest[32];fg_sha256_final(&hash,digest);
+                if(memcmp(digest,expected_sha256,sizeof(digest))){
+                    fg_ngram_resident_close(resident);
+                    fg_error_set(err,FG_ERR_MISMATCH,
+                                 "resident n-gram shard %s SHA-256 mismatch",path);
+                    return FG_ERR_MISMATCH;
+                }
+            }
+            fprintf(stderr,"NGRAM_PAGEABLE shard=%s rows=%llu bytes=%llu hot_mib=%llu\n",
+                    path,(unsigned long long)row_count,(unsigned long long)bytes,
+                    (unsigned long long)(hot>>20u));
+            *out=resident;
+            return FG_OK;
+        }
+        fprintf(stderr,"NGRAM_PAGEABLE mmap failed for %s: %s; falling back to "
+                "the pinned shard\n",path,strerror(errno));
+    }
     if(posix_memalign((void **)&resident->data,FG_ALIGNMENT,(size_t)bytes)!=0){
         close(fd);fg_ngram_resident_close(resident);
         fg_error_set(err,FG_ERR_OOM,"allocate resident n-gram shard");
@@ -184,7 +223,37 @@ fg_status fg_ngram_resident_open_manifest(fg_ngram_resident **out,
                                          record->row_count,record->sha256,err);
 }
 
-fg_status fg_ngram_resident_read(const fg_ngram_resident *resident,const uint64_t *rows,uint32_t row_count,uint8_t *packed,uint64_t packed_capacity,fg_error *err){if(!resident||!rows||!row_count||!packed||packed_capacity<(uint64_t)row_count*FG_NGRAM_ROW_BYTES){fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident n-gram read");return FG_ERR_ARGUMENT;}for(uint32_t i=0;i<row_count;i++){if(rows[i]<resident->row_begin||rows[i]-resident->row_begin>=resident->row_count){fg_error_set(err,FG_ERR_MISMATCH,"n-gram row %llu is outside resident shard",(unsigned long long)rows[i]);return FG_ERR_MISMATCH;}memcpy(packed+(uint64_t)i*FG_NGRAM_ROW_BYTES,resident->data+(rows[i]-resident->row_begin)*FG_NGRAM_ROW_BYTES,FG_NGRAM_ROW_BYTES);}return FG_OK;}
+/* Pageable mode serves the same sealed bytes from the shard mapping.  The
+ * read-ahead is bounded to the exact pages of this result (one WILLNEED per
+ * row, at most the caller's item count), so the kernel fetches only what the
+ * token needs; MADV_RANDOM keeps it from growing the hint into a stream.  A
+ * row outside the mapping falls back to the unchanged pread path. */
+static fg_status resident_read_pageable(const fg_ngram_resident *resident,const uint64_t *rows,uint32_t row_count,uint8_t *packed,fg_error *err){
+    for(uint32_t i=0;i<row_count;i++){
+        uint64_t offset=(rows[i]-resident->row_begin)*FG_NGRAM_ROW_BYTES;
+        uint64_t block=offset&~(uint64_t)(FG_NGRAM_BLOCK_BYTES-1u);
+        uint32_t span=(uint32_t)(offset+FG_NGRAM_ROW_BYTES-block);
+        if(resident->fd>=0)
+            (void)posix_fadvise(resident->fd,(off_t)block,(off_t)span,POSIX_FADV_WILLNEED);
+    }
+    for(uint32_t i=0;i<row_count;i++){
+        uint64_t offset=(rows[i]-resident->row_begin)*FG_NGRAM_ROW_BYTES;
+        if(offset+FG_NGRAM_ROW_BYTES>resident->bytes){
+            ssize_t got=pread(resident->fd,packed+(uint64_t)i*FG_NGRAM_ROW_BYTES,
+                              FG_NGRAM_ROW_BYTES,(off_t)offset);
+            if(got<0&&errno==EINTR)got=pread(resident->fd,packed+(uint64_t)i*FG_NGRAM_ROW_BYTES,
+                                             FG_NGRAM_ROW_BYTES,(off_t)offset);
+            if(got!=(ssize_t)FG_NGRAM_ROW_BYTES){
+                fg_error_set(err,FG_ERR_IO,"pageable resident n-gram fallback read: %s",
+                             got<0?strerror(errno):"short read");
+                return FG_ERR_IO;
+            }
+        }else memcpy(packed+(uint64_t)i*FG_NGRAM_ROW_BYTES,resident->map+offset,FG_NGRAM_ROW_BYTES);
+    }
+    return FG_OK;
+}
+
+fg_status fg_ngram_resident_read(const fg_ngram_resident *resident,const uint64_t *rows,uint32_t row_count,uint8_t *packed,uint64_t packed_capacity,fg_error *err){if(!resident||!rows||!row_count||!packed||packed_capacity<(uint64_t)row_count*FG_NGRAM_ROW_BYTES){fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident n-gram read");return FG_ERR_ARGUMENT;}for(uint32_t i=0;i<row_count;i++){if(rows[i]<resident->row_begin||rows[i]-resident->row_begin>=resident->row_count){fg_error_set(err,FG_ERR_MISMATCH,"n-gram row %llu is outside resident shard",(unsigned long long)rows[i]);return FG_ERR_MISMATCH;}}if(resident->pageable)return resident_read_pageable(resident,rows,row_count,packed,err);for(uint32_t i=0;i<row_count;i++){memcpy(packed+(uint64_t)i*FG_NGRAM_ROW_BYTES,resident->data+(rows[i]-resident->row_begin)*FG_NGRAM_ROW_BYTES,FG_NGRAM_ROW_BYTES);}return FG_OK;}
 
 static void q38_ngram_fill(const int32_t *tokens,size_t end,size_t segment_start,
                            uint64_t rows[FG_NGRAM_HEAD_COUNT],uint64_t addresses[FG_NGRAM_HEAD_COUNT]){

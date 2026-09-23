@@ -41,6 +41,7 @@ expected_code="$(printf '%s\n' \
     FG_GDN_DIAG \
     FG_GENERATE_TRACE \
     FG_NGRAM_LOCALITY_TRACE \
+    FG_NGRAM_PAGEABLE \
     FG_NGRAM_VERIFY \
     FG_NUMERICS_TRACE \
     FG_OUTPUT_SPLIT \

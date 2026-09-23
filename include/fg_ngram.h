@@ -14,6 +14,11 @@
 #define FG_NGRAM_PREFILL_MAX_BLOCKS (FG_NGRAM_PREFILL_MAX_ROWS*2u)
 #define FG_NGRAM_IO_SLOTS 64u
 #define FG_NGRAM_PREFILL_IO_BYTES ((uint64_t)FG_NGRAM_IO_SLOTS*FG_NGRAM_MAX_READ_BYTES)
+/* Pageable worker shard mode (FG_NGRAM_PAGEABLE=1): map the sealed shard and
+ * serve rows from the kernel page cache with bounded WILLNEED read-ahead
+ * instead of pinning the whole shard.  The first FG_NGRAM_PAGEABLE_HOT_BYTES
+ * of the mapping stay mlocked as the pinned hot subset. */
+#define FG_NGRAM_PAGEABLE_HOT_BYTES (128u * 1024u * 1024u)
 
 typedef struct fg_ngram_read {uint64_t offset;uint32_t bytes;} fg_ngram_read;
 typedef struct fg_ngram_cache fg_ngram_cache;
@@ -50,6 +55,7 @@ fg_status fg_ngram_resident_open_manifest(fg_ngram_resident **out,
                                           const char *pack_dir,uint32_t rank,
                                           fg_error *err);
 void fg_ngram_resident_close(fg_ngram_resident *resident);
+bool fg_ngram_resident_pageable(const fg_ngram_resident *resident);
 fg_status fg_ngram_resident_read(const fg_ngram_resident *resident,const uint64_t *rows,
                                  uint32_t row_count,uint8_t *packed,uint64_t packed_capacity,
                                  fg_error *err);

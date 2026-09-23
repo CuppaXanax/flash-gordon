@@ -113,11 +113,25 @@ int main(void){
     fg_ngram_resident *resident=NULL;
     CHECK(fg_ngram_resident_open_sealed(
         &resident,first,100u,4u,first_hash,&error)==FG_OK);
+    CHECK(!fg_ngram_resident_pageable(resident));
     uint64_t row=102u;uint8_t packed[FG_NGRAM_ROW_BYTES];
     CHECK(fg_ngram_resident_read(
         resident,&row,1u,packed,sizeof(packed),&error)==FG_OK);
     CHECK(packed_row_matches(packed,3u,2u));
     fg_ngram_resident_close(resident);resident=NULL;
+    /* Pageable mode must serve the same bytes and keep the sealed-hash check. */
+    setenv("FG_NGRAM_PAGEABLE","1",1);
+    CHECK(fg_ngram_resident_open_sealed(
+        &resident,first,100u,4u,first_hash,&error)==FG_OK);
+    CHECK(fg_ngram_resident_pageable(resident));
+    row=103u;
+    CHECK(fg_ngram_resident_read(
+        resident,&row,1u,packed,sizeof(packed),&error)==FG_OK);
+    CHECK(packed_row_matches(packed,3u,3u));
+    fg_ngram_resident_close(resident);resident=NULL;
+    CHECK(fg_ngram_resident_open_sealed(
+        &resident,first,100u,4u,second_hash,&error)==FG_ERR_MISMATCH);
+    unsetenv("FG_NGRAM_PAGEABLE");
     CHECK(fg_ngram_resident_open_sealed(
         &resident,"test-ngram-does-not-exist.iq4nl",100u,4u,
         first_hash,&error)==FG_ERR_IO);

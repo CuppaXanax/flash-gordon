@@ -2358,9 +2358,10 @@ fg_status fg_rank_main(const char *path,uint32_t rank,fg_error *err){
         if(status==FG_OK)status=rank_ready(fabric,rank,err);
         if(status==FG_OK){
             printf("rank %u READY: %.3f GiB sealed weights, %.3f GiB n-gram "
-                   "rows resident on %s\n",rank,
+                   "rows %s on %s\n",rank,
                    (double)fg_model_weight_bytes(model)/(1024.0*1024.0*1024.0),
                    (double)(row_count*FG_NGRAM_ROW_BYTES)/(1024.0*1024.0*1024.0),
+                   fg_ngram_resident_pageable(ngram)?"mapped pageable":"resident",
                    fg_vk_device_name(fg_model_vk(model)));
             fflush(stdout);
             status=rank_worker_loop(fabric,owner,expert,output,output_slice,output_hc,
