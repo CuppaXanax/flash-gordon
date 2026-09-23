@@ -2335,16 +2335,12 @@ static fg_status handle_output_work(fg_fabric *fabric,fg_output_executor *output
  * the same token, then the head runs and the 16-byte result returns to rank 0
  * on the bulk channel exactly like the relay route. */
 #define FG_OUTPUT_SPLIT_TIMEOUT_DEFAULT_MS 4000u
-#define FG_OUTPUT_SPLIT_TIMEOUT_MAX_MS 60000u
 #define FG_OUTPUT_SPLIT_TIMEOUT_GRACE_MS 4000u
 
+/* Fixed liveness bound for the split partial wait.  It is a deadline, not a
+ * tuning knob: the value only matters when a helper rank is dead or wedged. */
 static uint32_t output_split_timeout_ms(void){
-    const char *value=getenv("FG_OUTPUT_SPLIT_TIMEOUT_MS");
-    if(!value||!*value)return FG_OUTPUT_SPLIT_TIMEOUT_DEFAULT_MS;
-    long parsed=strtol(value,NULL,10);
-    if(parsed<(long)100u)parsed=100;
-    if(parsed>(long)FG_OUTPUT_SPLIT_TIMEOUT_MAX_MS)parsed=(long)FG_OUTPUT_SPLIT_TIMEOUT_MAX_MS;
-    return (uint32_t)parsed;
+    return FG_OUTPUT_SPLIT_TIMEOUT_DEFAULT_MS;
 }
 
 static bool output_split_trace_enabled(void){

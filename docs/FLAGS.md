@@ -47,7 +47,6 @@ session-level cold reset (`fg_runtime_reset`) is unchanged.
 | Flag | Default | Effect | Status |
 |---|---|---|---|
 | `FG_OUTPUT_SPLIT` | `0` (off) | `1`/`2` select the 2-way head split; `4` selects the 4-way split. Requires a pack which supports the split layout. | variant (opt-in) |
-| `FG_OUTPUT_SPLIT_TIMEOUT_MS` | `4000` | Liveness bound for waiting on split partials; clamped to 100-60000. | variant (opt-in) |
 | `FG_OUTPUT_SPLIT_TRACE` | unset (off) | Split handoff state trace. | profiling |
 
 ## Fabric and numeric traces
@@ -132,4 +131,5 @@ These no longer exist in the code; setting them has no effect.
 | `FG_EXPERT_BATCH_SEND` | Never-validated batched expert fan-out; the send-batch API and test were removed. | No. |
 | `FG_MTP_DRAFT_ECHO` | Harness scaffolding for the parked MTP head; the draft/verify scaffold and speculative-accept helpers were deleted. | Yes - with the trained MTP pack and kernels. |
 | `FG_OUTPUT_SPLIT_HIDDEN` | The finished 4-way A/B round promoted suppression; the 40 KiB hidden is always dropped under 4-way. | No. |
+| `FG_OUTPUT_SPLIT_TIMEOUT_MS` | The split partial wait is a fixed 4000 ms liveness deadline, not a tunable: the value only matters when a helper rank is dead or wedged. | No; the bound is compiled in. |
 | `FG_PREFIX_CONT` | Replaced by the discoverable `--no-prefix-cont` CLI option on `chat`/`api`. | N/A - use the CLI option. |
