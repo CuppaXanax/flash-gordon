@@ -34,7 +34,7 @@ Status values:
 | `FG_PREFILL_RING` | `1` | Layer-ring prefill. `0` restores the non-ring prefill path. | validated default |
 | `FG_DECODE_RING` | `1` | Layer-ring decode. `0` restores the legacy expert-parallel decode replay. | validated default |
 | `FG_WORKER_OWNER` | `1` | Worker-side owner executor. `0` opts out. | validated default |
-| `FG_NGRAM_PAGEABLE` | `0` (off) | Worker n-gram shard mode. `1` maps the sealed shard (`mmap` + `MADV_RANDOM`) and serves rows from the kernel page cache with bounded `posix_fadvise(WILLNEED)` read-ahead, keeping the first 128 MiB of the mapping mlocked as the hot subset, instead of `mlock`ing the whole shard. A mapping that cannot be established falls back to the pinned path. | variant (opt-in) |
+| `FG_NGRAM_PAGEABLE` | `1` (on) | Worker n-gram shard mode. The shard is mapped (`mmap` + `MADV_RANDOM`) and served from the kernel page cache with a 128 MiB mlocked hot prefix and bounded `posix_fadvise(WILLNEED)` read-ahead; `0` restores mlock of the whole shard. Measured equal-or-better at 4K-151K and returns 3.7-3.9 GiB of host headroom per worker. | validated default |
 | `FG_PACK_EMBED_RANK` | rank 7 | Packer placement override for `token_embd.weight` (0-7). | packer option |
 
 Prefix continuation (resuming exact token-prefix extensions from the recorded

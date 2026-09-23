@@ -25,7 +25,7 @@ static int u64_cmp(const void *a,const void *b){uint64_t x=*(const uint64_t *)a,
 static double ngram_ts(void){struct timespec value;clock_gettime(CLOCK_MONOTONIC,&value);return (double)value.tv_sec*1e3+(double)value.tv_nsec*1e-6;}
 static bool ngram_trace_enabled(void){const char *enabled=getenv("FG_FRAME_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool ngram_locality_trace_enabled(void){const char *enabled=getenv("FG_NGRAM_LOCALITY_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
-static bool ngram_pageable_enabled(void){const char *enabled=getenv("FG_NGRAM_PAGEABLE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
+static bool ngram_pageable_enabled(void){const char *disabled=getenv("FG_NGRAM_PAGEABLE");return !(disabled&&*disabled&&strcmp(disabled,"0")==0);}
 fg_status fg_ngram_plan_reads(const uint64_t *addresses,uint32_t count,uint64_t table_bytes,fg_ngram_read *reads,uint32_t cap,uint32_t *out_count,fg_error *err){
     if((count&&!addresses)||!reads||!out_count||!table_bytes){fg_error_set(err,FG_ERR_ARGUMENT,"invalid n-gram read planner arguments");return FG_ERR_ARGUMENT;}if(count>FG_NGRAM_PREFILL_MAX_BLOCKS){fg_error_set(err,FG_ERR_LIMIT,"n-gram read planner input exceeds bounded prefill capacity");return FG_ERR_LIMIT;}
     uint64_t padded_bytes=fg_align_up_u64(table_bytes,FG_NGRAM_BLOCK_BYTES),*blocks=malloc((size_t)count*sizeof(*blocks));if(count&&!blocks){fg_error_set(err,FG_ERR_OOM,"allocate n-gram block planner");return FG_ERR_OOM;}
