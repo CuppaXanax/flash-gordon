@@ -275,10 +275,30 @@ static void tool_arguments_free(tool_argument *arguments, size_t count) {
 
 static fg_status buffer_append_text(fg_text_buffer *buffer, const char *text, fg_error *err) {
     static const char zero_width[] = "\xe2\x80\x8b";
+    /* The API inserts these markers itself for media content parts; they must
+     * reach the tokenizer verbatim so the vision transcript scan can find
+     * them.  Every other "<|" sequence is neutralized. */
+    static const char *const vision_markers[] = {
+        "<|vision_start|>", "<|image_pad|>", "<|video_pad|>", "<|vision_end|>"
+    };
     if (!text) return FG_OK;
     const char *cursor = text;
     const char *marker;
     while ((marker = strstr(cursor, "<|")) != NULL) {
+        const char *allowed = NULL;
+        for (size_t i = 0; i < sizeof(vision_markers) / sizeof(vision_markers[0]); i++) {
+            if (!strncmp(marker, vision_markers[i], strlen(vision_markers[i]))) {
+                allowed = vision_markers[i];
+                break;
+            }
+        }
+        if (allowed) {
+            const size_t marker_bytes = strlen(allowed);
+            fg_status status = buffer_append_n(buffer, marker, marker_bytes, err);
+            if (status != FG_OK) return status;
+            cursor = marker + marker_bytes;
+            continue;
+        }
         fg_status status = buffer_append_n(buffer, cursor, (size_t)(marker - cursor) + 2u, err);
         if (status != FG_OK) return status;
         status = buffer_append(buffer, zero_width, err);
