@@ -511,12 +511,17 @@ static fg_status chained_decode_expert(void *opaque,uint32_t layer,
         expert_output,err);
 }
 
-/* Test-only A/B switches: `depth-b-selftest --serial-batch` forces the serial
- * per-slot chained block, `--serial-expert` keeps the batch block but runs the
- * two expert chains serially instead of the token-tagged union.  Never set on
- * a serving path. */
+/* Test-only A/B switches: `--serial-batch` forces the serial per-slot chained
+ * block, `--serial-expert` keeps the batch block but runs the two expert
+ * chains serially instead of the token-tagged union.  The depth-b selftest
+ * sets them on the coordinator; the worker `rank` command accepts the same
+ * flags so the A/B covers every rank.  Never set on a serving path. */
 static bool depthb_serial_batch=false;
 static bool depthb_serial_expert=false;
+void fg_runtime_set_decode_ab(bool serial_batch,bool serial_expert){
+    depthb_serial_batch=serial_batch;
+    depthb_serial_expert=serial_expert;
+}
 
 /* Batch-2 variant of the chained expert hook: GPU routing stays on the
  * device, the two tokens share one token-tagged union schedule and one fused

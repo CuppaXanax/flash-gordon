@@ -407,6 +407,8 @@ static fg_status manifest_cmd(const char *command, int argc, char **argv, fg_err
     const char *prompt = NULL;
     uint32_t rank = UINT32_MAX;
     uint32_t generate = 1u;
+    bool serial_batch = false;
+    bool serial_expert = false;
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--manifest")) {
             path = arg_value(&i, argc, argv, "--manifest", err);
@@ -414,6 +416,10 @@ static fg_status manifest_cmd(const char *command, int argc, char **argv, fg_err
             const char *text = arg_value(&i, argc, argv, "--rank", err);
             if (text && parse_u32(text, "--rank", 0u, UINT32_MAX, &rank, err) != FG_OK)
                 return err->code;
+        } else if (!strcmp(command, "rank") && !strcmp(argv[i], "--serial-batch")) {
+            serial_batch = true;
+        } else if (!strcmp(command, "rank") && !strcmp(argv[i], "--serial-expert")) {
+            serial_expert = true;
         } else if (!strcmp(argv[i], "--prompt")) {
             prompt = arg_value(&i, argc, argv, "--prompt", err);
         } else if (!strcmp(argv[i], "--generate")) {
@@ -438,7 +444,10 @@ static fg_status manifest_cmd(const char *command, int argc, char **argv, fg_err
         fg_error_set(err, FG_ERR_ARGUMENT, "%s requires --manifest", command);
         return FG_ERR_ARGUMENT;
     }
-    if (!strcmp(command, "rank")) return fg_rank_main(path, rank, err);
+    if (!strcmp(command, "rank")) {
+        fg_runtime_set_decode_ab(serial_batch, serial_expert);
+        return fg_rank_main(path, rank, err);
+    }
     if (!strcmp(command, "serve")) return fg_serve_main(path, err);
     if (!strcmp(command, "bench")) return fg_bench_main(path, err);
     if (!strcmp(command, "eval")) {

@@ -174,6 +174,9 @@ const char *fg_execution_mode_name(fg_execution_mode mode);
 fg_mtp_capability fg_runtime_mtp_capability(const fg_runtime *runtime);
 
 fg_status fg_rank_main(const char *manifest_path, uint32_t rank, fg_error *err);
+/* Test-only decode A/B switches (see depth-b-selftest --serial-batch /
+ * --serial-expert); applied by the worker `rank` command for A/B windows. */
+void fg_runtime_set_decode_ab(bool serial_batch,bool serial_expert);
 /* Test-only depth-B parity gate: two canned conversations run at depth 1 and
  * interleaved through the B=2 ring, with exact token/logit/state comparison and
  * an injected abort-retry.  Not part of the serving path. */
