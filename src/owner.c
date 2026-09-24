@@ -1958,9 +1958,14 @@ fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
 #undef BATCH_NEXT
     if(status==FG_OK){
         if(fg_vk_batch_active(vk))status=finish_batch(vk,status,err);
-    }else if(fg_vk_batch_active(vk)){
-        fg_error ignored={0};
-        fg_vk_abort(vk,&ignored);
+    }else{
+        fprintf(stderr,"BATCH_BLOCK_FAIL rank=%u first=%u last=%u status=%d msg=%s\n",
+                fg_model_rank(e->model),first_layer,last_layer,(int)status,
+                err?err->message:"");
+        if(fg_vk_batch_active(vk)){
+            fg_error ignored={0};
+            fg_vk_abort(vk,&ignored);
+        }
     }
     if(status==FG_OK)*output=(fg_vk_tensor *)cur;
     return status;

@@ -2107,9 +2107,9 @@ static fg_status handle_decode_batch_work(fg_fabric *fabric,const fg_manifest *m
         }
         if(ms){
             t_tail=dispatch_ts()-t_slot0-t_setup-t_block;
-            fprintf(stderr,"DECODE_BATCH_WORK_MS rank=%u token=%u+%u union=1 setup_ms=%.3f block_ms=%.3f tail_ms=%.3f total_ms=%.3f\n",
+            fprintf(stderr,"DECODE_BATCH_WORK_MS rank=%u token=%u+%u union=1 setup_ms=%.3f block_ms=%.3f tail_ms=%.3f total_ms=%.3f status=%d msg=%s\n",
                     self,token_index[0],token_index[1],t_setup,t_block,t_tail,
-                    t_setup+t_block+t_tail);
+                    t_setup+t_block+t_tail,(int)status,status==FG_OK?"":err->message);
         }
     }else
     for(uint32_t slot=0;status==FG_OK&&slot<work->slot_count;slot++){
