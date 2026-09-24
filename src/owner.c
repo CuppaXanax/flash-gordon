@@ -1486,7 +1486,11 @@ static fg_status owner_record_layer(fg_owner_executor *e,uint32_t layer,
         fg_vk_tensor *ple_input=NULL;
         if(fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"ple",err);
         if(status==FG_OK)status=ensure_decode_batch(vk,err);
-        if(status==FG_OK)status=ple_decode_into(e,block_input,ngram_embedding,
+        /* The PLE query is the current residual (layer 0's flushed output).
+         * On the single-token ring the block input aliases that ping tensor, so
+         * this used to pass `block_input`; a batch slot whose input lives in a
+         * dedicated tensor would then read the pre-layer-0 hidden instead. */
+        if(status==FG_OK)status=ple_decode_into(e,layer_input,ngram_embedding,
             e->hyper_output,e->hyper_output_b,&ple_input,err);
         if(status!=FG_OK)return status;
         layer_input=ple_input;
