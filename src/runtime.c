@@ -1,4 +1,5 @@
 #include "fg_runtime.h"
+#include "fg_chat.h"
 #include "fg_decode_batch.h"
 #include "fg_ledger.h"
 #include "fg_topology.h"
@@ -6829,6 +6830,17 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
         count_y=prompt_y->count;
         history_x[count_x++]=(int32_t)g0_x;
         history_y[count_y++]=(int32_t)g0_y;
+        /* Actual captures are aligned with the expected ones: index 0 is the
+         * prefill sample, index i is the i-th batch step's token. */
+        actual_x.token[0]=g0_x;
+        memcpy(&actual_x.logit_bits[0],&logit_x,4u);
+        actual_x.count=1u;
+        actual_y.token[0]=g0_y;
+        memcpy(&actual_y.logit_bits[0],&logit_y,4u);
+        actual_y.count=1u;
+        fprintf(stderr,"DEPTH_B_SELFTEST case=%s prompts x_tokens=%zu y_tokens=%zu "
+            "x_first=%u y_first=%u\n",name,prompt_x->count,prompt_y->count,
+            prompt_x->count?prompt_x->data[0]:0u,prompt_y->count?prompt_y->data[0]:0u);
     }
     fg_decode_batch_table table;
     fg_decode_batch_policy policy;
@@ -6938,7 +6950,7 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
     bool x_state_match=false,y_state_match=false,x_qsa_match=false,y_qsa_match=false;
     uint32_t x_bad=0,y_bad=0;
     if(status==FG_OK){
-        uint32_t x_actual=actual_x.count+1u,y_actual=actual_y.count+1u;
+        uint32_t x_actual=actual_x.count,y_actual=actual_y.count;
         uint32_t x_limit=expected_x.count<x_actual?expected_x.count:x_actual;
         uint32_t y_limit=expected_y.count<y_actual?expected_y.count:y_actual;
         x_token_match=depthb_capture_equal(&expected_x,&actual_x,1u,x_limit,
@@ -6975,14 +6987,14 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
         for(uint32_t i=0;i<expected_x.count&&i<16u;i++)
             fprintf(stderr,"%s%u",i?",":"",expected_x.token[i]);
         fprintf(stderr," actual=");
-        for(uint32_t i=0;i<actual_x.count+1u&&i<16u;i++)
-            fprintf(stderr,"%s%u",i?",":"",i==0?g0_x:actual_x.token[i-1u]);
+        for(uint32_t i=0;i<actual_x.count&&i<16u;i++)
+            fprintf(stderr,"%s%u",i?",":"",actual_x.token[i]);
         fprintf(stderr,"\nDEPTH_B_SELFTEST_STREAM case=%s session=Y expected=",name);
         for(uint32_t i=0;i<expected_y.count&&i<16u;i++)
             fprintf(stderr,"%s%u",i?",":"",expected_y.token[i]);
         fprintf(stderr," actual=");
-        for(uint32_t i=0;i<actual_y.count+1u&&i<16u;i++)
-            fprintf(stderr,"%s%u",i?",":"",i==0?g0_y:actual_y.token[i-1u]);
+        for(uint32_t i=0;i<actual_y.count&&i<16u;i++)
+            fprintf(stderr,"%s%u",i?",":"",actual_y.token[i]);
         fputc('\n',stderr);
         if(measure){
             double b1_total=b1_wall;
@@ -7030,6 +7042,21 @@ static fg_status depthb_report_answer(fg_runtime *runtime,const char *label,
     return FG_OK;
 }
 
+static fg_status depthb_render_prompt(const fg_tokenizer *tokenizer,const char *text,
+                                      fg_tokens *tokens,fg_error *err){
+    fg_chat_message message={.role="user",.content=text};
+    fg_chat_render_options options={.think_mode=FG_CHAT_THINK_OFF};
+    char *rendered=NULL;
+    fg_status status=fg_chat_render(&message,1u,&options,&rendered,err);
+    if(status==FG_OK&&!rendered){
+        fg_error_set(err,FG_ERR_MISMATCH,"chat renderer returned no transcript");
+        status=FG_ERR_MISMATCH;
+    }
+    if(status==FG_OK)status=fg_tokenizer_encode(tokenizer,rendered,true,tokens,err);
+    free(rendered);
+    return status;
+}
+
 fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
                                   uint32_t max_tokens,uint32_t long_tokens,
                                   uint32_t abort_step,
@@ -7048,15 +7075,14 @@ fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
                      "depth-b-selftest requires ring prefill and ring decode");
         status=FG_ERR_UNAVAILABLE;
     }
-    static const char prompt_12[]="<|im_start|>user\n/no_think What is 6 times 2? "
-        "Answer with the number only.<|im_end|>\n<|im_start|>assistant\n";
-    static const char prompt_paris[]="<|im_start|>user\n/no_think What is the capital "
-        "of France? Answer with the city name only.<|im_end|>\n<|im_start|>assistant\n";
+    static const char prompt_12[]="What is 6 times 2? Answer with the number only.";
+    static const char prompt_paris[]=
+        "What is the capital of France? Answer with the city name only.";
     fg_tokens tokens_12={0},tokens_paris={0},tokens_long={0};
-    if(status==FG_OK)status=fg_tokenizer_encode(runtime->coordinator.tokenizer,
-        prompt_12,true,&tokens_12,err);
-    if(status==FG_OK)status=fg_tokenizer_encode(runtime->coordinator.tokenizer,
-        prompt_paris,true,&tokens_paris,err);
+    if(status==FG_OK)status=depthb_render_prompt(runtime->coordinator.tokenizer,
+        prompt_12,&tokens_12,err);
+    if(status==FG_OK)status=depthb_render_prompt(runtime->coordinator.tokenizer,
+        prompt_paris,&tokens_paris,err);
     uint32_t long_target=long_tokens;
     if(status==FG_OK&&long_target){
         uint32_t limit=runtime->context_limit>max_tokens+8u?
@@ -7073,7 +7099,7 @@ fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
                                depth,abort_step,true,&pass,&answer_12,&answer_paris,err);
         pass_all=pass_all&&pass;
     }
-    if(status==FG_OK){
+    if(answer_12.count||answer_paris.count){
         depthb_report_answer(runtime,"12",&answer_12,"12");
         depthb_report_answer(runtime,"Paris",&answer_paris,"Paris");
     }
