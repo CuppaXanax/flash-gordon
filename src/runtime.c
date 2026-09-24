@@ -68,6 +68,7 @@ static bool decode_direct_output_eligible(const fg_manifest *manifest){
 }
 static bool decode_profile_enabled(void){const char *enabled=getenv("FG_DECODE_PROFILE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool frame_trace_enabled(void){const char *enabled=getenv("FG_FRAME_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
+static bool decode_ms_enabled(void){const char *enabled=getenv("FG_DECODE_MS");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool route_trace_enabled(void){const char *enabled=getenv("FG_TRACE_ROUTES");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool prefix_trace_enabled(void){const char *enabled=getenv("FG_PREFIX_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool numerics_trace_enabled(void){const char *enabled=getenv("FG_NUMERICS_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
@@ -1916,6 +1917,8 @@ static fg_status handle_owner_session_transaction(fg_fabric *fabric,
         return FG_ERR_MISMATCH;
     }
     fg_message_type reply=0;
+    bool ms=decode_ms_enabled();
+    double t_op0=ms?dispatch_ts():0.0,t_op=0.0;
     switch(control.operation){
         case FG_OWNER_SESSION_PREPARE:
             status=depthb_owner_prepare(depthb,control.state_slot,err);
@@ -1937,6 +1940,7 @@ static fg_status handle_owner_session_transaction(fg_fabric *fabric,
                          "unexpected owner session transaction op %u",control.operation);
             return FG_ERR_MISMATCH;
     }
+    if(ms)t_op=dispatch_ts()-t_op0;
     if(status!=FG_OK)return status;
     uint32_t tokens[FG_LAYER_COUNT];
     if(fg_owner_qsa_frontier(depthb->owner,control.state_slot,tokens)!=FG_OK)
@@ -1952,6 +1956,9 @@ static fg_status handle_owner_session_transaction(fg_fabric *fabric,
     status=fg_owner_session_control_encode(wire,&control,err);
     if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_CONTROL,reply,request,
                                            control.state_slot,0u,wire,sizeof(wire),err);
+    if(ms)fprintf(stderr,"OWNER_TXN_WORK_MS rank=%u op=%u slot=%u op_ms=%.3f total_ms=%.3f status=%d\n",
+                  depthb->self,control.operation,control.state_slot,t_op,
+                  dispatch_ts()-t_op0,(int)status);
     return status;
 }
 
@@ -1996,7 +2003,9 @@ static fg_status handle_decode_batch_work(fg_fabric *fabric,const fg_manifest *m
         fg_error_set(err,FG_ERR_UNAVAILABLE,"depth-B batch decode requires the ring");
         return FG_ERR_UNAVAILABLE;
     }
+    bool ms=decode_ms_enabled();
     for(uint32_t slot=0;status==FG_OK&&slot<work->slot_count;slot++){
+        double t_slot0=ms?dispatch_ts():0.0,t_setup=0.0,t_block=0.0,t_tail=0.0;
         uint32_t state_slot=work->slots[slot].state_slot;
         if(state_slot>=fg_owner_session_count(owner)){
             fg_error_set(err,FG_ERR_MISMATCH,
@@ -2026,6 +2035,7 @@ static fg_status handle_decode_batch_work(fg_fabric *fabric,const fg_manifest *m
         if(has_ngram)status=fg_vk_tensor_write(context->ngram_tensor,0,
             work->slots[slot].ngram_embedding,(uint64_t)FG_NGRAM_EMBED_VALUES*4u,err);
         if(status!=FG_OK)break;
+        if(ms)t_setup=dispatch_ts()-t_slot0;
         numerics_trace_host("FB_IN",self,work->layer,work->slots[slot].token_index,
                             1u,work->slots[slot].hyper);
         fg_vk_tensor *current=NULL;
@@ -2058,6 +2068,7 @@ static fg_status handle_decode_batch_work(fg_fabric *fabric,const fg_manifest *m
                     (unsigned long long)decode_profile.submissions,
                     (unsigned long long)decode_profile.dispatches);
         }
+        if(ms)t_block=dispatch_ts()-t_slot0-t_setup;
         if(status!=FG_OK)break;
         status=fg_vk_tensor_read(current,0,context->batch_result.slots[slot].hyper,
                                  (uint64_t)FG_HYPER_WIDTH*4u,err);
@@ -2069,6 +2080,12 @@ static fg_status handle_decode_batch_work(fg_fabric *fabric,const fg_manifest *m
                             context->batch_result.slots[slot].hyper);
         status=worker_publish_qsa_pages(depthb->qsa,owner,self,
             work->slots[slot].token_index,1u,state_slot,err);
+        if(ms){
+            t_tail=dispatch_ts()-t_slot0-t_setup-t_block;
+            fprintf(stderr,"DECODE_BATCH_WORK_MS rank=%u token=%u slot=%u setup_ms=%.3f block_ms=%.3f tail_ms=%.3f total_ms=%.3f\n",
+                    self,work->slots[slot].token_index,slot,t_setup,t_block,t_tail,
+                    t_setup+t_block+t_tail);
+        }
     }
     if(status!=FG_OK)return status;
     context->batch_result.layer=(uint8_t)last;
@@ -4669,6 +4686,8 @@ static fg_status coordinator_owner_transaction(fg_coordinator *coordinator,uint8
         return FG_ERR_MISMATCH;
     }
     fg_status status=FG_OK;
+    bool ms=decode_ms_enabled();
+    double t_local0=ms?dispatch_ts():0.0,t_local=0.0,t_sent=0.0,t_recv=0.0;
     switch(operation){
         case FG_OWNER_SESSION_PREPARE: status=depthb_owner_prepare(depthb,slot,err);break;
         case FG_OWNER_SESSION_COMMIT: status=depthb_owner_commit(depthb,slot,err);break;
@@ -4677,6 +4696,7 @@ static fg_status coordinator_owner_transaction(fg_coordinator *coordinator,uint8
             fg_error_set(err,FG_ERR_ARGUMENT,"invalid depth-B transaction op %u",operation);
             return FG_ERR_ARGUMENT;
     }
+    if(ms)t_local=dispatch_ts()-t_local0;
     if(status!=FG_OK)return status;
     fg_owner_session_control control={
         .version=FG_OWNER_SESSION_CONTROL_VERSION,
@@ -4708,6 +4728,7 @@ static fg_status coordinator_owner_transaction(fg_coordinator *coordinator,uint8
                               request,slot,0u,wire,sizeof(wire),err);
         if(status!=FG_OK)break;
     }
+    if(ms)t_sent=dispatch_ts()-t_local0;
     if(status==FG_OK)for(uint32_t peer=1;peer<FG_RANK_COUNT;peer++){
         uint8_t wire[FG_OWNER_SESSION_CONTROL_BYTES];fg_frame_header header;uint32_t bytes=0;
         status=fg_fabric_recv(coordinator->fabric,peer,FG_FABRIC_CONTROL,&header,wire,
@@ -4730,6 +4751,11 @@ static fg_status coordinator_owner_transaction(fg_coordinator *coordinator,uint8
                          "owner session transaction reply identity mismatch from rank %u",peer);
             status=FG_ERR_MISMATCH;break;
         }
+    }
+    if(ms){
+        t_recv=dispatch_ts()-t_local0;
+        fprintf(stderr,"OWNER_TXN_MS op=%u slot=%u local_ms=%.3f send_ms=%.3f recv_ms=%.3f total_ms=%.3f status=%d\n",
+                operation,slot,t_local,t_sent-t_local,t_recv-t_sent,t_recv,(int)status);
     }
     if(status!=FG_OK&&operation==FG_OWNER_SESSION_PREPARE){
         fg_error ignored={0};
@@ -4804,8 +4830,11 @@ static fg_status coordinator_decode_batch_step(fg_coordinator *coordinator,
         .commit=depthb_batch_commit_hook,
         .restore=depthb_batch_restore_hook,
         .context=&batch_ctx};
+    bool ms=decode_ms_enabled();
+    double t_step0=ms?dispatch_ts():0.0;
     fg_status status=fg_decode_batch_step_begin(table,policy,&ops,now,step,err);
     if(status!=FG_OK)return status;
+    double t_begin=ms?dispatch_ts():0.0;
     layer_work_context *work_ctx=&coordinator->depthb_work;
     fg_decode_batch_work *work=&work_ctx->batch_work;
     memset(work,0,sizeof(*work));
@@ -4886,7 +4915,7 @@ static fg_status coordinator_decode_batch_step(fg_coordinator *coordinator,
     if(status==FG_OK)status=fg_fabric_send(coordinator->fabric,work->destination_rank,
         FG_FABRIC_BULK,FG_MSG_DECODE_BATCH_WORK,coordinator->session_id,
         work->slots[0].token_index*FG_LAYER_COUNT,0,work_ctx->work_wire,wire_bytes,err);
-    double t_sent=t_ngram0==0.0?t_embed0:dispatch_ts();
+    double t_sent=ms?dispatch_ts():0.0;
     bool have_result=false;
     while(status==FG_OK&&!have_result){
         uint32_t peer=0,bytes=0;fg_frame_header header;
@@ -4936,6 +4965,7 @@ static fg_status coordinator_decode_batch_step(fg_coordinator *coordinator,
             status=FG_ERR_MISMATCH;break;
         }
     }
+    double t_ring=ms?dispatch_ts():0.0;
     /* Sample each slot through the rank-0 relay (the batch path never uses the
      * direct 4-way handoff: its per-token messages carry no session slot). */
     if(status==FG_OK&&inject_abort){
@@ -4964,7 +4994,10 @@ static fg_status coordinator_decode_batch_step(fg_coordinator *coordinator,
         coordinator->sampler_state=sequence->sampler;
         coordinator->output_session=entry->state_slot;
         uint32_t next=0;float logit=0.0f;
+        double t_out0=ms?dispatch_ts():0.0;
         status=coordinator_output(coordinator,entry->token_index,input,&next,&logit,err);
+        if(ms)fprintf(stderr,"DECODE_BATCH_SAMPLE_MS slot=%u output_ms=%.3f\n",
+                      slot,dispatch_ts()-t_out0);
         if(status!=FG_OK)break;
         fg_decode_batch_outcome outcome={0};
         outcome.next_token=next;
@@ -4977,13 +5010,17 @@ static fg_status coordinator_decode_batch_step(fg_coordinator *coordinator,
         outcome.sampler=coordinator->sampler_state;
         status=fg_decode_batch_step_advance(table,step,slot,&outcome,err);
     }
+    double t_sample=ms?dispatch_ts():0.0;
     if(status==FG_OK)status=fg_decode_batch_step_commit(table,step,err);
     else{
         fg_error rollback_error={0};
         fg_status rollback=fg_decode_batch_step_restore(table,step,&rollback_error);
         if(rollback!=FG_OK&&err)*err=rollback_error;
     }
-    (void)t_embed0;(void)t_sent;(void)t_ngram0;
+    if(ms)fprintf(stderr,"DECODE_BATCH_STEP_MS begin=%.3f assemble=%.3f ring=%.3f sample=%.3f commit=%.3f total=%.3f slots=%u\n",
+                  t_begin-t_step0,t_sent-t_begin,t_ring-t_sent,t_sample-t_ring,
+                  dispatch_ts()-t_sample,dispatch_ts()-t_step0,step->batch.slot_count);
+    (void)t_embed0;(void)t_ngram0;
     return status;
 }
 
