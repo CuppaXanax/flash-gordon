@@ -48,10 +48,12 @@ void main(){
         uvec4 packed1=uvec4(wb[(quant_base1.x+word_offset)>>2u],wb[(quant_base1.y+word_offset)>>2u],wb[(quant_base1.z+word_offset)>>2u],wb[(quant_base1.w+word_offset)>>2u]);
         vec4 input_value0=live?x4[input_base0+safe_block*8u+cohort_lane]:vec4(0.0);
         vec4 input_value1=live?x4[input_base1+safe_block*8u+cohort_lane]:vec4(0.0);
-        vec4 products00=vec4(dot(vec4(unpack8(int32_t(packed0.x))),input_value0),dot(vec4(unpack8(int32_t(packed0.y))),input_value0),dot(vec4(unpack8(int32_t(packed0.z))),input_value0),dot(vec4(unpack8(int32_t(packed0.w))),input_value0));
-        vec4 products01=vec4(dot(vec4(unpack8(int32_t(packed1.x))),input_value0),dot(vec4(unpack8(int32_t(packed1.y))),input_value0),dot(vec4(unpack8(int32_t(packed1.z))),input_value0),dot(vec4(unpack8(int32_t(packed1.w))),input_value0));
-        vec4 products10=vec4(dot(vec4(unpack8(int32_t(packed0.x))),input_value1),dot(vec4(unpack8(int32_t(packed0.y))),input_value1),dot(vec4(unpack8(int32_t(packed0.z))),input_value1),dot(vec4(unpack8(int32_t(packed0.w))),input_value1));
-        vec4 products11=vec4(dot(vec4(unpack8(int32_t(packed1.x))),input_value1),dot(vec4(unpack8(int32_t(packed1.y))),input_value1),dot(vec4(unpack8(int32_t(packed1.z))),input_value1),dot(vec4(unpack8(int32_t(packed1.w))),input_value1));
+        vec4 u0=vec4(unpack8(int32_t(packed0.x))),u1=vec4(unpack8(int32_t(packed0.y))),u2=vec4(unpack8(int32_t(packed0.z))),u3=vec4(unpack8(int32_t(packed0.w)));
+        vec4 v0=vec4(unpack8(int32_t(packed1.x))),v1=vec4(unpack8(int32_t(packed1.y))),v2=vec4(unpack8(int32_t(packed1.z))),v3=vec4(unpack8(int32_t(packed1.w)));
+        vec4 products00=vec4(dot(u0,input_value0),dot(u1,input_value0),dot(u2,input_value0),dot(u3,input_value0));
+        vec4 products01=vec4(dot(v0,input_value0),dot(v1,input_value0),dot(v2,input_value0),dot(v3,input_value0));
+        vec4 products10=vec4(dot(u0,input_value1),dot(u1,input_value1),dot(u2,input_value1),dot(u3,input_value1));
+        vec4 products11=vec4(dot(v0,input_value1),dot(v1,input_value1),dot(v2,input_value1),dot(v3,input_value1));
         accumulator00=fma(delta0,products00,accumulator00);accumulator01=fma(delta1,products01,accumulator01);
         accumulator10=fma(delta0,products10,accumulator10);accumulator11=fma(delta1,products11,accumulator11);
     }
