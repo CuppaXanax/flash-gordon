@@ -1,9 +1,51 @@
 # API concurrency and HTTP/engine decoupling
 
-Design note for the front-end/engine split. Status: **M1 landed** (2026-09-24,
-branch `feat/api-m1-frontend`, deployed to the 8-blade fleet as live dir
-`20260924-api-m1`); M2 (request queue) and M3 (multi-session generation) are
-not started.
+Design note for the front-end/engine split. Status: **M2 landed** (2026-09-24,
+branch `feat/api-m2-admission`); M1 landed as `ee25e7e` (2026-09-24, branch
+`feat/api-m1-frontend`, deployed to the 8-blade fleet as live dir
+`20260924-api-m1`); M3 (multi-session generation) is not started.
+
+## M2: bounded FIFO admission on the engine queue (landed)
+
+M1's transport ring (`api_engine_queue`, capacity 4) already carried request
+ownership; M2 turns the admission policy from "reject while busy" into a
+bounded FIFO queue. `handle_chat_completions`, the engine loop and the
+single-session contract are unchanged.
+
+- **Admission**: `api_engine_queue_try_push` returns
+  `API_ENGINE_ADMIT_QUEUED | _FULL | _STOPPING`. A chat request is admitted
+  while a generation is running and waits in the ring; the engine services it
+  FIFO via the existing `pop_wait` loop.
+- **Bound**: `FG_API_ENGINE_QUEUE_CAPACITY = 4` counts every admitted request
+  (running + queued + not yet completed), not just ring occupancy. The next
+  request is answered `429 Too Many Requests` with `Retry-After: 1` and body
+  `{"error":{"message":...,"type":"queue_full"}}`. `503 + server_busy` is now
+  only the shutting-down path.
+- **Cancellation**: the front-end tracks `client_gone`; the reap sweep calls
+  `api_engine_queue_cancel` for a queued connection that disconnected before
+  the engine picked it up - the ring entry is compacted out, its body freed
+  and its admission slot released, and the connection is completed so the
+  reaper closes it. The engine pop path re-checks `client_gone` for the race
+  and drops the request without spending a token slot. The abort/retry
+  frontier path is untouched (a *running* generation still aborts through
+  `api_interrupted`).
+- **Probes/keep-alive/heartbeats**: `/health` `busy` is `outstanding != 0`
+  (anything admitted), so it reports `busy:true` while requests queue; probes,
+  keep-alive and the 10 s heartbeats are unchanged.
+
+### M2 tests (`tests/test_api.c`)
+
+- `test_frontend_engine_split`: second chat while busy is admitted, served in
+  order (200 on the queued connection), the admission bound answers `429` +
+  `Retry-After: 1` + `queue_full`, keep-alive/probes/heartbeat behavior
+  unchanged.
+- `test_engine_queue_admission`: FIFO order over the full ring, `FULL` at the
+  bound, slot reuse after completion, `STOPPING` after stop.
+- `test_engine_queue_cancel`: cancellation compacts the ring, survivors keep
+  FIFO order, double-cancel is a no-op.
+- `test_frontend_cancels_queued_client`: end-to-end - three queued clients,
+  the middle one disconnects; the front-end sweep releases its slot and the
+  survivors are served in order.
 
 ## M1: dedicated HTTP front-end thread (landed)
 
@@ -164,14 +206,13 @@ workstream; do not bolt it onto the token loop.
 - Preserved: continuation semantics (tool/system deltas), abort/retry frontier,
   gates `[12]`/`[Paris]`, battery in band, soak PASS. DONE.
 
-## What M2/M3 still need
+## What M3 still needs
 
-- **M2**: queue depth > 1 with a documented bound; `429` + Retry-After when the
-  bound is exceeded; cancellation of queued requests when the client
-  disconnects before the engine picks them up; `api_engine_queue` already
-  carries the FIFO ring, so the work is admission policy plus tests.
 - **M3**: multi-session generation. The engine loop and `api_public_session`
   are still single-threaded; ring session multiplexing and the depth-B batch
-  path (`src/decode_batch.c`) are the upstream pieces. The front-end transport
-  was built so request ownership (connection + body) moves through the queue,
-  which is the prerequisite for multiple in-flight sessions.
+  path (`src/decode_batch.c`, `docs/DEPTH_B_DECODE_RING.md`,
+  `docs/BATCHED_DECODE_BLOCK.md`) are the upstream pieces. The front-end
+  transport was built so request ownership (connection + body) moves through
+  the queue, which is the prerequisite for multiple in-flight sessions; M2
+  now admits more than one request and the engine still runs them one at a
+  time.
