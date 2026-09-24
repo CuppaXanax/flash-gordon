@@ -21,6 +21,11 @@ fg_status fg_expert_decode_chain_ready(fg_expert_executor *executor,uint32_t lay
 fg_status fg_expert_decode_chain(fg_expert_executor *executor,uint32_t layer,
                                  const fg_vk_tensor *activation,const fg_vk_tensor *router_logits,
                                  fg_vk_tensor **reduced,fg_error *err);
+/* Batch-2 union: GPU top-10 for two tokens, one token-tagged schedule, one
+ * fused gate/up and one down/reduce dispatch; `reduced` is two hidden rows. */
+fg_status fg_expert_decode_chain_b2(fg_expert_executor *executor,uint32_t layer,
+                                    const fg_vk_tensor *activation,const fg_vk_tensor *router_logits,
+                                    fg_vk_tensor **reduced,fg_error *err);
 fg_status fg_expert_prefill(fg_expert_executor *executor,const fg_prefill_work *work,
                             fg_prefill_result *result,fg_prefill_result_pair *pair_storage,
                             uint32_t pair_capacity,float *output_storage,

@@ -235,14 +235,15 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
     c->dense_cooked_split_reduce=(fg_vk_kernel){.file="fg_dense_q8_0_cooked_split_reduce.spv",.bindings=2,.push_bytes=8};
     c->dense_cooked_split_reduce_silu=(fg_vk_kernel){.file="fg_dense_q8_0_cooked_split_reduce_silu.spv",.bindings=3,.push_bytes=12};
     c->moe_q5_1=(fg_vk_kernel){.file="fg_moe_q5_1_down.spv",.bindings=4,.push_bytes=28};c->moe_q5_1_cooked=(fg_vk_kernel){.file="fg_moe_q5_1_down_cooked.spv",.bindings=4,.push_bytes=28};c->moe_q8_0=(fg_vk_kernel){.file="fg_moe_q8_0_down.spv",.bindings=4,.push_bytes=28};c->moe_q8_0_cooked=(fg_vk_kernel){.file="fg_moe_q8_0_down_cooked.spv",.bindings=4,.push_bytes=28};c->moe_reduce=(fg_vk_kernel){.file="fg_moe_reduce.spv",.bindings=4,.push_bytes=12};c->kquant=(fg_vk_kernel){.file="fg_moe_kquant.spv",.bindings=4,.push_bytes=36};c->kquant_cooked=(fg_vk_kernel){.file="fg_moe_kquant_cooked.spv",.bindings=4,.push_bytes=32};
-    c->moe_decode_gate_up=(fg_vk_kernel){.file="fg_moe_decode_gate_up.spv",.bindings=5,.push_bytes=32};c->moe_decode_down_reduce=(fg_vk_kernel){.file="fg_moe_decode_down_reduce.spv",.bindings=5,.push_bytes=28};c->moe_decode_shared_add=(fg_vk_kernel){.file="fg_moe_shared_add.spv",.bindings=4,.push_bytes=4};
+    c->moe_decode_gate_up=(fg_vk_kernel){.file="fg_moe_decode_gate_up.spv",.bindings=5,.push_bytes=32};c->moe_decode_down_reduce=(fg_vk_kernel){.file="fg_moe_decode_down_reduce.spv",.bindings=5,.push_bytes=32};c->moe_decode_shared_add=(fg_vk_kernel){.file="fg_moe_shared_add.spv",.bindings=4,.push_bytes=8};
     c->bench_stream=(fg_vk_kernel){.file="fg_bench_stream.spv",.bindings=3,.push_bytes=20};c->bench_dequant=(fg_vk_kernel){.file="fg_bench_dequant.spv",.bindings=3,.push_bytes=20};c->bench_dot_nored=(fg_vk_kernel){.file="fg_bench_dot_nored.spv",.bindings=3,.push_bytes=20};
     c->bench_stream_wide=(fg_vk_kernel){.file="fg_bench_stream_wide.spv",.bindings=3,.push_bytes=20};c->bench_stream_vec=(fg_vk_kernel){.file="fg_bench_stream_vec.spv",.bindings=3,.push_bytes=20};
     c->bench_cooked_layout=(fg_vk_kernel){.file="fg_bench_cooked_layout.spv",.bindings=3,.push_bytes=32};
     c->dense_cooked_tile=(fg_vk_kernel){.file="fg_dense_q8_0_cooked_tile.spv",.bindings=3,.push_bytes=20};
     c->router_top10=(fg_vk_kernel){.file="fg_router_top10.spv",.bindings=3,.push_bytes=8};
+
     c->expert_major_pack=(fg_vk_kernel){.file="fg_expert_major_pack.spv",.bindings=2,.push_bytes=12};
-    c->decode_tile_schedule=(fg_vk_kernel){.file="fg_decode_tile_schedule.spv",.bindings=2,.push_bytes=0};
+    c->decode_tile_schedule=(fg_vk_kernel){.file="fg_decode_tile_schedule.spv",.bindings=2,.push_bytes=4};
     c->kquant_cooked_grouped=(fg_vk_kernel){.file="fg_moe_kquant_cooked_grouped.spv",.bindings=4,.push_bytes=24};c->kquant_cooked_grouped_int=(fg_vk_kernel){.file="fg_moe_kquant_cooked_grouped_int.spv",.bindings=4,.push_bytes=24};
     c->q5_1_cooked_grouped=(fg_vk_kernel){.file="fg_moe_q5_1_down_cooked_grouped.spv",.bindings=4,.push_bytes=24};
     c->q8_0_grouped=(fg_vk_kernel){.file="fg_moe_q8_0_down_grouped.spv",.bindings=4,.push_bytes=20};
@@ -708,7 +709,7 @@ fg_status fg_vk_expert_graph_create(fg_vk_context *c,fg_vk_expert_graph **out,fg
     fg_status status=FG_OK;
     if(fused){
         struct{uint32_t out_dim,blocks,gate_tile_bytes,up_tile_bytes,gate_stride,up_stride,gate_type,up_type;}gate_up_push={mid_width,hidden_width/FG_QK8_K,(uint32_t)(gate_q8?fg_q8_0_cooked_tile_bytes(hidden_width):fg_k_quant_cooked_tile_bytes(hidden_width,gate_type)),(uint32_t)(up_q8?fg_q8_0_cooked_tile_bytes(hidden_width):fg_k_quant_cooked_tile_bytes(hidden_width,up_type)),gate_expert_stride,up_expert_stride,gate_type,up_type};
-        struct{uint32_t out_dim,in_dim,blocks,tile_bytes,expert_stride,slots,down_type;}down_reduce_push={hidden_width,mid_width,mid_width/FG_QK8_0,down_q51?(uint32_t)fg_q5_1_cooked_tile_bytes(mid_width):down_q8?(uint32_t)fg_q8_0_cooked_tile_bytes(mid_width):0u,down_expert_stride,slots,down_type};
+        struct{uint32_t out_dim,in_dim,blocks,tile_bytes,expert_stride,slots,down_type,token_count;}down_reduce_push={hidden_width,mid_width,mid_width/FG_QK8_0,down_q51?(uint32_t)fg_q5_1_cooked_tile_bytes(mid_width):down_q8?(uint32_t)fg_q8_0_cooked_tile_bytes(mid_width):0u,down_expert_stride,slots,down_type,1u};
         const fg_vk_tensor *gate_up_bindings[]={gate_weights,up_weights,activation,tiles,mid},*down_reduce_bindings[]={down_weights,tiles,mid,gates,reduced};
         status=expert_graph_dispatch(graph,&c->moe_decode_gate_up,gate_up_bindings,&gate_up_push,(mid_width+7u)/8u,slots,1u,false,err);
         if(status==FG_OK)status=expert_graph_dispatch(graph,&c->moe_decode_down_reduce,down_reduce_bindings,&down_reduce_push,down_q8?(hidden_width+7u)/8u:(hidden_width+15u)/16u,1u,1u,true,err);
@@ -736,6 +737,12 @@ fg_status fg_vk_dense_q8_0_f32(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_te
 fg_status fg_vk_dense_q8_0_subgroup(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *w,const fg_vk_tensor *x,uint32_t in,uint32_t rows,uint32_t tokens,float scale,fg_error *err){uint64_t row_bytes=(uint64_t)(in/32u)*34u;if(!c||!w||w->format!=FG_VK_TENSOR_FORMAT_DEFAULT||in==0||in%32u||!tensor_range(w,0,row_bytes*rows)||!tensor_range(x,0,(uint64_t)in*tokens*4u)||!tensor_range(out,0,(uint64_t)rows*tokens*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid subgroup Q8_0 dense dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t out_dim,n_tok,blocks,row_bytes;float scale;}push={rows,tokens,in/32u,(uint32_t)row_bytes,scale};const fg_vk_tensor *bindings[]={w,x,out};return dispatch(c,&c->dense_subgroup,bindings,&push,rows,tokens,1,err);}
 fg_status fg_vk_dense_q8_0_cooked(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *w,const fg_vk_tensor *x,uint32_t in,uint32_t rows,uint32_t tokens,float scale,fg_error *err){if(tokens>1u)return fg_vk_dense_q8_0_cooked_prefill(c,out,w,x,in,rows,tokens,scale,err);uint32_t blocks=in/FG_QK8_0;uint64_t quant_offset=fg_align_up_u64(FG_Q8_0_COOK_ROWS*(uint64_t)blocks*sizeof(uint16_t),FG_Q8_0_COOK_ALIGNMENT),tile_bytes=fg_align_up_u64(quant_offset+FG_Q8_0_COOK_ROWS*(uint64_t)blocks*FG_QK8_0,FG_Q8_0_COOK_ALIGNMENT),tiles=((uint64_t)rows+FG_Q8_0_COOK_ROWS-1u)/FG_Q8_0_COOK_ROWS;if(!c||!in||in%FG_QK8_0||tile_bytes>UINT32_MAX||tiles>UINT64_MAX/tile_bytes||!tensor_range(w,0,tile_bytes*tiles)||!tensor_range(x,0,(uint64_t)in*tokens*4u)||!tensor_range(out,0,(uint64_t)rows*tokens*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid cooked Q8_0 dense dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t out_dim,n_tok,blocks,tile_bytes;float scale;}push={rows,tokens,blocks,(uint32_t)tile_bytes,scale};const fg_vk_tensor *bindings[]={w,x,out};return dispatch(c,&c->dense_cooked,bindings,&push,(rows+3u)/4u,tokens,1,err);}
 fg_status fg_vk_dense_q8_0_cooked_prefill(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *w,const fg_vk_tensor *x,uint32_t in,uint32_t rows,uint32_t tokens,float scale,fg_error *err){uint32_t blocks=in/FG_QK8_0;uint64_t tile_bytes=fg_q8_0_cooked_tile_bytes(in),matrix_bytes=fg_q8_0_cooked_matrix_bytes(in,rows);if(!c||!w||!blocks||!rows||tokens<2u||tile_bytes>UINT32_MAX||w->format!=FG_VK_TENSOR_FORMAT_Q8_0_COOKED||!tensor_range(w,0,matrix_bytes)||!tensor_range(x,0,(uint64_t)in*tokens*4u)||!tensor_range(out,0,(uint64_t)rows*tokens*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid token-tiled cooked Q8_0 prefill dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t out_dim,tokens,blocks,tile_bytes;float scale;}push={rows,tokens,blocks,(uint32_t)tile_bytes,scale};const fg_vk_tensor *bindings[]={w,x,out};return dispatch(c,&c->dense_cooked_tile,bindings,&push,(rows+63u)/64u,(tokens+31u)/32u,1u,err);}
+/* Cooked token-grid MMV for the two-token batch: the same dense_cooked kernel
+ * a single-token dispatch uses for shapes that are not r8-eligible, with the
+ * token grid at two.  Reserved for non-r8 shapes; an eligible shape must keep
+ * the r8 route because only its reduction tree is the bit-exact reference. */
+fg_status fg_vk_dense_q8_0_cooked_pair(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *w,const fg_vk_tensor *x,uint32_t in,uint32_t rows,float scale,fg_error *err){uint32_t blocks=in/FG_QK8_0;uint64_t tile_bytes=fg_q8_0_cooked_tile_bytes(in),tiles=((uint64_t)rows+FG_Q8_0_COOK_ROWS-1u)/FG_Q8_0_COOK_ROWS;if(!c||!w||in==0u||in%FG_QK8_0||!rows||tile_bytes>UINT32_MAX||tiles>UINT64_MAX/tile_bytes||w->format!=FG_VK_TENSOR_FORMAT_Q8_0_COOKED||!tensor_range(w,0,tile_bytes*tiles)||!tensor_range(x,0,(uint64_t)in*2u*4u)||!tensor_range(out,0,(uint64_t)rows*2u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid cooked Q8_0 pair dense dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t out_dim,n_tok,blocks,tile_bytes;float scale;}push={rows,2u,blocks,(uint32_t)tile_bytes,scale};const fg_vk_tensor *bindings[]={w,x,out};return dispatch(c,&c->dense_cooked,bindings,&push,(rows+3u)/4u,2u,1u,err);}
+
 /* Batch-2 decode MMV prototype: one cooked-weight pass for two tokens with
  * per-token bit-identical r8 arithmetic (see fg_dense_q8_0_cooked_r8_b2.comp).
  * Not on any production path; the measured amortization gates promotion. */
@@ -1442,7 +1449,11 @@ fg_status fg_vk_topk_select(fg_vk_context *c,fg_vk_tensor *out_scores,fg_vk_tens
 }
 fg_status fg_vk_router_top10(fg_vk_context *c,fg_vk_tensor *selected,fg_vk_tensor *gates,const fg_vk_tensor *logits,uint32_t experts,uint32_t tokens,fg_error *err){uint64_t pairs=(uint64_t)tokens*FG_TOP_K;if(!c||experts!=FG_EXPERT_COUNT||!tokens||!tensor_range(logits,0,(uint64_t)tokens*experts*4u)||!tensor_range(selected,0,pairs*4u)||!tensor_range(gates,0,pairs*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid GPU top-10 router dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t experts,tokens;}push={experts,tokens};const fg_vk_tensor *bindings[]={logits,selected,gates};return dispatch(c,&c->router_top10,bindings,&push,tokens,1u,1u,err);}
 fg_status fg_vk_expert_major_pack(fg_vk_context *c,fg_vk_tensor *tiles,const fg_vk_tensor *selected,uint32_t experts,uint32_t tokens,fg_error *err){uint64_t pairs=(uint64_t)tokens*FG_TOP_K,tile_bytes=pairs*FG_VK_PREFILL_TILE_WORDS*4u;if(!c||experts!=FG_EXPERT_COUNT||!tokens||pairs>UINT32_MAX||!tensor_range(selected,0,pairs*4u)||!tensor_range(tiles,0,tile_bytes)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid GPU expert-major packing dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t pairs,experts,tile_capacity;}push={(uint32_t)pairs,experts,(uint32_t)pairs};const fg_vk_tensor *bindings[]={selected,tiles};return dispatch(c,&c->expert_major_pack,bindings,&push,1u,1u,1u,err);}
-fg_status fg_vk_decode_tile_schedule(fg_vk_context *c,fg_vk_tensor *tiles,const fg_vk_tensor *selected,fg_error *err){if(!c||!tensor_range(selected,0,FG_TOP_K*4u)||!tensor_range(tiles,0,FG_TOP_K*9u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid GPU decode tile schedule dispatch");return FG_ERR_ARGUMENT;}const fg_vk_tensor *bindings[]={selected,tiles};return dispatch(c,&c->decode_tile_schedule,bindings,NULL,1u,1u,1u,err);}
+fg_status fg_vk_decode_tile_schedule(fg_vk_context *c,fg_vk_tensor *tiles,const fg_vk_tensor *selected,fg_error *err){if(!c||!tensor_range(selected,0,FG_TOP_K*4u)||!tensor_range(tiles,0,FG_TOP_K*9u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid GPU decode tile schedule dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t tokens;}push={1u};const fg_vk_tensor *bindings[]={selected,tiles};return dispatch(c,&c->decode_tile_schedule,bindings,&push,1u,1u,1u,err);}
+/* Token-tagged union schedule: 2*FG_TOP_K tiles, each carrying (expert, global
+ * pair, token), so one expert gate/up and one down/reduce dispatch serves both
+ * tokens of a depth-B batch block.  Per-token tile order is preserved. */
+fg_status fg_vk_decode_tile_schedule_b2(fg_vk_context *c,fg_vk_tensor *tiles,const fg_vk_tensor *selected,fg_error *err){if(!c||!tensor_range(selected,0,2u*FG_TOP_K*4u)||!tensor_range(tiles,0,2u*FG_TOP_K*9u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid GPU batch-2 decode tile schedule dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t tokens;}push={2u};const fg_vk_tensor *bindings[]={selected,tiles};return dispatch(c,&c->decode_tile_schedule,bindings,&push,1u,1u,1u,err);}
 fg_status fg_vk_argmax_reduce(fg_vk_context *c,fg_vk_tensor *out_scores,fg_vk_tensor *out_ids,const fg_vk_tensor *in_scores,const fg_vk_tensor *in_ids,uint32_t count,uint32_t *output_count,fg_error *err){uint32_t groups=(count+4095u)/4096u;if(!c||!count||!output_count||!tensor_range(in_scores,0,(uint64_t)count*4u)||!tensor_range(in_ids,0,(uint64_t)count*4u)||!tensor_range(out_scores,0,(uint64_t)groups*4u)||!tensor_range(out_ids,0,(uint64_t)groups*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid argmax reduction dispatch");return FG_ERR_ARGUMENT;}const fg_vk_tensor *bindings[]={in_scores,in_ids,out_scores,out_ids};fg_status status=dispatch(c,&c->argmax,bindings,&count,groups,1,1,err);if(status==FG_OK)*output_count=groups;return status;}
 fg_status fg_vk_moe_q5_1_down(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *weights,const fg_vk_tensor *tiles,const fg_vk_tensor *input,uint32_t output_width,uint32_t input_width,uint32_t expert_stride,uint32_t used_experts,bool packed,uint32_t tile_count,fg_error *err){if(weights&&weights->format==FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED)return fg_vk_moe_q5_1_down_cooked_pairs(c,out,weights,tiles,input,output_width,input_width,expert_stride,used_experts,packed,tile_count,err);uint64_t row_bytes=(uint64_t)(input_width/32u)*24u;if(!c||!output_width||!input_width||input_width%32u||!tile_count||expert_stride<row_bytes*output_width||!tensor_range(tiles,0,(uint64_t)tile_count*9u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Q5_1 expert dispatch");return FG_ERR_ARGUMENT;}struct {uint32_t out_dim,in_dim,row_bytes,expert_stride,n_used,packed_weights,reserved;} push={output_width,input_width,(uint32_t)row_bytes,expert_stride,used_experts,packed?1u:0u,0};const fg_vk_tensor *bindings[]={weights,tiles,input,out};return dispatch(c,&c->moe_q5_1,bindings,&push,(output_width+7u)/8u,tile_count,1,err);}
 fg_status fg_vk_moe_q5_1_down_cooked_pairs(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *weights,const fg_vk_tensor *tiles,const fg_vk_tensor *input,uint32_t output_width,uint32_t input_width,uint32_t expert_stride,uint32_t routed_pairs,bool packed,uint32_t tile_count,fg_error *err){uint64_t tile_bytes=fg_q5_1_cooked_tile_bytes(input_width),matrix_bytes=fg_q5_1_cooked_matrix_bytes(input_width,output_width);uint64_t weight_bytes=(uint64_t)expert_stride*(packed?tile_count:FG_EXPERTS_PER_RANK);if(!c||!matrix_bytes||tile_bytes>UINT32_MAX||!routed_pairs||!tile_count||expert_stride<matrix_bytes||!tensor_range(weights,0,weight_bytes)||!tensor_range(tiles,0,(uint64_t)tile_count*9u*4u)||!tensor_range(input,0,(uint64_t)routed_pairs*input_width*4u)||!tensor_range(out,0,(uint64_t)routed_pairs*output_width*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid cooked Q5_1 expert dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t out_dim,in_dim,blocks,tile_bytes,expert_stride,routed_pairs,packed_weights;}push={output_width,input_width,input_width/FG_QK8_0,(uint32_t)tile_bytes,expert_stride,routed_pairs,packed?1u:0u};const fg_vk_tensor *bindings[]={weights,tiles,input,out};return dispatch(c,&c->moe_q5_1_cooked,bindings,&push,output_width/8u,tile_count,1,err);}
@@ -1503,6 +1514,37 @@ fg_status fg_vk_moe_decode_gate_up(fg_vk_context *c,fg_vk_tensor *mid,
     const fg_vk_tensor *bindings[]={gate_weights,up_weights,activation,tiles,mid};
     return dispatch(c,&c->moe_decode_gate_up,bindings,&push,(output_width+7u)/8u,slots,1u,err);
 }
+/* Batch-2 union variant: the activation holds two q8_k token rows and each
+ * tile's token word selects the row it multiplies.  `slots` is the union tile
+ * count (2*FG_TOP_K); per-pair arithmetic inside the kernel is unchanged. */
+fg_status fg_vk_moe_decode_gate_up_b2(fg_vk_context *c,fg_vk_tensor *mid,
+    const fg_vk_tensor *gate_weights,const fg_vk_tensor *up_weights,
+    const fg_vk_tensor *activation,const fg_vk_tensor *tiles,uint32_t output_width,
+    uint32_t input_width,uint32_t gate_stride,uint32_t up_stride,uint32_t gate_type,
+    uint32_t up_type,uint32_t slots,fg_error *err){
+    uint64_t gate_tile=gate_type==8u?fg_q8_0_cooked_tile_bytes(input_width):fg_k_quant_cooked_tile_bytes(input_width,gate_type);
+    uint64_t up_tile=up_type==8u?fg_q8_0_cooked_tile_bytes(input_width):fg_k_quant_cooked_tile_bytes(input_width,up_type);
+    uint64_t gate_matrix=gate_type==8u?fg_q8_0_cooked_matrix_bytes(input_width,output_width):fg_k_quant_cooked_matrix_bytes(input_width,output_width,gate_type);
+    uint64_t up_matrix=up_type==8u?fg_q8_0_cooked_matrix_bytes(input_width,output_width):fg_k_quant_cooked_matrix_bytes(input_width,output_width,up_type);
+    uint64_t activation_bytes=(uint64_t)(input_width/FG_QK8_K)*FG_Q8_K_BLOCK_BYTES;
+    if(!c||!output_width||!input_width||input_width%FG_QK8_K||!slots||
+       !gate_tile||!up_tile||gate_tile>UINT32_MAX||up_tile>UINT32_MAX||
+       gate_stride<gate_matrix||up_stride<up_matrix||
+       !tensor_on_context(c,mid)||!tensor_on_context(c,gate_weights)||
+       !tensor_on_context(c,up_weights)||!tensor_on_context(c,activation)||
+       !tensor_on_context(c,tiles)||
+       !tensor_range(mid,0,(uint64_t)slots*output_width*4u)||
+       !tensor_range(gate_weights,0,gate_stride)||
+       !tensor_range(up_weights,0,up_stride)||
+       !tensor_range(activation,0,2u*activation_bytes)||
+       !tensor_range(tiles,0,(uint64_t)slots*9u*4u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid fused batch-2 gate/up decode dispatch");
+        return FG_ERR_ARGUMENT;
+    }
+    struct{uint32_t out_dim,blocks,gate_tile_bytes,up_tile_bytes,gate_stride,up_stride,gate_type,up_type;}push={output_width,input_width/FG_QK8_K,(uint32_t)gate_tile,(uint32_t)up_tile,gate_stride,up_stride,gate_type,up_type};
+    const fg_vk_tensor *bindings[]={gate_weights,up_weights,activation,tiles,mid};
+    return dispatch(c,&c->moe_decode_gate_up,bindings,&push,(output_width+7u)/8u,slots,1u,err);
+}
 
 fg_status fg_vk_moe_decode_down_reduce(fg_vk_context *c,fg_vk_tensor *out,
     const fg_vk_tensor *down_weights,const fg_vk_tensor *tiles,const fg_vk_tensor *input,
@@ -1533,7 +1575,44 @@ fg_status fg_vk_moe_decode_down_reduce(fg_vk_context *c,fg_vk_tensor *out,
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid fused down/reduce decode dispatch");
         return FG_ERR_ARGUMENT;
     }
-    struct{uint32_t out_dim,in_dim,blocks,tile_bytes,expert_stride,slots,down_type;}push={output_width,input_width,input_width/FG_QK8_0,(uint32_t)tile_bytes,expert_stride,slots,down_type};
+    struct{uint32_t out_dim,in_dim,blocks,tile_bytes,expert_stride,slots,down_type,token_count;}push={output_width,input_width,input_width/FG_QK8_0,(uint32_t)tile_bytes,expert_stride,slots,down_type,1u};
+    const fg_vk_tensor *bindings[]={down_weights,tiles,input,gates,out};
+    uint32_t groups=q8_cooked?(output_width+7u)/8u:(output_width+15u)/16u;
+    return dispatch(c,&c->moe_decode_down_reduce,bindings,&push,groups,1u,1u,err);
+}
+/* Batch-2 union variant: the token-tagged union schedule is walked once per
+ * token in its own routed order, and each token's gate-weighted sum lands in
+ * its own output row.  The per-token fma chain is the single-token one. */
+fg_status fg_vk_moe_decode_down_reduce_b2(fg_vk_context *c,fg_vk_tensor *out,
+    const fg_vk_tensor *down_weights,const fg_vk_tensor *tiles,const fg_vk_tensor *input,
+    const fg_vk_tensor *gates,uint32_t output_width,uint32_t input_width,
+    uint32_t expert_stride,uint32_t slots,uint32_t down_type,fg_error *err){
+    uint64_t tile_bytes=0u,matrix_bytes=0u;
+    bool q8_cooked=down_type==8u&&down_weights&&
+        down_weights->format==FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED;
+    if(down_type==7u){
+        tile_bytes=fg_q5_1_cooked_tile_bytes(input_width);
+        matrix_bytes=fg_q5_1_cooked_matrix_bytes(input_width,output_width);
+    }else if(down_type==8u){
+        if(q8_cooked){
+            tile_bytes=fg_q8_0_cooked_tile_bytes(input_width);
+            matrix_bytes=fg_q8_0_cooked_matrix_bytes(input_width,output_width);
+        }else matrix_bytes=(uint64_t)(input_width/FG_QK8_0)*FG_Q8_0_BLOCK_BYTES*output_width;
+    }
+    if(!c||!output_width||!input_width||input_width%FG_QK8_0||!slots||
+       !matrix_bytes||tile_bytes>UINT32_MAX||expert_stride<matrix_bytes||
+       !tensor_on_context(c,out)||!tensor_on_context(c,down_weights)||
+       !tensor_on_context(c,tiles)||!tensor_on_context(c,input)||
+       !tensor_on_context(c,gates)||
+       !tensor_range(out,0,2u*(uint64_t)output_width*4u)||
+       !tensor_range(down_weights,0,expert_stride)||
+       !tensor_range(tiles,0,(uint64_t)slots*9u*4u)||
+       !tensor_range(input,0,(uint64_t)slots*input_width*4u)||
+       !tensor_range(gates,0,(uint64_t)slots*4u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid fused batch-2 down/reduce decode dispatch");
+        return FG_ERR_ARGUMENT;
+    }
+    struct{uint32_t out_dim,in_dim,blocks,tile_bytes,expert_stride,slots,down_type,token_count;}push={output_width,input_width,input_width/FG_QK8_0,(uint32_t)tile_bytes,expert_stride,slots,down_type,2u};
     const fg_vk_tensor *bindings[]={down_weights,tiles,input,gates,out};
     uint32_t groups=q8_cooked?(output_width+7u)/8u:(output_width+15u)/16u;
     return dispatch(c,&c->moe_decode_down_reduce,bindings,&push,groups,1u,1u,err);
@@ -1544,15 +1623,17 @@ fg_status fg_vk_moe_decode_down_reduce(fg_vk_context *c,fg_vk_tensor *out,
  * reads either tensor back. */
 fg_status fg_vk_moe_decode_shared_add(fg_vk_context *c,fg_vk_tensor *out,
     const fg_vk_tensor *reduced,const fg_vk_tensor *shared,const fg_vk_tensor *scalar,
-    uint32_t width,fg_error *err){
-    if(!c||!width||!tensor_range(reduced,0,(uint64_t)width*4u)||
-       !tensor_range(shared,0,(uint64_t)width*4u)||!tensor_range(scalar,0,4u)||
-       !tensor_range(out,0,(uint64_t)width*4u)){
+    uint32_t width,uint32_t tokens,fg_error *err){
+    if(!c||!width||!tokens||!tensor_range(reduced,0,(uint64_t)width*tokens*4u)||
+       !tensor_range(shared,0,(uint64_t)width*tokens*4u)||
+       !tensor_range(scalar,0,(uint64_t)tokens*4u)||
+       !tensor_range(out,0,(uint64_t)width*tokens*4u)){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid shared-expert fold dispatch");
         return FG_ERR_ARGUMENT;
     }
+    struct{uint32_t width,tokens;}push={width,tokens};
     const fg_vk_tensor *bindings[]={reduced,shared,scalar,out};
-    return dispatch(c,&c->moe_decode_shared_add,bindings,&width,(width+255u)/256u,1u,1u,err);
+    return dispatch(c,&c->moe_decode_shared_add,bindings,&push,(width*tokens+255u)/256u,1u,1u,err);
 }
 
 fg_status fg_vk_moe_kquant_cooked_grouped(fg_vk_context *c,fg_vk_tensor *out,

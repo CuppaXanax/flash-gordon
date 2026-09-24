@@ -29,6 +29,7 @@ static const shape shapes[] = {
     {2560u, 2560u, "ssm_out"},      /* hidden -> hidden */
     {2560u, 640u, "shexp_up"},      /* shared expert gate/up */
     {640u, 2560u, "shexp_down"},    /* shared expert down */
+    {320u, 10240u, "hc_up"},        /* GR read up projection */
 };
 enum { ITERATIONS = 24 };
 

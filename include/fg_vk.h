@@ -125,9 +125,25 @@ fg_status fg_vk_moe_decode_down_reduce(fg_vk_context *context,fg_vk_tensor *out,
                                        uint32_t output_width,uint32_t input_width,
                                        uint32_t expert_stride,uint32_t slots,
                                        uint32_t down_type,fg_error *err);
+/* Batch-2 expert union: one gate/up and one down/reduce dispatch over a
+ * token-tagged 2*FG_TOP_K tile schedule.  Each token keeps its own routed
+ * accumulation order and lands in its own output row. */
+fg_status fg_vk_moe_decode_gate_up_b2(fg_vk_context *context,fg_vk_tensor *mid,
+                                      const fg_vk_tensor *gate_weights,const fg_vk_tensor *up_weights,
+                                      const fg_vk_tensor *activation,const fg_vk_tensor *tiles,
+                                      uint32_t output_width,uint32_t input_width,
+                                      uint32_t gate_stride,uint32_t up_stride,
+                                      uint32_t gate_type,uint32_t up_type,uint32_t slots,fg_error *err);
+fg_status fg_vk_moe_decode_down_reduce_b2(fg_vk_context *context,fg_vk_tensor *out,
+                                          const fg_vk_tensor *down_weights,const fg_vk_tensor *tiles,
+                                          const fg_vk_tensor *input,const fg_vk_tensor *gates,
+                                          uint32_t output_width,uint32_t input_width,
+                                          uint32_t expert_stride,uint32_t slots,
+                                          uint32_t down_type,fg_error *err);
 fg_status fg_vk_moe_decode_shared_add(fg_vk_context *context,fg_vk_tensor *out,
                                       const fg_vk_tensor *reduced,const fg_vk_tensor *shared,
-                                      const fg_vk_tensor *scalar,uint32_t width,fg_error *err);
+                                      const fg_vk_tensor *scalar,uint32_t width,
+                                      uint32_t tokens,fg_error *err);
 
 fg_status fg_vk_tensor_create(fg_vk_context *context,uint64_t bytes,fg_vk_tensor **out,fg_error *err);
 fg_status fg_vk_tensor_create_cached(fg_vk_context *context,uint64_t bytes,fg_vk_tensor **out,fg_error *err);
@@ -183,6 +199,11 @@ fg_status fg_vk_dense_q8_0_cooked_prefill(fg_vk_context *context,
                                           fg_error *err);
 /* Batch-2 decode MMV prototype: two tokens, one cooked-weight pass, per-token
  * bit-identical to two fg_vk_dense_q8_0_cooked r8 dispatches. */
+/* Two-token token-grid cooked MMV for non-r8-eligible shapes. */
+fg_status fg_vk_dense_q8_0_cooked_pair(fg_vk_context *context,fg_vk_tensor *output,
+                                       const fg_vk_tensor *weights,const fg_vk_tensor *input,
+                                       uint32_t input_width,uint32_t output_width,
+                                       float scale,fg_error *err);
 fg_status fg_vk_dense_q8_0_b2(fg_vk_context *context,fg_vk_tensor *output,
                               const fg_vk_tensor *weights,const fg_vk_tensor *input,
                               uint32_t input_width,uint32_t output_width,
@@ -436,6 +457,10 @@ fg_status fg_vk_decode_tile_schedule(fg_vk_context *context,
                                      fg_vk_tensor *tiles,
                                      const fg_vk_tensor *selected,
                                      fg_error *err);
+fg_status fg_vk_decode_tile_schedule_b2(fg_vk_context *context,
+                                        fg_vk_tensor *tiles,
+                                        const fg_vk_tensor *selected,
+                                        fg_error *err);
 fg_status fg_vk_argmax_reduce(fg_vk_context *context,fg_vk_tensor *output_scores,
                                                             fg_vk_tensor *output_ids,const fg_vk_tensor *input_scores,
                                                             const fg_vk_tensor *input_ids,uint32_t count,

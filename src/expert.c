@@ -45,8 +45,10 @@ static fg_status create_scratch(fg_expert_executor *executor,fg_error *err){
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*640u*4u,&executor->mid,err);
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*FG_HIDDEN_SIZE*4u,&executor->down,err);
 
+    /* The routed reduction is one hidden row per token; the batch-2 union
+     * writes two, so the arena is sized for the sealed microbatch. */
     if(status==FG_OK)status=fg_vk_tensor_create(vk,
-        (uint64_t)1u*FG_HIDDEN_SIZE*4u,
+        (uint64_t)executor->max_tokens*FG_HIDDEN_SIZE*4u,
         &executor->reduced,err);
     if(status==FG_OK)status=fg_vk_tensor_create_cached(vk,
         (uint64_t)executor->max_tokens*FG_HIDDEN_SIZE*4u,
@@ -410,6 +412,40 @@ fg_status fg_expert_decode_chain(fg_expert_executor *executor,uint32_t layer,
     if(status==FG_OK)status=fg_vk_moe_decode_down_reduce(vk,executor->reduced,
         down_weight,executor->tiles,executor->mid,executor->gates,FG_HIDDEN_SIZE,
         640u,down_stride,FG_TOP_K,down_type,err);
+    if(status==FG_OK)*reduced=executor->reduced;
+    return status;
+}
+
+/* Batch-2 chained decode: GPU routing for two tokens, one token-tagged union
+ * schedule, one fused gate/up dispatch and one down/reduce dispatch.  The
+ * result is the two gate-weighted rank-local expert sums, one hidden row per
+ * token, in the executor's reduced tensor. */
+fg_status fg_expert_decode_chain_b2(fg_expert_executor *executor,uint32_t layer,
+    const fg_vk_tensor *activation,const fg_vk_tensor *router_logits,
+    fg_vk_tensor **reduced,fg_error *err){
+    if(!executor||!activation||!router_logits||!reduced){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid chained batch-2 expert arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_vk_tensor *gate_weight=NULL,*up_weight=NULL,*down_weight=NULL;
+    uint32_t gate_stride=0u,up_stride=0u,down_stride=0u;
+    uint32_t gate_type=0u,up_type=0u,down_type=0u;
+    fg_status status=chain_expert_layout(executor,layer,&gate_weight,&up_weight,
+        &down_weight,&gate_stride,&up_stride,&down_stride,&gate_type,&up_type,
+        &down_type,err);
+    if(status!=FG_OK)return status;
+    fg_vk_context *vk=fg_model_vk(executor->model);
+    uint32_t slots=2u*FG_TOP_K;
+    status=fg_vk_router_top10(vk,executor->selected,executor->gates,router_logits,
+        FG_EXPERT_COUNT,2u,err);
+    if(status==FG_OK)status=fg_vk_decode_tile_schedule_b2(vk,executor->tiles,
+        executor->selected,err);
+    if(status==FG_OK)status=fg_vk_moe_decode_gate_up_b2(vk,executor->mid,gate_weight,
+        up_weight,activation,executor->tiles,640u,FG_HIDDEN_SIZE,gate_stride,
+        up_stride,gate_type,up_type,slots,err);
+    if(status==FG_OK)status=fg_vk_moe_decode_down_reduce_b2(vk,executor->reduced,
+        down_weight,executor->tiles,executor->mid,executor->gates,FG_HIDDEN_SIZE,
+        640u,down_stride,slots,down_type,err);
     if(status==FG_OK)*reduced=executor->reduced;
     return status;
 }

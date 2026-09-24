@@ -142,6 +142,11 @@ struct fg_owner_executor {
     fg_vk_tensor *ples_shadow[FG_OWNER_SESSION_MAX];
     fg_vk_tensor *ples_state[FG_OWNER_SESSION_MAX];
     fg_vk_tensor *session_input[FG_OWNER_SESSION_MAX];
+    /* Depth-B batch-2 block storage: a two-row residual ping-pong and the
+     * two-token HC down partials (the shared transient is one row).  Allocated
+     * lazily on the first batch block so single-token owners stay unchanged. */
+    fg_vk_tensor *batch_ping[2];
+    fg_vk_tensor *batch_hc_down_partials;
     fg_vk_tensor *attention_family_scratch;
     fg_vk_tensor *reduce_experts,*reduce_gates,*reduce_shared,*reduce_logits,*reduce_output;
     uint32_t reduce_tile_tokens;
@@ -429,6 +434,9 @@ void fg_owner_executor_destroy(fg_owner_executor *e){
         fg_vk_tensor_destroy(e->ples_state[session]);
         fg_vk_tensor_destroy(e->session_input[session]);
     }
+    fg_vk_tensor_destroy(e->batch_hc_down_partials);
+    fg_vk_tensor_destroy(e->batch_ping[1]);
+    fg_vk_tensor_destroy(e->batch_ping[0]);
     fg_vk_tensor_destroy(e->ple_added);
     fg_vk_tensor_destroy(e->ple_output);
     fg_vk_tensor_destroy(e->ple_gated_norm);
@@ -1560,6 +1568,402 @@ static fg_status static_run_check(fg_owner_executor *e,fg_vk_context *vk,uint32_
     return FG_OK;
 }
 
+/* ---------------------------------------------------------------------------
+ * Depth-B batch-2 block: both slots' tokens through one layer pass.
+ *
+ * Dense passes read each weight once for the token pair: the b2 MMV where the
+ * B=1 path takes the r8 decode kernel (same per-token arithmetic, measured
+ * bit-identical) and the token-grid cooked kernel for the remaining
+ * non-r8-eligible projections.  Row-wise passes (RMS, HC injection, GR mix,
+ * router, shared expert, shared fold) take both rows in one dispatch.  The
+ * stateful work stays per token: GDN conv/recurrent and PLE conv under the
+ * token's owner session, and the whole QSA session (projections, selection,
+ * records, attention) is literally the B=1 code path.  Routed experts run as
+ * one union work: GPU top-10 for the pair, one token-tagged schedule, one
+ * fused gate/up and one down/reduce dispatch.
+ *
+ * Bit-exactness: every batched pass keeps each token's arithmetic sequence
+ * (operand order, fma chain, subgroup reduction) identical to its B=1
+ * dispatch; no partial sum crosses tokens.  The block never records into the
+ * static replay (session 0's recorded run stays bound to the single-token
+ * path), so a batch step is always a fresh dynamic recording.
+ * ------------------------------------------------------------------------- */
+
+static fg_status ensure_batch_storage(fg_owner_executor *e,fg_error *err){
+    fg_vk_context *vk=fg_model_vk(e->model);
+    fg_status status=FG_OK;
+    if(!e->batch_ping[0])status=fg_vk_tensor_create(vk,
+        (uint64_t)2u*FG_HYPER_WIDTH*4u,&e->batch_ping[0],err);
+    if(status==FG_OK&&!e->batch_ping[1])status=fg_vk_tensor_create(vk,
+        (uint64_t)2u*FG_HYPER_WIDTH*4u,&e->batch_ping[1],err);
+    if(status==FG_OK&&!e->batch_hc_down_partials)status=fg_vk_tensor_create(vk,
+        (uint64_t)2u*FG_HC_DOWN_SPLITS*320u*4u,&e->batch_hc_down_partials,err);
+    return status;
+}
+
+static fg_status row_slice(fg_vk_tensor *base,uint32_t row,uint32_t width,
+                           fg_vk_tensor **out,fg_error *err){
+    if(!base||!out){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner row slice");
+        return FG_ERR_ARGUMENT;
+    }
+    return fg_vk_tensor_view(base,(uint64_t)row*width*4u,(uint64_t)width*4u,out,err);
+}
+
+/* GR read for the token pair: identical layout to gr_read_batch_into with
+ * token_count=2, but the HC down projection goes through the split+SiLU
+ * kernel (the exact arithmetic the single-token decode uses) with two token
+ * rows, and the up projection through the b2 MMV (the single-token r8
+ * arithmetic for each row). */
+static fg_status gr_read_batch_into_b2(fg_owner_executor *e,uint32_t layer,bool ffn,
+    const fg_vk_tensor *hyper_input,fg_vk_tensor **mixed,const fg_vk_tensor **residual,
+    fg_vk_tensor **injection,fg_error *err){
+    if(!e||!hyper_input||!mixed||!residual||!injection||!owns_layer(e,layer)){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "batch-2 gated residual read is not on the layer owner");
+        return FG_ERR_MISMATCH;
+    }
+    const char *prefix=ffn?"hc_ffn":"hc_attn";
+    char suffix[48];
+    fg_vk_tensor *norm_weight,*down_weight,*up_weight,*inject_weight;
+    snprintf(suffix,sizeof(suffix),"%s_norm.weight",prefix);norm_weight=weight(e,layer,suffix,err);
+    snprintf(suffix,sizeof(suffix),"%s_down.weight",prefix);down_weight=weight(e,layer,suffix,err);
+    snprintf(suffix,sizeof(suffix),"%s_up.weight",prefix);up_weight=weight(e,layer,suffix,err);
+    snprintf(suffix,sizeof(suffix),"%s_inject.weight",prefix);inject_weight=weight(e,layer,suffix,err);
+    if(!norm_weight||!down_weight||!up_weight||!inject_weight)return FG_ERR_MISMATCH;
+    if(fg_vk_tensor_get_format(down_weight)!=FG_VK_TENSOR_FORMAT_Q8_0_COOKED||
+       fg_vk_tensor_get_format(up_weight)!=FG_VK_TENSOR_FORMAT_Q8_0_COOKED){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "batch-2 GR read requires cooked HC projections on layer %u",layer);
+        return FG_ERR_UNAVAILABLE;
+    }
+    fg_vk_context *vk=fg_model_vk(e->model);
+    fg_status status=fg_vk_begin(vk,err);
+    if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->hyper_norm,hyper_input,norm_weight,
+        FG_HIDDEN_SIZE,4u,2u,1e-6f,err);
+    if(status==FG_OK)status=fg_vk_hc_inject_partial(vk,e->inject_partials,e->hyper_norm,
+        inject_weight,FG_HIDDEN_SIZE,4u,2u,e->hc_inject_pieces,err);
+    if(status==FG_OK)fg_vk_next_dispatch_independent(vk);
+    if(status==FG_OK)status=fg_vk_dense_q8_0_cooked_split_silu(vk,e->low,e->low_active,
+        e->batch_hc_down_partials,down_weight,e->hyper_norm,10240u,320u,2u,
+        FG_HC_DOWN_SPLITS,1.0f,0.25f,err);
+    if(status==FG_OK)status=fg_vk_dense_q8_0_b2(vk,e->up_logits,up_weight,
+        e->low_active,320u,10240u,1.0f,err);
+    if(status==FG_OK)status=fg_vk_gr_mix_partial(vk,e->mixed,e->injection,e->hyper_norm,
+        e->up_logits,e->inject_partials,FG_HIDDEN_SIZE,4u,2u,e->hc_inject_pieces,err);
+    status=finish_batch(vk,status,err);
+    if(status==FG_OK){*mixed=e->mixed;*residual=hyper_input;*injection=e->injection;}
+    return status;
+}
+
+/* PLE for the token pair: b2 key/value projections, two-token norms and gate,
+ * then the per-token convolution under the token's owner session (the PLE
+ * state is session-scoped). */
+static fg_status ple_decode_into_b2(fg_owner_executor *e,const fg_vk_tensor *hyper,
+    const fg_vk_tensor *embedding,fg_vk_tensor *destination,const uint32_t slots[2],
+    fg_vk_tensor **output,fg_error *err){
+    if(!e||!hyper||!embedding||!destination||!slots||!output||
+       !owns_layer(e,1u)||!OWNER_PLE(e)){
+        fg_error_set(err,FG_ERR_MISMATCH,"batch-2 PLE decode is not on the layer-1 owner");
+        return FG_ERR_MISMATCH;
+    }
+    fg_vk_tensor *key_weight=weight(e,1u,"ple_key.weight",err),*value_weight=weight(e,1u,"ple_value.weight",err),*key_norm=weight(e,1u,"ple_norm_key.weight",err),*query_norm=weight(e,1u,"ple_norm_query.weight",err),*conv_norm=weight(e,1u,"ple_norm_conv.weight",err),*conv_weight=weight(e,1u,"ple_conv1d.weight",err);
+    if(!key_weight||!value_weight||!key_norm||!query_norm||!conv_norm||!conv_weight)return FG_ERR_MISMATCH;
+    if(fg_vk_tensor_get_format(key_weight)!=FG_VK_TENSOR_FORMAT_Q8_0_COOKED||
+       fg_vk_tensor_get_format(value_weight)!=FG_VK_TENSOR_FORMAT_Q8_0_COOKED){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"batch-2 PLE requires cooked key/value");
+        return FG_ERR_UNAVAILABLE;
+    }
+    fg_vk_context *vk=fg_model_vk(e->model);
+    fg_status status=fg_vk_begin(vk,err);
+    if(status==FG_OK)status=fg_vk_dense_q8_0_b2(vk,e->ple_key,key_weight,embedding,
+        2560u,10240u,1.0f,err);
+    if(status==FG_OK)fg_vk_next_dispatch_independent(vk);
+    if(status==FG_OK)status=fg_vk_dense_q8_0_b2(vk,e->ple_value,value_weight,embedding,
+        2560u,2560u,1.0f,err);
+    if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->ple_key_norm,e->ple_key,key_norm,
+        2560u,4u,2u,1e-6f,err);
+    if(status==FG_OK)fg_vk_next_dispatch_independent(vk);
+    if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->ple_query_norm,hyper,query_norm,
+        2560u,4u,2u,1e-6f,err);
+    if(status==FG_OK)status=fg_vk_ple_gate_prefill(vk,e->ple_gated,e->ple_key_norm,
+        e->ple_query_norm,e->ple_value,2u,err);
+    if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->ple_gated_norm,e->ple_gated,
+        conv_norm,2560u,4u,2u,1e-6f,err);
+    for(uint32_t t=0;status==FG_OK&&t<2u;t++){
+        fg_vk_tensor *gated_row=NULL,*norm_row=NULL,*dst_row=NULL,*hyper_row=NULL;
+        status=row_slice(e->ple_gated,t,10240u,&gated_row,err);
+        if(status==FG_OK)status=row_slice(e->ple_gated_norm,t,10240u,&norm_row,err);
+        if(status==FG_OK)status=row_slice(destination,t,10240u,&dst_row,err);
+        if(status==FG_OK)status=row_slice((fg_vk_tensor *)hyper,t,10240u,&hyper_row,err);
+        if(status==FG_OK)status=fg_owner_set_active_session(e,slots[t],err);
+        if(status==FG_OK)status=fg_vk_ple_conv_decode_add(vk,dst_row,OWNER_PLE(e),
+            gated_row,norm_row,conv_weight,hyper_row,err);
+        fg_vk_tensor_destroy(hyper_row);fg_vk_tensor_destroy(dst_row);
+        fg_vk_tensor_destroy(norm_row);fg_vk_tensor_destroy(gated_row);
+    }
+    status=finish_batch(vk,status,err);
+    if(status==FG_OK)*output=destination;
+    return status;
+}
+
+/* GDN for the token pair: b2 qkv, token-grid z, f32 alpha/beta, then the
+ * per-token convolution and algebraic recurrence under the token's owner
+ * session, and the b2 output projection into the two-row block tensor. */
+static fg_status gdn_decode_pair_into(fg_owner_executor *e,uint32_t layer,
+    const fg_vk_tensor *hidden,const uint32_t slots[2],fg_vk_tensor **output,
+    fg_error *err){
+    if(!e||!hidden||!slots||!output||!owns_layer(e,layer)||(layer&3u)==3u||
+       !OWNER_GDN(e,layer)->conv_state||!OWNER_GDN(e,layer)->recurrent_state){
+        fg_error_set(err,FG_ERR_MISMATCH,"batch-2 GDN decode is not on an owned linear-attention layer");
+        return FG_ERR_MISMATCH;
+    }
+    fg_vk_tensor *qkv_weight=weight(e,layer,"attn_qkv.weight",err),*z_weight=weight(e,layer,"attn_gate.weight",err),*alpha_weight=weight(e,layer,"ssm_alpha.weight",err),*beta_weight=weight(e,layer,"ssm_beta.weight",err),*conv_weight=weight(e,layer,"ssm_conv1d.weight",err),*a_decay=weight(e,layer,"ssm_a",err),*dt_bias=weight(e,layer,"ssm_dt.bias",err),*norm_weight=weight(e,layer,"ssm_norm.weight",err),*out_weight=weight(e,layer,"ssm_out.weight",err);
+    if(!qkv_weight||!z_weight||!alpha_weight||!beta_weight||!conv_weight||!a_decay||!dt_bias||!norm_weight||!out_weight)return FG_ERR_MISMATCH;
+    if(fg_vk_tensor_get_format(qkv_weight)!=FG_VK_TENSOR_FORMAT_Q8_0_COOKED||
+       fg_vk_tensor_get_format(z_weight)!=FG_VK_TENSOR_FORMAT_Q8_0_COOKED||
+       fg_vk_tensor_get_format(out_weight)!=FG_VK_TENSOR_FORMAT_Q8_0_COOKED){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"batch-2 GDN requires cooked projections");
+        return FG_ERR_UNAVAILABLE;
+    }
+    fg_vk_context *vk=fg_model_vk(e->model);
+    fg_status status=fg_vk_profile_active(vk)?fg_vk_profile_set_scope(vk,"gdn_projection",err):FG_OK;
+    if(status==FG_OK)status=fg_vk_begin(vk,err);
+    if(status==FG_OK)status=fg_vk_dense_q8_0_b2(vk,e->gdn_qkv,qkv_weight,hidden,
+        2560u,10240u,1.0f,err);
+    if(status==FG_OK)status=fg_vk_dense_q8_0_cooked_pair(vk,e->gdn_z,z_weight,hidden,
+        2560u,6144u,1.0f,err);
+    if(status==FG_OK)status=fg_vk_dense_f32(vk,e->gdn_alpha,alpha_weight,hidden,
+        2560u,48u,2u,err);
+    if(status==FG_OK)status=fg_vk_dense_f32(vk,e->gdn_beta,beta_weight,hidden,
+        2560u,48u,2u,err);
+    if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gdn_recurrent",err);
+    for(uint32_t t=0;status==FG_OK&&t<2u;t++){
+        fg_vk_tensor *qkv_row=NULL,*conv_row=NULL,*core_row=NULL,*z_row=NULL,*alpha_row=NULL,*beta_row=NULL;
+        status=row_slice(e->gdn_qkv,t,10240u,&qkv_row,err);
+        if(status==FG_OK)status=row_slice(e->gdn_conv_output,t,10240u,&conv_row,err);
+        if(status==FG_OK)status=row_slice(e->gdn_core,t,6144u,&core_row,err);
+        if(status==FG_OK)status=row_slice(e->gdn_z,t,6144u,&z_row,err);
+        if(status==FG_OK)status=row_slice(e->gdn_alpha,t,48u,&alpha_row,err);
+        if(status==FG_OK)status=row_slice(e->gdn_beta,t,48u,&beta_row,err);
+        if(status==FG_OK)status=fg_owner_set_active_session(e,slots[t],err);
+        if(status==FG_OK)status=fg_vk_gdn_conv_decode(vk,conv_row,
+            OWNER_GDN(e,layer)->conv_state,qkv_row,conv_weight,10240u,err);
+        if(status==FG_OK)status=fg_vk_gdn_recurrent_algebraic(vk,core_row,
+            OWNER_GDN(e,layer)->recurrent_state,conv_row,z_row,alpha_row,beta_row,
+            a_decay,dt_bias,norm_weight,48u,16u,128u,1e-6f,err);
+        fg_vk_tensor_destroy(beta_row);fg_vk_tensor_destroy(alpha_row);
+        fg_vk_tensor_destroy(z_row);fg_vk_tensor_destroy(core_row);
+        fg_vk_tensor_destroy(conv_row);fg_vk_tensor_destroy(qkv_row);
+    }
+    if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gdn_output",err);
+    if(status==FG_OK)status=fg_vk_dense_q8_0_b2(vk,e->gdn_output,out_weight,
+        e->gdn_core,6144u,2560u,1.0f,err);
+    status=finish_batch(vk,status,err);
+    if(status==FG_OK)*output=e->gdn_output;
+    return status;
+}
+
+/* Per-token GR write used on QSA layers: the QSA session output is a
+ * per-session tensor, so the residual write stays per token exactly as the
+ * single-token path writes it (the row views alias the two-row ping). */
+static fg_status gr_write_pair_into(fg_owner_executor *e,const fg_vk_tensor *residual2,
+    fg_vk_tensor *const block[2],const fg_vk_tensor *injection2,fg_vk_tensor *destination,
+    fg_error *err){
+    fg_vk_context *vk=fg_model_vk(e->model);
+    fg_status status=FG_OK;
+    for(uint32_t t=0;status==FG_OK&&t<2u;t++){
+        fg_vk_tensor *residual_row=NULL,*injection_row=NULL,*dst_row=NULL;
+        status=row_slice((fg_vk_tensor *)residual2,t,FG_HIDDEN_SIZE,&residual_row,err);
+        if(status==FG_OK)status=row_slice(destination,t,FG_HIDDEN_SIZE,&dst_row,err);
+        if(status==FG_OK)status=row_slice((fg_vk_tensor *)injection2,t,FG_GROUP_SIZE,&injection_row,err);
+        if(status==FG_OK&&!block[t])status=FG_ERR_MISMATCH;
+        if(status==FG_OK)status=fg_vk_gr_write(vk,dst_row,residual_row,block[t],
+            injection_row,FG_HIDDEN_SIZE,4u,1u,err);
+        fg_vk_tensor_destroy(injection_row);fg_vk_tensor_destroy(dst_row);
+        fg_vk_tensor_destroy(residual_row);
+    }
+    return status;
+}
+
+/* Readiness check for the batch block: every weight it dispatches must be in
+ * the cooked ring layout (otherwise the block would silently change a token's
+ * arithmetic).  Returns FG_ERR_UNAVAILABLE so the caller can fall back to the
+ * serial slot loop without touching state. */
+static bool batch_cooked(fg_owner_executor *e,uint32_t layer,const char *name,
+                         fg_error *err){
+    fg_error probe={0};
+    fg_vk_tensor *t=weight(e,layer,name,&probe);
+    if(!t||fg_vk_tensor_get_format(t)!=FG_VK_TENSOR_FORMAT_Q8_0_COOKED){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"batch-2 block layer %u %s is not cooked",
+                     layer,name);
+        return false;
+    }
+    return true;
+}
+
+bool fg_owner_decode_block_batch_ready(fg_owner_executor *e,uint32_t first,uint32_t last,
+    fg_error *err){
+    if(!e||first>last||last>=FG_LAYER_COUNT||e->session_count<2u||e->max_tokens<2u){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"batch-2 owner block is not constructible");
+        return false;
+    }
+    for(uint32_t layer=first;layer<=last;layer++){
+        if(!owns_layer(e,layer)){
+            fg_error_set(err,FG_ERR_UNAVAILABLE,"batch-2 block layer %u is not owned",layer);
+            return false;
+        }
+        const char *hc=(layer&3u)==3u?"hc_ffn":"hc_attn";
+        char hc_down[48],hc_up[48];
+        snprintf(hc_down,sizeof(hc_down),"%s_down.weight",hc);
+        snprintf(hc_up,sizeof(hc_up),"%s_up.weight",hc);
+        if(layer==1u&&(!batch_cooked(e,layer,"ple_key.weight",err)||
+                       !batch_cooked(e,layer,"ple_value.weight",err)))return false;
+        if((layer&3u)!=3u&&(!batch_cooked(e,layer,"attn_qkv.weight",err)||
+                            !batch_cooked(e,layer,"attn_gate.weight",err)||
+                            !batch_cooked(e,layer,"ssm_out.weight",err)))return false;
+        if(!batch_cooked(e,layer,hc_down,err)||!batch_cooked(e,layer,hc_up,err)||
+           !batch_cooked(e,layer,"ffn_gate_shexp.weight",err)||
+           !batch_cooked(e,layer,"ffn_up_shexp.weight",err)||
+           !batch_cooked(e,layer,"ffn_down_shexp.weight",err))return false;
+    }
+    return true;
+}
+
+fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
+    uint32_t last_layer,const uint32_t token_index[2],const uint32_t state_slot[2],
+    const uint32_t positions[2][3],const fg_vk_tensor *hyper_input,
+    const fg_vk_tensor *ngram_embedding,fg_owner_expert_inline_fn expert,
+    void *expert_context,fg_vk_tensor **output,fg_error *err){
+    if(!e||!token_index||!state_slot||!positions||!hyper_input||!expert||!output||
+       first_layer>last_layer||last_layer>=FG_LAYER_COUNT||
+       (first_layer<=1u)!=(ngram_embedding!=NULL)||!owns_layer(e,first_layer)||
+       e->session_count<2u){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid batch-2 owner decode block arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    for(uint32_t t=0;t<2u;t++)
+        if(state_slot[t]>=e->session_count||!session_allocated(e,state_slot[t])){
+            fg_error_set(err,FG_ERR_ARGUMENT,"batch-2 block session %u is not allocated",
+                         state_slot[t]);
+            return FG_ERR_ARGUMENT;
+        }
+    fg_vk_context *vk=fg_model_vk(e->model);
+    fg_status status=ensure_batch_storage(e,err);
+    const fg_vk_tensor *cur=hyper_input;
+    uint32_t cur_ping=UINT32_MAX;
+#define BATCH_NEXT() (cur_ping==UINT32_MAX?(cur_ping=0u,e->batch_ping[0]): \
+    (cur_ping^=1u,e->batch_ping[cur_ping]))
+    for(uint32_t layer=first_layer;status==FG_OK&&layer<=last_layer;layer++){
+        bool qsa=(layer&3u)==3u;
+        const fg_vk_tensor *layer_input=cur;
+        if(layer==1u){
+            if(fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"ple",err);
+            if(status==FG_OK)status=ensure_decode_batch(vk,err);
+            fg_vk_tensor *destination=BATCH_NEXT();
+            if(status==FG_OK)status=ple_decode_into_b2(e,layer_input,ngram_embedding,
+                destination,state_slot,&layer_input,err);
+            if(status==FG_OK)cur=layer_input;
+        }
+        if(status==FG_OK&&fg_vk_profile_active(vk))
+            status=fg_vk_profile_set_scope(vk,"gr_attn_read",err);
+        if(status==FG_OK)status=ensure_decode_batch(vk,err);
+        fg_vk_tensor *mixed=NULL,*injection=NULL;const fg_vk_tensor *residual=NULL;
+        if(status==FG_OK)status=gr_read_batch_into_b2(e,layer,false,layer_input,&mixed,
+            &residual,&injection,err);
+        fg_vk_tensor *qsa_block[2]={NULL,NULL};
+        if(status==FG_OK&&fg_vk_profile_active(vk))
+            status=fg_vk_profile_set_scope(vk,qsa?"qsa":"gdn",err);
+        if(status==FG_OK&&qsa){
+            for(uint32_t t=0;status==FG_OK&&t<2u;t++){
+                fg_vk_tensor *hidden_row=NULL;
+                status=row_slice(e->mixed,t,FG_HIDDEN_SIZE,&hidden_row,err);
+                if(status==FG_OK)status=fg_owner_set_active_session(e,state_slot[t],err);
+                if(status==FG_OK)status=fg_owner_qsa_decode(e,layer,token_index[t],
+                    positions[t],hidden_row,&qsa_block[t],err);
+                fg_vk_tensor_destroy(hidden_row);
+            }
+        }else if(status==FG_OK){
+            fg_vk_tensor *block=NULL;
+            status=gdn_decode_pair_into(e,layer,layer_input,state_slot,&block,err);
+        }
+        if(status==FG_OK&&fg_vk_profile_active(vk))
+            status=fg_vk_profile_set_scope(vk,"gr_attn_write",err);
+        if(status==FG_OK)status=ensure_decode_batch(vk,err);
+        if(status==FG_OK){
+            fg_vk_tensor *destination=BATCH_NEXT();
+            if(qsa){
+                status=gr_write_pair_into(e,cur,qsa_block,injection,destination,err);
+                if(status==FG_OK)cur=destination;
+            }else{
+                /* gdn pair wrote the two-row block into gdn_output. */
+                status=fg_vk_gr_write(vk,destination,cur,e->gdn_output,injection,
+                    FG_HIDDEN_SIZE,4u,2u,err);
+                if(status==FG_OK)cur=destination;
+            }
+        }
+        if(status==FG_OK&&fg_vk_profile_active(vk))
+            status=fg_vk_profile_set_scope(vk,"gr_ffn_read",err);
+        fg_vk_tensor *mixed2=NULL,*injection2=NULL;const fg_vk_tensor *residual2=NULL;
+        if(status==FG_OK)status=gr_read_batch_into_b2(e,layer,true,cur,&mixed2,&residual2,
+            &injection2,err);
+        fg_vk_tensor *router_w=status==FG_OK?weight(e,layer,"ffn_gate_inp.weight",err):NULL;
+        if(status==FG_OK&&!router_w)status=FG_ERR_MISMATCH;
+        if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"router",err);
+        if(status==FG_OK)status=fg_vk_dense_f32(vk,e->router_logits,router_w,mixed2,
+            FG_HIDDEN_SIZE,FG_EXPERT_COUNT,2u,err);
+        if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"router_quantization",err);
+        if(status==FG_OK)fg_vk_next_dispatch_independent(vk);
+        if(status==FG_OK)status=fg_vk_quantize_q8_k(vk,e->activation_q8k,mixed2,
+            FG_HIDDEN_SIZE,2u,err);
+        fg_vk_tensor *shared_gate_w=NULL,*gate_w=NULL,*up_w=NULL,*down_w=NULL;
+        if(status==FG_OK){
+            shared_gate_w=weight(e,layer,"ffn_gate_inp_shexp.weight",err);
+            gate_w=weight(e,layer,"ffn_gate_shexp.weight",err);
+            up_w=weight(e,layer,"ffn_up_shexp.weight",err);
+            down_w=weight(e,layer,"ffn_down_shexp.weight",err);
+            if(!shared_gate_w||!gate_w||!up_w||!down_w)status=FG_ERR_MISMATCH;
+        }
+        if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"shared_expert",err);
+        if(status==FG_OK)status=fg_vk_dense_q8_0_b2(vk,e->shared_gate,gate_w,mixed2,
+            FG_HIDDEN_SIZE,640u,1.0f,err);
+        if(status==FG_OK)fg_vk_next_dispatch_independent(vk);
+        if(status==FG_OK)status=fg_vk_dense_q8_0_b2(vk,e->shared_up,up_w,mixed2,
+            FG_HIDDEN_SIZE,640u,1.0f,err);
+        if(status==FG_OK)fg_vk_next_dispatch_independent(vk);
+        if(status==FG_OK)status=fg_vk_dense_f32(vk,e->shared_scalar,shared_gate_w,mixed2,
+            FG_HIDDEN_SIZE,1u,2u,err);
+        if(status==FG_OK)status=fg_vk_swiglu(vk,e->shared_mid,e->shared_gate,e->shared_up,
+            2u*640u,err);
+        if(status==FG_OK)status=fg_vk_dense_q8_0_b2(vk,e->shared_output,down_w,
+            e->shared_mid,640u,FG_HIDDEN_SIZE,1.0f,err);
+        fg_vk_tensor *expert_output=NULL;
+        if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"expert_decode",err);
+        if(status==FG_OK)status=expert(expert_context,layer,e->activation_q8k,
+            e->router_logits,&expert_output,err);
+        if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"moe_reduce",err);
+        if(status==FG_OK)status=fg_vk_moe_decode_shared_add(vk,e->reduced,expert_output,
+            e->shared_output,e->shared_scalar,FG_HIDDEN_SIZE,2u,err);
+        if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_ffn_write",err);
+        if(status==FG_OK)status=ensure_decode_batch(vk,err);
+        if(status==FG_OK){
+            fg_vk_tensor *destination=BATCH_NEXT();
+            status=fg_vk_gr_write(vk,destination,cur,e->reduced,injection2,
+                FG_HIDDEN_SIZE,4u,2u,err);
+            if(status==FG_OK)cur=destination;
+        }
+    }
+#undef BATCH_NEXT
+    if(status==FG_OK){
+        if(fg_vk_batch_active(vk))status=finish_batch(vk,status,err);
+    }else if(fg_vk_batch_active(vk)){
+        fg_error ignored={0};
+        fg_vk_abort(vk,&ignored);
+    }
+    if(status==FG_OK)*output=cur;
+    return status;
+}
+
 /* One text layer: PLE, GR read, GDN or QSA, GR write, GR read, router, shared
  * expert, GPU-routed expert pair, reduction and the final GR write.  Every
  * non-QSA layer is token-invariant, so a run of them is recorded once into a
@@ -1638,7 +2042,7 @@ static fg_status owner_record_layer(fg_owner_executor *e,uint32_t layer,
         e->router_logits,&expert_output,err);
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"moe_reduce",err);
     if(status==FG_OK)status=fg_vk_moe_decode_shared_add(vk,e->reduced,expert_output,
-        e->shared_output,e->shared_scalar,FG_HIDDEN_SIZE,err);
+        e->shared_output,e->shared_scalar,FG_HIDDEN_SIZE,1u,err);
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_ffn_write",err);
     if(status==FG_OK)status=gr_write_batch_into(e,residual,e->reduced,injection,1u,
         e->hyper_output,e->hyper_output_b,current,err);

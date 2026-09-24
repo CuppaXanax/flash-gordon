@@ -4,9 +4,10 @@ layout(set=0,binding=0)readonly buffer Reduced{float reduced_value[];};
 layout(set=0,binding=1)readonly buffer Shared{float shared_value[];};
 layout(set=0,binding=2)readonly buffer Scalar{float scalar_value[];};
 layout(set=0,binding=3)writeonly buffer Output{float output_value[];};
-layout(push_constant)uniform Push{uint values;}pc;
+layout(push_constant)uniform Push{uint values;uint tokens;}pc;
 void main(){
     uint index=gl_GlobalInvocationID.x;
-    if(index<pc.values)
-        output_value[index]=reduced_value[index]+(1.0/(1.0+exp(-scalar_value[0])))*shared_value[index];
+    if(index>=pc.values*pc.tokens)return;
+    uint token=index/pc.values;
+    output_value[index]=reduced_value[index]+(1.0/(1.0+exp(-scalar_value[token])))*shared_value[index];
 }

@@ -511,6 +511,21 @@ static fg_status chained_decode_expert(void *opaque,uint32_t layer,
         expert_output,err);
 }
 
+/* Batch-2 variant of the chained expert hook: GPU routing stays on the
+ * device, the two tokens share one token-tagged union schedule and one fused
+ * gate/up + down/reduce dispatch pair. */
+static fg_status chained_decode_expert_b2(void *opaque,uint32_t layer,
+    const fg_vk_tensor *activation,const fg_vk_tensor *router_logits,
+    fg_vk_tensor **expert_output,fg_error *err){
+    worker_decode_dispatch *context=opaque;
+    if(!context||!context->expert){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"batch-2 chained decode has no expert executor");
+        return FG_ERR_UNAVAILABLE;
+    }
+    return fg_expert_decode_chain_b2(context->expert,layer,activation,router_logits,
+        expert_output,err);
+}
+
 /* Chaining needs every layer's whole routed expert slab on this rank (the
  * ring pack) and a fusable gate/up/down pair. */
 static bool decode_block_chain_eligible(fg_expert_executor *expert,
@@ -561,10 +576,13 @@ typedef struct layer_work_context {
     fg_decode_batch_result batch_result;
     float *batch_hyper;
     float *batch_ngram;
+    /* Two-row residual input for the depth-B batch-2 block (token-major). */
+    fg_vk_tensor *batch_input;
 } layer_work_context;
 
 static void layer_work_context_destroy(layer_work_context *context){
     if(!context)return;
+    fg_vk_tensor_destroy(context->batch_input);
     fg_vk_tensor_destroy(context->ngram_tensor);
     free(context->batch_ngram);free(context->batch_hyper);
     free(context->ngram);free(context->hyper_out);free(context->hyper_in);
@@ -601,6 +619,11 @@ static fg_status layer_work_context_create(layer_work_context *context,fg_model 
     if(manifest->layer_owner[1u]==(uint8_t)fg_model_rank(model)){
         fg_status status=fg_vk_tensor_create(fg_model_vk(model),
             (uint64_t)tokens*FG_NGRAM_EMBED_VALUES*4u,&context->ngram_tensor,err);
+        if(status!=FG_OK){layer_work_context_destroy(context);return status;}
+    }
+    {
+        fg_status status=fg_vk_tensor_create(fg_model_vk(model),
+            (uint64_t)FG_DECODE_BATCH_MAX_SLOTS*FG_HYPER_WIDTH*4u,&context->batch_input,err);
         if(status!=FG_OK){layer_work_context_destroy(context);return status;}
     }
     context->dispatch.expert=expert;context->dispatch.manifest=manifest;
@@ -1965,6 +1988,11 @@ static fg_status handle_owner_session_transaction(fg_fabric *fabric,
 /* One batch work message: run this rank's whole block for every slot under that
  * slot's owner session, then forward the per-slot hyper states to the next
  * block owner (or hand the final result back to rank 0). */
+/* Test-only A/B switch: `depth-b-selftest --serial-batch` forces the serial
+ * per-slot chained block so the batch-2 block and its reference run the same
+ * harness.  Never set on a serving path. */
+static bool depthb_serial_batch=false;
+
 static fg_status handle_decode_batch_work(fg_fabric *fabric,const fg_manifest *manifest,
     uint32_t self,uint64_t session_id,uint32_t peer,const fg_frame_header *header,
     const uint8_t *payload,uint32_t bytes,layer_work_context *context,
@@ -2004,6 +2032,85 @@ static fg_status handle_decode_batch_work(fg_fabric *fabric,const fg_manifest *m
         return FG_ERR_UNAVAILABLE;
     }
     bool ms=decode_ms_enabled();
+    /* Depth-B batch-2: when both slots can ride one weight pass (cooked ring
+     * pack, single-owner expert slab, both sessions and their QSA state
+     * ready), the block runs both tokens through one layer pass.  Otherwise
+     * the serial per-slot chained block below is the reference path. */
+    bool batch2=false;
+    if(work->slot_count==2u&&context->batch_input&&status==FG_OK&&
+       !depthb_serial_batch){
+        fg_error probe={0};
+        batch2=fg_owner_decode_block_batch_ready(owner,work->layer,last,&probe)&&
+               decode_block_chain_eligible(context->decode_dispatch.expert,manifest,self,
+                                           work->layer,last);
+        if(batch2&&has_ngram&&!context->ngram_tensor)batch2=false;
+        for(uint32_t t=0;batch2&&t<2u;t++){
+            uint32_t slot_session=work->slots[t].state_slot;
+            if(slot_session>=fg_owner_session_count(owner)||
+               (depthb->qsa_layers&&!fg_owner_qsa_ready_slot(owner,slot_session))||
+               !depthb_slot_input(owner,slot_session))batch2=false;
+        }
+    }
+    if(batch2){
+        double t_slot0=ms?dispatch_ts():0.0,t_setup=0.0,t_block=0.0,t_tail=0.0;
+        uint32_t token_index[2],state_slot[2],positions[2][3];
+        for(uint32_t t=0;t<2u;t++){
+            token_index[t]=work->slots[t].token_index;
+            state_slot[t]=work->slots[t].state_slot;
+            for(uint32_t axis=0;axis<3u;axis++)positions[t][axis]=work->slots[t].position[axis];
+            status=fg_vk_tensor_write(context->batch_input,
+                (uint64_t)t*FG_HYPER_WIDTH*4u,work->slots[t].hyper,
+                (uint64_t)FG_HYPER_WIDTH*4u,err);
+            if(status==FG_OK&&has_ngram)status=fg_vk_tensor_write(context->ngram_tensor,
+                (uint64_t)t*FG_NGRAM_EMBED_VALUES*4u,work->slots[t].ngram_embedding,
+                (uint64_t)FG_NGRAM_EMBED_VALUES*4u,err);
+            if(status!=FG_OK)break;
+            numerics_trace_host("FB_IN",self,work->layer,token_index[t],1u,
+                                work->slots[t].hyper);
+        }
+        if(ms)t_setup=dispatch_ts()-t_slot0;
+        fg_vk_tensor *current=NULL;
+        bool profile=status==FG_OK&&decode_profile_enabled();
+        if(profile){
+            fg_error profile_error={0};
+            if(fg_vk_profile_begin(context->vk,&profile_error)!=FG_OK)profile=false;
+        }
+        if(status==FG_OK)status=fg_owner_decode_block_batch(owner,work->layer,last,
+            token_index,state_slot,positions,context->batch_input,
+            has_ngram?context->ngram_tensor:NULL,chained_decode_expert_b2,
+            &context->decode_dispatch,&current,err);
+        if(profile){
+            fg_vk_profile decode_profile={0};fg_error profile_error={0};
+            fg_status profile_status=fg_vk_profile_end(context->vk,&decode_profile,
+                status==FG_OK?err:&profile_error);
+            if(profile_status==FG_OK)
+                fprintf(stderr,"DECODE_BATCH_PROFILE rank=%u token=%u+%u layers=%u..%u "
+                    "union=1 gpu_ms=%.3f submissions=%llu dispatches=%llu\n",self,
+                    token_index[0],token_index[1],(unsigned)work->layer,last,
+                    decode_profile.gpu_ms,
+                    (unsigned long long)decode_profile.submissions,
+                    (unsigned long long)decode_profile.dispatches);
+        }
+        if(ms)t_block=dispatch_ts()-t_slot0-t_setup;
+        for(uint32_t t=0;status==FG_OK&&t<2u;t++){
+            status=fg_vk_tensor_read(current,(uint64_t)t*FG_HYPER_WIDTH*4u,
+                context->batch_result.slots[t].hyper,(uint64_t)FG_HYPER_WIDTH*4u,err);
+            if(status!=FG_OK)break;
+            status=validate_block_hidden(self,token_index[t],last,
+                context->batch_result.slots[t].hyper,err);
+            if(status!=FG_OK)break;
+            numerics_trace_host("FB_OUT",self,last,token_index[t],1u,
+                                context->batch_result.slots[t].hyper);
+            status=worker_publish_qsa_pages(depthb->qsa,owner,self,token_index[t],1u,
+                state_slot[t],err);
+        }
+        if(ms){
+            t_tail=dispatch_ts()-t_slot0-t_setup-t_block;
+            fprintf(stderr,"DECODE_BATCH_WORK_MS rank=%u token=%u+%u union=1 setup_ms=%.3f block_ms=%.3f tail_ms=%.3f total_ms=%.3f\n",
+                    self,token_index[0],token_index[1],t_setup,t_block,t_tail,
+                    t_setup+t_block+t_tail);
+        }
+    }else
     for(uint32_t slot=0;status==FG_OK&&slot<work->slot_count;slot++){
         double t_slot0=ms?dispatch_ts():0.0,t_setup=0.0,t_block=0.0,t_tail=0.0;
         uint32_t state_slot=work->slots[slot].state_slot;
@@ -7149,7 +7256,7 @@ static fg_status depthb_render_prompt(const fg_tokenizer *tokenizer,const char *
 
 fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
                                   uint32_t max_tokens,uint32_t long_tokens,
-                                  uint32_t abort_step,
+                                  uint32_t abort_step,bool serial_batch,
                                   const fg_runtime_options *requested,fg_error *err){
     if(!manifest_path||depth<1u||depth>FG_DECODE_BATCH_MAX_SLOTS||!max_tokens||
        max_tokens+1u>FG_DEPTHB_CAPTURE_MAX){
@@ -7158,6 +7265,8 @@ fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
                      FG_DECODE_BATCH_MAX_SLOTS,FG_DEPTHB_CAPTURE_MAX-1u);
         return FG_ERR_ARGUMENT;
     }
+    depthb_serial_batch=serial_batch;
+    if(serial_batch)fprintf(stderr,"DEPTH_B_SELFTEST serial_batch=1 (reference path)\n");
     fg_runtime *runtime=NULL;
     fg_status status=fg_runtime_open_with_options(&runtime,manifest_path,requested,err);
     if(status==FG_OK&&!(runtime->coordinator.ring_prefill&&runtime->coordinator.ring_decode)){

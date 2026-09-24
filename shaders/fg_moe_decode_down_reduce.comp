@@ -46,6 +46,7 @@ layout(push_constant) uniform Push {
     uint expert_stride;
     uint slots;
     uint down_type;
+    uint token_count;
 } pc;
 
 const uint Q5_1 = 7u;
@@ -54,7 +55,9 @@ const uint INVALID = 0xffffffffu;
 const uint ROWS_PER_WORKGROUP = 16u;
 const uint PARTS = 4u;
 
-shared float partial[64];
+/* Two tokens' partials: 8 rows x 8 lanes (cooked Q8 path) or 16 row-pairs x 4
+   parts (generic path), each within one token's slot of the array. */
+shared float partial[128];
 
 /* One owned 32-value block of a row pair.  The pair's scale/min and fifth-bit
    words are adjacent u32s, so one uvec2 each feeds both rows; the four
@@ -119,47 +122,53 @@ void main() {
         uint row_tile8 = row8 >> 4u;
         uint tile_row8 = row8 & 15u;
         uint quant_offset8 = (pc.blocks * 32u + 63u) & ~63u;
-        float accumulator_lo = 0.0;
-        float accumulator_hi = 0.0;
-        if (live8) {
-            for (uint slot = 0u; slot < pc.slots; slot++) {
-                uint tile_base = slot * TILE_WORDS;
-                uint expert = tiles[tile_base];
-                if (expert == INVALID) continue;
-                uint pair = tiles[tile_base + 1u];
-                if (pair == INVALID) continue;
-                float gate = gates[slot];
-                uint row_base = expert * pc.expert_stride + row_tile8 * pc.tile_bytes;
-                uint input_base = pair * (pc.in_dim >> 2u);
-                uint scale_word = (row_base + tile_row8 * 2u) >> 2u;
-                uint quant_word = (row_base + quant_offset8 + tile_row8 * pc.blocks * 32u + lane4 * 8u) >> 2u;
-                uint in_vec = input_base + lane4 * 2u;
-                bool upper = (tile_row8 & 1u) != 0u;
-                float slot_lo = 0.0;
-                float slot_hi = 0.0;
-                for (uint block = 0u; block < pc.blocks; block++) {
-                    vec2 scale = unpackHalf2x16(wb[scale_word]);
-                    uvec2 packed = wv[quant_word >> 1u];
-                    float delta = upper ? scale.y : scale.x;
-                    slot_lo = fma(delta, dot4f(packed.x, x4[in_vec]), slot_lo);
-                    slot_hi = fma(delta, dot4f(packed.y, x4[in_vec + 1u]), slot_hi);
-                    scale_word += 8u;
-                    quant_word += 8u;
-                    in_vec += 8u;
+        for (uint token = 0u; token < pc.token_count; token++) {
+            float accumulator_lo = 0.0;
+            float accumulator_hi = 0.0;
+            if (live8) {
+                for (uint slot = 0u; slot < pc.slots; slot++) {
+                    uint tile_base = slot * TILE_WORDS;
+                    uint expert = tiles[tile_base];
+                    if (expert == INVALID) continue;
+                    uint tile_token = tiles[tile_base + 2u];
+                    if (tile_token != INVALID && tile_token != token) continue;
+                    uint pair = tiles[tile_base + 1u];
+                    if (pair == INVALID) continue;
+                    float gate = gates[slot];
+                    uint row_base = expert * pc.expert_stride + row_tile8 * pc.tile_bytes;
+                    uint input_base = pair * (pc.in_dim >> 2u);
+                    uint scale_word = (row_base + tile_row8 * 2u) >> 2u;
+                    uint quant_word = (row_base + quant_offset8 + tile_row8 * pc.blocks * 32u + lane4 * 8u) >> 2u;
+                    uint in_vec = input_base + lane4 * 2u;
+                    bool upper = (tile_row8 & 1u) != 0u;
+                    float slot_lo = 0.0;
+                    float slot_hi = 0.0;
+                    for (uint block = 0u; block < pc.blocks; block++) {
+                        vec2 scale = unpackHalf2x16(wb[scale_word]);
+                        uvec2 packed = wv[quant_word >> 1u];
+                        float delta = upper ? scale.y : scale.x;
+                        slot_lo = fma(delta, dot4f(packed.x, x4[in_vec]), slot_lo);
+                        slot_hi = fma(delta, dot4f(packed.y, x4[in_vec + 1u]), slot_hi);
+                        scale_word += 8u;
+                        quant_word += 8u;
+                        in_vec += 8u;
+                    }
+                    accumulator_lo = fma(gate, slot_lo, accumulator_lo);
+                    accumulator_hi = fma(gate, slot_hi, accumulator_hi);
                 }
-                accumulator_lo = fma(gate, slot_lo, accumulator_lo);
-                accumulator_hi = fma(gate, slot_hi, accumulator_hi);
             }
-        }
-        partial[(local_id >> 2u) * 8u + lane4 * 2u] = accumulator_lo;
-        partial[(local_id >> 2u) * 8u + lane4 * 2u + 1u] = accumulator_hi;
-        barrier();
-        if (live8 && lane4 == 0u) {
-            uint offset = (local_id >> 2u) * 8u;
-            y[row8] = ((partial[offset] + partial[offset + 4u]) +
-                       (partial[offset + 2u] + partial[offset + 6u])) +
-                      ((partial[offset + 1u] + partial[offset + 5u]) +
-                       (partial[offset + 3u] + partial[offset + 7u]));
+            uint row_offset = (token * 8u + (local_id >> 2u)) * 8u;
+            partial[row_offset + lane4 * 2u] = accumulator_lo;
+            partial[row_offset + lane4 * 2u + 1u] = accumulator_hi;
+            barrier();
+            if (live8 && lane4 == 0u) {
+                y[token * pc.out_dim + row8] =
+                    ((partial[row_offset] + partial[row_offset + 4u]) +
+                     (partial[row_offset + 2u] + partial[row_offset + 6u])) +
+                    ((partial[row_offset + 1u] + partial[row_offset + 5u]) +
+                     (partial[row_offset + 3u] + partial[row_offset + 7u]));
+            }
+            barrier();
         }
         return;
     }
@@ -170,12 +179,15 @@ void main() {
     uint seg = part & 1u;
     uint parity = part >> 1u;
 
+    for (uint token = 0u; token < pc.token_count; token++) {
     float accumulator = 0.0;
     float accumulator_pair = 0.0;
     for (uint slot = 0u; slot < pc.slots; slot++) {
         uint tile_base = slot * TILE_WORDS;
         uint expert = tiles[tile_base];
         if (expert == INVALID) continue;
+        uint tile_token = tiles[tile_base + 2u];
+        if (tile_token != INVALID && tile_token != token) continue;
         uint pair = tiles[tile_base + 1u];
         if (pair == INVALID) continue;
         if (!row_live) continue;
@@ -271,18 +283,20 @@ void main() {
         accumulator_pair = fma(gate, slot_acc_pair, accumulator_pair);
     }
 
-    partial[(pair_slot * 2u) * PARTS + part] = accumulator;
-    partial[(pair_slot * 2u + 1u) * PARTS + part] = accumulator_pair;
+    uint row_offset = (token * ROWS_PER_WORKGROUP + pair_slot * 2u) * PARTS;
+    partial[row_offset + part] = accumulator;
+    partial[row_offset + PARTS + part] = accumulator_pair;
     barrier();
     if (row_live && part == 0u) {
-        uint offset = (pair_slot * 2u) * PARTS;
-        y[row] = (partial[offset] + partial[offset + 1u]) +
-            (partial[offset + 2u] + partial[offset + 3u]);
+        y[token * pc.out_dim + row] = (partial[row_offset] + partial[row_offset + 1u]) +
+            (partial[row_offset + 2u] + partial[row_offset + 3u]);
         uint pair_row = row + 1u;
         if (pair_row < pc.out_dim) {
-            uint pair_offset = offset + PARTS;
-            y[pair_row] = (partial[pair_offset] + partial[pair_offset + 1u]) +
+            uint pair_offset = row_offset + PARTS;
+            y[token * pc.out_dim + pair_row] = (partial[pair_offset] + partial[pair_offset + 1u]) +
                 (partial[pair_offset + 2u] + partial[pair_offset + 3u]);
         }
+    }
+    barrier();
     }
 }

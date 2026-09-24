@@ -263,6 +263,24 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *executor,uint32_t fir
                                         const fg_vk_tensor *ngram_embedding,
                                         fg_owner_expert_inline_fn expert,void *expert_context,
                                         fg_vk_tensor **output,fg_error *err);
+/* Depth-B batch-2 block: two slots' tokens through one layer pass per layer.
+ * `hyper_input` is a two-row residual (token-major), `ngram_embedding` is a
+ * two-row n-gram embedding when the range includes layer 1, and `output` is
+ * the two-row residual after `last_layer`.  The expert callback receives the
+ * two-row activation/router tensors and must leave two gate-weighted hidden
+ * rows (the fg_expert_decode_chain_b2 contract).  Eligibility is
+ * fg_owner_decode_block_batch_ready; an ineligible range must fall back to the
+ * per-slot chained block. */
+bool fg_owner_decode_block_batch_ready(fg_owner_executor *executor,uint32_t first_layer,
+                                       uint32_t last_layer,fg_error *err);
+fg_status fg_owner_decode_block_batch(fg_owner_executor *executor,uint32_t first_layer,
+                                      uint32_t last_layer,const uint32_t token_index[2],
+                                      const uint32_t state_slot[2],
+                                      const uint32_t positions[2][3],
+                                      const fg_vk_tensor *hyper_input,
+                                      const fg_vk_tensor *ngram_embedding,
+                                      fg_owner_expert_inline_fn expert,void *expert_context,
+                                      fg_vk_tensor **output,fg_error *err);
 fg_status fg_owner_decode_layer_finish(fg_owner_executor *executor,uint32_t slot,
                                        fg_vk_tensor **output,fg_error *err);
 fg_status fg_owner_prefill_layer(fg_owner_executor *executor,uint32_t layer,

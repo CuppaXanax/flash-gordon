@@ -152,7 +152,7 @@ int sum32(uint packed) {
         uvec4 uhw = uvec4(0u); \
         if (G5V) ghw = gwv[gh_vec + block * gq_step]; \
         if (U5V) uhw = uwv[uh_vec + block * uq_step]; \
-        uint act_vec = (block * Q8K_WORDS) >> 1u; \
+        uint act_vec = (act_token_base + block * Q8K_WORDS) >> 1u; \
         uvec2 a01 = q8p[act_vec + act_a0]; \
         uvec2 a23 = q8p[act_vec + act_a0 + 1u]; \
         uvec2 b01 = q8p[act_vec + act_b0]; \
@@ -164,7 +164,7 @@ int sum32(uint packed) {
         FG_KWORD(1, G5V, U5V) \
         FG_KWORD(2, G5V, U5V) \
         FG_KWORD(3, G5V, U5V) \
-        float act_delta = uintBitsToFloat(q8[block * Q8K_WORDS]); \
+        float act_delta = uintBitsToFloat(q8[act_token_base + block * Q8K_WORDS]); \
         gate_acc = fma(gdm.x * act_delta, gma.x * gia + gmb.x * gib, gate_acc); \
         up_acc = fma(udm.x * act_delta, uma.x * uia + umb.x * uib, up_acc); \
         if (sub == 0u) { \
@@ -187,6 +187,12 @@ void main() {
     uint expert = tiles[tile_base];
     uint pair = tiles[tile_base + 1u];
     if (expert == INVALID || pair == INVALID) return;
+    /* Token tag: INVALID (single-token schedule) means token 0.  A batch-2
+       union schedule tags each of the 2*TOP_K tiles with its token, so the
+       shared activation buffer is indexed at the token's q8_k row. */
+    uint token = tiles[tile_base + 2u];
+    if (token == INVALID) token = 0u;
+    uint act_token_base = token * Q8K_WORDS;
 
     bool row_live = row < pc.out_dim;
     bool gate_q5 = pc.gate_type == Q5_K;
@@ -240,7 +246,7 @@ void main() {
             uint gate_q8_base = expert * pc.gate_stride + row_tile_q8 * pc.gate_tile_bytes;
             uint up_q8_base = expert * pc.up_stride + row_tile_q8 * pc.up_tile_bytes;
             for (uint block = 0u; block < pc.blocks; block++) {
-                uint act_base = block * Q8K_WORDS;
+                uint act_base = act_token_base + block * Q8K_WORDS;
                 if (gate_active) {
                     uint gb = gate_row_base + block * gate_block_bytes;
                     uint act_vec = act_base >> 1u;
