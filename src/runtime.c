@@ -6799,7 +6799,7 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
     depthb_capture expected_x={0},expected_y={0},actual_x={0},actual_y={0};
     double b1_wall=0.0,b2_wall=0.0;
     *pass=false;
-    /* Phase 1a: Y alone in owner session 1. */
+    /* Phase 1a: Y alone in owner session 1 on a pristine session. */
     fprintf(stderr,"DEPTH_B_SELFTEST case=%s phase=reset\n",name);
     if(status==FG_OK)status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
     if(status==FG_OK)status=coordinator_owner_transaction(&runtime->coordinator,
@@ -6811,13 +6811,13 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
     if(status==FG_OK){
         expected_y.state_digest=depthb_session_digest(runtime,1u,&expected_y.state_valid);
         depthb_capture_cursors(runtime,1u,&expected_y);
-        status=coordinator_owner_transaction(&runtime->coordinator,
-            FG_OWNER_SESSION_RESTORE,1u,err);
     }
-    /* Phase 1b: X alone in owner session 0, snapshotted so the B=2 pass can
-     * return session 0 to the exact pre-run state. */
-    if(status==FG_OK)status=coordinator_owner_transaction(&runtime->coordinator,
-        FG_OWNER_SESSION_PREPARE,0u,err);
+    /* Phase 1b: X alone in owner session 0 on a pristine session.  A full reset
+     * (BEGIN) recreates the QSA state, so the batch phase's prefills below see
+     * exactly the conditions this capture saw.  RESTORE-only rollback is not
+     * enough: it rolls the frontier back but leaves the aborted tail records in
+     * the QSA store, which perturbs a later prefill's partial block. */
+    if(status==FG_OK)status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
     if(status==FG_OK)status=depthb_decode_b1(runtime,0u,prompt_x,max_tokens,&expected_x,
                                              measure?&b1_wall:NULL,err);
     if(status==FG_OK)fprintf(stderr,"DEPTH_B_SELFTEST case=%s phase=b1-x-done tokens=%u\n",
@@ -6825,10 +6825,10 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
     if(status==FG_OK){
         expected_x.state_digest=depthb_session_digest(runtime,0u,&expected_x.state_valid);
         depthb_capture_cursors(runtime,0u,&expected_x);
-        status=coordinator_owner_transaction(&runtime->coordinator,
-            FG_OWNER_SESSION_RESTORE,0u,err);
     }
-    /* Phase 2 setup: both sessions at their prefilled frontiers. */
+    /* Phase 2 setup: a fresh session, then both sequences at their prefilled
+     * frontiers (Y in session 1, X in session 0). */
+    if(status==FG_OK)status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
     if(status==FG_OK)status=coordinator_owner_transaction(&runtime->coordinator,
         FG_OWNER_SESSION_PREPARE,1u,err);
     uint32_t g0_x=0,g0_y=0;float logit_x=0.0f,logit_y=0.0f;
