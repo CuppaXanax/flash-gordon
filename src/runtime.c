@@ -2825,7 +2825,7 @@ static fg_status qsa_page_transport_ensure(qsa_page_transport *transport,fg_erro
 }
 
 #define FG_PREFILL_FRAMES 8u
-typedef struct fg_coordinator {const fg_manifest *manifest;fg_runtime_options options;fg_session_identity identity;fg_model *model;fg_expert_executor *expert;fg_owner_executor *owner;fg_fabric *fabric;fg_ngram_store *ngram;fg_tokenizer *tokenizer;prefill_worker_buffers prefill_expert[FG_PREFILL_FRAMES];prefill_layer_buffers prefill_layer[FG_PREFILL_FRAMES];qsa_page_transport qsa_pages;uint64_t session_id;uint8_t *async_recv_payloads[FG_GROUP_SIZE];const char *directory;atomic_uint transport_state;fg_sampler_config sampler;fg_sampler_state sampler_state;bool ring_prefill;fg_vk_tensor *ring_output[FG_PREFILL_FRAMES];bool ring_decode;uint8_t *decode_work_wire,*decode_result_wire;fg_layer_work decode_work;fg_layer_result decode_result;fg_output_slice *output_slice;depthb_owner_runtime depthb;layer_work_context depthb_work;uint32_t depthb_generation;uint32_t output_session;bool depthb_relay_only;bool depthb_restore_pending;char ledger[FG_LEDGER_LINE_MAX];} fg_coordinator;
+typedef struct fg_coordinator {const fg_manifest *manifest;fg_runtime_options options;fg_session_identity identity;fg_model *model;fg_expert_executor *expert;fg_owner_executor *owner;fg_fabric *fabric;fg_ngram_store *ngram;fg_tokenizer *tokenizer;prefill_worker_buffers prefill_expert[FG_PREFILL_FRAMES];prefill_layer_buffers prefill_layer[FG_PREFILL_FRAMES];qsa_page_transport qsa_pages;uint64_t session_id;uint8_t *async_recv_payloads[FG_GROUP_SIZE];const char *directory;atomic_uint transport_state;fg_sampler_config sampler;fg_sampler_state sampler_state;bool ring_prefill;fg_vk_tensor *ring_output[FG_PREFILL_FRAMES];bool ring_decode;uint8_t *decode_work_wire,*decode_result_wire;fg_layer_work decode_work;fg_layer_result decode_result;fg_output_slice *output_slice;depthb_owner_runtime depthb;layer_work_context depthb_work;uint32_t depthb_generation;uint32_t output_session;bool depthb_restore_pending;char ledger[FG_LEDGER_LINE_MAX];} fg_coordinator;
 
 static uint64_t coordinator_prefill_host_bytes(const prefill_worker_buffers *buffers){
     if(!buffers)return 0;
@@ -5003,7 +5003,7 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
         fg_error_set(err,FG_ERR_MISMATCH,"coordinator ring decode input storage is unavailable");
         return FG_ERR_MISMATCH;
     }
-    bool direct=decode_direct_output_eligible(manifest)&&!coordinator->depthb_relay_only;
+    bool direct=decode_direct_output_eligible(manifest);
     bool trace=decode_ring_trace_enabled();double t0=trace?dispatch_ts():0.0;
     double t_embed=0.0,t_ngram=0.0;
     fg_vk_tensor *ngram_view=NULL;
@@ -6781,11 +6781,14 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
     double b1_wall=0.0,b2_wall=0.0;
     *pass=false;
     /* Phase 1a: Y alone in owner session 1. */
+    fprintf(stderr,"DEPTH_B_SELFTEST case=%s phase=reset\n",name);
     if(status==FG_OK)status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
     if(status==FG_OK)status=coordinator_owner_transaction(&runtime->coordinator,
         FG_OWNER_SESSION_PREPARE,1u,err);
     if(status==FG_OK)status=depthb_decode_b1(runtime,1u,prompt_y,max_tokens,&expected_y,
                                              measure?&b1_wall:NULL,err);
+    if(status==FG_OK)fprintf(stderr,"DEPTH_B_SELFTEST case=%s phase=b1-y-done tokens=%u\n",
+                             name,expected_y.count);
     if(status==FG_OK){
         expected_y.state_digest=depthb_session_digest(runtime,1u,&expected_y.state_valid);
         depthb_capture_cursors(runtime,1u,&expected_y);
@@ -6798,6 +6801,8 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
         FG_OWNER_SESSION_PREPARE,0u,err);
     if(status==FG_OK)status=depthb_decode_b1(runtime,0u,prompt_x,max_tokens,&expected_x,
                                              measure?&b1_wall:NULL,err);
+    if(status==FG_OK)fprintf(stderr,"DEPTH_B_SELFTEST case=%s phase=b1-x-done tokens=%u\n",
+                             name,expected_x.count);
     if(status==FG_OK){
         expected_x.state_digest=depthb_session_digest(runtime,0u,&expected_x.state_valid);
         depthb_capture_cursors(runtime,0u,&expected_x);
@@ -6844,6 +6849,8 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
     uint32_t expected_steps=max_tokens-1u;
     uint32_t steps_done=0;
     bool injected=false;
+    fprintf(stderr,"DEPTH_B_SELFTEST case=%s phase=batch-start steps=%u\n",name,
+            expected_steps);
     double b2_start=dispatch_ts();
     while(status==FG_OK&&steps_done<expected_steps){
         uint64_t now=(uint64_t)steps_done+1u;
@@ -7005,9 +7012,6 @@ fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
                      "depth-b-selftest requires ring prefill and ring decode");
         status=FG_ERR_UNAVAILABLE;
     }
-    /* Sample through the rank-0 relay for both depths so the parity comparison
-     * is not confounded by the direct 4-way output path. */
-    if(status==FG_OK)runtime->coordinator.depthb_relay_only=true;
     static const char prompt_12[]="What is 6 times 2? Answer with the number only.";
     static const char prompt_paris[]=
         "What is the capital of France? Answer with the city name only.";
