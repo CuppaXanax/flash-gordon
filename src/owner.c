@@ -1610,26 +1610,6 @@ static fg_status row_slice(fg_vk_tensor *base,uint32_t row,uint32_t width,
     return fg_vk_tensor_view(base,(uint64_t)row*width*4u,(uint64_t)width*4u,out,err);
 }
 
-/* Numerics bisect helpers: drain the recording, then hash one token row of a
- * per-layer intermediate tensor.  Diagnostic only (FG_NUMERICS_TRACE). */
-static void diag_drain(fg_vk_context *vk){
-    if(!vk)return;
-    fg_error ignored={0};
-    while(fg_vk_batch_active(vk)){
-        fg_status pending=fg_vk_end(vk,&ignored);
-        if(pending!=FG_OK)break;
-    }
-}
-static void diag_row(const char *phase,fg_owner_executor *e,uint32_t layer,
-    uint32_t token,const fg_vk_tensor *tensor,uint32_t row,uint32_t width){
-    if(!numerics_trace_enabled()||!tensor)return;
-    fg_error ignored={0};
-    fg_vk_tensor *view=NULL;
-    if(row_slice((fg_vk_tensor *)tensor,row,width,&view,&ignored)!=FG_OK)return;
-    numerics_trace_tensor(phase,fg_model_rank(e->model),layer,token,1u,view,&ignored);
-    fg_vk_tensor_destroy(view);
-}
-
 /* GR read for the token pair: identical layout to gr_read_batch_into with
  * token_count=2, but the HC down projection goes through the split+SiLU
  * kernel (the exact arithmetic the single-token decode uses) with two token
@@ -1893,11 +1873,6 @@ fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
         fg_vk_tensor *mixed=NULL,*injection=NULL;const fg_vk_tensor *residual=NULL;
         if(status==FG_OK)status=gr_read_batch_into_b2(e,layer,false,layer_input,&mixed,
             &residual,&injection,err);
-        if(status==FG_OK&&numerics_trace_enabled()){
-            diag_drain(vk);
-            diag_row("BAT_MIXED1",e,layer,token_index[0],mixed,0u,FG_HIDDEN_SIZE);
-            diag_row("BAT_MIXED1",e,layer,token_index[1],mixed,1u,FG_HIDDEN_SIZE);
-        }
         fg_vk_tensor *qsa_block[2]={NULL,NULL};
         if(status==FG_OK&&fg_vk_profile_active(vk))
             status=fg_vk_profile_set_scope(vk,qsa?"qsa":"gdn",err);
@@ -1916,16 +1891,6 @@ fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
             fg_vk_tensor *block=NULL;
             status=gdn_decode_pair_into(e,layer,layer_input,state_slot,&block,err);
         }
-        if(status==FG_OK&&numerics_trace_enabled()){
-            diag_drain(vk);
-            if(qsa){
-                diag_row("BAT_BLOCK",e,layer,token_index[0],qsa_block[0],0u,FG_HIDDEN_SIZE);
-                diag_row("BAT_BLOCK",e,layer,token_index[1],qsa_block[1],0u,FG_HIDDEN_SIZE);
-            }else{
-                diag_row("BAT_BLOCK",e,layer,token_index[0],e->gdn_output,0u,FG_HIDDEN_SIZE);
-                diag_row("BAT_BLOCK",e,layer,token_index[1],e->gdn_output,1u,FG_HIDDEN_SIZE);
-            }
-        }
         if(status==FG_OK&&fg_vk_profile_active(vk))
             status=fg_vk_profile_set_scope(vk,"gr_attn_write",err);
         if(status==FG_OK)status=ensure_decode_batch(vk,err);
@@ -1941,21 +1906,11 @@ fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
                 if(status==FG_OK)cur=destination;
             }
         }
-        if(status==FG_OK&&numerics_trace_enabled()){
-            diag_drain(vk);
-            diag_row("BAT_AFTER_ATTN",e,layer,token_index[0],cur,0u,FG_HYPER_WIDTH);
-            diag_row("BAT_AFTER_ATTN",e,layer,token_index[1],cur,1u,FG_HYPER_WIDTH);
-        }
         if(status==FG_OK&&fg_vk_profile_active(vk))
             status=fg_vk_profile_set_scope(vk,"gr_ffn_read",err);
         fg_vk_tensor *mixed2=NULL,*injection2=NULL;const fg_vk_tensor *residual2=NULL;
         if(status==FG_OK)status=gr_read_batch_into_b2(e,layer,true,cur,&mixed2,&residual2,
             &injection2,err);
-        if(status==FG_OK&&numerics_trace_enabled()){
-            diag_drain(vk);
-            diag_row("BAT_MIXED2",e,layer,token_index[0],mixed2,0u,FG_HIDDEN_SIZE);
-            diag_row("BAT_MIXED2",e,layer,token_index[1],mixed2,1u,FG_HIDDEN_SIZE);
-        }
         fg_vk_tensor *router_w=status==FG_OK?weight(e,layer,"ffn_gate_inp.weight",err):NULL;
         if(status==FG_OK&&!router_w)status=FG_ERR_MISMATCH;
         if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"router",err);
@@ -1993,11 +1948,6 @@ fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
         if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"moe_reduce",err);
         if(status==FG_OK)status=fg_vk_moe_decode_shared_add(vk,e->reduced,expert_output,
             e->shared_output,e->shared_scalar,FG_HIDDEN_SIZE,2u,err);
-        if(status==FG_OK&&numerics_trace_enabled()){
-            diag_drain(vk);
-            diag_row("BAT_REDUCED",e,layer,token_index[0],e->reduced,0u,FG_HIDDEN_SIZE);
-            diag_row("BAT_REDUCED",e,layer,token_index[1],e->reduced,1u,FG_HIDDEN_SIZE);
-        }
         if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_ffn_write",err);
         if(status==FG_OK)status=ensure_decode_batch(vk,err);
         if(status==FG_OK){
@@ -2005,20 +1955,6 @@ fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
             status=fg_vk_gr_write(vk,destination,cur,e->reduced,injection2,
                 FG_HIDDEN_SIZE,4u,2u,err);
             if(status==FG_OK)cur=destination;
-        }
-        /* Numerics bisect: one hash per token row after each layer, matching
-         * the single-token FG_NUMERICS_LAYER trace.  Diagnostic only. */
-        if(status==FG_OK&&numerics_trace_enabled()){
-            fg_error ignored={0};
-            while(fg_vk_batch_active(vk)){fg_status pending=fg_vk_end(vk,&ignored);if(pending!=FG_OK)break;}
-            for(uint32_t t=0;t<2u;t++){
-                fg_vk_tensor *row=NULL;
-                if(row_slice((fg_vk_tensor *)cur,t,FG_HYPER_WIDTH,&row,&ignored)==FG_OK){
-                    numerics_trace_tensor("BATCH_LAYER",fg_model_rank(e->model),layer,
-                                          token_index[t],1u,row,&ignored);
-                    fg_vk_tensor_destroy(row);
-                }
-            }
         }
     }
 #undef BATCH_NEXT
@@ -2068,26 +2004,18 @@ static fg_status owner_record_layer(fg_owner_executor *e,uint32_t layer,
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_attn_read",err);
     if(status==FG_OK)status=gr_read_batch_into(e,layer,false,layer_input,1u,
         e->injection,&mixed,&residual,&injection,err);
-    if(status==FG_OK&&numerics_trace_enabled()){diag_drain(vk);
-        numerics_trace_tensor("SER_MIXED1",fg_model_rank(e->model),layer,token,1u,mixed,err);}
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,
         (layer&3u)==3u?"qsa":"gdn",err);
     if(status==FG_OK&&(layer&3u)==3u)
         status=fg_owner_qsa_decode(e,layer,token,position,mixed,&block,err);
     else if(status==FG_OK)status=fg_owner_gdn_decode(e,layer,mixed,&block,err);
-    if(status==FG_OK&&numerics_trace_enabled()){diag_drain(vk);
-        numerics_trace_tensor("SER_BLOCK",fg_model_rank(e->model),layer,token,1u,block,err);}
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_attn_write",err);
     if(status==FG_OK)status=gr_write_batch_into(e,residual,block,injection,1u,
         e->hyper_output,e->hyper_output_b,&after_attention,err);
-    if(status==FG_OK&&numerics_trace_enabled()){diag_drain(vk);
-        numerics_trace_tensor("SER_AFTER_ATTN",fg_model_rank(e->model),layer,token,1u,
                               after_attention,err);}
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_ffn_read",err);
     if(status==FG_OK)status=gr_read_batch_into(e,layer,true,after_attention,1u,
         e->injection,&mixed,&residual,&injection,err);
-    if(status==FG_OK&&numerics_trace_enabled()){diag_drain(vk);
-        numerics_trace_tensor("SER_MIXED2",fg_model_rank(e->model),layer,token,1u,mixed,err);}
     fg_vk_tensor *router_w=status==FG_OK?weight(e,layer,"ffn_gate_inp.weight",err):NULL;
     if(status==FG_OK&&!router_w)status=FG_ERR_MISMATCH;
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"router",err);
@@ -2125,14 +2053,10 @@ static fg_status owner_record_layer(fg_owner_executor *e,uint32_t layer,
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"moe_reduce",err);
     if(status==FG_OK)status=fg_vk_moe_decode_shared_add(vk,e->reduced,expert_output,
         e->shared_output,e->shared_scalar,FG_HIDDEN_SIZE,1u,err);
-    if(status==FG_OK&&numerics_trace_enabled()){diag_drain(vk);
-        numerics_trace_tensor("SER_REDUCED",fg_model_rank(e->model),layer,token,1u,
                               e->reduced,err);}
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_ffn_write",err);
     if(status==FG_OK)status=gr_write_batch_into(e,residual,e->reduced,injection,1u,
         e->hyper_output,e->hyper_output_b,current,err);
-    if(status==FG_OK&&numerics_trace_enabled()){diag_drain(vk);
-        numerics_trace_tensor("SER_LAYER_OUT",fg_model_rank(e->model),layer,token,1u,
                               *current,err);}
     return status;
 }
