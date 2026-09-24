@@ -6747,9 +6747,9 @@ static fg_status depthb_long_prompt(const fg_tokenizer *tokenizer,uint32_t targe
 
 static bool depthb_capture_equal(const depthb_capture *expected,
                                  const depthb_capture *actual,uint32_t from,
-                                 bool *logits_match,uint32_t *first_bad){
+                                 uint32_t limit,bool *logits_match,uint32_t *first_bad){
     *logits_match=true;
-    for(uint32_t i=from;i<expected->count;i++){
+    for(uint32_t i=from;i<limit;i++){
         if(expected->token[i]!=actual->token[i]){
             *first_bad=i;
             return false;
@@ -6832,6 +6832,7 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
     }
     fg_decode_batch_table table;
     fg_decode_batch_policy policy;
+    fg_decode_batch_policy_default(&policy);
     if(status==FG_OK)status=fg_decode_batch_table_init(&table,depth,err);
     if(status==FG_OK)status=fg_decode_batch_sequence_enter(&table,FG_DEPTHB_SEQ_X,0u,err);
     if(status==FG_OK)status=fg_decode_batch_sequence_enter(&table,FG_DEPTHB_SEQ_Y,1u,err);
@@ -6915,16 +6916,14 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
     bool x_state_match=false,y_state_match=false,x_qsa_match=false,y_qsa_match=false;
     uint32_t x_bad=0,y_bad=0;
     if(status==FG_OK){
-        if(expected_x.count!=actual_x.count+1u||expected_y.count!=actual_y.count+1u){
-            fg_error_set(err,FG_ERR_MISMATCH,
-                "depth-B parity token counts disagree: x=%u/%u y=%u/%u",
-                expected_x.count,actual_x.count+1u,expected_y.count,actual_y.count+1u);
-            status=FG_ERR_MISMATCH;
-        }
-    }
-    if(status==FG_OK){
-        x_token_match=depthb_capture_equal(&expected_x,&actual_x,1u,&x_logit_match,&x_bad);
-        y_token_match=depthb_capture_equal(&expected_y,&actual_y,1u,&y_logit_match,&y_bad);
+        uint32_t x_actual=actual_x.count+1u,y_actual=actual_y.count+1u;
+        uint32_t x_limit=expected_x.count<x_actual?expected_x.count:x_actual;
+        uint32_t y_limit=expected_y.count<y_actual?expected_y.count:y_actual;
+        x_token_match=depthb_capture_equal(&expected_x,&actual_x,1u,x_limit,
+                                           &x_logit_match,&x_bad);
+        y_token_match=depthb_capture_equal(&expected_y,&actual_y,1u,y_limit,
+                                           &y_logit_match,&y_bad);
+        bool counts_match=expected_x.count==x_actual&&expected_y.count==y_actual;
         bool g0_x_match=expected_x.token[0]==g0_x&&
             memcmp(&expected_x.logit_bits[0],&logit_x,4u)==0;
         bool g0_y_match=expected_y.token[0]==g0_y&&
@@ -6939,8 +6938,8 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
             expected_x.qsa_valid&&memcmp(xc,expected_x.qsa_cursor,sizeof(xc))==0;
         y_qsa_match=fg_owner_qsa_frontier(runtime->coordinator.owner,1u,yc)==FG_OK&&
             expected_y.qsa_valid&&memcmp(yc,expected_y.qsa_cursor,sizeof(yc))==0;
-        bool pass_case=x_token_match&&y_token_match&&x_logit_match&&y_logit_match&&
-            x_state_match&&y_state_match&&x_qsa_match&&y_qsa_match&&
+        bool pass_case=counts_match&&x_token_match&&y_token_match&&x_logit_match&&
+            y_logit_match&&x_state_match&&y_state_match&&x_qsa_match&&y_qsa_match&&
             g0_x_match&&g0_y_match;
         fprintf(stderr,"DEPTH_B_SELFTEST case=%s depth=%u steps=%u scheduled=%u "
             "x_tokens=%u y_tokens=%u x_token_match=%d y_token_match=%d "
