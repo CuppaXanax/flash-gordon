@@ -49,6 +49,7 @@ typedef struct fg_vk_descriptor_cache {
 struct fg_vk_context {
     VkInstance instance;VkPhysicalDevice physical;VkDevice device;VkQueue queue;uint32_t queue_family;
     VkCommandPool command_pool;VkCommandBuffer command;VkFence fence;VkFence expert_fence;bool expert_fence_pending;VkDescriptorPool descriptor_pool;VkDescriptorPool static_descriptor_pool;VkDescriptorSetLayout descriptor_set_layout;VkPipelineCache pipeline_cache;
+    VkCommandPool copy_pool;VkCommandBuffer copy_command;VkFence copy_fence;
     VkCommandBuffer command_alt;VkFence fence_alt;VkFence pending_fences[2];uint32_t pending_fence_count;bool pipeline_ready;double record_start_s;
     VkSemaphore flush_semaphores[2];VkSemaphore pipelined_semaphore;bool pipelined_semaphore_valid;uint32_t flush_semaphore_slot;
     VkCommandBuffer static_command[FG_VK_STATIC_SLOTS];VkFence static_fence[FG_VK_STATIC_SLOTS];
@@ -254,7 +255,7 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
     *out=c;return FG_OK;
 }
 
-void fg_vk_close(fg_vk_context *c){if(!c)return;if(c->device)vkDeviceWaitIdle(c->device);destroy_kernel(c,&c->moe_decode_shared_add);destroy_kernel(c,&c->moe_decode_down_reduce);destroy_kernel(c,&c->moe_decode_gate_up);destroy_kernel(c,&c->moe_prefill_shard_reduce);destroy_kernel(c,&c->moe_prefill_reduce);destroy_kernel(c,&c->q8_0_grouped);destroy_kernel(c,&c->q8_0_cooked_grouped);destroy_kernel(c,&c->q5_1_cooked_grouped);destroy_kernel(c,&c->kquant_cooked_grouped_int);destroy_kernel(c,&c->kquant_cooked_grouped);destroy_kernel(c,&c->decode_tile_schedule);destroy_kernel(c,&c->expert_major_pack);destroy_kernel(c,&c->router_top10);destroy_kernel(c,&c->dense_cooked_tile);destroy_kernel(c,&c->bench_cooked_layout);destroy_kernel(c,&c->bench_stream_vec);destroy_kernel(c,&c->bench_stream_wide);destroy_kernel(c,&c->bench_dot_nored);destroy_kernel(c,&c->bench_dequant);destroy_kernel(c,&c->bench_stream);destroy_kernel(c,&c->kquant);destroy_kernel(c,&c->moe_reduce);destroy_kernel(c,&c->moe_q8_0);destroy_kernel(c,&c->moe_q8_0_cooked);destroy_kernel(c,&c->moe_q5_1);destroy_kernel(c,&c->topk_v2);destroy_kernel(c,&c->topk_select);destroy_kernel(c,&c->topk_select_fallback);destroy_kernel(c,&c->apply_penalties);destroy_kernel(c,&c->qsa_resident_attention);destroy_kernel(c,&c->qsa_resident_merge);destroy_kernel(c,&c->qsa_resident_select);destroy_kernel(c,&c->qsa_resident_commit);destroy_kernel(c,&c->qsa_attention_split);destroy_kernel(c,&c->qsa_decode_attention_split);destroy_kernel(c,&c->qsa_attention_merge);destroy_kernel(c,&c->qsa_attention_split_batch);destroy_kernel(c,&c->qsa_attention_merge_batch);destroy_kernel(c,&c->qsa_record_gather_batch);destroy_kernel(c,&c->qsa_select_resolve);destroy_kernel(c,&c->qsa_attention);destroy_kernel(c,&c->qsa_score);destroy_kernel(c,&c->qsa_record_gather);destroy_kernel(c,&c->qsa_record_commit);destroy_kernel(c,&c->qsa_index_prepare_prefill);destroy_kernel(c,&c->qsa_index_prepare);destroy_kernel(c,&c->qsa_prepare_prefill);destroy_kernel(c,&c->qsa_prepare);destroy_kernel(c,&c->gdn_prefill_output);destroy_kernel(c,&c->gdn_prefill_recurrence);destroy_kernel(c,&c->gdn_prefill_qk_norm);destroy_kernel(c,&c->gdn_recurrent_prefill);destroy_kernel(c,&c->gdn_recurrent_algebraic);destroy_kernel(c,&c->gdn_recurrent);destroy_kernel(c,&c->gdn_conv_prefill);destroy_kernel(c,&c->gdn_conv);destroy_kernel(c,&c->add);destroy_kernel(c,&c->ple_conv_prefill);destroy_kernel(c,&c->ple_conv);destroy_kernel(c,&c->ple_conv_add);destroy_kernel(c,&c->ple_gate_prefill);destroy_kernel(c,&c->ple_gate);destroy_kernel(c,&c->gr_write);destroy_kernel(c,&c->hc_finalize);destroy_kernel(c,&c->gr_partial);destroy_kernel(c,&c->hc_inject_partial);destroy_kernel(c,&c->gr);destroy_kernel(c,&c->rms);destroy_kernel(c,&c->dense_cooked);destroy_kernel(c,&c->dense_subgroup);destroy_kernel(c,&c->dense_bf16);destroy_kernel(c,&c->dense_f32);destroy_kernel(c,&c->dense);destroy_kernel(c,&c->silu_scaled);destroy_kernel(c,&c->swiglu);destroy_kernel(c,&c->embedding_batch);destroy_kernel(c,&c->embedding);destroy_kernel(c,&c->dequant_iq4nl);destroy_kernel(c,&c->quant_q4);destroy_kernel(c,&c->quant_q8);destroy_kernel(c,&c->quant_q8k);if(c->profile_query_pool)vkDestroyQueryPool(c->device,c->profile_query_pool,NULL);if(c->pipeline_cache)vkDestroyPipelineCache(c->device,c->pipeline_cache,NULL);if(c->descriptor_pool)vkDestroyDescriptorPool(c->device,c->descriptor_pool,NULL);if(c->static_descriptor_pool)vkDestroyDescriptorPool(c->device,c->static_descriptor_pool,NULL);if(c->descriptor_set_layout)vkDestroyDescriptorSetLayout(c->device,c->descriptor_set_layout,NULL);if(c->expert_fence)vkDestroyFence(c->device,c->expert_fence,NULL);if(c->fence)vkDestroyFence(c->device,c->fence,NULL);if(c->command_pool)vkDestroyCommandPool(c->device,c->command_pool,NULL);if(c->device)vkDestroyDevice(c->device,NULL);if(c->instance)vkDestroyInstance(c->instance,NULL);free(c);}
+void fg_vk_close(fg_vk_context *c){if(!c)return;if(c->device)vkDeviceWaitIdle(c->device);destroy_kernel(c,&c->moe_decode_shared_add);destroy_kernel(c,&c->moe_decode_down_reduce);destroy_kernel(c,&c->moe_decode_gate_up);destroy_kernel(c,&c->moe_prefill_shard_reduce);destroy_kernel(c,&c->moe_prefill_reduce);destroy_kernel(c,&c->q8_0_grouped);destroy_kernel(c,&c->q8_0_cooked_grouped);destroy_kernel(c,&c->q5_1_cooked_grouped);destroy_kernel(c,&c->kquant_cooked_grouped_int);destroy_kernel(c,&c->kquant_cooked_grouped);destroy_kernel(c,&c->decode_tile_schedule);destroy_kernel(c,&c->expert_major_pack);destroy_kernel(c,&c->router_top10);destroy_kernel(c,&c->dense_cooked_tile);destroy_kernel(c,&c->bench_cooked_layout);destroy_kernel(c,&c->bench_stream_vec);destroy_kernel(c,&c->bench_stream_wide);destroy_kernel(c,&c->bench_dot_nored);destroy_kernel(c,&c->bench_dequant);destroy_kernel(c,&c->bench_stream);destroy_kernel(c,&c->kquant);destroy_kernel(c,&c->moe_reduce);destroy_kernel(c,&c->moe_q8_0);destroy_kernel(c,&c->moe_q8_0_cooked);destroy_kernel(c,&c->moe_q5_1);destroy_kernel(c,&c->topk_v2);destroy_kernel(c,&c->topk_select);destroy_kernel(c,&c->topk_select_fallback);destroy_kernel(c,&c->apply_penalties);destroy_kernel(c,&c->qsa_resident_attention);destroy_kernel(c,&c->qsa_resident_merge);destroy_kernel(c,&c->qsa_resident_select);destroy_kernel(c,&c->qsa_resident_commit);destroy_kernel(c,&c->qsa_attention_split);destroy_kernel(c,&c->qsa_decode_attention_split);destroy_kernel(c,&c->qsa_attention_merge);destroy_kernel(c,&c->qsa_attention_split_batch);destroy_kernel(c,&c->qsa_attention_merge_batch);destroy_kernel(c,&c->qsa_record_gather_batch);destroy_kernel(c,&c->qsa_select_resolve);destroy_kernel(c,&c->qsa_attention);destroy_kernel(c,&c->qsa_score);destroy_kernel(c,&c->qsa_record_gather);destroy_kernel(c,&c->qsa_record_commit);destroy_kernel(c,&c->qsa_index_prepare_prefill);destroy_kernel(c,&c->qsa_index_prepare);destroy_kernel(c,&c->qsa_prepare_prefill);destroy_kernel(c,&c->qsa_prepare);destroy_kernel(c,&c->gdn_prefill_output);destroy_kernel(c,&c->gdn_prefill_recurrence);destroy_kernel(c,&c->gdn_prefill_qk_norm);destroy_kernel(c,&c->gdn_recurrent_prefill);destroy_kernel(c,&c->gdn_recurrent_algebraic);destroy_kernel(c,&c->gdn_recurrent);destroy_kernel(c,&c->gdn_conv_prefill);destroy_kernel(c,&c->gdn_conv);destroy_kernel(c,&c->add);destroy_kernel(c,&c->ple_conv_prefill);destroy_kernel(c,&c->ple_conv);destroy_kernel(c,&c->ple_conv_add);destroy_kernel(c,&c->ple_gate_prefill);destroy_kernel(c,&c->ple_gate);destroy_kernel(c,&c->gr_write);destroy_kernel(c,&c->hc_finalize);destroy_kernel(c,&c->gr_partial);destroy_kernel(c,&c->hc_inject_partial);destroy_kernel(c,&c->gr);destroy_kernel(c,&c->rms);destroy_kernel(c,&c->dense_cooked);destroy_kernel(c,&c->dense_subgroup);destroy_kernel(c,&c->dense_bf16);destroy_kernel(c,&c->dense_f32);destroy_kernel(c,&c->dense);destroy_kernel(c,&c->silu_scaled);destroy_kernel(c,&c->swiglu);destroy_kernel(c,&c->embedding_batch);destroy_kernel(c,&c->embedding);destroy_kernel(c,&c->dequant_iq4nl);destroy_kernel(c,&c->quant_q4);destroy_kernel(c,&c->quant_q8);destroy_kernel(c,&c->quant_q8k);if(c->profile_query_pool)vkDestroyQueryPool(c->device,c->profile_query_pool,NULL);if(c->pipeline_cache)vkDestroyPipelineCache(c->device,c->pipeline_cache,NULL);if(c->descriptor_pool)vkDestroyDescriptorPool(c->device,c->descriptor_pool,NULL);if(c->static_descriptor_pool)vkDestroyDescriptorPool(c->device,c->static_descriptor_pool,NULL);if(c->descriptor_set_layout)vkDestroyDescriptorSetLayout(c->device,c->descriptor_set_layout,NULL);if(c->expert_fence)vkDestroyFence(c->device,c->expert_fence,NULL);if(c->fence)vkDestroyFence(c->device,c->fence,NULL);if(c->copy_fence)vkDestroyFence(c->device,c->copy_fence,NULL);if(c->command_pool)vkDestroyCommandPool(c->device,c->command_pool,NULL);if(c->copy_pool)vkDestroyCommandPool(c->device,c->copy_pool,NULL);if(c->device)vkDestroyDevice(c->device,NULL);if(c->instance)vkDestroyInstance(c->instance,NULL);free(c);}
 const char *fg_vk_device_name(const fg_vk_context *c){return c?c->device_name:"";}
 bool fg_vk_integer_dot_product_enabled(const fg_vk_context *c){return c&&c->integer_dot_product;}
 uint32_t fg_vk_active_compute_units(const fg_vk_context *c){return c?c->active_compute_units:0u;}
@@ -355,6 +356,76 @@ static void vk_read_mapped(void *destination,const void *source,size_t bytes){
 static void vk_read_mapped(void *destination,const void *source,size_t bytes){memcpy(destination,source,bytes);}
 #endif
 fg_status fg_vk_tensor_read(const fg_vk_tensor *t,uint64_t offset,void *data,uint64_t bytes,fg_error *err){if(!data||!tensor_range(t,offset,bytes)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan tensor read");return FG_ERR_ARGUMENT;}vk_read_mapped(data,(const uint8_t *)t->allocation->mapped+t->offset+offset,(size_t)bytes);return FG_OK;}
+
+/* One-shot device-side copy used by the depth-B owner session checkpoints.  The
+ * state tensors live in device-local coherent memory whose host reads run at
+ * uncached bandwidth; copying them with the GPU keeps a per-step snapshot at
+ * transfer speed instead of a 100+ ms host readback. */
+fg_status fg_vk_copy_tensors(fg_vk_context *c,fg_vk_tensor *const *dst,
+                             const fg_vk_tensor *const *src,uint32_t count,fg_error *err){
+    if(!c||count>FG_LAYER_COUNT*2u+2u){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan tensor copy");
+        return FG_ERR_ARGUMENT;
+    }
+    if(!count)return FG_OK;
+    if(!dst||!src){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan tensor copy");
+        return FG_ERR_ARGUMENT;
+    }
+    for(uint32_t i=0;i<count;i++)
+        if(!dst[i]||!src[i]||dst[i]->bytes!=src[i]->bytes||dst[i]->bytes==0u){
+            fg_error_set(err,FG_ERR_ARGUMENT,"Vulkan tensor copy pair %u is not size-matched",i);
+            return FG_ERR_ARGUMENT;
+        }
+    fg_status status=vk_pipeline_drain(c,err);
+    if(status!=FG_OK)return status;
+    VkResult vr;
+    if(!c->copy_pool){
+        VkCommandPoolCreateInfo pool={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags=VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,.queueFamilyIndex=c->queue_family};
+        if((vr=vkCreateCommandPool(c->device,&pool,NULL,&c->copy_pool))!=VK_SUCCESS)
+            return vk_error(err,"create tensor copy command pool",vr);
+        VkCommandBufferAllocateInfo allocate={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool=c->copy_pool,.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY,.commandBufferCount=1};
+        if((vr=vkAllocateCommandBuffers(c->device,&allocate,&c->copy_command))!=VK_SUCCESS)
+            return vk_error(err,"allocate tensor copy command buffer",vr);
+        VkFenceCreateInfo fence={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        if((vr=vkCreateFence(c->device,&fence,NULL,&c->copy_fence))!=VK_SUCCESS)
+            return vk_error(err,"create tensor copy fence",vr);
+    }
+    vkResetCommandBuffer(c->copy_command,0);
+    VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+    if((vr=vkBeginCommandBuffer(c->copy_command,&begin))!=VK_SUCCESS)
+        return vk_error(err,"begin tensor copy command",vr);
+    VkMemoryBarrier pre={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT};
+    vkCmdPipelineBarrier(c->copy_command,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&pre,0,NULL,0,NULL);
+    for(uint32_t i=0;i<count;i++){
+        VkBufferCopy region={.srcOffset=src[i]->offset,.dstOffset=dst[i]->offset,
+            .size=src[i]->bytes};
+        vkCmdCopyBuffer(c->copy_command,dst[i]->allocation->buffer,
+                        src[i]->allocation->buffer,1,&region);
+    }
+    VkMemoryBarrier post={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT};
+    vkCmdPipelineBarrier(c->copy_command,VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,1,&post,0,NULL,0,NULL);
+    if((vr=vkEndCommandBuffer(c->copy_command))!=VK_SUCCESS)
+        return vk_error(err,"end tensor copy command",vr);
+    vkResetFences(c->device,1,&c->copy_fence);
+    VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,
+        .pCommandBuffers=&c->copy_command};
+    if((vr=vkQueueSubmit(c->queue,1,&submit,c->copy_fence))!=VK_SUCCESS)
+        return vk_error(err,"submit tensor copy command",vr);
+    c->counters.submissions++;
+    if((vr=vkWaitForFences(c->device,1,&c->copy_fence,VK_TRUE,UINT64_MAX))!=VK_SUCCESS)
+        return vk_error(err,"wait for tensor copy",vr);
+    return FG_OK;
+}
 
 static fg_status dispatch_impl(fg_vk_context *c,fg_vk_kernel *kernel,const fg_vk_tensor *const *tensors,const void *push,uint32_t gx,uint32_t gy,uint32_t gz,bool batch_barrier,fg_error *err){
     fg_status status=create_kernel(c,kernel,err);if(status!=FG_OK)return status;double op_begin=0.0;if(c->profile_active)op_begin=vk_wall_seconds();if(c->batch_depth&&c->batch_set_base+c->batch_set_count>=FG_VK_BATCH_MAX_SETS){fg_error_set(err,FG_ERR_LIMIT,"Vulkan batch exceeded %u descriptor sets",FG_VK_BATCH_MAX_SETS);return FG_ERR_LIMIT;}uint32_t set_index=c->batch_depth?c->batch_set_base+c->batch_set_count:0u;VkDescriptorSet set;fg_vk_descriptor_cache *cache;bool *cache_valid;if(c->batch_depth&&c->batch_set_base!=0u){uint32_t slot=(c->batch_set_base-FG_VK_STATIC_SET_BASE)/FG_VK_STATIC_SET_STRIDE;if(slot>=FG_VK_STATIC_SLOTS||c->batch_set_count>=FG_VK_STATIC_SET_STRIDE){fg_error_set(err,FG_ERR_LIMIT,"static recording crossed its descriptor window");return FG_ERR_LIMIT;}uint32_t static_index=slot*FG_VK_STATIC_SET_STRIDE+c->batch_set_count;set=c->static_descriptor_sets[static_index];cache=&c->static_descriptor_cache[static_index];cache_valid=&c->static_descriptor_cache_valid[static_index];}else{set=c->descriptor_sets[set_index];cache=&c->descriptor_cache[set_index];cache_valid=&c->descriptor_cache_valid[set_index];if(set_index>=FG_VK_STATIC_SET_BASE){const char *trace=getenv("FG_SET_TRACE");static bool crossed=false;if(trace&&*trace&&strcmp(trace,"0")!=0&&!crossed){crossed=true;fprintf(stderr,"FG_SET_CROSS dynamic descriptor epoch reached set %u\n",set_index);}}}VkResult vr;bool cached=*cache_valid&&cache->bindings==kernel->bindings;for(uint32_t i=0;cached&&i<kernel->bindings;i++)cached=cache->buffer[i]==tensors[i]->allocation->buffer&&cache->offset[i]==tensors[i]->offset&&cache->range[i]==tensors[i]->bytes;if(!cached){VkDescriptorBufferInfo info[16];VkWriteDescriptorSet write[16];for(uint32_t i=0;i<kernel->bindings;i++){info[i]=(VkDescriptorBufferInfo){.buffer=tensors[i]->allocation->buffer,.offset=tensors[i]->offset,.range=tensors[i]->bytes};write[i]=(VkWriteDescriptorSet){.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=set,.dstBinding=i,.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.pBufferInfo=&info[i]};}vkUpdateDescriptorSets(c->device,kernel->bindings,write,0,NULL);cache->bindings=kernel->bindings;for(uint32_t i=0;i<kernel->bindings;i++){cache->buffer[i]=tensors[i]->allocation->buffer;cache->offset[i]=tensors[i]->offset;cache->range[i]=tensors[i]->bytes;}*cache_valid=true;}

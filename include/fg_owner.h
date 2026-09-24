@@ -79,6 +79,9 @@ uint32_t fg_owner_active_session(const fg_owner_executor *executor);
  * rollback restores both.  Release frees the host staging. */
 typedef struct fg_owner_session_checkpoint {
     bool valid;
+    /* Device-side checkpoint: GDN/PLE state is shadowed by the executor's
+     * per-session shadow tensors (a GPU copy) instead of host staging. */
+    bool device;
     uint32_t session;
     uint32_t gdn_count;
     struct {
@@ -94,6 +97,12 @@ typedef struct fg_owner_session_checkpoint {
 } fg_owner_session_checkpoint;
 fg_status fg_owner_session_snapshot(fg_owner_executor *executor,uint32_t session,
                                     fg_owner_session_checkpoint *snapshot,fg_error *err);
+/* Device-side variant: copies the session's GDN conv/recurrent and PLE state
+ * into per-session shadow tensors with vkCmdCopyBuffer (no host readback), and
+ * records the QSA frontier.  Rollback copies the shadows back. */
+fg_status fg_owner_session_device_snapshot(fg_owner_executor *executor,uint32_t session,
+                                           fg_owner_session_checkpoint *snapshot,
+                                           fg_error *err);
 fg_status fg_owner_session_rollback(fg_owner_executor *executor,
                                     const fg_owner_session_checkpoint *snapshot,
                                     fg_error *err);

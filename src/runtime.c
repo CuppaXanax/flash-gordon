@@ -1863,8 +1863,8 @@ static fg_status depthb_owner_prepare(depthb_owner_runtime *depthb,uint32_t slot
                 depthb->manifest->prefill_microbatch,true,NULL,NULL,err);
         }
     }
-    if(status==FG_OK)status=fg_owner_session_snapshot(depthb->owner,slot,
-                                                      &depthb->checkpoint[slot],err);
+    if(status==FG_OK)status=fg_owner_session_device_snapshot(depthb->owner,slot,
+                                                             &depthb->checkpoint[slot],err);
     if(status==FG_OK)depthb->checkpoint_valid[slot]=true;
     return status;
 }
@@ -6750,7 +6750,7 @@ static fg_status depthb_prefill_sample(fg_runtime *runtime,const fg_tokens *prom
 
 static fg_status depthb_decode_b1(fg_runtime *runtime,uint32_t session_slot,
     const fg_tokens *prompt,uint32_t max_tokens,depthb_capture *capture,
-    double *wall_ms,fg_error *err){
+    double *wall_ms,double *decode_ms,fg_error *err){
     size_t capacity=prompt->count+(size_t)max_tokens+2u;
     int32_t *history=malloc(capacity*sizeof(*history));
     if(!history){
@@ -6766,14 +6766,17 @@ static fg_status depthb_decode_b1(fg_runtime *runtime,uint32_t session_slot,
     size_t count=prompt->count;
     uint32_t position=(uint32_t)prompt->count;
     double start=dispatch_ts();
+    double decode_total=0.0;
     while(status==FG_OK&&capture->count<max_tokens){
         capture->token[capture->count]=next;
         memcpy(&capture->logit_bits[capture->count],&logit,4u);
         capture->count++;
         if(capture->count>=max_tokens)break;
         history[count++]=(int32_t)next;
+        double decode_start=dispatch_ts();
         status=coordinator_decode_token(&runtime->coordinator,history,count,count-1u,
                                         position,&next,&logit,err);
+        decode_total+=dispatch_ts()-decode_start;
         position++;
         if(status==FG_OK&&capture->step_count<FG_DEPTHB_CAPTURE_MAX){
             bool valid=false;
@@ -6782,6 +6785,7 @@ static fg_status depthb_decode_b1(fg_runtime *runtime,uint32_t session_slot,
         }
     }
     if(wall_ms)*wall_ms=dispatch_ts()-start;
+    if(decode_ms)*decode_ms=decode_total;
     free(history);
     return status;
 }
@@ -6839,7 +6843,7 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
         return FG_ERR_OOM;
     }
     depthb_capture expected_x={0},expected_y={0},actual_x={0},actual_y={0};
-    double b1_wall=0.0,b2_wall=0.0;
+    double b1_wall=0.0,b2_wall=0.0,b1_decode=0.0,b2_decode=0.0;
     *pass=false;
     /* Phase 1a: Y alone in owner session 1 on a pristine session. */
     fprintf(stderr,"DEPTH_B_SELFTEST case=%s phase=reset\n",name);
@@ -6847,7 +6851,7 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
     if(status==FG_OK)status=coordinator_owner_transaction(&runtime->coordinator,
         FG_OWNER_SESSION_PREPARE,1u,err);
     if(status==FG_OK)status=depthb_decode_b1(runtime,1u,prompt_y,max_tokens,&expected_y,
-                                             measure?&b1_wall:NULL,err);
+                                             measure?&b1_wall:NULL,measure?&b1_decode:NULL,err);
     if(status==FG_OK)fprintf(stderr,"DEPTH_B_SELFTEST case=%s phase=b1-y-done tokens=%u\n",
                              name,expected_y.count);
     if(status==FG_OK){
@@ -6861,7 +6865,7 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
      * the QSA store, which perturbs a later prefill's partial block. */
     if(status==FG_OK)status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
     if(status==FG_OK)status=depthb_decode_b1(runtime,0u,prompt_x,max_tokens,&expected_x,
-                                             measure?&b1_wall:NULL,err);
+                                             measure?&b1_wall:NULL,measure?&b1_decode:NULL,err);
     if(status==FG_OK)fprintf(stderr,"DEPTH_B_SELFTEST case=%s phase=b1-x-done tokens=%u\n",
                              name,expected_x.count);
     if(status==FG_OK){
@@ -6937,9 +6941,11 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
         if(status==FG_OK)status=fg_decode_batch_sequence_ready(&table,
             FG_DEPTHB_SEQ_Y,now,err);
         fg_decode_batch_step step={0};
+        double batch_start=dispatch_ts();
         if(status==FG_OK)status=coordinator_decode_batch_step(&runtime->coordinator,
             &table,&policy,(const int32_t *const[]){history_x,history_y},
             (const size_t[]){count_x,count_y},now,inject,&step,err);
+        if(!inject)b2_decode+=dispatch_ts()-batch_start;
         if(status==FG_ERR_INTERRUPTED&&inject){
             if(!table.restored){
                 fg_error_set(err,FG_ERR_MISMATCH,
@@ -7079,12 +7085,21 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
             double b1_total=b1_wall;
             double b2_total=b2_wall;
             double b2_tokens=(double)batched_tokens;
+            /* Decode-only buckets exclude the per-step owner-state digests the
+             * harness runs for attribution; those are not part of the path. */
+            double b1_path_tps=b1_decode>0.0?(double)steps_done/(b1_decode/1000.0):0.0;
+            double b2_path_tps=b2_decode>0.0?b2_tokens/(b2_decode/1000.0):0.0;
             fprintf(stderr,"DEPTH_B_SELFTEST_PERF case=%s b1_ms=%.3f b2_ms=%.3f "
                 "b2_steps=%u b2_tokens=%u b1_seq_ms=%.3f b2_per_step_ms=%.3f "
-                "b2_aggregate_tps=%.3f\n",name,b1_total,b2_total,steps_done,
+                "b2_aggregate_tps=%.3f b1_decode_ms=%.3f b2_decode_ms=%.3f "
+                "b2_decode_per_step_ms=%.3f b2_decode_aggregate_tps=%.3f "
+                "b2_decode_speedup=%.3f\n",name,b1_total,b2_total,steps_done,
                 (unsigned)b2_tokens,b1_total,
                 steps_done?b2_total/steps_done:0.0,
-                b2_total>0.0?b2_tokens/(b2_total/1000.0):0.0);
+                b2_total>0.0?b2_tokens/(b2_total/1000.0):0.0,
+                b1_decode,b2_decode,
+                steps_done?b2_decode/steps_done:0.0,b2_path_tps,
+                b1_path_tps>0.0?b2_path_tps/b1_path_tps:0.0);
         }
         if(!x_token_match)
             fprintf(stderr,"DEPTH_B_SELFTEST_MISMATCH session=X first_bad=%u "

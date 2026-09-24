@@ -146,6 +146,11 @@ void fg_vk_tensor_set_format(fg_vk_tensor *tensor,fg_vk_tensor_format format);
 fg_vk_tensor_format fg_vk_tensor_get_format(const fg_vk_tensor *tensor);
 fg_status fg_vk_tensor_write(fg_vk_tensor *tensor,uint64_t offset,const void *data,uint64_t bytes,fg_error *err);
 fg_status fg_vk_tensor_read(const fg_vk_tensor *tensor,uint64_t offset,void *data,uint64_t bytes,fg_error *err);
+/* Device-side tensor copy: `count` equal-sized (dst[i],src[i]) pairs copied with
+ * vkCmdCopyBuffer on the context queue.  Drains pending submissions first and
+ * waits for the copy, so it is a synchronous checkpoint primitive. */
+fg_status fg_vk_copy_tensors(fg_vk_context *context,fg_vk_tensor *const *dst,
+                             const fg_vk_tensor *const *src,uint32_t count,fg_error *err);
 fg_status fg_vk_quantize_q8_k(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *input,
                               uint32_t input_width,uint32_t tokens,fg_error *err);
 fg_status fg_vk_quantize_q8_0(fg_vk_context *context,fg_vk_tensor *output,const fg_vk_tensor *input,

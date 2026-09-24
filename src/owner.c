@@ -136,6 +136,10 @@ struct fg_owner_executor {
     fg_vk_tensor *gdn_qkv,*gdn_conv_output,*gdn_z,*gdn_alpha,*gdn_beta,*gdn_core,*gdn_output;
     fg_vk_tensor *ple_key,*ple_value,*ple_key_norm,*ple_query_norm,*ple_gated,*ple_gated_norm,*ple_output,*ple_added;
     struct {fg_vk_tensor *conv_state,*recurrent_state;} gdn_state[FG_OWNER_SESSION_MAX][FG_LAYER_COUNT];
+    /* Device-side checkpoint shadows, allocated lazily by the depth-B session
+     * transaction so the snapshot is a GPU copy, not an uncached host read. */
+    struct {fg_vk_tensor *conv_state,*recurrent_state;} gdn_shadow[FG_OWNER_SESSION_MAX][FG_LAYER_COUNT];
+    fg_vk_tensor *ples_shadow[FG_OWNER_SESSION_MAX];
     fg_vk_tensor *ples_state[FG_OWNER_SESSION_MAX];
     fg_vk_tensor *session_input[FG_OWNER_SESSION_MAX];
     fg_vk_tensor *attention_family_scratch;
@@ -418,7 +422,10 @@ void fg_owner_executor_destroy(fg_owner_executor *e){
         for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){
             fg_vk_tensor_destroy(e->gdn_state[session][layer].recurrent_state);
             fg_vk_tensor_destroy(e->gdn_state[session][layer].conv_state);
+            fg_vk_tensor_destroy(e->gdn_shadow[session][layer].recurrent_state);
+            fg_vk_tensor_destroy(e->gdn_shadow[session][layer].conv_state);
         }
+        fg_vk_tensor_destroy(e->ples_shadow[session]);
         fg_vk_tensor_destroy(e->ples_state[session]);
         fg_vk_tensor_destroy(e->session_input[session]);
     }
@@ -972,6 +979,7 @@ void fg_owner_session_snapshot_release(fg_owner_session_checkpoint *snapshot){
     snapshot->ple_values=0u;
     snapshot->gdn_count=0u;
     snapshot->qsa_valid=false;
+    snapshot->device=false;
     snapshot->valid=false;
 }
 fg_status fg_owner_session_snapshot(fg_owner_executor *executor,uint32_t session,
@@ -1033,12 +1041,93 @@ fg_status fg_owner_session_snapshot(fg_owner_executor *executor,uint32_t session
     snapshot->valid=true;
     return FG_OK;
 }
+/* Device-side checkpoint: grow the per-session shadow tensors on first use and
+ * copy GDN conv/recurrent + PLE state into them with one GPU transfer, so the
+ * transaction never reads uncached device memory from the host. */
+fg_status fg_owner_session_device_snapshot(fg_owner_executor *executor,uint32_t session,
+                                           fg_owner_session_checkpoint *snapshot,
+                                           fg_error *err){
+    if(!executor||!snapshot||!session_allocated(executor,session)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner session device snapshot");
+        return FG_ERR_ARGUMENT;
+    }
+    memset(snapshot,0,sizeof(*snapshot));
+    snapshot->session=session;
+    snapshot->device=true;
+    fg_vk_context *vk=fg_model_vk(executor->model);
+    fg_vk_tensor *dst[FG_LAYER_COUNT*2u+1u];const fg_vk_tensor *src[FG_LAYER_COUNT*2u+1u];
+    uint32_t count=0;
+    fg_status status=FG_OK;
+    for(uint32_t layer=0;status==FG_OK&&layer<FG_LAYER_COUNT;layer++){
+        fg_vk_tensor *states[2u]={executor->gdn_state[session][layer].conv_state,
+                                  executor->gdn_state[session][layer].recurrent_state};
+        fg_vk_tensor **shadows[2u]={&executor->gdn_shadow[session][layer].conv_state,
+                                    &executor->gdn_shadow[session][layer].recurrent_state};
+        for(uint32_t which=0u;status==FG_OK&&which<2u;which++){
+            if(!states[which])continue;
+            if(!*shadows[which])
+                status=fg_vk_tensor_create(vk,fg_vk_tensor_bytes(states[which]),
+                                           shadows[which],err);
+            if(status==FG_OK){
+                src[count]=states[which];
+                dst[count]=*shadows[which];
+                count++;
+            }
+        }
+    }
+    if(status==FG_OK&&executor->ples_state[session]){
+        if(!executor->ples_shadow[session])
+            status=fg_vk_tensor_create(vk,fg_vk_tensor_bytes(executor->ples_state[session]),
+                                       &executor->ples_shadow[session],err);
+        if(status==FG_OK){
+            src[count]=executor->ples_state[session];
+            dst[count]=executor->ples_shadow[session];
+            count++;
+        }
+    }
+    if(status==FG_OK)status=fg_vk_copy_tensors(vk,dst,src,count,err);
+    if(status!=FG_OK)return status;
+    snapshot->qsa_valid=fg_owner_qsa_frontier(executor,session,snapshot->qsa_tokens)==FG_OK;
+    snapshot->valid=true;
+    return FG_OK;
+}
 fg_status fg_owner_session_rollback(fg_owner_executor *executor,
                                     const fg_owner_session_checkpoint *snapshot,fg_error *err){
     if(!executor||!snapshot||!snapshot->valid||
        !session_allocated(executor,snapshot->session)){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner session rollback");
         return FG_ERR_ARGUMENT;
+    }
+    if(snapshot->device){
+        fg_vk_context *vk=fg_model_vk(executor->model);
+        fg_vk_tensor *dst[FG_LAYER_COUNT*2u+1u];const fg_vk_tensor *src[FG_LAYER_COUNT*2u+1u];
+        uint32_t count=0;
+        for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){
+            fg_vk_tensor *states[2u]={executor->gdn_state[snapshot->session][layer].conv_state,
+                                      executor->gdn_state[snapshot->session][layer].recurrent_state};
+            fg_vk_tensor *shadows[2u]={executor->gdn_shadow[snapshot->session][layer].conv_state,
+                                       executor->gdn_shadow[snapshot->session][layer].recurrent_state};
+            for(uint32_t which=0u;which<2u;which++){
+                if(!states[which]||!shadows[which])continue;
+                dst[count]=states[which];
+                src[count]=shadows[which];
+                count++;
+            }
+        }
+        if(executor->ples_state[snapshot->session]&&
+           executor->ples_shadow[snapshot->session]){
+            dst[count]=executor->ples_state[snapshot->session];
+            src[count]=executor->ples_shadow[snapshot->session];
+            count++;
+        }
+        if(count){
+            fg_status status=fg_vk_copy_tensors(vk,dst,src,count,err);
+            if(status!=FG_OK)return status;
+        }
+        if(snapshot->qsa_valid)
+            return fg_owner_qsa_rollback(executor,snapshot->session,
+                                         snapshot->qsa_tokens,err);
+        return FG_OK;
     }
     for(uint32_t i=0;i<snapshot->gdn_count;i++){
         fg_status status=fg_vk_tensor_write(snapshot->gdn[i].tensor,0,
