@@ -511,6 +511,13 @@ static fg_status chained_decode_expert(void *opaque,uint32_t layer,
         expert_output,err);
 }
 
+/* Test-only A/B switches: `depth-b-selftest --serial-batch` forces the serial
+ * per-slot chained block, `--serial-expert` keeps the batch block but runs the
+ * two expert chains serially instead of the token-tagged union.  Never set on
+ * a serving path. */
+static bool depthb_serial_batch=false;
+static bool depthb_serial_expert=false;
+
 /* Batch-2 variant of the chained expert hook: GPU routing stays on the
  * device, the two tokens share one token-tagged union schedule and one fused
  * gate/up + down/reduce dispatch pair. */
@@ -2009,13 +2016,6 @@ static fg_status handle_owner_session_transaction(fg_fabric *fabric,
 /* One batch work message: run this rank's whole block for every slot under that
  * slot's owner session, then forward the per-slot hyper states to the next
  * block owner (or hand the final result back to rank 0). */
-/* Test-only A/B switches: `depth-b-selftest --serial-batch` forces the serial
- * per-slot chained block, `--serial-expert` keeps the batch block but runs the
- * two expert chains serially instead of the token-tagged union.  Never set on
- * a serving path. */
-static bool depthb_serial_batch=false;
-static bool depthb_serial_expert=false;
-
 static fg_status handle_decode_batch_work(fg_fabric *fabric,const fg_manifest *manifest,
     uint32_t self,uint64_t session_id,uint32_t peer,const fg_frame_header *header,
     const uint8_t *payload,uint32_t bytes,layer_work_context *context,
