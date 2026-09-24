@@ -6856,7 +6856,12 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
     double b2_start=dispatch_ts();
     while(status==FG_OK&&steps_done<expected_steps){
         uint64_t now=(uint64_t)steps_done+1u;
-        bool inject=!injected&&abort_step==steps_done;
+        bool inject=abort_step!=UINT32_MAX&&!injected&&abort_step==steps_done;
+        uint64_t pre_x=0,pre_y=0;bool pre_x_valid=false,pre_y_valid=false;
+        if(inject){
+            pre_x=depthb_session_digest(runtime,0u,&pre_x_valid);
+            pre_y=depthb_session_digest(runtime,1u,&pre_y_valid);
+        }
         status=fg_decode_batch_sequence_ready(&table,FG_DEPTHB_SEQ_X,now,err);
         if(status==FG_OK)status=fg_decode_batch_sequence_ready(&table,
             FG_DEPTHB_SEQ_Y,now,err);
@@ -6872,20 +6877,34 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
                 break;
             }
             injected=true;
+            bool rx=false,ry=false;
+            uint64_t dx=depthb_session_digest(runtime,0u,&rx);
+            uint64_t dy=depthb_session_digest(runtime,1u,&ry);
+            bool rollback_x=rx&&pre_x_valid&&dx==pre_x;
+            bool rollback_y=ry&&pre_y_valid&&dy==pre_y;
             fprintf(stderr,"DEPTH_B_SELFTEST case=%s RESTORE step=%u x=%llu y=%llu "
-                "restored=1\n",name,steps_done,(unsigned long long)count_x,
-                (unsigned long long)count_y);
+                "restored=1 rollback_x=%d rollback_y=%d\n",name,steps_done,
+                (unsigned long long)count_x,(unsigned long long)count_y,
+                rollback_x?1:0,rollback_y?1:0);
+            if(!rollback_x||!rollback_y){
+                fg_error_set(err,FG_ERR_MISMATCH,
+                    "owner session rollback did not restore the pre-step state");
+                status=FG_ERR_MISMATCH;
+                break;
+            }
             status=FG_OK;
             continue;
         }
         if(status!=FG_OK)break;
         if(step.batch.slot_count>effective_depth)
             effective_depth=step.batch.slot_count;
+        uint32_t step_x=UINT32_MAX,step_y=UINT32_MAX;
         for(uint32_t slot=0;slot<step.batch.slot_count;slot++){
             uint64_t sequence_id=table.sequences[step.batch.slots[slot].sequence].sequence_id;
             uint32_t token=step.outcomes[slot].next_token;
             if(sequence_id==FG_DEPTHB_SEQ_X){
                 if(count_x>=history_capacity){status=FG_ERR_LIMIT;break;}
+                step_x=token;
                 history_x[count_x++]=(int32_t)token;
                 if(actual_x.count<FG_DEPTHB_CAPTURE_MAX){
                     actual_x.token[actual_x.count]=token;
@@ -6894,6 +6913,7 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
                 }
             }else if(sequence_id==FG_DEPTHB_SEQ_Y){
                 if(count_y>=history_capacity){status=FG_ERR_LIMIT;break;}
+                step_y=token;
                 history_y[count_y++]=(int32_t)token;
                 if(actual_y.count<FG_DEPTHB_CAPTURE_MAX){
                     actual_y.token[actual_y.count]=token;
@@ -6908,6 +6928,8 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
             batched_tokens++;
         }
         if(status!=FG_OK)break;
+        fprintf(stderr,"DEPTH_B_SELFTEST case=%s step=%u x=%u y=%u\n",name,steps_done,
+                step_x,step_y);
         steps_done++;
     }
     if(measure)b2_wall=dispatch_ts()-b2_start;
@@ -6997,6 +7019,7 @@ static fg_status depthb_report_answer(fg_runtime *runtime,const char *label,
 
 fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
                                   uint32_t max_tokens,uint32_t long_tokens,
+                                  uint32_t abort_step,
                                   const fg_runtime_options *requested,fg_error *err){
     if(!manifest_path||depth<1u||depth>FG_DECODE_BATCH_MAX_SLOTS||!max_tokens||
        max_tokens+1u>FG_DEPTHB_CAPTURE_MAX){
@@ -7033,7 +7056,7 @@ fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
     if(status==FG_OK){
         bool pass=false;
         status=depthb_run_case(runtime,"short-pair",&tokens_12,&tokens_paris,max_tokens,
-                               depth,2u,true,&pass,&answer_12,&answer_paris,err);
+                               depth,abort_step,true,&pass,&answer_12,&answer_paris,err);
         pass_all=pass_all&&pass;
     }
     if(status==FG_OK){
@@ -7043,7 +7066,7 @@ fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
     if(status==FG_OK&&long_target){
         bool pass=false;
         status=depthb_run_case(runtime,"long-short",&tokens_long,&tokens_12,max_tokens,
-                               depth,2u,false,&pass,NULL,NULL,err);
+                               depth,abort_step,false,&pass,NULL,NULL,err);
         pass_all=pass_all&&pass;
     }
     if(status==FG_OK&&!pass_all){

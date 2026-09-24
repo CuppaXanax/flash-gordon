@@ -179,6 +179,7 @@ fg_status fg_rank_main(const char *manifest_path, uint32_t rank, fg_error *err);
  * an injected abort-retry.  Not part of the serving path. */
 fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
                                   uint32_t max_tokens,uint32_t long_tokens,
+                                  uint32_t abort_step,
                                   const fg_runtime_options *requested,fg_error *err);
 fg_status fg_serve_main(const char *manifest_path, fg_error *err);
 fg_status fg_bench_main(const char *manifest_path, fg_error *err);
