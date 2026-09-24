@@ -62,10 +62,6 @@ static bool decode_ring_trace_enabled(void){const char *enabled=getenv("FG_DECOD
  * output owner or the last block owner is rank 0. */
 static bool decode_direct_output_eligible(const fg_manifest *manifest){
     if(!manifest)return false;
-    /* DIAG-R3 (temporary): force the rank-4 relay output path so a B=1 run can
-     * be compared against the B=2 relay bit-for-bit. */
-    const char *force=getenv("FG_FORCE_RELAY");
-    if(force&&*force&&strcmp(force,"0")!=0)return false;
     uint32_t owner=fg_output_owner_rank(manifest);
     uint32_t last=manifest->layer_owner[FG_LAYER_COUNT-1u];
     return owner!=0u&&last!=0u&&owner!=last;
@@ -526,6 +522,13 @@ void fg_runtime_set_decode_ab(bool serial_batch,bool serial_expert){
     depthb_serial_batch=serial_batch;
     depthb_serial_expert=serial_expert;
 }
+/* Test-only: the depth-B gate compares the batch block against the relay
+ * output path the batch itself uses.  The direct 4-way handoff computes its
+ * vocabulary slices with the r4 cooked kernel while the relay's full head uses
+ * r8, so the two paths are not bit-equal; forcing the relay keeps the gate
+ * measuring the block, not the output-path kernel split.  The serving path is
+ * never forced (set only by fg_depthb_selftest_main). */
+static bool depthb_force_relay_output=false;
 
 /* Batch-2 variant of the chained expert hook: GPU routing stays on the
  * device, the two tokens share one token-tagged union schedule and one fused
@@ -5187,7 +5190,7 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
         fg_error_set(err,FG_ERR_MISMATCH,"coordinator ring decode input storage is unavailable");
         return FG_ERR_MISMATCH;
     }
-    bool direct=decode_direct_output_eligible(manifest);
+    bool direct=decode_direct_output_eligible(manifest)&&!depthb_force_relay_output;
     bool trace=decode_ring_trace_enabled();double t0=trace?dispatch_ts():0.0;
     double t_embed=0.0,t_ngram=0.0;
     fg_vk_tensor *ngram_view=NULL;
@@ -7323,8 +7326,12 @@ fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
     }
     depthb_serial_batch=serial_batch;
     depthb_serial_expert=serial_expert;
+    /* The gate's B=1 reference runs through the relay output path so both
+     * phases use the same output arithmetic; see depthb_force_relay_output. */
+    depthb_force_relay_output=true;
     if(serial_batch)fprintf(stderr,"DEPTH_B_SELFTEST serial_batch=1 (reference path)\n");
     if(serial_expert)fprintf(stderr,"DEPTH_B_SELFTEST serial_expert=1 (union A/B off)\n");
+    fprintf(stderr,"DEPTH_B_SELFTEST relay_output=1 (parity reference path)\n");
     fg_runtime *runtime=NULL;
     fg_status status=fg_runtime_open_with_options(&runtime,manifest_path,requested,err);
     if(status==FG_OK&&!(runtime->coordinator.ring_prefill&&runtime->coordinator.ring_decode)){

@@ -67,14 +67,6 @@ static fg_status chained_layer_trace(uint32_t rank,fg_vk_context *vk,uint32_t la
     if(values)for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(values[i])){first_bad=(int32_t)i;break;}
     fprintf(stderr,"FG_NUMERICS_LAYER rank=%u token=%u layer=%u finite=%d first_bad=%d f0=%g\n",
         rank,token,layer,first_bad<0,first_bad,values?values[0]:0.0f);
-    if(values){
-        double sum=0.0;float min=values[0],max=values[0];
-        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++){float v=values[i];sum+=v;if(v<min)min=v;if(v>max)max=v;}
-        fprintf(stderr,"FG_LAYER_TRACE rank=%u token=%u layer=%u hash=%016llx "
-            "sum=%.6f min=%.6g max=%.6g f0=%.6g\n",rank,token,layer,
-            (unsigned long long)numerics_hash_bytes(values,(size_t)FG_HYPER_WIDTH*4u),
-            sum,min,max,values[0]);
-    }
     if(first_bad>=0){
         fg_error_set(err,FG_ERR_FORMAT,
             "rank %u decode layer %u token %u produced non-finite hidden at element %d value=%g",
@@ -1772,29 +1764,6 @@ static fg_status gdn_decode_pair_into(fg_owner_executor *e,uint32_t layer,
     return status;
 }
 
-/* Per-token GR write used on QSA layers: the QSA session output is a
- * per-session tensor, so the residual write stays per token exactly as the
- * single-token path writes it (the row views alias the two-row ping). */
-static fg_status gr_write_pair_into(fg_owner_executor *e,const fg_vk_tensor *residual2,
-    fg_vk_tensor *const block[2],const fg_vk_tensor *injection2,fg_vk_tensor *destination,
-    fg_error *err){
-    fg_vk_context *vk=fg_model_vk(e->model);
-    fg_status status=FG_OK;
-    for(uint32_t t=0;status==FG_OK&&t<2u;t++){
-        fg_vk_tensor *residual_row=NULL,*injection_row=NULL,*dst_row=NULL;
-        /* The residual and the destination are full hyper rows (hidden x
-         * groups); only the block is hidden-wide. */
-        status=row_slice((fg_vk_tensor *)residual2,t,FG_HYPER_WIDTH,&residual_row,err);
-        if(status==FG_OK)status=row_slice(destination,t,FG_HYPER_WIDTH,&dst_row,err);
-        if(status==FG_OK)status=row_slice((fg_vk_tensor *)injection2,t,FG_GROUP_SIZE,&injection_row,err);
-        if(status==FG_OK&&!block[t])status=FG_ERR_MISMATCH;
-        if(status==FG_OK)status=fg_vk_gr_write(vk,dst_row,residual_row,block[t],
-            injection_row,FG_HIDDEN_SIZE,4u,1u,err);
-        fg_vk_tensor_destroy(injection_row);fg_vk_tensor_destroy(dst_row);
-        fg_vk_tensor_destroy(residual_row);
-    }
-    return status;
-}
 
 /* Readiness check for the batch block: every weight it dispatches must be in
  * the cooked ring layout (otherwise the block would silently change a token's
@@ -1840,33 +1809,6 @@ bool fg_owner_decode_block_batch_ready(fg_owner_executor *e,uint32_t first,uint3
     return true;
 }
 
-/* DIAG-R3: per-layer residual hash for the batch block, same shape as the
- * serial path's FG_LAYER_TRACE so the two paths can be diffed layer by layer
- * (FG_NUMERICS_TRACE=1; the serial side needs FG_DECODE_STATIC=0 to trace). */
-static fg_status batch_layer_trace(fg_owner_executor *e,uint32_t layer,
-    const uint32_t state_slot[2],const fg_vk_tensor *state,fg_error *err){
-    if(!numerics_trace_enabled()||!state)return FG_OK;
-    fg_vk_context *vk=fg_model_vk(e->model);
-    while(fg_vk_batch_active(vk)){fg_status pending=fg_vk_end(vk,err);if(pending!=FG_OK)return pending;}
-    fg_status status=fg_vk_static_drain(vk,err);
-    if(status!=FG_OK)return status;
-    const float *values=fg_vk_tensor_map((fg_vk_tensor *)state);
-    if(!values)return FG_OK;
-    double sum0=0.0,sum1=0.0;float min0=values[0],max0=values[0],min1=values[FG_HYPER_WIDTH],max1=values[FG_HYPER_WIDTH];
-    for(uint32_t i=0;i<FG_HYPER_WIDTH;i++){
-        float v0=values[i];sum0+=v0;if(v0<min0)min0=v0;if(v0>max0)max0=v0;
-        float v1=values[FG_HYPER_WIDTH+i];sum1+=v1;if(v1<min1)min1=v1;if(v1>max1)max1=v1;
-    }
-    fprintf(stderr,"FG_BATCH_TRACE rank=%u layer=%u slot0=%u slot1=%u hash0=%016llx hash1=%016llx "
-        "sum0=%.6f min0=%.6g max0=%.6g f00=%.6g sum1=%.6f min1=%.6g max1=%.6g f01=%.6g\n",
-        fg_model_rank(e->model),layer,state_slot[0],state_slot[1],
-        (unsigned long long)numerics_hash_bytes(values,(size_t)FG_HYPER_WIDTH*4u),
-        (unsigned long long)numerics_hash_bytes(values+FG_HYPER_WIDTH,
-                                                (size_t)FG_HYPER_WIDTH*4u),
-        sum0,min0,max0,values[0],sum1,min1,max1,values[FG_HYPER_WIDTH]);
-    return FG_OK;
-}
-
 fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
     uint32_t last_layer,const uint32_t token_index[2],const uint32_t state_slot[2],
     const uint32_t positions[6],const fg_vk_tensor *hyper_input,
@@ -1908,32 +1850,35 @@ fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
         fg_vk_tensor *mixed=NULL,*injection=NULL;const fg_vk_tensor *residual=NULL;
         if(status==FG_OK)status=gr_read_batch_into_b2(e,layer,false,layer_input,&mixed,
             &residual,&injection,err);
-        fg_vk_tensor *qsa_block[2]={NULL,NULL};
         if(status==FG_OK&&fg_vk_profile_active(vk))
             status=fg_vk_profile_set_scope(vk,qsa?"qsa":"gdn",err);
         if(status==FG_OK&&qsa){
+            /* A session's QSA output is a view into the owner's shared attention
+             * scratch, so it is only valid until the next session's decode on
+             * this owner.  Write each token's residual immediately after its own
+             * decode; holding both blocks until after the second decode would
+             * make both writes read token 1's block. */
+            fg_vk_tensor *destination=BATCH_NEXT();
             for(uint32_t t=0;status==FG_OK&&t<2u;t++){
-                fg_vk_tensor *hidden_row=NULL;
+                fg_vk_tensor *hidden_row=NULL,*residual_row=NULL,*dst_row=NULL,*injection_row=NULL;
                 const uint32_t position[3]={positions[t*3u],positions[t*3u+1u],
                                             positions[t*3u+2u]};
                 status=row_slice(e->mixed,t,FG_HIDDEN_SIZE,&hidden_row,err);
                 if(status==FG_OK)status=fg_owner_set_active_session(e,state_slot[t],err);
+                fg_vk_tensor *block=NULL;
                 if(status==FG_OK)status=fg_owner_qsa_decode(e,layer,token_index[t],
-                    position,hidden_row,&qsa_block[t],err);
-                fg_vk_tensor_destroy(hidden_row);
-                if(status==FG_OK&&numerics_trace_enabled()&&qsa_block[t]){
-                    while(fg_vk_batch_active(vk)){fg_status pending=fg_vk_end(vk,err);if(pending!=FG_OK){status=pending;break;}}
-                    if(status==FG_OK)status=fg_vk_static_drain(vk,err);
-                    if(status==FG_OK){
-                        const float *v=fg_vk_tensor_map(qsa_block[t]);
-                        fprintf(stderr,"FG_QSA_BLK rank=%u layer=%u token=%u slot=%u "
-                            "hash=%016llx f0=%g fl=%g\n",fg_model_rank(e->model),layer,
-                            token_index[t],state_slot[t],
-                            (unsigned long long)numerics_hash_bytes(v,(size_t)FG_HIDDEN_SIZE*4u),
-                            v[0],v[FG_HIDDEN_SIZE-1u]);
-                    }
-                }
+                    position,hidden_row,&block,err);
+                if(status==FG_OK)status=row_slice((fg_vk_tensor *)cur,t,FG_HYPER_WIDTH,
+                    &residual_row,err);
+                if(status==FG_OK)status=row_slice(destination,t,FG_HYPER_WIDTH,&dst_row,err);
+                if(status==FG_OK)status=row_slice((fg_vk_tensor *)injection,t,FG_GROUP_SIZE,
+                    &injection_row,err);
+                if(status==FG_OK)status=fg_vk_gr_write(vk,dst_row,residual_row,block,
+                    injection_row,FG_HIDDEN_SIZE,4u,1u,err);
+                fg_vk_tensor_destroy(injection_row);fg_vk_tensor_destroy(dst_row);
+                fg_vk_tensor_destroy(residual_row);fg_vk_tensor_destroy(hidden_row);
             }
+            if(status==FG_OK)cur=destination;
         }else if(status==FG_OK){
             /* Same input as the single-token path: the GDN projections consume
              * the HC-gated normalized residual, not the layer input. */
@@ -1943,17 +1888,12 @@ fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
         if(status==FG_OK&&fg_vk_profile_active(vk))
             status=fg_vk_profile_set_scope(vk,"gr_attn_write",err);
         if(status==FG_OK)status=ensure_decode_batch(vk,err);
-        if(status==FG_OK){
+        if(status==FG_OK&&!qsa){
+            /* gdn pair wrote the two-row block into gdn_output. */
             fg_vk_tensor *destination=BATCH_NEXT();
-            if(qsa){
-                status=gr_write_pair_into(e,cur,qsa_block,injection,destination,err);
-                if(status==FG_OK)cur=destination;
-            }else{
-                /* gdn pair wrote the two-row block into gdn_output. */
-                status=fg_vk_gr_write(vk,destination,cur,e->gdn_output,injection,
-                    FG_HIDDEN_SIZE,4u,2u,err);
-                if(status==FG_OK)cur=destination;
-            }
+            status=fg_vk_gr_write(vk,destination,cur,e->gdn_output,injection,
+                FG_HIDDEN_SIZE,4u,2u,err);
+            if(status==FG_OK)cur=destination;
         }
         if(status==FG_OK&&fg_vk_profile_active(vk))
             status=fg_vk_profile_set_scope(vk,"gr_ffn_read",err);
@@ -2005,7 +1945,6 @@ fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
                 FG_HIDDEN_SIZE,4u,2u,err);
             if(status==FG_OK)cur=destination;
         }
-        if(status==FG_OK)status=batch_layer_trace(e,layer,state_slot,cur,err);
     }
 #undef BATCH_NEXT
     if(status==FG_OK){
@@ -2056,21 +1995,8 @@ static fg_status owner_record_layer(fg_owner_executor *e,uint32_t layer,
         e->injection,&mixed,&residual,&injection,err);
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,
         (layer&3u)==3u?"qsa":"gdn",err);
-    if(status==FG_OK&&(layer&3u)==3u){
+    if(status==FG_OK&&(layer&3u)==3u)
         status=fg_owner_qsa_decode(e,layer,token,position,mixed,&block,err);
-        if(status==FG_OK&&numerics_trace_enabled()&&block){
-            while(fg_vk_batch_active(vk)){fg_status pending=fg_vk_end(vk,err);if(pending!=FG_OK){status=pending;break;}}
-            if(status==FG_OK)status=fg_vk_static_drain(vk,err);
-            if(status==FG_OK){
-                const float *v=fg_vk_tensor_map(block);
-                fprintf(stderr,"FG_QSA_BLK rank=%u layer=%u token=%u slot=%u "
-                    "hash=%016llx f0=%g fl=%g\n",fg_model_rank(e->model),layer,token,
-                    e->active_session,
-                    (unsigned long long)numerics_hash_bytes(v,(size_t)FG_HIDDEN_SIZE*4u),
-                    v[0],v[FG_HIDDEN_SIZE-1u]);
-            }
-        }
-    }
     else if(status==FG_OK)status=fg_owner_gdn_decode(e,layer,mixed,&block,err);
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_attn_write",err);
     if(status==FG_OK)status=gr_write_batch_into(e,residual,block,injection,1u,
