@@ -1860,10 +1860,10 @@ fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
         if(layer==1u){
             if(fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"ple",err);
             if(status==FG_OK)status=ensure_decode_batch(vk,err);
-            fg_vk_tensor *destination=BATCH_NEXT();
+            fg_vk_tensor *destination=BATCH_NEXT(),*ple_input=NULL;
             if(status==FG_OK)status=ple_decode_into_b2(e,layer_input,ngram_embedding,
-                destination,state_slot,&layer_input,err);
-            if(status==FG_OK)cur=layer_input;
+                destination,state_slot,&ple_input,err);
+            if(status==FG_OK){layer_input=ple_input;cur=ple_input;}
         }
         if(status==FG_OK&&fg_vk_profile_active(vk))
             status=fg_vk_profile_set_scope(vk,"gr_attn_read",err);
@@ -1960,7 +1960,7 @@ fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
         fg_error ignored={0};
         fg_vk_abort(vk,&ignored);
     }
-    if(status==FG_OK)*output=cur;
+    if(status==FG_OK)*output=(fg_vk_tensor *)cur;
     return status;
 }
 
