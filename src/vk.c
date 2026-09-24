@@ -399,15 +399,17 @@ fg_status fg_vk_copy_tensors(fg_vk_context *c,fg_vk_tensor *const *dst,
     if((vr=vkBeginCommandBuffer(c->copy_command,&begin))!=VK_SUCCESS)
         return vk_error(err,"begin tensor copy command",vr);
     VkMemoryBarrier pre={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-        .srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_TRANSFER_WRITE_BIT,
+        .srcAccessMask=VK_ACCESS_HOST_WRITE_BIT|VK_ACCESS_SHADER_WRITE_BIT|
+                       VK_ACCESS_TRANSFER_WRITE_BIT,
         .dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT};
-    vkCmdPipelineBarrier(c->copy_command,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+    vkCmdPipelineBarrier(c->copy_command,
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT|VK_PIPELINE_STAGE_HOST_BIT,
         VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&pre,0,NULL,0,NULL);
     for(uint32_t i=0;i<count;i++){
         VkBufferCopy region={.srcOffset=src[i]->offset,.dstOffset=dst[i]->offset,
             .size=src[i]->bytes};
-        vkCmdCopyBuffer(c->copy_command,dst[i]->allocation->buffer,
-                        src[i]->allocation->buffer,1,&region);
+        vkCmdCopyBuffer(c->copy_command,src[i]->allocation->buffer,
+                        dst[i]->allocation->buffer,1,&region);
     }
     VkMemoryBarrier post={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,
         .srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,
