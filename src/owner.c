@@ -1832,7 +1832,7 @@ bool fg_owner_decode_block_batch_ready(fg_owner_executor *e,uint32_t first,uint3
 
 fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
     uint32_t last_layer,const uint32_t token_index[2],const uint32_t state_slot[2],
-    const uint32_t positions[2][3],const fg_vk_tensor *hyper_input,
+    const uint32_t positions[6],const fg_vk_tensor *hyper_input,
     const fg_vk_tensor *ngram_embedding,fg_owner_expert_inline_fn expert,
     void *expert_context,fg_vk_tensor **output,fg_error *err){
     if(!e||!token_index||!state_slot||!positions||!hyper_input||!expert||!output||
@@ -1877,10 +1877,12 @@ fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
         if(status==FG_OK&&qsa){
             for(uint32_t t=0;status==FG_OK&&t<2u;t++){
                 fg_vk_tensor *hidden_row=NULL;
+                const uint32_t position[3]={positions[t*3u],positions[t*3u+1u],
+                                            positions[t*3u+2u]};
                 status=row_slice(e->mixed,t,FG_HIDDEN_SIZE,&hidden_row,err);
                 if(status==FG_OK)status=fg_owner_set_active_session(e,state_slot[t],err);
                 if(status==FG_OK)status=fg_owner_qsa_decode(e,layer,token_index[t],
-                    positions[t],hidden_row,&qsa_block[t],err);
+                    position,hidden_row,&qsa_block[t],err);
                 fg_vk_tensor_destroy(hidden_row);
             }
         }else if(status==FG_OK){

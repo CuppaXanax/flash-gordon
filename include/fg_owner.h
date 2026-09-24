@@ -276,7 +276,7 @@ bool fg_owner_decode_block_batch_ready(fg_owner_executor *executor,uint32_t firs
 fg_status fg_owner_decode_block_batch(fg_owner_executor *executor,uint32_t first_layer,
                                       uint32_t last_layer,const uint32_t token_index[2],
                                       const uint32_t state_slot[2],
-                                      const uint32_t positions[2][3],
+                                      const uint32_t positions[6],
                                       const fg_vk_tensor *hyper_input,
                                       const fg_vk_tensor *ngram_embedding,
                                       fg_owner_expert_inline_fn expert,void *expert_context,

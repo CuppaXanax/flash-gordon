@@ -2053,11 +2053,12 @@ static fg_status handle_decode_batch_work(fg_fabric *fabric,const fg_manifest *m
     }
     if(batch2){
         double t_slot0=ms?dispatch_ts():0.0,t_setup=0.0,t_block=0.0,t_tail=0.0;
-        uint32_t token_index[2],state_slot[2],positions[2][3];
+        uint32_t token_index[2],state_slot[2],positions[6];
         for(uint32_t t=0;t<2u;t++){
             token_index[t]=work->slots[t].token_index;
             state_slot[t]=work->slots[t].state_slot;
-            for(uint32_t axis=0;axis<3u;axis++)positions[t][axis]=work->slots[t].position[axis];
+            for(uint32_t axis=0;axis<3u;axis++)
+                positions[t*3u+axis]=work->slots[t].position[axis];
             status=fg_vk_tensor_write(context->batch_input,
                 (uint64_t)t*FG_HYPER_WIDTH*4u,work->slots[t].hyper,
                 (uint64_t)FG_HYPER_WIDTH*4u,err);
