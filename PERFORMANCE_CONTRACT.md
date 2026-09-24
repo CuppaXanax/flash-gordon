@@ -67,9 +67,13 @@ bandwidth-bound; remaining kernel headroom is small. See
 
 ## Multi-session status
 
-The engine still serves one generation at a time; a second concurrent request
-gets 503 until the front-end/engine split in
-[docs/API_CONCURRENCY.md](docs/API_CONCURRENCY.md) lands. A depth-B batch path
+The engine still serves one generation at a time. The HTTP front-end is now a
+dedicated thread ([docs/API_CONCURRENCY.md](docs/API_CONCURRENCY.md), M1
+landed): keep-alive, chunked SSE, front-end heartbeats and concurrent
+`/health`/`/v1/models` no longer share the token loop; a second concurrent chat
+request still gets 503 + Retry-After until the M2 request queue lands, but it
+is rejected immediately (0.7 ms measured during a 512px vision turn, versus
+2.6 s before). A depth-B batch path
 exists (`src/decode_batch.c`: batch table, FIFO scheduler, owner session slots
 with PREPARE/COMMIT/RESTORE transactions) and is byte-identical at B=1, but B=2
 measures 1.25-1.46x the sequential aggregate against a 1.6x target because the
