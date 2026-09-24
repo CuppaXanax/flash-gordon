@@ -1481,6 +1481,7 @@ static fg_status owner_record_layer(fg_owner_executor *e,uint32_t layer,
     void *expert_context,fg_vk_tensor **current,fg_error *err){
     fg_vk_context *vk=fg_model_vk(e->model);
     fg_status status=FG_OK;
+    (void)block_input;
     const fg_vk_tensor *layer_input=*current;
     if(layer==1u){
         fg_vk_tensor *ple_input=NULL;
