@@ -39,7 +39,10 @@ static fg_status create_scratch(fg_expert_executor *executor,fg_error *err){
         status=FG_ERR_MISMATCH;
     }
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*4u,&executor->gates,err);
-    if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)FG_TOP_K*4u,&executor->selected,err);
+    /* Top-10 selection scratch: one row per token so the batch-2 union can
+     * select for the pair in one dispatch. */
+    if(status==FG_OK)status=fg_vk_tensor_create(vk,
+        (uint64_t)executor->max_tokens*FG_TOP_K*4u,&executor->selected,err);
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*640u*4u,&executor->gate,err);
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*640u*4u,&executor->up,err);
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*640u*4u,&executor->mid,err);
