@@ -6945,7 +6945,7 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
         if(measure){
             double b1_total=b1_wall;
             double b2_total=b2_wall;
-            double b2_tokens=steps_done*effective_depth;
+            double b2_tokens=(double)batched_tokens;
             fprintf(stderr,"DEPTH_B_SELFTEST_PERF case=%s b1_ms=%.3f b2_ms=%.3f "
                 "b2_steps=%u b2_tokens=%u b1_seq_ms=%.3f b2_per_step_ms=%.3f "
                 "b2_aggregate_tps=%.3f\n",name,b1_total,b2_total,steps_done,
