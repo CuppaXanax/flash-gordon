@@ -4962,8 +4962,9 @@ static fg_status coordinator_decode_batch_step(fg_coordinator *coordinator,
         fg_decode_batch_outcome outcome={0};
         outcome.next_token=next;
         outcome.logit=logit;
-        for(uint32_t axis=0;axis<4u;axis++)
+        for(uint32_t axis=0;axis<3u;axis++)
             outcome.position[axis]=sequence->position[axis]+1u;
+        outcome.position[3]=0u;
         for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++)
             if((layer&3u)==3u)outcome.qsa_records[layer]=sequence->token_index+1u;
         outcome.sampler=coordinator->sampler_state;
