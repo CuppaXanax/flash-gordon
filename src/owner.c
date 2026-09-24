@@ -67,6 +67,14 @@ static fg_status chained_layer_trace(uint32_t rank,fg_vk_context *vk,uint32_t la
     if(values)for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(values[i])){first_bad=(int32_t)i;break;}
     fprintf(stderr,"FG_NUMERICS_LAYER rank=%u token=%u layer=%u finite=%d first_bad=%d f0=%g\n",
         rank,token,layer,first_bad<0,first_bad,values?values[0]:0.0f);
+    if(values){
+        double sum=0.0;float min=values[0],max=values[0];
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++){float v=values[i];sum+=v;if(v<min)min=v;if(v>max)max=v;}
+        fprintf(stderr,"FG_LAYER_TRACE rank=%u token=%u layer=%u hash=%016llx "
+            "sum=%.6f min=%.6g max=%.6g f0=%.6g\n",rank,token,layer,
+            (unsigned long long)numerics_hash_bytes(values,(size_t)FG_HYPER_WIDTH*4u),
+            sum,min,max,values[0]);
+    }
     if(first_bad>=0){
         fg_error_set(err,FG_ERR_FORMAT,
             "rank %u decode layer %u token %u produced non-finite hidden at element %d value=%g",
@@ -1832,6 +1840,33 @@ bool fg_owner_decode_block_batch_ready(fg_owner_executor *e,uint32_t first,uint3
     return true;
 }
 
+/* DIAG-R3: per-layer residual hash for the batch block, same shape as the
+ * serial path's FG_LAYER_TRACE so the two paths can be diffed layer by layer
+ * (FG_NUMERICS_TRACE=1; the serial side needs FG_DECODE_STATIC=0 to trace). */
+static fg_status batch_layer_trace(fg_owner_executor *e,uint32_t layer,
+    const uint32_t state_slot[2],const fg_vk_tensor *state,fg_error *err){
+    if(!numerics_trace_enabled()||!state)return FG_OK;
+    fg_vk_context *vk=fg_model_vk(e->model);
+    while(fg_vk_batch_active(vk)){fg_status pending=fg_vk_end(vk,err);if(pending!=FG_OK)return pending;}
+    fg_status status=fg_vk_static_drain(vk,err);
+    if(status!=FG_OK)return status;
+    const float *values=fg_vk_tensor_map((fg_vk_tensor *)state);
+    if(!values)return FG_OK;
+    double sum0=0.0,sum1=0.0;float min0=values[0],max0=values[0],min1=values[FG_HYPER_WIDTH],max1=values[FG_HYPER_WIDTH];
+    for(uint32_t i=0;i<FG_HYPER_WIDTH;i++){
+        float v0=values[i];sum0+=v0;if(v0<min0)min0=v0;if(v0>max0)max0=v0;
+        float v1=values[FG_HYPER_WIDTH+i];sum1+=v1;if(v1<min1)min1=v1;if(v1>max1)max1=v1;
+    }
+    fprintf(stderr,"FG_BATCH_TRACE rank=%u layer=%u slot0=%u slot1=%u hash0=%016llx hash1=%016llx "
+        "sum0=%.6f min0=%.6g max0=%.6g f00=%.6g sum1=%.6f min1=%.6g max1=%.6g f01=%.6g\n",
+        fg_model_rank(e->model),layer,state_slot[0],state_slot[1],
+        (unsigned long long)numerics_hash_bytes(values,(size_t)FG_HYPER_WIDTH*4u),
+        (unsigned long long)numerics_hash_bytes(values+FG_HYPER_WIDTH,
+                                                (size_t)FG_HYPER_WIDTH*4u),
+        sum0,min0,max0,values[0],sum1,min1,max1,values[FG_HYPER_WIDTH]);
+    return FG_OK;
+}
+
 fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
     uint32_t last_layer,const uint32_t token_index[2],const uint32_t state_slot[2],
     const uint32_t positions[6],const fg_vk_tensor *hyper_input,
@@ -1886,10 +1921,24 @@ fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
                 if(status==FG_OK)status=fg_owner_qsa_decode(e,layer,token_index[t],
                     position,hidden_row,&qsa_block[t],err);
                 fg_vk_tensor_destroy(hidden_row);
+                if(status==FG_OK&&numerics_trace_enabled()&&qsa_block[t]){
+                    while(fg_vk_batch_active(vk)){fg_status pending=fg_vk_end(vk,err);if(pending!=FG_OK){status=pending;break;}}
+                    if(status==FG_OK)status=fg_vk_static_drain(vk,err);
+                    if(status==FG_OK){
+                        const float *v=fg_vk_tensor_map(qsa_block[t]);
+                        fprintf(stderr,"FG_QSA_BLK rank=%u layer=%u token=%u slot=%u "
+                            "hash=%016llx f0=%g fl=%g\n",fg_model_rank(e->model),layer,
+                            token_index[t],state_slot[t],
+                            (unsigned long long)numerics_hash_bytes(v,(size_t)FG_HIDDEN_SIZE*4u),
+                            v[0],v[FG_HIDDEN_SIZE-1u]);
+                    }
+                }
             }
         }else if(status==FG_OK){
+            /* Same input as the single-token path: the GDN projections consume
+             * the HC-gated normalized residual, not the layer input. */
             fg_vk_tensor *block=NULL;
-            status=gdn_decode_pair_into(e,layer,layer_input,state_slot,&block,err);
+            status=gdn_decode_pair_into(e,layer,mixed,state_slot,&block,err);
         }
         if(status==FG_OK&&fg_vk_profile_active(vk))
             status=fg_vk_profile_set_scope(vk,"gr_attn_write",err);
@@ -1956,6 +2005,7 @@ fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
                 FG_HIDDEN_SIZE,4u,2u,err);
             if(status==FG_OK)cur=destination;
         }
+        if(status==FG_OK)status=batch_layer_trace(e,layer,state_slot,cur,err);
     }
 #undef BATCH_NEXT
     if(status==FG_OK){
@@ -2006,8 +2056,21 @@ static fg_status owner_record_layer(fg_owner_executor *e,uint32_t layer,
         e->injection,&mixed,&residual,&injection,err);
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,
         (layer&3u)==3u?"qsa":"gdn",err);
-    if(status==FG_OK&&(layer&3u)==3u)
+    if(status==FG_OK&&(layer&3u)==3u){
         status=fg_owner_qsa_decode(e,layer,token,position,mixed,&block,err);
+        if(status==FG_OK&&numerics_trace_enabled()&&block){
+            while(fg_vk_batch_active(vk)){fg_status pending=fg_vk_end(vk,err);if(pending!=FG_OK){status=pending;break;}}
+            if(status==FG_OK)status=fg_vk_static_drain(vk,err);
+            if(status==FG_OK){
+                const float *v=fg_vk_tensor_map(block);
+                fprintf(stderr,"FG_QSA_BLK rank=%u layer=%u token=%u slot=%u "
+                    "hash=%016llx f0=%g fl=%g\n",fg_model_rank(e->model),layer,token,
+                    e->active_session,
+                    (unsigned long long)numerics_hash_bytes(v,(size_t)FG_HIDDEN_SIZE*4u),
+                    v[0],v[FG_HIDDEN_SIZE-1u]);
+            }
+        }
+    }
     else if(status==FG_OK)status=fg_owner_gdn_decode(e,layer,mixed,&block,err);
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_attn_write",err);
     if(status==FG_OK)status=gr_write_batch_into(e,residual,block,injection,1u,

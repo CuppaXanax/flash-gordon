@@ -62,6 +62,10 @@ static bool decode_ring_trace_enabled(void){const char *enabled=getenv("FG_DECOD
  * output owner or the last block owner is rank 0. */
 static bool decode_direct_output_eligible(const fg_manifest *manifest){
     if(!manifest)return false;
+    /* DIAG-R3 (temporary): force the rank-4 relay output path so a B=1 run can
+     * be compared against the B=2 relay bit-for-bit. */
+    const char *force=getenv("FG_FORCE_RELAY");
+    if(force&&*force&&strcmp(force,"0")!=0)return false;
     uint32_t owner=fg_output_owner_rank(manifest);
     uint32_t last=manifest->layer_owner[FG_LAYER_COUNT-1u];
     return owner!=0u&&last!=0u&&owner!=last;
