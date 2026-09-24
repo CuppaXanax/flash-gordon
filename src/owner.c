@@ -1774,8 +1774,10 @@ static fg_status gr_write_pair_into(fg_owner_executor *e,const fg_vk_tensor *res
     fg_status status=FG_OK;
     for(uint32_t t=0;status==FG_OK&&t<2u;t++){
         fg_vk_tensor *residual_row=NULL,*injection_row=NULL,*dst_row=NULL;
-        status=row_slice((fg_vk_tensor *)residual2,t,FG_HIDDEN_SIZE,&residual_row,err);
-        if(status==FG_OK)status=row_slice(destination,t,FG_HIDDEN_SIZE,&dst_row,err);
+        /* The residual and the destination are full hyper rows (hidden x
+         * groups); only the block is hidden-wide. */
+        status=row_slice((fg_vk_tensor *)residual2,t,FG_HYPER_WIDTH,&residual_row,err);
+        if(status==FG_OK)status=row_slice(destination,t,FG_HYPER_WIDTH,&dst_row,err);
         if(status==FG_OK)status=row_slice((fg_vk_tensor *)injection2,t,FG_GROUP_SIZE,&injection_row,err);
         if(status==FG_OK&&!block[t])status=FG_ERR_MISMATCH;
         if(status==FG_OK)status=fg_vk_gr_write(vk,dst_row,residual_row,block[t],
