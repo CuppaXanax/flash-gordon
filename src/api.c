@@ -6,12 +6,15 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <float.h>
 #include <math.h>
 #include <netdb.h>
 #include <poll.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,9 +29,16 @@
 #define FG_API_IO_TIMEOUT_SECONDS 30
 #define FG_API_DEFAULT_MAX_TOKENS 512u
 #define FG_API_STREAM_KEEPALIVE_SECONDS 10.0
-#define FG_API_BUSY_PROBE_BUDGET_SECONDS 0.5
-#define FG_API_BUSY_PROBE_MAX_CONNECTIONS 8u
 #define FG_API_CONTENT_SNIPPET 48u
+/* Front-end bounds.  The front-end thread owns the listener and every client
+ * socket; the engine only appends response bytes to a connection's outbound
+ * buffer under out_mutex. */
+#define FG_API_MAX_HEADER_BYTES (256u * 1024u)
+#define FG_API_CONNECTION_OUTPUT_LIMIT (8u * 1024u * 1024u)
+#define FG_API_CONNECTION_IDLE_SECONDS 120.0
+#define FG_API_MAX_CONNECTIONS 64u
+#define FG_API_ENGINE_QUEUE_CAPACITY 4u
+#define FG_API_FRONTEND_POLL_MS 200
 
 typedef struct api_buffer {
     char *data;
@@ -126,9 +136,58 @@ typedef struct api_public_session {
     bool valid;
 } api_public_session;
 
-typedef struct api_generation {
+/* Incremental HTTP/1.1 request parser.  The front-end thread feeds it bytes
+ * from a client socket; it consumes exactly one complete request at a time and
+ * leaves any pipelined remainder in `input`. */
+typedef struct api_http_parser {
+    api_buffer input;
+} api_http_parser;
+
+typedef enum api_parse_state {
+    API_PARSE_INCOMPLETE = 0,
+    API_PARSE_COMPLETE,
+    API_PARSE_FAILED
+} api_parse_state;
+
+typedef struct api_connection api_connection;
+typedef struct api_frontend api_frontend;
+
+/* Response sink.  In the serving process every write goes to a front-end
+ * connection; the raw-fd mode exists for direct unit tests and keeps the
+ * historical `Connection: close` framing. */
+typedef struct api_sink {
     int fd;
+    api_connection *connection;
+} api_sink;
+
+struct api_connection {
+    int fd;
+    api_frontend *frontend;
+    api_http_parser parser;
+    /* Front-end-thread state. */
+    bool generating;      /* a chat request is in flight on this connection */
+    bool peer_closed;     /* client half-closed; flush then close */
+    bool keep_alive;      /* request allows a persistent connection */
+    double last_activity; /* monotonic seconds of the last read or write */
+    /* Engine/front-end shared state.  out_mutex guards `out` and
+     * `client_failed`; the flags are atomic so the engine can publish response
+     * state without stalling the front-end poll loop. */
+    pthread_mutex_t out_mutex;
+    api_buffer out;       /* response bytes pending write (chunk-framed when
+                           * `chunked` is set) */
+    _Atomic bool chunked;         /* response body uses HTTP chunked framing */
+    _Atomic bool response_complete;
+    _Atomic bool close_after_flush;
+    bool client_failed;   /* engine could not enqueue more response bytes */
+    /* Written by the front-end, read by the engine's interrupt hook. */
+    _Atomic bool client_gone;
+    api_connection *next;
+};
+
+typedef struct api_generation {
+    api_sink sink;
     bool stream;
+    bool keep_alive;
     api_buffer content;
     const char *id;
     const char *model;
@@ -145,18 +204,59 @@ typedef struct api_generation {
     size_t utf8_reasoning_pending_length;
     size_t reasoning_emitted;
     size_t streamed_tool_calls;
-    double last_stream_write;
-    int listener;
     fg_runtime *runtime;
 } api_generation;
 
+typedef struct api_engine_request {
+    api_connection *connection;
+    http_request http;
+} api_engine_request;
+
+/* Single in-flight slot plus a bounded transport queue for M2.  M1 keeps the
+ * documented 503-while-busy contract: the front-end rejects a chat request
+ * immediately when `outstanding` is non-zero. */
+typedef struct api_engine_queue {
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    api_engine_request entries[FG_API_ENGINE_QUEUE_CAPACITY];
+    size_t head;
+    size_t count;
+    size_t outstanding;
+    bool stopping;
+} api_engine_queue;
+
+struct api_frontend {
+    int listener;
+    int wake_read;
+    int wake_write;
+    pthread_t thread;
+    bool thread_started;
+    _Atomic bool stopping;
+    fg_runtime *runtime;
+    api_engine_queue *engine;
+    api_connection *connections;
+    size_t connection_count;
+};
+
 static volatile sig_atomic_t api_stop_requested;
 static unsigned long long api_request_sequence;
-static int api_listener_fd = -1;
+static int api_wake_fd = -1;
 
 static int utf8_unit(const unsigned char *text,size_t available,size_t *bytes);
 static void tool_call_id(const api_generation *generation,size_t index,char output[128]);
-static void api_service_pending_connections(int listener, fg_runtime *runtime);
+static fg_status api_sink_write(api_sink *sink,const char *data,size_t length,fg_error *err);
+static fg_status api_connection_enqueue_raw(api_connection *conn,const char *data,
+                                            size_t length,fg_error *err);
+static void api_connection_complete_response(api_connection *conn,bool close_after);
+static void api_connection_flush(api_connection *conn);
+static bool api_connection_maybe_heartbeat(api_connection *conn,double now);
+static bool api_connection_detect_client_gone(api_connection *conn);
+static void api_frontend_wake(api_frontend *frontend);
+static void api_frontend_accept(api_frontend *frontend);
+static void api_frontend_read_available(api_frontend *frontend,api_connection *conn);
+static bool api_frontend_dispatch(api_frontend *frontend,api_connection *conn,
+                                  http_request *http,bool keep_alive);
+static fg_status configure_client_socket(int fd,fg_error *err);
 
 static double api_monotonic_seconds(void) {
     struct timespec now;
@@ -276,35 +376,40 @@ static const char *http_reason(unsigned status) {
     }
 }
 
-static fg_status send_response_with_headers(int fd, unsigned status, const char *content_type,
-                                            const char *extra_headers, const char *body,
-                                            size_t body_length, fg_error *err) {
+static fg_status api_send_response_with_headers(api_sink *sink, unsigned status,
+                                                const char *content_type,
+                                                const char *extra_headers, const char *body,
+                                                size_t body_length, bool keep_alive,
+                                                fg_error *err) {
     char header[4096];
     int length = snprintf(header, sizeof(header),
                           "HTTP/1.1 %u %s\r\n"
                           "Content-Type: %s\r\n"
                           "Content-Length: %zu\r\n"
-                          "Connection: close\r\n"
+                          "Connection: %s\r\n"
                           "Cache-Control: no-store\r\n"
                           "%s\r\n",
                           status, http_reason(status), content_type, body_length,
+                          keep_alive ? "keep-alive" : "close",
                           extra_headers ? extra_headers : "");
     if (length < 0 || (size_t)length >= sizeof(header)) {
         fg_error_set(err, FG_ERR_LIMIT, "HTTP response header overflow");
         return FG_ERR_LIMIT;
     }
-    fg_status result = send_all(fd, header, (size_t)length, err);
-    if (result == FG_OK) result = send_all(fd, body, body_length, err);
+    fg_status result = api_sink_write(sink, header, (size_t)length, err);
+    if (result == FG_OK) result = api_sink_write(sink, body, body_length, err);
     return result;
 }
 
-static fg_status send_response(int fd, unsigned status, const char *content_type,
-                               const char *body, size_t body_length, fg_error *err) {
-    return send_response_with_headers(fd, status, content_type, NULL, body, body_length, err);
+static fg_status api_send_response(api_sink *sink, unsigned status, const char *content_type,
+                                   const char *body, size_t body_length, bool keep_alive,
+                                   fg_error *err) {
+    return api_send_response_with_headers(sink, status, content_type, NULL, body,
+                                          body_length, keep_alive, err);
 }
 
-static fg_status send_error_response(int fd, unsigned status, const char *message,
-                                     fg_error *err) {
+static fg_status api_send_error_response(api_sink *sink, unsigned status, const char *message,
+                                         bool keep_alive, fg_error *err) {
     api_buffer body = {0};
     fg_status result = buffer_append(&body, "{\"error\":{\"message\":", err);
     if (result == FG_OK)
@@ -312,7 +417,8 @@ static fg_status send_error_response(int fd, unsigned status, const char *messag
     if (result == FG_OK)
         result = buffer_append(&body, ",\"type\":\"invalid_request_error\"}}", err);
     if (result == FG_OK)
-        result = send_response(fd, status, "application/json", body.data, body.length, err);
+        result = api_send_response(sink, status, "application/json", body.data, body.length,
+                                   keep_alive, err);
     free(body.data);
     return result;
 }
@@ -1902,200 +2008,149 @@ static bool header_value_equal(const char *value, size_t length, const char *wan
     return true;
 }
 
-static fg_status http_input_receive(int fd, api_buffer *input, unsigned *http_status,
-                                    fg_error *err) {
-    if (input->length >= FG_API_MAX_REQUEST_BYTES) {
-        *http_status = 413u;
-        fg_error_set(err, FG_ERR_LIMIT, "HTTP request exceeds 32 MiB");
-        return FG_ERR_LIMIT;
+/* --- incremental HTTP parsing ------------------------------------------- */
+
+static void api_http_parser_consume(api_http_parser *parser, size_t count) {
+    if (count >= parser->input.length) {
+        parser->input.length = 0;
+        if (parser->input.data) parser->input.data[0] = 0;
+        return;
     }
-    size_t chunk = FG_API_MAX_REQUEST_BYTES - input->length;
-    if (chunk > 8192u) chunk = 8192u;
-    fg_status status = buffer_reserve(input, chunk, err);
-    if (status != FG_OK) return status;
-    ssize_t received;
-    for (;;) {
-        received = recv(fd, input->data + input->length, chunk, 0);
-        if (received >= 0 || errno != EINTR || api_stop_requested) break;
-    }
-    if (received < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            *http_status = 408u;
-            fg_error_set(err, FG_ERR_IO, "HTTP body read timed out");
-        } else if (errno == EINTR) {
-            fg_error_set(err, FG_ERR_IO, "HTTP body interrupted by shutdown");
-        } else {
-            fg_error_set(err, FG_ERR_IO, "receive HTTP body: %s", strerror(errno));
-        }
-        return FG_ERR_IO;
-    }
-    if (!received) {
-        fg_error_set(err, FG_ERR_FORMAT, "client closed before HTTP body completed");
-        return FG_ERR_FORMAT;
-    }
-    input->length += (size_t)received;
-    input->data[input->length] = 0;
-    return FG_OK;
+    memmove(parser->input.data, parser->input.data + count, parser->input.length - count);
+    parser->input.length -= count;
+    parser->input.data[parser->input.length] = 0;
 }
 
-static size_t chunked_size_line_end(const api_buffer *input, size_t cursor) {
-    for (size_t i = cursor; i + 1u < input->length; i++)
-        if (input->data[i] == '\r' && input->data[i + 1u] == '\n') return i;
-    return SIZE_MAX;
-}
-
-static fg_status chunked_body_receive(int fd, api_buffer *input, size_t cursor,
-                                      char **body, size_t *body_length,
-                                      unsigned *http_status, fg_error *err) {
-    api_buffer decoded = {0};
+/* Decode a chunked body already buffered in `data`.  Returns
+ * API_PARSE_INCOMPLETE until the terminal chunk (and trailers) are present so
+ * the front-end can retry after more bytes arrive. */
+static api_parse_state api_chunked_decode(const char *data, size_t length, size_t cursor,
+                                          api_buffer *decoded, size_t *end_cursor,
+                                          unsigned *http_status, fg_error *err) {
     for (;;) {
-        size_t line_end = chunked_size_line_end(input, cursor);
-        while (line_end == SIZE_MAX) {
-            fg_status received = http_input_receive(fd, input, http_status, err);
-            if (received != FG_OK) {
-                free(decoded.data);
-                return received;
+        size_t line_end = SIZE_MAX;
+        for (size_t i = cursor; i + 1u < length; i++)
+            if (data[i] == '\r' && data[i + 1u] == '\n') {
+                line_end = i;
+                break;
             }
-            line_end = chunked_size_line_end(input, cursor);
-        }
+        if (line_end == SIZE_MAX) return API_PARSE_INCOMPLETE;
         size_t hex_begin = cursor, hex_end = cursor;
-        while (hex_end < line_end && isxdigit((unsigned char)input->data[hex_end])) hex_end++;
+        while (hex_end < line_end && isxdigit((unsigned char)data[hex_end])) hex_end++;
         if (hex_end == hex_begin) {
             *http_status = 400u;
             fg_error_set(err, FG_ERR_FORMAT, "invalid chunk size");
-            free(decoded.data);
-            return FG_ERR_FORMAT;
+            return API_PARSE_FAILED;
         }
         unsigned long long size = 0;
         for (size_t i = hex_begin; i < hex_end; i++) {
-            int digit = json_hex(input->data[i]);
+            int digit = json_hex(data[i]);
             size = size * 16u + (unsigned long long)digit;
             if (size > FG_API_MAX_REQUEST_BYTES) {
                 *http_status = 413u;
                 fg_error_set(err, FG_ERR_LIMIT, "chunked HTTP request exceeds 32 MiB");
-                free(decoded.data);
-                return FG_ERR_LIMIT;
+                return API_PARSE_FAILED;
             }
         }
         cursor = line_end + 2u;
         if (!size) {
             for (;;) {
-                if (cursor + 1u < input->length && input->data[cursor] == '\r' &&
-                    input->data[cursor + 1u] == '\n') break;
+                if (cursor + 1u < length && data[cursor] == '\r' &&
+                    data[cursor + 1u] == '\n') {
+                    cursor += 2u;
+                    *end_cursor = cursor;
+                    return API_PARSE_COMPLETE;
+                }
                 bool trailer_end = false;
-                for (size_t i = cursor; i + 3u < input->length; i++)
-                    if (!memcmp(input->data + i, "\r\n\r\n", 4u)) {
+                for (size_t i = cursor; i + 3u < length; i++)
+                    if (!memcmp(data + i, "\r\n\r\n", 4u)) {
+                        cursor = i + 4u;
                         trailer_end = true;
                         break;
                     }
-                if (trailer_end) break;
-                fg_status received = http_input_receive(fd, input, http_status, err);
-                if (received != FG_OK) {
-                    free(decoded.data);
-                    return received;
+                if (trailer_end) {
+                    *end_cursor = cursor;
+                    return API_PARSE_COMPLETE;
                 }
-            }
-            break;
-        }
-        while (input->length < cursor + size + 2u) {
-            fg_status received = http_input_receive(fd, input, http_status, err);
-            if (received != FG_OK) {
-                free(decoded.data);
-                return received;
+                return API_PARSE_INCOMPLETE;
             }
         }
-        if (input->data[cursor + size] != '\r' || input->data[cursor + size + 1u] != '\n') {
+        if (length < cursor + (size_t)size + 2u) return API_PARSE_INCOMPLETE;
+        if (data[cursor + (size_t)size] != '\r' ||
+            data[cursor + (size_t)size + 1u] != '\n') {
             *http_status = 400u;
             fg_error_set(err, FG_ERR_FORMAT, "malformed chunked HTTP body");
-            free(decoded.data);
-            return FG_ERR_FORMAT;
+            return API_PARSE_FAILED;
         }
-        fg_status appended = buffer_append_n(&decoded, input->data + cursor, (size_t)size, err);
-        if (appended != FG_OK) {
-            free(decoded.data);
-            return appended;
-        }
+        fg_status appended = buffer_append_n(decoded, data + cursor, (size_t)size, err);
+        if (appended != FG_OK) return API_PARSE_FAILED;
         cursor += (size_t)size + 2u;
     }
-    *body = decoded.data ? decoded.data : strdup("");
-    if (!*body) {
-        fg_error_set(err, FG_ERR_OOM, "allocate HTTP body");
-        return FG_ERR_OOM;
-    }
-    *body_length = decoded.length;
-    return FG_OK;
 }
 
-static fg_status read_http_request(int fd, http_request *request, unsigned *http_status,
-                                   fg_error *err) {
+/* Try to consume exactly one complete request from the parser buffer.  On
+ * API_PARSE_COMPLETE the caller must call api_http_parser_consume() with the
+ * returned `consumed` count; pipelined bytes stay in the buffer. */
+static api_parse_state api_http_parser_try(api_http_parser *parser, http_request *request,
+                                           bool *keep_alive, size_t *consumed,
+                                           unsigned *http_status, fg_error *err) {
     memset(request, 0, sizeof(*request));
+    *keep_alive = true;
+    *consumed = 0u;
     *http_status = 400u;
-    api_buffer input = {0};
-    char *header_end = NULL;
-    while (!header_end) {
-        if (input.length == FG_API_MAX_REQUEST_BYTES) {
+    char *data = parser->input.data;
+    size_t length = parser->input.length;
+    if (!data || length < 4u) return API_PARSE_INCOMPLETE;
+    char *header_end = find_header_end(data, length);
+    if (!header_end) {
+        if (length >= FG_API_MAX_REQUEST_BYTES) {
             *http_status = 413u;
             fg_error_set(err, FG_ERR_LIMIT, "HTTP request exceeds 32 MiB");
-            free(input.data);
-            return FG_ERR_LIMIT;
+            return API_PARSE_FAILED;
         }
-        size_t chunk = FG_API_MAX_REQUEST_BYTES - input.length;
-        if (chunk > 8192u) chunk = 8192u;
-        fg_status status = buffer_reserve(&input, chunk, err);
-        if (status != FG_OK) {
-            free(input.data);
-            return status;
+        if (length >= FG_API_MAX_HEADER_BYTES) {
+            *http_status = 413u;
+            fg_error_set(err, FG_ERR_LIMIT, "HTTP request headers exceed 256 KiB");
+            return API_PARSE_FAILED;
         }
-        ssize_t received = recv(fd, input.data + input.length, chunk, 0);
-        if (received < 0) {
-            if (errno == EINTR && !api_stop_requested) continue;
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                *http_status = 408u;
-                fg_error_set(err, FG_ERR_IO, "HTTP request read timed out");
-            } else if (errno == EINTR) {
-                fg_error_set(err, FG_ERR_IO, "HTTP request interrupted by shutdown");
-            } else {
-                fg_error_set(err, FG_ERR_IO, "receive HTTP request: %s", strerror(errno));
-            }
-            free(input.data);
-            return FG_ERR_IO;
-        }
-        if (!received) {
-            fg_error_set(err, FG_ERR_FORMAT, "client closed before HTTP headers completed");
-            free(input.data);
-            return FG_ERR_FORMAT;
-        }
-        input.length += (size_t)received;
-        input.data[input.length] = 0;
-        header_end = find_header_end(input.data, input.length);
+        return API_PARSE_INCOMPLETE;
     }
-    size_t header_bytes = (size_t)(header_end - input.data) + 4u;
-    char *line_end = strstr(input.data, "\r\n");
+    size_t header_bytes = (size_t)(header_end - data) + 4u;
+    char *header = malloc(header_bytes + 1u);
+    if (!header) {
+        fg_error_set(err, FG_ERR_OOM, "allocate HTTP header copy");
+        return API_PARSE_FAILED;
+    }
+    memcpy(header, data, header_bytes);
+    header[header_bytes] = 0;
+    char *line_end = strstr(header, "\r\n");
     if (!line_end) {
+        free(header);
         fg_error_set(err, FG_ERR_FORMAT, "invalid HTTP request line");
-        free(input.data);
-        return FG_ERR_FORMAT;
+        return API_PARSE_FAILED;
     }
     *line_end = 0;
     char version[16];
-    if (sscanf(input.data, "%7s %255s %15s", request->method, request->path, version) != 3 ||
+    if (sscanf(header, "%7s %255s %15s", request->method, request->path, version) != 3 ||
         strcmp(version, "HTTP/1.1")) {
+        free(header);
         fg_error_set(err, FG_ERR_FORMAT, "expected an HTTP/1.1 request line");
-        free(input.data);
-        return FG_ERR_FORMAT;
+        return API_PARSE_FAILED;
     }
     size_t content_length = 0;
     bool have_length = false;
     bool chunked = false;
     bool json_content = false;
-    for (char *line = line_end + 2; line < header_end;) {
+    bool close_requested = false;
+    char *header_limit = header + header_bytes - 4u;
+    for (char *line = line_end + 2; line < header_limit;) {
         char *next = strstr(line, "\r\n");
-        if (!next || next > header_end) break;
+        if (!next || next > header_limit) break;
         char *colon = memchr(line, ':', (size_t)(next - line));
         if (!colon) {
+            free(header);
             fg_error_set(err, FG_ERR_FORMAT, "invalid HTTP header");
-            free(input.data);
-            return FG_ERR_FORMAT;
+            return API_PARSE_FAILED;
         }
         const char *value = colon + 1;
         while (value < next && isspace((unsigned char)*value)) value++;
@@ -2106,140 +2161,185 @@ static fg_status read_http_request(int fd, http_request *request, unsigned *http
             unsigned long long parsed = strtoull(value, &end, 10);
             while (end < next && isspace((unsigned char)*end)) end++;
             if (errno == ERANGE || end != next || parsed > FG_API_MAX_REQUEST_BYTES) {
+                free(header);
                 *http_status = parsed > FG_API_MAX_REQUEST_BYTES ? 413u : 400u;
                 fg_error_set(err, FG_ERR_LIMIT, "invalid or excessive Content-Length");
-                free(input.data);
-                return FG_ERR_LIMIT;
+                return API_PARSE_FAILED;
             }
             content_length = (size_t)parsed;
             have_length = true;
         } else if (header_name_equal(line, name_length, "Transfer-Encoding")) {
             size_t value_length = (size_t)(next - value);
             if (!header_value_equal(value, value_length, "chunked")) {
+                free(header);
                 *http_status = 400u;
                 fg_error_set(err, FG_ERR_ARGUMENT,
                              "unsupported Transfer-Encoding; only chunked is accepted");
-                free(input.data);
-                return FG_ERR_ARGUMENT;
+                return API_PARSE_FAILED;
             }
             chunked = true;
         } else if (header_name_equal(line, name_length, "Content-Type")) {
             size_t value_length = (size_t)(next - value);
             json_content = value_length >= 16u &&
                            !strncasecmp(value, "application/json", 16u);
+        } else if (header_name_equal(line, name_length, "Connection")) {
+            size_t value_length = (size_t)(next - value);
+            if (header_value_equal(value, value_length, "close")) close_requested = true;
         }
         line = next + 2;
     }
+    free(header);
+    *keep_alive = !close_requested;
     bool body_required = !strcmp(request->method, "POST");
     if (chunked && have_length) {
         *http_status = 400u;
         fg_error_set(err, FG_ERR_ARGUMENT,
                      "Content-Length and Transfer-Encoding are mutually exclusive");
-        free(input.data);
-        return FG_ERR_ARGUMENT;
+        return API_PARSE_FAILED;
     }
     if (body_required && !have_length && !chunked) {
         *http_status = 411u;
         fg_error_set(err, FG_ERR_ARGUMENT, "POST requires Content-Length");
-        free(input.data);
-        return FG_ERR_ARGUMENT;
+        return API_PARSE_FAILED;
     }
     if (body_required && !json_content) {
         *http_status = 415u;
         fg_error_set(err, FG_ERR_ARGUMENT, "POST requires application/json");
-        free(input.data);
-        return FG_ERR_ARGUMENT;
+        return API_PARSE_FAILED;
     }
     if (chunked) {
-        fg_status status = chunked_body_receive(fd, &input, header_bytes, &request->body,
-                                                &request->body_length, http_status, err);
-        free(input.data);
-        return status;
+        api_buffer decoded = {0};
+        size_t end_cursor = 0u;
+        api_parse_state state = api_chunked_decode(data, length, header_bytes, &decoded,
+                                                   &end_cursor, http_status, err);
+        if (state != API_PARSE_COMPLETE) {
+            free(decoded.data);
+            return state;
+        }
+        request->body = decoded.data ? decoded.data : strdup("");
+        if (!request->body) {
+            free(decoded.data);
+            fg_error_set(err, FG_ERR_OOM, "allocate HTTP body");
+            return API_PARSE_FAILED;
+        }
+        request->body_length = decoded.length;
+        *consumed = end_cursor;
+        return API_PARSE_COMPLETE;
     }
     if (header_bytes + content_length > FG_API_MAX_REQUEST_BYTES) {
         *http_status = 413u;
         fg_error_set(err, FG_ERR_LIMIT, "HTTP request exceeds 32 MiB");
-        free(input.data);
-        return FG_ERR_LIMIT;
+        return API_PARSE_FAILED;
     }
-    while (input.length < header_bytes + content_length) {
-        size_t remaining = header_bytes + content_length - input.length;
-        fg_status status = buffer_reserve(&input, remaining, err);
-        if (status != FG_OK) {
-            free(input.data);
-            return status;
-        }
-        ssize_t received = recv(fd, input.data + input.length, remaining, 0);
-        if (received < 0) {
-            if (errno == EINTR && !api_stop_requested) continue;
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                *http_status = 408u;
-                fg_error_set(err, FG_ERR_IO, "HTTP body read timed out");
-            } else if (errno == EINTR) {
-                fg_error_set(err, FG_ERR_IO, "HTTP body interrupted by shutdown");
-            } else {
-                fg_error_set(err, FG_ERR_IO, "receive HTTP body: %s", strerror(errno));
-            }
-            free(input.data);
-            return FG_ERR_IO;
-        }
-        if (!received) {
-            fg_error_set(err, FG_ERR_FORMAT, "client closed before HTTP body completed");
-            free(input.data);
-            return FG_ERR_FORMAT;
-        }
-        input.length += (size_t)received;
-        input.data[input.length] = 0;
-    }
+    if (length < header_bytes + content_length) return API_PARSE_INCOMPLETE;
     request->body = malloc(content_length + 1u);
     if (!request->body) {
         fg_error_set(err, FG_ERR_OOM, "allocate HTTP body");
-        free(input.data);
-        return FG_ERR_OOM;
+        return API_PARSE_FAILED;
     }
-    memcpy(request->body, input.data + header_bytes, content_length);
+    memcpy(request->body, data + header_bytes, content_length);
     request->body[content_length] = 0;
     request->body_length = content_length;
-    free(input.data);
-    return FG_OK;
+    *consumed = header_bytes + content_length;
+    return API_PARSE_COMPLETE;
 }
+
+/* Blocking compatibility wrapper used by the API unit tests only; the serving
+ * process reads through api_http_parser_try() on the front-end poll loop. */
+#ifdef FG_API_TEST_BUILD
+static fg_status read_http_request(int fd, http_request *request, unsigned *http_status,
+                                   fg_error *err) {
+    api_http_parser parser = {0};
+    memset(request, 0, sizeof(*request));
+    *http_status = 400u;
+    for (;;) {
+        if (parser.input.length >= FG_API_MAX_REQUEST_BYTES) {
+            *http_status = 413u;
+            fg_error_set(err, FG_ERR_LIMIT, "HTTP request exceeds 32 MiB");
+            free(parser.input.data);
+            return FG_ERR_LIMIT;
+        }
+        size_t chunk = FG_API_MAX_REQUEST_BYTES - parser.input.length;
+        if (chunk > 8192u) chunk = 8192u;
+        fg_status status = buffer_reserve(&parser.input, chunk, err);
+        if (status != FG_OK) {
+            free(parser.input.data);
+            return status;
+        }
+        ssize_t received;
+        for (;;) {
+            received = recv(fd, parser.input.data + parser.input.length, chunk, 0);
+            if (received >= 0 || errno != EINTR || api_stop_requested) break;
+        }
+        if (received < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                *http_status = 408u;
+                fg_error_set(err, FG_ERR_IO, "HTTP request read timed out");
+            } else if (errno == EINTR) {
+                fg_error_set(err, FG_ERR_IO, "HTTP request interrupted by shutdown");
+            } else {
+                fg_error_set(err, FG_ERR_IO, "receive HTTP request: %s", strerror(errno));
+            }
+            free(parser.input.data);
+            return FG_ERR_IO;
+        }
+        if (!received) {
+            fg_error_set(err, FG_ERR_FORMAT, "client closed before HTTP headers completed");
+            free(parser.input.data);
+            return FG_ERR_FORMAT;
+        }
+        parser.input.length += (size_t)received;
+        parser.input.data[parser.input.length] = 0;
+        bool keep_alive = true;
+        size_t consumed = 0u;
+        api_parse_state state = api_http_parser_try(&parser, request, &keep_alive, &consumed,
+                                                    http_status, err);
+        if (state == API_PARSE_COMPLETE) {
+            free(parser.input.data);
+            return FG_OK;
+        }
+        if (state == API_PARSE_FAILED) {
+            fg_status failed = err->code ? err->code : FG_ERR_FORMAT;
+            free(parser.input.data);
+            free(request->body);
+            request->body = NULL;
+            request->body_length = 0u;
+            return failed;
+        }
+    }
+}
+#endif /* FG_API_TEST_BUILD */
 
 static void api_signal_handler(int signal_number) {
     (void)signal_number;
     api_stop_requested = 1;
+    if (api_wake_fd >= 0) {
+        char byte = 1;
+        ssize_t ignored = write(api_wake_fd, &byte, 1u);
+        (void)ignored;
+    }
 }
 
 static bool api_client_gone(api_generation *generation) {
-    if (!generation || generation->fd < 0) return false;
-    struct pollfd probe = {.fd = generation->fd, .events = POLLIN};
+    if (!generation) return false;
+    if (generation->sink.connection)
+        return atomic_load(&generation->sink.connection->client_gone);
+    int fd = generation->sink.fd;
+    if (fd < 0) return false;
+    struct pollfd probe = {.fd = fd, .events = POLLIN};
     int ready = poll(&probe, 1u, 0);
     if (ready <= 0) return false;
     if (probe.revents & (POLLERR | POLLHUP | POLLRDHUP)) return true;
     if (!(probe.revents & (POLLIN | POLLRDNORM))) return false;
     char byte = 0;
-    ssize_t peeked = recv(generation->fd, &byte, 1u, MSG_PEEK | MSG_DONTWAIT);
+    ssize_t peeked = recv(fd, &byte, 1u, MSG_PEEK | MSG_DONTWAIT);
     return peeked == 0 ||
            (peeked < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR);
 }
 
-static bool api_stream_tick(api_generation *generation) {
-    if (!generation || !generation->stream || generation->fd < 0) return true;
-    double now = api_monotonic_seconds();
-    if (generation->last_stream_write <= 0.0) {
-        generation->last_stream_write = now;
-        return true;
-    }
-    if (now - generation->last_stream_write < FG_API_STREAM_KEEPALIVE_SECONDS) return true;
-    generation->last_stream_write = now;
-    static const char comment[] = ": keep-alive\n\n";
-    fg_error err = {0};
-    if (send_all(generation->fd, comment, sizeof(comment) - 1u, &err) != FG_OK) {
-        generation->client_failed = true;
-        return false;
-    }
-    return true;
-}
-
+/* The engine's interrupt hook is a pure abort check: the front-end thread owns
+ * socket I/O, keep-alive comments and listener servicing, and publishes client
+ * disconnect through the connection's `client_gone` flag. */
 static bool api_interrupted(void *context) {
     if (api_stop_requested) return true;
     api_generation *generation = context;
@@ -2247,20 +2347,37 @@ static bool api_interrupted(void *context) {
         generation->client_failed = true;
         return true;
     }
-    if (generation && !api_stream_tick(generation)) return true;
-    if (generation && generation->listener >= 0)
-        api_service_pending_connections(generation->listener, generation->runtime);
     return false;
 }
 
-static fg_status send_sse_headers(int fd, fg_error *err) {
+static fg_status api_send_sse_headers(api_sink *sink, fg_error *err) {
+    if (sink->connection) {
+        /* Chunked framing lets a streaming response end without closing the
+         * connection, so keep-alive works for SSE too. */
+        static const char headers[] =
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/event-stream\r\n"
+            "Cache-Control: no-cache\r\n"
+            "Connection: keep-alive\r\n"
+            "Transfer-Encoding: chunked\r\n"
+            "X-Accel-Buffering: no\r\n\r\n";
+        fg_status status = api_connection_enqueue_raw(sink->connection, headers,
+                                                      sizeof(headers) - 1u, err);
+        if (status == FG_OK) {
+            api_connection *conn = sink->connection;
+            pthread_mutex_lock(&conn->out_mutex);
+            conn->chunked = true;
+            pthread_mutex_unlock(&conn->out_mutex);
+        }
+        return status;
+    }
     static const char headers[] =
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: text/event-stream\r\n"
         "Cache-Control: no-cache\r\n"
         "Connection: close\r\n"
         "X-Accel-Buffering: no\r\n\r\n";
-    return send_all(fd, headers, sizeof(headers) - 1u, err);
+    return send_all(sink->fd, headers, sizeof(headers) - 1u, err);
 }
 
 static fg_status send_delta_field(api_generation *generation,const char *field,
@@ -2291,9 +2408,8 @@ static fg_status send_delta_field(api_generation *generation,const char *field,
     if (status == FG_OK)
         status = buffer_append(&event, "},\"finish_reason\":null}]}\n\n", err);
     if (status == FG_OK) {
-        status = send_all(generation->fd, event.data, event.length, err);
+        status = api_sink_write(&generation->sink, event.data, event.length, err);
         if (status != FG_OK) generation->client_failed = true;
-        else generation->last_stream_write = api_monotonic_seconds();
     }
     free(event.data);
     return status;
@@ -2399,9 +2515,8 @@ static fg_status send_tool_call_delta(api_generation *generation,
         status = buffer_append(
             &event, "}}]},\"finish_reason\":null}]}\n\n", err);
     if (status == FG_OK) {
-        status = send_all(generation->fd, event.data, event.length, err);
+        status = api_sink_write(&generation->sink, event.data, event.length, err);
         if (status != FG_OK) generation->client_failed = true;
-        else generation->last_stream_write = api_monotonic_seconds();
     }
     free(event.data);
     return status;
@@ -2718,10 +2833,8 @@ static fg_status send_stream_start(api_generation *generation, fg_error *err) {
             ",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},"
             "\"finish_reason\":null}]}\n\n",
             err);
-    if (status == FG_OK) {
-        status = send_all(generation->fd, event.data, event.length, err);
-        if (status == FG_OK) generation->last_stream_write = api_monotonic_seconds();
-    }
+    if (status == FG_OK)
+        status = api_sink_write(&generation->sink, event.data, event.length, err);
     free(event.data);
     return status;
 }
@@ -2770,7 +2883,8 @@ static fg_status send_stream_end(api_generation *generation,
     if (status == FG_OK)
         status = buffer_append_json_string(&event, reason, strlen(reason), err);
     if (status == FG_OK) status = buffer_append(&event, "}]}\n\ndata: [DONE]\n\n", err);
-    if (status == FG_OK) status = send_all(generation->fd, event.data, event.length, err);
+    if (status == FG_OK)
+        status = api_sink_write(&generation->sink, event.data, event.length, err);
     free(event.data);
     return status;
 }
@@ -2781,11 +2895,11 @@ static fg_status send_stream_error(api_generation *generation,const char *messag
     fg_status status=buffer_append(&event,"data: {\"error\":{\"message\":",err);
     if(status==FG_OK)status=buffer_append_json_string(&event,message,strlen(message),err);
     if(status==FG_OK)status=buffer_append(&event,",\"type\":\"server_error\"}}\n\ndata: [DONE]\n\n",err);
-    if(status==FG_OK)status=send_all(generation->fd,event.data,event.length,err);
+    if(status==FG_OK)status=api_sink_write(&generation->sink,event.data,event.length,err);
     free(event.data);return status;
 }
 
-static fg_status send_completion(const api_generation *generation,
+static fg_status send_completion(api_generation *generation,
                                  const fg_chat_generated *generated,
                                  const fg_generation_stats *stats, const char *reason,
                                  fg_error *err) {
@@ -2891,15 +3005,18 @@ static fg_status send_completion(const api_generation *generation,
             fg_error_set(err, FG_ERR_LIMIT, "API metrics headers exceed buffer");
             status = FG_ERR_LIMIT;
         } else if(status==FG_OK) {
-            status = send_response_with_headers(generation->fd, 200u, "application/json",
-                                                metrics, body.data, body.length, err);
+            status = api_send_response_with_headers(&generation->sink, 200u,
+                                                    "application/json", metrics,
+                                                    body.data, body.length,
+                                                    generation->keep_alive, err);
         }
     }
     free(body.data);
     return status;
 }
 
-static fg_status handle_models(int fd, fg_runtime *runtime, fg_error *err) {
+static fg_status handle_models(api_sink *sink, fg_runtime *runtime, bool keep_alive,
+                               fg_error *err) {
     const char *model = fg_runtime_model_name(runtime);
     const char *mtp = fg_runtime_mtp_capability(runtime) == FG_MTP_CAPABILITY_ENABLED ?
         "true" : "false";
@@ -2926,113 +3043,593 @@ static fg_status handle_models(int fd, fg_runtime *runtime, fg_error *err) {
         }
     }
     if (status == FG_OK)
-        status = send_response(fd, 200u, "application/json", body.data, body.length, err);
+        status = api_send_response(sink, 200u, "application/json", body.data, body.length,
+                                   keep_alive, err);
     free(body.data);
     return status;
 }
 
-static fg_status handle_health(int fd, bool busy, fg_error *err) {
+static fg_status handle_health(api_sink *sink, bool busy, bool keep_alive, fg_error *err) {
     static const char idle_body[] = "{\"status\":\"ok\",\"busy\":false}";
     static const char busy_body[] = "{\"status\":\"ok\",\"busy\":true}";
     const char *body = busy ? busy_body : idle_body;
-    return send_response(fd, 200u, "application/json", body, strlen(body), err);
+    return api_send_response(sink, 200u, "application/json", body, strlen(body),
+                             keep_alive, err);
 }
 
-static fg_status send_busy_response(int fd, fg_error *err) {
+static fg_status send_busy_response(api_sink *sink, bool keep_alive, fg_error *err) {
     static const char body[] =
         "{\"error\":{\"message\":\"Flash Gordon is busy generating another request; "
         "retry shortly\",\"type\":\"server_busy\"}}";
-    return send_response_with_headers(fd, 503u, "application/json", "Retry-After: 1\r\n",
-                                      body, sizeof(body) - 1u, err);
+    return api_send_response_with_headers(sink, 503u, "application/json",
+                                          "Retry-After: 1\r\n", body, sizeof(body) - 1u,
+                                          keep_alive, err);
 }
 
-static bool api_probe_request(int fd, char *method, char *path, double deadline) {
-    char buffer[8192];
-    size_t length = 0;
-    char *header_end = NULL;
-    while (!header_end) {
-        if (length == sizeof(buffer)) return false;
-        double remaining = deadline - api_monotonic_seconds();
-        if (remaining <= 0.0) return false;
-        struct pollfd ready = {.fd = fd, .events = POLLIN};
-        int polled = poll(&ready, 1u, (int)(remaining * 1000.0) + 1);
-        if (polled <= 0) return false;
-        if (!(ready.revents & POLLIN)) return false;
-        ssize_t received = recv(fd, buffer + length, sizeof(buffer) - length, 0);
-        if (received <= 0) return false;
-        length += (size_t)received;
-        buffer[length] = 0;
-        header_end = find_header_end(buffer, length);
-    }
-    char *line_end = strstr(buffer, "\r\n");
-    if (!line_end) return false;
-    *line_end = 0;
-    char version[16];
-    if (sscanf(buffer, "%7s %255s %15s", method, path, version) != 3) return false;
-    return true;
+/* --- front-end connections, engine queue and the HTTP thread ------------- */
+
+static void api_frontend_wake(api_frontend *frontend) {
+    if (!frontend || frontend->wake_write < 0) return;
+    char byte = 1;
+    ssize_t ignored = write(frontend->wake_write, &byte, 1u);
+    (void)ignored;
 }
 
-static void api_drain_probe_socket(int fd) {
-    struct timeval timeout = {.tv_sec = 0, .tv_usec = 50000};
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    char discard[4096];
-    size_t total = 0;
-    while (total < (1u << 20)) {
-        ssize_t received = recv(fd, discard, sizeof(discard), 0);
-        if (received <= 0) break;
-        total += (size_t)received;
-    }
-}
-
-static void api_serve_busy_probe(int fd, fg_runtime *runtime, double deadline) {
-    struct timeval read_timeout = {.tv_sec = 0, .tv_usec = 200000};
-    struct timeval write_timeout = {.tv_sec = 0, .tv_usec = 300000};
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &read_timeout, sizeof(read_timeout));
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &write_timeout, sizeof(write_timeout));
-    char method[8] = {0}, path[256] = {0};
-    fg_error err = {0};
-    if (!api_probe_request(fd, method, path, deadline)) {
-        fg_error ignored = {0};
-        send_busy_response(fd, &ignored);
-    } else if (!strcmp(method, "GET") && !strcmp(path, "/v1/models")) {
-        handle_models(fd, runtime, &err);
-    } else if (!strcmp(method, "GET") && !strcmp(path, "/health")) {
-        handle_health(fd, true, &err);
+/* Append response bytes under out_mutex.  Chunk framing is applied by the
+ * front-end when the connection's response is chunked; the raw path is used
+ * for response heads and the terminating zero chunk. */
+static fg_status api_connection_append(api_connection *conn, const char *data,
+                                       size_t length, bool chunked, fg_error *err) {
+    if (!length) return FG_OK;
+    pthread_mutex_lock(&conn->out_mutex);
+    fg_status status = FG_OK;
+    if (conn->client_failed) {
+        fg_error_set(err, FG_ERR_IO, "HTTP client is not draining the response");
+        status = FG_ERR_IO;
+    } else if (conn->out.length + length > FG_API_CONNECTION_OUTPUT_LIMIT) {
+        fg_error_set(err, FG_ERR_IO, "HTTP client is not draining the response");
+        conn->client_failed = true;
+        status = FG_ERR_IO;
     } else {
-        send_busy_response(fd, &err);
+        if (chunked) {
+            char header[32];
+            int header_length = snprintf(header, sizeof(header), "%zx\r\n", length);
+            if (header_length > 0)
+                status = buffer_append_n(&conn->out, header, (size_t)header_length, err);
+        }
+        if (status == FG_OK) status = buffer_append_n(&conn->out, data, length, err);
+        if (status == FG_OK && chunked)
+            status = buffer_append_n(&conn->out, "\r\n", 2u, err);
+        if (status != FG_OK) conn->client_failed = true;
     }
-    shutdown(fd, SHUT_WR);
-    api_drain_probe_socket(fd);
+    if (status == FG_OK) conn->last_activity = api_monotonic_seconds();
+    pthread_mutex_unlock(&conn->out_mutex);
+    if (status == FG_OK) api_frontend_wake(conn->frontend);
+    return status;
 }
 
-static void api_service_pending_connections(int listener, fg_runtime *runtime) {
-    if (listener < 0) return;
-    double deadline = api_monotonic_seconds() + FG_API_BUSY_PROBE_BUDGET_SECONDS;
-    unsigned served = 0;
+static fg_status api_connection_enqueue_raw(api_connection *conn, const char *data,
+                                            size_t length, fg_error *err) {
+    return api_connection_append(conn, data, length, false, err);
+}
+
+static fg_status api_sink_write(api_sink *sink, const char *data, size_t length,
+                                fg_error *err) {
+    if (!length) return FG_OK;
+    if (sink->connection)
+        return api_connection_append(sink->connection, data, length,
+                                     atomic_load(&sink->connection->chunked), err);
+    return send_all(sink->fd, data, length, err);
+}
+
+/* Engine-side response completion: emit the terminating chunk for a chunked
+ * response, publish completion, and let the front-end flush/close/reuse. */
+static void api_connection_complete_response(api_connection *conn, bool close_after) {
+    if (!conn) return;
+    pthread_mutex_lock(&conn->out_mutex);
+    if (atomic_load(&conn->chunked) && !conn->client_failed &&
+        !atomic_load(&conn->client_gone)) {
+        fg_error ignored = {0};
+        buffer_append_n(&conn->out, "0\r\n\r\n", 5u, &ignored);
+    }
+    if (close_after || conn->client_failed || atomic_load(&conn->client_gone))
+        atomic_store(&conn->close_after_flush, true);
+    pthread_mutex_unlock(&conn->out_mutex);
+    atomic_store(&conn->response_complete, true);
+    api_frontend_wake(conn->frontend);
+}
+
+/* Non-blocking flush of the outbound buffer.  A write failure drops the
+ * remaining bytes and marks the client gone; the engine sees that through
+ * api_interrupted() and aborts the generation. */
+static void api_connection_flush(api_connection *conn) {
+    pthread_mutex_lock(&conn->out_mutex);
+    while (conn->out.length) {
+        ssize_t sent = send(conn->fd, conn->out.data, conn->out.length, MSG_NOSIGNAL);
+        if (sent > 0) {
+            if ((size_t)sent >= conn->out.length) {
+                conn->out.length = 0;
+                if (conn->out.data) conn->out.data[0] = 0;
+            } else {
+                memmove(conn->out.data, conn->out.data + sent,
+                        conn->out.length - (size_t)sent);
+                conn->out.length -= (size_t)sent;
+                conn->out.data[conn->out.length] = 0;
+            }
+            conn->last_activity = api_monotonic_seconds();
+            continue;
+        }
+        if (sent < 0 && errno == EINTR) continue;
+        if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
+        conn->out.length = 0;
+        if (conn->out.data) conn->out.data[0] = 0;
+        atomic_store(&conn->client_gone, true);
+        atomic_store(&conn->close_after_flush, true);
+        break;
+    }
+    pthread_mutex_unlock(&conn->out_mutex);
+}
+
+/* Front-end heartbeat: only streaming responses get `: keep-alive` comments,
+ * and only when nothing else is queued.  This runs off the poll loop, so it
+ * covers long prefills and the vision tower without touching the token path. */
+static bool api_connection_maybe_heartbeat(api_connection *conn, double now) {
+    if (!conn->generating || atomic_load(&conn->client_gone)) return false;
+    pthread_mutex_lock(&conn->out_mutex);
+    bool due = atomic_load(&conn->chunked) && !conn->client_failed &&
+               !atomic_load(&conn->response_complete) && conn->out.length == 0 &&
+               now - conn->last_activity >= FG_API_STREAM_KEEPALIVE_SECONDS;
+    if (due) {
+        static const char comment[] = ": keep-alive\n\n";
+        fg_error ignored = {0};
+        char header[32];
+        int header_length = snprintf(header, sizeof(header), "%zx\r\n",
+                                     sizeof(comment) - 1u);
+        if (header_length > 0)
+            buffer_append_n(&conn->out, header, (size_t)header_length, &ignored);
+        buffer_append_n(&conn->out, comment, sizeof(comment) - 1u, &ignored);
+        buffer_append_n(&conn->out, "\r\n", 2u, &ignored);
+        conn->last_activity = now;
+    }
+    pthread_mutex_unlock(&conn->out_mutex);
+    return due;
+}
+
+/* Client disconnect probe for a connection the engine is currently serving. */
+static bool api_connection_detect_client_gone(api_connection *conn) {
+    if (atomic_load(&conn->client_gone)) return true;
+    struct pollfd probe = {.fd = conn->fd, .events = POLLIN | POLLRDHUP};
+    int ready = poll(&probe, 1u, 0);
+    if (ready <= 0) return false;
+    if (probe.revents & (POLLERR | POLLHUP | POLLRDHUP)) {
+        atomic_store(&conn->client_gone, true);
+        return true;
+    }
+    if (probe.revents & (POLLIN | POLLRDNORM)) {
+        char byte = 0;
+        ssize_t peeked = recv(conn->fd, &byte, 1u, MSG_PEEK | MSG_DONTWAIT);
+        if (peeked == 0 ||
+            (peeked < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
+            atomic_store(&conn->client_gone, true);
+            return true;
+        }
+    }
+    return false;
+}
+
+static void api_engine_queue_init(api_engine_queue *queue) {
+    memset(queue, 0, sizeof(*queue));
+    pthread_mutex_init(&queue->mutex, NULL);
+    pthread_cond_init(&queue->cond, NULL);
+}
+
+static void api_engine_queue_destroy(api_engine_queue *queue) {
+    pthread_mutex_destroy(&queue->mutex);
+    pthread_cond_destroy(&queue->cond);
+}
+
+/* M1 contract: one generation in flight; a second chat request is answered
+ * with 503 + Retry-After by the caller instead of being queued. */
+static bool api_engine_queue_try_push(api_engine_queue *queue, api_connection *connection,
+                                      http_request *http) {
+    bool pushed = false;
+    pthread_mutex_lock(&queue->mutex);
+    if (!queue->stopping && queue->outstanding == 0 &&
+        queue->count < FG_API_ENGINE_QUEUE_CAPACITY) {
+        size_t slot = (queue->head + queue->count) % FG_API_ENGINE_QUEUE_CAPACITY;
+        queue->entries[slot].connection = connection;
+        queue->entries[slot].http = *http;
+        queue->count++;
+        queue->outstanding++;
+        pushed = true;
+        pthread_cond_signal(&queue->cond);
+    }
+    pthread_mutex_unlock(&queue->mutex);
+    return pushed;
+}
+
+static bool api_engine_queue_pop_wait(api_engine_queue *queue, api_engine_request *out,
+                                      int timeout_ms) {
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_nsec += (long)timeout_ms * 1000000L;
+    if (deadline.tv_nsec >= 1000000000L) {
+        deadline.tv_sec += deadline.tv_nsec / 1000000000L;
+        deadline.tv_nsec %= 1000000000L;
+    }
+    pthread_mutex_lock(&queue->mutex);
+    while (!queue->count && !queue->stopping) {
+        if (pthread_cond_timedwait(&queue->cond, &queue->mutex, &deadline) == ETIMEDOUT)
+            break;
+    }
+    bool popped = false;
+    if (queue->count) {
+        *out = queue->entries[queue->head];
+        queue->head = (queue->head + 1) % FG_API_ENGINE_QUEUE_CAPACITY;
+        queue->count--;
+        popped = true;
+    }
+    pthread_mutex_unlock(&queue->mutex);
+    return popped;
+}
+
+static void api_engine_queue_complete(api_engine_queue *queue) {
+    pthread_mutex_lock(&queue->mutex);
+    if (queue->outstanding) queue->outstanding--;
+    pthread_mutex_unlock(&queue->mutex);
+}
+
+static bool api_engine_queue_busy(api_engine_queue *queue) {
+    pthread_mutex_lock(&queue->mutex);
+    bool busy = queue->outstanding != 0;
+    pthread_mutex_unlock(&queue->mutex);
+    return busy;
+}
+
+static void api_engine_queue_stop(api_engine_queue *queue) {
+    pthread_mutex_lock(&queue->mutex);
+    queue->stopping = true;
+    pthread_cond_broadcast(&queue->cond);
+    pthread_mutex_unlock(&queue->mutex);
+}
+
+static api_connection *api_frontend_connection_create(api_frontend *frontend, int fd) {
+    api_connection *conn = calloc(1, sizeof(*conn));
+    if (!conn) return NULL;
+    conn->fd = fd;
+    conn->frontend = frontend;
+    pthread_mutex_init(&conn->out_mutex, NULL);
+    atomic_init(&conn->client_gone, false);
+    atomic_init(&conn->chunked, false);
+    atomic_init(&conn->response_complete, false);
+    atomic_init(&conn->close_after_flush, false);
+    conn->last_activity = api_monotonic_seconds();
+    conn->next = frontend->connections;
+    frontend->connections = conn;
+    frontend->connection_count++;
+    return conn;
+}
+
+static void api_connection_free(api_connection *conn) {
+    if (!conn) return;
+    free(conn->parser.input.data);
+    free(conn->out.data);
+    pthread_mutex_destroy(&conn->out_mutex);
+    free(conn);
+}
+
+static void api_frontend_accept(api_frontend *frontend) {
     for (;;) {
-        struct pollfd ready = {.fd = listener, .events = POLLIN};
-        int polled = poll(&ready, 1u, 0);
-        if (polled <= 0) break;
-        if (!(ready.revents & POLLIN)) break;
-        int client = accept(listener, NULL, NULL);
-        if (client < 0) break;
-        api_serve_busy_probe(client, runtime, deadline);
-        close(client);
-        if (++served >= FG_API_BUSY_PROBE_MAX_CONNECTIONS) break;
-        if (api_monotonic_seconds() >= deadline) break;
+        int client = accept(frontend->listener, NULL, NULL);
+        if (client < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (frontend->connection_count >= FG_API_MAX_CONNECTIONS) {
+            close(client);
+            continue;
+        }
+        fg_error err = {0};
+        if (configure_client_socket(client, &err) != FG_OK) {
+            close(client);
+            continue;
+        }
+        if (!api_frontend_connection_create(frontend, client)) close(client);
     }
 }
 
-static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
+static void api_frontend_read_available(api_frontend *frontend, api_connection *conn) {
+    for (;;) {
+        fg_error err = {0};
+        if (conn->parser.input.length >= FG_API_MAX_REQUEST_BYTES) break;
+        size_t chunk = FG_API_MAX_REQUEST_BYTES - conn->parser.input.length;
+        if (chunk > 8192u) chunk = 8192u;
+        if (buffer_reserve(&conn->parser.input, chunk, &err) != FG_OK) {
+            atomic_store(&conn->client_gone, true);
+            atomic_store(&conn->close_after_flush, true);
+            return;
+        }
+        ssize_t received = recv(conn->fd,
+                                conn->parser.input.data + conn->parser.input.length,
+                                chunk, 0);
+        if (received > 0) {
+            conn->parser.input.length += (size_t)received;
+            conn->parser.input.data[conn->parser.input.length] = 0;
+            conn->last_activity = api_monotonic_seconds();
+            continue;
+        }
+        if (!received) {
+            /* Peer closed its write side: serve any complete request already
+             * buffered, then close after the response. */
+            conn->peer_closed = true;
+            conn->keep_alive = false;
+            break;
+        }
+        if (errno == EINTR) continue;
+        if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+        atomic_store(&conn->client_gone, true);
+        atomic_store(&conn->close_after_flush, true);
+        return;
+    }
+    for (;;) {
+        if (conn->generating || atomic_load(&conn->client_gone) ||
+            atomic_load(&conn->response_complete))
+            break;
+        http_request http = {0};
+        bool keep_alive = true;
+        size_t consumed = 0u;
+        unsigned http_status = 400u;
+        fg_error err = {0};
+        api_parse_state state = api_http_parser_try(&conn->parser, &http, &keep_alive,
+                                                    &consumed, &http_status, &err);
+        if (state == API_PARSE_INCOMPLETE) break;
+        if (state == API_PARSE_FAILED) {
+            api_sink sink = {.fd = conn->fd, .connection = conn};
+            fg_error send_err = {0};
+            api_send_error_response(&sink, http_status,
+                                    err.message[0] ? err.message : "invalid HTTP request",
+                                    false, &send_err);
+            free(http.body);
+            api_connection_complete_response(conn, true);
+            break;
+        }
+        api_http_parser_consume(&conn->parser, consumed);
+        if (api_frontend_dispatch(frontend, conn, &http, keep_alive)) break;
+    }
+}
+
+static bool api_frontend_dispatch(api_frontend *frontend, api_connection *conn,
+                                  http_request *http, bool keep_alive) {
+    api_sink sink = {.fd = conn->fd, .connection = conn};
+    conn->keep_alive = keep_alive && !conn->peer_closed;
+    fg_error err = {0};
+    if (!strcmp(http->method, "GET") && !strcmp(http->path, "/v1/models")) {
+        handle_models(&sink, frontend->runtime, conn->keep_alive, &err);
+        api_connection_complete_response(conn, !conn->keep_alive);
+    } else if (!strcmp(http->method, "GET") && !strcmp(http->path, "/health")) {
+        handle_health(&sink, api_engine_queue_busy(frontend->engine), conn->keep_alive, &err);
+        api_connection_complete_response(conn, !conn->keep_alive);
+    } else if (!strcmp(http->method, "POST") &&
+               !strcmp(http->path, "/v1/chat/completions")) {
+        /* Ownership of the request body moves to the engine queue on success. */
+        if (api_engine_queue_try_push(frontend->engine, conn, http)) {
+            conn->generating = true;
+            return true;
+        }
+        send_busy_response(&sink, conn->keep_alive, &err);
+        api_connection_complete_response(conn, !conn->keep_alive);
+    } else if (!strcmp(http->path, "/v1/models") ||
+               !strcmp(http->path, "/v1/chat/completions")) {
+        api_send_error_response(&sink, 405u, "method not allowed", conn->keep_alive, &err);
+        api_connection_complete_response(conn, !conn->keep_alive);
+    } else {
+        api_send_error_response(&sink, 404u, "not found", conn->keep_alive, &err);
+        api_connection_complete_response(conn, !conn->keep_alive);
+    }
+    free(http->body);
+    http->body = NULL;
+    http->body_length = 0u;
+    return false;
+}
+
+static bool api_connection_reusable(api_connection *conn) {
+    return conn->keep_alive && !atomic_load(&conn->client_gone) &&
+           !atomic_load(&conn->close_after_flush) && !conn->peer_closed;
+}
+
+/* Called from the front-end loop only.  Frees connections whose response has
+ * flushed and that cannot serve another request; resets the rest for the next
+ * request on the same connection. */
+static void api_frontend_reap(api_frontend *frontend) {
+    double now = api_monotonic_seconds();
+    api_connection **cursor = &frontend->connections;
+    while (*cursor) {
+        api_connection *conn = *cursor;
+        bool done = false;
+        pthread_mutex_lock(&conn->out_mutex);
+        bool flushed = atomic_load(&conn->response_complete) && conn->out.length == 0;
+        pthread_mutex_unlock(&conn->out_mutex);
+        if (conn->generating) {
+            if (!flushed) {
+                cursor = &conn->next;
+                continue;
+            }
+            conn->generating = false; /* engine finished; front-end owns it again */
+        }
+        if (flushed) {
+            if (api_connection_reusable(conn)) {
+                pthread_mutex_lock(&conn->out_mutex);
+                atomic_store(&conn->chunked, false);
+                atomic_store(&conn->close_after_flush, false);
+                conn->client_failed = false;
+                pthread_mutex_unlock(&conn->out_mutex);
+                atomic_store(&conn->response_complete, false);
+                conn->peer_closed = false;
+            } else {
+                done = true;
+            }
+        } else if (atomic_load(&conn->client_gone)) {
+            done = true;
+        } else if (conn->peer_closed && conn->parser.input.length == 0) {
+            done = true;
+        } else if (now - conn->last_activity > FG_API_CONNECTION_IDLE_SECONDS) {
+            done = true;
+        }
+        if (done) {
+            *cursor = conn->next;
+            frontend->connection_count--;
+            close(conn->fd);
+            api_connection_free(conn);
+        } else {
+            cursor = &conn->next;
+        }
+    }
+}
+
+static void *api_frontend_thread(void *context) {
+    api_frontend *frontend = context;
+    struct pollfd fds[2 + FG_API_MAX_CONNECTIONS];
+    api_connection *owners[2 + FG_API_MAX_CONNECTIONS];
+    while (!atomic_load(&frontend->stopping)) {
+        size_t count = 0;
+        fds[count] = (struct pollfd){.fd = frontend->wake_read, .events = POLLIN};
+        owners[count++] = NULL;
+        fds[count] = (struct pollfd){.fd = frontend->listener, .events = POLLIN};
+        owners[count++] = NULL;
+        for (api_connection *conn = frontend->connections; conn; conn = conn->next) {
+            if (count >= sizeof(fds) / sizeof(fds[0])) break;
+            short events = 0;
+            if (conn->generating) {
+                /* Only disconnect detection while the engine owns the
+                 * response; pipelined bytes are read after it completes. */
+                events |= POLLRDHUP;
+            } else if (!atomic_load(&conn->response_complete)) {
+                events |= POLLIN | POLLRDHUP;
+            }
+            pthread_mutex_lock(&conn->out_mutex);
+            bool has_output = conn->out.length != 0;
+            pthread_mutex_unlock(&conn->out_mutex);
+            if (has_output && !atomic_load(&conn->client_gone)) events |= POLLOUT;
+            fds[count] = (struct pollfd){.fd = conn->fd, .events = events};
+            owners[count++] = conn;
+        }
+        int ready = poll(fds, (nfds_t)count, FG_API_FRONTEND_POLL_MS);
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (fds[0].revents & POLLIN) {
+            char discard[256];
+            while (read(frontend->wake_read, discard, sizeof(discard)) > 0) {}
+        }
+        if (atomic_load(&frontend->stopping)) break;
+        if (fds[1].revents & (POLLIN | POLLERR)) api_frontend_accept(frontend);
+        for (size_t i = 2; i < count; i++) {
+            api_connection *conn = owners[i];
+            if (!conn) continue;
+            short revents = fds[i].revents;
+            if (!revents) continue;
+            if (conn->generating) {
+                if (revents & (POLLERR | POLLHUP | POLLRDHUP))
+                    api_connection_detect_client_gone(conn);
+            } else if (revents & (POLLIN | POLLERR | POLLHUP | POLLRDHUP)) {
+                api_frontend_read_available(frontend, conn);
+            }
+            if (revents & POLLOUT) api_connection_flush(conn);
+        }
+        double now = api_monotonic_seconds();
+        for (api_connection *conn = frontend->connections; conn; conn = conn->next)
+            api_connection_maybe_heartbeat(conn, now);
+        api_frontend_reap(frontend);
+    }
+    api_connection *conn = frontend->connections;
+    while (conn) {
+        api_connection *next = conn->next;
+        close(conn->fd);
+        api_connection_free(conn);
+        conn = next;
+    }
+    frontend->connections = NULL;
+    frontend->connection_count = 0;
+    return NULL;
+}
+
+static fg_status api_frontend_start(api_frontend *frontend, int listener,
+                                    fg_runtime *runtime, api_engine_queue *engine,
+                                    fg_error *err) {
+    memset(frontend, 0, sizeof(*frontend));
+    frontend->listener = listener;
+    frontend->wake_read = -1;
+    frontend->wake_write = -1;
+    frontend->runtime = runtime;
+    frontend->engine = engine;
+    int listener_flags = fcntl(listener, F_GETFL, 0);
+    if (listener_flags < 0 ||
+        fcntl(listener, F_SETFL, listener_flags | O_NONBLOCK) != 0) {
+        fg_error_set(err, FG_ERR_IO, "configure API listener non-blocking mode: %s",
+                     strerror(errno));
+        return FG_ERR_IO;
+    }
+    int pipe_fds[2];
+    if (pipe(pipe_fds) != 0) {
+        fg_error_set(err, FG_ERR_IO, "create API front-end wake pipe: %s",
+                     strerror(errno));
+        return FG_ERR_IO;
+    }
+    frontend->wake_read = pipe_fds[0];
+    frontend->wake_write = pipe_fds[1];
+    /* Non-blocking both ends: the drain loop must never block on an empty
+     * pipe, and a full pipe must never stall the engine. */
+    int wake_read_flags = fcntl(frontend->wake_read, F_GETFL, 0);
+    int wake_write_flags = fcntl(frontend->wake_write, F_GETFL, 0);
+    if (wake_read_flags < 0 || wake_write_flags < 0 ||
+        fcntl(frontend->wake_read, F_SETFL, wake_read_flags | O_NONBLOCK) != 0 ||
+        fcntl(frontend->wake_write, F_SETFL, wake_write_flags | O_NONBLOCK) != 0) {
+        fg_error_set(err, FG_ERR_IO, "configure API front-end wake pipe: %s",
+                     strerror(errno));
+        close(frontend->wake_read);
+        close(frontend->wake_write);
+        frontend->wake_read = frontend->wake_write = -1;
+        return FG_ERR_IO;
+    }
+    api_wake_fd = frontend->wake_write;
+    if (pthread_create(&frontend->thread, NULL, api_frontend_thread, frontend) != 0) {
+        fg_error_set(err, FG_ERR_IO, "start API front-end thread: %s", strerror(errno));
+        close(frontend->wake_read);
+        close(frontend->wake_write);
+        frontend->wake_read = frontend->wake_write = -1;
+        api_wake_fd = -1;
+        return FG_ERR_IO;
+    }
+    frontend->thread_started = true;
+    return FG_OK;
+}
+
+static void api_frontend_stop(api_frontend *frontend) {
+    if (!frontend) return;
+    atomic_store(&frontend->stopping, true);
+    api_frontend_wake(frontend);
+    if (frontend->thread_started) {
+        pthread_join(frontend->thread, NULL);
+        frontend->thread_started = false;
+    }
+    api_wake_fd = -1;
+    if (frontend->wake_read >= 0) close(frontend->wake_read);
+    if (frontend->wake_write >= 0) close(frontend->wake_write);
+    frontend->wake_read = frontend->wake_write = -1;
+}
+
+static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
                                          api_public_session *public_session,
                                          const http_request *http, fg_error *err) {
     memset(err, 0, sizeof(*err));
+    bool keep_alive = sink->connection ? sink->connection->keep_alive : false;
     json_value *root = parse_json_body(http->body, http->body_length, err);
     if (!root) {
         char message[sizeof(err->message)];
         snprintf(message, sizeof(message), "%s", err->message);
         fg_error send_err = {0};
-        send_error_response(fd, 400u, message, &send_err);
+        api_send_error_response(sink, 400u, message, keep_alive, &send_err);
         return FG_OK;
     }
     api_chat_request request = {0};
@@ -3058,7 +3655,7 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
                       "(static ffmpeg/ffprobe or the tower temporal token entry is missing)";
         if (message) {
             fg_error send_err = {0};
-            send_error_response(fd, 400u, message, &send_err);
+            api_send_error_response(sink, 400u, message, keep_alive, &send_err);
             api_chat_request_free(&request);
             return FG_OK;
         }
@@ -3067,7 +3664,7 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
         char message[sizeof(err->message)];
         snprintf(message, sizeof(message), "%s", err->message);
         fg_error send_err = {0};
-        send_error_response(fd, 400u, message, &send_err);
+        api_send_error_response(sink, 400u, message, keep_alive, &send_err);
         api_chat_request_free(&request);
         return FG_OK;
     }
@@ -3175,20 +3772,19 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
     snprintf(id, sizeof(id), "chatcmpl-fg-%lld-%llu", (long long)time(NULL),
              ++api_request_sequence);
     api_generation generation = {
-        .fd = fd,
+        .sink = *sink,
         .stream = request.stream,
+        .keep_alive = keep_alive,
         .id = id,
         .model = fg_runtime_model_name(runtime),
         .created = time(NULL),
         .request = &request,
         .think_closed = render_options.think_mode == FG_CHAT_THINK_OFF,
-        .last_stream_write = api_monotonic_seconds(),
-        .listener = api_listener_fd,
         .runtime = runtime,
     };
     bool stream_started=false;
     if (status == FG_OK && request.stream) {
-        status = send_sse_headers(fd, err);
+        status = api_send_sse_headers(sink, err);
         if (status == FG_OK){stream_started=true;status = send_stream_start(&generation, err);}
         if (status != FG_OK) generation.client_failed = true;
     }
@@ -3324,7 +3920,7 @@ static fg_status handle_chat_completions(int fd, fg_runtime *runtime,
                 400u :
                 500u;
         if(stream_started)send_stream_error(&generation,message,&send_err);
-        else send_error_response(fd, response_status, message, &send_err);
+        else api_send_error_response(sink, response_status, message, keep_alive, &send_err);
     }
     free(generation.content.data);
     free(generation.visible_pending.data);
@@ -3405,6 +4001,14 @@ static fg_status configure_client_socket(int fd, fg_error *err) {
         fg_error_set(err, FG_ERR_IO, "configure API client timeout: %s", strerror(errno));
         return FG_ERR_IO;
     }
+    /* The front-end poll loop never blocks on one client; a slow reader or a
+     * mid-body client must not stall probes on other connections. */
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) {
+        fg_error_set(err, FG_ERR_IO, "configure API client non-blocking mode: %s",
+                     strerror(errno));
+        return FG_ERR_IO;
+    }
     return FG_OK;
 }
 
@@ -3427,7 +4031,6 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
         fg_runtime_close(runtime);
         return status;
     }
-    api_listener_fd = listener;
 
     struct sigaction action = {0}, old_int = {0}, old_term = {0}, ignore_pipe = {0},
                      old_pipe = {0};
@@ -3441,74 +4044,44 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
     fprintf(stderr, "Flash Gordon API serving %s on http://%s:%u\n",
             fg_runtime_model_name(runtime), host, port);
 
-    api_public_session public_session={0};
-    while (status == FG_OK && !api_stop_requested) {
-        struct pollfd ready = {.fd = listener, .events = POLLIN};
-        int polled = poll(&ready, 1u, 1000);
-        if (polled < 0) {
-            if (errno == EINTR) continue;
-            fg_error_set(err, FG_ERR_IO, "poll API listener: %s", strerror(errno));
-            status = FG_ERR_IO;
-            break;
-        }
-        if (!polled) continue;
-        if (!(ready.revents & POLLIN)) {
-            fg_error_set(err, FG_ERR_IO, "API listener reported events 0x%x",
-                         ready.revents);
-            status = FG_ERR_IO;
-            break;
-        }
-        int client = accept(listener, NULL, NULL);
-        if (client < 0) {
-            if (errno == EINTR && api_stop_requested) break;
-            if (errno == EINTR) continue;
-            fg_error_set(err, FG_ERR_IO, "accept API connection: %s", strerror(errno));
-            status = FG_ERR_IO;
-            break;
-        }
-        fg_error request_error = {0};
-        if (configure_client_socket(client, &request_error) != FG_OK) {
-            close(client);
-            if (!api_stop_requested) {
-                *err = request_error;
-                status = request_error.code;
-            }
-            continue;
-        }
-        http_request request = {0};
-        unsigned http_status = 400u;
-        fg_status read_status =
-            read_http_request(client, &request, &http_status, &request_error);
-        if (read_status != FG_OK) {
-            if (!api_stop_requested) {
-                fg_error send_error = {0};
-                send_error_response(client, http_status,
-                                    request_error.message[0] ? request_error.message :
-                                                               "invalid HTTP request",
-                                    &send_error);
-            }
-        } else if (!strcmp(request.method, "GET") && !strcmp(request.path, "/v1/models")) {
-            fg_status response_status = handle_models(client, runtime, err);
-            if (response_status != FG_ERR_IO) status = response_status;
-        } else if (!strcmp(request.method, "GET") && !strcmp(request.path, "/health")) {
-            fg_status response_status = handle_health(client, false, err);
-            if (response_status != FG_ERR_IO) status = response_status;
-        } else if (!strcmp(request.method, "POST") &&
-                   !strcmp(request.path, "/v1/chat/completions")) {
-            status = handle_chat_completions(client, runtime, &public_session,&request, err);
-        } else if (!strcmp(request.path, "/v1/models") ||
-                   !strcmp(request.path, "/v1/chat/completions")) {
-            fg_error send_error = {0};
-            send_error_response(client, 405u, "method not allowed", &send_error);
-        } else {
-            fg_error send_error = {0};
-            send_error_response(client, 404u, "not found", &send_error);
-        }
-        free(request.body);
-        close(client);
+    /* The front-end thread owns the listener and every client connection; this
+     * thread is the engine: it consumes complete chat requests one at a time
+     * and never touches the listener. */
+    api_engine_queue queue;
+    api_engine_queue_init(&queue);
+    api_frontend frontend;
+    status = api_frontend_start(&frontend, listener, runtime, &queue, err);
+    if (status != FG_OK) {
+        api_engine_queue_destroy(&queue);
+        close(listener);
+        sigaction(SIGINT, &old_int, NULL);
+        sigaction(SIGTERM, &old_term, NULL);
+        sigaction(SIGPIPE, &old_pipe, NULL);
+        fg_runtime_close(runtime);
+        return status;
     }
-    api_listener_fd = -1;
+
+    api_public_session public_session = {0};
+    while (!api_stop_requested) {
+        api_engine_request engine_request;
+        if (!api_engine_queue_pop_wait(&queue, &engine_request, 200)) continue;
+        api_sink sink = {
+            .fd = engine_request.connection->fd,
+            .connection = engine_request.connection,
+        };
+        status = handle_chat_completions(&sink, runtime, &public_session,
+                                         &engine_request.http, err);
+        api_connection_complete_response(engine_request.connection,
+                                         !engine_request.connection->keep_alive);
+        free(engine_request.http.body);
+        api_engine_queue_complete(&queue);
+        if (status != FG_OK) break;
+    }
+
+    api_engine_queue_stop(&queue);
+    api_frontend_stop(&frontend);
     close(listener);
+    api_engine_queue_destroy(&queue);
     sigaction(SIGINT, &old_int, NULL);
     sigaction(SIGTERM, &old_term, NULL);
     sigaction(SIGPIPE, &old_pipe, NULL);

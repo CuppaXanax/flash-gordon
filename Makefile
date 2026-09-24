@@ -51,7 +51,7 @@ tests/test_chat_runtime: tests/test_chat_runtime.c src/chat.c src/prefix.c src/u
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_chat_runtime.c src/prefix.c src/util.c $(LDLIBS)
 
 tests/test_api: tests/test_api.c src/api.c src/chat.c src/prefix.c src/util.c src/sampler.o src/sha256.o include/fg_api.h include/fg_chat.h
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DFG_CHAT_RENDER_ONLY -o $@ tests/test_api.c src/chat.c src/prefix.c src/util.c src/sampler.o src/sha256.o $(LDLIBS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DFG_CHAT_RENDER_ONLY -DFG_API_TEST_BUILD -o $@ tests/test_api.c src/chat.c src/prefix.c src/util.c src/sampler.o src/sha256.o $(LDLIBS)
 
 tests/test_sampler: tests/test_sampler.c src/sampler.o src/util.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDLIBS)
