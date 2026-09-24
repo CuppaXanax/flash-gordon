@@ -48,6 +48,10 @@
 #define FG_OUTPUT_HISTORY_MAX_BYTES (FG_OUTPUT_HISTORY_HEADER_BYTES+FG_NATIVE_CONTEXT*4u)
 #define FG_LAYER_WORK_HAS_NGRAM 1u
 #define FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY 2u
+/* Test-only: force the rank-4 relay output path for this work instead of the
+ * direct 4-way handoff (the depth-B parity gate compares both phases on the
+ * same output arithmetic).  Never set on a serving path. */
+#define FG_LAYER_WORK_FLAG_OUTPUT_RELAY 4u
 #define FG_PREFILL_MAX_TOKENS 512u
 #define FG_PREFILL_MAX_PAIRS (FG_PREFILL_MAX_TOKENS*FG_TOP_K)
 #define FG_PREFILL_WORK_HEADER_BYTES 16u

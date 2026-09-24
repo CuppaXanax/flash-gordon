@@ -60,6 +60,9 @@ static bool decode_ring_trace_enabled(void){const char *enabled=getenv("FG_DECOD
  * Both the coordinator and the last block owner derive the route from the
  * manifest, and the rank-0 relay remains the fallback for topologies where the
  * output owner or the last block owner is rank 0. */
+/* Output-routing flags a decode work message must carry across pipeline hops. */
+#define FG_LAYER_WORK_FLAG_FORWARD \
+    (FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY|FG_LAYER_WORK_FLAG_OUTPUT_RELAY)
 static bool decode_direct_output_eligible(const fg_manifest *manifest){
     if(!manifest)return false;
     uint32_t owner=fg_output_owner_rank(manifest);
@@ -946,7 +949,7 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
         fg_layer_work next={.layer=(uint8_t)(last+1u),.source_rank=(uint8_t)self,
             .destination_rank=manifest->layer_owner[last+1u],
             .token_index=work->token_index,.position_mode=FG_POSITION_TEXT,
-            .flags=(uint8_t)(work->flags&FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY)};
+                    .flags=(uint8_t)(work->flags&FG_LAYER_WORK_FLAG_FORWARD)};
         for(uint32_t axis=0;axis<3u;axis++)next.position[axis]=work->position[axis];
         memcpy(next.hyper,context->hyper_out,(uint64_t)FG_HYPER_WIDTH*4u);
         uint32_t wire_bytes=0;
@@ -957,7 +960,8 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
             work->token_index*FG_LAYER_COUNT+next.layer,0,context->work_wire,wire_bytes,err);
     }else if(status==FG_OK){
         uint32_t output_owner=fg_output_owner_rank(manifest);
-        bool direct=decode_direct_output_eligible(manifest)&&output_owner!=self;
+        bool direct=decode_direct_output_eligible(manifest)&&output_owner!=self&&
+            (work->flags&FG_LAYER_WORK_FLAG_OUTPUT_RELAY)==0u;
         bool skip_hidden=direct&&context->output_split_ways==FG_OUTPUT_SPLIT_WAYS_MAX&&
             (work->flags&FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY)!=0u;
         fg_layer_result *result=&context->decode_result;
@@ -5210,6 +5214,7 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
        coordinator->sampler.temperature==0.0f&&
        !fg_sampler_penalties_active(&coordinator->sampler))
         work->flags|=FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY;
+    if(depthb_force_relay_output)work->flags|=FG_LAYER_WORK_FLAG_OUTPUT_RELAY;
     work->token_index=token_index;
     /* Decode carries the M-RoPE cursor, not the raw token index, so a token
      * generated after a vision span sits at the position a cold prefill of the
@@ -5340,7 +5345,7 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
                 fg_layer_work next={.layer=(uint8_t)(last+1u),.source_rank=0u,
                     .destination_rank=manifest->layer_owner[last+1u],
                     .token_index=work->token_index,.position_mode=FG_POSITION_TEXT,
-                    .flags=(uint8_t)(work->flags&FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY)};
+            .flags=(uint8_t)(work->flags&FG_LAYER_WORK_FLAG_FORWARD)};
                 for(uint32_t axis=0;axis<3u;axis++)next.position[axis]=work->position[axis];
                 memcpy(next.hyper,work->hyper,(uint64_t)FG_HYPER_WIDTH*4u);
                 uint32_t next_bytes=0;
