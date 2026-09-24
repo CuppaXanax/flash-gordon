@@ -2012,7 +2012,6 @@ static fg_status owner_record_layer(fg_owner_executor *e,uint32_t layer,
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_attn_write",err);
     if(status==FG_OK)status=gr_write_batch_into(e,residual,block,injection,1u,
         e->hyper_output,e->hyper_output_b,&after_attention,err);
-                              after_attention,err);}
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_ffn_read",err);
     if(status==FG_OK)status=gr_read_batch_into(e,layer,true,after_attention,1u,
         e->injection,&mixed,&residual,&injection,err);
@@ -2053,11 +2052,9 @@ static fg_status owner_record_layer(fg_owner_executor *e,uint32_t layer,
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"moe_reduce",err);
     if(status==FG_OK)status=fg_vk_moe_decode_shared_add(vk,e->reduced,expert_output,
         e->shared_output,e->shared_scalar,FG_HIDDEN_SIZE,1u,err);
-                              e->reduced,err);}
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_ffn_write",err);
     if(status==FG_OK)status=gr_write_batch_into(e,residual,e->reduced,injection,1u,
         e->hyper_output,e->hyper_output_b,current,err);
-                              *current,err);}
     return status;
 }
 
