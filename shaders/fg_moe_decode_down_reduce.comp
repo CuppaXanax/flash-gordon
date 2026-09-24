@@ -9,27 +9,27 @@
        scales, the fifth-bit plane and the nibble quants in separate runs;
      - cooked Q8_0 (down_type 8, tile_bytes != 0): 16-row tiles with an f16
        scale run and a 32-byte-per-row-block quant run, read with aligned
-       uint4 loads;
+       uvec2 loads;
      - raw row-major Q8_0 (down_type 8, tile_bytes == 0): the 34-byte GGML
        blocks exactly as the packer stores them, read through aligned word
        funnels because the quant payload starts two bytes into each block.
 
-   A workgroup owns 16 output rows and each row is split four ways: lane part
-   p = 2*par + h covers the h half (16 values) of blocks par, par+2, ...  For
-   the cooked layouts that half is an aligned vector quant load; for the raw
-   layout the same half is rebuilt from five aligned words.  Both paths read
-   two vector activation words per half and the fifth-bit expansion is a
-   single multiply instead of four shift/or pairs; the only barrier is the
-   final four-lane row reduction.  The gate is applied once per slot so the
-   arithmetic order matches fg_moe_reduce.
+   Thirty-two lanes and two adjacent rows per lane: a lane carries the same
+   four-way (parity, half) split of one row as before for both rows of its
+   pair, so the per-lane block order, the per-slot fma chain and the final
+   four-way row reduction are unchanged and every output bit is identical.
+   The pair shares one scale/fifth-bit word pair and one activation read per
+   block, which halves the activation traffic per weight byte, and the cooked
+   Q5_1 weights are read as aligned uvec2 words.  The Q5_1 block loop batches
+   four owned blocks per iteration (a 4x2-block stride walk) so a wave keeps
+   four weight streams in flight; the block accumulation order is untouched,
+   so the batch is bit-identical to the unbatched walk.  The cooked Q8_0 path
+   gives each lane two four-value words of a row block (one uvec2) and two
+   accumulators, so its quant and scale loads per value halve as well.
 
-   Both cooked paths advance their word/vector offsets by fixed strides
-   instead of rebuilding the full expression per block, the Q5_1 two-word
-   decode is unrolled (no dynamically indexed local vector), and the cooked
-   Q8_0 path scales the summed dot once per block instead of multiplying all
-   four quant words.  The row-block partial sums are otherwise unchanged. */
+   A workgroup still owns 16 output rows and the same dispatch grid. */
 
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) readonly buffer Weights { uint wb[]; };
 layout(set = 0, binding = 0) readonly buffer WeightsVector { uvec2 wv[]; };
@@ -51,34 +51,50 @@ layout(push_constant) uniform Push {
 const uint Q5_1 = 7u;
 const uint TILE_WORDS = 9u;
 const uint INVALID = 0xffffffffu;
-const uint BLOCK_TILE_BYTES = 384u;
 const uint ROWS_PER_WORKGROUP = 16u;
 const uint PARTS = 4u;
 
 shared float partial[64];
 
-#define FG_DOWN_BLOCK(SM_OFF, Q_OFF, IN_OFF) { \
-                vec2 sm = unpackHalf2x16(wb[sm_word + SM_OFF]); \
-                uint hw = wb[hw_word + SM_OFF]; \
-                uvec2 q = wv[qt_uvec + Q_OFF]; \
-                vec4 dmx = vec4(sm.x); \
-                vec4 dmy = vec4(sm.y); \
-                uint q0 = q.x; \
-                uint q1 = q.y; \
-                uint lo0 = q0 & 0x0f0f0f0fu; \
-                uint hi0 = (q0 >> 4u) & 0x0f0f0f0fu; \
-                uint lo1 = q1 & 0x0f0f0f0fu; \
-                uint hi1 = (q1 >> 4u) & 0x0f0f0f0fu; \
-                vec4 w0 = fma(dmx, vec4(unpack8(int(lo0 | spread4((hw >> bit_base) & 15u)))), dmy); \
-                vec4 w1 = fma(dmx, vec4(unpack8(int(hi0 | spread4((hw >> (16u + bit_base)) & 15u)))), dmy); \
-                vec4 w2 = fma(dmx, vec4(unpack8(int(lo1 | spread4((hw >> (bit_base + 4u)) & 15u)))), dmy); \
-                vec4 w3 = fma(dmx, vec4(unpack8(int(hi1 | spread4((hw >> (20u + bit_base)) & 15u)))), dmy); \
-                vec4 i0 = x4[in_vec + IN_OFF]; \
-                vec4 i4 = x4[in_vec + IN_OFF + 4u]; \
-                vec4 i1 = x4[in_vec + IN_OFF + 1u]; \
-                vec4 i5 = x4[in_vec + IN_OFF + 5u]; \
+/* One owned 32-value block of a row pair.  The pair's scale/min and fifth-bit
+   words are adjacent u32s, so one uvec2 each feeds both rows; the four
+   activation vec4 loads are shared, and the two rows' quant uvec2s sit two
+   apart.  SM_OFF/Q_OFF are uvec2 strides of the owned-block walk, IN_OFF is
+   the vec4 stride.  The two rows' accumulation expressions are exactly the
+   single-row ones, in the same order, so the output bits are unchanged. */
+#define FG_DOWN_PAIR(SM_OFF, Q_OFF, IN_OFF) { \
+                uvec2 sm = wv[sm_uvec + (SM_OFF)]; \
+                uvec2 hw = wv[hw_uvec + (SM_OFF)]; \
+                uvec2 q0 = wv[qt_uvec + (Q_OFF)]; \
+                uvec2 q1 = wv[qt_uvec + (Q_OFF) + 2u]; \
+                vec2 sm0 = unpackHalf2x16(sm.x); \
+                vec2 sm1 = unpackHalf2x16(sm.y); \
+                uint hw0 = hw.x; \
+                uint hw1 = hw.y; \
+                vec4 i0 = x4[in_vec + (IN_OFF)]; \
+                vec4 i4 = x4[in_vec + (IN_OFF) + 4u]; \
+                vec4 i1 = x4[in_vec + (IN_OFF) + 1u]; \
+                vec4 i5 = x4[in_vec + (IN_OFF) + 5u]; \
+                uint lo0 = q0.x & 0x0f0f0f0fu; \
+                uint hi0 = (q0.x >> 4u) & 0x0f0f0f0fu; \
+                uint lo1 = q0.y & 0x0f0f0f0fu; \
+                uint hi1 = (q0.y >> 4u) & 0x0f0f0f0fu; \
+                vec4 w0 = fma(vec4(sm0.x), vec4(unpack8(int(lo0 | spread4((hw0 >> bit_base) & 15u)))), vec4(sm0.y)); \
+                vec4 w1 = fma(vec4(sm0.x), vec4(unpack8(int(hi0 | spread4((hw0 >> (16u + bit_base)) & 15u)))), vec4(sm0.y)); \
+                vec4 w2 = fma(vec4(sm0.x), vec4(unpack8(int(lo1 | spread4((hw0 >> (bit_base + 4u)) & 15u)))), vec4(sm0.y)); \
+                vec4 w3 = fma(vec4(sm0.x), vec4(unpack8(int(hi1 | spread4((hw0 >> (20u + bit_base)) & 15u)))), vec4(sm0.y)); \
+                uint pl0 = q1.x & 0x0f0f0f0fu; \
+                uint ph0 = (q1.x >> 4u) & 0x0f0f0f0fu; \
+                uint pl1 = q1.y & 0x0f0f0f0fu; \
+                uint ph1 = (q1.y >> 4u) & 0x0f0f0f0fu; \
+                vec4 p0 = fma(vec4(sm1.x), vec4(unpack8(int(pl0 | spread4((hw1 >> bit_base) & 15u)))), vec4(sm1.y)); \
+                vec4 p1 = fma(vec4(sm1.x), vec4(unpack8(int(ph0 | spread4((hw1 >> (16u + bit_base)) & 15u)))), vec4(sm1.y)); \
+                vec4 p2 = fma(vec4(sm1.x), vec4(unpack8(int(pl1 | spread4((hw1 >> (bit_base + 4u)) & 15u)))), vec4(sm1.y)); \
+                vec4 p3 = fma(vec4(sm1.x), vec4(unpack8(int(ph1 | spread4((hw1 >> (20u + bit_base)) & 15u)))), vec4(sm1.y)); \
                 slot_acc += dot(w0, i0) + dot(w1, i4); \
-                slot_acc += dot(w2, i1) + dot(w3, i5); }
+                slot_acc += dot(w2, i1) + dot(w3, i5); \
+                slot_acc_pair += dot(p0, i0) + dot(p1, i4); \
+                slot_acc_pair += dot(p2, i1) + dot(p3, i5); }
 
 /* Spread four consecutive fifth bits into the high nibble of four bytes so a
    single unpack8 yields four five-bit values. */
@@ -93,17 +109,18 @@ float dot4f(uint weight_word, vec4 activation) {
 void main() {
     uint local_id = gl_LocalInvocationID.x;
     if (pc.down_type == 8u && pc.tile_bytes != 0u) {
-        /* Cooked Q8_0 down tiles: eight lanes own one output row and each lane
-           reads one aligned four-value word of every 32-value block, so a warp
-           touches one fully used 32-byte sector per row-block instead of the
-           scattered half-sectors the old row-major geometry produced. */
-        uint lane8 = local_id & 7u;
-        uint row8 = gl_WorkGroupID.x * 8u + (local_id >> 3u);
+        /* Cooked Q8_0 down tiles: four lanes own one output row and each lane
+           reads one aligned eight-value word pair of every 32-value block into
+           two accumulators, so a warp touches one fully used 32-byte sector
+           per row-block while the scale word stays shared four ways. */
+        uint lane4 = local_id & 3u;
+        uint row8 = gl_WorkGroupID.x * 8u + (local_id >> 2u);
         bool live8 = row8 < pc.out_dim;
         uint row_tile8 = row8 >> 4u;
         uint tile_row8 = row8 & 15u;
         uint quant_offset8 = (pc.blocks * 32u + 63u) & ~63u;
-        float accumulator8 = 0.0;
+        float accumulator_lo = 0.0;
+        float accumulator_hi = 0.0;
         if (live8) {
             for (uint slot = 0u; slot < pc.slots; slot++) {
                 uint tile_base = slot * TILE_WORDS;
@@ -115,26 +132,30 @@ void main() {
                 uint row_base = expert * pc.expert_stride + row_tile8 * pc.tile_bytes;
                 uint input_base = pair * (pc.in_dim >> 2u);
                 uint scale_word = (row_base + tile_row8 * 2u) >> 2u;
-                uint quant_word = (row_base + quant_offset8 + tile_row8 * pc.blocks * 32u + lane8 * 4u) >> 2u;
-                uint in_vec = input_base + lane8;
+                uint quant_word = (row_base + quant_offset8 + tile_row8 * pc.blocks * 32u + lane4 * 8u) >> 2u;
+                uint in_vec = input_base + lane4 * 2u;
                 bool upper = (tile_row8 & 1u) != 0u;
-                float slot_acc = 0.0;
+                float slot_lo = 0.0;
+                float slot_hi = 0.0;
                 for (uint block = 0u; block < pc.blocks; block++) {
                     vec2 scale = unpackHalf2x16(wb[scale_word]);
-                    uint packed = wb[quant_word];
+                    uvec2 packed = wv[quant_word >> 1u];
                     float delta = upper ? scale.y : scale.x;
-                    slot_acc = fma(delta, dot4f(packed, x4[in_vec]), slot_acc);
+                    slot_lo = fma(delta, dot4f(packed.x, x4[in_vec]), slot_lo);
+                    slot_hi = fma(delta, dot4f(packed.y, x4[in_vec + 1u]), slot_hi);
                     scale_word += 8u;
                     quant_word += 8u;
                     in_vec += 8u;
                 }
-                accumulator8 = fma(gate, slot_acc, accumulator8);
+                accumulator_lo = fma(gate, slot_lo, accumulator_lo);
+                accumulator_hi = fma(gate, slot_hi, accumulator_hi);
             }
         }
-        partial[local_id] = accumulator8;
+        partial[(local_id >> 2u) * 8u + lane4 * 2u] = accumulator_lo;
+        partial[(local_id >> 2u) * 8u + lane4 * 2u + 1u] = accumulator_hi;
         barrier();
-        if (live8 && lane8 == 0u) {
-            uint offset = (local_id >> 3u) * 8u;
+        if (live8 && lane4 == 0u) {
+            uint offset = (local_id >> 2u) * 8u;
             y[row8] = ((partial[offset] + partial[offset + 4u]) +
                        (partial[offset + 2u] + partial[offset + 6u])) +
                       ((partial[offset + 1u] + partial[offset + 5u]) +
@@ -143,13 +164,14 @@ void main() {
         return;
     }
     uint part = local_id & (PARTS - 1u);
-    uint row_slot = local_id >> 2u;
-    uint row = gl_WorkGroupID.x * ROWS_PER_WORKGROUP + row_slot;
+    uint pair_slot = local_id >> 2u;
+    uint row = gl_WorkGroupID.x * ROWS_PER_WORKGROUP + pair_slot * 2u;
     bool row_live = row < pc.out_dim;
     uint seg = part & 1u;
     uint parity = part >> 1u;
 
     float accumulator = 0.0;
+    float accumulator_pair = 0.0;
     for (uint slot = 0u; slot < pc.slots; slot++) {
         uint tile_base = slot * TILE_WORDS;
         uint expert = tiles[tile_base];
@@ -160,41 +182,43 @@ void main() {
 
         float gate = gates[slot];
         float slot_acc = 0.0;
+        float slot_acc_pair = 0.0;
         if (pc.down_type == Q5_1) {
             uint row_tile = row >> 4u;
             uint tile_row = row & 15u;
             uint row_base = expert * pc.expert_stride + row_tile * pc.tile_bytes;
             uint input_base = pair * (pc.in_dim >> 2u);
-            uint sm_word = ((row_base + tile_row * 4u) >> 2u) + parity * 96u;
-            uint hw_word = ((row_base + 64u + tile_row * 4u) >> 2u) + parity * 96u;
+            uint sm_uvec = ((row_base + tile_row * 4u) >> 3u) + parity * 48u;
+            uint hw_uvec = sm_uvec + 8u;
             uint qt_uvec = ((row_base + 128u + tile_row * 16u) >> 3u) + parity * 48u + seg;
             uint in_vec = input_base + parity * 8u + seg * 2u;
             uint bit_base = seg * 8u;
             uint block = parity;
             for (; block + 6u < pc.blocks; block += 8u) {
-                FG_DOWN_BLOCK(0u, 0u, 0u)
-                FG_DOWN_BLOCK(192u, 96u, 16u)
-                FG_DOWN_BLOCK(384u, 192u, 32u)
-                FG_DOWN_BLOCK(576u, 288u, 48u)
-                sm_word += 768u;
-                hw_word += 768u;
+                FG_DOWN_PAIR(0u, 0u, 0u)
+                FG_DOWN_PAIR(96u, 96u, 16u)
+                FG_DOWN_PAIR(192u, 192u, 32u)
+                FG_DOWN_PAIR(288u, 288u, 48u)
+                sm_uvec += 384u;
+                hw_uvec += 384u;
                 qt_uvec += 384u;
                 in_vec += 64u;
             }
             for (; block + 2u < pc.blocks; block += 4u) {
-                FG_DOWN_BLOCK(0u, 0u, 0u)
-                FG_DOWN_BLOCK(192u, 96u, 16u)
-                sm_word += 384u;
-                hw_word += 384u;
+                FG_DOWN_PAIR(0u, 0u, 0u)
+                FG_DOWN_PAIR(96u, 96u, 16u)
+                sm_uvec += 192u;
+                hw_uvec += 192u;
                 qt_uvec += 192u;
                 in_vec += 32u;
             }
             if (block < pc.blocks) {
-                FG_DOWN_BLOCK(0u, 0u, 0u)
+                FG_DOWN_PAIR(0u, 0u, 0u)
             }
         } else {
             uint row_bytes = pc.blocks * 34u;
             uint row_base = expert * pc.expert_stride + row * row_bytes;
+            uint row_base_pair = row_base + row_bytes;
             uint input_base = pair * (pc.in_dim >> 2u);
             for (uint block = parity; block < pc.blocks; block += 2u) {
                 uint base = row_base + block * 34u;
@@ -215,22 +239,50 @@ void main() {
                         (wb[(offset >> 2u) + 1u] << (32u - shift));
                     weight[word] = vec4(unpack8(int(packed))) * delta;
                 }
+                uint base_pair = row_base_pair + block * 34u;
+                uint scale_word_pair = wb[base_pair >> 2u];
+                uint scale_shift_pair = (base_pair & 3u) * 8u;
+                uint scale_bits_pair = (scale_word_pair >> scale_shift_pair) & 65535u;
+                if (scale_shift_pair == 24u)
+                    scale_bits_pair = (scale_word_pair >> 24u) |
+                        ((wb[(base_pair >> 2u) + 1u] & 255u) << 8u);
+                float delta_pair = unpackHalf2x16(scale_bits_pair).x;
+                uint quant_start_pair = base_pair + 2u + seg * 16u;
+                vec4 weight_pair[4];
+                for (uint word = 0u; word < 4u; word++) {
+                    uint offset = quant_start_pair + word * 4u;
+                    uint shift = (offset & 3u) * 8u;
+                    uint packed = shift == 0u ? wb[offset >> 2u] :
+                        (wb[offset >> 2u] >> shift) |
+                        (wb[(offset >> 2u) + 1u] << (32u - shift));
+                    weight_pair[word] = vec4(unpack8(int(packed))) * delta_pair;
+                }
                 vec4 input0 = x4[input_base + block * 8u + seg * 4u];
                 vec4 input1 = x4[input_base + block * 8u + seg * 4u + 1u];
                 vec4 input2 = x4[input_base + block * 8u + seg * 4u + 2u];
                 vec4 input3 = x4[input_base + block * 8u + seg * 4u + 3u];
                 slot_acc += dot(weight[0], input0) + dot(weight[1], input1) +
                     dot(weight[2], input2) + dot(weight[3], input3);
+                slot_acc_pair += dot(weight_pair[0], input0) + dot(weight_pair[1], input1) +
+                    dot(weight_pair[2], input2) + dot(weight_pair[3], input3);
             }
         }
         accumulator = fma(gate, slot_acc, accumulator);
+        accumulator_pair = fma(gate, slot_acc_pair, accumulator_pair);
     }
 
-    partial[local_id] = accumulator;
+    partial[(pair_slot * 2u) * PARTS + part] = accumulator;
+    partial[(pair_slot * 2u + 1u) * PARTS + part] = accumulator_pair;
     barrier();
     if (row_live && part == 0u) {
-        uint offset = row_slot * PARTS;
+        uint offset = (pair_slot * 2u) * PARTS;
         y[row] = (partial[offset] + partial[offset + 1u]) +
             (partial[offset + 2u] + partial[offset + 3u]);
+        uint pair_row = row + 1u;
+        if (pair_row < pc.out_dim) {
+            uint pair_offset = offset + PARTS;
+            y[pair_row] = (partial[pair_offset] + partial[pair_offset + 1u]) +
+                (partial[pair_offset + 2u] + partial[pair_offset + 3u]);
+        }
     }
 }
