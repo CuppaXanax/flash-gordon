@@ -6858,7 +6858,7 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
         status=fg_decode_batch_sequence_ready(&table,FG_DEPTHB_SEQ_X,now,err);
         if(status==FG_OK)status=fg_decode_batch_sequence_ready(&table,
             FG_DEPTHB_SEQ_Y,now,err);
-        fg_decode_batch_step step;
+        fg_decode_batch_step step={0};
         if(status==FG_OK)status=coordinator_decode_batch_step(&runtime->coordinator,
             &table,&policy,(const int32_t *const[]){history_x,history_y},
             (const size_t[]){count_x,count_y},now,inject,&step,err);
