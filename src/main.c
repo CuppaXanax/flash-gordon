@@ -355,6 +355,7 @@ static fg_status depthb_selftest_cmd(int argc, char **argv, fg_error *err) {
     uint32_t long_tokens = 4096u;
     uint32_t abort_step = UINT32_MAX;
     bool serial_batch = false;
+    bool serial_expert = false;
     fg_runtime_options runtime_options;
     fg_runtime_options_init(&runtime_options);
     for (int i = 2; i < argc; i++) {
@@ -362,6 +363,8 @@ static fg_status depthb_selftest_cmd(int argc, char **argv, fg_error *err) {
             manifest = arg_value(&i, argc, argv, "--manifest", err);
         } else if (!strcmp(argv[i], "--serial-batch")) {
             serial_batch = true;
+        } else if (!strcmp(argv[i], "--serial-expert")) {
+            serial_expert = true;
         } else if (!strcmp(argv[i], "--depth")) {
             const char *text = arg_value(&i, argc, argv, "--depth", err);
             if (text && parse_u32(text, "--depth", 1u, 2u, &depth, err) != FG_OK)
@@ -396,7 +399,7 @@ static fg_status depthb_selftest_cmd(int argc, char **argv, fg_error *err) {
         return FG_ERR_ARGUMENT;
     }
     return fg_depthb_selftest_main(manifest, depth, max_tokens, long_tokens, abort_step,
-                                   serial_batch, &runtime_options, err);
+                                   serial_batch, serial_expert, &runtime_options, err);
 }
 
 static fg_status manifest_cmd(const char *command, int argc, char **argv, fg_error *err) {

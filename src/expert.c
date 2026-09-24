@@ -322,6 +322,11 @@ fg_status fg_expert_decode_submit(fg_expert_executor *executor,const fg_decode_w
     memset(result,0,sizeof(*result));result->layer=work->layer;result->source_rank=(uint8_t)rank;result->destination_rank=work->source_rank;result->selected_count=1u;result->routing_slots[0]=0xFFu;result->position=work->position;return FG_OK;
 }
 
+/* The routed-reduction arena (one hidden row per token). */
+fg_vk_tensor *fg_expert_reduced(fg_expert_executor *executor){
+    return executor?executor->reduced:NULL;
+}
+
 fg_status fg_expert_decode_finish(fg_expert_executor *executor,fg_expert_result *result,fg_error *err){
     if(!executor||!result){fg_error_set(err,FG_ERR_ARGUMENT,"invalid expert decode finish");return FG_ERR_ARGUMENT;}
     fg_status status=fg_vk_expert_graph_wait(fg_model_vk(executor->model),err);
@@ -416,6 +421,36 @@ fg_status fg_expert_decode_chain(fg_expert_executor *executor,uint32_t layer,
         down_weight,executor->tiles,executor->mid,executor->gates,FG_HIDDEN_SIZE,
         640u,down_stride,FG_TOP_K,down_type,err);
     if(status==FG_OK)*reduced=executor->reduced;
+    return status;
+}
+
+/* Single-token chained decode that writes into a caller-provided tensor (a
+ * row of the batch arena), used by the test-only serial-expert A/B. */
+fg_status fg_expert_decode_chain_into(fg_expert_executor *executor,uint32_t layer,
+    const fg_vk_tensor *activation,const fg_vk_tensor *router_logits,
+    fg_vk_tensor *reduced,fg_error *err){
+    if(!executor||!activation||!router_logits||!reduced){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid chained expert arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_vk_tensor *gate_weight=NULL,*up_weight=NULL,*down_weight=NULL;
+    uint32_t gate_stride=0u,up_stride=0u,down_stride=0u;
+    uint32_t gate_type=0u,up_type=0u,down_type=0u;
+    fg_status status=chain_expert_layout(executor,layer,&gate_weight,&up_weight,
+        &down_weight,&gate_stride,&up_stride,&down_stride,&gate_type,&up_type,
+        &down_type,err);
+    if(status!=FG_OK)return status;
+    fg_vk_context *vk=fg_model_vk(executor->model);
+    status=fg_vk_router_top10(vk,executor->selected,executor->gates,router_logits,
+        FG_EXPERT_COUNT,1u,err);
+    if(status==FG_OK)status=fg_vk_decode_tile_schedule(vk,executor->tiles,
+        executor->selected,err);
+    if(status==FG_OK)status=fg_vk_moe_decode_gate_up(vk,executor->mid,gate_weight,
+        up_weight,activation,executor->tiles,640u,FG_HIDDEN_SIZE,gate_stride,
+        up_stride,gate_type,up_type,FG_TOP_K,err);
+    if(status==FG_OK)status=fg_vk_moe_decode_down_reduce(vk,reduced,down_weight,
+        executor->tiles,executor->mid,executor->gates,FG_HIDDEN_SIZE,640u,
+        down_stride,FG_TOP_K,down_type,err);
     return status;
 }
 

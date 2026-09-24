@@ -522,6 +522,27 @@ static fg_status chained_decode_expert_b2(void *opaque,uint32_t layer,
         fg_error_set(err,FG_ERR_UNAVAILABLE,"batch-2 chained decode has no expert executor");
         return FG_ERR_UNAVAILABLE;
     }
+    if(depthb_serial_expert){
+        fg_vk_tensor *arena=fg_expert_reduced(context->expert);
+        fg_status status=arena?FG_OK:FG_ERR_UNAVAILABLE;
+        if(status!=FG_OK)fg_error_set(err,FG_ERR_UNAVAILABLE,
+                                      "serial-expert A/B has no reduced arena");
+        for(uint32_t t=0;status==FG_OK&&t<2u;t++){
+            fg_vk_tensor *activation_row=NULL,*router_row=NULL,*reduced_row=NULL;
+            status=fg_vk_tensor_view((fg_vk_tensor *)activation,
+                (uint64_t)t*FG_Q8K_ACTIVATION_BYTES,FG_Q8K_ACTIVATION_BYTES,&activation_row,err);
+            if(status==FG_OK)status=fg_vk_tensor_view((fg_vk_tensor *)router_logits,
+                (uint64_t)t*FG_EXPERT_COUNT*4u,(uint64_t)FG_EXPERT_COUNT*4u,&router_row,err);
+            if(status==FG_OK)status=fg_vk_tensor_view(arena,
+                (uint64_t)t*FG_HIDDEN_SIZE*4u,(uint64_t)FG_HIDDEN_SIZE*4u,&reduced_row,err);
+            if(status==FG_OK)status=fg_expert_decode_chain_into(context->expert,layer,
+                activation_row,router_row,reduced_row,err);
+            fg_vk_tensor_destroy(reduced_row);fg_vk_tensor_destroy(router_row);
+            fg_vk_tensor_destroy(activation_row);
+        }
+        if(status==FG_OK)*expert_output=arena;
+        return status;
+    }
     return fg_expert_decode_chain_b2(context->expert,layer,activation,router_logits,
         expert_output,err);
 }
@@ -1988,10 +2009,12 @@ static fg_status handle_owner_session_transaction(fg_fabric *fabric,
 /* One batch work message: run this rank's whole block for every slot under that
  * slot's owner session, then forward the per-slot hyper states to the next
  * block owner (or hand the final result back to rank 0). */
-/* Test-only A/B switch: `depth-b-selftest --serial-batch` forces the serial
- * per-slot chained block so the batch-2 block and its reference run the same
- * harness.  Never set on a serving path. */
+/* Test-only A/B switches: `depth-b-selftest --serial-batch` forces the serial
+ * per-slot chained block, `--serial-expert` keeps the batch block but runs the
+ * two expert chains serially instead of the token-tagged union.  Never set on
+ * a serving path. */
 static bool depthb_serial_batch=false;
+static bool depthb_serial_expert=false;
 
 static fg_status handle_decode_batch_work(fg_fabric *fabric,const fg_manifest *manifest,
     uint32_t self,uint64_t session_id,uint32_t peer,const fg_frame_header *header,
@@ -7257,7 +7280,7 @@ static fg_status depthb_render_prompt(const fg_tokenizer *tokenizer,const char *
 
 fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
                                   uint32_t max_tokens,uint32_t long_tokens,
-                                  uint32_t abort_step,bool serial_batch,
+                                  uint32_t abort_step,bool serial_batch,bool serial_expert,
                                   const fg_runtime_options *requested,fg_error *err){
     if(!manifest_path||depth<1u||depth>FG_DECODE_BATCH_MAX_SLOTS||!max_tokens||
        max_tokens+1u>FG_DEPTHB_CAPTURE_MAX){
@@ -7267,7 +7290,9 @@ fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
         return FG_ERR_ARGUMENT;
     }
     depthb_serial_batch=serial_batch;
+    depthb_serial_expert=serial_expert;
     if(serial_batch)fprintf(stderr,"DEPTH_B_SELFTEST serial_batch=1 (reference path)\n");
+    if(serial_expert)fprintf(stderr,"DEPTH_B_SELFTEST serial_expert=1 (union A/B off)\n");
     fg_runtime *runtime=NULL;
     fg_status status=fg_runtime_open_with_options(&runtime,manifest_path,requested,err);
     if(status==FG_OK&&!(runtime->coordinator.ring_prefill&&runtime->coordinator.ring_decode)){

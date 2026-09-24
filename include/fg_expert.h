@@ -26,6 +26,12 @@ fg_status fg_expert_decode_chain(fg_expert_executor *executor,uint32_t layer,
 fg_status fg_expert_decode_chain_b2(fg_expert_executor *executor,uint32_t layer,
                                     const fg_vk_tensor *activation,const fg_vk_tensor *router_logits,
                                     fg_vk_tensor **reduced,fg_error *err);
+/* Test-only: single-token chain writing into a caller-provided tensor. */
+fg_status fg_expert_decode_chain_into(fg_expert_executor *executor,uint32_t layer,
+                                      const fg_vk_tensor *activation,const fg_vk_tensor *router_logits,
+                                      fg_vk_tensor *reduced,fg_error *err);
+/* Routed-reduction arena accessor (token-major hidden rows). */
+fg_vk_tensor *fg_expert_reduced(fg_expert_executor *executor);
 fg_status fg_expert_prefill(fg_expert_executor *executor,const fg_prefill_work *work,
                             fg_prefill_result *result,fg_prefill_result_pair *pair_storage,
                             uint32_t pair_capacity,float *output_storage,
