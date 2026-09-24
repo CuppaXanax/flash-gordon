@@ -6639,6 +6639,10 @@ typedef struct depthb_capture {
     uint32_t token[FG_DEPTHB_CAPTURE_MAX];
     uint32_t logit_bits[FG_DEPTHB_CAPTURE_MAX];
     uint32_t count;
+    /* Owner-session digest after each committed step, so a token divergence
+     * can be attributed to the state math or to the output path. */
+    uint64_t step_state_digest[FG_DEPTHB_CAPTURE_MAX];
+    uint32_t step_count;
     uint64_t state_digest;
     uint32_t qsa_cursor[FG_LAYER_COUNT];
     bool state_valid,qsa_valid;
@@ -6729,6 +6733,11 @@ static fg_status depthb_decode_b1(fg_runtime *runtime,uint32_t session_slot,
         status=coordinator_decode_token(&runtime->coordinator,history,count,count-1u,
                                         position,&next,&logit,err);
         position++;
+        if(status==FG_OK&&capture->step_count<FG_DEPTHB_CAPTURE_MAX){
+            bool valid=false;
+            capture->step_state_digest[capture->step_count++]=
+                depthb_session_digest(runtime,session_slot,&valid);
+        }
     }
     if(wall_ms)*wall_ms=dispatch_ts()-start;
     free(history);
@@ -6948,6 +6957,16 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
             batched_tokens++;
         }
         if(status!=FG_OK)break;
+        if(actual_x.step_count<FG_DEPTHB_CAPTURE_MAX){
+            bool valid=false;
+            actual_x.step_state_digest[actual_x.step_count++]=
+                depthb_session_digest(runtime,0u,&valid);
+        }
+        if(actual_y.step_count<FG_DEPTHB_CAPTURE_MAX){
+            bool valid=false;
+            actual_y.step_state_digest[actual_y.step_count++]=
+                depthb_session_digest(runtime,1u,&valid);
+        }
         fprintf(stderr,"DEPTH_B_SELFTEST case=%s step=%u x=%u y=%u\n",name,steps_done,
                 step_x,step_y);
         steps_done++;
@@ -6966,6 +6985,15 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
         y_token_match=depthb_capture_equal(&expected_y,&actual_y,1u,y_limit,
                                            &y_logit_match,&y_bad);
         bool counts_match=expected_x.count==x_actual&&expected_y.count==y_actual;
+        int32_t x_state_bad=-1,y_state_bad=-1;
+        for(uint32_t i=0;i<expected_x.step_count&&i<actual_x.step_count;i++)
+            if(expected_x.step_state_digest[i]!=actual_x.step_state_digest[i]){
+                x_state_bad=(int32_t)i;break;
+            }
+        for(uint32_t i=0;i<expected_y.step_count&&i<actual_y.step_count;i++)
+            if(expected_y.step_state_digest[i]!=actual_y.step_state_digest[i]){
+                y_state_bad=(int32_t)i;break;
+            }
         bool g0_x_match=expected_x.token[0]==g0_x&&
             memcmp(&expected_x.logit_bits[0],&logit_x,4u)==0;
         bool g0_y_match=expected_y.token[0]==g0_y&&
@@ -6982,15 +7010,16 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
             expected_y.qsa_valid&&memcmp(yc,expected_y.qsa_cursor,sizeof(yc))==0;
         bool pass_case=counts_match&&x_token_match&&y_token_match&&x_logit_match&&
             y_logit_match&&x_state_match&&y_state_match&&x_qsa_match&&y_qsa_match&&
-            g0_x_match&&g0_y_match;
+            g0_x_match&&g0_y_match&&x_state_bad<0&&y_state_bad<0;
         fprintf(stderr,"DEPTH_B_SELFTEST case=%s depth=%u steps=%u scheduled=%u "
             "x_tokens=%u y_tokens=%u x_token_match=%d y_token_match=%d "
             "x_logit_match=%d y_logit_match=%d g0_match=%d/%d x_state_match=%d "
-            "y_state_match=%d x_qsa_match=%d y_qsa_match=%d restored=%d\n",name,depth,
+            "y_state_match=%d x_qsa_match=%d y_qsa_match=%d restored=%d "
+            "x_state_first_bad=%d y_state_first_bad=%d\n",name,depth,
             steps_done,effective_depth,actual_x.count,actual_y.count,
             x_token_match,y_token_match,x_logit_match,y_logit_match,
             g0_x_match,g0_y_match,x_state_match,y_state_match,x_qsa_match,y_qsa_match,
-            injected?1:0);
+            injected?1:0,x_state_bad,y_state_bad);
         fprintf(stderr,"DEPTH_B_SELFTEST_STREAM case=%s session=X expected=",name);
         for(uint32_t i=0;i<expected_x.count&&i<16u;i++)
             fprintf(stderr,"%s%u",i?",":"",expected_x.token[i]);
