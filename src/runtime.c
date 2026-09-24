@@ -6971,6 +6971,19 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
             x_token_match,y_token_match,x_logit_match,y_logit_match,
             g0_x_match,g0_y_match,x_state_match,y_state_match,x_qsa_match,y_qsa_match,
             injected?1:0);
+        fprintf(stderr,"DEPTH_B_SELFTEST_STREAM case=%s session=X expected=",name);
+        for(uint32_t i=0;i<expected_x.count&&i<16u;i++)
+            fprintf(stderr,"%s%u",i?",":"",expected_x.token[i]);
+        fprintf(stderr," actual=");
+        for(uint32_t i=0;i<actual_x.count+1u&&i<16u;i++)
+            fprintf(stderr,"%s%u",i?",":"",i==0?g0_x:actual_x.token[i-1u]);
+        fprintf(stderr,"\nDEPTH_B_SELFTEST_STREAM case=%s session=Y expected=",name);
+        for(uint32_t i=0;i<expected_y.count&&i<16u;i++)
+            fprintf(stderr,"%s%u",i?",":"",expected_y.token[i]);
+        fprintf(stderr," actual=");
+        for(uint32_t i=0;i<actual_y.count+1u&&i<16u;i++)
+            fprintf(stderr,"%s%u",i?",":"",i==0?g0_y:actual_y.token[i-1u]);
+        fputc('\n',stderr);
         if(measure){
             double b1_total=b1_wall;
             double b2_total=b2_wall;
@@ -7035,9 +7048,10 @@ fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
                      "depth-b-selftest requires ring prefill and ring decode");
         status=FG_ERR_UNAVAILABLE;
     }
-    static const char prompt_12[]="What is 6 times 2? Answer with the number only.";
-    static const char prompt_paris[]=
-        "What is the capital of France? Answer with the city name only.";
+    static const char prompt_12[]="<|im_start|>user\n/no_think What is 6 times 2? "
+        "Answer with the number only.<|im_end|>\n<|im_start|>assistant\n";
+    static const char prompt_paris[]="<|im_start|>user\n/no_think What is the capital "
+        "of France? Answer with the city name only.<|im_end|>\n<|im_start|>assistant\n";
     fg_tokens tokens_12={0},tokens_paris={0},tokens_long={0};
     if(status==FG_OK)status=fg_tokenizer_encode(runtime->coordinator.tokenizer,
         prompt_12,true,&tokens_12,err);
