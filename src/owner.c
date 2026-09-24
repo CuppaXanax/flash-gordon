@@ -1956,6 +1956,20 @@ fg_status fg_owner_decode_block_batch(fg_owner_executor *e,uint32_t first_layer,
                 FG_HIDDEN_SIZE,4u,2u,err);
             if(status==FG_OK)cur=destination;
         }
+        /* Numerics bisect: one hash per token row after each layer, matching
+         * the single-token FG_NUMERICS_LAYER trace.  Diagnostic only. */
+        if(status==FG_OK&&numerics_trace_enabled()){
+            fg_error ignored={0};
+            while(fg_vk_batch_active(vk)){fg_status pending=fg_vk_end(vk,&ignored);if(pending!=FG_OK)break;}
+            for(uint32_t t=0;t<2u;t++){
+                fg_vk_tensor *row=NULL;
+                if(row_slice((fg_vk_tensor *)cur,t,FG_HYPER_WIDTH,&row,&ignored)==FG_OK){
+                    numerics_trace_tensor("BATCH_LAYER",fg_model_rank(e->model),layer,
+                                          token_index[t],1u,row,&ignored);
+                    fg_vk_tensor_destroy(row);
+                }
+            }
+        }
     }
 #undef BATCH_NEXT
     if(status==FG_OK){
