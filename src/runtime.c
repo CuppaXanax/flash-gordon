@@ -4849,6 +4849,21 @@ static fg_status coordinator_decode_batch_step(fg_coordinator *coordinator,
         if(status!=FG_OK)break;
         ngram_any=ngram_any||ngram_view[slot]!=NULL;
         ngram_all=ngram_all&&ngram_view[slot]!=NULL;
+        /* The store returns a view over one shared embedding tensor, so this
+         * slot's values must be copied out before the next slot's lookup
+         * replaces them. */
+        if(ngram_view[slot]){
+            status=fg_vk_tensor_read(ngram_view[slot],0,
+                work_ctx->batch_ngram+(uint64_t)slot*FG_NGRAM_EMBED_VALUES,
+                (uint64_t)FG_NGRAM_EMBED_VALUES*4u,err);
+            if(status!=FG_OK)break;
+            work->slots[slot].ngram_embedding=
+                work_ctx->batch_ngram+(uint64_t)slot*FG_NGRAM_EMBED_VALUES;
+            if(numerics_trace_enabled())
+                numerics_trace_values("NGRAM_BATCH",0u,1u,sequence->token_index,
+                    work_ctx->batch_ngram+(uint64_t)slot*FG_NGRAM_EMBED_VALUES,
+                    FG_NGRAM_EMBED_VALUES);
+        }
         work->slots[slot].token_index=entry->token_index;
         work->slots[slot].state_slot=entry->state_slot;
         for(uint32_t axis=0;axis<4u;axis++)
@@ -4859,16 +4874,6 @@ static fg_status coordinator_decode_batch_step(fg_coordinator *coordinator,
         fg_error_set(err,FG_ERR_MISMATCH,
                      "decode batch slots disagree on n-gram embedding availability");
         status=FG_ERR_MISMATCH;
-    }
-    if(status==FG_OK&&ngram_all){
-        for(uint32_t slot=0;slot<step->batch.slot_count;slot++){
-            status=fg_vk_tensor_read(ngram_view[slot],0,
-                work_ctx->batch_ngram+(uint64_t)slot*FG_NGRAM_EMBED_VALUES,
-                (uint64_t)FG_NGRAM_EMBED_VALUES*4u,err);
-            if(status!=FG_OK)break;
-            work->slots[slot].ngram_embedding=
-                work_ctx->batch_ngram+(uint64_t)slot*FG_NGRAM_EMBED_VALUES;
-        }
     }
     work->layer=0u;work->source_rank=0u;
     work->destination_rank=manifest->layer_owner[0u];
