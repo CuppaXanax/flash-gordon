@@ -1093,3 +1093,53 @@ diverged by one trailing byte -> reset -> full prefill, repeatedly.
 - Measured: trailing-newline echo `hit, reused 52057` (was full re-prefill);
   real edit `miss`; abort/retry 1.96 s; tool/system deltas unchanged; gates +
   battery + soak PASS.
+
+## 0ah. VISION CONTINUATION, WORKER MEMORY, DEPTH-B, KERNELS (2026-09-23/24)
+
+Merged to main `4b3e85d` (fleet serves `20260924-final`; gates + soak + vision
+PASS). The session's arc, in order:
+
+- **Media prefix continuation** (`752aa63`/`62219ac`): vision turns now CONTINUE
+  and COMMIT the public session. Before, `media_count==0` gated both, so any
+  image turn cold-started and every following turn re-prefilled the whole
+  context (~2 min at 28-30K). Media identity is a SHA-256 digest of the bytes in
+  message order - a changed image resets, the same image hits. Mixed
+  image/text conversations now hit 91.7-99.8% of the prefix; cold-vs-continued
+  is byte-identical on a faithful replay (the `/no_think` closed-think render
+  delta is documented in `docs/TOOL_CONTINUATION.md`).
+- **Vision crash + rank0 mask** (`9000283`/`428bfad`): a 1 MP screenshot OOM'd
+  rank0's Vulkan arena (`tower Vulkan allocate buffer memory failed`) and killed
+  the API. Two fixes: the tower pixel cap now derives from the 4096-token
+  attention budget (`ee4213b`), `buffer_append_text` keeps the API-inserted
+  vision markers verbatim (`95cbb52`), a failed vision alloc returns 500 and the
+  API survives, and rank 0 masks the common shards it does not execute
+  (`COORDINATOR_MASK`, 940 tensors / 3.387 GiB) - margin +45 MB -> +3.43 GiB.
+  The 2.6 MB screenshot now answers in ~40 s.
+- **Pageable n-gram shard** (default since `f4aec44`): workers map the shard
+  (`mmap`+`MADV_RANDOM`, 128 MiB mlocked hot prefix, bounded WILLNEED
+  read-ahead) instead of mlocking all of it - equal-or-better at 4K-151K and
+  **3.7-3.9 GiB returned per worker**. That headroom let the QSA record window
+  go 320 -> 640 MiB (rank0 618 MiB) and took 151K decode from 17.0 to **20.1**
+  TPS. Lesson recorded: the earlier 640 MiB attempt without the headroom
+  swapped (pswpout ~100k, block_ms 4 -> 1200) and wedged `.49`; never bump
+  caches without MemAvailable/swap monitoring.
+- **Paired down/reduce kernels** (`d3cd06e`): Q5_1 expert down 61.8 -> 56.5 us
+  (-8.5%, 217.6 GB/s), pair -3.3%, bit-identical (cross-compiler SPV parity).
+- **Depth-B batch path** (`adf45dd` + `663236f`): owner session slots,
+  PREPARE/COMMIT/RESTORE transactions, protocol 51/52. B=1 byte-identical; the
+  first B=2 measured 506-532 ms/step (host-read `PREPARE` dominator) and after
+  device-side `vkCmdCopyBuffer` checkpoints 100-132 ms/step = 1.25-1.46x vs a
+  1.6x target. Below the gate, so **fail-closed/test-only**; the pivot is a
+  batched decode block (one weight pass per layer for both tokens, projecting
+  1.7-2.0x). The API is still single-session until the front-end/engine split
+  (`docs/API_CONCURRENCY.md`) lands.
+- **Flag purge 2**: `FG_OUTPUT_SPLIT`/`FG_OUTPUT_SPLIT_TIMEOUT_MS` removed (the
+  4-way head split is unconditional); `FG_NGRAM_PAGEABLE` is now an opt-out
+  default; `tools/check-flags.sh` still gates every read against `docs/FLAGS.md`.
+- **Socket-buffer landmine**: a reboot drops the 16 MiB sysctls and long ring
+  prefills deadlock deterministically; the four values are now persisted in
+  `/etc/sysctl.d/99-fg.conf` on all 8 (verified effective). Never remove them.
+- Ops lesson: three parallel long subagents plus a session restart left zombie
+  task sessions the UI could not cancel; kill the opencode process to clear
+  them, and checkpoint-commit agent work early (the killed kernel instance's
+  uncommitted shader/test was recovered from its worktree).

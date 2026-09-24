@@ -10,8 +10,8 @@ The product contract and remaining implementation work are in [PRD.md](PRD.md).
 The current operating point is summarized in
 [PERFORMANCE_CONTRACT.md](PERFORMANCE_CONTRACT.md): a 6.671 GB/token
 expert-parallel byte chain with a practical warm band of 24-31 TPS, measuring
-26.05 TPS for warm short decode, 24.02 TPS at 4K context, 22.96 TPS at 16K,
-22.54 TPS at 32K, 21.19 TPS at 64K and 17.02 TPS at 151K. Early records such as
+25.6-26.1 TPS for warm short decode, ~23.8-24.4 TPS at 4K context, ~22.4 TPS at
+16K, ~22.2 TPS at 32K, ~21.5 TPS at 64K and ~20.1 TPS at 151K. Early records such as
 `lkg-10.035tps-cooked-experts` (99.647 ms/token, or 10.035 tok/s) describe their
 measured revision and are historical, not the current operating point. See
 [PERFORMANCE_TRACE_10_035TPS.md](PERFORMANCE_TRACE_10_035TPS.md) for that early
