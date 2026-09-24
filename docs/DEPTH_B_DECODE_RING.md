@@ -4,6 +4,37 @@ Worktree `fg-work-depthb`, branch `feat/depth-b` off `main` `1caabc7`.
 Status: **host-side core implemented and unit-tested locally; the owner/runtime
 wiring listed in §8 is the first task of the fleet window** (`PLAN.md`).
 
+## 0. Measured result and verdict (2026-09-24, branch `fix/depthb-gate5`)
+
+Fleet evidence: `bc-250-dbg/results/depthb2-20260923-2310/EVIDENCE.md`.
+The batch path now runs **parity-clean and rollback-clean at ~121 ms/step for
+two tokens** (was ~530 ms), but Gate 5's 1.6x aggregate is **not met**: the
+decode-only selftest speedup is **1.46x** (full-harness 1.25x).  The block work
+is still one token per pass, so each ring hop executes both slots serially and
+the ring stays at ~92 ms/step (~2x the B=1 ring).  Cost table (ms/step):
+
+| phase | B=1 steady | B=2 before | B=2 after |
+|---|---:|---:|---:|
+| PREPARE transactions (2 slots) | - | 394.5 | 1.1-4.5 |
+| assembly (2x embed + ngram) | ~0.8 | 26.7 | 0.8-27.4 |
+| ring (all 8 ranks, both slots) | 51.3 | 94.6 | 91.2-94.9 |
+| sampling relay (2 slots) | 0 (direct) | 6.1 | 6.0 |
+| COMMIT transactions | - | 8.7 | 0.5 |
+| **total** | **~52** | **506-532** | **100-132** |
+
+The dominator was the per-step host snapshot in PREPARE (`fg_owner_session_
+snapshot` reading device-local coherent GDN/PLE state at uncached bandwidth,
+93-198 ms per rank per slot).  `fg_owner_session_device_snapshot` now shadows
+each session's GDN conv/recurrent + PLE tensors with per-session device tensors
+and checkpoints with one `vkCmdCopyBuffer` (`fg_vk_copy_tensors`); rollback is
+the reverse copy plus the QSA frontier.  Host snapshots remain for the
+selftest digests.  The remaining step is ring-bound: the only way to reach the
+1.87x byte model is a batched decode block (both slots in one weight pass per
+layer, per-token bit-exact kernels).  Second-order: the pageable n-gram block
+read pays a ~24 ms 4K miss penalty after idle (NVMe wake), and two sequences
+consume blocks twice as fast as one, so batching currently pays ~1 extra miss
+per step; a prefetch or a larger block would recover ~10-20 ms/step.
+
 ## 1. Why
 
 Decode is depth-1: `coordinator->decode_work_wire` / `decode_result_wire` are a
