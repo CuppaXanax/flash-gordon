@@ -1498,15 +1498,80 @@ static void test_frontend_engine_split(void) {
     CHECK(models && strstr(models, "Qwen3.8-Flash-Next"));
     free(models);
 
-    char *busy = NULL;
-    double busy_ms = frontend_test_probe_ms(&address,
+    /* M2: while the engine is busy a second chat is admitted to the bounded
+     * FIFO queue instead of an immediate 503, and it is served in order. */
+    int second = frontend_test_connect(&address);
+    CHECK(second >= 0);
+    frontend_test_send(second,
         "POST /v1/chat/completions HTTP/1.1\r\nHost: fg\r\n"
-        "Content-Type: application/json\r\nContent-Length: 2\r\n\r\n{}", &busy);
-    CHECK(busy_ms >= 0.0 && busy_ms < 1000.0);
-    CHECK(busy && strstr(busy, "HTTP/1.1 503 Service Unavailable"));
-    CHECK(busy && strstr(busy, "Retry-After: 1"));
-    CHECK(busy && strstr(busy, "\"type\":\"server_busy\""));
-    free(busy);
+        "Content-Type: application/json\r\nContent-Length: 2\r\n\r\n{}");
+    api_engine_request queued = {0};
+    CHECK(api_engine_queue_pop_wait(&queue, &queued, 2000));
+    CHECK(queued.connection != NULL && queued.connection != engine_request.connection);
+    CHECK(api_engine_queue_busy(&queue) == true);
+
+    /* Probes still answer immediately while a request waits in the queue. */
+    char *queued_health = NULL;
+    double queued_health_ms = frontend_test_probe_ms(&address,
+        "GET /health HTTP/1.1\r\nHost: fg\r\n\r\n", &queued_health);
+    CHECK(queued_health_ms >= 0.0 && queued_health_ms < 1000.0);
+    CHECK(queued_health && strstr(queued_health, "\"busy\":true"));
+    free(queued_health);
+
+    /* Fill the remaining admission slots (A running, B queued here are already
+     * two of the four), then the next chat is over the bound: 429. */
+    int filler[FG_API_ENGINE_QUEUE_CAPACITY - 2];
+    api_engine_request extras[FG_API_ENGINE_QUEUE_CAPACITY - 2];
+    memset(extras, 0, sizeof(extras));
+    for (size_t i = 0; i < sizeof(filler) / sizeof(filler[0]); i++) {
+        filler[i] = frontend_test_connect(&address);
+        CHECK(filler[i] >= 0);
+        frontend_test_send(filler[i],
+            "POST /v1/chat/completions HTTP/1.1\r\nHost: fg\r\n"
+            "Content-Type: application/json\r\nContent-Length: 2\r\n\r\n{}");
+        CHECK(api_engine_queue_pop_wait(&queue, &extras[i], 2000));
+        CHECK(extras[i].connection != NULL);
+    }
+
+    char *overflow = NULL;
+    double overflow_ms = frontend_test_probe_ms(&address,
+        "POST /v1/chat/completions HTTP/1.1\r\nHost: fg\r\n"
+        "Content-Type: application/json\r\nContent-Length: 2\r\n\r\n{}", &overflow);
+    CHECK(overflow_ms >= 0.0 && overflow_ms < 1000.0);
+    CHECK(overflow && strstr(overflow, "HTTP/1.1 429 Too Many Requests"));
+    CHECK(overflow && strstr(overflow, "Retry-After: 1"));
+    CHECK(overflow && strstr(overflow, "\"type\":\"queue_full\""));
+    free(overflow);
+
+    /* Answer the queued requests in FIFO order, then the original generation. */
+    static const char queued_body[] = "{\"id\":\"chatcmpl-queued\"}";
+    for (size_t i = 0; i < sizeof(extras) / sizeof(extras[0]); i++) {
+        api_sink extra_sink = {.fd = extras[i].connection->fd,
+                               .connection = extras[i].connection};
+        CHECK(api_send_response(&extra_sink, 200u, "application/json", queued_body,
+                                sizeof(queued_body) - 1u,
+                                extras[i].connection->keep_alive, &err) == FG_OK);
+        api_connection_complete_response(extras[i].connection,
+                                         !extras[i].connection->keep_alive);
+        free(extras[i].http.body);
+        api_engine_queue_complete(&queue);
+    }
+    {
+        api_sink queued_sink = {.fd = queued.connection->fd,
+                                .connection = queued.connection};
+        CHECK(api_send_response(&queued_sink, 200u, "application/json", queued_body,
+                                sizeof(queued_body) - 1u,
+                                queued.connection->keep_alive, &err) == FG_OK);
+        api_connection_complete_response(queued.connection,
+                                         !queued.connection->keep_alive);
+        free(queued.http.body);
+        api_engine_queue_complete(&queue);
+    }
+    char *queued_response = frontend_test_read_until(second, "\"chatcmpl-queued\"", 5000);
+    CHECK(queued_response && strstr(queued_response, "HTTP/1.1 200 OK"));
+    free(queued_response);
+    close(second);
+    for (size_t i = 0; i < sizeof(filler) / sizeof(filler[0]); i++) close(filler[i]);
 
     /* Complete the generation with a chunked SSE response, exactly like the
      * engine: headers first, then frames, then the response completion. */
@@ -1531,10 +1596,10 @@ static void test_frontend_engine_split(void) {
 
     /* The same connection serves the next request (keep-alive). */
     frontend_test_send(chat, "GET /health HTTP/1.1\r\nHost: fg\r\n\r\n");
-    char *second = frontend_test_read_until(chat, "\"busy\":false}", 5000);
-    CHECK(second && strstr(second, "HTTP/1.1 200 OK"));
-    CHECK(second && strstr(second, "\"busy\":false"));
-    free(second);
+    char *second_health = frontend_test_read_until(chat, "\"busy\":false}", 5000);
+    CHECK(second_health && strstr(second_health, "HTTP/1.1 200 OK"));
+    CHECK(second_health && strstr(second_health, "\"busy\":false"));
+    free(second_health);
 
     /* Two sequential probe requests on one connection, then an explicit
      * Connection: close. */
@@ -1567,6 +1632,161 @@ static void test_frontend_engine_split(void) {
     close(bad);
 
     close(chat);
+    api_frontend_stop(&frontend);
+    api_engine_queue_destroy(&queue);
+    close(listener);
+}
+
+/* --- M2 admission policy: FIFO bound, 429 over the bound, cancellation ---- */
+
+static void test_engine_queue_admission(void) {
+    api_engine_queue queue;
+    api_engine_queue_init(&queue);
+    api_connection connections[FG_API_ENGINE_QUEUE_CAPACITY + 1];
+    memset(connections, 0, sizeof(connections));
+    for (size_t i = 0; i < FG_API_ENGINE_QUEUE_CAPACITY; i++) {
+        http_request http = {.body = strdup("{}")};
+        CHECK(http.body != NULL);
+        CHECK(api_engine_queue_try_push(&queue, &connections[i], &http) ==
+              API_ENGINE_ADMIT_QUEUED);
+    }
+    CHECK(api_engine_queue_busy(&queue) == true);
+
+    http_request overflow = {.body = strdup("{}")};
+    CHECK(api_engine_queue_try_push(&queue, &connections[FG_API_ENGINE_QUEUE_CAPACITY],
+                                    &overflow) == API_ENGINE_ADMIT_FULL);
+    free(overflow.body);
+
+    for (size_t i = 0; i < FG_API_ENGINE_QUEUE_CAPACITY; i++) {
+        api_engine_request popped = {0};
+        CHECK(api_engine_queue_pop_wait(&queue, &popped, 100));
+        CHECK(popped.connection == &connections[i]); /* FIFO order preserved */
+        free(popped.http.body);
+        api_engine_queue_complete(&queue);
+    }
+    CHECK(api_engine_queue_busy(&queue) == false);
+
+    /* A completed request frees its admission slot for the next push. */
+    http_request again = {.body = strdup("{}")};
+    CHECK(api_engine_queue_try_push(&queue, &connections[0], &again) ==
+          API_ENGINE_ADMIT_QUEUED);
+    api_engine_queue_stop(&queue);
+    http_request rejected = {.body = strdup("{}")};
+    CHECK(api_engine_queue_try_push(&queue, &connections[1], &rejected) ==
+          API_ENGINE_ADMIT_STOPPING);
+    free(rejected.body);
+    api_engine_queue_destroy(&queue); /* drains the still-queued body */
+}
+
+static void test_engine_queue_cancel(void) {
+    api_engine_queue queue;
+    api_engine_queue_init(&queue);
+    api_connection connections[3];
+    memset(connections, 0, sizeof(connections));
+    for (size_t i = 0; i < 3; i++) {
+        atomic_init(&connections[i].client_gone, true);
+        http_request http = {.body = strdup("{}")};
+        CHECK(api_engine_queue_try_push(&queue, &connections[i], &http) ==
+              API_ENGINE_ADMIT_QUEUED);
+    }
+    CHECK(api_engine_queue_cancel(&queue, &connections[1]) == true);
+    CHECK(api_engine_queue_cancel(&queue, &connections[1]) == false);
+
+    api_engine_request popped = {0};
+    CHECK(api_engine_queue_pop_wait(&queue, &popped, 100));
+    CHECK(popped.connection == &connections[0]);
+    free(popped.http.body);
+    api_engine_queue_complete(&queue);
+    CHECK(api_engine_queue_pop_wait(&queue, &popped, 100));
+    CHECK(popped.connection == &connections[2]); /* survivors keep FIFO order */
+    free(popped.http.body);
+    api_engine_queue_complete(&queue);
+    CHECK(api_engine_queue_busy(&queue) == false);
+    api_engine_queue_destroy(&queue);
+}
+
+static void test_frontend_cancels_queued_client(void) {
+    int listener = -1;
+    struct sockaddr_in address;
+    CHECK(frontend_test_listen(&listener, &address) == 0);
+    api_engine_queue queue;
+    api_engine_queue_init(&queue);
+    api_frontend frontend;
+    fg_error err = {0};
+    CHECK(api_frontend_start(&frontend, listener, NULL, &queue, &err) == FG_OK);
+
+    int running = frontend_test_connect(&address);
+    CHECK(running >= 0);
+    frontend_test_send(running,
+        "POST /v1/chat/completions HTTP/1.1\r\nHost: fg\r\n"
+        "Content-Type: application/json\r\nContent-Length: 2\r\n\r\n{}");
+    api_engine_request running_request = {0};
+    CHECK(api_engine_queue_pop_wait(&queue, &running_request, 2000));
+    CHECK(running_request.connection != NULL);
+
+    int clients[3];
+    for (size_t i = 0; i < 3; i++) {
+        clients[i] = frontend_test_connect(&address);
+        CHECK(clients[i] >= 0);
+        frontend_test_send(clients[i],
+            "POST /v1/chat/completions HTTP/1.1\r\nHost: fg\r\n"
+            "Content-Type: application/json\r\nContent-Length: 2\r\n\r\n{}");
+    }
+    struct timespec pause = {.tv_sec = 0, .tv_nsec = 5 * 1000 * 1000};
+    bool admitted = false;
+    for (int attempt = 0; attempt < 600 && !admitted; attempt++) {
+        pthread_mutex_lock(&queue.mutex);
+        admitted = queue.count == 3;
+        pthread_mutex_unlock(&queue.mutex);
+        if (!admitted) nanosleep(&pause, NULL);
+    }
+    CHECK(admitted);
+
+    /* The middle queued client drops: the front-end sweep frees its slot. */
+    close(clients[1]);
+    bool canceled = false;
+    for (int attempt = 0; attempt < 600 && !canceled; attempt++) {
+        pthread_mutex_lock(&queue.mutex);
+        canceled = queue.count == 2 && queue.outstanding == 3;
+        pthread_mutex_unlock(&queue.mutex);
+        if (!canceled) nanosleep(&pause, NULL);
+    }
+    CHECK(canceled);
+
+    api_engine_request first = {0}, last = {0};
+    CHECK(api_engine_queue_pop_wait(&queue, &first, 2000));
+    CHECK(api_engine_queue_pop_wait(&queue, &last, 2000));
+    CHECK(first.connection && last.connection && first.connection != last.connection);
+
+    static const char first_body[] = "{\"id\":\"first\"}";
+    static const char last_body[] = "{\"id\":\"last\"}";
+    api_sink first_sink = {.fd = first.connection->fd, .connection = first.connection};
+    CHECK(api_send_response(&first_sink, 200u, "application/json", first_body,
+                            sizeof(first_body) - 1u, true, &err) == FG_OK);
+    api_connection_complete_response(first.connection, false);
+    free(first.http.body);
+    api_engine_queue_complete(&queue);
+    api_sink last_sink = {.fd = last.connection->fd, .connection = last.connection};
+    CHECK(api_send_response(&last_sink, 200u, "application/json", last_body,
+                            sizeof(last_body) - 1u, true, &err) == FG_OK);
+    api_connection_complete_response(last.connection, false);
+    free(last.http.body);
+    api_engine_queue_complete(&queue);
+
+    /* Survivors answer their own clients: first queued -> first served. */
+    char *first_response = frontend_test_read_until(clients[0], "\"id\":\"first\"", 5000);
+    CHECK(first_response && strstr(first_response, "HTTP/1.1 200 OK"));
+    free(first_response);
+    char *last_response = frontend_test_read_until(clients[2], "\"id\":\"last\"", 5000);
+    CHECK(last_response && strstr(last_response, "HTTP/1.1 200 OK"));
+    free(last_response);
+
+    free(running_request.http.body);
+    api_engine_queue_complete(&queue);
+    close(running);
+    close(clients[0]);
+    close(clients[2]);
+
     api_frontend_stop(&frontend);
     api_engine_queue_destroy(&queue);
     close(listener);
@@ -3367,6 +3587,9 @@ int main(void) {
     test_nonstream_gets_no_keepalive();
     test_incremental_parser();
     test_frontend_engine_split();
+    test_engine_queue_admission();
+    test_engine_queue_cancel();
+    test_frontend_cancels_queued_client();
     test_chunked_request_body();
     test_stale_error_not_reused_on_bad_json();
     test_json_nul_and_member_limit();

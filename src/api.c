@@ -212,9 +212,11 @@ typedef struct api_engine_request {
     http_request http;
 } api_engine_request;
 
-/* Single in-flight slot plus a bounded transport queue for M2.  M1 keeps the
- * documented 503-while-busy contract: the front-end rejects a chat request
- * immediately when `outstanding` is non-zero. */
+/* Bounded FIFO transport queue (M2 admission policy).  A chat request is
+ * admitted while the engine is busy and waits here; the bound counts every
+ * admitted request (running + queued + not yet completed), so at most
+ * FG_API_ENGINE_QUEUE_CAPACITY requests are in flight and the next one gets
+ * `429` + Retry-After instead of a token slot. */
 typedef struct api_engine_queue {
     pthread_mutex_t mutex;
     pthread_cond_t cond;
@@ -224,6 +226,12 @@ typedef struct api_engine_queue {
     size_t outstanding;
     bool stopping;
 } api_engine_queue;
+
+typedef enum api_engine_admission {
+    API_ENGINE_ADMIT_QUEUED,   /* request accepted; ownership moved to the queue */
+    API_ENGINE_ADMIT_FULL,     /* bound reached: 429 + Retry-After */
+    API_ENGINE_ADMIT_STOPPING  /* shutting down: 503 */
+} api_engine_admission;
 
 struct api_frontend {
     int listener;
@@ -371,6 +379,7 @@ static const char *http_reason(unsigned status) {
         case 411: return "Length Required";
         case 413: return "Content Too Large";
         case 415: return "Unsupported Media Type";
+        case 429: return "Too Many Requests";
         case 503: return "Service Unavailable";
         default: return "Internal Server Error";
     }
@@ -3059,9 +3068,19 @@ static fg_status handle_health(api_sink *sink, bool busy, bool keep_alive, fg_er
 
 static fg_status send_busy_response(api_sink *sink, bool keep_alive, fg_error *err) {
     static const char body[] =
-        "{\"error\":{\"message\":\"Flash Gordon is busy generating another request; "
-        "retry shortly\",\"type\":\"server_busy\"}}";
+        "{\"error\":{\"message\":\"Flash Gordon is shutting down\","
+        "\"type\":\"server_busy\"}}";
     return api_send_response_with_headers(sink, 503u, "application/json",
+                                          "Retry-After: 1\r\n", body, sizeof(body) - 1u,
+                                          keep_alive, err);
+}
+
+static fg_status send_queue_full_response(api_sink *sink, bool keep_alive, fg_error *err) {
+    static const char body[] =
+        "{\"error\":{\"message\":\"Flash Gordon is at its request bound ("
+        "one running plus a bounded FIFO queue); retry shortly\","
+        "\"type\":\"queue_full\"}}";
+    return api_send_response_with_headers(sink, 429u, "application/json",
                                           "Retry-After: 1\r\n", body, sizeof(body) - 1u,
                                           keep_alive, err);
 }
@@ -3224,28 +3243,74 @@ static void api_engine_queue_init(api_engine_queue *queue) {
 }
 
 static void api_engine_queue_destroy(api_engine_queue *queue) {
+    pthread_mutex_lock(&queue->mutex);
+    for (size_t i = 0; i < queue->count; i++) {
+        size_t slot = (queue->head + i) % FG_API_ENGINE_QUEUE_CAPACITY;
+        free(queue->entries[slot].http.body);
+        queue->entries[slot].http.body = NULL;
+    }
+    queue->head = 0;
+    queue->count = 0;
+    queue->outstanding = 0;
+    pthread_mutex_unlock(&queue->mutex);
     pthread_mutex_destroy(&queue->mutex);
     pthread_cond_destroy(&queue->cond);
 }
 
-/* M1 contract: one generation in flight; a second chat request is answered
- * with 503 + Retry-After by the caller instead of being queued. */
-static bool api_engine_queue_try_push(api_engine_queue *queue, api_connection *connection,
-                                      http_request *http) {
-    bool pushed = false;
+/* M2 admission: a chat request is accepted while generations are running; the
+ * engine runs admitted requests FIFO.  The bound is `outstanding` (running +
+ * queued, not yet completed), not the physical ring occupancy, so the
+ * documented capacity is the number of requests a burst can hold. */
+static api_engine_admission api_engine_queue_try_push(api_engine_queue *queue,
+                                                      api_connection *connection,
+                                                      http_request *http) {
+    api_engine_admission admission = API_ENGINE_ADMIT_FULL;
     pthread_mutex_lock(&queue->mutex);
-    if (!queue->stopping && queue->outstanding == 0 &&
-        queue->count < FG_API_ENGINE_QUEUE_CAPACITY) {
+    if (queue->stopping) {
+        admission = API_ENGINE_ADMIT_STOPPING;
+    } else if (queue->outstanding < FG_API_ENGINE_QUEUE_CAPACITY &&
+               queue->count < FG_API_ENGINE_QUEUE_CAPACITY) {
         size_t slot = (queue->head + queue->count) % FG_API_ENGINE_QUEUE_CAPACITY;
         queue->entries[slot].connection = connection;
         queue->entries[slot].http = *http;
         queue->count++;
         queue->outstanding++;
-        pushed = true;
+        admission = API_ENGINE_ADMIT_QUEUED;
         pthread_cond_signal(&queue->cond);
     }
     pthread_mutex_unlock(&queue->mutex);
-    return pushed;
+    return admission;
+}
+
+/* Cancel a queued request whose client disconnected before the engine picked
+ * it up (front-end thread only; the connection's `generating` flag is
+ * front-end state).  Frees the request body and the admission slot.  The
+ * engine's pop-time `client_gone` check covers the race where the request is
+ * popped between the disconnect and this sweep. */
+static bool api_engine_queue_cancel(api_engine_queue *queue, api_connection *connection) {
+    bool canceled = false;
+    pthread_mutex_lock(&queue->mutex);
+    size_t kept = 0;
+    for (size_t i = 0; i < queue->count; i++) {
+        size_t slot = (queue->head + i) % FG_API_ENGINE_QUEUE_CAPACITY;
+        api_engine_request *entry = &queue->entries[slot];
+        if (entry->connection == connection) {
+            free(entry->http.body);
+            entry->http.body = NULL;
+            entry->connection = NULL;
+            if (queue->outstanding) queue->outstanding--;
+            canceled = true;
+            continue;
+        }
+        if (kept != i) {
+            size_t target = (queue->head + kept) % FG_API_ENGINE_QUEUE_CAPACITY;
+            queue->entries[target] = *entry;
+        }
+        kept++;
+    }
+    queue->count = kept;
+    pthread_mutex_unlock(&queue->mutex);
+    return canceled;
 }
 
 static bool api_engine_queue_pop_wait(api_engine_queue *queue, api_engine_request *out,
@@ -3412,11 +3477,16 @@ static bool api_frontend_dispatch(api_frontend *frontend, api_connection *conn,
     } else if (!strcmp(http->method, "POST") &&
                !strcmp(http->path, "/v1/chat/completions")) {
         /* Ownership of the request body moves to the engine queue on success. */
-        if (api_engine_queue_try_push(frontend->engine, conn, http)) {
+        api_engine_admission admission =
+            api_engine_queue_try_push(frontend->engine, conn, http);
+        if (admission == API_ENGINE_ADMIT_QUEUED) {
             conn->generating = true;
             return true;
         }
-        send_busy_response(&sink, conn->keep_alive, &err);
+        if (admission == API_ENGINE_ADMIT_FULL)
+            send_queue_full_response(&sink, conn->keep_alive, &err);
+        else
+            send_busy_response(&sink, conn->keep_alive, &err);
         api_connection_complete_response(conn, !conn->keep_alive);
     } else if (!strcmp(http->path, "/v1/models") ||
                !strcmp(http->path, "/v1/chat/completions")) {
@@ -3442,6 +3512,15 @@ static bool api_connection_reusable(api_connection *conn) {
  * request on the same connection. */
 static void api_frontend_reap(api_frontend *frontend) {
     double now = api_monotonic_seconds();
+    /* Cancel queued requests whose client disconnected before the engine
+     * picked them up; the pop-time check covers the race.  Completion here is
+     * safe because `generating` and `client_gone` are both front-end state. */
+    for (api_connection *conn = frontend->connections; conn; conn = conn->next) {
+        if (!conn->generating || atomic_load(&conn->response_complete)) continue;
+        if (!atomic_load(&conn->client_gone)) continue;
+        if (api_engine_queue_cancel(frontend->engine, conn))
+            api_connection_complete_response(conn, true);
+    }
     api_connection **cursor = &frontend->connections;
     while (*cursor) {
         api_connection *conn = *cursor;
@@ -4065,6 +4144,16 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
     while (!api_stop_requested) {
         api_engine_request engine_request;
         if (!api_engine_queue_pop_wait(&queue, &engine_request, 200)) continue;
+        if (atomic_load(&engine_request.connection->client_gone)) {
+            /* The client disconnected while the request waited in the queue:
+             * cancel it without spending a token slot.  The front-end sweep
+             * handles the more common case; this closes the pop race. */
+            free(engine_request.http.body);
+            engine_request.http.body = NULL;
+            api_connection_complete_response(engine_request.connection, true);
+            api_engine_queue_complete(&queue);
+            continue;
+        }
         api_sink sink = {
             .fd = engine_request.connection->fd,
             .connection = engine_request.connection,
