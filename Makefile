@@ -93,6 +93,9 @@ test-fg-dense-rates:
 tests/test_hc_down_split: tests/test_hc_down_split.o src/vk.o src/quant.o src/q38_math.o src/ngram.o src/uring.o src/sha256.o src/q38_schema.o src/gguf.o src/util.o | shaders
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS) -lvulkan
 
+tests/test_batch_block: tests/test_batch_block.o src/vk.o src/quant.o src/q38_math.o src/ngram.o src/uring.o src/sha256.o src/q38_schema.o src/gguf.o src/topology.o src/util.o | shaders
+	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS) -lvulkan
+
 tests/test_model_load: tests/test_model_load.o src/model.o src/vk.o src/quant.o src/q38_math.o src/ngram.o src/loader.o src/uring.o src/sha256.o src/manifest.o src/runtime_options.o src/topology.o src/q38_schema.o src/gguf.o src/util.o | shaders
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
@@ -127,9 +130,10 @@ tests/test_ngram_deployment: tests/test_ngram_deployment.o $(TEST_COMMON)
 test-ngram-deployment: tests/test_ngram_deployment
 	./tests/test_ngram_deployment
 
-test-vulkan: tests/test_owner_reduce tests/test_fg_vk tests/test_hc_down_split tests/test_model_load tests/test_qsa_model_load tests/test_tokenizer tests/test_fabric tests/test_expert_prefill tests/test_qsa_prefill
+test-vulkan: tests/test_owner_reduce tests/test_fg_vk tests/test_hc_down_split tests/test_model_load tests/test_qsa_model_load tests/test_tokenizer tests/test_fabric tests/test_expert_prefill tests/test_qsa_prefill tests/test_batch_block
 	./tests/test_fg_vk
 	./tests/test_hc_down_split || test $$? -eq 77
+	./tests/test_batch_block || test $$? -eq 77
 	./tests/test_model_load || test $$? -eq 77
 	./tests/test_qsa_model_load || test $$? -eq 77
 	./tests/test_tokenizer || test $$? -eq 77
@@ -155,6 +159,6 @@ test-gdn-fleet: tests/test_fg_vk
 	done
 
 clean:
-	rm -f tests/test_prefill_collective flash-gordon $(OBJ) $(DEP) vendor/*.o vendor/*.d tests/*.o tests/test_core tests/test_session tests/test_prefix tests/test_chat tests/test_chat_runtime tests/test_api tests/test_sampler tests/test_ngram_deployment tests/test_expert_prefill tests/test_qsa_prefill tests/test_owner_reduce tests/test_prefill_dispatch tests/test_decode_batch tests/test_expert_prefill.d tests/test_prefill_dispatch.d tests/test_decode_batch.d tests/test_fg_vk tests/test_hc_down_split tests/test_model_load tests/test_qsa_model_load tests/test_tokenizer tests/test_fabric tests/test_video vulkan/*.spv
+	rm -f tests/test_prefill_collective flash-gordon $(OBJ) $(DEP) vendor/*.o vendor/*.d tests/*.o tests/test_core tests/test_session tests/test_prefix tests/test_chat tests/test_chat_runtime tests/test_api tests/test_sampler tests/test_ngram_deployment tests/test_expert_prefill tests/test_qsa_prefill tests/test_owner_reduce tests/test_prefill_dispatch tests/test_decode_batch tests/test_expert_prefill.d tests/test_prefill_dispatch.d tests/test_decode_batch.d tests/test_fg_vk tests/test_hc_down_split tests/test_batch_block tests/test_model_load tests/test_qsa_model_load tests/test_tokenizer tests/test_fabric tests/test_video vulkan/*.spv
 
 -include $(DEP) tests/test_expert_prefill.d tests/test_prefill_dispatch.d tests/test_decode_batch.d

@@ -181,6 +181,12 @@ fg_status fg_vk_dense_q8_0_cooked_prefill(fg_vk_context *context,
                                           uint32_t output_width,
                                           uint32_t tokens,float scale,
                                           fg_error *err);
+/* Batch-2 decode MMV prototype: two tokens, one cooked-weight pass, per-token
+ * bit-identical to two fg_vk_dense_q8_0_cooked r8 dispatches. */
+fg_status fg_vk_dense_q8_0_b2(fg_vk_context *context,fg_vk_tensor *output,
+                              const fg_vk_tensor *weights,const fg_vk_tensor *input,
+                              uint32_t input_width,uint32_t output_width,
+                              float scale,fg_error *err);
 fg_status fg_vk_dense_q8_0_cooked_split(fg_vk_context *context,fg_vk_tensor *output,
                                         fg_vk_tensor *partials,const fg_vk_tensor *weights,
                                         const fg_vk_tensor *input,uint32_t input_width,
