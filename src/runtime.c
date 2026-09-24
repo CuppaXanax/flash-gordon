@@ -4185,6 +4185,7 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
         fg_status drain=coordinator_warm_qsa_drain(coordinator,err);
         if(drain!=FG_OK)status=drain;
     }
+    if(status==FG_OK)prefilled=token_count;
     if(status==FG_OK)*output=last_output;
     /* Decode on rank 0 attaches to owners' committed state; the mirror did not
      * compute most QSA layers, so advance its committed counters to the
@@ -6681,8 +6682,15 @@ static fg_status depthb_prefill_sample(fg_runtime *runtime,const fg_tokens *prom
     fg_status status=coordinator_prefill_pipeline(&runtime->coordinator,history,
         prompt->count,prompt->data,0u,(uint32_t)prompt->count,NULL,0u,
         &runtime->prefill_profiled,NULL,NULL,&output,&prefilled,err);
+    if(status==FG_OK&&prefilled!=(uint32_t)prompt->count){
+        fg_error_set(err,FG_ERR_MISMATCH,"depth-B prefill did not complete the prompt");
+        status=FG_ERR_MISMATCH;
+    }
     if(status==FG_OK){
-        uint32_t final_count=prefilled%manifest->prefill_microbatch;
+        /* The ring pipeline stores the final chunk at offset 0, so the last
+         * token of a chunk of N sits at N-1, exactly like the production decode
+         * path computes it from the prompt length. */
+        uint32_t final_count=(uint32_t)prompt->count%manifest->prefill_microbatch;
         if(!final_count)final_count=manifest->prefill_microbatch;
         fg_vk_tensor *last=NULL;
         status=fg_vk_tensor_view(output,(uint64_t)(final_count-1u)*FG_HYPER_WIDTH*4u,
