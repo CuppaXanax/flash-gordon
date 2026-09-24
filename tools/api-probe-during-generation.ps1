@@ -1,11 +1,16 @@
 #requires -Version 7.0
 <#
-Probe-latency-during-generation evidence for the API M1 front-end split.
+Probe-latency-during-generation evidence for the API front-end split.
 
 Starts one long chat completion (text prefill+decode or a 512px vision turn),
 then hammers /health and /v1/models from separate connections while it runs,
 plus one second chat request while the engine is busy.  Records per-probe
-latencies, the busy-chat status/Retry-After, and the generation wall time.
+latencies, the busy-chat status/Retry-After and the generation wall time.
+
+M1 refused the second chat with 503; M2 admits it to the bounded queue, so the
+10 s busy-chat probe client times out with `queued=1` (the request is waiting
+for its turn, served after the generation; see tools/api-queue.ps1 for the
+dedicated admission evidence).
 
 FGPROBE lines are the citable output.
 #>
@@ -51,28 +56,41 @@ function Invoke-Probe([string]$Path) {
     }
 }
 
-function Invoke-BusyChatProbe {
+function Start-BusyChatProbe {
     $small = @{ model = "Qwen3.8-Flash-Next"
         messages = @(@{ role = "user"; content = "hi" }); max_tokens = 1; stream = $false } |
         ConvertTo-Json -Depth 10 -Compress
     $content = [System.Net.Http.StringContent]::new($small, [Text.Encoding]::UTF8,
         "application/json")
+    $client = New-Client 10
     $sw = [Diagnostics.Stopwatch]::StartNew()
+    # Fire-and-record: the sampler must not block on it (a queued request can
+    # wait out a whole generation; in M1 the same probe returned 503 at once).
+    $task = $client.PostAsync("$BaseUrl/v1/chat/completions", $content)
+    return [pscustomobject]@{ Task = $task; Sw = $sw; Client = $client }
+}
+
+function Finish-BusyChatProbe($job) {
     try {
-        $resp = $probeClient.PostAsync("$BaseUrl/v1/chat/completions", $content).
-            GetAwaiter().GetResult()
+        $resp = $job.Task.GetAwaiter().GetResult()
         $text = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-        $sw.Stop()
+        $job.Sw.Stop()
         $retry = if ($resp.Headers.Contains("Retry-After")) {
             ($resp.Headers.GetValues("Retry-After") -join ",")
         } else { "" }
-        return [pscustomobject]@{ Ms = $sw.Elapsed.TotalMilliseconds
-            Status = [int]$resp.StatusCode; Body = $text; RetryAfter = $retry }
+        return [pscustomobject]@{ Ms = $job.Sw.Elapsed.TotalMilliseconds
+            Status = [int]$resp.StatusCode; Body = $text; RetryAfter = $retry
+            Queued = $false }
     } catch {
-        $sw.Stop()
-        return [pscustomobject]@{ Ms = $sw.Elapsed.TotalMilliseconds; Status = 0
-            Body = $_.Exception.GetBaseException().Message; RetryAfter = "" }
-    }
+        $job.Sw.Stop()
+        $base = $_.Exception.GetBaseException()
+        # M2: a second chat while busy is queued, not refused, so the 10 s
+        # probe client times out waiting for its turn - that is admission.
+        $queued = ($base -is [System.Threading.Tasks.TaskCanceledException]) -or
+                  ($base.Message -match 'aborted|timed out')
+        return [pscustomobject]@{ Ms = $job.Sw.Elapsed.TotalMilliseconds; Status = 0
+            Body = $base.Message; RetryAfter = ""; Queued = $queued }
+    } finally { $job.Client.Dispose() }
 }
 
 # --- build the long request -------------------------------------------------
@@ -117,7 +135,7 @@ Emit ("FGPROBE busy_seen={0}" -f $busySeen)
 $health = @()
 $models = @()
 $errors = 0
-$busyChat = $null
+$busyChatJob = $null
 $probeIndex = 0
 while (-not $task.IsCompleted) {
     $p = Invoke-Probe "/health"
@@ -128,15 +146,16 @@ while (-not $task.IsCompleted) {
         $models += $m.Ms
         if ($m.Error) { $errors++ }
     }
-    if ($null -eq $busyChat -and $busySeen) { $busyChat = Invoke-BusyChatProbe }
+    if ($null -eq $busyChatJob -and $busySeen) { $busyChatJob = Start-BusyChatProbe }
     $probeIndex++
     Start-Sleep -Milliseconds $ProbeIntervalMs
 }
 $wall.Stop()
+$busyChat = if ($busyChatJob) { Finish-BusyChatProbe $busyChatJob } else { $null }
 
 function Get-Stats([double[]]$Values) {
-    if ($Values.Count -eq 0) { return @(0.0, 0.0, 0.0) }
-    $sorted = $Values | Sort-Object
+    if ($null -eq $Values -or $Values.Count -eq 0) { return @(0.0, 0.0, 0.0) }
+    $sorted = @($Values | Sort-Object)
     $p95 = $sorted[[Math]::Min($sorted.Count - 1, [Math]::Floor($sorted.Count * 0.95))]
     return @(($sorted | Measure-Object -Maximum).Maximum,
               ($Values | Measure-Object -Average).Average, $p95)
@@ -149,8 +168,9 @@ Emit ("FGPROBE probe health n={0} max_ms={1:F1} avg_ms={2:F1} p95_ms={3:F1} erro
 Emit ("FGPROBE probe models n={0} max_ms={1:F1} avg_ms={2:F1} p95_ms={3:F1}" -f
     $models.Count, $ms[0], $ms[1], $ms[2])
 if ($busyChat) {
-    Emit ("FGPROBE busy_chat status={0} latency_ms={1:F1} retry_after='{2}'" -f
-        $busyChat.Status, $busyChat.Ms, $busyChat.RetryAfter)
+    Emit ("FGPROBE busy_chat status={0} latency_ms={1:F1} retry_after='{2}' queued={3} note='{4}'" -f
+        $busyChat.Status, $busyChat.Ms, $busyChat.RetryAfter, [int]$busyChat.Queued,
+        $busyChat.Body.Substring(0, [Math]::Min(60, $busyChat.Body.Length)))
 }
 
 # --- generation result ------------------------------------------------------
