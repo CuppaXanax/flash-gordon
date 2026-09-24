@@ -128,12 +128,16 @@ struct fg_owner_executor {
     uint32_t max_tokens;
     uint32_t hc_inject_pieces;
     bool replicated;
+    uint32_t session_count;
+    uint32_t active_session;
     fg_vk_tensor *hyper_norm,*low,*hc_down_partials,*low_active,*up_logits,*inject_partials,*mixed,*injection,*hyper_output,*hyper_output_b;
     fg_vk_tensor *router_logits,*activation_q8k,*shared_gate,*shared_up,*shared_mid,*shared_output,*shared_scalar,*reduced;
     fg_vk_tensor *prefill_experts,*prefill_gates;
     fg_vk_tensor *gdn_qkv,*gdn_conv_output,*gdn_z,*gdn_alpha,*gdn_beta,*gdn_core,*gdn_output;
-    fg_vk_tensor *ple_key,*ple_value,*ple_key_norm,*ple_query_norm,*ple_gated,*ple_gated_norm,*ple_output,*ple_added,*ple_state;
-    struct {fg_vk_tensor *conv_state,*recurrent_state;} gdn_state[FG_LAYER_COUNT];
+    fg_vk_tensor *ple_key,*ple_value,*ple_key_norm,*ple_query_norm,*ple_gated,*ple_gated_norm,*ple_output,*ple_added;
+    struct {fg_vk_tensor *conv_state,*recurrent_state;} gdn_state[FG_OWNER_SESSION_MAX][FG_LAYER_COUNT];
+    fg_vk_tensor *ples_state[FG_OWNER_SESSION_MAX];
+    fg_vk_tensor *session_input[FG_OWNER_SESSION_MAX];
     fg_vk_tensor *attention_family_scratch;
     fg_vk_tensor *reduce_experts,*reduce_gates,*reduce_shared,*reduce_logits,*reduce_output;
     uint32_t reduce_tile_tokens;
@@ -144,8 +148,38 @@ struct fg_owner_executor {
     fg_owner_decode_slot decode_slots[FG_OWNER_SLOT_COUNT];
     fg_owner_prefill_slot prefill_slots[FG_OWNER_SLOT_COUNT];
     fg_vk_tensor *static_run_output[FG_VK_STATIC_SLOTS];
-    fg_qsa_session *qsa;
+    uint32_t static_run_session[FG_VK_STATIC_SLOTS];
+    bool static_run_session_valid[FG_VK_STATIC_SLOTS];
+    fg_qsa_session *qsa[FG_OWNER_SESSION_MAX];
 };
+
+/* Active-session state selectors.  Every stateful owner entry point resolves
+ * GDN/PLE/QSA through these so a batch step's slot switch is one field. */
+#define OWNER_GDN(e,layer) (&(e)->gdn_state[(e)->active_session][(layer)])
+#define OWNER_PLE(e) ((e)->ples_state[(e)->active_session])
+#define OWNER_QSA(e) ((e)->qsa[(e)->active_session])
+static bool session_allocated(const fg_owner_executor *e,uint32_t session){
+    return e&&session<e->session_count&&session<FG_OWNER_SESSION_MAX;
+}
+uint32_t fg_owner_session_count(const fg_owner_executor *executor){
+    return executor?executor->session_count:0u;
+}
+uint32_t fg_owner_active_session(const fg_owner_executor *executor){
+    return executor?executor->active_session:0u;
+}
+fg_status fg_owner_set_active_session(fg_owner_executor *executor,uint32_t session,
+                                      fg_error *err){
+    if(!executor||!session_allocated(executor,session)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"owner session %u is not allocated",session);
+        return FG_ERR_ARGUMENT;
+    }
+    executor->active_session=session;
+    return FG_OK;
+}
+fg_vk_tensor *fg_owner_session_input(fg_owner_executor *executor,uint32_t session){
+    if(!executor||!session_allocated(executor,session))return NULL;
+    return executor->session_input[session];
+}
 
 static fg_status scratch(fg_vk_context *vk,uint64_t values,fg_vk_tensor **out,fg_error *err){return fg_vk_tensor_create(vk,values*4u,out,err);}
 static fg_status family_view(fg_owner_executor *executor,uint64_t *offset,uint64_t bytes,
@@ -277,9 +311,15 @@ static fg_status create_decode_slots(fg_owner_executor *executor,fg_error *err){
 }
 
 static fg_status owner_executor_create_impl(fg_owner_executor **out,fg_model *model,
-                                            bool replicated,fg_error *err){
+                                            bool replicated,uint32_t sessions,fg_error *err){
     if(!out||!model){fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner executor arguments");return FG_ERR_ARGUMENT;}*out=NULL;
+    if(!sessions||sessions>FG_OWNER_SESSION_MAX){
+        fg_error_set(err,FG_ERR_ARGUMENT,"owner session count %u is outside 1..%u",
+                     sessions,FG_OWNER_SESSION_MAX);
+        return FG_ERR_ARGUMENT;
+    }
     fg_owner_executor *executor=calloc(1,sizeof(*executor));if(!executor){fg_error_set(err,FG_ERR_OOM,"allocate owner executor");return FG_ERR_OOM;}executor->model=model;fg_vk_context *vk=fg_model_vk(model);
+    executor->session_count=sessions;executor->active_session=0;
     executor->hc_inject_pieces=fg_vk_hc_inject_pieces(vk);
     const fg_manifest *manifest=fg_model_manifest(model);executor->max_tokens=manifest->prefill_microbatch;executor->replicated=replicated;if(!executor->max_tokens||executor->max_tokens>FG_PREFILL_MAX_TOKENS){fg_owner_executor_destroy(executor);fg_error_set(err,FG_ERR_MISMATCH,"manifest prefill microbatch exceeds owner executor limit");return FG_ERR_MISMATCH;}uint64_t tokens=executor->max_tokens;
     fg_status status=fg_vk_tensor_create(vk,(uint64_t)10240u*tokens*4u,&executor->hyper_output,err);
@@ -301,26 +341,30 @@ static fg_status owner_executor_create_impl(fg_owner_executor **out,fg_model *mo
     if(status==FG_OK)status=create_transient_views(executor,err);
     if(status==FG_OK)status=create_decode_slots(executor,err);
     bool ring=executor->replicated&&fg_runtime_ring_enabled();
-    for(uint32_t layer=0;status==FG_OK&&layer<FG_LAYER_COUNT;layer++){
-        bool owned=manifest->layer_owner[layer]==fg_model_rank(model)||
-                   (executor->replicated&&!ring);
-        if(owned&&(layer&3u)!=3u){
-            status=scratch(vk,10240u*4u,&executor->gdn_state[layer].conv_state,err);
-            if(status==FG_OK)status=scratch(vk,48u*128u*128u,
-                                            &executor->gdn_state[layer].recurrent_state,err);
-            if(status==FG_OK){
-                memset(fg_vk_tensor_map(executor->gdn_state[layer].conv_state),0,
-                       10240u*4u*4u);
-                memset(fg_vk_tensor_map(executor->gdn_state[layer].recurrent_state),0,
-                       48u*128u*128u*4u);
+    for(uint32_t session=0;status==FG_OK&&session<executor->session_count;session++){
+        for(uint32_t layer=0;status==FG_OK&&layer<FG_LAYER_COUNT;layer++){
+            bool owned=manifest->layer_owner[layer]==fg_model_rank(model)||
+                       (executor->replicated&&!ring);
+            if(owned&&(layer&3u)!=3u){
+                status=scratch(vk,10240u*4u,&executor->gdn_state[session][layer].conv_state,err);
+                if(status==FG_OK)status=scratch(vk,48u*128u*128u,
+                                                &executor->gdn_state[session][layer].recurrent_state,err);
+                if(status==FG_OK){
+                    memset(fg_vk_tensor_map(executor->gdn_state[session][layer].conv_state),0,
+                           10240u*4u*4u);
+                    memset(fg_vk_tensor_map(executor->gdn_state[session][layer].recurrent_state),0,
+                           48u*128u*128u*4u);
+                }
             }
         }
+        if(status==FG_OK&&(manifest->layer_owner[1u]==fg_model_rank(model)||
+                           (executor->replicated&&!ring)))
+            status=scratch(vk,10240u*9u,&executor->ples_state[session],err);
+        if(status==FG_OK&&executor->ples_state[session])
+            memset(fg_vk_tensor_map(executor->ples_state[session]),0,10240u*9u*4u);
+        if(status==FG_OK)
+            status=scratch(vk,(uint64_t)FG_HYPER_WIDTH*4u,&executor->session_input[session],err);
     }
-    if(status==FG_OK&&(manifest->layer_owner[1u]==fg_model_rank(model)||
-                       (executor->replicated&&!ring)))
-        status=scratch(vk,10240u*9u,&executor->ple_state,err);
-    if(status==FG_OK&&executor->ple_state)
-        memset(fg_vk_tensor_map(executor->ple_state),0,10240u*9u*4u);
     if(status==FG_OK){
         executor->prefill_slot_outputs=calloc(
             (size_t)executor->max_tokens*FG_TOP_K,
@@ -334,10 +378,18 @@ static fg_status owner_executor_create_impl(fg_owner_executor **out,fg_model *mo
     if(status!=FG_OK){fg_owner_executor_destroy(executor);return status;}*out=executor;return FG_OK;
 }
 fg_status fg_owner_executor_create(fg_owner_executor **out,fg_model *model,fg_error *err){
-    return owner_executor_create_impl(out,model,true,err);
+    return owner_executor_create_impl(out,model,true,1u,err);
 }
 fg_status fg_owner_executor_create_worker(fg_owner_executor **out,fg_model *model,fg_error *err){
-    return owner_executor_create_impl(out,model,false,err);
+    return owner_executor_create_impl(out,model,false,1u,err);
+}
+fg_status fg_owner_executor_create_slots(fg_owner_executor **out,fg_model *model,
+                                         uint32_t sessions,fg_error *err){
+    return owner_executor_create_impl(out,model,true,sessions,err);
+}
+fg_status fg_owner_executor_create_worker_slots(fg_owner_executor **out,fg_model *model,
+                                                uint32_t sessions,fg_error *err){
+    return owner_executor_create_impl(out,model,false,sessions,err);
 }
 fg_vk_tensor *fg_owner_prefill_input(fg_owner_executor *executor){
     /*
@@ -351,17 +403,25 @@ fg_vk_tensor *fg_owner_prefill_input_slot(fg_owner_executor *executor,uint32_t s
     return executor->decode_slots[slot].ping[1];
 }
 uint64_t fg_owner_qsa_host_bytes(const fg_owner_executor *executor){
-    return executor?fg_qsa_session_host_bytes(executor->qsa):0;
+    if(!executor)return 0u;
+    uint64_t bytes=0u;
+    for(uint32_t session=0;session<executor->session_count;session++)
+        bytes+=fg_qsa_session_host_bytes(executor->qsa[session]);
+    return bytes;
 }
 void fg_owner_executor_destroy(fg_owner_executor *e){
     if(!e)return;
-    fg_qsa_session_close(e->qsa);
+    for(uint32_t session=0;session<e->session_count;session++)
+        fg_qsa_session_close(e->qsa[session]);
     free(e->prefill_slot_outputs);
-    for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){
-        fg_vk_tensor_destroy(e->gdn_state[layer].recurrent_state);
-        fg_vk_tensor_destroy(e->gdn_state[layer].conv_state);
+    for(uint32_t session=0;session<e->session_count;session++){
+        for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){
+            fg_vk_tensor_destroy(e->gdn_state[session][layer].recurrent_state);
+            fg_vk_tensor_destroy(e->gdn_state[session][layer].conv_state);
+        }
+        fg_vk_tensor_destroy(e->ples_state[session]);
+        fg_vk_tensor_destroy(e->session_input[session]);
     }
-    fg_vk_tensor_destroy(e->ple_state);
     fg_vk_tensor_destroy(e->ple_added);
     fg_vk_tensor_destroy(e->ple_output);
     fg_vk_tensor_destroy(e->ple_gated_norm);
@@ -413,8 +473,25 @@ void fg_owner_executor_destroy(fg_owner_executor *e){
     fg_vk_tensor_destroy(e->hyper_output);
     free(e);
 }
-fg_status fg_owner_reset_state(fg_owner_executor *e,fg_error *err){if(!e){fg_error_set(err,FG_ERR_ARGUMENT,"owner state reset is null");return FG_ERR_ARGUMENT;}for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){if(e->gdn_state[layer].conv_state)memset(fg_vk_tensor_map(e->gdn_state[layer].conv_state),0,(size_t)fg_vk_tensor_bytes(e->gdn_state[layer].conv_state));if(e->gdn_state[layer].recurrent_state)memset(fg_vk_tensor_map(e->gdn_state[layer].recurrent_state),0,(size_t)fg_vk_tensor_bytes(e->gdn_state[layer].recurrent_state));}if(e->ple_state)memset(fg_vk_tensor_map(e->ple_state),0,(size_t)fg_vk_tensor_bytes(e->ple_state));memset(&e->pending_write,0,sizeof(e->pending_write));for(uint32_t slot=0;slot<FG_OWNER_SLOT_COUNT;slot++){memset(&e->decode_slots[slot].pending_write,0,sizeof(e->decode_slots[slot].pending_write));e->decode_slots[slot].active=false;e->prefill_slots[slot].active=false;}return e->qsa?fg_qsa_session_reset(e->qsa,err):FG_OK;}
-fg_status fg_owner_qsa_checkpoint(fg_owner_executor *executor,fg_error *err){if(!executor||!executor->qsa){fg_error_set(err,FG_ERR_ARGUMENT,"owner QSA checkpoint is unavailable");return FG_ERR_ARGUMENT;}return fg_qsa_session_checkpoint(executor->qsa,err);}
+fg_status fg_owner_reset_state(fg_owner_executor *e,fg_error *err){
+    if(!e){fg_error_set(err,FG_ERR_ARGUMENT,"owner state reset is null");return FG_ERR_ARGUMENT;}
+    for(uint32_t session=0;session<e->session_count;session++)for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){
+        if(e->gdn_state[session][layer].conv_state)memset(fg_vk_tensor_map(e->gdn_state[session][layer].conv_state),0,(size_t)fg_vk_tensor_bytes(e->gdn_state[session][layer].conv_state));
+        if(e->gdn_state[session][layer].recurrent_state)memset(fg_vk_tensor_map(e->gdn_state[session][layer].recurrent_state),0,(size_t)fg_vk_tensor_bytes(e->gdn_state[session][layer].recurrent_state));
+    }
+    for(uint32_t session=0;session<e->session_count;session++)
+        if(e->ples_state[session])memset(fg_vk_tensor_map(e->ples_state[session]),0,(size_t)fg_vk_tensor_bytes(e->ples_state[session]));
+    e->active_session=0;
+    memset(&e->pending_write,0,sizeof(e->pending_write));
+    for(uint32_t slot=0;slot<FG_OWNER_SLOT_COUNT;slot++){memset(&e->decode_slots[slot].pending_write,0,sizeof(e->decode_slots[slot].pending_write));e->decode_slots[slot].active=false;e->prefill_slots[slot].active=false;}
+    for(uint32_t static_slot=0;static_slot<FG_VK_STATIC_SLOTS;static_slot++)
+        e->static_run_session_valid[static_slot]=false;
+    fg_status status=FG_OK;
+    for(uint32_t session=0;status==FG_OK&&session<e->session_count;session++)
+        if(e->qsa[session])status=fg_qsa_session_reset(e->qsa[session],err);
+    return status;
+}
+fg_status fg_owner_qsa_checkpoint(fg_owner_executor *executor,fg_error *err){if(!executor||!OWNER_QSA(executor)){fg_error_set(err,FG_ERR_ARGUMENT,"owner QSA checkpoint is unavailable");return FG_ERR_ARGUMENT;}return fg_qsa_session_checkpoint(OWNER_QSA(executor),err);}
 
 static fg_vk_tensor *weight(fg_owner_executor *executor,uint32_t layer,const char *suffix,fg_error *err){char name[FG_TENSOR_NAME_MAX];int length=snprintf(name,sizeof(name),"blk.%u.%s",layer,suffix);if(length<0||(uint32_t)length>=sizeof(name)){fg_error_set(err,FG_ERR_LIMIT,"owner tensor name overflow");return NULL;}fg_vk_tensor *tensor=fg_model_tensor(executor->model,name);if(!tensor)fg_error_set(err,FG_ERR_MISMATCH,"owner rank is missing %s",name);return tensor;}
 static fg_status dense_prefill(fg_owner_executor *executor,fg_vk_tensor *output,
@@ -644,7 +721,7 @@ static fg_status defer_gr_write(fg_owner_executor *executor,fg_owner_pending_wri
 static fg_status flush_gr_write(fg_owner_executor *executor,fg_owner_pending_write *pending,fg_error *err){if(!executor||!pending||!pending->active){fg_error_set(err,FG_ERR_MISMATCH,"deferred residual write is unavailable");return FG_ERR_MISMATCH;}fg_status status=FG_OK;if(!pending->skip){status=fg_vk_gr_write(fg_model_vk(executor->model),pending->output,pending->hyper,pending->block,pending->injection,FG_HIDDEN_SIZE,4u,1u,err);if(status==FG_OK)numerics_trace_tensor("DOUT_FLUSH",fg_model_rank(executor->model),pending->layer,pending->token,1u,pending->output,err);}if(status==FG_OK)memset(pending,0,sizeof(*pending));return status;}
 
 fg_status fg_owner_gdn_decode(fg_owner_executor *executor,uint32_t layer,const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err){
-    if(!executor||!hidden||!output||!owns_layer(executor,layer)||(layer&3u)==3u||!executor->gdn_state[layer].conv_state||!executor->gdn_state[layer].recurrent_state){fg_error_set(err,FG_ERR_MISMATCH,"GDN decode is not on an owned linear-attention layer");return FG_ERR_MISMATCH;}
+    if(!executor||!hidden||!output||!owns_layer(executor,layer)||(layer&3u)==3u||!OWNER_GDN(executor,layer)->conv_state||!OWNER_GDN(executor,layer)->recurrent_state){fg_error_set(err,FG_ERR_MISMATCH,"GDN decode is not on an owned linear-attention layer");return FG_ERR_MISMATCH;}
     fg_vk_tensor *qkv_weight=weight(executor,layer,"attn_qkv.weight",err),*z_weight=weight(executor,layer,"attn_gate.weight",err),*alpha_weight=weight(executor,layer,"ssm_alpha.weight",err),*beta_weight=weight(executor,layer,"ssm_beta.weight",err),*conv_weight=weight(executor,layer,"ssm_conv1d.weight",err),*a_decay=weight(executor,layer,"ssm_a",err),*dt_bias=weight(executor,layer,"ssm_dt.bias",err),*norm_weight=weight(executor,layer,"ssm_norm.weight",err),*out_weight=weight(executor,layer,"ssm_out.weight",err);if(!qkv_weight||!z_weight||!alpha_weight||!beta_weight||!conv_weight||!a_decay||!dt_bias||!norm_weight||!out_weight)return FG_ERR_MISMATCH;
     fg_vk_context *vk=fg_model_vk(executor->model);
     if(layer<=1u&&numerics_trace_enabled()){
@@ -671,8 +748,8 @@ fg_status fg_owner_gdn_decode(fg_owner_executor *executor,uint32_t layer,const f
     if(status==FG_OK)status=fg_vk_begin(vk,err);
     if(status==FG_OK)status=fg_vk_gdn_project_decode(vk,executor->gdn_qkv,executor->gdn_z,executor->gdn_alpha,executor->gdn_beta,qkv_weight,z_weight,alpha_weight,beta_weight,hidden,err);
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gdn_recurrent",err);
-    if(status==FG_OK)status=fg_vk_gdn_conv_decode(vk,executor->gdn_conv_output,executor->gdn_state[layer].conv_state,executor->gdn_qkv,conv_weight,10240u,err);
-    if(status==FG_OK)status=fg_vk_gdn_recurrent_algebraic(vk,executor->gdn_core,executor->gdn_state[layer].recurrent_state,executor->gdn_conv_output,executor->gdn_z,executor->gdn_alpha,executor->gdn_beta,a_decay,dt_bias,norm_weight,48u,16u,128u,1e-6f,err);
+    if(status==FG_OK)status=fg_vk_gdn_conv_decode(vk,executor->gdn_conv_output,OWNER_GDN(executor,layer)->conv_state,executor->gdn_qkv,conv_weight,10240u,err);
+    if(status==FG_OK)status=fg_vk_gdn_recurrent_algebraic(vk,executor->gdn_core,OWNER_GDN(executor,layer)->recurrent_state,executor->gdn_conv_output,executor->gdn_z,executor->gdn_alpha,executor->gdn_beta,a_decay,dt_bias,norm_weight,48u,16u,128u,1e-6f,err);
     status=finish_batch(vk,status,err);
     if(status==FG_OK&&layer==0u&&numerics_trace_enabled()){
         numerics_trace_values_local("GDN_QKV",fg_model_rank(executor->model),layer,
@@ -693,8 +770,8 @@ static fg_status owner_gdn_prefill(fg_owner_executor *executor,uint32_t layer,
                                    fg_error *err){
     if(!executor||!hidden||!output||!token_count||token_count>executor->max_tokens||
        !owns_layer(executor,layer)||(layer&3u)==3u||
-       !executor->gdn_state[layer].conv_state||
-       !executor->gdn_state[layer].recurrent_state){
+       !OWNER_GDN(executor,layer)->conv_state||
+       !OWNER_GDN(executor,layer)->recurrent_state){
         fg_error_set(err,FG_ERR_MISMATCH,
                      "GDN prefill is not on an owned linear-attention layer or exceeds the sealed microbatch");
         return FG_ERR_MISMATCH;
@@ -711,11 +788,11 @@ static fg_status owner_gdn_prefill(fg_owner_executor *executor,uint32_t layer,
     if(status==FG_OK)status=fg_vk_dense_f32(vk,executor->gdn_beta,beta_weight,hidden,2560u,48u,token_count,err);
     if(status==FG_OK&&profiling)
         status=fg_vk_profile_set_scope(vk,"gdn_prefill_convolution",err);
-    if(status==FG_OK)status=fg_vk_gdn_conv_prefill(vk,executor->gdn_conv_output,executor->gdn_state[layer].conv_state,executor->gdn_qkv,conv_weight,10240u,token_count,err);
+    if(status==FG_OK)status=fg_vk_gdn_conv_prefill(vk,executor->gdn_conv_output,OWNER_GDN(executor,layer)->conv_state,executor->gdn_qkv,conv_weight,10240u,token_count,err);
     if(status==FG_OK&&profiling)
         status=fg_vk_profile_set_scope(vk,"gdn_recurrent_prefill",err);
     if(status==FG_OK)status=fg_vk_gdn_recurrent_prefill_chunked(vk,executor->gdn_core,
-            executor->gdn_state[layer].recurrent_state,
+            OWNER_GDN(executor,layer)->recurrent_state,
             executor->gdn_conv_output,executor->gdn_z,executor->gdn_alpha,
             executor->gdn_beta,a_decay,dt_bias,norm_weight,
             token_count,1e-6f,err);
@@ -736,32 +813,83 @@ fg_status fg_owner_gdn_prefill(fg_owner_executor *executor,uint32_t layer,
 /* PLE residuals remain live through GR read and attention. Keep them in the
  * protected ping-pong storage, outside the aliased attention scratch arena. */
 static fg_status ple_decode_into(fg_owner_executor *e,const fg_vk_tensor *hyper,const fg_vk_tensor *embedding,fg_vk_tensor *ping_a,fg_vk_tensor *ping_b,fg_vk_tensor **output,fg_error *err){
-    if(!e||!hyper||!embedding||!ping_a||!ping_b||!output||!owns_layer(e,1u)||!e->ple_state){fg_error_set(err,FG_ERR_MISMATCH,"PLE decode is not on the layer-1 owner");return FG_ERR_MISMATCH;}fg_vk_tensor *key_weight=weight(e,1u,"ple_key.weight",err),*value_weight=weight(e,1u,"ple_value.weight",err),*key_norm=weight(e,1u,"ple_norm_key.weight",err),*query_norm=weight(e,1u,"ple_norm_query.weight",err),*conv_norm=weight(e,1u,"ple_norm_conv.weight",err),*conv_weight=weight(e,1u,"ple_conv1d.weight",err);if(!key_weight||!value_weight||!key_norm||!query_norm||!conv_norm||!conv_weight)return FG_ERR_MISMATCH;fg_vk_context *vk=fg_model_vk(e->model);fg_vk_tensor *destination=hyper!=ping_a?ping_a:ping_b;fg_status status=fg_vk_begin(vk,err);if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->ple_key,key_weight,embedding,2560u,10240u,1u,1.0f,err);if(status==FG_OK)fg_vk_next_dispatch_independent(vk);if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->ple_value,value_weight,embedding,2560u,2560u,1u,1.0f,err);if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->ple_key_norm,e->ple_key,key_norm,2560u,4u,1u,1e-6f,err);if(status==FG_OK)fg_vk_next_dispatch_independent(vk);if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->ple_query_norm,hyper,query_norm,2560u,4u,1u,1e-6f,err);if(status==FG_OK)status=fg_vk_ple_gate(vk,e->ple_gated,e->ple_key_norm,e->ple_query_norm,e->ple_value,err);if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->ple_gated_norm,e->ple_gated,conv_norm,2560u,4u,1u,1e-6f,err);if(status==FG_OK)status=fg_vk_ple_conv_decode_add(vk,destination,e->ple_state,e->ple_gated,e->ple_gated_norm,conv_weight,hyper,err);status=finish_batch(vk,status,err);if(status==FG_OK)*output=destination;return status;
+    if(!e||!hyper||!embedding||!ping_a||!ping_b||!output||!owns_layer(e,1u)||!OWNER_PLE(e)){fg_error_set(err,FG_ERR_MISMATCH,"PLE decode is not on the layer-1 owner");return FG_ERR_MISMATCH;}fg_vk_tensor *key_weight=weight(e,1u,"ple_key.weight",err),*value_weight=weight(e,1u,"ple_value.weight",err),*key_norm=weight(e,1u,"ple_norm_key.weight",err),*query_norm=weight(e,1u,"ple_norm_query.weight",err),*conv_norm=weight(e,1u,"ple_norm_conv.weight",err),*conv_weight=weight(e,1u,"ple_conv1d.weight",err);if(!key_weight||!value_weight||!key_norm||!query_norm||!conv_norm||!conv_weight)return FG_ERR_MISMATCH;fg_vk_context *vk=fg_model_vk(e->model);fg_vk_tensor *destination=hyper!=ping_a?ping_a:ping_b;fg_status status=fg_vk_begin(vk,err);if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->ple_key,key_weight,embedding,2560u,10240u,1u,1.0f,err);if(status==FG_OK)fg_vk_next_dispatch_independent(vk);if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->ple_value,value_weight,embedding,2560u,2560u,1u,1.0f,err);if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->ple_key_norm,e->ple_key,key_norm,2560u,4u,1u,1e-6f,err);if(status==FG_OK)fg_vk_next_dispatch_independent(vk);if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->ple_query_norm,hyper,query_norm,2560u,4u,1u,1e-6f,err);if(status==FG_OK)status=fg_vk_ple_gate(vk,e->ple_gated,e->ple_key_norm,e->ple_query_norm,e->ple_value,err);if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->ple_gated_norm,e->ple_gated,conv_norm,2560u,4u,1u,1e-6f,err);if(status==FG_OK)status=fg_vk_ple_conv_decode_add(vk,destination,OWNER_PLE(e),e->ple_gated,e->ple_gated_norm,conv_weight,hyper,err);status=finish_batch(vk,status,err);if(status==FG_OK)*output=destination;return status;
 }
 fg_status fg_owner_ple_decode(fg_owner_executor *e,const fg_vk_tensor *hyper,const fg_vk_tensor *embedding,fg_vk_tensor **output,fg_error *err){return ple_decode_into(e,hyper,embedding,e?e->hyper_output:NULL,e?e->hyper_output_b:NULL,output,err);}
 
 static fg_status ple_prefill_into(fg_owner_executor *e,const fg_vk_tensor *hyper,const fg_vk_tensor *embedding,fg_vk_tensor *ping_a,fg_vk_tensor *ping_b,uint32_t token_count,fg_vk_tensor **output,fg_error *err){
-    if(!e||!hyper||!embedding||!ping_a||!ping_b||!output||!token_count||token_count>e->max_tokens||!owns_layer(e,1u)||!e->ple_state){fg_error_set(err,FG_ERR_MISMATCH,"PLE prefill is not on the layer-1 owner or exceeds the sealed microbatch");return FG_ERR_MISMATCH;}fg_vk_tensor *key_weight=weight(e,1u,"ple_key.weight",err),*value_weight=weight(e,1u,"ple_value.weight",err),*key_norm=weight(e,1u,"ple_norm_key.weight",err),*query_norm=weight(e,1u,"ple_norm_query.weight",err),*conv_norm=weight(e,1u,"ple_norm_conv.weight",err),*conv_weight=weight(e,1u,"ple_conv1d.weight",err);if(!key_weight||!value_weight||!key_norm||!query_norm||!conv_norm||!conv_weight)return FG_ERR_MISMATCH;fg_vk_context *vk=fg_model_vk(e->model);fg_vk_tensor *destination=hyper!=ping_a?ping_a:ping_b;fg_status status=fg_vk_begin(vk,err);if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->ple_key,key_weight,embedding,2560u,10240u,token_count,1.0f,err);if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->ple_value,value_weight,embedding,2560u,2560u,token_count,1.0f,err);if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->ple_key_norm,e->ple_key,key_norm,2560u,4u,token_count,1e-6f,err);if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->ple_query_norm,hyper,query_norm,2560u,4u,token_count,1e-6f,err);if(status==FG_OK)status=fg_vk_ple_gate_prefill(vk,e->ple_gated,e->ple_key_norm,e->ple_query_norm,e->ple_value,token_count,err);if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->ple_gated_norm,e->ple_gated,conv_norm,2560u,4u,token_count,1e-6f,err);if(status==FG_OK)status=fg_vk_ple_conv_prefill(vk,e->ple_output,e->ple_state,e->ple_gated,e->ple_gated_norm,conv_weight,token_count,err);if(status==FG_OK)status=fg_vk_add_f32(vk,destination,hyper,e->ple_output,token_count*10240u,err);status=finish_batch(vk,status,err);if(status==FG_OK)*output=destination;return status;
+    if(!e||!hyper||!embedding||!ping_a||!ping_b||!output||!token_count||token_count>e->max_tokens||!owns_layer(e,1u)||!OWNER_PLE(e)){fg_error_set(err,FG_ERR_MISMATCH,"PLE prefill is not on the layer-1 owner or exceeds the sealed microbatch");return FG_ERR_MISMATCH;}fg_vk_tensor *key_weight=weight(e,1u,"ple_key.weight",err),*value_weight=weight(e,1u,"ple_value.weight",err),*key_norm=weight(e,1u,"ple_norm_key.weight",err),*query_norm=weight(e,1u,"ple_norm_query.weight",err),*conv_norm=weight(e,1u,"ple_norm_conv.weight",err),*conv_weight=weight(e,1u,"ple_conv1d.weight",err);if(!key_weight||!value_weight||!key_norm||!query_norm||!conv_norm||!conv_weight)return FG_ERR_MISMATCH;fg_vk_context *vk=fg_model_vk(e->model);fg_vk_tensor *destination=hyper!=ping_a?ping_a:ping_b;fg_status status=fg_vk_begin(vk,err);if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->ple_key,key_weight,embedding,2560u,10240u,token_count,1.0f,err);if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->ple_value,value_weight,embedding,2560u,2560u,token_count,1.0f,err);if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->ple_key_norm,e->ple_key,key_norm,2560u,4u,token_count,1e-6f,err);if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->ple_query_norm,hyper,query_norm,2560u,4u,token_count,1e-6f,err);if(status==FG_OK)status=fg_vk_ple_gate_prefill(vk,e->ple_gated,e->ple_key_norm,e->ple_query_norm,e->ple_value,token_count,err);if(status==FG_OK)status=fg_vk_group_rms_norm(vk,e->ple_gated_norm,e->ple_gated,conv_norm,2560u,4u,token_count,1e-6f,err);if(status==FG_OK)status=fg_vk_ple_conv_prefill(vk,e->ple_output,OWNER_PLE(e),e->ple_gated,e->ple_gated_norm,conv_weight,token_count,err);if(status==FG_OK)status=fg_vk_add_f32(vk,destination,hyper,e->ple_output,token_count*10240u,err);status=finish_batch(vk,status,err);if(status==FG_OK)*output=destination;return status;
 }
 fg_status fg_owner_ple_prefill(fg_owner_executor *e,const fg_vk_tensor *hyper,const fg_vk_tensor *embedding,uint32_t token_count,fg_vk_tensor **output,fg_error *err){return ple_prefill_into(e,hyper,embedding,e?e->hyper_output:NULL,e?e->hyper_output_b:NULL,token_count,output,err);}
 
+static fg_status owner_qsa_open_check(fg_owner_executor *executor,uint32_t session,
+                                      const char *state_path,fg_error *err){
+    if(!executor||!state_path){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner QSA open arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    if(!session_allocated(executor,session)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"owner QSA session %u is not allocated",session);
+        return FG_ERR_ARGUMENT;
+    }
+    if(executor->qsa[session]){
+        fg_error_set(err,FG_ERR_MISMATCH,"owner QSA session is already open");
+        return FG_ERR_MISMATCH;
+    }
+    return FG_OK;
+}
+static fg_status qsa_open_plain_slot(fg_owner_executor *executor,uint32_t session,
+                                     const char *state_path,bool create,fg_error *err){
+    fg_status status=owner_qsa_open_check(executor,session,state_path,err);
+    if(status!=FG_OK)return status;
+    return fg_qsa_session_open(&executor->qsa[session],executor->model,state_path,create,err);
+}
+static fg_status qsa_open_state_slot_impl(fg_owner_executor *executor,uint32_t session,
+    const char *state_path,uint32_t logical_context,uint32_t hot_tokens,uint32_t cache_pages,
+    uint32_t batch_size,bool mirror,bool owned_only,fg_qsa_page_fetch_fn fetch_pages,
+    void *fetch_opaque,fg_error *err){
+    fg_status status=owner_qsa_open_check(executor,session,state_path,err);
+    if(status!=FG_OK)return status;
+    if(!mirror)
+        return fg_qsa_session_open_state(&executor->qsa[session],executor->model,state_path,
+                                         logical_context,hot_tokens,cache_pages,batch_size,err);
+    if(executor->session_count>1u&&session!=0u){
+        /* Session 1 gets its own attention scratch region view over the shared
+         * arena: sessions execute sequentially, so aliasing session 0's scratch
+         * is safe, but the open call builds its own views and must not disturb
+         * the live session. */
+        return fg_qsa_session_open_state_mirror_with_scratch(
+            &executor->qsa[session],executor->model,state_path,logical_context,hot_tokens,
+            cache_pages,batch_size,executor->attention_family_scratch,owned_only,
+            fetch_pages,fetch_opaque,err);
+    }
+    return fg_qsa_session_open_state_mirror_with_scratch(
+        &executor->qsa[session],executor->model,state_path,logical_context,hot_tokens,
+        cache_pages,batch_size,executor->attention_family_scratch,owned_only,
+        fetch_pages,fetch_opaque,err);
+}
 fg_status fg_owner_qsa_open(fg_owner_executor *executor,const char *state_path,bool create,fg_error *err){
-    if(!executor||!state_path){fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner QSA open arguments");return FG_ERR_ARGUMENT;}
-    if(executor->qsa){fg_error_set(err,FG_ERR_MISMATCH,"owner QSA session is already open");return FG_ERR_MISMATCH;}
-    return fg_qsa_session_open(&executor->qsa,executor->model,state_path,create,err);
+    return qsa_open_plain_slot(executor,0u,state_path,create,err);
 }
 fg_status fg_owner_qsa_open_decode(fg_owner_executor *executor,const char *state_path,uint32_t resident_tokens,uint32_t batch_size,fg_error *err){
-    if(!executor||!state_path){fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner QSA decode open arguments");return FG_ERR_ARGUMENT;}
-    if(executor->qsa){fg_error_set(err,FG_ERR_MISMATCH,"owner QSA session is already open");return FG_ERR_MISMATCH;}
-    return fg_qsa_session_open_decode(&executor->qsa,executor->model,state_path,resident_tokens,batch_size,err);
+    if(!state_path){fg_error_set(err,FG_ERR_ARGUMENT,"decode QSA state path is null");return FG_ERR_ARGUMENT;}
+    fg_status status=owner_qsa_open_check(executor,0u,state_path,err);
+    if(status!=FG_OK)return status;
+    return fg_qsa_session_open_decode(&executor->qsa[0u],executor->model,state_path,
+                                      resident_tokens,batch_size,err);
 }
 fg_status fg_owner_qsa_open_state(fg_owner_executor *executor,const char *state_path,
                                   uint32_t logical_context,uint32_t hot_tokens,
                                   uint32_t cache_pages,uint32_t batch_size,fg_error *err){
-    if(!executor||!state_path){fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner QSA state open arguments");return FG_ERR_ARGUMENT;}
-    if(executor->qsa){fg_error_set(err,FG_ERR_MISMATCH,"owner QSA session is already open");return FG_ERR_MISMATCH;}
-    return fg_qsa_session_open_state(&executor->qsa,executor->model,state_path,
-                                     logical_context,hot_tokens,cache_pages,batch_size,err);
+    return fg_owner_qsa_open_state_slot(executor,0u,state_path,logical_context,hot_tokens,
+                                        cache_pages,batch_size,err);
+}
+fg_status fg_owner_qsa_open_state_slot(fg_owner_executor *executor,uint32_t session,
+                                       const char *state_path,uint32_t logical_context,
+                                       uint32_t hot_tokens,uint32_t cache_pages,
+                                       uint32_t batch_size,fg_error *err){
+    return qsa_open_state_slot_impl(executor,session,state_path,logical_context,hot_tokens,
+                                    cache_pages,batch_size,false,false,NULL,NULL,err);
 }
 fg_status fg_owner_qsa_open_state_mirror(fg_owner_executor *executor,const char *state_path,
                                          uint32_t logical_context,uint32_t hot_tokens,
@@ -769,42 +897,181 @@ fg_status fg_owner_qsa_open_state_mirror(fg_owner_executor *executor,const char 
                                          bool owned_only,
                                          fg_qsa_page_fetch_fn fetch_pages,void *fetch_opaque,
                                          fg_error *err){
-    if(!executor||!state_path){fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner QSA state mirror open");return FG_ERR_ARGUMENT;}
-    if(executor->qsa){fg_error_set(err,FG_ERR_MISMATCH,"owner QSA session is already open");return FG_ERR_MISMATCH;}
-    return fg_qsa_session_open_state_mirror_with_scratch(
-        &executor->qsa,executor->model,state_path,logical_context,hot_tokens,cache_pages,
-        batch_size,executor->attention_family_scratch,owned_only,fetch_pages,fetch_opaque,err);
+    return fg_owner_qsa_open_state_mirror_slot(executor,0u,state_path,logical_context,
+                                               hot_tokens,cache_pages,batch_size,owned_only,
+                                               fetch_pages,fetch_opaque,err);
 }
-bool fg_owner_qsa_ready(const fg_owner_executor *executor){return executor&&executor->qsa;}
+fg_status fg_owner_qsa_open_state_mirror_slot(fg_owner_executor *executor,uint32_t session,
+                                              const char *state_path,uint32_t logical_context,
+                                              uint32_t hot_tokens,uint32_t cache_pages,
+                                              uint32_t batch_size,bool owned_only,
+                                              fg_qsa_page_fetch_fn fetch_pages,
+                                              void *fetch_opaque,fg_error *err){
+    return qsa_open_state_slot_impl(executor,session,state_path,logical_context,hot_tokens,
+                                    cache_pages,batch_size,true,owned_only,fetch_pages,
+                                    fetch_opaque,err);
+}
+bool fg_owner_qsa_ready(const fg_owner_executor *executor){
+    return executor&&executor->qsa[0u];
+}
+bool fg_owner_qsa_ready_slot(const fg_owner_executor *executor,uint32_t session){
+    return executor&&session_allocated(executor,session)&&executor->qsa[session];
+}
 fg_status fg_owner_qsa_open_mirror(fg_owner_executor *executor,uint32_t logical_context,
                                    uint32_t hot_tokens,uint32_t cache_pages,uint32_t batch_size,
                                    fg_qsa_page_fetch_fn fetch_pages,void *fetch_opaque,
                                    fg_error *err){
+    return fg_owner_qsa_open_mirror_slot(executor,0u,logical_context,hot_tokens,cache_pages,
+                                         batch_size,fetch_pages,fetch_opaque,err);
+}
+fg_status fg_owner_qsa_open_mirror_slot(fg_owner_executor *executor,uint32_t session,
+                                        uint32_t logical_context,uint32_t hot_tokens,
+                                        uint32_t cache_pages,uint32_t batch_size,
+                                        fg_qsa_page_fetch_fn fetch_pages,void *fetch_opaque,
+                                        fg_error *err){
     if(!executor){fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner QSA mirror open");return FG_ERR_ARGUMENT;}
-    if(executor->qsa){fg_error_set(err,FG_ERR_MISMATCH,"owner QSA session is already open");return FG_ERR_MISMATCH;}
+    if(!session_allocated(executor,session)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"owner QSA session %u is not allocated",session);
+        return FG_ERR_ARGUMENT;
+    }
+    if(executor->qsa[session]){fg_error_set(err,FG_ERR_MISMATCH,"owner QSA session is already open");return FG_ERR_MISMATCH;}
     return fg_qsa_session_open_mirror_with_scratch(
-        &executor->qsa,executor->model,logical_context,hot_tokens,cache_pages,batch_size,
+        &executor->qsa[session],executor->model,logical_context,hot_tokens,cache_pages,batch_size,
         executor->attention_family_scratch,fetch_pages,fetch_opaque,err);
 }
-void fg_owner_qsa_set_tokens(fg_owner_executor *executor,uint32_t tokens){if(executor&&executor->qsa)fg_qsa_session_set_tokens(executor->qsa,tokens);}
+void fg_owner_qsa_set_tokens(fg_owner_executor *executor,uint32_t tokens){if(executor&&OWNER_QSA(executor))fg_qsa_session_set_tokens(OWNER_QSA(executor),tokens);}
+fg_status fg_owner_qsa_frontier(const fg_owner_executor *executor,uint32_t session,
+                                uint32_t tokens[FG_LAYER_COUNT]){
+    if(!executor||!tokens||!session_allocated(executor,session))return FG_ERR_UNAVAILABLE;
+    fg_qsa_session *qsa=executor->qsa[session];
+    if(!qsa){memset(tokens,0,FG_LAYER_COUNT*sizeof(*tokens));return FG_OK;}
+    for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++)
+        tokens[layer]=fg_qsa_session_tokens(qsa,layer);
+    return FG_OK;
+}
+fg_status fg_owner_qsa_rollback(fg_owner_executor *executor,uint32_t session,
+                                const uint32_t tokens[FG_LAYER_COUNT],fg_error *err){
+    if(!executor||!tokens||!session_allocated(executor,session)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner QSA rollback");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_qsa_session *qsa=executor->qsa[session];
+    if(!qsa)return FG_OK;
+    for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++)
+        fg_qsa_session_set_layer_tokens(qsa,layer,tokens[layer]);
+    return FG_OK;
+}
+void fg_owner_session_snapshot_release(fg_owner_session_checkpoint *snapshot){
+    if(!snapshot)return;
+    for(uint32_t i=0;i<snapshot->gdn_count;i++){
+        free(snapshot->gdn[i].data);
+        snapshot->gdn[i].data=NULL;
+    }
+    free(snapshot->ple_data);
+    snapshot->ple_data=NULL;
+    snapshot->ple_values=0u;
+    snapshot->gdn_count=0u;
+    snapshot->qsa_valid=false;
+    snapshot->valid=false;
+}
+fg_status fg_owner_session_snapshot(fg_owner_executor *executor,uint32_t session,
+                                    fg_owner_session_checkpoint *snapshot,fg_error *err){
+    if(!executor||!snapshot||!session_allocated(executor,session)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner session snapshot");
+        return FG_ERR_ARGUMENT;
+    }
+    memset(snapshot,0,sizeof(*snapshot));
+    snapshot->session=session;
+    for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){
+        fg_vk_tensor *tensors[2u]={executor->gdn_state[session][layer].conv_state,
+                                   executor->gdn_state[session][layer].recurrent_state};
+        for(uint32_t which=0u;which<2u;which++){
+            fg_vk_tensor *tensor=tensors[which];
+            if(!tensor)continue;
+            if(snapshot->gdn_count>=FG_LAYER_COUNT*2u){
+                fg_owner_session_snapshot_release(snapshot);
+                fg_error_set(err,FG_ERR_LIMIT,"owner session snapshot overflow");
+                return FG_ERR_LIMIT;
+            }
+            uint64_t values=fg_vk_tensor_bytes(tensor)/4u;
+            float *data=malloc((size_t)(values*4u));
+            if(!data){
+                fg_owner_session_snapshot_release(snapshot);
+                fg_error_set(err,FG_ERR_OOM,"allocate owner session snapshot");
+                return FG_ERR_OOM;
+            }
+            fg_status status=fg_vk_tensor_read(tensor,0,data,values*4u,err);
+            if(status!=FG_OK){
+                free(data);
+                fg_owner_session_snapshot_release(snapshot);
+                return status;
+            }
+            snapshot->gdn[snapshot->gdn_count].tensor=tensor;
+            snapshot->gdn[snapshot->gdn_count].data=data;
+            snapshot->gdn[snapshot->gdn_count].values=values;
+            snapshot->gdn_count++;
+        }
+    }
+    fg_vk_tensor *ple=executor->ples_state[session];
+    if(ple){
+        uint64_t values=fg_vk_tensor_bytes(ple)/4u;
+        snapshot->ple_data=malloc((size_t)(values*4u));
+        if(!snapshot->ple_data){
+            fg_owner_session_snapshot_release(snapshot);
+            fg_error_set(err,FG_ERR_OOM,"allocate owner PLE session snapshot");
+            return FG_ERR_OOM;
+        }
+        snapshot->ple=ple;
+        snapshot->ple_values=values;
+        fg_status status=fg_vk_tensor_read(ple,0,snapshot->ple_data,values*4u,err);
+        if(status!=FG_OK){
+            fg_owner_session_snapshot_release(snapshot);
+            return status;
+        }
+    }
+    snapshot->qsa_valid=fg_owner_qsa_frontier(executor,session,snapshot->qsa_tokens)==FG_OK;
+    snapshot->valid=true;
+    return FG_OK;
+}
+fg_status fg_owner_session_rollback(fg_owner_executor *executor,
+                                    const fg_owner_session_checkpoint *snapshot,fg_error *err){
+    if(!executor||!snapshot||!snapshot->valid||
+       !session_allocated(executor,snapshot->session)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner session rollback");
+        return FG_ERR_ARGUMENT;
+    }
+    for(uint32_t i=0;i<snapshot->gdn_count;i++){
+        fg_status status=fg_vk_tensor_write(snapshot->gdn[i].tensor,0,
+            snapshot->gdn[i].data,snapshot->gdn[i].values*4u,err);
+        if(status!=FG_OK)return status;
+    }
+    if(snapshot->ple_data){
+        fg_status status=fg_vk_tensor_write(snapshot->ple,0,snapshot->ple_data,
+                                            snapshot->ple_values*4u,err);
+        if(status!=FG_OK)return status;
+    }
+    if(snapshot->qsa_valid)
+        return fg_owner_qsa_rollback(executor,snapshot->session,snapshot->qsa_tokens,err);
+    return FG_OK;
+}
 fg_expert_result *fg_owner_decode_results(fg_owner_executor *executor){
     return executor?executor->decode_results:NULL;
 }
 fg_vk_tensor *fg_owner_gdn_state_tensor(fg_owner_executor *executor,uint32_t layer,
                                         uint32_t slot){
     if(!executor||layer>=FG_LAYER_COUNT||slot>1u)return NULL;
-    return slot==0u?executor->gdn_state[layer].conv_state:
-                    executor->gdn_state[layer].recurrent_state;
+    return slot==0u?OWNER_GDN(executor,layer)->conv_state:
+                    OWNER_GDN(executor,layer)->recurrent_state;
 }
 fg_vk_tensor *fg_owner_ple_state_tensor(fg_owner_executor *executor){
-    return executor?executor->ple_state:NULL;
+    return executor?OWNER_PLE(executor):NULL;
 }
 uint32_t fg_owner_gdn_layers(const fg_owner_executor *executor,uint8_t *layers,
                              uint32_t capacity,fg_error *err){
     if(!executor||!layers){fg_error_set(err,FG_ERR_ARGUMENT,"invalid GDN layer query");return 0u;}
     uint32_t count=0;
     for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){
-        if((layer&3u)==3u||!executor->gdn_state[layer].conv_state)continue;
+        if((layer&3u)==3u||!executor->gdn_state[0u][layer].conv_state)continue;
         if(count>=capacity){
             fg_error_set(err,FG_ERR_LIMIT,"GDN layer list exceeds capacity");
             return 0u;
@@ -815,54 +1082,60 @@ uint32_t fg_owner_gdn_layers(const fg_owner_executor *executor,uint8_t *layers,
 }
 
 fg_status fg_owner_qsa_decode(fg_owner_executor *executor,uint32_t layer,uint32_t token,const uint32_t position[3],const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err){
-    if(!executor||!executor->qsa||!owns_layer(executor,layer)||(layer&3u)!=3u){fg_error_set(err,FG_ERR_MISMATCH,"QSA decode is not on an initialized QSA layer owner");return FG_ERR_MISMATCH;}
-    return fg_qsa_session_decode(executor->qsa,layer,token,position,hidden,output,err);
+    fg_qsa_session *qsa=executor?OWNER_QSA(executor):NULL;
+    if(!executor||!qsa||!owns_layer(executor,layer)||(layer&3u)!=3u){fg_error_set(err,FG_ERR_MISMATCH,"QSA decode is not on an initialized QSA layer owner");return FG_ERR_MISMATCH;}
+    return fg_qsa_session_decode(qsa,layer,token,position,hidden,output,err);
 }
 
 fg_status fg_owner_qsa_prefill(fg_owner_executor *executor,uint32_t layer,uint32_t first_token,const uint32_t *positions,uint32_t token_count,const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err){
-    if(!executor||!executor->qsa||!owns_layer(executor,layer)||(layer&3u)!=3u||!token_count||token_count>executor->max_tokens){fg_error_set(err,FG_ERR_MISMATCH,"QSA prefill is not on an initialized QSA layer owner or exceeds the sealed microbatch");return FG_ERR_MISMATCH;}
-    return fg_qsa_session_prefill(executor->qsa,layer,first_token,positions,token_count,hidden,output,err);
+    fg_qsa_session *qsa=executor?OWNER_QSA(executor):NULL;
+    if(!executor||!qsa||!owns_layer(executor,layer)||(layer&3u)!=3u||!token_count||token_count>executor->max_tokens){fg_error_set(err,FG_ERR_MISMATCH,"QSA prefill is not on an initialized QSA layer owner or exceeds the sealed microbatch");return FG_ERR_MISMATCH;}
+    return fg_qsa_session_prefill(qsa,layer,first_token,positions,token_count,hidden,output,err);
 }
 fg_status fg_owner_qsa_page_records(const fg_owner_executor *executor,uint32_t layer,
                                     uint32_t block,const uint8_t **records,fg_error *err){
-    if(!executor||!executor->qsa){
+    fg_qsa_session *qsa=executor?OWNER_QSA(executor):NULL;
+    if(!executor||!qsa){
         fg_error_set(err,FG_ERR_ARGUMENT,"owner QSA page lookup is unavailable");
         return FG_ERR_ARGUMENT;
     }
-    return fg_qsa_session_page_records(executor->qsa,layer,block,records,err);
+    return fg_qsa_session_page_records(qsa,layer,block,records,err);
 }
 fg_status fg_owner_qsa_warm_pages(fg_owner_executor *executor,uint32_t layer,
                                   const uint32_t *blocks,const uint8_t *records,
                                   uint32_t page_count,fg_error *err){
-    if(!executor||!executor->qsa){
+    fg_qsa_session *qsa=executor?OWNER_QSA(executor):NULL;
+    if(!executor||!qsa){
         fg_error_set(err,FG_ERR_ARGUMENT,"owner QSA mirror warm is unavailable");
         return FG_ERR_ARGUMENT;
     }
-    return fg_qsa_session_warm_pages(executor->qsa,layer,blocks,records,page_count,err);
+    return fg_qsa_session_warm_pages(qsa,layer,blocks,records,page_count,err);
 }
 bool fg_owner_qsa_page_cached(fg_owner_executor *executor,uint32_t layer,uint32_t block){
-    if(!executor||!executor->qsa)return false;
-    return fg_qsa_session_page_cached(executor->qsa,layer,block);
+    fg_qsa_session *qsa=executor?OWNER_QSA(executor):NULL;
+    if(!qsa)return false;
+    return fg_qsa_session_page_cached(qsa,layer,block);
 }
 void fg_owner_qsa_page_published(fg_owner_executor *executor,uint32_t layer,uint32_t block){
-    if(executor)fg_qsa_session_page_published(executor->qsa,layer,block);
+    if(executor&&OWNER_QSA(executor))fg_qsa_session_page_published(OWNER_QSA(executor),layer,block);
 }
 fg_status fg_owner_qsa_state_records(fg_owner_executor *executor,uint32_t layer,
                                      uint32_t block,uint8_t *records,fg_error *err){
-    if(!executor||!executor->qsa){
+    fg_qsa_session *qsa=executor?OWNER_QSA(executor):NULL;
+    if(!executor||!qsa){
         fg_error_set(err,FG_ERR_UNAVAILABLE,"owner QSA state records are unavailable");
         return FG_ERR_UNAVAILABLE;
     }
-    return fg_qsa_session_state_records(executor->qsa,layer,block,records,err);
+    return fg_qsa_session_state_records(qsa,layer,block,records,err);
 }
 fg_status fg_owner_qsa_state_records_batch(fg_owner_executor *executor,uint32_t layer,
     const uint32_t *blocks,uint32_t page_count,uint8_t *records,fg_error *err){
-    if(!executor||!executor->qsa){
+    fg_qsa_session *qsa=executor?OWNER_QSA(executor):NULL;
+    if(!executor||!qsa){
         fg_error_set(err,FG_ERR_UNAVAILABLE,"owner QSA state records are unavailable");
         return FG_ERR_UNAVAILABLE;
     }
-    return fg_qsa_session_state_records_batch(executor->qsa,layer,blocks,page_count,
-                                              records,err);
+    return fg_qsa_session_state_records_batch(qsa,layer,blocks,page_count,records,err);
 }
 
 static float tensor_l2(const fg_vk_tensor *t,uint32_t n){const float *p=fg_vk_tensor_map((fg_vk_tensor *)t);if(!p)return -1.0f;double s=0.0;for(uint32_t i=0;i<n;i++)s+=(double)p[i]*p[i];return (float)sqrt(s/n);}
@@ -912,7 +1185,7 @@ fg_status fg_owner_decode_layer(fg_owner_executor *e,uint32_t layer,uint32_t tok
     /* expert dispatch + reduce + final gr_write (unchanged) */
     memset(e->decode_results,0,sizeof(e->decode_results));uint32_t result_count=0;if(status==FG_OK)status=dispatch(dispatch_context,layer,token,expert_ids,gates,activation,e->decode_results,&result_count,err);double t_exp=ts_ms();if(status==FG_OK)status=fg_owner_moe_reduce(e,layer,token,expert_ids,gates,e->decode_results,result_count,&block,err);double t_red=ts_ms();if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_ffn_write",err);if(status==FG_OK)status=fg_owner_gr_write(e,residual,block,injection,output,err);double t_end=ts_ms();
     float attn_block_l2=diag&&status==FG_OK?tensor_l2(block,FG_HIDDEN_SIZE):0.0f;
-    if(diag&&status==FG_OK){fprintf(stderr,"layer[%u] t=%u in=%.4f attn_blk=%.4f attn=%.4f moe=%.4f out=%.4f exp=%u,%u,%u",layer,token,tensor_l2(layer_input,FG_HYPER_WIDTH),attn_block_l2,tensor_l2(after_attention,FG_HYPER_WIDTH),tensor_l2(block,FG_HIDDEN_SIZE),tensor_l2(*output,FG_HYPER_WIDTH),expert_ids[0],expert_ids[1],expert_ids[2]);if(layer==0u&&(layer&3u)!=3u)fprintf(stderr," gdn_state=%.6f",tensor_l2(e->gdn_state[layer].recurrent_state,48u*128u*128u));fprintf(stderr,"\n");}
+    if(diag&&status==FG_OK){fprintf(stderr,"layer[%u] t=%u in=%.4f attn_blk=%.4f attn=%.4f moe=%.4f out=%.4f exp=%u,%u,%u",layer,token,tensor_l2(layer_input,FG_HYPER_WIDTH),attn_block_l2,tensor_l2(after_attention,FG_HYPER_WIDTH),tensor_l2(block,FG_HIDDEN_SIZE),tensor_l2(*output,FG_HYPER_WIDTH),expert_ids[0],expert_ids[1],expert_ids[2]);if(layer==0u&&(layer&3u)!=3u)fprintf(stderr," gdn_state=%.6f",tensor_l2(OWNER_GDN(e,layer)->recurrent_state,48u*128u*128u));fprintf(stderr,"\n");}
     if(token>=26u&&token<32u){fprintf(stderr,"TIMING layer[%u] t=%u total=%.1f ple=%.1f gr_read=%.1f attn=%.1f gr_write=%.1f gr_read2=%.1f router=%.1f moe_prep=%.1f expert=%.1f moe_red=%.1f gr_write2=%.1f\n",layer,token,t_end-t0,t_ple-t0,t_gr1-t_ple,t_attn-t_gr1,t_grw1-t_attn,t_gr2-t_grw1,t_router-t_gr2,t_mprep-t_router,t_exp-t_mprep,t_red-t_exp,t_end-t_red);}
     return status;
 }
@@ -1139,8 +1412,8 @@ static void gdn_state_trace(fg_owner_executor *e,uint32_t layer,uint32_t token,
     const char *phase,const fg_vk_tensor *input){
     if(!numerics_trace_enabled())return;
     if(!e||layer>=FG_LAYER_COUNT||(layer&3u)==3u)return;
-    const fg_vk_tensor *conv=e->gdn_state[layer].conv_state;
-    const fg_vk_tensor *recur=e->gdn_state[layer].recurrent_state;
+    const fg_vk_tensor *conv=OWNER_GDN(e,layer)->conv_state;
+    const fg_vk_tensor *recur=OWNER_GDN(e,layer)->recurrent_state;
     if(!conv||!recur)return;
     const float *c=fg_vk_tensor_map((fg_vk_tensor *)conv);
     const float *r=fg_vk_tensor_map((fg_vk_tensor *)recur);
@@ -1299,7 +1572,12 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
     fg_vk_context *vk=fg_model_vk(e->model);
     fg_vk_tensor *current=(fg_vk_tensor *)hyper_input;
     fg_status status=FG_OK;
-    bool static_allowed=chained_static_allowed(vk);
+    /* Static replay records slot-0 transients and advances slot-0 state; a
+     * recorded run replayed against another session's state is silent
+     * corruption.  Session 0 keeps the validated replay; other sessions run
+     * dynamically and any recorded run bound to a different session fails
+     * closed instead of replaying. */
+    bool static_allowed=chained_static_allowed(vk)&&e->active_session==0u;
     uint32_t layer=first_layer;
     while(status==FG_OK&&layer<=last_layer){
         if((layer&3u)==3u){
@@ -1319,6 +1597,14 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
            (token%rerecord)==0u)
             status=fg_vk_static_reset(vk,slot,err);
         if(status==FG_OK&&static_allowed&&slot<FG_VK_STATIC_SLOTS&&fg_vk_static_recorded(vk,slot)){
+            if(e->static_run_session_valid[slot]&&
+               e->static_run_session[slot]!=e->active_session){
+                fg_error_set(err,FG_ERR_MISMATCH,
+                    "static replay is bound to owner session %u, not %u",
+                    e->static_run_session[slot],e->active_session);
+                status=FG_ERR_MISMATCH;
+            }
+            if(status!=FG_OK)break;
             if(frame_trace_enabled()){
                 const fg_vk_tensor *cur=current;
                 for(uint32_t l=layer;l<=run_last;l++){
@@ -1341,7 +1627,11 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
                     ngram_embedding,expert,expert_context,&current,err);
             if(status==FG_OK)status=fg_vk_static_end(vk,slot,err);
             if(status==FG_OK)status=fg_vk_static_submit(vk,slot,err);
-            if(status==FG_OK)e->static_run_output[slot]=current;
+            if(status==FG_OK){
+                e->static_run_output[slot]=current;
+                e->static_run_session[slot]=e->active_session;
+                e->static_run_session_valid[slot]=true;
+            }
             if(status==FG_OK&&static_check_enabled())
                 status=static_run_check(e,vk,slot,token,err);
         }else{

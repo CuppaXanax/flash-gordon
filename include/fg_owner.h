@@ -51,11 +51,53 @@ typedef fg_status (*fg_owner_prefill_collect_fn)(void *context,uint32_t layer,
                                                  fg_prefill_result results[FG_GROUP_SIZE],
                                                  uint32_t *result_count,fg_error *err);
 
+/* Depth-B owner state namespaces.  Session 0 is the legacy single-session
+ * state; session 1 is allocated only by the slot-count constructors and is
+ * what a depth-2 batch step advances.  Weights, arena and command
+ * infrastructure stay singular. */
+#define FG_OWNER_SESSION_MAX 2u
+
 fg_status fg_owner_executor_create(fg_owner_executor **out,fg_model *model,fg_error *err);
 /* Sealed single-owner worker: owns only this rank's layers (manifest
  * layer_owner), allocates per-layer state for owned layers only. */
 fg_status fg_owner_executor_create_worker(fg_owner_executor **out,fg_model *model,fg_error *err);
+/* Slot-count variants: `sessions` in 1..FG_OWNER_SESSION_MAX.  Existing
+ * callers keep one session; the depth-B batch path allocates two. */
+fg_status fg_owner_executor_create_slots(fg_owner_executor **out,fg_model *model,
+                                         uint32_t sessions,fg_error *err);
+fg_status fg_owner_executor_create_worker_slots(fg_owner_executor **out,fg_model *model,
+                                                uint32_t sessions,fg_error *err);
 void fg_owner_executor_destroy(fg_owner_executor *executor);
+uint32_t fg_owner_session_count(const fg_owner_executor *executor);
+/* Select the owner state namespace every stateful call below operates on.
+ * Session 0 is the default; selecting an unallocated session fails closed. */
+fg_status fg_owner_set_active_session(fg_owner_executor *executor,uint32_t session,
+                                      fg_error *err);
+uint32_t fg_owner_active_session(const fg_owner_executor *executor);
+/* Per-session transaction hook for the depth-B batch step: snapshot copies the
+ * session's authoritative GDN/PLE device state and QSA frontier to the host;
+ * rollback restores both.  Release frees the host staging. */
+typedef struct fg_owner_session_checkpoint {
+    bool valid;
+    uint32_t session;
+    uint32_t gdn_count;
+    struct {
+        fg_vk_tensor *tensor;
+        float *data;
+        uint64_t values;
+    } gdn[FG_LAYER_COUNT*2u];
+    fg_vk_tensor *ple;
+    float *ple_data;
+    uint64_t ple_values;
+    bool qsa_valid;
+    uint32_t qsa_tokens[FG_LAYER_COUNT];
+} fg_owner_session_checkpoint;
+fg_status fg_owner_session_snapshot(fg_owner_executor *executor,uint32_t session,
+                                    fg_owner_session_checkpoint *snapshot,fg_error *err);
+fg_status fg_owner_session_rollback(fg_owner_executor *executor,
+                                    const fg_owner_session_checkpoint *snapshot,
+                                    fg_error *err);
+void fg_owner_session_snapshot_release(fg_owner_session_checkpoint *snapshot);
 bool fg_owner_owns_layer(const fg_owner_executor *executor,uint32_t layer);
 fg_vk_tensor *fg_owner_prefill_input(fg_owner_executor *executor);
 uint64_t fg_owner_qsa_host_bytes(const fg_owner_executor *executor);
@@ -115,6 +157,31 @@ fg_status fg_owner_qsa_open_state_mirror(fg_owner_executor *executor,const char 
                                          bool owned_only,
                                          fg_qsa_page_fetch_fn fetch_pages,void *fetch_opaque,
                                          fg_error *err);
+/* Per-session QSA open: same contracts as the calls above, but the session is
+ * explicit so slot 1 gets its own state file and index/cache allocation. */
+fg_status fg_owner_qsa_open_state_slot(fg_owner_executor *executor,uint32_t session,
+                                       const char *state_path,uint32_t logical_context,
+                                       uint32_t hot_tokens,uint32_t cache_pages,
+                                       uint32_t batch_size,fg_error *err);
+fg_status fg_owner_qsa_open_state_mirror_slot(fg_owner_executor *executor,uint32_t session,
+                                              const char *state_path,uint32_t logical_context,
+                                              uint32_t hot_tokens,uint32_t cache_pages,
+                                              uint32_t batch_size,bool owned_only,
+                                              fg_qsa_page_fetch_fn fetch_pages,
+                                              void *fetch_opaque,fg_error *err);
+fg_status fg_owner_qsa_open_mirror_slot(fg_owner_executor *executor,uint32_t session,
+                                        uint32_t logical_context,uint32_t hot_tokens,
+                                        uint32_t cache_pages,uint32_t batch_size,
+                                        fg_qsa_page_fetch_fn fetch_pages,void *fetch_opaque,
+                                        fg_error *err);
+bool fg_owner_qsa_ready_slot(const fg_owner_executor *executor,uint32_t session);
+fg_status fg_owner_qsa_frontier(const fg_owner_executor *executor,uint32_t session,
+                                uint32_t tokens[FG_LAYER_COUNT]);
+fg_status fg_owner_qsa_rollback(fg_owner_executor *executor,uint32_t session,
+                                const uint32_t tokens[FG_LAYER_COUNT],fg_error *err);
+/* Per-session embedding input storage for the depth-B batch step (one 40 KiB
+ * hyper vector per session; allocated with the session). */
+fg_vk_tensor *fg_owner_session_input(fg_owner_executor *executor,uint32_t session);
 bool fg_owner_qsa_ready(const fg_owner_executor *executor);
 void fg_owner_qsa_set_tokens(fg_owner_executor *executor,uint32_t tokens);
 /* Ring decode-state handoff accessors: slot 0 is the GDN conv state, slot 1 the

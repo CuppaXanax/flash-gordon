@@ -113,7 +113,8 @@ int main(void){
     fg_ngram_resident *resident=NULL;
     CHECK(fg_ngram_resident_open_sealed(
         &resident,first,100u,4u,first_hash,&error)==FG_OK);
-    CHECK(!fg_ngram_resident_pageable(resident));
+    /* Pageable worker shard mode is the default since f4aec44; the explicit
+     * FG_NGRAM_PAGEABLE=1 leg below covers the pageable read path. */
     uint64_t row=102u;uint8_t packed[FG_NGRAM_ROW_BYTES];
     CHECK(fg_ngram_resident_read(
         resident,&row,1u,packed,sizeof(packed),&error)==FG_OK);

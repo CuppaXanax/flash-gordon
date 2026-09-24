@@ -166,49 +166,68 @@ order on ties) and caps the batch with `fg_decode_batch_choose_batch`:
   n-gram agent frees ~3 GB/worker. B=2 fits with the mask work in place.
 - No extra weights, arena, or command buffers: the ring reads the same blocks.
 
-## 8. Fleet-window wiring (not in this local phase)
+## 8. Fleet-window wiring
+
+Status: **implemented** (branch `feat/depth-b`, this commit).  The notes below
+record where the implementation deviated from the sketch and why; the parity
+gate is `flash-gordon depth-b-selftest --manifest ... --depth 2`.
 
 The host core is complete; the GPU/fabric half is deliberately left for the
 fleet window so it can be validated against the real pack:
 
-1. **Owner session slots** (`src/owner.c`): `gdn_state[slot][layer]`,
-   `ple_state[slot]`, `qsa[slot]`, an `active_session` selector set around
-   `owner_record_layer` / `fg_owner_gdn_decode` / `ple_decode_into` /
-   `fg_owner_qsa_decode`; allocate slot 0 exactly as today and slot 1 only when
-   the executor is created with two slots (`fg_owner_executor_create` gains a
-   slot-count variant; existing callers keep 1).
-2. **Session control handlers** (`src/runtime.c`): `FG_OWNER_SESSION_PREPARE`,
-   `_COMMIT` and `_RESTORE` are admitted by the protocol but only `_BEGIN` /
-   `_READY` are handled today. The batch step's device hooks are these
-   messages: prepare snapshots the owner's per-slot GDN/PLE/QSA frontier,
-   commit makes it permanent, restore rolls it back. The existing abort/retry
-   frontier (`a8bc1ee`, merged) is the coordinator-side precedent.
-3. **QSA namespace** (`src/qsa_owner.c`, `include/fg_qsa_owner.h`): per-slot
-   `next_token[FG_LAYER_COUNT]` guards and a `session_slot` tag on
-   `FG_MSG_QSA_PAGE_APPEND` / `BARRIER` / `FETCH` so a page belongs to one
-   sequence's state file. Worker state paths become
-   `qsa-owner-rank-%02u-s%u.state`.
-4. **Runtime batch step** (`src/runtime.c`): a `coordinator_decode_batch_ring`
-   that embeds B tokens (one `fg_owner_prefill_input_slot` per state slot),
-   sends one `FG_MSG_DECODE_BATCH_WORK` per block owner, runs the local block
-   per slot, and returns one `FG_MSG_DECODE_BATCH_RESULT`; worker
-   `handle_decode_batch_work` loops the slots through the existing
-   `fg_owner_decode_block*` with the slot's `active_session`. Call
-   `step_begin` before the first send and `step_commit`/`step_restore` after
-   the final result.
-5. **Static replay**: chained blocks record against slot-0 tensors. For
-   `state_slot != 0` the fleet wiring must either disable static replay or
-   record per-slot static runs (`FG_VK_STATIC_SLOTS` exists).
-6. **Output head / split**: the direct 4-way handoff is one token per message.
-   At B>=2 either add slot arrays to `FG_MSG_OUTPUT_*` or fall back to the
-   rank-0 relay; the relay is correct and only costs the existing 3.9 ms.
-7. **Sampler history**: `fg_output_history` on rank 4 is a single session's
-   token history (penalties). Per-session output history is required for
-   isolation; until then B>=2 is limited to penalty-free sampler configs.
-8. **Test-only harness**: a `flash-gordon depth-b-selftest` subcommand (CLI,
-   not an env flag) that runs two canned conversations sequentially at B=1 and
-   interleaved at B=2 and compares token ids, logits bits and per-session state
-   digests. This is the executable B=2 parity gate.
+1. **Owner session slots** (`src/owner.c`, `include/fg_owner.h`):
+   `gdn_state[slot][layer]`, `ples_state[slot]`, `qsa[slot]`,
+   `session_input[slot]`, an `active_session` selector resolved by
+   `OWNER_GDN`/`OWNER_PLE`/`OWNER_QSA` in every stateful owner entry point, and
+   `fg_owner_executor_create_slots` / `_worker_slots`.  Existing callers keep
+   one session; the fleet runtime creates two so a batch work message can name
+   either, and `fg_owner_reset_state` resets them all.
+2. **Session control handlers** (`src/runtime.c`): `FG_MSG_SESSION_PREPARE` /
+   `_COMMIT` / `_RESTORE` are handled on every rank.  PREPARE snapshots the
+   addressed session's GDN/PLE device state plus its QSA per-layer frontier
+   (`fg_owner_session_snapshot`), COMMIT drops the snapshot, RESTORE writes the
+   state back and rolls the QSA frontier to the snapshot
+   (`fg_owner_session_rollback`).  The control wire gains a `state_slot` byte
+   (protocol 6, previously reserved zero).  PREPARE also lazily creates a batch
+   session's QSA state: an owned-layer state skeleton plus a state mirror at
+   `qsa-owner-rank-%02u-s%u.state`, so session 1 never shares a page stream
+   with session 0.
+3. **QSA namespace** (`src/qsa_owner.c`, `src/runtime.c`): batch sessions use
+   separate state files and the page-service guard only advances for slot 0.
+   Depth-B refuses to run unless the ring is active (`fg_runtime_ring_enabled`)
+   because then every block owner writes its own state file and the rank-0
+   page append/fetch transport is dormant; a live page transport with a batch
+   slot would be a cross-session page stream, so that combination fails closed
+   instead of tagging the wire.
+4. **Runtime batch step** (`src/runtime.c`): `coordinator_decode_batch_step`
+   embeds each slot into its session input (slot 0 keeps the single-token
+   ping tensor so recorded static runs stay valid), looks up the per-slot
+   n-gram embedding (all slots must agree on availability), sends one
+   `FG_MSG_DECODE_BATCH_WORK` to the first block owner, runs rank 0's own block
+   when the message comes back, and samples each slot through the existing
+   rank-0 relay.  `handle_decode_batch_work` loops the slots through
+   `fg_owner_decode_block*` with the slot's `active_session`, reads each
+   output hyper back, and forwards the per-slot state to the next owner (or
+   returns `FG_MSG_DECODE_BATCH_RESULT`).  `step_begin` calls the
+   PREPARE/COMMIT/RESTORE hooks, and any failure rolls the whole batch back.
+5. **Static replay**: session 0 keeps the validated replay; any other session
+   runs dynamically and a recorded run bound to a different session fails
+   closed (`static_run_session`).
+6. **Output head / split**: B>=2 uses the rank-0 relay only; the batch step
+   never sets the direct-handoff flag.  The output work/config/history wires
+   carry a `session_slot` byte and rank 4 keeps one penalty-counting table per
+   session (`fg_output_set_session`).  Until the API grows a second session,
+   B>=2 still fails closed when penalties are active.
+7. **Sampler history**: see 6; per-session tables landed with the wire tags.
+8. **Test-only harness**: `flash-gordon depth-b-selftest --manifest ... --depth
+   2 [--tokens N --long-tokens T --context-tokens C]` runs the `12`/`Paris`
+   pair and an optional long+short pair: each conversation at B=1 alone in
+   owner session 0/1, then both interleaved through the B=2 ring from the same
+   prefilled frontiers.  Greedy token ids, logit bits, final per-session state
+   digests and QSA cursors must match exactly, and one step is aborted after
+   the ring result and retried through RESTORE on every run.  The selftest
+   forces the rank-0 relay for both depths so the comparison is not confounded
+   by the direct output path.
 
 ## 9. Files in this phase
 

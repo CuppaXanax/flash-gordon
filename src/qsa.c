@@ -762,6 +762,12 @@ fg_status fg_qsa_session_checkpoint(fg_qsa_session *s,fg_error *err){
 
 uint32_t fg_qsa_session_tokens(const fg_qsa_session *s,uint32_t layer){int slot=s?layer_slot(s,layer):-1;return slot<0?0:s->committed[slot];}
 void fg_qsa_session_set_tokens(fg_qsa_session *s,uint32_t tokens){if(!s)return;for(uint32_t i=0;i<s->layer_count;i++){s->committed[i]=tokens;if(s->state)fg_qsa_state_set_layer_tokens(s->state,i,tokens);}}
+void fg_qsa_session_set_layer_tokens(fg_qsa_session *s,uint32_t layer,uint32_t tokens){
+    int slot=s?layer_slot(s,layer):-1;
+    if(slot<0)return;
+    s->committed[slot]=tokens;
+    if(s->state)fg_qsa_state_set_layer_tokens(s->state,(uint32_t)slot,tokens);
+}
 
 uint64_t fg_qsa_session_host_bytes(const fg_qsa_session *s){
     if(!s)return 0;

@@ -1,4 +1,5 @@
 #include "fg_runtime.h"
+#include "fg_decode_batch.h"
 #include "fg_ledger.h"
 #include "fg_topology.h"
 #include "fg_expert.h"
@@ -13,6 +14,7 @@
 #include "fg_qsa_owner.h"
 #include "fg_qsa_replica.h"
 #include "fg_qsa_state.h"
+#include "fg_sha256.h"
 #include "fg_tokenizer.h"
 #include "fg_tower_vk.h"
 #include "fg_video.h"
@@ -551,11 +553,18 @@ typedef struct layer_work_context {
     void *qsa_owner;
     fg_output_hc *output_hc;
     uint32_t output_split_ways;
+    /* Depth-B batch step storage: decoded per-slot hyper/ngram inputs and the
+     * per-slot final-block results. */
+    fg_decode_batch_work batch_work;
+    fg_decode_batch_result batch_result;
+    float *batch_hyper;
+    float *batch_ngram;
 } layer_work_context;
 
 static void layer_work_context_destroy(layer_work_context *context){
     if(!context)return;
     fg_vk_tensor_destroy(context->ngram_tensor);
+    free(context->batch_ngram);free(context->batch_hyper);
     free(context->ngram);free(context->hyper_out);free(context->hyper_in);
     free(context->positions);free(context->result_wire);free(context->work_wire);
     memset(context,0,sizeof(*context));
@@ -575,10 +584,13 @@ static fg_status layer_work_context_create(layer_work_context *context,fg_model 
     context->positions=malloc((size_t)tokens*3u*sizeof(*context->positions));
     context->hyper_in=malloc((size_t)tokens*FG_HYPER_WIDTH*sizeof(float));
     context->hyper_out=malloc((size_t)tokens*FG_HYPER_WIDTH*sizeof(float));
+    context->batch_hyper=malloc((size_t)FG_DECODE_BATCH_MAX_SLOTS*FG_HYPER_WIDTH*sizeof(float));
+    context->batch_ngram=malloc((size_t)FG_DECODE_BATCH_MAX_SLOTS*FG_NGRAM_EMBED_VALUES*sizeof(float));
     if(manifest->layer_owner[1u]==(uint8_t)fg_model_rank(model))
         context->ngram=malloc((size_t)tokens*FG_NGRAM_EMBED_VALUES*sizeof(float));
     if(!context->work_wire||!context->result_wire||!context->positions||
-       !context->hyper_in||!context->hyper_out||
+       !context->hyper_in||!context->hyper_out||!context->batch_hyper||
+       !context->batch_ngram||
        (manifest->layer_owner[1u]==(uint8_t)fg_model_rank(model)&&!context->ngram)){
         layer_work_context_destroy(context);
         fg_error_set(err,FG_ERR_OOM,"allocate worker layer-work buffers");
@@ -604,7 +616,8 @@ static fg_status layer_work_context_create(layer_work_context *context,fg_model 
 }
 
 static fg_status worker_publish_qsa_pages(void *opaque,fg_owner_executor *owner,
-    uint32_t self,uint32_t first_token,uint16_t token_count,fg_error *err);
+    uint32_t self,uint32_t first_token,uint16_t token_count,uint32_t state_slot,
+    fg_error *err);
 
 /* Execute this rank's whole layer block for one chunk and hand the hyper state
  * to the next block owner (or back to rank 0 as the final result). */
@@ -691,7 +704,7 @@ static fg_status handle_prefill_layer_work(fg_fabric *fabric,fg_owner_executor *
         }
     }
     if(status==FG_OK)status=worker_publish_qsa_pages(context->qsa_owner,owner,self,
-        work.first_token,work.token_count,err);
+        work.first_token,work.token_count,0u,err);
     if(status==FG_OK)status=fg_vk_tensor_read(current,0,context->hyper_out,
         (uint64_t)work.token_count*FG_HYPER_WIDTH*4u,err);
     if(status==FG_OK)numerics_trace_host(last+1u<FG_LAYER_COUNT?"SEND_NEXT":"SEND_RESULT",
@@ -862,7 +875,7 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
     struct timespec t_read={0};if(trace)clock_gettime(CLOCK_MONOTONIC,&t_read);
     numerics_trace_host("FB_OUT",self,last,work->token_index,1u,context->hyper_out);
     if(status==FG_OK)status=worker_publish_qsa_pages(context->qsa_owner,owner,self,
-        work->token_index,1u,err);
+        work->token_index,1u,0u,err);
     struct timespec t_publish={0};if(trace)clock_gettime(CLOCK_MONOTONIC,&t_publish);
     if(status==FG_OK&&last+1u<FG_LAYER_COUNT){
         fg_layer_work next={.layer=(uint8_t)(last+1u),.source_rank=(uint8_t)self,
@@ -1490,6 +1503,16 @@ typedef struct qsa_owner_runtime {
     char state_path[1200];
 } qsa_owner_runtime;
 
+typedef struct depthb_owner_runtime {
+    fg_owner_executor *owner;
+    const fg_manifest *manifest;
+    const char *directory;
+    uint32_t self,qsa_layers,logical_context;
+    qsa_owner_runtime *qsa;
+    fg_owner_session_checkpoint checkpoint[FG_OWNER_SESSION_MAX];
+    bool checkpoint_valid[FG_OWNER_SESSION_MAX];
+} depthb_owner_runtime;
+
 static int qsa_owner_layer_slot(const qsa_owner_runtime *runtime,uint32_t layer);
 
 static void *qsa_owner_writer_main(void *opaque){
@@ -1716,7 +1739,8 @@ static uint32_t worker_qsa_cache_pages(uint32_t layers,uint32_t full_pages){
 
 static fg_status worker_open_qsa_state(fg_owner_executor *owner,qsa_owner_runtime *runtime,
     const fg_manifest *manifest,const char *directory,uint32_t self,uint32_t logical,
-    fg_error *err){
+    depthb_owner_runtime *depthb,fg_error *err){
+    if(depthb)depthb->logical_context=logical;
     if(!owner||!runtime->enabled||fg_owner_qsa_ready(owner))return FG_OK;
     char path[1200];
     if(snprintf(path,sizeof(path),"%s/qsa-owner-rank-%02u.state",directory,self)>=
@@ -1736,10 +1760,15 @@ static fg_status worker_open_qsa_state(fg_owner_executor *owner,qsa_owner_runtim
  * Advance the runtime guard frontier so decode cold fetches from rank 0 are
  * accepted for the tokens this block produced. */
 static fg_status worker_publish_qsa_pages(void *opaque,fg_owner_executor *owner,
-    uint32_t self,uint32_t first_token,uint16_t token_count,fg_error *err){
+    uint32_t self,uint32_t first_token,uint16_t token_count,uint32_t state_slot,
+    fg_error *err){
     (void)owner;(void)self;(void)err;
     qsa_owner_runtime *runtime=opaque;
     if(!runtime||!runtime->enabled)return FG_OK;
+    /* The page-service state file is the slot-0 namespace.  Batch slots never
+     * advance it: depth-B requires the ring, where block owners write their own
+     * per-session state files and the page transport is dormant. */
+    if(state_slot!=0u)return FG_OK;
     uint32_t frontier=first_token+token_count;
     for(uint32_t slot=0;slot<runtime->layer_count;slot++){
         uint32_t layer=runtime->layers[slot];
@@ -1747,6 +1776,334 @@ static fg_status worker_publish_qsa_pages(void *opaque,fg_owner_executor *owner,
             runtime->guard.next_token[layer]=frontier;
     }
     return FG_OK;
+}
+
+/* ---------------------------------------------------------------------------
+ * Depth-B owner session transaction and batch decode work.
+ *
+ * The owner state namespace is selected by SESSION_PREPARE/COMMIT/RESTORE
+ * control messages (one state slot per message).  PREPARE snapshots the
+ * session's authoritative GDN/PLE device state and QSA frontier, lazily
+ * creating the per-session QSA state file the first time a batch slot is
+ * prepared; RESTORE rolls those back for the retry.  The batch decode work
+ * message carries one state slot per token, so the worker selects the owner
+ * namespace per slot with no per-step coordination.
+ * ------------------------------------------------------------------------- */
+static void depthb_transaction_digest(uint8_t digest[32],uint64_t session_nonce,
+    uint32_t slot,uint8_t operation,const uint32_t tokens[FG_LAYER_COUNT]){
+    fg_sha256 hash;
+    fg_sha256_init(&hash);
+    uint8_t header[16]={0};
+    memcpy(header,&session_nonce,8u);
+    header[8]=(uint8_t)slot;
+    header[9]=operation;
+    fg_sha256_update(&hash,header,sizeof(header));
+    fg_sha256_update(&hash,tokens,FG_LAYER_COUNT*sizeof(*tokens));
+    fg_sha256_final(&hash,digest);
+}
+
+/* Batch slot input storage: slot 0 must use the same ping tensor the
+ * single-token ring path and its recorded static runs are bound to; batch
+ * slots use their dedicated session inputs (non-zero slots never replay). */
+static fg_vk_tensor *depthb_slot_input(fg_owner_executor *owner,uint32_t state_slot){
+    if(!owner)return NULL;
+    return state_slot==0u?fg_owner_prefill_input(owner):
+                          fg_owner_session_input(owner,state_slot);
+}
+
+static fg_status depthb_owner_prepare(depthb_owner_runtime *depthb,uint32_t slot,
+                                      fg_error *err){
+    if(!depthb||!depthb->owner||slot>=FG_OWNER_SESSION_MAX||
+       slot>=fg_owner_session_count(depthb->owner)){
+        fg_error_set(err,FG_ERR_MISMATCH,"owner state slot %u is not allocated",slot);
+        return FG_ERR_MISMATCH;
+    }
+    if(depthb->checkpoint_valid[slot]){
+        fg_owner_session_snapshot_release(&depthb->checkpoint[slot]);
+        depthb->checkpoint_valid[slot]=false;
+    }
+    fg_status status=fg_owner_set_active_session(depthb->owner,slot,err);
+    /* Slot 0's QSA session is opened at SESSION_BEGIN; a batch slot gets its
+     * own state file the first time it is prepared.  The file name carries the
+     * session so the two namespaces can never share a page stream. */
+    if(status==FG_OK&&slot!=0u&&depthb->qsa_layers&&
+       !fg_owner_qsa_ready_slot(depthb->owner,slot)){
+        char path[1200];
+        if(snprintf(path,sizeof(path),"%s/qsa-owner-rank-%02u-s%u.state",
+                    depthb->directory,depthb->self,slot)>=(int)sizeof(path)){
+            fg_error_set(err,FG_ERR_LIMIT,"batch QSA session state path overflow");
+            return FG_ERR_LIMIT;
+        }
+        unlink(path);
+        uint8_t layers[FG_QSA_OWNER_LAYER_COUNT];uint32_t layer_count=0;
+        for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
+            if(depthb->manifest->layer_owner[layer]==depthb->self)
+                layers[layer_count++]=(uint8_t)layer;
+        if(!layer_count){
+            fg_error_set(err,FG_ERR_MISMATCH,
+                         "rank %u owns no QSA layers for batch session %u",
+                         depthb->self,slot);
+            return FG_ERR_MISMATCH;
+        }
+        /* Create the owned-layer state skeleton first, then attach the session
+         * as an owned-only state mirror.  The mirror never needs the page
+         * transport: evicted pages are read back from this file. */
+        fg_qsa_state *state=NULL;
+        status=fg_qsa_state_open(&state,path,layers,layer_count,
+                                 depthb->logical_context,true,err);
+        fg_qsa_state_close(state);
+        if(status==FG_OK){
+            uint32_t full_pages=depthb->logical_context/FG_Q38_QSA_COMPRESS_RATIO;
+            if(!full_pages)full_pages=1u;
+            uint32_t cache_pages=worker_qsa_cache_pages(depthb->qsa_layers,full_pages);
+            status=fg_owner_qsa_open_state_mirror_slot(depthb->owner,slot,path,
+                depthb->logical_context,depthb->logical_context,cache_pages,
+                depthb->manifest->prefill_microbatch,true,NULL,NULL,err);
+        }
+    }
+    if(status==FG_OK)status=fg_owner_session_snapshot(depthb->owner,slot,
+                                                      &depthb->checkpoint[slot],err);
+    if(status==FG_OK)depthb->checkpoint_valid[slot]=true;
+    return status;
+}
+
+static fg_status depthb_owner_commit(depthb_owner_runtime *depthb,uint32_t slot,
+                                     fg_error *err){
+    if(!depthb||!depthb->owner||slot>=FG_OWNER_SESSION_MAX){
+        fg_error_set(err,FG_ERR_MISMATCH,"invalid owner session commit");
+        return FG_ERR_MISMATCH;
+    }
+    if(depthb->checkpoint_valid[slot]){
+        fg_owner_session_snapshot_release(&depthb->checkpoint[slot]);
+        depthb->checkpoint_valid[slot]=false;
+    }
+    return fg_owner_set_active_session(depthb->owner,0u,err);
+}
+
+static fg_status depthb_owner_restore(depthb_owner_runtime *depthb,uint32_t slot,
+                                      fg_error *err){
+    if(!depthb||!depthb->owner||slot>=FG_OWNER_SESSION_MAX){
+        fg_error_set(err,FG_ERR_MISMATCH,"invalid owner session restore");
+        return FG_ERR_MISMATCH;
+    }
+    fg_status status=FG_OK;
+    if(depthb->checkpoint_valid[slot]){
+        status=fg_owner_session_rollback(depthb->owner,&depthb->checkpoint[slot],err);
+        fg_owner_session_snapshot_release(&depthb->checkpoint[slot]);
+        depthb->checkpoint_valid[slot]=false;
+    }
+    fg_status active=fg_owner_set_active_session(depthb->owner,0u,err);
+    return status==FG_OK?active:status;
+}
+
+static fg_status handle_owner_session_transaction(fg_fabric *fabric,
+    depthb_owner_runtime *depthb,uint64_t session_id,uint32_t peer,
+    const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,fg_error *err){
+    if(!depthb||!depthb->owner||peer!=0u||!session_id){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "owner session transaction reached an inactive rank");
+        return FG_ERR_MISMATCH;
+    }
+    fg_owner_session_control control;
+    fg_status status=fg_owner_session_control_decode(&control,payload,bytes,err);
+    if(status!=FG_OK)return status;
+    uint64_t request=fg_frame_request_id(header);
+    if(request!=session_id||control.rank!=depthb->self||
+       control.session_nonce!=request||
+       control.position_mode!=(fg_position_mode)depthb->manifest->session.position_mode){
+        fg_error_set(err,FG_ERR_MISMATCH,"stale or misrouted owner session transaction");
+        return FG_ERR_MISMATCH;
+    }
+    fg_message_type reply=0;
+    switch(control.operation){
+        case FG_OWNER_SESSION_PREPARE:
+            status=depthb_owner_prepare(depthb,control.state_slot,err);
+            reply=FG_MSG_SESSION_PREPARED;
+            control.operation=FG_OWNER_SESSION_PREPARED;
+            break;
+        case FG_OWNER_SESSION_COMMIT:
+            status=depthb_owner_commit(depthb,control.state_slot,err);
+            reply=FG_MSG_SESSION_COMMITTED;
+            control.operation=FG_OWNER_SESSION_COMMITTED;
+            break;
+        case FG_OWNER_SESSION_RESTORE:
+            status=depthb_owner_restore(depthb,control.state_slot,err);
+            reply=FG_MSG_SESSION_RESTORED;
+            control.operation=FG_OWNER_SESSION_RESTORED;
+            break;
+        default:
+            fg_error_set(err,FG_ERR_MISMATCH,
+                         "unexpected owner session transaction op %u",control.operation);
+            return FG_ERR_MISMATCH;
+    }
+    if(status!=FG_OK)return status;
+    uint32_t tokens[FG_LAYER_COUNT];
+    if(fg_owner_qsa_frontier(depthb->owner,control.state_slot,tokens)!=FG_OK)
+        memset(tokens,0,sizeof(tokens));
+    depthb_transaction_digest(control.frontier_sha256,request,control.state_slot,
+                              control.operation,tokens);
+    if(control.operation!=FG_OWNER_SESSION_COMMITTED)
+        depthb_transaction_digest(control.state_sha256,request,control.state_slot,
+                                  control.operation,tokens);
+    else
+        memset(control.state_sha256,0,32u);
+    uint8_t wire[FG_OWNER_SESSION_CONTROL_BYTES];
+    status=fg_owner_session_control_encode(wire,&control,err);
+    if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_CONTROL,reply,request,
+                                           control.state_slot,0u,wire,sizeof(wire),err);
+    return status;
+}
+
+/* One batch work message: run this rank's whole block for every slot under that
+ * slot's owner session, then forward the per-slot hyper states to the next
+ * block owner (or hand the final result back to rank 0). */
+static fg_status handle_decode_batch_work(fg_fabric *fabric,const fg_manifest *manifest,
+    uint32_t self,uint64_t session_id,uint32_t peer,const fg_frame_header *header,
+    const uint8_t *payload,uint32_t bytes,layer_work_context *context,
+    depthb_owner_runtime *depthb,fg_error *err){
+    if(!depthb||!depthb->owner||!context){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"batch decode work requires an owner executor");
+        return FG_ERR_UNAVAILABLE;
+    }
+    fg_owner_executor *owner=depthb->owner;
+    fg_decode_batch_work *work=&context->batch_work;
+    fg_status status=fg_decode_batch_work_decode(work,manifest->protocol_version,
+        context->batch_hyper,(uint64_t)FG_DECODE_BATCH_MAX_SLOTS*FG_HYPER_WIDTH,
+        context->batch_ngram,(uint64_t)FG_DECODE_BATCH_MAX_SLOTS*FG_NGRAM_EMBED_VALUES,
+        payload,bytes,err);
+    if(status!=FG_OK)return status;
+    uint64_t request=fg_frame_request_id(header);
+    bool has_ngram=(work->flags&FG_LAYER_WORK_HAS_NGRAM)!=0u;
+    uint32_t last=work->layer;
+    while(last+1u<FG_LAYER_COUNT&&manifest->layer_owner[last+1u]==self)last++;
+    if(!session_id||request!=session_id||peer!=work->source_rank||
+       work->destination_rank!=self||work->layer>=FG_LAYER_COUNT||
+       manifest->layer_owner[work->layer]!=self||
+       (work->layer>0u&&manifest->layer_owner[work->layer-1u]==self)||
+       ((work->layer<=1u)!=has_ngram)||
+       work->position_mode!=FG_POSITION_TEXT||
+       fg_frame_sequence(header)!=
+           work->slots[0].token_index*FG_LAYER_COUNT+work->layer){
+        fg_error_set(err,FG_ERR_MISMATCH,"stale or misrouted decode batch work");
+        return FG_ERR_MISMATCH;
+    }
+    /* Depth-B only runs on the ring, where every block owner writes its own
+     * per-session QSA state and the rank-0 page fetch/append transport is
+     * dormant.  Refuse the batch path otherwise instead of risking a page
+     * stream shared across sessions. */
+    if(!fg_runtime_ring_enabled()){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"depth-B batch decode requires the ring");
+        return FG_ERR_UNAVAILABLE;
+    }
+    for(uint32_t slot=0;status==FG_OK&&slot<work->slot_count;slot++){
+        uint32_t state_slot=work->slots[slot].state_slot;
+        if(state_slot>=fg_owner_session_count(owner)){
+            fg_error_set(err,FG_ERR_MISMATCH,
+                         "decode batch slot %u names unallocated owner session %u",
+                         slot,state_slot);
+            status=FG_ERR_MISMATCH;
+            break;
+        }
+        if(depthb->qsa_layers&&!fg_owner_qsa_ready_slot(owner,state_slot)){
+            fg_error_set(err,FG_ERR_UNAVAILABLE,
+                         "decode batch slot %u has no QSA session",slot);
+            status=FG_ERR_UNAVAILABLE;
+            break;
+        }
+        fg_vk_tensor *input=depthb_slot_input(owner,state_slot);
+        if(!input){
+            fg_error_set(err,FG_ERR_UNAVAILABLE,
+                         "decode batch slot %u has no session input storage",slot);
+            status=FG_ERR_UNAVAILABLE;
+            break;
+        }
+        status=fg_owner_set_active_session(owner,state_slot,err);
+        if(status!=FG_OK)break;
+        status=fg_vk_tensor_write(input,0,work->slots[slot].hyper,
+                                  (uint64_t)FG_HYPER_WIDTH*4u,err);
+        if(status!=FG_OK)break;
+        if(has_ngram)status=fg_vk_tensor_write(context->ngram_tensor,0,
+            work->slots[slot].ngram_embedding,(uint64_t)FG_NGRAM_EMBED_VALUES*4u,err);
+        if(status!=FG_OK)break;
+        numerics_trace_host("FB_IN",self,work->layer,work->slots[slot].token_index,
+                            1u,work->slots[slot].hyper);
+        fg_vk_tensor *current=NULL;
+        bool profile=decode_profile_enabled();
+        if(profile){
+            fg_error profile_error={0};
+            if(fg_vk_profile_begin(context->vk,&profile_error)!=FG_OK)profile=false;
+        }
+        if(decode_block_chain_eligible(context->decode_dispatch.expert,manifest,self,
+                                       work->layer,last)){
+            status=fg_owner_decode_block_chained(owner,work->layer,last,
+                work->slots[slot].token_index,work->slots[slot].position,input,
+                has_ngram?context->ngram_tensor:NULL,chained_decode_expert,
+                &context->decode_dispatch,&current,err);
+        }else{
+            status=fg_owner_decode_block(owner,work->layer,last,
+                work->slots[slot].token_index,work->slots[slot].position,input,
+                has_ngram?context->ngram_tensor:NULL,worker_decode_fire,
+                worker_decode_collect,&context->decode_dispatch,&current,err);
+        }
+        if(profile){
+            fg_vk_profile decode_profile={0};fg_error profile_error={0};
+            fg_status profile_status=fg_vk_profile_end(context->vk,&decode_profile,
+                status==FG_OK?err:&profile_error);
+            if(profile_status==FG_OK)
+                fprintf(stderr,"DECODE_BATCH_PROFILE rank=%u token=%u layers=%u..%u "
+                    "gpu_ms=%.3f submissions=%llu dispatches=%llu\n",self,
+                    work->slots[slot].token_index,(unsigned)work->layer,last,
+                    decode_profile.gpu_ms,
+                    (unsigned long long)decode_profile.submissions,
+                    (unsigned long long)decode_profile.dispatches);
+        }
+        if(status!=FG_OK)break;
+        status=fg_vk_tensor_read(current,0,context->batch_result.slots[slot].hyper,
+                                 (uint64_t)FG_HYPER_WIDTH*4u,err);
+        if(status!=FG_OK)break;
+        status=validate_block_hidden(self,work->slots[slot].token_index,last,
+            context->batch_result.slots[slot].hyper,err);
+        if(status!=FG_OK)break;
+        numerics_trace_host("FB_OUT",self,last,work->slots[slot].token_index,1u,
+                            context->batch_result.slots[slot].hyper);
+        status=worker_publish_qsa_pages(depthb->qsa,owner,self,
+            work->slots[slot].token_index,1u,state_slot,err);
+    }
+    if(status!=FG_OK)return status;
+    context->batch_result.layer=(uint8_t)last;
+    context->batch_result.source_rank=(uint8_t)self;
+    context->batch_result.flags=0u;
+    context->batch_result.slot_count=work->slot_count;
+    for(uint32_t slot=0;slot<work->slot_count;slot++)
+        context->batch_result.slots[slot].token_index=work->slots[slot].token_index;
+    if(last+1u<FG_LAYER_COUNT){
+        fg_decode_batch_work forward=*work;
+        forward.layer=(uint8_t)(last+1u);
+        forward.source_rank=(uint8_t)self;
+        forward.destination_rank=manifest->layer_owner[last+1u];
+        forward.flags=0u;
+        for(uint32_t slot=0;slot<work->slot_count;slot++){
+            forward.slots[slot].hyper=context->batch_result.slots[slot].hyper;
+            forward.slots[slot].ngram_embedding=NULL;
+        }
+        uint32_t wire_bytes=0;
+        status=fg_decode_batch_work_encode(context->work_wire,context->work_capacity,
+            &wire_bytes,manifest->protocol_version,&forward,err);
+        if(status==FG_OK)status=fg_fabric_send(fabric,forward.destination_rank,
+            FG_FABRIC_BULK,FG_MSG_DECODE_BATCH_WORK,request,
+            work->slots[0].token_index*FG_LAYER_COUNT+forward.layer,0,
+            context->work_wire,wire_bytes,err);
+    }else{
+        context->batch_result.destination_rank=0u;
+        uint32_t wire_bytes=0;
+        status=fg_decode_batch_result_encode(context->work_wire,context->work_capacity,
+            &wire_bytes,&context->batch_result,err);
+        if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,
+            FG_MSG_DECODE_BATCH_RESULT,request,
+            work->slots[0].token_index*FG_LAYER_COUNT+last,0,
+            context->work_wire,wire_bytes,err);
+    }
+    return status;
 }
 
 static fg_status handle_qsa_page_append(qsa_owner_runtime *runtime,
@@ -1854,7 +2211,8 @@ static fg_status begin_session(fg_fabric *fabric,const fg_manifest *manifest,
                                fg_owner_executor *owner,uint32_t self,
                                uint32_t peer,const fg_frame_header *header,const uint8_t *payload,
                                uint32_t bytes,uint64_t *session_id,
-                               fg_output_executor *output,fg_error *err){
+                               fg_output_executor *output,depthb_owner_runtime *depthb,
+                               fg_error *err){
     uint64_t request=fg_frame_request_id(header);
     if(peer!=0u||!request||(*session_id&&request<=*session_id)){fg_error_set(err,FG_ERR_MISMATCH,"invalid, stale, or duplicate session begin");return FG_ERR_MISMATCH;}
     fg_session_identity identity;fg_status status=fg_session_identity_from_manifest(manifest,&identity,err);
@@ -1863,7 +2221,8 @@ static fg_status begin_session(fg_fabric *fabric,const fg_manifest *manifest,
         if(status==FG_OK)status=qsa_owner_open_session(qsa,manifest,directory,&identity,
                                                        request,NULL,err);
         if(status==FG_OK)status=worker_open_qsa_state(owner,qsa,manifest,directory,self,
-                                                      manifest->session.logical_context_tokens,err);
+                                                      manifest->session.logical_context_tokens,
+                                                      depthb,err);
         if(status==FG_OK&&owner)status=fg_owner_reset_state(owner,err);
         if(status==FG_OK)status=fg_fabric_send(fabric,peer,FG_FABRIC_CONTROL,
                                                FG_MSG_SESSION_READY,request,0,0,NULL,0,err);
@@ -1885,8 +2244,13 @@ static fg_status begin_session(fg_fabric *fabric,const fg_manifest *manifest,
     if(status==FG_OK)status=qsa_owner_open_session(qsa,manifest,directory,&identity,
                                                    request,&control,err);
     if(status==FG_OK)status=worker_open_qsa_state(owner,qsa,manifest,directory,self,
-                                                  control.logical_context_tokens,err);
+                                                  control.logical_context_tokens,depthb,err);
     if(status==FG_OK&&owner)status=fg_owner_reset_state(owner,err);
+    if(depthb)for(uint32_t slot=0;slot<FG_OWNER_SESSION_MAX;slot++)
+        if(depthb->checkpoint_valid[slot]){
+            fg_owner_session_snapshot_release(&depthb->checkpoint[slot]);
+            depthb->checkpoint_valid[slot]=false;
+        }
     if(status==FG_OK&&output)status=fg_output_history_reset(output,NULL,0u,err);
     uint8_t wire[FG_OWNER_SESSION_CONTROL_BYTES];
     if(status==FG_OK){
@@ -1937,6 +2301,7 @@ static fg_status handle_output_work(fg_fabric *fabric,fg_output_executor *output
     fg_status status=fg_output_work_decode(work,payload,bytes,err);uint64_t request=fg_frame_request_id(header);
     if(status==FG_OK&&(!session_id||request!=session_id||peer!=work->source_rank||work->destination_rank!=self)){fg_error_set(err,FG_ERR_MISMATCH,"stale or misrouted output work");status=FG_ERR_MISMATCH;}
     token_profile_capture capture={0};if(status==FG_OK)status=token_profile_begin(&capture,vk,work->token_index,err);
+    if(status==FG_OK)fg_output_set_session(output,work->session_slot);
     if(status==FG_OK)status=fg_vk_tensor_write(hyper_tensor,0,work->hyper,sizeof(work->hyper),err);
     fg_output_result result={.source_rank=(uint8_t)self,.destination_rank=work->source_rank,.token_index=work->token_index};
     if(status==FG_OK)status=fg_output_sample(output,hyper_tensor,&work->sampler,
@@ -2208,6 +2573,7 @@ static fg_status handle_output_config(fg_fabric *fabric,fg_output_executor *outp
         status=FG_ERR_MISMATCH;
     }
     if(status==FG_OK)status=fg_output_handoff_config(state,&config,err);
+    if(status==FG_OK)fg_output_set_session(output,config.session_slot);
     if(status==FG_OK)status=worker_output_handoff_flush(fabric,output,output_slice,vk,self,
         session_id,hyper_tensor,state,err);
     return status;
@@ -2242,9 +2608,9 @@ static bool output_history_count(const uint8_t *payload,uint32_t bytes,
     if(!payload||!count||bytes<FG_OUTPUT_HISTORY_HEADER_BYTES)return false;
     uint32_t value=((uint32_t)payload[0u]<<24u)|((uint32_t)payload[1u]<<16u)|
                    ((uint32_t)payload[2u]<<8u)|payload[3u];
-    uint32_t reserved=((uint32_t)payload[4u]<<24u)|((uint32_t)payload[5u]<<16u)|
-                      ((uint32_t)payload[6u]<<8u)|payload[7u];
-    if(reserved||value>FG_NATIVE_CONTEXT||
+    uint32_t reserved=((uint32_t)payload[5u]<<16u)|((uint32_t)payload[6u]<<8u)|
+                      payload[7u];
+    if(reserved||payload[4u]>=FG_DECODE_BATCH_MAX_SLOTS||value>FG_NATIVE_CONTEXT||
        (uint64_t)FG_OUTPUT_HISTORY_HEADER_BYTES+(uint64_t)value*4u!=bytes)
         return false;
     *count=value;return true;
@@ -2265,6 +2631,7 @@ static fg_status handle_output_history(fg_fabric *fabric,fg_output_executor *out
     if(count&&!tokens){fg_error_set(err,FG_ERR_OOM,"allocate output history decode");return FG_ERR_OOM;}
     fg_output_history history={0};fg_status status=fg_output_history_decode(
         &history,tokens,count,payload,bytes,err);
+    if(status==FG_OK)fg_output_set_session(output,history.session_slot);
     if(status==FG_OK)status=fg_output_history_reset(output,history.tokens,history.count,err);
     if(status==FG_OK)status=fg_fabric_send(fabric,peer,FG_FABRIC_CONTROL,
         FG_MSG_OUTPUT_HISTORY_ACK,fg_frame_request_id(header),fg_frame_sequence(header),0u,
@@ -2273,20 +2640,26 @@ static fg_status handle_output_history(fg_fabric *fabric,fg_output_executor *out
 }
 
 static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_expert_executor *expert,fg_output_executor *output,fg_output_slice *output_slice,fg_output_hc *output_hc,uint32_t output_split_ways,const fg_ngram_resident *ngram,fg_model *model,const fg_manifest *manifest,const char *directory,uint32_t self,fg_error *err){
-    uint32_t control_capacity=FG_LAYER_WORK_FOUR_AXIS_BASE_BYTES;if(control_capacity<FG_OUTPUT_WORK_BYTES)control_capacity=FG_OUTPUT_WORK_BYTES;if(control_capacity<FG_OUTPUT_HISTORY_MAX_BYTES)control_capacity=FG_OUTPUT_HISTORY_MAX_BYTES;if(control_capacity<FG_DECODE_WORK_BYTES)control_capacity=FG_DECODE_WORK_BYTES;if(control_capacity<FG_QSA_BLOCK_WORK_MAX_BYTES)control_capacity=FG_QSA_BLOCK_WORK_MAX_BYTES;uint8_t *control=malloc(control_capacity);prefill_worker_buffers prefill={0};qsa_owner_runtime qsa={0};layer_work_context layer_work={0};fg_vk_tensor *hyper=NULL;fg_output_handoff *handoff=NULL;
+    uint32_t control_capacity=FG_LAYER_WORK_FOUR_AXIS_BASE_BYTES;if(control_capacity<FG_OUTPUT_WORK_BYTES)control_capacity=FG_OUTPUT_WORK_BYTES;if(control_capacity<FG_OUTPUT_HISTORY_MAX_BYTES)control_capacity=FG_OUTPUT_HISTORY_MAX_BYTES;if(control_capacity<FG_DECODE_WORK_BYTES)control_capacity=FG_DECODE_WORK_BYTES;if(control_capacity<FG_QSA_BLOCK_WORK_MAX_BYTES)control_capacity=FG_QSA_BLOCK_WORK_MAX_BYTES;uint8_t *control=malloc(control_capacity);prefill_worker_buffers prefill={0};qsa_owner_runtime qsa={0};layer_work_context layer_work={0};depthb_owner_runtime depthb={0};fg_vk_tensor *hyper=NULL;fg_output_handoff *handoff=NULL;
     /* Pre-allocate expert work buffers — eliminates ~200 KB malloc/free per expert request */
     fg_expert_result *ew_result=malloc(sizeof(*ew_result));uint8_t *ew_wire=malloc(FG_EXPERT_RESULT_SINGLE_BYTES);
     if(!control||!ew_result||!ew_wire){free(ew_wire);free(ew_result);free(control);fg_error_set(err,FG_ERR_OOM,"allocate rank worker buffers");return FG_ERR_OOM;}
     fg_status status=prefill_worker_buffers_create(&prefill,manifest->prefill_microbatch,
                                                    false,err);if(status==FG_OK)status=qsa_owner_runtime_create(&qsa,manifest,self,err);if(status==FG_OK&&owner)status=layer_work_context_create(&layer_work,model,owner,manifest,expert,&prefill,err);layer_work.qsa_owner=&qsa;layer_work.output_hc=output_hc;layer_work.output_split_ways=output_split_ways;
+    depthb.owner=owner;depthb.manifest=manifest;depthb.directory=directory;depthb.self=self;
+    depthb.qsa=&qsa;depthb.qsa_layers=owned_qsa_layers(manifest,self);
+    depthb.logical_context=manifest->session.logical_context_tokens;
     uint32_t worker_qsa_layers=owned_qsa_layers(manifest,self);
     (void)worker_qsa_layers;
     if(status==FG_OK&&output)status=fg_vk_tensor_create(fg_model_vk(model),FG_HYPER_WIDTH*4u,&hyper,err);
     if(status==FG_OK&&output){handoff=calloc(1,sizeof(*handoff));if(!handoff){fg_error_set(err,FG_ERR_OOM,"allocate output handoff state");status=FG_ERR_OOM;}}
     if(status==FG_OK)status=token_profile_prepare(fg_model_vk(model),err);
     uint8_t *bulk_receive=prefill.receive;uint32_t bulk_capacity=prefill.receive_capacity;if(qsa.enabled&&qsa.receive_capacity>bulk_capacity){bulk_receive=qsa.receive_wire;bulk_capacity=qsa.receive_capacity;}if(layer_work.work_capacity>bulk_capacity){bulk_receive=layer_work.work_wire;bulk_capacity=layer_work.work_capacity;}uint64_t session_id=0;
-    while(status==FG_OK){uint32_t peer=0,bytes=0;fg_frame_header header;fg_fabric_class ready_class;fg_fabric_recv_timing receive_timing={0};receive_timing.poll_start_ns=critical_ns();int32_t split_wait_ms=worker_output_split_pending(handoff)?worker_output_split_remaining_ms(handoff):-1;if(split_wait_ms==0){status=worker_output_split_timeout(handoff,self,err);break;}status=split_wait_ms>0?fg_fabric_wait_ready_timeout(fabric,3u,split_wait_ms,&peer,&ready_class,err):fg_fabric_wait_ready(fabric,3u,&peer,&ready_class,err);if(status==FG_ERR_LIMIT){if(worker_output_split_pending(handoff)&&worker_output_split_remaining_ms(handoff)==0)status=worker_output_split_timeout(handoff,self,err);else status=FG_OK;}receive_timing.ready_ns=critical_ns();if(status!=FG_OK)break;if(ready_class==FG_FABRIC_BULK){status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_BULK,&header,bulk_receive,bulk_capacity,&bytes,&receive_timing,err);fg_message_type type=status==FG_OK?fg_frame_type(&header):0;if(status==FG_OK&&type==FG_MSG_PREFILL_LAYER_WORK)status=handle_prefill_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_PREFILL_WORK)status=handle_prefill_expert_work(fabric,expert,manifest,self,session_id,peer,&header,bulk_receive,bytes,&prefill,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_APPEND)status=handle_qsa_page_append(&qsa,manifest,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_BARRIER)status=handle_qsa_page_barrier(fabric,&qsa,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_FETCH)status=handle_qsa_page_fetch(fabric,&qsa,owner,manifest,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_GDN_STATE_FETCH)status=handle_gdn_state_fetch(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_DECODE_LAYER_WORK)status=handle_decode_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_HIDDEN)status=handle_output_hidden(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,bulk_receive,bytes,hyper,handoff,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_SLICE_HIDDEN)status=handle_output_slice_hidden(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,bulk_receive,bytes,hyper,handoff,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported bulk message %u",self,type);status=FG_ERR_FORMAT;}continue;}status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_CONTROL,&header,control,control_capacity,&bytes,&receive_timing,err);if(status!=FG_OK)break;fg_message_type type=fg_frame_type(&header);if(type==FG_MSG_DECODE_WORK){if(!session_id||fg_frame_request_id(&header)!=session_id){fg_error_set(err,FG_ERR_MISMATCH,"stale expert work request");status=FG_ERR_MISMATCH;}else status=handle_expert_work(fabric,expert,fg_model_vk(model),self,peer,&header,control,bytes,&receive_timing,ew_result,ew_wire,err);    }else if(type==FG_MSG_NGRAM_WORK)status=handle_ngram_work(fabric,ngram,FG_FABRIC_BULK,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_SESSION_BEGIN){fg_output_handoff_reset(handoff);status=begin_session(fabric,manifest,directory,&qsa,owner,self,peer,&header,control,bytes,&session_id,output,err);}else if(type==FG_MSG_OUTPUT_HISTORY)status=handle_output_history(fabric,output,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_OUTPUT_WORK)status=handle_output_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,err);else if(type==FG_MSG_OUTPUT_CONFIG)status=handle_output_config(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,control,bytes,hyper,handoff,err);else if(type==FG_MSG_OUTPUT_PARTIAL)status=handle_output_partial(fabric,output,output_slice,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,handoff,err);else{fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported control message %u",self,type);status=FG_ERR_FORMAT;}}
-    fg_vk_tensor_destroy(hyper);free(handoff);layer_work_context_destroy(&layer_work);qsa_owner_runtime_destroy(&qsa);
+    while(status==FG_OK){uint32_t peer=0,bytes=0;fg_frame_header header;fg_fabric_class ready_class;fg_fabric_recv_timing receive_timing={0};receive_timing.poll_start_ns=critical_ns();int32_t split_wait_ms=worker_output_split_pending(handoff)?worker_output_split_remaining_ms(handoff):-1;if(split_wait_ms==0){status=worker_output_split_timeout(handoff,self,err);break;}status=split_wait_ms>0?fg_fabric_wait_ready_timeout(fabric,3u,split_wait_ms,&peer,&ready_class,err):fg_fabric_wait_ready(fabric,3u,&peer,&ready_class,err);if(status==FG_ERR_LIMIT){if(worker_output_split_pending(handoff)&&worker_output_split_remaining_ms(handoff)==0)status=worker_output_split_timeout(handoff,self,err);else status=FG_OK;}receive_timing.ready_ns=critical_ns();if(status!=FG_OK)break;if(ready_class==FG_FABRIC_BULK){status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_BULK,&header,bulk_receive,bulk_capacity,&bytes,&receive_timing,err);fg_message_type type=status==FG_OK?fg_frame_type(&header):0;if(status==FG_OK&&type==FG_MSG_PREFILL_LAYER_WORK)status=handle_prefill_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_PREFILL_WORK)status=handle_prefill_expert_work(fabric,expert,manifest,self,session_id,peer,&header,bulk_receive,bytes,&prefill,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_APPEND)status=handle_qsa_page_append(&qsa,manifest,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_BARRIER)status=handle_qsa_page_barrier(fabric,&qsa,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_FETCH)status=handle_qsa_page_fetch(fabric,&qsa,owner,manifest,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_GDN_STATE_FETCH)status=handle_gdn_state_fetch(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_DECODE_LAYER_WORK)status=handle_decode_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_DECODE_BATCH_WORK)status=handle_decode_batch_work(fabric,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,&depthb,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_HIDDEN)status=handle_output_hidden(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,bulk_receive,bytes,hyper,handoff,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_SLICE_HIDDEN)status=handle_output_slice_hidden(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,bulk_receive,bytes,hyper,handoff,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported bulk message %u",self,type);status=FG_ERR_FORMAT;}continue;}status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_CONTROL,&header,control,control_capacity,&bytes,&receive_timing,err);if(status!=FG_OK)break;fg_message_type type=fg_frame_type(&header);if(type==FG_MSG_DECODE_WORK){if(!session_id||fg_frame_request_id(&header)!=session_id){fg_error_set(err,FG_ERR_MISMATCH,"stale expert work request");status=FG_ERR_MISMATCH;}else status=handle_expert_work(fabric,expert,fg_model_vk(model),self,peer,&header,control,bytes,&receive_timing,ew_result,ew_wire,err);    }else if(type==FG_MSG_NGRAM_WORK)status=handle_ngram_work(fabric,ngram,FG_FABRIC_BULK,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_SESSION_BEGIN){fg_output_handoff_reset(handoff);status=begin_session(fabric,manifest,directory,&qsa,owner,self,peer,&header,control,bytes,&session_id,output,&depthb,err);}else if(type==FG_MSG_SESSION_PREPARE||type==FG_MSG_SESSION_COMMIT||type==FG_MSG_SESSION_RESTORE)status=handle_owner_session_transaction(fabric,&depthb,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_OUTPUT_HISTORY)status=handle_output_history(fabric,output,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_OUTPUT_WORK)status=handle_output_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,err);else if(type==FG_MSG_OUTPUT_CONFIG)status=handle_output_config(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,control,bytes,hyper,handoff,err);else if(type==FG_MSG_OUTPUT_PARTIAL)status=handle_output_partial(fabric,output,output_slice,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,handoff,err);else{fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported control message %u",self,type);status=FG_ERR_FORMAT;}}
+    fg_vk_tensor_destroy(hyper);free(handoff);
+    for(uint32_t slot=0;slot<FG_OWNER_SESSION_MAX;slot++)
+        if(depthb.checkpoint_valid[slot])fg_owner_session_snapshot_release(&depthb.checkpoint[slot]);
+    layer_work_context_destroy(&layer_work);qsa_owner_runtime_destroy(&qsa);
     prefill_worker_buffers_destroy(&prefill);free(ew_wire);free(ew_result);free(control);return status;
 }
 
@@ -2310,7 +2683,7 @@ fg_status fg_rank_main(const char *path,uint32_t rank,fg_error *err){
         status=fg_model_open(&model,manifest,directory,rank,err);
         if(status==FG_OK)status=fg_expert_executor_create(&expert,model,err);
         if(status==FG_OK&&(bench||worker_owner_enabled()))
-            status=fg_owner_executor_create_worker(&owner,model,err);
+            status=fg_owner_executor_create_worker_slots(&owner,model,FG_OWNER_SESSION_MAX,err);
         if(status==FG_OK&&bench){
             status=run_block_bench(model,expert,owner,manifest,err);
             fg_owner_executor_destroy(owner);
@@ -2452,7 +2825,7 @@ static fg_status qsa_page_transport_ensure(qsa_page_transport *transport,fg_erro
 }
 
 #define FG_PREFILL_FRAMES 8u
-typedef struct fg_coordinator {const fg_manifest *manifest;fg_runtime_options options;fg_session_identity identity;fg_model *model;fg_expert_executor *expert;fg_owner_executor *owner;fg_fabric *fabric;fg_ngram_store *ngram;fg_tokenizer *tokenizer;prefill_worker_buffers prefill_expert[FG_PREFILL_FRAMES];prefill_layer_buffers prefill_layer[FG_PREFILL_FRAMES];qsa_page_transport qsa_pages;uint64_t session_id;uint8_t *async_recv_payloads[FG_GROUP_SIZE];const char *directory;atomic_uint transport_state;fg_sampler_config sampler;fg_sampler_state sampler_state;bool ring_prefill;fg_vk_tensor *ring_output[FG_PREFILL_FRAMES];bool ring_decode;uint8_t *decode_work_wire,*decode_result_wire;fg_layer_work decode_work;fg_layer_result decode_result;fg_output_slice *output_slice;char ledger[FG_LEDGER_LINE_MAX];} fg_coordinator;
+typedef struct fg_coordinator {const fg_manifest *manifest;fg_runtime_options options;fg_session_identity identity;fg_model *model;fg_expert_executor *expert;fg_owner_executor *owner;fg_fabric *fabric;fg_ngram_store *ngram;fg_tokenizer *tokenizer;prefill_worker_buffers prefill_expert[FG_PREFILL_FRAMES];prefill_layer_buffers prefill_layer[FG_PREFILL_FRAMES];qsa_page_transport qsa_pages;uint64_t session_id;uint8_t *async_recv_payloads[FG_GROUP_SIZE];const char *directory;atomic_uint transport_state;fg_sampler_config sampler;fg_sampler_state sampler_state;bool ring_prefill;fg_vk_tensor *ring_output[FG_PREFILL_FRAMES];bool ring_decode;uint8_t *decode_work_wire,*decode_result_wire;fg_layer_work decode_work;fg_layer_result decode_result;fg_output_slice *output_slice;depthb_owner_runtime depthb;layer_work_context depthb_work;uint32_t depthb_generation;uint32_t output_session;bool depthb_relay_only;bool depthb_restore_pending;char ledger[FG_LEDGER_LINE_MAX];} fg_coordinator;
 
 static uint64_t coordinator_prefill_host_bytes(const prefill_worker_buffers *buffers){
     if(!buffers)return 0;
@@ -3967,6 +4340,7 @@ static fg_status coordinator_output(fg_coordinator *coordinator,uint32_t token_i
         return FG_ERR_OOM;
     }
     work->source_rank=0u;work->destination_rank=4u;work->token_index=token_index;
+    work->session_slot=(uint8_t)coordinator->output_session;
     work->sampler=coordinator->sampler;
     work->uniform=work->sampler.temperature>0.0f?
         fg_sampler_uniform(&coordinator->sampler_state):0.0f;
@@ -4016,6 +4390,7 @@ static fg_status coordinator_output_config(fg_coordinator *coordinator,uint32_t 
             FG_OUTPUT_CONFIG_FLAG_SPLIT;
     fg_output_config config={.source_rank=0u,.destination_rank=4u,
         .flags=flags,
+        .session_slot=(uint8_t)coordinator->output_session,
         .token_index=token_index,.sampler=coordinator->sampler,
         .uniform=coordinator->sampler.temperature>0.0f?
             fg_sampler_uniform(&coordinator->sampler_state):0.0f};
@@ -4271,6 +4646,339 @@ static fg_status coordinator_output_slice_hidden(fg_coordinator *coordinator,uin
     return status;
 }
 
+/* ---------------------------------------------------------------------------
+ * Depth-B coordinator: owner session transactions and the batched ring step.
+ * ------------------------------------------------------------------------- */
+
+/* Apply one owner session operation locally and on every peer, waiting for one
+ * reply per rank.  A partial PREPARE is rolled back best-effort so the fleet
+ * never holds a half-prepared batch. */
+static fg_status coordinator_owner_transaction(fg_coordinator *coordinator,uint8_t operation,
+                                               uint8_t slot,fg_error *err){
+    depthb_owner_runtime *depthb=&coordinator->depthb;
+    if(!depthb->owner){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"depth-B owner state is unavailable");
+        return FG_ERR_UNAVAILABLE;
+    }
+    uint64_t request=coordinator->session_id;
+    uint64_t generation=++coordinator->depthb_generation;
+    if(!request||!generation){
+        fg_error_set(err,FG_ERR_MISMATCH,"depth-B session transaction nonce is invalid");
+        return FG_ERR_MISMATCH;
+    }
+    fg_status status=FG_OK;
+    switch(operation){
+        case FG_OWNER_SESSION_PREPARE: status=depthb_owner_prepare(depthb,slot,err);break;
+        case FG_OWNER_SESSION_COMMIT: status=depthb_owner_commit(depthb,slot,err);break;
+        case FG_OWNER_SESSION_RESTORE: status=depthb_owner_restore(depthb,slot,err);break;
+        default:
+            fg_error_set(err,FG_ERR_ARGUMENT,"invalid depth-B transaction op %u",operation);
+            return FG_ERR_ARGUMENT;
+    }
+    if(status!=FG_OK)return status;
+    fg_owner_session_control control={
+        .version=FG_OWNER_SESSION_CONTROL_VERSION,
+        .operation=operation,
+        .position_mode=(fg_position_mode)coordinator->manifest->session.position_mode,
+        .state_slot=slot,
+        .session_nonce=request,.generation=generation,
+        .logical_context_tokens=coordinator->options.logical_context_tokens,
+        .gpu_index_tokens=coordinator->options.gpu_index_tokens,
+        .qsa_hot_tokens=coordinator->options.qsa_hot_tokens,
+        .qsa_page_cache_bytes=coordinator->options.qsa_page_cache_bytes};
+    uint32_t local_tokens[FG_LAYER_COUNT];
+    if(fg_owner_qsa_frontier(depthb->owner,slot,local_tokens)!=FG_OK)
+        memset(local_tokens,0,sizeof(local_tokens));
+    depthb_transaction_digest(control.frontier_sha256,request,slot,operation,local_tokens);
+    fg_message_type request_type=operation==FG_OWNER_SESSION_PREPARE?FG_MSG_SESSION_PREPARE:
+        operation==FG_OWNER_SESSION_COMMIT?FG_MSG_SESSION_COMMIT:FG_MSG_SESSION_RESTORE;
+    fg_message_type reply_type=operation==FG_OWNER_SESSION_PREPARE?FG_MSG_SESSION_PREPARED:
+        operation==FG_OWNER_SESSION_COMMIT?FG_MSG_SESSION_COMMITTED:FG_MSG_SESSION_RESTORED;
+    for(uint32_t peer=1;peer<FG_RANK_COUNT;peer++){
+        uint8_t wire[FG_OWNER_SESSION_CONTROL_BYTES];
+        control.rank=(uint8_t)peer;
+        memcpy(control.identity_sha256,coordinator->identity.identity_sha256,32u);
+        memcpy(control.state_format_sha256,
+               coordinator->manifest->session.rank_state_format_sha256[peer],32u);
+        fg_status encode=fg_owner_session_control_encode(wire,&control,err);
+        if(encode!=FG_OK){status=encode;break;}
+        status=fg_fabric_send(coordinator->fabric,peer,FG_FABRIC_CONTROL,request_type,
+                              request,slot,0u,wire,sizeof(wire),err);
+        if(status!=FG_OK)break;
+    }
+    if(status==FG_OK)for(uint32_t peer=1;peer<FG_RANK_COUNT;peer++){
+        uint8_t wire[FG_OWNER_SESSION_CONTROL_BYTES];fg_frame_header header;uint32_t bytes=0;
+        status=fg_fabric_recv(coordinator->fabric,peer,FG_FABRIC_CONTROL,&header,wire,
+                              sizeof(wire),&bytes,err);
+        if(status!=FG_OK)break;
+        if(fg_frame_type(&header)!=reply_type||
+           fg_frame_request_id(&header)!=request||
+           fg_frame_sequence(&header)!=slot||bytes!=sizeof(wire)){
+            fg_error_set(err,FG_ERR_MISMATCH,
+                         "owner session transaction reply mismatch from rank %u",peer);
+            status=FG_ERR_MISMATCH;break;
+        }
+        fg_owner_session_control reply;
+        status=fg_owner_session_control_decode(&reply,wire,bytes,err);
+        if(status!=FG_OK)break;
+        if(reply.operation!=(uint8_t)(operation+1u)||reply.rank!=peer||
+           reply.session_nonce!=request||reply.state_slot!=slot||
+           reply.generation!=generation){
+            fg_error_set(err,FG_ERR_MISMATCH,
+                         "owner session transaction reply identity mismatch from rank %u",peer);
+            status=FG_ERR_MISMATCH;break;
+        }
+    }
+    if(status!=FG_OK&&operation==FG_OWNER_SESSION_PREPARE){
+        fg_error ignored={0};
+        coordinator_owner_transaction(coordinator,FG_OWNER_SESSION_RESTORE,slot,&ignored);
+    }
+    return status;
+}
+
+typedef struct depthb_batch_context {
+    fg_coordinator *coordinator;
+    const int32_t *history[FG_DECODE_BATCH_MAX_SLOTS];
+    size_t history_count[FG_DECODE_BATCH_MAX_SLOTS];
+} depthb_batch_context;
+
+static fg_status depthb_batch_prepare_hook(void *context,uint64_t sequence_id,
+                                           uint32_t state_slot,fg_error *err){
+    (void)sequence_id;
+    depthb_batch_context *batch=context;
+    return coordinator_owner_transaction(batch->coordinator,FG_OWNER_SESSION_PREPARE,
+                                         (uint8_t)state_slot,err);
+}
+static fg_status depthb_batch_commit_hook(void *context,uint64_t sequence_id,
+                                          uint32_t state_slot,fg_error *err){
+    (void)sequence_id;
+    depthb_batch_context *batch=context;
+    return coordinator_owner_transaction(batch->coordinator,FG_OWNER_SESSION_COMMIT,
+                                         (uint8_t)state_slot,err);
+}
+static fg_status depthb_batch_restore_hook(void *context,uint64_t sequence_id,
+                                           uint32_t state_slot,fg_error *err){
+    (void)sequence_id;
+    depthb_batch_context *batch=context;
+    return coordinator_owner_transaction(batch->coordinator,FG_OWNER_SESSION_RESTORE,
+                                         (uint8_t)state_slot,err);
+}
+
+/* Assemble, transact and sample one B>=2 ring step.  The batch table holds the
+ * host-side frontiers; the owner sessions hold the device state.  All state
+ * changes are committed or rolled back as one transaction. */
+static fg_status coordinator_decode_batch_step(fg_coordinator *coordinator,
+    fg_decode_batch_table *table,const fg_decode_batch_policy *policy,
+    const int32_t *const histories[FG_DECODE_BATCH_MAX_SLOTS],
+    const size_t history_counts[FG_DECODE_BATCH_MAX_SLOTS],uint64_t now,
+    bool inject_abort,fg_decode_batch_step *step,fg_error *err){
+    const fg_manifest *manifest=coordinator->manifest;
+    if(!manifest->layer_owner[0u]){
+        fg_error_set(err,FG_ERR_MISMATCH,"batched ring decode requires a remote first block");
+        return FG_ERR_MISMATCH;
+    }
+    if(table->depth<2u){
+        fg_error_set(err,FG_ERR_ARGUMENT,"batched ring decode requires table depth >= 2");
+        return FG_ERR_ARGUMENT;
+    }
+    if(fg_sampler_penalties_active(&coordinator->sampler)){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "depth-B batch decode is restricted to penalty-free sampler configs");
+        return FG_ERR_UNAVAILABLE;
+    }
+    fg_vk_context *vk=fg_model_vk(coordinator->model);
+    fg_vk_tensor *embedding=fg_model_tensor(coordinator->model,"token_embd.weight");
+    if(!embedding){
+        fg_error_set(err,FG_ERR_MISMATCH,"coordinator is missing token_embd.weight");
+        return FG_ERR_MISMATCH;
+    }
+    depthb_batch_context batch_ctx={.coordinator=coordinator};
+    for(uint32_t slot=0;slot<FG_DECODE_BATCH_MAX_SLOTS;slot++){
+        batch_ctx.history[slot]=histories?histories[slot]:NULL;
+        batch_ctx.history_count[slot]=history_counts?history_counts[slot]:0u;
+    }
+    const fg_decode_batch_ops ops={
+        .prepare=depthb_batch_prepare_hook,
+        .commit=depthb_batch_commit_hook,
+        .restore=depthb_batch_restore_hook,
+        .context=&batch_ctx};
+    fg_status status=fg_decode_batch_step_begin(table,policy,&ops,now,step,err);
+    if(status!=FG_OK)return status;
+    layer_work_context *work_ctx=&coordinator->depthb_work;
+    fg_decode_batch_work *work=&work_ctx->batch_work;
+    memset(work,0,sizeof(*work));
+    bool ngram_all=true,ngram_any=false;
+    fg_vk_tensor *ngram_view[FG_DECODE_BATCH_MAX_SLOTS]={NULL};
+    double t_embed0=0.0,t_ngram0=0.0;
+    for(uint32_t slot=0;status==FG_OK&&slot<step->batch.slot_count;slot++){
+        fg_decode_batch_slot *entry=&step->batch.slots[slot];
+        fg_decode_batch_sequence *sequence=&table->sequences[entry->sequence];
+        const int32_t *history=histories[slot];
+        size_t count=history_counts[slot];
+        if(!history||!count||(uint32_t)history[count-1u]>=FG_Q38_VOCAB_SIZE){
+            fg_error_set(err,FG_ERR_ARGUMENT,
+                         "decode batch slot %u has no valid token history",slot);
+            status=FG_ERR_ARGUMENT;break;
+        }
+        fg_vk_tensor *input=depthb_slot_input(coordinator->owner,entry->state_slot);
+        if(!input){
+            fg_error_set(err,FG_ERR_UNAVAILABLE,
+                         "decode batch slot %u has no session input storage",slot);
+            status=FG_ERR_UNAVAILABLE;break;
+        }
+        if(t_embed0==0.0)t_embed0=dispatch_ts();
+        status=fg_vk_embedding_q8_0(vk,input,embedding,(uint32_t)history[count-1u],
+            FG_HIDDEN_SIZE,FG_Q38_VOCAB_SIZE,FG_Q38_HYPER_COUNT,err);
+        if(status!=FG_OK)break;
+        status=fg_vk_tensor_read(input,0,work_ctx->batch_hyper+(uint64_t)slot*FG_HYPER_WIDTH,
+                                 (uint64_t)FG_HYPER_WIDTH*4u,err);
+        if(status!=FG_OK)break;
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)
+            if(!isfinite(work_ctx->batch_hyper[(uint64_t)slot*FG_HYPER_WIDTH+i])){
+                fg_error_set(err,FG_ERR_FORMAT,
+                    "decode batch slot %u embedding produced non-finite hidden at %u",
+                    slot,i);
+                status=FG_ERR_FORMAT;break;
+            }
+        if(status!=FG_OK)break;
+        if(t_ngram0==0.0)t_ngram0=dispatch_ts();
+        status=fg_ngram_store_lookup_prefill(coordinator->ngram,history,count,
+            sequence->token_index,1u,&ngram_view[slot],err);
+        if(status!=FG_OK)break;
+        ngram_any=ngram_any||ngram_view[slot]!=NULL;
+        ngram_all=ngram_all&&ngram_view[slot]!=NULL;
+        work->slots[slot].token_index=entry->token_index;
+        work->slots[slot].state_slot=entry->state_slot;
+        for(uint32_t axis=0;axis<4u;axis++)
+            work->slots[slot].position[axis]=entry->position[axis];
+        work->slots[slot].hyper=work_ctx->batch_hyper+(uint64_t)slot*FG_HYPER_WIDTH;
+    }
+    if(status==FG_OK&&ngram_any!=ngram_all){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "decode batch slots disagree on n-gram embedding availability");
+        status=FG_ERR_MISMATCH;
+    }
+    if(status==FG_OK&&ngram_all){
+        for(uint32_t slot=0;slot<step->batch.slot_count;slot++){
+            status=fg_vk_tensor_read(ngram_view[slot],0,
+                work_ctx->batch_ngram+(uint64_t)slot*FG_NGRAM_EMBED_VALUES,
+                (uint64_t)FG_NGRAM_EMBED_VALUES*4u,err);
+            if(status!=FG_OK)break;
+            work->slots[slot].ngram_embedding=
+                work_ctx->batch_ngram+(uint64_t)slot*FG_NGRAM_EMBED_VALUES;
+        }
+    }
+    work->layer=0u;work->source_rank=0u;
+    work->destination_rank=manifest->layer_owner[0u];
+    work->flags=ngram_all?FG_LAYER_WORK_HAS_NGRAM:0u;
+    work->position_mode=FG_POSITION_TEXT;
+    work->slot_count=(uint16_t)step->batch.slot_count;
+    uint32_t wire_bytes=0;
+    if(status==FG_OK)status=fg_decode_batch_work_encode(work_ctx->work_wire,
+        work_ctx->work_capacity,&wire_bytes,manifest->protocol_version,work,err);
+    if(status==FG_OK)status=fg_fabric_send(coordinator->fabric,work->destination_rank,
+        FG_FABRIC_BULK,FG_MSG_DECODE_BATCH_WORK,coordinator->session_id,
+        work->slots[0].token_index*FG_LAYER_COUNT,0,work_ctx->work_wire,wire_bytes,err);
+    double t_sent=t_ngram0==0.0?t_embed0:dispatch_ts();
+    bool have_result=false;
+    while(status==FG_OK&&!have_result){
+        uint32_t peer=0,bytes=0;fg_frame_header header;
+        status=fg_fabric_recv_any(coordinator->fabric,FG_FABRIC_BULK,&peer,&header,
+            work_ctx->work_wire,work_ctx->work_capacity,&bytes,err);
+        if(status!=FG_OK)break;
+        fg_message_type type=fg_frame_type(&header);
+        if(type==FG_MSG_DECODE_BATCH_WORK){
+            /* Rank 0 executes its own block inline. */
+            fg_decode_batch_work incoming;
+            fg_status decode=fg_decode_batch_work_decode(&incoming,manifest->protocol_version,
+                work_ctx->batch_hyper,(uint64_t)FG_DECODE_BATCH_MAX_SLOTS*FG_HYPER_WIDTH,
+                work_ctx->batch_ngram,(uint64_t)FG_DECODE_BATCH_MAX_SLOTS*FG_NGRAM_EMBED_VALUES,
+                work_ctx->work_wire,bytes,err);
+            if(decode!=FG_OK){status=decode;break;}
+            if(incoming.destination_rank!=0u||peer!=incoming.source_rank){
+                fg_error_set(err,FG_ERR_MISMATCH,"misrouted decode batch work at rank 0");
+                status=FG_ERR_MISMATCH;break;
+            }
+            /* handle_decode_batch_work re-decodes the payload; give it the
+             * received bytes through the shared work wire.  It overwrites the
+             * assembly buffers only after the send above completed. */
+            fg_decode_batch_work saved=*work;
+            status=handle_decode_batch_work(coordinator->fabric,manifest,0u,
+                coordinator->session_id,peer,&header,work_ctx->work_wire,bytes,
+                work_ctx,&coordinator->depthb,err);
+            (void)saved;
+            if(status!=FG_OK)break;
+        }else if(type==FG_MSG_DECODE_BATCH_RESULT){
+            fg_decode_batch_result *result=&work_ctx->batch_result;
+            fg_status decode=fg_decode_batch_result_decode(result,work_ctx->work_wire,bytes,err);
+            if(decode!=FG_OK){status=decode;break;}
+            if(result->destination_rank!=0u||result->layer!=FG_LAYER_COUNT-1u||
+               result->source_rank!=manifest->layer_owner[FG_LAYER_COUNT-1u]||
+               result->source_rank!=peer||
+               fg_frame_request_id(&header)!=coordinator->session_id||
+               result->slot_count!=work->slot_count||
+               fg_frame_sequence(&header)!=
+                   work->slots[0].token_index*FG_LAYER_COUNT+(FG_LAYER_COUNT-1u)){
+                fg_error_set(err,FG_ERR_MISMATCH,"misrouted decode batch result");
+                status=FG_ERR_MISMATCH;break;
+            }
+            have_result=true;
+        }else{
+            fg_error_set(err,FG_ERR_MISMATCH,
+                         "unexpected batch decode message type %u",type);
+            status=FG_ERR_MISMATCH;break;
+        }
+    }
+    /* Sample each slot through the rank-0 relay (the batch path never uses the
+     * direct 4-way handoff: its per-token messages carry no session slot). */
+    if(status==FG_OK&&inject_abort){
+        /* Fault injection for the gate: the ring already advanced every owner
+         * session, so restoring proves the transaction rolls the whole batch
+         * back and lets the same step retry. */
+        status=fg_decode_batch_step_restore(table,step,err);
+        if(err&&status==FG_OK)
+            fg_error_set(err,FG_ERR_INTERRUPTED,"injected decode batch abort");
+        return status==FG_OK?FG_ERR_INTERRUPTED:status;
+    }
+    for(uint32_t slot=0;status==FG_OK&&slot<step->batch.slot_count;slot++){
+        fg_decode_batch_slot *entry=&step->batch.slots[slot];
+        fg_decode_batch_sequence *sequence=&table->sequences[entry->sequence];
+        fg_vk_tensor *input=depthb_slot_input(coordinator->owner,entry->state_slot);
+        if(!input){
+            fg_error_set(err,FG_ERR_UNAVAILABLE,"decode batch slot %u lost its input",
+                         slot);
+            status=FG_ERR_UNAVAILABLE;break;
+        }
+        status=fg_owner_set_active_session(coordinator->owner,entry->state_slot,err);
+        if(status!=FG_OK)break;
+        status=fg_vk_tensor_write(input,0,work_ctx->batch_result.slots[slot].hyper,
+                                  (uint64_t)FG_HYPER_WIDTH*4u,err);
+        if(status!=FG_OK)break;
+        coordinator->sampler_state=sequence->sampler;
+        coordinator->output_session=entry->state_slot;
+        uint32_t next=0;float logit=0.0f;
+        status=coordinator_output(coordinator,entry->token_index,input,&next,&logit,err);
+        if(status!=FG_OK)break;
+        fg_decode_batch_outcome outcome={0};
+        outcome.next_token=next;
+        outcome.logit=logit;
+        for(uint32_t axis=0;axis<4u;axis++)
+            outcome.position[axis]=sequence->position[axis]+1u;
+        for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++)
+            if((layer&3u)==3u)outcome.qsa_records[layer]=sequence->token_index+1u;
+        outcome.sampler=coordinator->sampler_state;
+        status=fg_decode_batch_step_advance(table,step,slot,&outcome,err);
+    }
+    if(status==FG_OK)status=fg_decode_batch_step_commit(table,step,err);
+    else{
+        fg_error rollback_error={0};
+        fg_status rollback=fg_decode_batch_step_restore(table,step,&rollback_error);
+        if(rollback!=FG_OK&&err)*err=rollback_error;
+    }
+    (void)t_embed0;(void)t_sent;(void)t_ngram0;
+    return status;
+}
+
 static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
     const int32_t *history,size_t history_count,uint32_t token_index,
     uint32_t position,uint32_t *next_token,float *logit,fg_error *err){
@@ -4295,7 +5003,7 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
         fg_error_set(err,FG_ERR_MISMATCH,"coordinator ring decode input storage is unavailable");
         return FG_ERR_MISMATCH;
     }
-    bool direct=decode_direct_output_eligible(manifest);
+    bool direct=decode_direct_output_eligible(manifest)&&!coordinator->depthb_relay_only;
     bool trace=decode_ring_trace_enabled();double t0=trace?dispatch_ts():0.0;
     double t_embed=0.0,t_ngram=0.0;
     fg_vk_tensor *ngram_view=NULL;
@@ -4596,7 +5304,12 @@ static fg_status coordinator_decode_token(fg_coordinator *coordinator,const int3
         position,next_token,logit,err);
 }
 
-static void coordinator_close(fg_coordinator *coordinator){if(!coordinator)return;free(coordinator->decode_result_wire);free(coordinator->decode_work_wire);for(uint32_t i=0;i<FG_GROUP_SIZE;i++)free(coordinator->async_recv_payloads[i]);qsa_page_transport_destroy(&coordinator->qsa_pages);for(uint32_t slot=0;slot<FG_PREFILL_FRAMES;slot++){fg_vk_tensor_destroy(coordinator->ring_output[slot]);prefill_layer_buffers_destroy(&coordinator->prefill_layer[slot]);prefill_worker_buffers_destroy(&coordinator->prefill_expert[slot]);}fg_ngram_store_close(coordinator->ngram);fg_tokenizer_close(coordinator->tokenizer);fg_fabric_close(coordinator->fabric);fg_output_slice_destroy(coordinator->output_slice);fg_owner_executor_destroy(coordinator->owner);fg_expert_executor_destroy(coordinator->expert);fg_model_close(coordinator->model);memset(coordinator,0,sizeof(*coordinator));}
+static void coordinator_close(fg_coordinator *coordinator){if(!coordinator)return;
+    for(uint32_t slot=0;slot<FG_OWNER_SESSION_MAX;slot++)
+        if(coordinator->depthb.checkpoint_valid[slot])
+            fg_owner_session_snapshot_release(&coordinator->depthb.checkpoint[slot]);
+    layer_work_context_destroy(&coordinator->depthb_work);
+    free(coordinator->decode_result_wire);free(coordinator->decode_work_wire);for(uint32_t i=0;i<FG_GROUP_SIZE;i++)free(coordinator->async_recv_payloads[i]);qsa_page_transport_destroy(&coordinator->qsa_pages);for(uint32_t slot=0;slot<FG_PREFILL_FRAMES;slot++){fg_vk_tensor_destroy(coordinator->ring_output[slot]);prefill_layer_buffers_destroy(&coordinator->prefill_layer[slot]);prefill_worker_buffers_destroy(&coordinator->prefill_expert[slot]);}fg_ngram_store_close(coordinator->ngram);fg_tokenizer_close(coordinator->tokenizer);fg_fabric_close(coordinator->fabric);fg_output_slice_destroy(coordinator->output_slice);fg_owner_executor_destroy(coordinator->owner);fg_expert_executor_destroy(coordinator->expert);fg_model_close(coordinator->model);memset(coordinator,0,sizeof(*coordinator));}
 
 /* The coordinator executes its own block's QSA layers in the ring.  A
  * state-backed mirror keeps those pages recoverable after cache eviction
@@ -4655,7 +5368,7 @@ static fg_status coordinator_output_split_open(fg_coordinator *coordinator,fg_er
     return status;
 }
 
-static fg_status coordinator_open(fg_coordinator *coordinator,const fg_manifest *manifest,const char *directory,const fg_runtime_options *options,fg_error *err){memset(coordinator,0,sizeof(*coordinator));coordinator->manifest=manifest;coordinator->options=*options;fg_status status=fg_session_identity_from_manifest(manifest,&coordinator->identity,err);if(status==FG_OK&&manifest->protocol_version<6u){fg_error_set(err,FG_ERR_MISMATCH,"QSA page ownership requires protocol version 6");status=FG_ERR_MISMATCH;}if(status==FG_OK)status=fg_model_open_coordinator(&coordinator->model,manifest,directory,0u,fg_runtime_ring_enabled(),err);if(status==FG_OK)status=coordinator_output_split_open(coordinator,err);if(status==FG_OK)status=fg_owner_executor_create(&coordinator->owner,coordinator->model,err);if(status==FG_OK)status=fg_expert_executor_create(&coordinator->expert,coordinator->model,err);uint32_t cache_page_count=coordinator_qsa_cache_pages(manifest,options);if(status==FG_OK&&!cache_page_count){fg_error_set(err,FG_ERR_LIMIT,"QSA record cache has no capacity");status=FG_ERR_LIMIT;}if(status==FG_OK)status=coordinator_open_qsa(coordinator,directory,options->logical_context_tokens,cache_page_count,err);if(status==FG_OK)status=fg_tokenizer_open(&coordinator->tokenizer,directory,manifest,err);if(status==FG_OK)status=fg_tokenizer_validate_qwen38(coordinator->tokenizer,err);const fg_tensor_record *ngram_record=NULL;for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++)if(manifest->tensors[i].kind==FG_TENSOR_NGRAM){if(ngram_record){fg_error_set(err,FG_ERR_MISMATCH,"multiple n-gram tensors in deployment manifest");status=FG_ERR_MISMATCH;}else ngram_record=&manifest->tensors[i];}char ngram_path[1200];if(status==FG_OK&&!ngram_record){fg_error_set(err,FG_ERR_MISMATCH,"deployment manifest has no n-gram tensor");status=FG_ERR_MISMATCH;}if(status==FG_OK&&snprintf(ngram_path,sizeof(ngram_path),"%s/ngram.iq4nl",directory)>=(int)sizeof(ngram_path)){fg_error_set(err,FG_ERR_LIMIT,"n-gram path is too long");status=FG_ERR_LIMIT;}uint32_t ngram_store_tokens=manifest->prefill_microbatch<=FG_NGRAM_PREFILL_MAX_TOKENS/FG_PREFILL_FRAMES?FG_PREFILL_FRAMES*manifest->prefill_microbatch:FG_NGRAM_PREFILL_MAX_TOKENS;if(status==FG_OK)status=fg_ngram_store_open(&coordinator->ngram,fg_model_vk(coordinator->model),ngram_path,ngram_record->bytes,ngram_store_tokens,err);
+static fg_status coordinator_open(fg_coordinator *coordinator,const fg_manifest *manifest,const char *directory,const fg_runtime_options *options,fg_error *err){memset(coordinator,0,sizeof(*coordinator));coordinator->manifest=manifest;coordinator->options=*options;fg_status status=fg_session_identity_from_manifest(manifest,&coordinator->identity,err);if(status==FG_OK&&manifest->protocol_version<6u){fg_error_set(err,FG_ERR_MISMATCH,"QSA page ownership requires protocol version 6");status=FG_ERR_MISMATCH;}if(status==FG_OK)status=fg_model_open_coordinator(&coordinator->model,manifest,directory,0u,fg_runtime_ring_enabled(),err);if(status==FG_OK)status=coordinator_output_split_open(coordinator,err);if(status==FG_OK){status=fg_owner_executor_create_slots(&coordinator->owner,coordinator->model,FG_OWNER_SESSION_MAX,err);if(status==FG_OK){coordinator->depthb.owner=coordinator->owner;coordinator->depthb.manifest=manifest;coordinator->depthb.directory=directory;coordinator->depthb.self=0u;coordinator->depthb.qsa_layers=owned_qsa_layers(manifest,0u);coordinator->depthb.logical_context=options->logical_context_tokens;}}if(status==FG_OK)status=fg_expert_executor_create(&coordinator->expert,coordinator->model,err);if(status==FG_OK)status=layer_work_context_create(&coordinator->depthb_work,coordinator->model,coordinator->owner,manifest,coordinator->expert,NULL,err);uint32_t cache_page_count=coordinator_qsa_cache_pages(manifest,options);if(status==FG_OK&&!cache_page_count){fg_error_set(err,FG_ERR_LIMIT,"QSA record cache has no capacity");status=FG_ERR_LIMIT;}if(status==FG_OK)status=coordinator_open_qsa(coordinator,directory,options->logical_context_tokens,cache_page_count,err);if(status==FG_OK)status=fg_tokenizer_open(&coordinator->tokenizer,directory,manifest,err);if(status==FG_OK)status=fg_tokenizer_validate_qwen38(coordinator->tokenizer,err);const fg_tensor_record *ngram_record=NULL;for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++)if(manifest->tensors[i].kind==FG_TENSOR_NGRAM){if(ngram_record){fg_error_set(err,FG_ERR_MISMATCH,"multiple n-gram tensors in deployment manifest");status=FG_ERR_MISMATCH;}else ngram_record=&manifest->tensors[i];}char ngram_path[1200];if(status==FG_OK&&!ngram_record){fg_error_set(err,FG_ERR_MISMATCH,"deployment manifest has no n-gram tensor");status=FG_ERR_MISMATCH;}if(status==FG_OK&&snprintf(ngram_path,sizeof(ngram_path),"%s/ngram.iq4nl",directory)>=(int)sizeof(ngram_path)){fg_error_set(err,FG_ERR_LIMIT,"n-gram path is too long");status=FG_ERR_LIMIT;}uint32_t ngram_store_tokens=manifest->prefill_microbatch<=FG_NGRAM_PREFILL_MAX_TOKENS/FG_PREFILL_FRAMES?FG_PREFILL_FRAMES*manifest->prefill_microbatch:FG_NGRAM_PREFILL_MAX_TOKENS;if(status==FG_OK)status=fg_ngram_store_open(&coordinator->ngram,fg_model_vk(coordinator->model),ngram_path,ngram_record->bytes,ngram_store_tokens,err);
     /* Allocate only coordinator-side asynchronous receive payloads. */
     for(uint32_t i=0;status==FG_OK&&i<FG_GROUP_SIZE;i++){coordinator->async_recv_payloads[i]=malloc(FG_EXPERT_RESULT_SINGLE_BYTES);if(!coordinator->async_recv_payloads[i]){fg_error_set(err,FG_ERR_OOM,"allocate async expert recv buffer %u",i);status=FG_ERR_OOM;}}for(uint32_t slot=0;status==FG_OK&&slot<FG_PREFILL_FRAMES;slot++){status=prefill_worker_buffers_create(&coordinator->prefill_expert[slot],manifest->prefill_microbatch,true,err);if(status==FG_OK)status=prefill_layer_buffers_create(&coordinator->prefill_layer[slot],coordinator->model,manifest->prefill_microbatch,err);if(status==FG_OK&&slot<2u)status=fg_vk_tensor_create(fg_model_vk(coordinator->model),(uint64_t)manifest->prefill_microbatch*FG_HYPER_WIDTH*4u,&coordinator->ring_output[slot],err);}if(status==FG_OK)coordinator->ring_prefill=prefill_ring_requested();if(status==FG_OK)coordinator->ring_decode=coordinator->ring_prefill&&decode_ring_requested();if(status==FG_OK&&coordinator->ring_decode){coordinator->decode_work_wire=malloc(FG_DECODE_LAYER_WORK_MAX_BYTES);coordinator->decode_result_wire=malloc(FG_DECODE_LAYER_RESULT_BYTES);if(!coordinator->decode_work_wire||!coordinator->decode_result_wire){fg_error_set(err,FG_ERR_OOM,"allocate ring decode exchange buffers");status=FG_ERR_OOM;}}if(status==FG_OK)status=fg_fabric_open(&coordinator->fabric,manifest,0u,err);if(status==FG_OK)atomic_init(&coordinator->transport_state,FG_TRANSPORT_READY);if(status==FG_OK)status=qsa_page_transport_create(&coordinator->qsa_pages,coordinator->fabric,&coordinator->transport_state,err);if(status==FG_OK)status=rank_ready(coordinator->fabric,0u,err);if(status==FG_OK)status=token_profile_prepare(fg_model_vk(coordinator->model),err);if(status==FG_OK)coordinator_ledger_report(coordinator);if(status==FG_OK)status=coordinator_begin_session(coordinator,err);if(status==FG_OK)coordinator_memory_report(coordinator);if(status!=FG_OK)coordinator_close(coordinator);coordinator->directory=directory;return status;}
 
@@ -4708,6 +5421,7 @@ static fg_status runtime_reset_state(fg_runtime *runtime,fg_prefix_reset_reason 
     runtime->next_token_valid=false;
     runtime->next_token=0;
     runtime->next_logit=0.0f;
+    runtime->coordinator.output_session=0u;
     runtime->empty_reason=reason;
     free(runtime->rendered_history);
     runtime->rendered_history=NULL;
@@ -4757,12 +5471,15 @@ fg_status fg_runtime_open(fg_runtime **out,const char *path,fg_error *err){
 }
 
 static fg_status sync_output_history(fg_fabric *fabric,uint32_t owner,uint64_t session_id,
-                                     const uint32_t *tokens,uint32_t count,fg_error *err){
+                                     uint32_t session_slot,const uint32_t *tokens,
+                                     uint32_t count,fg_error *err){
     if(!fabric||owner>=FG_RANK_COUNT||!session_id||count>FG_NATIVE_CONTEXT||
+       session_slot>=FG_DECODE_BATCH_MAX_SLOTS||
        (count&&!tokens)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output history sync");return FG_ERR_ARGUMENT;}
     uint8_t *wire=malloc(FG_OUTPUT_HISTORY_MAX_BYTES);
     if(!wire){fg_error_set(err,FG_ERR_OOM,"allocate output history wire");return FG_ERR_OOM;}
-    fg_output_history history={.tokens=tokens,.count=count};uint32_t bytes=0;
+    fg_output_history history={.tokens=tokens,.count=count,
+                               .session_slot=(uint8_t)session_slot};uint32_t bytes=0;
     fg_status status=fg_output_history_encode(wire,FG_OUTPUT_HISTORY_MAX_BYTES,&bytes,&history,err);
     if(status==FG_OK)status=fg_fabric_send(fabric,owner,FG_FABRIC_CONTROL,
         FG_MSG_OUTPUT_HISTORY,session_id,0u,0u,wire,bytes,err);
@@ -4927,7 +5644,8 @@ static fg_status runtime_generate_tokens(
 
     if(status==FG_OK&&fg_sampler_penalties_active(&runtime->sampler))
         status=sync_output_history(runtime->coordinator.fabric,4u,
-            runtime->coordinator.session_id,prompt->data,(uint32_t)prompt->count,err);
+            runtime->coordinator.session_id,runtime->coordinator.output_session,
+            prompt->data,(uint32_t)prompt->count,err);
 
     if(stats){
         stats->prompt_tokens=(uint32_t)prompt->count;
@@ -5896,6 +6614,442 @@ fg_status fg_runtime_generate_vision_continuation(
     free(grid_width);
     free(merged);
     free(embeddings);
+    return status;
+}
+
+/* ---------------------------------------------------------------------------
+ * depth-b-selftest: the executable B=2 parity gate.
+ *
+ * Two canned conversations run each at depth 1 (X and Y alone, in owner
+ * sessions 0 and 1), then interleaved through the B=2 ring from the same
+ * prefilled frontiers.  Per-session greedy token ids, logit bits, final owner
+ * state digests and QSA cursors must match exactly.  One batch step is aborted
+ * after the ring result and retried through the owner transaction, so the
+ * RESTORE rollback is exercised on every run.  This is a test-only CLI
+ * subcommand; no production path constructs a depth-2 table.
+ * ------------------------------------------------------------------------- */
+#define FG_DEPTHB_CAPTURE_MAX 64u
+#define FG_DEPTHB_SEQ_X 1001u
+#define FG_DEPTHB_SEQ_Y 1002u
+
+typedef struct depthb_capture {
+    uint32_t token[FG_DEPTHB_CAPTURE_MAX];
+    uint32_t logit_bits[FG_DEPTHB_CAPTURE_MAX];
+    uint32_t count;
+    uint64_t state_digest;
+    uint32_t qsa_cursor[FG_LAYER_COUNT];
+    bool state_valid,qsa_valid;
+} depthb_capture;
+
+static uint64_t depthb_session_digest(fg_runtime *runtime,uint32_t session,bool *valid){
+    fg_error ignored={0};
+    fg_owner_session_checkpoint checkpoint;
+    if(!runtime||!runtime->coordinator.owner||
+       fg_owner_session_snapshot(runtime->coordinator.owner,session,&checkpoint,&ignored)!=FG_OK){
+        *valid=false;
+        return 0u;
+    }
+    fg_sha256 hash;
+    fg_sha256_init(&hash);
+    for(uint32_t i=0;i<checkpoint.gdn_count;i++)
+        fg_sha256_update(&hash,checkpoint.gdn[i].data,
+                         (size_t)(checkpoint.gdn[i].values*4u));
+    if(checkpoint.ple_data)
+        fg_sha256_update(&hash,checkpoint.ple_data,(size_t)(checkpoint.ple_values*4u));
+    uint8_t digest[32];
+    fg_sha256_final(&hash,digest);
+    fg_owner_session_snapshot_release(&checkpoint);
+    uint64_t value=0u;
+    memcpy(&value,digest,8u);
+    *valid=true;
+    return value;
+}
+
+static void depthb_capture_cursors(fg_runtime *runtime,uint32_t session,
+                                   depthb_capture *capture){
+    capture->qsa_valid=fg_owner_qsa_frontier(runtime->coordinator.owner,session,
+                                             capture->qsa_cursor)==FG_OK;
+}
+
+static fg_status depthb_prefill_sample(fg_runtime *runtime,const fg_tokens *prompt,
+    int32_t *history,uint32_t *next,float *logit,fg_error *err){
+    const fg_manifest *manifest=runtime->manifest;
+    for(size_t i=0;i<prompt->count;i++)history[i]=(int32_t)prompt->data[i];
+    fg_vk_tensor *output=NULL;uint32_t prefilled=0;
+    fg_status status=coordinator_prefill_pipeline(&runtime->coordinator,history,
+        prompt->count,prompt->data,0u,(uint32_t)prompt->count,NULL,0u,
+        &runtime->prefill_profiled,NULL,NULL,&output,&prefilled,err);
+    if(status==FG_OK){
+        uint32_t final_count=prefilled%manifest->prefill_microbatch;
+        if(!final_count)final_count=manifest->prefill_microbatch;
+        fg_vk_tensor *last=NULL;
+        status=fg_vk_tensor_view(output,(uint64_t)(final_count-1u)*FG_HYPER_WIDTH*4u,
+                                 FG_HYPER_WIDTH*4u,&last,err);
+        if(status==FG_OK)status=coordinator_output(&runtime->coordinator,
+            (uint32_t)prompt->count-1u,last,next,logit,err);
+        fg_vk_tensor_destroy(last);
+    }
+    return status;
+}
+
+static fg_status depthb_decode_b1(fg_runtime *runtime,uint32_t session_slot,
+    const fg_tokens *prompt,uint32_t max_tokens,depthb_capture *capture,
+    double *wall_ms,fg_error *err){
+    size_t capacity=prompt->count+(size_t)max_tokens+2u;
+    int32_t *history=malloc(capacity*sizeof(*history));
+    if(!history){
+        fg_error_set(err,FG_ERR_OOM,"allocate depth-B selftest history");
+        return FG_ERR_OOM;
+    }
+    memset(capture,0,sizeof(*capture));
+    runtime->coordinator.sampler=runtime->sampler;
+    runtime->coordinator.output_session=session_slot;
+    fg_sampler_state_init(&runtime->coordinator.sampler_state,runtime->sampler.seed);
+    uint32_t next=0;float logit=0.0f;
+    fg_status status=depthb_prefill_sample(runtime,prompt,history,&next,&logit,err);
+    size_t count=prompt->count;
+    uint32_t position=(uint32_t)prompt->count;
+    double start=dispatch_ts();
+    while(status==FG_OK&&capture->count<max_tokens){
+        capture->token[capture->count]=next;
+        memcpy(&capture->logit_bits[capture->count],&logit,4u);
+        capture->count++;
+        if(capture->count>=max_tokens)break;
+        history[count++]=(int32_t)next;
+        status=coordinator_decode_token(&runtime->coordinator,history,count,count-1u,
+                                        position,&next,&logit,err);
+        position++;
+    }
+    if(wall_ms)*wall_ms=dispatch_ts()-start;
+    free(history);
+    return status;
+}
+
+/* Long deterministic filler prompt: repeated text truncated to `target` tokens. */
+static fg_status depthb_long_prompt(const fg_tokenizer *tokenizer,uint32_t target,
+                                    fg_tokens *tokens,fg_error *err){
+    static const char filler[]="The quick brown fox jumps over the lazy dog. ";
+    size_t repeats=(size_t)(target/8u)+8u;
+    size_t filler_bytes=strlen(filler);
+    char *text=malloc(repeats*filler_bytes+1u);
+    if(!text){
+        fg_error_set(err,FG_ERR_OOM,"allocate depth-B long prompt");
+        return FG_ERR_OOM;
+    }
+    for(size_t i=0;i<repeats;i++)memcpy(text+i*filler_bytes,filler,filler_bytes);
+    text[repeats*filler_bytes]=0;
+    fg_status status=fg_tokenizer_encode(tokenizer,text,true,tokens,err);
+    free(text);
+    if(status==FG_OK&&tokens->count>target)tokens->count=target;
+    return status;
+}
+
+static bool depthb_capture_equal(const depthb_capture *expected,
+                                 const depthb_capture *actual,uint32_t from,
+                                 bool *logits_match,uint32_t *first_bad){
+    *logits_match=true;
+    for(uint32_t i=from;i<expected->count;i++){
+        if(expected->token[i]!=actual->token[i]){
+            *first_bad=i;
+            return false;
+        }
+        if(expected->logit_bits[i]!=actual->logit_bits[i])*logits_match=false;
+    }
+    return true;
+}
+
+static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
+    const fg_tokens *prompt_x,const fg_tokens *prompt_y,uint32_t max_tokens,
+    uint32_t depth,uint32_t abort_step,bool measure,bool *pass,
+    depthb_capture *answer_x,depthb_capture *answer_y,fg_error *err){
+    fg_status status=fg_sampler_config_validate(&runtime->sampler,err);
+    if(status==FG_OK&&(runtime->sampler.temperature!=0.0f||
+       fg_sampler_penalties_active(&runtime->sampler))){
+        fg_sampler_config_greedy(&runtime->sampler);
+    }
+    if(status!=FG_OK)return status;
+    size_t history_capacity=(size_t)prompt_x->count+(size_t)prompt_y->count+
+        2u*max_tokens+4u;
+    int32_t *history_x=malloc(history_capacity*sizeof(*history_x));
+    int32_t *history_y=malloc(history_capacity*sizeof(*history_y));
+    if(!history_x||!history_y){
+        free(history_x);free(history_y);
+        fg_error_set(err,FG_ERR_OOM,"allocate depth-B selftest histories");
+        return FG_ERR_OOM;
+    }
+    depthb_capture expected_x={0},expected_y={0},actual_x={0},actual_y={0};
+    double b1_wall=0.0,b2_wall=0.0;
+    *pass=false;
+    /* Phase 1a: Y alone in owner session 1. */
+    if(status==FG_OK)status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
+    if(status==FG_OK)status=coordinator_owner_transaction(&runtime->coordinator,
+        FG_OWNER_SESSION_PREPARE,1u,err);
+    if(status==FG_OK)status=depthb_decode_b1(runtime,1u,prompt_y,max_tokens,&expected_y,
+                                             measure?&b1_wall:NULL,err);
+    if(status==FG_OK){
+        expected_y.state_digest=depthb_session_digest(runtime,1u,&expected_y.state_valid);
+        depthb_capture_cursors(runtime,1u,&expected_y);
+        status=coordinator_owner_transaction(&runtime->coordinator,
+            FG_OWNER_SESSION_RESTORE,1u,err);
+    }
+    /* Phase 1b: X alone in owner session 0, snapshotted so the B=2 pass can
+     * return session 0 to the exact pre-run state. */
+    if(status==FG_OK)status=coordinator_owner_transaction(&runtime->coordinator,
+        FG_OWNER_SESSION_PREPARE,0u,err);
+    if(status==FG_OK)status=depthb_decode_b1(runtime,0u,prompt_x,max_tokens,&expected_x,
+                                             measure?&b1_wall:NULL,err);
+    if(status==FG_OK){
+        expected_x.state_digest=depthb_session_digest(runtime,0u,&expected_x.state_valid);
+        depthb_capture_cursors(runtime,0u,&expected_x);
+        status=coordinator_owner_transaction(&runtime->coordinator,
+            FG_OWNER_SESSION_RESTORE,0u,err);
+    }
+    /* Phase 2 setup: both sessions at their prefilled frontiers. */
+    if(status==FG_OK)status=coordinator_owner_transaction(&runtime->coordinator,
+        FG_OWNER_SESSION_PREPARE,1u,err);
+    uint32_t g0_x=0,g0_y=0;float logit_x=0.0f,logit_y=0.0f;
+    if(status==FG_OK){
+        runtime->coordinator.sampler=runtime->sampler;
+        fg_sampler_state_init(&runtime->coordinator.sampler_state,runtime->sampler.seed);
+        status=depthb_prefill_sample(runtime,prompt_y,history_y,&g0_y,&logit_y,err);
+    }
+    if(status==FG_OK)status=coordinator_owner_transaction(&runtime->coordinator,
+        FG_OWNER_SESSION_COMMIT,1u,err);
+    if(status==FG_OK)status=depthb_prefill_sample(runtime,prompt_x,history_x,&g0_x,
+                                                  &logit_x,err);
+    size_t count_x=0,count_y=0;
+    if(status==FG_OK){
+        count_x=prompt_x->count;
+        count_y=prompt_y->count;
+        history_x[count_x++]=(int32_t)g0_x;
+        history_y[count_y++]=(int32_t)g0_y;
+    }
+    fg_decode_batch_table table;
+    fg_decode_batch_policy policy;
+    if(status==FG_OK)status=fg_decode_batch_table_init(&table,depth,err);
+    if(status==FG_OK)status=fg_decode_batch_sequence_enter(&table,FG_DEPTHB_SEQ_X,0u,err);
+    if(status==FG_OK)status=fg_decode_batch_sequence_enter(&table,FG_DEPTHB_SEQ_Y,1u,err);
+    uint32_t position_x=(uint32_t)prompt_x->count,position_y=(uint32_t)prompt_y->count;
+    uint32_t batched_tokens=0,effective_depth=0;
+    if(status==FG_OK){
+        uint32_t positions[4]={position_x,position_x,position_x,0u};
+        status=fg_decode_batch_sequence_frontier(&table,FG_DEPTHB_SEQ_X,
+            (uint32_t)prompt_x->count,position_x,positions,err);
+    }
+    if(status==FG_OK){
+        uint32_t positions[4]={position_y,position_y,position_y,0u};
+        status=fg_decode_batch_sequence_frontier(&table,FG_DEPTHB_SEQ_Y,
+            (uint32_t)prompt_y->count,position_y,positions,err);
+    }
+    uint32_t expected_steps=max_tokens-1u;
+    uint32_t steps_done=0;
+    bool injected=false;
+    double b2_start=dispatch_ts();
+    while(status==FG_OK&&steps_done<expected_steps){
+        uint64_t now=(uint64_t)steps_done+1u;
+        bool inject=!injected&&abort_step==steps_done;
+        status=fg_decode_batch_sequence_ready(&table,FG_DEPTHB_SEQ_X,now,err);
+        if(status==FG_OK)status=fg_decode_batch_sequence_ready(&table,
+            FG_DEPTHB_SEQ_Y,now,err);
+        fg_decode_batch_step step;
+        if(status==FG_OK)status=coordinator_decode_batch_step(&runtime->coordinator,
+            &table,&policy,(const int32_t *const[]){history_x,history_y},
+            (const size_t[]){count_x,count_y},now,inject,&step,err);
+        if(status==FG_ERR_INTERRUPTED&&inject){
+            if(!table.restored){
+                fg_error_set(err,FG_ERR_MISMATCH,
+                    "injected abort did not mark the batch table restored");
+                status=FG_ERR_MISMATCH;
+                break;
+            }
+            injected=true;
+            fprintf(stderr,"DEPTH_B_SELFTEST case=%s RESTORE step=%u x=%llu y=%llu "
+                "restored=1\n",name,steps_done,(unsigned long long)count_x,
+                (unsigned long long)count_y);
+            status=FG_OK;
+            continue;
+        }
+        if(status!=FG_OK)break;
+        if(step.batch.slot_count>effective_depth)
+            effective_depth=step.batch.slot_count;
+        for(uint32_t slot=0;slot<step.batch.slot_count;slot++){
+            uint64_t sequence_id=table.sequences[step.batch.slots[slot].sequence].sequence_id;
+            uint32_t token=step.outcomes[slot].next_token;
+            if(sequence_id==FG_DEPTHB_SEQ_X){
+                if(count_x>=history_capacity){status=FG_ERR_LIMIT;break;}
+                history_x[count_x++]=(int32_t)token;
+                if(actual_x.count<FG_DEPTHB_CAPTURE_MAX){
+                    actual_x.token[actual_x.count]=token;
+                    memcpy(&actual_x.logit_bits[actual_x.count],&step.outcomes[slot].logit,4u);
+                    actual_x.count++;
+                }
+            }else if(sequence_id==FG_DEPTHB_SEQ_Y){
+                if(count_y>=history_capacity){status=FG_ERR_LIMIT;break;}
+                history_y[count_y++]=(int32_t)token;
+                if(actual_y.count<FG_DEPTHB_CAPTURE_MAX){
+                    actual_y.token[actual_y.count]=token;
+                    memcpy(&actual_y.logit_bits[actual_y.count],&step.outcomes[slot].logit,4u);
+                    actual_y.count++;
+                }
+            }else{
+                fg_error_set(err,FG_ERR_MISMATCH,"unknown selftest sequence in batch step");
+                status=FG_ERR_MISMATCH;
+                break;
+            }
+            batched_tokens++;
+        }
+        if(status!=FG_OK)break;
+        steps_done++;
+    }
+    if(measure)b2_wall=dispatch_ts()-b2_start;
+    /* Phase 3: per-session parity. */
+    bool x_token_match=false,y_token_match=false,x_logit_match=false,y_logit_match=false;
+    bool x_state_match=false,y_state_match=false,x_qsa_match=false,y_qsa_match=false;
+    uint32_t x_bad=0,y_bad=0;
+    if(status==FG_OK){
+        if(expected_x.count!=actual_x.count+1u||expected_y.count!=actual_y.count+1u){
+            fg_error_set(err,FG_ERR_MISMATCH,
+                "depth-B parity token counts disagree: x=%u/%u y=%u/%u",
+                expected_x.count,actual_x.count+1u,expected_y.count,actual_y.count+1u);
+            status=FG_ERR_MISMATCH;
+        }
+    }
+    if(status==FG_OK){
+        x_token_match=depthb_capture_equal(&expected_x,&actual_x,1u,&x_logit_match,&x_bad);
+        y_token_match=depthb_capture_equal(&expected_y,&actual_y,1u,&y_logit_match,&y_bad);
+        bool g0_x_match=expected_x.token[0]==g0_x&&
+            memcmp(&expected_x.logit_bits[0],&logit_x,4u)==0;
+        bool g0_y_match=expected_y.token[0]==g0_y&&
+            memcmp(&expected_y.logit_bits[0],&logit_y,4u)==0;
+        uint32_t xc[FG_LAYER_COUNT],yc[FG_LAYER_COUNT];
+        bool x_valid=false,y_valid=false;
+        uint64_t x_digest=depthb_session_digest(runtime,0u,&x_valid);
+        uint64_t y_digest=depthb_session_digest(runtime,1u,&y_valid);
+        x_state_match=x_valid&&expected_x.state_valid&&x_digest==expected_x.state_digest;
+        y_state_match=y_valid&&expected_y.state_valid&&y_digest==expected_y.state_digest;
+        x_qsa_match=fg_owner_qsa_frontier(runtime->coordinator.owner,0u,xc)==FG_OK&&
+            expected_x.qsa_valid&&memcmp(xc,expected_x.qsa_cursor,sizeof(xc))==0;
+        y_qsa_match=fg_owner_qsa_frontier(runtime->coordinator.owner,1u,yc)==FG_OK&&
+            expected_y.qsa_valid&&memcmp(yc,expected_y.qsa_cursor,sizeof(yc))==0;
+        bool pass_case=x_token_match&&y_token_match&&x_logit_match&&y_logit_match&&
+            x_state_match&&y_state_match&&x_qsa_match&&y_qsa_match&&
+            g0_x_match&&g0_y_match;
+        fprintf(stderr,"DEPTH_B_SELFTEST case=%s depth=%u steps=%u scheduled=%u "
+            "x_tokens=%u y_tokens=%u x_token_match=%d y_token_match=%d "
+            "x_logit_match=%d y_logit_match=%d g0_match=%d/%d x_state_match=%d "
+            "y_state_match=%d x_qsa_match=%d y_qsa_match=%d restored=%d\n",name,depth,
+            steps_done,effective_depth,actual_x.count,actual_y.count,
+            x_token_match,y_token_match,x_logit_match,y_logit_match,
+            g0_x_match,g0_y_match,x_state_match,y_state_match,x_qsa_match,y_qsa_match,
+            injected?1:0);
+        if(measure){
+            double b1_total=b1_wall;
+            double b2_total=b2_wall;
+            double b2_tokens=steps_done*effective_depth;
+            fprintf(stderr,"DEPTH_B_SELFTEST_PERF case=%s b1_ms=%.3f b2_ms=%.3f "
+                "b2_steps=%u b2_tokens=%u b1_seq_ms=%.3f b2_per_step_ms=%.3f "
+                "b2_aggregate_tps=%.3f\n",name,b1_total,b2_total,steps_done,
+                (unsigned)b2_tokens,b1_total,
+                steps_done?b2_total/steps_done:0.0,
+                b2_total>0.0?b2_tokens/(b2_total/1000.0):0.0);
+        }
+        if(!x_token_match)
+            fprintf(stderr,"DEPTH_B_SELFTEST_MISMATCH session=X first_bad=%u "
+                "expected=%u actual=%u\n",x_bad+1u,expected_x.token[x_bad],
+                actual_x.token[x_bad]);
+        if(!y_token_match)
+            fprintf(stderr,"DEPTH_B_SELFTEST_MISMATCH session=Y first_bad=%u "
+                "expected=%u actual=%u\n",y_bad+1u,expected_y.token[y_bad],
+                actual_y.token[y_bad]);
+        if(!pass_case)status=FG_ERR_MISMATCH;
+        *pass=pass_case;
+    }
+    if(answer_x)*answer_x=expected_x;
+    if(answer_y)*answer_y=expected_y;
+    free(history_x);free(history_y);
+    return status;
+}
+
+static fg_status depthb_report_answer(fg_runtime *runtime,const char *label,
+                                      const depthb_capture *capture,
+                                      const char *needle){
+    char text[512];size_t used=0;
+    for(uint32_t i=0;i<capture->count&&used+8u<sizeof(text);i++){
+        char piece[64];size_t bytes=0;
+        fg_error ignored={0};
+        if(fg_tokenizer_decode_token(runtime->coordinator.tokenizer,capture->token[i],
+                                     piece,sizeof(piece),&bytes,&ignored)!=FG_OK)continue;
+        if(used+bytes>=sizeof(text))bytes=sizeof(text)-used-1u;
+        memcpy(text+used,piece,bytes);used+=bytes;
+    }
+    text[used]=0;
+    fprintf(stderr,"DEPTH_B_SELFTEST answer=%s text=%s contains=%s\n",label,text,
+        needle&&strstr(text,needle)?"1":"0");
+    return FG_OK;
+}
+
+fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
+                                  uint32_t max_tokens,uint32_t long_tokens,
+                                  const fg_runtime_options *requested,fg_error *err){
+    if(!manifest_path||depth<1u||depth>FG_DECODE_BATCH_MAX_SLOTS||!max_tokens||
+       max_tokens+1u>FG_DEPTHB_CAPTURE_MAX){
+        fg_error_set(err,FG_ERR_ARGUMENT,
+                     "depth-b-selftest requires --manifest, --depth 1..%u, --tokens 1..%u",
+                     FG_DECODE_BATCH_MAX_SLOTS,FG_DEPTHB_CAPTURE_MAX-1u);
+        return FG_ERR_ARGUMENT;
+    }
+    fg_runtime *runtime=NULL;
+    fg_status status=fg_runtime_open_with_options(&runtime,manifest_path,requested,err);
+    if(status==FG_OK&&!(runtime->coordinator.ring_prefill&&runtime->coordinator.ring_decode)){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "depth-b-selftest requires ring prefill and ring decode");
+        status=FG_ERR_UNAVAILABLE;
+    }
+    /* Sample through the rank-0 relay for both depths so the parity comparison
+     * is not confounded by the direct 4-way output path. */
+    if(status==FG_OK)runtime->coordinator.depthb_relay_only=true;
+    static const char prompt_12[]="What is 6 times 2? Answer with the number only.";
+    static const char prompt_paris[]=
+        "What is the capital of France? Answer with the city name only.";
+    fg_tokens tokens_12={0},tokens_paris={0},tokens_long={0};
+    if(status==FG_OK)status=fg_tokenizer_encode(runtime->coordinator.tokenizer,
+        prompt_12,true,&tokens_12,err);
+    if(status==FG_OK)status=fg_tokenizer_encode(runtime->coordinator.tokenizer,
+        prompt_paris,true,&tokens_paris,err);
+    uint32_t long_target=long_tokens;
+    if(status==FG_OK&&long_target){
+        uint32_t limit=runtime->context_limit>max_tokens+8u?
+            runtime->context_limit-max_tokens-8u:0u;
+        if(long_target>limit)long_target=limit;
+        if(long_target)status=depthb_long_prompt(runtime->coordinator.tokenizer,
+                                                 long_target,&tokens_long,err);
+    }
+    bool pass_all=true;
+    depthb_capture answer_12={0},answer_paris={0};
+    if(status==FG_OK){
+        bool pass=false;
+        status=depthb_run_case(runtime,"short-pair",&tokens_12,&tokens_paris,max_tokens,
+                               depth,2u,true,&pass,&answer_12,&answer_paris,err);
+        pass_all=pass_all&&pass;
+    }
+    if(status==FG_OK){
+        depthb_report_answer(runtime,"12",&answer_12,"12");
+        depthb_report_answer(runtime,"Paris",&answer_paris,"Paris");
+    }
+    if(status==FG_OK&&long_target){
+        bool pass=false;
+        status=depthb_run_case(runtime,"long-short",&tokens_long,&tokens_12,max_tokens,
+                               depth,2u,false,&pass,NULL,NULL,err);
+        pass_all=pass_all&&pass;
+    }
+    if(status==FG_OK&&!pass_all){
+        fg_error_set(err,FG_ERR_MISMATCH,"depth-B selftest parity mismatch");
+        status=FG_ERR_MISMATCH;
+    }
+    if(runtime){fprintf(stderr,"DEPTH_B_SELFTEST RESULT=%s depth=%u long_tokens=%u\n",
+        status==FG_OK&&pass_all?"PASS":"FAIL",depth,long_target);}
+    fg_tokens_free(&tokens_12);fg_tokens_free(&tokens_paris);fg_tokens_free(&tokens_long);
+    fg_runtime_close(runtime);
     return status;
 }
 

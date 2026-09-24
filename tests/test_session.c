@@ -262,7 +262,7 @@ static void test_manifest_upgrade(void){
                   FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_128,&error)==FG_OK);
         CHECK(fg_manifest_upgrade_with_profile(
                   legacy_path,pipeline_path,
-                  2u,&error)==FG_ERR_ARGUMENT);
+                  99u,&error)==FG_ERR_ARGUMENT);
         CHECK(access(pipeline_path,F_OK)!=0);
         CHECK(fg_manifest_read(profile_path,profiled,&error)==FG_OK);
         CHECK(profiled->format_version==FG_MANIFEST_FORMAT_VERSION);
@@ -597,7 +597,11 @@ static void test_owner_controls(void){
               decoded.generation==control.generation&&
               decoded.logical_context_tokens==8192u);
     }
-    wire[6]=1u;fg_owner_session_control decoded={0};
+    wire[6]=FG_DECODE_BATCH_MAX_SLOTS;fg_owner_session_control decoded={0};
+    CHECK(fg_owner_session_control_decode(&decoded,wire,sizeof(wire),&error)==FG_ERR_MISMATCH);
+    wire[6]=1u;
+    CHECK(fg_owner_session_control_decode(&decoded,wire,sizeof(wire),&error)==FG_OK);
+    wire[6]=0u;wire[7]=1u;
     CHECK(fg_owner_session_control_decode(&decoded,wire,sizeof(wire),&error)==FG_ERR_FORMAT);
 }
 

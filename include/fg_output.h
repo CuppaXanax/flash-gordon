@@ -44,6 +44,10 @@ void fg_output_executor_destroy(fg_output_executor *executor);
 fg_status fg_output_history_reset(fg_output_executor *executor,
                                   const uint32_t *history,uint32_t count,
                                   fg_error *err);
+/* Select the owner session whose penalty history the executor serves.  Output
+ * messages carry the slot; the legacy single-session path stays on slot 0. */
+void fg_output_set_session(fg_output_executor *executor,uint32_t session_slot);
+uint32_t fg_output_session(const fg_output_executor *executor);
 fg_status fg_output_history_increment(fg_output_executor *executor,uint32_t token,
                                        fg_error *err);
 fg_status fg_output_logits(fg_output_executor *executor,const fg_vk_tensor *hyper,

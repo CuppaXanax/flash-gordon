@@ -208,6 +208,9 @@ typedef struct fg_owner_session_control {
     uint8_t rank;
     fg_position_mode position_mode;
     uint8_t flags;
+    /* Owner state namespace the transactional operations address; 0 for the
+     * legacy single-session BEGIN/READY path. */
+    uint8_t state_slot;
     uint64_t session_nonce;
     uint64_t generation;
     uint64_t committed_tokens;
@@ -444,6 +447,9 @@ typedef struct fg_qsa_page_barrier {
 typedef struct fg_output_work {
     uint8_t source_rank;
     uint8_t destination_rank;
+    /* Owner session whose sampling history this token belongs to; 0 is the
+     * legacy single-session path. */
+    uint8_t session_slot;
     uint32_t token_index;
     fg_sampler_config sampler;
     float uniform;
@@ -462,6 +468,8 @@ typedef struct fg_output_config {
     uint8_t source_rank;
     uint8_t destination_rank;
     uint8_t flags;
+    /* Owner session whose sampling history this token belongs to. */
+    uint8_t session_slot;
     uint32_t token_index;
     fg_sampler_config sampler;
     float uniform;
@@ -558,6 +566,8 @@ fg_status fg_output_split_timeout_error(const fg_output_handoff *state,uint32_t 
 typedef struct fg_output_history {
     const uint32_t *tokens;
     uint32_t count;
+    /* Owner session the history belongs to; 0 is the legacy path. */
+    uint8_t session_slot;
 } fg_output_history;
 
 typedef struct fg_ngram_work {

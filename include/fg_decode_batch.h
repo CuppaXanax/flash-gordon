@@ -116,6 +116,7 @@ fg_status fg_decode_batch_schedule(fg_decode_batch_table *table,
 typedef struct fg_decode_batch_outcome {
     bool valid;
     uint32_t next_token;
+    float logit;
     uint32_t position[4];
     uint64_t qsa_records[FG_LAYER_COUNT];
     fg_sampler_state sampler;

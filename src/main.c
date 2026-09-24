@@ -348,6 +348,48 @@ static fg_status api_cmd(int argc, char **argv, fg_error *err) {
     return fg_api_main_with_options(manifest, host, (uint16_t)port, &runtime_options, err);
 }
 
+static fg_status depthb_selftest_cmd(int argc, char **argv, fg_error *err) {
+    const char *manifest = NULL;
+    uint32_t depth = 2u;
+    uint32_t max_tokens = 12u;
+    uint32_t long_tokens = 4096u;
+    fg_runtime_options runtime_options;
+    fg_runtime_options_init(&runtime_options);
+    for (int i = 2; i < argc; i++) {
+        if (!strcmp(argv[i], "--manifest")) {
+            manifest = arg_value(&i, argc, argv, "--manifest", err);
+        } else if (!strcmp(argv[i], "--depth")) {
+            const char *text = arg_value(&i, argc, argv, "--depth", err);
+            if (text && parse_u32(text, "--depth", 1u, 2u, &depth, err) != FG_OK)
+                return err->code;
+        } else if (!strcmp(argv[i], "--tokens")) {
+            const char *text = arg_value(&i, argc, argv, "--tokens", err);
+            if (text && parse_u32(text, "--tokens", 1u, 63u, &max_tokens, err) != FG_OK)
+                return err->code;
+        } else if (!strcmp(argv[i], "--long-tokens")) {
+            const char *text = arg_value(&i, argc, argv, "--long-tokens", err);
+            if (text && parse_u32(text, "--long-tokens", 0u, FG_MAX_CONTEXT,
+                                  &long_tokens, err) != FG_OK)
+                return err->code;
+        } else {
+            bool handled = false;
+            fg_status status =
+                parse_runtime_option(&i, argc, argv, &runtime_options, &handled, err);
+            if (status != FG_OK) return status;
+            if (handled) continue;
+            fg_error_set(err, FG_ERR_ARGUMENT, "unknown depth-b-selftest option: %s",
+                         argv[i]);
+            return FG_ERR_ARGUMENT;
+        }
+    }
+    if (!manifest) {
+        fg_error_set(err, FG_ERR_ARGUMENT, "depth-b-selftest requires --manifest");
+        return FG_ERR_ARGUMENT;
+    }
+    return fg_depthb_selftest_main(manifest, depth, max_tokens, long_tokens,
+                                   &runtime_options, err);
+}
+
 static fg_status manifest_cmd(const char *command, int argc, char **argv, fg_error *err) {
     const char *path = NULL;
     const char *prompt = NULL;
@@ -433,6 +475,8 @@ int main(int argc, char **argv) {
         status = chat_cmd(argc, argv, &err);
     else if (!strcmp(argv[1], "api"))
         status = api_cmd(argc, argv, &err);
+    else if (!strcmp(argv[1], "depth-b-selftest"))
+        status = depthb_selftest_cmd(argc, argv, &err);
     else if (!strcmp(argv[1], "rank") || !strcmp(argv[1], "serve") ||
              !strcmp(argv[1], "bench") || !strcmp(argv[1], "eval") ||
              !strcmp(argv[1], "inspect"))

@@ -27,11 +27,28 @@ struct fg_output_executor {
     fg_vk_tensor *up;
     fg_vk_tensor *hidden;
     fg_vk_tensor *logits;
+    /* One penalty-counting table per owner session; the active one is selected
+     * by session_slot so interleaved sessions never share output history. */
     fg_vk_tensor *history_counts;
+    uint32_t session_slot;
     fg_vk_tensor *vocabulary_ids;
     fg_vk_tensor *topk_scores[2];
     fg_vk_tensor *topk_ids[2];
 };
+
+void fg_output_set_session(fg_output_executor *executor,uint32_t session_slot){
+    if(executor&&session_slot<FG_DECODE_BATCH_MAX_SLOTS)
+        executor->session_slot=session_slot;
+}
+
+uint32_t fg_output_session(const fg_output_executor *executor){
+    return executor?executor->session_slot:0u;
+}
+
+static uint32_t *output_history_counts(fg_output_executor *executor){
+    uint32_t *base=executor?fg_vk_tensor_map(executor->history_counts):NULL;
+    return base?base+(uint64_t)executor->session_slot*FG_Q38_VOCAB_SIZE:NULL;
+}
 
 static fg_status scratch(fg_vk_context *vk,uint64_t values,fg_vk_tensor **out,fg_error *err){
     return fg_vk_tensor_create(vk,values*sizeof(float),out,err);
@@ -488,7 +505,7 @@ fg_status fg_output_executor_create(fg_output_executor **out,fg_model *model,fg_
     if(status==FG_OK)status=scratch(vk,FG_Q38_HYPER_WIDTH,&executor->up,err);
     if(status==FG_OK)status=scratch(vk,FG_HIDDEN_SIZE,&executor->hidden,err);
     if(status==FG_OK)status=scratch(vk,FG_Q38_VOCAB_SIZE,&executor->logits,err);
-    if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)FG_Q38_VOCAB_SIZE*4u,&executor->history_counts,err);
+    if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)FG_Q38_VOCAB_SIZE*FG_DECODE_BATCH_MAX_SLOTS*4u,&executor->history_counts,err);
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)FG_Q38_VOCAB_SIZE*4u,&executor->vocabulary_ids,err);
     for(uint32_t i=0;status==FG_OK&&i<2u;i++){status=scratch(vk,FG_OUTPUT_TOPK_CAPACITY,&executor->topk_scores[i],err);if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)FG_OUTPUT_TOPK_CAPACITY*4u,&executor->topk_ids[i],err);}
     if(status==FG_OK){uint32_t *ids=fg_vk_tensor_map(executor->vocabulary_ids);for(uint32_t i=0;i<FG_Q38_VOCAB_SIZE;i++)ids[i]=i;}
@@ -546,10 +563,10 @@ fg_status fg_output_history_reset(fg_output_executor *executor,
     if(!executor||count>FG_NATIVE_CONTEXT||
        (count&&!history)){fg_error_set(err,FG_ERR_ARGUMENT,
            "invalid output history");return FG_ERR_ARGUMENT;}
-    uint32_t *counts=fg_vk_tensor_map(executor->history_counts);
+    uint32_t *counts=output_history_counts(executor);
     if(!counts){fg_error_set(err,FG_ERR_UNAVAILABLE,
         "output history storage is unavailable");return FG_ERR_UNAVAILABLE;}
-    memset(counts,0,(size_t)fg_vk_tensor_bytes(executor->history_counts));
+    memset(counts,0,(size_t)FG_Q38_VOCAB_SIZE*4u);
     for(uint32_t i=0;i<count;i++){
         if(history[i]>=FG_Q38_VOCAB_SIZE){fg_error_set(err,FG_ERR_FORMAT,
             "history token %u is outside vocabulary",i);return FG_ERR_FORMAT;}
@@ -562,7 +579,7 @@ fg_status fg_output_history_increment(fg_output_executor *executor,uint32_t toke
                                        fg_error *err){
     if(!executor||token>=FG_Q38_VOCAB_SIZE){fg_error_set(err,FG_ERR_ARGUMENT,
         "invalid output history token");return FG_ERR_ARGUMENT;}
-    uint32_t *counts=fg_vk_tensor_map(executor->history_counts);
+    uint32_t *counts=output_history_counts(executor);
     if(!counts){fg_error_set(err,FG_ERR_UNAVAILABLE,
         "output history storage is unavailable");return FG_ERR_UNAVAILABLE;}
     if(counts[token]!=UINT32_MAX)counts[token]++;
@@ -656,10 +673,15 @@ fg_status fg_output_sample(fg_output_executor *executor,const fg_vk_tensor *hype
         return FG_ERR_ARGUMENT;
     }
     fg_status status=fg_vk_begin(vk,err);fg_vk_tensor *logits=NULL;
+    fg_vk_tensor *history_view=NULL;
     if(status==FG_OK)status=fg_output_logits(executor,hyper,&logits,err);
+    if(status==FG_OK&&penalties)status=fg_vk_tensor_view(executor->history_counts,
+        (uint64_t)executor->session_slot*FG_Q38_VOCAB_SIZE*4u,
+        (uint64_t)FG_Q38_VOCAB_SIZE*4u,&history_view,err);
     if(status==FG_OK&&penalties)status=fg_vk_apply_penalties(vk,logits,
-        executor->history_counts,FG_Q38_VOCAB_SIZE,config->presence_penalty,
+        history_view,FG_Q38_VOCAB_SIZE,config->presence_penalty,
         config->frequency_penalty,config->repetition_penalty,err);
+    fg_vk_tensor_destroy(history_view);
     fg_vk_tensor *scores=NULL,*ids=NULL;uint32_t count=0u;
     if(status==FG_OK&&config->temperature==0.0f){
         const fg_vk_tensor *current_scores=logits,*current_ids=executor->vocabulary_ids;

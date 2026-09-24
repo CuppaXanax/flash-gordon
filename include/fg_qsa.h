@@ -156,6 +156,11 @@ fg_status fg_qsa_session_reset(fg_qsa_session *session,fg_error *err);
 fg_status fg_qsa_session_checkpoint(fg_qsa_session *session,fg_error *err);
 uint32_t fg_qsa_session_tokens(const fg_qsa_session *session,uint32_t layer);
 void fg_qsa_session_set_tokens(fg_qsa_session *session,uint32_t tokens);
+/* Per-layer frontier restore for the depth-B transaction: sets one layer's
+ * committed token count (cache/partial contents for tokens beyond the
+ * frontier are recomputed by the retry).  Unknown layers are a no-op. */
+void fg_qsa_session_set_layer_tokens(fg_qsa_session *session,uint32_t layer,
+                                     uint32_t tokens);
 uint64_t fg_qsa_session_host_bytes(const fg_qsa_session *session);
 fg_status fg_qsa_session_decode(fg_qsa_session *session,uint32_t layer,uint32_t token_index,
                                 const uint32_t position[3],const fg_vk_tensor *hidden,
