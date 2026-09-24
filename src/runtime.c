@@ -6813,6 +6813,10 @@ typedef struct depthb_capture {
     uint64_t step_state_digest[FG_DEPTHB_CAPTURE_MAX];
     uint32_t step_count;
     uint64_t state_digest;
+    /* Owner-session digest right after the capture's prefill, before any
+     * decode step: the batch phase must start from the same state. */
+    uint64_t pre_state_digest;
+    bool pre_state_valid;
     uint32_t qsa_cursor[FG_LAYER_COUNT];
     bool state_valid,qsa_valid;
 } depthb_capture;
@@ -6890,6 +6894,11 @@ static fg_status depthb_decode_b1(fg_runtime *runtime,uint32_t session_slot,
     fg_sampler_state_init(&runtime->coordinator.sampler_state,runtime->sampler.seed);
     uint32_t next=0;float logit=0.0f;
     fg_status status=depthb_prefill_sample(runtime,prompt,history,&next,&logit,err);
+    if(status==FG_OK){
+        bool valid=false;
+        capture->pre_state_digest=depthb_session_digest(runtime,session_slot,&valid);
+        capture->pre_state_valid=valid;
+    }
     size_t count=prompt->count;
     uint32_t position=(uint32_t)prompt->count;
     double start=dispatch_ts();
@@ -7031,6 +7040,20 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
         fprintf(stderr,"DEPTH_B_SELFTEST case=%s prompts x_tokens=%zu y_tokens=%zu "
             "x_first=%u y_first=%u\n",name,prompt_x->count,prompt_y->count,
             prompt_x->count?prompt_x->data[0]:0u,prompt_y->count?prompt_y->data[0]:0u);
+    }
+    if(status==FG_OK){
+        bool px=false,py=false;
+        uint64_t dx=depthb_session_digest(runtime,0u,&px);
+        uint64_t dy=depthb_session_digest(runtime,1u,&py);
+        bool pre_x_match=px&&expected_x.pre_state_valid&&
+            dx==expected_x.pre_state_digest;
+        bool pre_y_match=py&&expected_y.pre_state_valid&&
+            dy==expected_y.pre_state_digest;
+        fprintf(stderr,"DEPTH_B_SELFTEST case=%s PRESTATE x_match=%d y_match=%d "
+            "x_bits=%016llx/%016llx y_bits=%016llx/%016llx\n",name,
+            pre_x_match,pre_y_match,(unsigned long long)dx,
+            (unsigned long long)expected_x.pre_state_digest,
+            (unsigned long long)dy,(unsigned long long)expected_y.pre_state_digest);
     }
     fg_decode_batch_table table;
     fg_decode_batch_policy policy;
