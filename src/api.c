@@ -4050,6 +4050,10 @@ static fg_status api_turn_open(api_turn *turn, api_sink sink, fg_runtime *runtim
             api_send_error_response(&turn->sink, 500u, message, keep_alive, &send_err);
             return begin;
         }
+        /* The head only needs the session's cold start / adoption to have run;
+         * the runtime binding is taken per scheduler step, so a second parked
+         * turn can be admitted without touching the first. */
+        fg_runtime_session_end(runtime, turn->entry->runtime_session);
     }
     turn->public_session = public_session;
     turn->render_options = (fg_chat_render_options){
@@ -4499,6 +4503,10 @@ static fg_status api_scheduler_decode_batch(api_engine_scheduler *scheduler,
 static fg_status api_scheduler_start(api_engine_scheduler *scheduler, api_turn *turn,
                                      fg_error *err) {
     if (!turn->eligible) {
+        /* The legacy generate path owns the runtime token-path state, so bind
+         * the session for the whole call (released by api_turn_close). */
+        fg_status bind = api_scheduler_bind(scheduler, turn, err);
+        if (bind != FG_OK) return bind;
         turn->started = true;   /* the legacy call runs and completes in pump */
         return FG_OK;
     }
@@ -4599,10 +4607,9 @@ static fg_status api_scheduler_pump(api_engine_scheduler *scheduler, fg_error *e
         }
         return FG_OK;
     }
-    /* 2. Abort a turn whose client disappeared. */
+    /* 2. Abort a turn whose client disappeared (waiting turns included). */
     for (size_t i = 0; i < scheduler->turn_count; i++) {
         api_turn *turn = scheduler->turns[i];
-        if (!turn->started) continue;
         if (turn->connection && atomic_load(&turn->connection->client_gone))
             return api_scheduler_abort(scheduler, turn, err);
     }
