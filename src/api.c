@@ -4542,6 +4542,15 @@ static fg_status api_scheduler_complete(api_engine_scheduler *scheduler, api_tur
     bool client_gone = connection && atomic_load(&connection->client_gone);
     if (turn->started && turn->eligible && turn->entry) {
         fg_error finish_error = {0};
+        /* Drop the batch-table sequence before the turn is closed: an aborted
+         * or finished turn must not keep its owner state slot reserved. */
+        uint64_t sequence_id = fg_runtime_session_id(turn->entry->runtime_session);
+        if (fg_decode_batch_table_find(&scheduler->table, sequence_id) !=
+            FG_DECODE_BATCH_INVALID_SLOT) {
+            fg_error leave_error = {0};
+            (void)fg_decode_batch_sequence_leave(&scheduler->table, sequence_id,
+                                                 &leave_error);
+        }
         if (turn->prefill_done) {
             fg_status finish = api_scheduler_bind(scheduler, turn, &finish_error);
             if (finish == FG_OK)
