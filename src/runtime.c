@@ -8682,7 +8682,6 @@ fg_status fg_concurrent_selftest_main(const char *manifest_path,uint32_t max_tok
     static const char prompt_12[]="What is 6 times 2? Answer with the number only.";
     static const char prompt_paris[]=
         "What is the capital of France? Answer with the city name only.";
-    const char *text_x=prompt_12,*text_y=prompt_paris;
     char *long_text=NULL;
     if(status==FG_OK&&long_tokens){
         /* Same filler as the depth-B long prompt; the prefill chunk-yield is
@@ -8699,18 +8698,17 @@ fg_status fg_concurrent_selftest_main(const char *manifest_path,uint32_t max_tok
             for(size_t i=0;i<repeats;i++)memcpy(long_text+i*filler_bytes,filler,filler_bytes);
             long_text[repeats*filler_bytes]=0;
         }
-        if(status==FG_OK)text_y=long_text;
     }
     bool pass_all=true;
     if(status==FG_OK){
         bool pass=false;
-        status=concurrent_selftest_case(runtime,"short-pair",text_x,text_y,max_tokens,
-                                        true,&pass,err);
+        status=concurrent_selftest_case(runtime,"short-pair",prompt_12,prompt_paris,
+                                        max_tokens,true,&pass,err);
         pass_all=pass_all&&pass;
     }
     if(status==FG_OK&&long_text){
         bool pass=false;
-        status=concurrent_selftest_case(runtime,"long-short",text_x,long_text,max_tokens,
+        status=concurrent_selftest_case(runtime,"long-short",prompt_12,long_text,max_tokens,
                                         true,&pass,err);
         pass_all=pass_all&&pass;
     }
