@@ -39,6 +39,15 @@
 #define FG_OUTPUT_WORK_HEADER_BYTES 40u
 #define FG_OUTPUT_WORK_BYTES (FG_OUTPUT_WORK_HEADER_BYTES+FG_HYPER_WIDTH*4u)
 #define FG_OUTPUT_RESULT_BYTES 16u
+/* Depth-B batch sampling: both slots' sampler routes and hyper states ride one
+ * message to the output owner, which runs the head once per slot and returns
+ * both tokens in one result.  One round trip instead of FG_DECODE_BATCH_MAX_SLOTS. */
+#define FG_OUTPUT_BATCH_HEADER_BYTES 8u
+#define FG_OUTPUT_BATCH_SLOT_HEADER_BYTES FG_OUTPUT_WORK_HEADER_BYTES
+#define FG_OUTPUT_BATCH_SLOT_BYTES (FG_OUTPUT_BATCH_SLOT_HEADER_BYTES+FG_HYPER_WIDTH*4u)
+#define FG_OUTPUT_BATCH_WORK_MAX_BYTES (FG_OUTPUT_BATCH_HEADER_BYTES+FG_DECODE_BATCH_MAX_SLOTS*FG_OUTPUT_BATCH_SLOT_BYTES)
+#define FG_OUTPUT_BATCH_RESULT_SLOT_BYTES 12u
+#define FG_OUTPUT_BATCH_RESULT_BYTES (FG_OUTPUT_BATCH_HEADER_BYTES+FG_DECODE_BATCH_MAX_SLOTS*FG_OUTPUT_BATCH_RESULT_SLOT_BYTES)
 /* Sampler-only preamble for the direct final-block -> output-owner handoff:
  * the output owner runs the head as soon as the matching 40 KiB hidden message
  * arrives, so the sampler route rides the control channel and the bulk hop
@@ -169,7 +178,12 @@ typedef enum fg_message_type {
      * hyper vector, optional layer-1 n-gram embedding, per-slot state slot),
      * and the result is the matching slot array of final-block hyper states. */
     FG_MSG_DECODE_BATCH_WORK = 51,
-    FG_MSG_DECODE_BATCH_RESULT = 52
+    FG_MSG_DECODE_BATCH_RESULT = 52,
+    /* Depth-B batch sampling relay: one message carries both slots' sampler
+     * routes plus their 40 KiB hyper states, and one result returns both
+     * tokens (see fg_output_batch_work). */
+    FG_MSG_OUTPUT_BATCH_WORK = 53,
+    FG_MSG_OUTPUT_BATCH_RESULT = 54
 } fg_message_type;
 
 typedef struct fg_gdn_state_fetch {
@@ -468,6 +482,34 @@ typedef struct fg_output_result {
     float logit;
 } fg_output_result;
 
+typedef struct fg_output_batch_slot {
+    uint8_t session_slot;
+    uint32_t token_index;
+    fg_sampler_config sampler;
+    float uniform;
+    float hyper[FG_HYPER_WIDTH];
+} fg_output_batch_slot;
+
+typedef struct fg_output_batch_work {
+    uint8_t source_rank;
+    uint8_t destination_rank;
+    uint8_t slot_count;
+    fg_output_batch_slot slots[FG_DECODE_BATCH_MAX_SLOTS];
+} fg_output_batch_work;
+
+typedef struct fg_output_batch_result_slot {
+    uint32_t token_index;
+    uint32_t token;
+    float logit;
+} fg_output_batch_result_slot;
+
+typedef struct fg_output_batch_result {
+    uint8_t source_rank;
+    uint8_t destination_rank;
+    uint8_t slot_count;
+    fg_output_batch_result_slot slots[FG_DECODE_BATCH_MAX_SLOTS];
+} fg_output_batch_result;
+
 typedef struct fg_output_config {
     uint8_t source_rank;
     uint8_t destination_rank;
@@ -755,6 +797,14 @@ fg_status fg_output_result_encode(uint8_t output[FG_OUTPUT_RESULT_BYTES],const f
                                   fg_error *err);
 fg_status fg_output_result_decode(fg_output_result *result,const uint8_t *payload,uint32_t bytes,
                                   fg_error *err);
+fg_status fg_output_batch_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                      const fg_output_batch_work *work,fg_error *err);
+fg_status fg_output_batch_work_decode(fg_output_batch_work *work,const uint8_t *payload,
+                                      uint32_t bytes,fg_error *err);
+fg_status fg_output_batch_result_encode(uint8_t output[FG_OUTPUT_BATCH_RESULT_BYTES],
+                                        const fg_output_batch_result *result,fg_error *err);
+fg_status fg_output_batch_result_decode(fg_output_batch_result *result,const uint8_t *payload,
+                                        uint32_t bytes,fg_error *err);
 fg_status fg_output_history_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
                                    const fg_output_history *history,fg_error *err);
 fg_status fg_output_history_decode(fg_output_history *history,uint32_t *storage,

@@ -1278,6 +1278,212 @@ fg_status fg_output_result_encode(uint8_t output[FG_OUTPUT_RESULT_BYTES],const f
 
 fg_status fg_output_result_decode(fg_output_result *result,const uint8_t *payload,uint32_t bytes,fg_error *err){if(!result||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output result input");return FG_ERR_ARGUMENT;}if(bytes!=FG_OUTPUT_RESULT_BYTES||payload[2]||payload[3]){fg_error_set(err,FG_ERR_FORMAT,"invalid output result size or reserved bytes");return FG_ERR_FORMAT;}memset(result,0,sizeof(*result));result->source_rank=payload[0];result->destination_rank=payload[1];result->token_index=get_u32_be(payload+4u);result->token=get_u32_be(payload+8u);result->logit=get_f32_be(payload+12u);return validate_output_result(result,err);}
 
+static fg_status validate_output_batch_slot(const fg_output_batch_slot *slot,fg_error *err){
+    if(!slot||slot->session_slot>=FG_DECODE_BATCH_MAX_SLOTS){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid output batch slot route");
+        return FG_ERR_FORMAT;
+    }
+    if((slot->sampler.temperature!=0.0f||slot->sampler.top_p!=0.0f||
+        slot->sampler.top_k!=0u||slot->sampler.presence_penalty!=0.0f||
+        slot->sampler.frequency_penalty!=0.0f||slot->sampler.repetition_penalty!=0.0f||
+        slot->sampler.min_p!=0.0f)&&fg_sampler_config_validate(&slot->sampler,err)!=FG_OK)
+        return FG_ERR_FORMAT;
+    if(!isfinite(slot->uniform)||slot->uniform<0.0f||slot->uniform>=1.0f){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid output batch sampler draw");
+        return FG_ERR_FORMAT;
+    }
+    for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(slot->hyper[i])){
+        fg_error_set(err,FG_ERR_FORMAT,"non-finite output batch input at %u",i);
+        return FG_ERR_FORMAT;
+    }
+    return FG_OK;
+}
+
+static fg_status validate_output_batch_work(const fg_output_batch_work *work,fg_error *err){
+    if(!work||work->source_rank>=FG_RANK_COUNT||work->destination_rank!=4u||
+       work->slot_count==0u||work->slot_count>FG_DECODE_BATCH_MAX_SLOTS){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid output batch work route");
+        return FG_ERR_FORMAT;
+    }
+    for(uint32_t slot=0;slot<work->slot_count;slot++){
+        fg_status status=validate_output_batch_slot(&work->slots[slot],err);
+        if(status!=FG_OK)return status;
+    }
+    return FG_OK;
+}
+
+fg_status fg_output_batch_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                      const fg_output_batch_work *work,fg_error *err){
+    if(!output||!bytes){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid output batch work buffer");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_status status=validate_output_batch_work(work,err);
+    if(status!=FG_OK)return status;
+    uint32_t needed=FG_OUTPUT_BATCH_HEADER_BYTES+
+        work->slot_count*FG_OUTPUT_BATCH_SLOT_BYTES;
+    if(capacity<needed){
+        fg_error_set(err,FG_ERR_LIMIT,"output batch work exceeds buffer capacity");
+        return FG_ERR_LIMIT;
+    }
+    output[0]=work->source_rank;
+    output[1]=work->destination_rank;
+    output[2]=work->slot_count;
+    output[3]=0;
+    uint32_t slot_count=work->slot_count>FG_DECODE_BATCH_MAX_SLOTS?
+        FG_DECODE_BATCH_MAX_SLOTS:work->slot_count;
+    for(uint32_t i=4u;i<FG_OUTPUT_BATCH_HEADER_BYTES;i++)output[i]=0;
+    uint32_t offset=FG_OUTPUT_BATCH_HEADER_BYTES;
+    for(uint32_t slot=0;slot<slot_count;slot++){
+        const fg_output_batch_slot *entry=&work->slots[slot];
+        output[offset+0u]=entry->session_slot;
+        output[offset+1u]=0;
+        output[offset+2u]=0;
+        output[offset+3u]=0;
+        put_u32_be(output+offset+4u,entry->token_index);
+        put_f32_be(output+offset+8u,entry->sampler.temperature);
+        put_f32_be(output+offset+12u,entry->sampler.top_p);
+        put_u32_be(output+offset+16u,entry->sampler.top_k);
+        put_f32_be(output+offset+20u,entry->uniform);
+        put_f32_be(output+offset+24u,entry->sampler.presence_penalty);
+        put_f32_be(output+offset+28u,entry->sampler.frequency_penalty);
+        put_f32_be(output+offset+32u,entry->sampler.repetition_penalty);
+        put_f32_be(output+offset+36u,entry->sampler.min_p);
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)
+            put_f32_be(output+offset+FG_OUTPUT_BATCH_SLOT_HEADER_BYTES+i*4u,
+                       entry->hyper[i]);
+        offset+=FG_OUTPUT_BATCH_SLOT_BYTES;
+    }
+    *bytes=needed;
+    return FG_OK;
+}
+
+fg_status fg_output_batch_work_decode(fg_output_batch_work *work,const uint8_t *payload,
+                                      uint32_t bytes,fg_error *err){
+    if(!work||!payload){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid output batch work input");
+        return FG_ERR_ARGUMENT;
+    }
+    if(bytes<FG_OUTPUT_BATCH_HEADER_BYTES||payload[3]||
+       payload[4]||payload[5]||payload[6]||payload[7]){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid output batch work header");
+        return FG_ERR_FORMAT;
+    }
+    uint32_t slot_count=payload[2];
+    if(slot_count==0u||slot_count>FG_DECODE_BATCH_MAX_SLOTS||
+       bytes!=FG_OUTPUT_BATCH_HEADER_BYTES+slot_count*FG_OUTPUT_BATCH_SLOT_BYTES){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid output batch work slot count");
+        return FG_ERR_FORMAT;
+    }
+    memset(work,0,sizeof(*work));
+    work->source_rank=payload[0];
+    work->destination_rank=payload[1];
+    work->slot_count=(uint8_t)slot_count;
+    uint32_t bounded=slot_count>FG_DECODE_BATCH_MAX_SLOTS?
+        FG_DECODE_BATCH_MAX_SLOTS:slot_count;
+    uint32_t offset=FG_OUTPUT_BATCH_HEADER_BYTES;
+    for(uint32_t slot=0;slot<bounded;slot++){
+        fg_output_batch_slot *entry=&work->slots[slot];
+        if(payload[offset+1u]||payload[offset+2u]||payload[offset+3u]){
+            fg_error_set(err,FG_ERR_FORMAT,"invalid output batch slot reserved bytes");
+            return FG_ERR_FORMAT;
+        }
+        entry->session_slot=payload[offset+0u];
+        entry->token_index=get_u32_be(payload+offset+4u);
+        entry->sampler.temperature=get_f32_be(payload+offset+8u);
+        entry->sampler.top_p=get_f32_be(payload+offset+12u);
+        entry->sampler.top_k=get_u32_be(payload+offset+16u);
+        entry->uniform=get_f32_be(payload+offset+20u);
+        entry->sampler.presence_penalty=get_f32_be(payload+offset+24u);
+        entry->sampler.frequency_penalty=get_f32_be(payload+offset+28u);
+        entry->sampler.repetition_penalty=get_f32_be(payload+offset+32u);
+        entry->sampler.min_p=get_f32_be(payload+offset+36u);
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)
+            entry->hyper[i]=get_f32_be(payload+offset+
+                FG_OUTPUT_BATCH_SLOT_HEADER_BYTES+i*4u);
+        offset+=FG_OUTPUT_BATCH_SLOT_BYTES;
+    }
+    return validate_output_batch_work(work,err);
+}
+
+static fg_status validate_output_batch_result(const fg_output_batch_result *result,
+                                              fg_error *err){
+    if(!result||result->source_rank!=4u||result->destination_rank>=FG_RANK_COUNT||
+       result->slot_count==0u||result->slot_count>FG_DECODE_BATCH_MAX_SLOTS){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid output batch result route");
+        return FG_ERR_FORMAT;
+    }
+    for(uint32_t slot=0;slot<result->slot_count;slot++){
+        const fg_output_batch_result_slot *entry=&result->slots[slot];
+        if(entry->token>=FG_Q38_VOCAB_SIZE||!isfinite(entry->logit)){
+            fg_error_set(err,FG_ERR_FORMAT,"invalid output batch result entry %u",slot);
+            return FG_ERR_FORMAT;
+        }
+    }
+    return FG_OK;
+}
+
+fg_status fg_output_batch_result_encode(uint8_t output[FG_OUTPUT_BATCH_RESULT_BYTES],
+                                        const fg_output_batch_result *result,fg_error *err){
+    if(!output){
+        fg_error_set(err,FG_ERR_ARGUMENT,"output batch result buffer is null");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_status status=validate_output_batch_result(result,err);
+    if(status!=FG_OK)return status;
+    output[0]=result->source_rank;
+    output[1]=result->destination_rank;
+    output[2]=result->slot_count;
+    output[3]=0;
+    uint32_t slot_count=result->slot_count>FG_DECODE_BATCH_MAX_SLOTS?
+        FG_DECODE_BATCH_MAX_SLOTS:result->slot_count;
+    for(uint32_t i=4u;i<FG_OUTPUT_BATCH_HEADER_BYTES;i++)output[i]=0;
+    uint32_t offset=FG_OUTPUT_BATCH_HEADER_BYTES;
+    for(uint32_t slot=0;slot<slot_count;slot++){
+        const fg_output_batch_result_slot *entry=&result->slots[slot];
+        put_u32_be(output+offset,entry->token_index);
+        put_u32_be(output+offset+4u,entry->token);
+        put_f32_be(output+offset+8u,entry->logit);
+        offset+=FG_OUTPUT_BATCH_RESULT_SLOT_BYTES;
+    }
+    return FG_OK;
+}
+
+fg_status fg_output_batch_result_decode(fg_output_batch_result *result,
+                                        const uint8_t *payload,uint32_t bytes,
+                                        fg_error *err){
+    if(!result||!payload){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid output batch result input");
+        return FG_ERR_ARGUMENT;
+    }
+    if(bytes<FG_OUTPUT_BATCH_HEADER_BYTES||payload[3]||
+       payload[4]||payload[5]||payload[6]||payload[7]){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid output batch result header");
+        return FG_ERR_FORMAT;
+    }
+    uint32_t slot_count=payload[2];
+    if(slot_count==0u||slot_count>FG_DECODE_BATCH_MAX_SLOTS||
+       bytes!=FG_OUTPUT_BATCH_HEADER_BYTES+slot_count*FG_OUTPUT_BATCH_RESULT_SLOT_BYTES){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid output batch result slot count");
+        return FG_ERR_FORMAT;
+    }
+    memset(result,0,sizeof(*result));
+    result->source_rank=payload[0];
+    result->destination_rank=payload[1];
+    result->slot_count=(uint8_t)slot_count;
+    uint32_t bounded=slot_count>FG_DECODE_BATCH_MAX_SLOTS?
+        FG_DECODE_BATCH_MAX_SLOTS:slot_count;
+    uint32_t offset=FG_OUTPUT_BATCH_HEADER_BYTES;
+    for(uint32_t slot=0;slot<bounded;slot++){
+        fg_output_batch_result_slot *entry=&result->slots[slot];
+        entry->token_index=get_u32_be(payload+offset);
+        entry->token=get_u32_be(payload+offset+4u);
+        entry->logit=get_f32_be(payload+offset+8u);
+        offset+=FG_OUTPUT_BATCH_RESULT_SLOT_BYTES;
+    }
+    return validate_output_batch_result(result,err);
+}
+
 static fg_status validate_output_partial(const fg_output_partial *partial,fg_error *err){if(!partial||partial->id>=FG_Q38_VOCAB_SIZE||!isfinite(partial->value)){fg_error_set(err,FG_ERR_FORMAT,"invalid output partial");return FG_ERR_FORMAT;}return FG_OK;}
 
 fg_status fg_output_partial_encode(uint8_t output[FG_OUTPUT_PARTIAL_BYTES],const fg_output_partial *partial,fg_error *err){if(!output){fg_error_set(err,FG_ERR_ARGUMENT,"output partial buffer is null");return FG_ERR_ARGUMENT;}fg_status status=validate_output_partial(partial,err);if(status!=FG_OK)return status;put_u32_be(output,partial->token_index);put_f32_be(output+4u,partial->value);put_u32_be(output+8u,partial->id);return FG_OK;}

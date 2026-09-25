@@ -514,6 +514,73 @@ static void test_wire_roundtrip(void){
     free(ngram);free(hyper);free(wire);
 }
 
+static void test_output_batch_wire(void){
+    fg_error err={0};
+    uint8_t wire[FG_OUTPUT_BATCH_WORK_MAX_BYTES];
+    fg_output_batch_work work,decoded;
+    memset(&work,0,sizeof(work));
+    work.source_rank=0u;work.destination_rank=4u;work.slot_count=2u;
+    for(uint32_t slot=0;slot<2u;slot++){
+        work.slots[slot].session_slot=(uint8_t)slot;
+        work.slots[slot].token_index=700u+slot;
+        work.slots[slot].uniform=0.25f+0.5f*(float)slot;
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)
+            work.slots[slot].hyper[i]=(float)(slot*10u+i)*0.03125f;
+    }
+    uint32_t bytes=0;
+    CHECK(fg_output_batch_work_encode(wire,FG_OUTPUT_BATCH_WORK_MAX_BYTES,&bytes,
+        &work,&err)==FG_OK);
+    CHECK(bytes==FG_OUTPUT_BATCH_HEADER_BYTES+2u*FG_OUTPUT_BATCH_SLOT_BYTES);
+    CHECK(fg_output_batch_work_decode(&decoded,wire,bytes,&err)==FG_OK);
+    CHECK(decoded.source_rank==0u&&decoded.destination_rank==4u&&
+          decoded.slot_count==2u);
+    for(uint32_t slot=0;slot<2u;slot++){
+        CHECK(decoded.slots[slot].session_slot==slot);
+        CHECK(decoded.slots[slot].token_index==700u+slot);
+        CHECK(decoded.slots[slot].uniform==work.slots[slot].uniform);
+        CHECK(!memcmp(decoded.slots[slot].hyper,work.slots[slot].hyper,
+                      sizeof(work.slots[slot].hyper)));
+    }
+    /* One-slot message is exactly one slot shorter. */
+    work.slot_count=1u;
+    CHECK(fg_output_batch_work_encode(wire,FG_OUTPUT_BATCH_WORK_MAX_BYTES,&bytes,
+        &work,&err)==FG_OK);
+    CHECK(bytes==FG_OUTPUT_BATCH_HEADER_BYTES+FG_OUTPUT_BATCH_SLOT_BYTES);
+    /* Rejects: reserved header byte, truncated size, slot count over the bound. */
+    work.slot_count=2u;
+    CHECK(fg_output_batch_work_encode(wire,FG_OUTPUT_BATCH_WORK_MAX_BYTES,&bytes,
+        &work,&err)==FG_OK);
+    uint8_t saved=wire[5];
+    wire[5]=1u;
+    CHECK(fg_output_batch_work_decode(&decoded,wire,bytes,&err)!=FG_OK);
+    wire[5]=saved;
+    CHECK(fg_output_batch_work_decode(&decoded,wire,bytes-1u,&err)!=FG_OK);
+    work.slot_count=3u;
+    CHECK(fg_output_batch_work_encode(wire,FG_OUTPUT_BATCH_WORK_MAX_BYTES,&bytes,
+        &work,&err)!=FG_OK);
+
+    fg_output_batch_result result,result_out;
+    memset(&result,0,sizeof(result));
+    result.source_rank=4u;result.destination_rank=0u;result.slot_count=2u;
+    for(uint32_t slot=0;slot<2u;slot++){
+        result.slots[slot].token_index=800u+slot;
+        result.slots[slot].token=900u+slot;
+        result.slots[slot].logit=(float)slot*0.5f;
+    }
+    uint8_t result_wire[FG_OUTPUT_BATCH_RESULT_BYTES];
+    CHECK(fg_output_batch_result_encode(result_wire,&result,&err)==FG_OK);
+    CHECK(fg_output_batch_result_decode(&result_out,result_wire,
+        sizeof(result_wire),&err)==FG_OK);
+    CHECK(result_out.slot_count==2u);
+    for(uint32_t slot=0;slot<2u;slot++){
+        CHECK(result_out.slots[slot].token_index==800u+slot);
+        CHECK(result_out.slots[slot].token==900u+slot);
+        CHECK(result_out.slots[slot].logit==result.slots[slot].logit);
+    }
+    result.slots[0].token=FG_Q38_VOCAB_SIZE;
+    CHECK(fg_output_batch_result_encode(result_wire,&result,&err)!=FG_OK);
+}
+
 static void test_wire_rejects(void){
     fg_error err={0};
     uint8_t *wire=malloc(FG_DECODE_BATCH_WORK_MAX_BYTES);
@@ -882,6 +949,7 @@ int main(void){
     test_isolation_and_b1();
     test_advance_validation();
     test_wire_roundtrip();
+    test_output_batch_wire();
     test_wire_rejects();
     test_batched_equals_sequential();
     test_failure_rolls_back_batch();
