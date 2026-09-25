@@ -5955,8 +5955,10 @@ fg_status fg_runtime_session_begin(fg_runtime *runtime,fg_runtime_session *sessi
     if(runtime->bootstrap_pending&&!session->adopted){
         /* The first session adopts the state fg_runtime_open created instead of
          * paying an extra owner BEGIN; single-session output stays byte
-         * identical to the pre-M3 path. */
+         * identical to the pre-M3 path.  The capture is non-destructive: the
+         * same state stays bound to the runtime for this generation. */
         runtime_session_store(runtime,&session->state);
+        runtime_session_load(runtime,&session->state);
         session->adopted=true;
         session->ring_generation=runtime->ring_generation;
         runtime->bootstrap_pending=false;
@@ -5965,6 +5967,11 @@ fg_status fg_runtime_session_begin(fg_runtime *runtime,fg_runtime_session *sessi
         runtime_session_load(runtime,&session->state);
     }else{
         runtime_session_load(runtime,&session->state);
+        /* The runtime is open, so its owners already hold a session namespace:
+         * a cold start must BEGIN a fresh one.  (session_started is per
+         * session and false for a new object; the open-time reset is the only
+         * reset that legitimately skips BEGIN.) */
+        runtime->session_started=true;
         fg_status status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
         if(status!=FG_OK){
             runtime_session_store(runtime,&session->state);
