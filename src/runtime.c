@@ -5154,10 +5154,13 @@ static fg_status depthb_batch_restore_hook(void *context,uint64_t sequence_id,
 /* Assemble, transact and sample one B>=2 ring step.  The batch table holds the
  * host-side frontiers; the owner sessions hold the device state.  All state
  * changes are committed or rolled back as one transaction. */
+/* `histories`/`history_counts` are indexed by the table's sequence index (not
+ * by the step's slot order), so a caller that cannot know the schedule order
+ * ahead of time can still supply every candidate's history. */
 static fg_status coordinator_decode_batch_step(fg_coordinator *coordinator,
     fg_decode_batch_table *table,const fg_decode_batch_policy *policy,
-    const int32_t *const histories[FG_DECODE_BATCH_MAX_SLOTS],
-    const size_t history_counts[FG_DECODE_BATCH_MAX_SLOTS],uint64_t now,
+    const int32_t *const histories[FG_DECODE_BATCH_SEQUENCE_MAX],
+    const size_t history_counts[FG_DECODE_BATCH_SEQUENCE_MAX],uint64_t now,
     bool inject_abort,fg_decode_batch_step *step,fg_error *err){
     const fg_manifest *manifest=coordinator->manifest;
     if(!manifest->layer_owner[0u]){
@@ -5180,10 +5183,6 @@ static fg_status coordinator_decode_batch_step(fg_coordinator *coordinator,
         return FG_ERR_MISMATCH;
     }
     depthb_batch_context batch_ctx={.coordinator=coordinator};
-    for(uint32_t slot=0;slot<FG_DECODE_BATCH_MAX_SLOTS;slot++){
-        batch_ctx.history[slot]=histories?histories[slot]:NULL;
-        batch_ctx.history_count[slot]=history_counts?history_counts[slot]:0u;
-    }
     const fg_decode_batch_ops ops={
         .prepare=depthb_batch_prepare_hook,
         .commit=depthb_batch_commit_hook,
@@ -5203,8 +5202,8 @@ static fg_status coordinator_decode_batch_step(fg_coordinator *coordinator,
     for(uint32_t slot=0;status==FG_OK&&slot<step->batch.slot_count;slot++){
         fg_decode_batch_slot *entry=&step->batch.slots[slot];
         fg_decode_batch_sequence *sequence=&table->sequences[entry->sequence];
-        const int32_t *history=histories[slot];
-        size_t count=history_counts[slot];
+        const int32_t *history=histories[entry->sequence];
+        size_t count=history_counts[entry->sequence];
         if(!history||!count||(uint32_t)history[count-1u]>=FG_Q38_VOCAB_SIZE){
             fg_error_set(err,FG_ERR_ARGUMENT,
                          "decode batch slot %u has no valid token history",slot);
@@ -5399,8 +5398,10 @@ static fg_status coordinator_decode_batch_step(fg_coordinator *coordinator,
         for(uint32_t slot=0;slot<step->batch.slot_count;slot++){
             uint64_t rows[FG_NGRAM_HEAD_COUNT];
             fg_error ignored={0};
-            if(histories[slot]&&history_counts[slot]&&
-               fg_q38_ngram_next_addresses(histories[slot],history_counts[slot],
+            if(histories[step->batch.slots[slot].sequence]&&
+               history_counts[step->batch.slots[slot].sequence]&&
+               fg_q38_ngram_next_addresses(histories[step->batch.slots[slot].sequence],
+                   history_counts[step->batch.slots[slot].sequence],
                    (int32_t)step->outcomes[slot].next_token,rows,&ignored)==FG_OK){
                 memcpy(pf_addresses+pf_rows,rows,sizeof(rows));
                 pf_rows+=FG_NGRAM_HEAD_COUNT;
@@ -6508,31 +6509,32 @@ fg_status fg_runtime_session_runner_batch(fg_runtime *runtime,
             fg_status status=fg_decode_batch_sequence_ready(table,sessions[i]->id,now,err);
             if(status!=FG_OK)return status;
         }
-    fg_decode_batch scheduled={0};
-    fg_status status=fg_decode_batch_schedule(table,policy,now,&scheduled,err);
+    /* Histories are indexed by table sequence so the step can schedule freely;
+     * the outcomes are attributed back through the same table index. */
+    const int32_t *histories[FG_DECODE_BATCH_SEQUENCE_MAX]={NULL};
+    size_t counts[FG_DECODE_BATCH_SEQUENCE_MAX]={0};
+    for(uint32_t i=0;i<count;i++){
+        uint32_t index=fg_decode_batch_table_find(table,sessions[i]->id);
+        if(index==FG_DECODE_BATCH_INVALID_SLOT){
+            fg_error_set(err,FG_ERR_MISMATCH,"batch session is not in the table");
+            return FG_ERR_MISMATCH;
+        }
+        histories[index]=sessions[i]->state.history;
+        counts[index]=sessions[i]->state.history_count;
+    }
+    fg_decode_batch_step step={0};
+    fg_status status=coordinator_decode_batch_step(&runtime->coordinator,table,policy,
+        histories,counts,now,false,&step,err);
     if(status!=FG_OK)return status;
-    const int32_t *histories[FG_DECODE_BATCH_MAX_SLOTS]={NULL};
-    size_t counts[FG_DECODE_BATCH_MAX_SLOTS]={0};
-    fg_runtime_session *ordered[FG_DECODE_BATCH_MAX_SLOTS]={NULL};
-    for(uint32_t slot=0;slot<scheduled.slot_count;slot++){
-        uint64_t id=table->sequences[scheduled.slots[slot].sequence].sequence_id;
+    for(uint32_t slot=0;slot<step.batch.slot_count;slot++){
+        uint64_t id=table->sequences[step.batch.slots[slot].sequence].sequence_id;
         fg_runtime_session *session=NULL;
         for(uint32_t i=0;i<count;i++)
             if(sessions[i]->id==id){session=sessions[i];break;}
         if(!session){
-            fg_error_set(err,FG_ERR_MISMATCH,"batch schedule names an unknown session");
+            fg_error_set(err,FG_ERR_MISMATCH,"batch step names an unknown session");
             return FG_ERR_MISMATCH;
         }
-        ordered[slot]=session;
-        histories[slot]=session->state.history;
-        counts[slot]=session->state.history_count;
-    }
-    fg_decode_batch_step step={0};
-    status=coordinator_decode_batch_step(&runtime->coordinator,table,policy,
-        histories,counts,now,false,&step,err);
-    if(status!=FG_OK)return status;
-    for(uint32_t slot=0;slot<scheduled.slot_count;slot++){
-        fg_runtime_session *session=ordered[slot];
         const fg_decode_batch_outcome *outcome=&step.outcomes[slot];
         session->state.next_token=outcome->next_token;
         session->state.next_logit=outcome->logit;
@@ -8112,10 +8114,11 @@ static fg_status depthb_run_case(fg_runtime *runtime,const char *name,
         if(status==FG_OK)status=fg_decode_batch_sequence_ready(&table,
             FG_DEPTHB_SEQ_Y,now,err);
         fg_decode_batch_step step={0};
+        const int32_t *const histories[FG_DECODE_BATCH_SEQUENCE_MAX]={history_x,history_y};
+        const size_t history_counts[FG_DECODE_BATCH_SEQUENCE_MAX]={count_x,count_y};
         double batch_start=dispatch_ts();
         if(status==FG_OK)status=coordinator_decode_batch_step(&runtime->coordinator,
-            &table,&policy,(const int32_t *const[]){history_x,history_y},
-            (const size_t[]){count_x,count_y},now,inject,&step,err);
+            &table,&policy,histories,history_counts,now,inject,&step,err);
         if(!inject)b2_decode+=dispatch_ts()-batch_start;
         if(status==FG_ERR_INTERRUPTED&&inject){
             if(!table.restored){
@@ -8515,8 +8518,9 @@ static fg_status concurrent_selftest_case(fg_runtime *runtime,const char *name,
                 uint32_t count=(uint32_t)tokens_y.count;
                 uint32_t position[4]={count,count,count,0u};
                 status=fg_decode_batch_sequence_enter(&table,fg_runtime_session_id(y),1u,err);
+                /* The prefill sample is the pending token at index `count`. */
                 if(status==FG_OK)status=fg_decode_batch_sequence_frontier(&table,
-                    fg_runtime_session_id(y),count,(uint32_t)(count-1u),position,err);
+                    fg_runtime_session_id(y),count,count,position,err);
                 if(status==FG_OK)status=fg_decode_batch_sequence_enter(&table,
                     fg_runtime_session_id(x),0u,err);
                 if(status==FG_OK)status=fg_runtime_session_runner_sync_frontier(runtime,x,
