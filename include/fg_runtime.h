@@ -19,6 +19,25 @@ static inline bool fg_runtime_ring_enabled(void){
 }
 
 typedef struct fg_runtime fg_runtime;
+/* M3 session objects: the token path state that used to live directly in
+ * `fg_runtime` (history, frontier, position, sampler, rendered transcript) is
+ * owned per session.  The engine binds a session for a request with
+ * fg_runtime_session_begin and releases it with fg_runtime_session_end; only
+ * one session is bound at a time today, so the generation path is unchanged.
+ * A session whose ring/owner state was reset by another session fails closed
+ * on resume (cold start) instead of resuming a stale frontier. */
+typedef struct fg_runtime_session fg_runtime_session;
+#define FG_RUNTIME_SESSION_MAX 8u
+fg_runtime_session *fg_runtime_session_acquire(fg_runtime *runtime,uint64_t id);
+fg_runtime_session *fg_runtime_session_find(fg_runtime *runtime,uint64_t id);
+void fg_runtime_session_release(fg_runtime *runtime,fg_runtime_session *session);
+uint64_t fg_runtime_session_id(const fg_runtime_session *session);
+/* Bind/unbind the session's token-path state to the runtime.  Begin cold-starts
+ * the session when its saved state cannot be resumed (fresh session, or the
+ * shared ring state was reset since the session last ran). */
+fg_status fg_runtime_session_begin(fg_runtime *runtime,fg_runtime_session *session,
+                                   fg_error *err);
+void fg_runtime_session_end(fg_runtime *runtime,fg_runtime_session *session);
 #define FG_RUNTIME_BOOT_CONTEXT_TOKENS FG_MANIFEST_DEFAULT_CONTEXT_TOKENS
 #define FG_RUNTIME_QSA_HOT_TOKENS 8192u
 #define FG_RUNTIME_QSA_CACHE_MIN_BYTES (UINT64_C(16) << 20u)

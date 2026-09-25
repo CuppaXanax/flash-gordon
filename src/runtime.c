@@ -3789,6 +3789,40 @@ static fg_status coordinator_qsa_barrier(fg_coordinator *coordinator,fg_error *e
     return FG_OK;
 }
 
+/* Token-path state saved per session.  The fields mirror the same-named
+ * members of `fg_runtime` exactly; runtime_session_load/store copy them
+ * field by field, so a new token-path field must be added in both places. */
+typedef struct fg_session_state {
+    int32_t *history;
+    size_t history_count,history_capacity;
+    uint32_t state_frontier;
+    uint32_t state_position;
+    char *rendered_history;
+    size_t rendered_history_length;
+    size_t pending_boundary_bytes;
+    uint32_t pending_eos_token;
+    bool pending_eos_valid;
+    bool session_started;
+    bool prefill_profiled;
+    bool state_ready;
+    bool next_token_valid;
+    uint32_t next_token;
+    float next_logit;
+    fg_prefix_reset_reason empty_reason;
+    fg_sampler_config sampler;
+    uint32_t output_session;
+} fg_session_state;
+
+struct fg_runtime_session {
+    uint64_t id;
+    /* Owner-ring generation the saved state belongs to; resume is refused when
+     * another session reset the owners in between. */
+    uint64_t ring_generation;
+    bool adopted;
+    bool in_use;
+    fg_session_state state;
+};
+
 struct fg_runtime {
     fg_manifest *manifest;
     fg_coordinator coordinator;
@@ -3827,6 +3861,15 @@ struct fg_runtime {
     /* Ring prefix continuation: resume owner state across sequential requests
      * on an exact token-prefix extension. */
     bool prefix_continuation;
+    /* M3 session objects: the fields above are the *active* session's state
+     * while `active_session` is set.  `ring_generation` increments on every
+     * owner-state reset; a session may resume only when its recorded generation
+     * matches, otherwise it cold-starts. */
+    fg_runtime_session sessions[FG_RUNTIME_SESSION_MAX];
+    uint64_t next_session_id;
+    uint64_t ring_generation;
+    bool bootstrap_pending;
+    fg_runtime_session *active_session;
 };
 
 static fg_status coordinator_begin_session(fg_coordinator *coordinator,fg_error *err){
@@ -5783,7 +5826,161 @@ static fg_status runtime_reset_state(fg_runtime *runtime,fg_prefix_reset_reason 
     if(status==FG_OK)runtime->session_started=true;
     if(status!=FG_OK)return status;
     runtime->state_ready=true;
+    /* Every reset re-creates the owner sessions, so any other session's saved
+     * frontier is stale from here on. */
+    runtime->ring_generation++;
+    if(runtime->active_session)
+        runtime->active_session->ring_generation=runtime->ring_generation;
     return FG_OK;
+}
+
+static void runtime_session_load(fg_runtime *runtime,const fg_session_state *state){
+    runtime->history=state->history;
+    runtime->history_count=state->history_count;
+    runtime->history_capacity=state->history_capacity;
+    runtime->state_frontier=state->state_frontier;
+    runtime->state_position=state->state_position;
+    runtime->rendered_history=state->rendered_history;
+    runtime->rendered_history_length=state->rendered_history_length;
+    runtime->pending_boundary_bytes=state->pending_boundary_bytes;
+    runtime->pending_eos_token=state->pending_eos_token;
+    runtime->pending_eos_valid=state->pending_eos_valid;
+    runtime->session_started=state->session_started;
+    runtime->prefill_profiled=state->prefill_profiled;
+    runtime->state_ready=state->state_ready;
+    runtime->next_token_valid=state->next_token_valid;
+    runtime->next_token=state->next_token;
+    runtime->next_logit=state->next_logit;
+    runtime->empty_reason=state->empty_reason;
+    runtime->sampler=state->sampler;
+    runtime->coordinator.output_session=state->output_session;
+}
+
+static void runtime_session_store(fg_runtime *runtime,fg_session_state *state){
+    state->history=runtime->history;
+    state->history_count=runtime->history_count;
+    state->history_capacity=runtime->history_capacity;
+    state->state_frontier=runtime->state_frontier;
+    state->state_position=runtime->state_position;
+    state->rendered_history=runtime->rendered_history;
+    state->rendered_history_length=runtime->rendered_history_length;
+    state->pending_boundary_bytes=runtime->pending_boundary_bytes;
+    state->pending_eos_token=runtime->pending_eos_token;
+    state->pending_eos_valid=runtime->pending_eos_valid;
+    state->session_started=runtime->session_started;
+    state->prefill_profiled=runtime->prefill_profiled;
+    state->state_ready=runtime->state_ready;
+    state->next_token_valid=runtime->next_token_valid;
+    state->next_token=runtime->next_token;
+    state->next_logit=runtime->next_logit;
+    state->empty_reason=runtime->empty_reason;
+    state->sampler=runtime->sampler;
+    state->output_session=runtime->coordinator.output_session;
+    /* The session owns the buffers from here; the runtime must never free or
+     * read them while another session is bound. */
+    runtime->history=NULL;
+    runtime->history_count=0;
+    runtime->history_capacity=0;
+    runtime->state_frontier=0;
+    runtime->state_position=0;
+    runtime->rendered_history=NULL;
+    runtime->rendered_history_length=0;
+    runtime->pending_boundary_bytes=0;
+    runtime->pending_eos_token=0;
+    runtime->pending_eos_valid=false;
+    runtime->session_started=false;
+    runtime->prefill_profiled=false;
+    runtime->state_ready=false;
+    runtime->next_token_valid=false;
+    runtime->next_token=0;
+    runtime->next_logit=0.0f;
+    runtime->empty_reason=FG_PREFIX_RESET_NONE;
+    fg_sampler_config_greedy(&runtime->sampler);
+    runtime->coordinator.output_session=0u;
+}
+
+fg_runtime_session *fg_runtime_session_acquire(fg_runtime *runtime,uint64_t id){
+    if(!runtime)return NULL;
+    if(id){
+        fg_runtime_session *existing=fg_runtime_session_find(runtime,id);
+        if(existing)return existing;
+    }else{
+        if(runtime->next_session_id==UINT64_MAX)return NULL;
+        id=++runtime->next_session_id;
+    }
+    for(uint32_t i=0;i<FG_RUNTIME_SESSION_MAX;i++){
+        fg_runtime_session *session=&runtime->sessions[i];
+        if(session->in_use)continue;
+        memset(session,0,sizeof(*session));
+        session->id=id;
+        session->in_use=true;
+        fg_sampler_config_greedy(&session->state.sampler);
+        if(id>runtime->next_session_id)runtime->next_session_id=id;
+        return session;
+    }
+    return NULL;
+}
+
+fg_runtime_session *fg_runtime_session_find(fg_runtime *runtime,uint64_t id){
+    if(!runtime||!id)return NULL;
+    for(uint32_t i=0;i<FG_RUNTIME_SESSION_MAX;i++)
+        if(runtime->sessions[i].in_use&&runtime->sessions[i].id==id)
+            return &runtime->sessions[i];
+    return NULL;
+}
+
+void fg_runtime_session_release(fg_runtime *runtime,fg_runtime_session *session){
+    if(!runtime||!session||!session->in_use)return;
+    if(runtime->active_session==session)return;
+    free(session->state.rendered_history);
+    free(session->state.history);
+    memset(session,0,sizeof(*session));
+}
+
+uint64_t fg_runtime_session_id(const fg_runtime_session *session){
+    return session?session->id:0u;
+}
+
+fg_status fg_runtime_session_begin(fg_runtime *runtime,fg_runtime_session *session,
+                                   fg_error *err){
+    if(!runtime||!session||!session->in_use){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid runtime session");
+        return FG_ERR_ARGUMENT;
+    }
+    if(runtime->active_session==session)return FG_OK;
+    if(runtime->active_session){
+        fg_error_set(err,FG_ERR_MISMATCH,"runtime already has an active session");
+        return FG_ERR_MISMATCH;
+    }
+    if(runtime->bootstrap_pending&&!session->adopted){
+        /* The first session adopts the state fg_runtime_open created instead of
+         * paying an extra owner BEGIN; single-session output stays byte
+         * identical to the pre-M3 path. */
+        runtime_session_store(runtime,&session->state);
+        session->adopted=true;
+        session->ring_generation=runtime->ring_generation;
+        runtime->bootstrap_pending=false;
+    }else if(session->state.state_ready&&
+             session->ring_generation==runtime->ring_generation){
+        runtime_session_load(runtime,&session->state);
+    }else{
+        runtime_session_load(runtime,&session->state);
+        fg_status status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
+        if(status!=FG_OK){
+            runtime_session_store(runtime,&session->state);
+            return status;
+        }
+        runtime->bootstrap_pending=false;
+    }
+    runtime->active_session=session;
+    return FG_OK;
+}
+
+void fg_runtime_session_end(fg_runtime *runtime,fg_runtime_session *session){
+    if(!runtime||!session||runtime->active_session!=session)return;
+    session->ring_generation=runtime->ring_generation;
+    runtime_session_store(runtime,&session->state);
+    runtime->active_session=NULL;
 }
 
 fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
@@ -5814,6 +6011,8 @@ fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
         status=coordinator_open(&runtime->coordinator,runtime->manifest,
                                 runtime->directory,&runtime->options,err);
     if(status==FG_OK)status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
+    /* The next session to begin adopts this state (see runtime_session_begin). */
+    if(status==FG_OK)runtime->bootstrap_pending=true;
     if(status!=FG_OK){fg_runtime_close(runtime);return status;}*out=runtime;return FG_OK;
 }
 
@@ -5856,6 +6055,14 @@ fg_status fg_runtime_set_sampler(fg_runtime *runtime,const fg_sampler_config *co
 void fg_runtime_close(fg_runtime *runtime){
     if(!runtime)return;
     coordinator_close(&runtime->coordinator);
+    for(uint32_t i=0;i<FG_RUNTIME_SESSION_MAX;i++){
+        fg_runtime_session *session=&runtime->sessions[i];
+        if(!session->in_use)continue;
+        free(session->state.rendered_history);
+        free(session->state.history);
+        session->state.rendered_history=NULL;
+        session->state.history=NULL;
+    }
     free(runtime->rendered_history);free(runtime->history);free(runtime->manifest);free(runtime);
 }
 

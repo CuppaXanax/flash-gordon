@@ -39,6 +39,9 @@
 #define FG_API_MAX_CONNECTIONS 64u
 #define FG_API_ENGINE_QUEUE_CAPACITY 4u
 #define FG_API_FRONTEND_POLL_MS 200
+/* M3 live-session table: at most one engine request is served at a time today
+ * (M2 bound 4), so 8 entries are ample; the LRU entry is evicted when full. */
+#define FG_API_SESSION_MAX FG_RUNTIME_SESSION_MAX
 
 typedef struct api_buffer {
     char *data;
@@ -121,6 +124,11 @@ typedef struct api_chat_request {
     api_media *media;
     size_t media_count;
     size_t media_capacity;
+    /* M3 public session identity: an opaque client-supplied continuation key.
+     * The server echoes it as X-Flash-Gordon-Session; an unknown id starts a
+     * new session. */
+    char session_id[48];
+    bool session_id_set;
 } api_chat_request;
 
 typedef struct api_media_identity {
@@ -134,6 +142,11 @@ typedef struct api_public_session {
     api_media_identity *media;
     size_t media_count;
     bool valid;
+    /* Public identity (M3): echoed in X-Flash-Gordon-Session so a client can
+     * continue this transcript across connections.  `numeric_id` is the engine
+     * side key for the runtime session object. */
+    char id[48];
+    uint64_t numeric_id;
 } api_public_session;
 
 /* Incremental HTTP/1.1 request parser.  The front-end thread feeds it bytes
@@ -205,6 +218,7 @@ typedef struct api_generation {
     size_t reasoning_emitted;
     size_t streamed_tool_calls;
     fg_runtime *runtime;
+    const char *session_id;
 } api_generation;
 
 typedef struct api_engine_request {
@@ -233,6 +247,25 @@ typedef enum api_engine_admission {
     API_ENGINE_ADMIT_STOPPING  /* shutting down: 503 */
 } api_engine_admission;
 
+/* M3 session table (engine thread only).  An entry owns the public transcript
+ * (`api_public_session`) and the runtime token-path object for one live chat
+ * session.  Requests resolve by explicit `session_id`, by their connection (the
+ * keep-alive default), or by strict prefix extension of the most recent
+ * session; a full table evicts the least-recently-used idle entry. */
+typedef struct api_session_entry {
+    api_public_session session;
+    fg_runtime_session *runtime_session;
+    api_connection *owner;
+    uint64_t last_used;
+    bool busy;
+    bool in_use;
+} api_session_entry;
+
+typedef struct api_session_table {
+    api_session_entry entries[FG_API_SESSION_MAX];
+    uint64_t sequence;
+} api_session_table;
+
 struct api_frontend {
     int listener;
     int wake_read;
@@ -259,6 +292,12 @@ static void api_connection_complete_response(api_connection *conn,bool close_aft
 static void api_connection_flush(api_connection *conn);
 static bool api_connection_maybe_heartbeat(api_connection *conn,double now);
 static bool api_connection_detect_client_gone(api_connection *conn);
+static bool api_session_id_valid(const char *id);
+static fg_status api_session_table_resolve(api_session_table *table,fg_runtime *runtime,
+                                           api_connection *conn,
+                                           const api_chat_request *request,
+                                           api_session_entry **entry_out,fg_error *err);
+static void api_session_table_destroy(api_session_table *table,fg_runtime *runtime);
 static void api_frontend_wake(api_frontend *frontend);
 static void api_frontend_accept(api_frontend *frontend);
 static void api_frontend_read_available(api_frontend *frontend,api_connection *conn);
@@ -1500,8 +1539,11 @@ static fg_status api_public_session_build(api_public_session *output,
                                           const api_chat_request *request,
                                           const api_generation *generation,
                                           const fg_chat_generated *generated,
+                                          const char *session_id,uint64_t numeric_id,
                                           fg_error *err) {
     memset(output,0,sizeof(*output));
+    if(session_id)snprintf(output->id,sizeof(output->id),"%s",session_id);
+    output->numeric_id=numeric_id;
     api_chat_request *copy=&output->transcript;
     copy->message_count=request->message_count+1u;
     copy->messages=calloc(copy->message_count,sizeof(*copy->messages));
@@ -1881,6 +1923,21 @@ static fg_status parse_chat_request(const json_value *root, const char *runtime_
             return FG_ERR_ARGUMENT;
         }
         request->stream = stream->as.boolean;
+    }
+
+    /* M3 public session identity: an optional opaque continuation key. */
+    json_value *session_id = json_object_get(root, "session_id");
+    if (session_id) {
+        if (session_id->type != JSON_STRING || !session_id->as.string[0] ||
+            strlen(session_id->as.string) >= sizeof(request->session_id) ||
+            !api_session_id_valid(session_id->as.string)) {
+            fg_error_set(err, FG_ERR_ARGUMENT,
+                         "session_id must be 1..47 characters of [A-Za-z0-9._:-]");
+            return FG_ERR_ARGUMENT;
+        }
+        snprintf(request->session_id, sizeof(request->session_id), "%s",
+                 session_id->as.string);
+        request->session_id_set = true;
     }
 
     json_value *messages = json_object_get(root, "messages");
@@ -2359,19 +2416,30 @@ static bool api_interrupted(void *context) {
     return false;
 }
 
-static fg_status api_send_sse_headers(api_sink *sink, fg_error *err) {
+static fg_status api_send_sse_headers(api_sink *sink,const char *session_id,
+                                      fg_error *err) {
+    char session_header[80]={0};
+    if(session_id&&session_id[0])
+        snprintf(session_header,sizeof(session_header),
+                 "X-Flash-Gordon-Session: %s\r\n",session_id);
     if (sink->connection) {
         /* Chunked framing lets a streaming response end without closing the
          * connection, so keep-alive works for SSE too. */
-        static const char headers[] =
+        char headers[512];
+        int length=snprintf(headers,sizeof(headers),
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: text/event-stream\r\n"
             "Cache-Control: no-cache\r\n"
             "Connection: keep-alive\r\n"
             "Transfer-Encoding: chunked\r\n"
-            "X-Accel-Buffering: no\r\n\r\n";
+            "X-Accel-Buffering: no\r\n"
+            "%s\r\n",session_header);
+        if(length<0||(size_t)length>=sizeof(headers)){
+            fg_error_set(err,FG_ERR_LIMIT,"SSE headers exceed buffer");
+            return FG_ERR_LIMIT;
+        }
         fg_status status = api_connection_enqueue_raw(sink->connection, headers,
-                                                      sizeof(headers) - 1u, err);
+                                                      (size_t)length, err);
         if (status == FG_OK) {
             api_connection *conn = sink->connection;
             pthread_mutex_lock(&conn->out_mutex);
@@ -2380,13 +2448,19 @@ static fg_status api_send_sse_headers(api_sink *sink, fg_error *err) {
         }
         return status;
     }
-    static const char headers[] =
+    char headers[512];
+    int length=snprintf(headers,sizeof(headers),
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: text/event-stream\r\n"
         "Cache-Control: no-cache\r\n"
         "Connection: close\r\n"
-        "X-Accel-Buffering: no\r\n\r\n";
-    return send_all(sink->fd, headers, sizeof(headers) - 1u, err);
+        "X-Accel-Buffering: no\r\n"
+        "%s\r\n",session_header);
+    if(length<0||(size_t)length>=sizeof(headers)){
+        fg_error_set(err,FG_ERR_LIMIT,"SSE headers exceed buffer");
+        return FG_ERR_LIMIT;
+    }
+    return send_all(sink->fd, headers, (size_t)length, err);
 }
 
 static fg_status send_delta_field(api_generation *generation,const char *field,
@@ -2984,9 +3058,14 @@ static fg_status send_completion(api_generation *generation,
                 stats->prefilled_tokens / stats->prefill_seconds : 0.0;
         double decode_tps =
             stats->decode_seconds > 0.0 ? stats->generated_tokens / stats->decode_seconds : 0.0;
-        char metrics[2048];
+        char session_header[80]={0};
+        if(generation->session_id&&generation->session_id[0])
+            snprintf(session_header,sizeof(session_header),
+                     "X-Flash-Gordon-Session: %s\r\n",generation->session_id);
+        char metrics[2304];
         int metrics_length = snprintf(
             metrics, sizeof(metrics),
+            "%s"
             "X-Flash-Gordon-Execution-Mode: %s\r\n"
             "X-Flash-Gordon-Prompt-Tokens: %u\r\n"
             "X-Flash-Gordon-Prefilled-Tokens: %u\r\n"
@@ -3001,6 +3080,7 @@ static fg_status send_completion(api_generation *generation,
             "X-Flash-Gordon-Decode-Seconds: %.9f\r\n"
             "X-Flash-Gordon-Decode-TPS: %.6f\r\n"
             "X-Flash-Gordon-Ledger: %s\r\n",
+            session_header,
             fg_execution_mode_name(stats->execution_mode),
             stats->prompt_tokens, stats->prefilled_tokens, stats->reused_tokens,
             stats->prefix_cache_hit ? "hit" : "miss",
@@ -3698,10 +3778,128 @@ static void api_frontend_stop(api_frontend *frontend) {
     frontend->wake_read = frontend->wake_write = -1;
 }
 
+static bool api_session_id_valid(const char *id) {
+    if (!id || !id[0]) return false;
+    for (const unsigned char *cursor = (const unsigned char *)id; *cursor; cursor++) {
+        unsigned char c = *cursor;
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                  (c >= '0' && c <= '9') || c == '.' || c == '_' || c == ':' || c == '-';
+        if (!ok) return false;
+    }
+    return true;
+}
+
+static void api_session_id_generate(api_session_table *table,char output[48]) {
+    uint64_t sequence = ++table->sequence;
+    snprintf(output,48u,"fg-%08llx-%06llx",
+             (unsigned long long)(uint64_t)time(NULL),
+             (unsigned long long)(sequence & 0xffffffu));
+}
+
+static api_session_entry *api_session_table_new(api_session_table *table,fg_runtime *runtime,
+                                                api_connection *conn,const char *id,
+                                                fg_error *err) {
+    api_session_entry *entry = NULL;
+    for (size_t i = 0; i < FG_API_SESSION_MAX; i++) {
+        if (!table->entries[i].in_use) { entry = &table->entries[i]; break; }
+    }
+    if (!entry) {
+        /* Evict the least-recently-used idle entry; a busy entry is the session
+         * currently being served and must survive until it completes. */
+        for (size_t i = 0; i < FG_API_SESSION_MAX; i++) {
+            api_session_entry *candidate = &table->entries[i];
+            if (candidate->busy) continue;
+            if (!entry || candidate->last_used < entry->last_used) entry = candidate;
+        }
+        if (!entry) {
+            fg_error_set(err,FG_ERR_LIMIT,"no free API session slot");
+            return NULL;
+        }
+        api_public_session_free(&entry->session);
+        fg_runtime_session_release(runtime,entry->runtime_session);
+        memset(entry,0,sizeof(*entry));
+    }
+    entry->runtime_session = fg_runtime_session_acquire(runtime, 0);
+    if (!entry->runtime_session) {
+        fg_error_set(err,FG_ERR_LIMIT,"no free runtime session slot");
+        return NULL;
+    }
+    if (id && id[0])
+        snprintf(entry->session.id,sizeof(entry->session.id),"%s",id);
+    else
+        api_session_id_generate(table,entry->session.id);
+    entry->session.numeric_id = fg_runtime_session_id(entry->runtime_session);
+    entry->owner = conn;
+    entry->in_use = true;
+    entry->last_used = ++table->sequence;
+    return entry;
+}
+
+static fg_status api_session_table_resolve(api_session_table *table,fg_runtime *runtime,
+                                           api_connection *conn,
+                                           const api_chat_request *request,
+                                           api_session_entry **entry_out,fg_error *err) {
+    *entry_out = NULL;
+    if (!table || !runtime) {
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid session table arguments");
+        return FG_ERR_ARGUMENT;
+    }
+    api_session_entry *entry = NULL;
+    if (request->session_id_set) {
+        for (size_t i = 0; i < FG_API_SESSION_MAX; i++) {
+            api_session_entry *candidate = &table->entries[i];
+            if (candidate->in_use && !strcmp(candidate->session.id, request->session_id)) {
+                entry = candidate;
+                break;
+            }
+        }
+        if (!entry) entry = api_session_table_new(table,runtime,conn,request->session_id,err);
+    } else {
+        /* Default: the connection's session (keep-alive continuation). */
+        for (size_t i = 0; i < FG_API_SESSION_MAX; i++) {
+            api_session_entry *candidate = &table->entries[i];
+            if (candidate->in_use && candidate->owner == conn) { entry = candidate; break; }
+        }
+        /* Preserve the pre-M3 cross-connection behaviour: a request that is a
+         * strict prefix extension of the most recent session continues it. */
+        if (!entry) {
+            api_session_entry *recent = NULL;
+            for (size_t i = 0; i < FG_API_SESSION_MAX; i++) {
+                api_session_entry *candidate = &table->entries[i];
+                if (!candidate->in_use) continue;
+                if (!recent || candidate->last_used > recent->last_used) recent = candidate;
+            }
+            if (recent &&
+                (!recent->session.valid ||
+                 api_public_session_prefix(&recent->session,request,NULL,0u)))
+                entry = recent;
+        }
+        if (!entry) entry = api_session_table_new(table,runtime,conn,NULL,err);
+    }
+    if (!entry) return err->code ? err->code : FG_ERR_LIMIT;
+    entry->owner = conn;
+    entry->last_used = ++table->sequence;
+    *entry_out = entry;
+    return FG_OK;
+}
+
+static void api_session_table_destroy(api_session_table *table,fg_runtime *runtime) {
+    if (!table) return;
+    for (size_t i = 0; i < FG_API_SESSION_MAX; i++) {
+        api_session_entry *entry = &table->entries[i];
+        if (!entry->in_use) continue;
+        api_public_session_free(&entry->session);
+        fg_runtime_session_release(runtime,entry->runtime_session);
+        memset(entry,0,sizeof(*entry));
+    }
+}
+
 static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
                                          api_public_session *public_session,
+                                         api_session_table *sessions,
                                          const http_request *http, fg_error *err) {
     memset(err, 0, sizeof(*err));
+    api_session_entry *session_entry = NULL;
     bool keep_alive = sink->connection ? sink->connection->keep_alive : false;
     json_value *root = parse_json_body(http->body, http->body_length, err);
     if (!root) {
@@ -3746,6 +3944,33 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
         api_send_error_response(sink, 400u, message, keep_alive, &send_err);
         api_chat_request_free(&request);
         return FG_OK;
+    }
+
+    /* M3: bind the request to its live session.  Tests call this function with
+     * `sessions == NULL` and their own `public_session`. */
+    if (sessions) {
+        fg_status resolve = api_session_table_resolve(sessions, runtime, sink->connection,
+                                                      &request, &session_entry, err);
+        if (resolve != FG_OK) {
+            char message[sizeof(err->message)];
+            snprintf(message, sizeof(message), "%s", err->message);
+            fg_error send_err = {0};
+            api_send_error_response(sink, 503u, message, keep_alive, &send_err);
+            api_chat_request_free(&request);
+            return FG_OK;
+        }
+        public_session = &session_entry->session;
+        session_entry->busy = true;
+        fg_status begin = fg_runtime_session_begin(runtime, session_entry->runtime_session, err);
+        if (begin != FG_OK) {
+            char message[sizeof(err->message)];
+            snprintf(message, sizeof(message), "%s", err->message);
+            fg_error send_err = {0};
+            session_entry->busy = false;
+            api_send_error_response(sink, 500u, message, keep_alive, &send_err);
+            api_chat_request_free(&request);
+            return begin;
+        }
     }
 
     char *rendered = NULL;
@@ -3860,10 +4085,11 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
         .request = &request,
         .think_closed = render_options.think_mode == FG_CHAT_THINK_OFF,
         .runtime = runtime,
+        .session_id = public_session ? public_session->id : NULL,
     };
     bool stream_started=false;
     if (status == FG_OK && request.stream) {
-        status = api_send_sse_headers(sink, err);
+        status = api_send_sse_headers(sink, generation.session_id, err);
         if (status == FG_OK){stream_started=true;status = send_stream_start(&generation, err);}
         if (status != FG_OK) generation.client_failed = true;
     }
@@ -3957,7 +4183,9 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
     if(status==FG_OK)status=validate_generated_tools(&request,&generated,err);
     api_public_session pending_session={0};
     if(status==FG_OK)
-        status=api_public_session_build(&pending_session,&request,&generation,&generated,err);
+        status=api_public_session_build(&pending_session,&request,&generation,&generated,
+                                        public_session?public_session->id:NULL,
+                                        public_session?public_session->numeric_id:0u,err);
     if(status==FG_OK){
         double prefill_tps=stats.prefill_seconds>0.0?
             (double)stats.prefilled_tokens/stats.prefill_seconds:0.0;
@@ -4015,7 +4243,7 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
         if(status!=FG_ERR_INTERRUPTED&&
            fg_runtime_reset_failure(runtime,&reset_error)!=FG_OK){
             *err=reset_error;
-            return reset_error.code;
+            status=reset_error.code;
         }
     }
     /* A media request that failed before the model produced a token is a
@@ -4025,7 +4253,7 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
      * so keep serving instead of taking the API down for one oversized image. */
     if(status!=FG_OK&&request_media_count&&stats.prompt_tokens==0u&&
        stats.generated_tokens==0u)
-        return FG_OK;
+        status=FG_OK;
     if(status==FG_ERR_INTERRUPTED)
         fprintf(stderr,"request %s: prefill interrupted after %u/%u tokens, "
                 "frontier %u, %.1f s, client_failed %d\n",
@@ -4033,9 +4261,14 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
                 stats.prefill_seconds,generation.client_failed?1:0);
     if (generation.client_failed || status == FG_ERR_INTERRUPTED ||
         (status == FG_ERR_IO && stats.prompt_tokens + stats.generated_tokens > 0u))
-        return FG_OK;
-    if (status == FG_ERR_ARGUMENT || status == FG_ERR_FORMAT || status == FG_ERR_LIMIT)
-        return FG_OK;
+        status = FG_OK;
+    else if (status == FG_ERR_ARGUMENT || status == FG_ERR_FORMAT || status == FG_ERR_LIMIT)
+        status = FG_OK;
+    if (sessions) {
+        fg_runtime_session_end(runtime, session_entry->runtime_session);
+        session_entry->busy = false;
+        session_entry->last_used = ++sessions->sequence;
+    }
     return status;
 }
 
@@ -4140,7 +4373,11 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
         return status;
     }
 
-    api_public_session public_session = {0};
+    /* M3: live sessions survive across requests in the queue; the engine
+     * resolves each request to its session (explicit id, connection, or prefix
+     * extension) and binds its token-path state for the generation. */
+    api_session_table sessions;
+    memset(&sessions, 0, sizeof(sessions));
     while (!api_stop_requested) {
         api_engine_request engine_request;
         if (!api_engine_queue_pop_wait(&queue, &engine_request, 200)) continue;
@@ -4158,7 +4395,7 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
             .fd = engine_request.connection->fd,
             .connection = engine_request.connection,
         };
-        status = handle_chat_completions(&sink, runtime, &public_session,
+        status = handle_chat_completions(&sink, runtime, NULL, &sessions,
                                          &engine_request.http, err);
         api_connection_complete_response(engine_request.connection,
                                          !engine_request.connection->keep_alive);
@@ -4174,7 +4411,7 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
     sigaction(SIGINT, &old_int, NULL);
     sigaction(SIGTERM, &old_term, NULL);
     sigaction(SIGPIPE, &old_pipe, NULL);
-    api_public_session_free(&public_session);
+    api_session_table_destroy(&sessions, runtime);
     fg_runtime_close(runtime);
     return status;
 }

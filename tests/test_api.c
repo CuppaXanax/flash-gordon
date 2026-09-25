@@ -45,6 +45,53 @@ fg_status fg_runtime_set_sampler(fg_runtime *runtime,const fg_sampler_config *co
     return FG_OK;
 }
 
+/* M3 fake session objects: the API-level session table only needs a stable
+ * handle per session; the mock runtime has no per-session token path. */
+struct fg_runtime_session {
+    uint64_t id;
+    bool in_use;
+};
+
+static uint64_t test_session_sequence;
+static uint32_t test_session_live;
+
+fg_runtime_session *fg_runtime_session_acquire(fg_runtime *runtime,uint64_t id){
+    (void)runtime;
+    fg_runtime_session *session=calloc(1,sizeof(*session));
+    if(!session)return NULL;
+    session->in_use=true;
+    session->id=id?id:++test_session_sequence;
+    test_session_live++;
+    return session;
+}
+
+fg_runtime_session *fg_runtime_session_find(fg_runtime *runtime,uint64_t id){
+    (void)runtime;(void)id;
+    return NULL;
+}
+
+void fg_runtime_session_release(fg_runtime *runtime,fg_runtime_session *session){
+    (void)runtime;
+    if(!session)return;
+    session->in_use=false;
+    if(test_session_live)test_session_live--;
+    free(session);
+}
+
+uint64_t fg_runtime_session_id(const fg_runtime_session *session){
+    return session?session->id:0u;
+}
+
+fg_status fg_runtime_session_begin(fg_runtime *runtime,fg_runtime_session *session,
+                                   fg_error *err){
+    (void)runtime;(void)session;(void)err;
+    return FG_OK;
+}
+
+void fg_runtime_session_end(fg_runtime *runtime,fg_runtime_session *session){
+    (void)runtime;(void)session;
+}
+
 const char *fg_execution_mode_name(fg_execution_mode mode){
     return mode==FG_EXECUTION_EXPERT_PARALLEL?"expert-parallel":"unsupported";
 }
@@ -1577,7 +1624,7 @@ static void test_frontend_engine_split(void) {
      * engine: headers first, then frames, then the response completion. */
     api_sink sink = {.fd = engine_request.connection->fd,
                      .connection = engine_request.connection};
-    CHECK(api_send_sse_headers(&sink, &err) == FG_OK);
+    CHECK(api_send_sse_headers(&sink, NULL, &err) == FG_OK);
     const char *frame = "data: {\"id\":\"chatcmpl-split\"}\n\n";
     CHECK(api_sink_write(&sink, frame, strlen(frame), &err) == FG_OK);
     const char *done = "data: [DONE]\n\n";
@@ -1886,7 +1933,7 @@ static void test_stale_error_not_reused_on_bad_json(void) {
         .body_length = 3u,
     };
     api_sink sink = {.fd = sockets[0]};
-    fg_status status = handle_chat_completions(&sink, NULL, NULL, &http, &err);
+    fg_status status = handle_chat_completions(&sink, NULL, NULL, NULL, &http, &err);
     CHECK(status == FG_OK);
     shutdown(sockets[0], SHUT_WR);
     char *response = read_socket_response(sockets[1]);
@@ -1989,7 +2036,7 @@ static char *run_chat_request(fg_runtime *runtime, api_public_session *session,
     };
     fg_error err = {0};
     api_sink sink = {.fd = sockets[0]};
-    fg_status status = handle_chat_completions(&sink, runtime, session,&request, &err);
+    fg_status status = handle_chat_completions(&sink, runtime, session,NULL,&request, &err);
     if (result) *result = status;
     shutdown(sockets[0], SHUT_WR);
     char *response = read_socket_response(sockets[1]);
@@ -3562,7 +3609,147 @@ static void test_content_compare_tolerance(void) {
     CHECK(!strcmp(reason, "message[1].content@2 stored=\"swer\" echoed=\"5wer\""));
 }
 
+static char *run_chat_request_session(fg_runtime *runtime,api_session_table *table,
+                                      const char *body, fg_status *result) {
+    int sockets[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    http_request request = {
+        .body = (char *)body,
+        .body_length = strlen(body),
+    };
+    fg_error err = {0};
+    api_sink sink = {.fd = sockets[0]};
+    fg_status status = handle_chat_completions(&sink, runtime, NULL, table, &request, &err);
+    if (result) *result = status;
+    shutdown(sockets[0], SHUT_WR);
+    char *response = read_socket_response(sockets[1]);
+    close(sockets[0]);
+    close(sockets[1]);
+    return response;
+}
+
+static bool response_session_id(const char *response,char output[48]) {
+    static const char marker[]="X-Flash-Gordon-Session: ";
+    const char *hit=response?strstr(response,marker):NULL;
+    if(!hit)return false;
+    hit+=sizeof(marker)-1u;
+    const char *end=strstr(hit,"\r\n");
+    if(!end||(size_t)(end-hit)>=48u)return false;
+    memcpy(output,hit,(size_t)(end-hit));
+    output[end-hit]=0;
+    return output[0]!=0;
+}
+
+static void test_session_table_resolve_and_eviction(void) {
+    api_session_table table={0};
+    fg_runtime runtime={0};
+    fg_error err={0};
+    uint32_t live=0;
+    for(uint32_t i=0;i<FG_API_SESSION_MAX;i++){
+        api_chat_request request={0};
+        request.session_id_set=true;
+        snprintf(request.session_id,sizeof(request.session_id),"fg-test-%u",i);
+        api_session_entry *entry=NULL;
+        CHECK(api_session_table_resolve(&table,&runtime,NULL,&request,&entry,&err)==FG_OK);
+        CHECK(entry!=NULL);
+        if(entry)live++;
+    }
+    CHECK(live==FG_API_SESSION_MAX);
+    /* The same explicit id resolves to the same entry. */
+    api_chat_request repeat={0};
+    repeat.session_id_set=true;
+    snprintf(repeat.session_id,sizeof(repeat.session_id),"fg-test-3");
+    api_session_entry *same=NULL;
+    CHECK(api_session_table_resolve(&table,&runtime,NULL,&repeat,&same,&err)==FG_OK);
+    CHECK(same==&table.entries[3]);
+    /* A ninth distinct id evicts the least-recently-used entry (fg-test-0). */
+    api_chat_request ninth={0};
+    ninth.session_id_set=true;
+    snprintf(ninth.session_id,sizeof(ninth.session_id),"fg-test-9");
+    api_session_entry *entry=NULL;
+    CHECK(api_session_table_resolve(&table,&runtime,NULL,&ninth,&entry,&err)==FG_OK);
+    CHECK(entry!=NULL);
+    uint32_t in_use=0;
+    bool has_zero=false,has_nine=false;
+    for(size_t i=0;i<FG_API_SESSION_MAX;i++){
+        if(!table.entries[i].in_use)continue;
+        in_use++;
+        if(!strcmp(table.entries[i].session.id,"fg-test-0"))has_zero=true;
+        if(!strcmp(table.entries[i].session.id,"fg-test-9"))has_nine=true;
+    }
+    CHECK(in_use==FG_API_SESSION_MAX);
+    CHECK(!has_zero);
+    CHECK(has_nine);
+    api_session_table_destroy(&table,&runtime);
+    CHECK(test_session_live==0);
+}
+
+static void test_session_id_echo_and_explicit_continuation(void) {
+    api_session_table table={0};
+    fg_runtime runtime={.empty_reason = FG_PREFIX_RESET_COLD_START};
+    fg_status status=FG_OK;
+    char *response=run_chat_request_session(&runtime,&table,
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}",&status);
+    CHECK(status==FG_OK);
+    CHECK(response&&strstr(response,"X-Flash-Gordon-Prefix-Cache: miss\r\n"));
+    char session_id[48]={0};
+    CHECK(response_session_id(response,session_id));
+    CHECK(session_id[0]&&!strncmp(session_id,"fg-",3u));
+    free(response);
+
+    /* Keep-alive/no-id extension on the same (NULL) connection continues. */
+    response=run_chat_request_session(&runtime,&table,
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"hello\"},"
+        "{\"role\":\"assistant\",\"content\":\"answer\"},"
+        "{\"role\":\"user\",\"content\":\"next\"}]}",&status);
+    CHECK(status==FG_OK);
+    CHECK(response&&strstr(response,"X-Flash-Gordon-Prefix-Cache: hit\r\n"));
+    char echoed[48]={0};
+    CHECK(response_session_id(response,echoed));
+    CHECK(!strcmp(echoed,session_id));
+    free(response);
+
+    /* An explicit session_id addresses the same session from anywhere. */
+    api_buffer third={0};
+    fg_error err={0};
+    CHECK(buffer_append(&third,
+        "{\"session_id\":",&err)==FG_OK);
+    CHECK(buffer_append_json_string(&third,session_id,strlen(session_id),&err)==FG_OK);
+    CHECK(buffer_append(&third,
+        ",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"},"
+        "{\"role\":\"assistant\",\"content\":\"answer\"},"
+        "{\"role\":\"user\",\"content\":\"next\"},"
+        "{\"role\":\"assistant\",\"content\":\"answer\"},"
+        "{\"role\":\"user\",\"content\":\"third\"}]}",&err)==FG_OK);
+    response=run_chat_request_session(&runtime,&table,third.data,&status);
+    free(third.data);
+    CHECK(status==FG_OK);
+    CHECK(response&&strstr(response,"X-Flash-Gordon-Prefix-Cache: hit\r\n"));
+    free(response);
+
+    /* An unknown explicit id starts a new session and is echoed. */
+    response=run_chat_request_session(&runtime,&table,
+        "{\"session_id\":\"fg-client-owned-1\","
+        "\"messages\":[{\"role\":\"user\",\"content\":\"fresh\"}]}",&status);
+    CHECK(status==FG_OK);
+    CHECK(response&&strstr(response,"X-Flash-Gordon-Prefix-Cache: miss\r\n"));
+    CHECK(response&&strstr(response,"X-Flash-Gordon-Session: fg-client-owned-1\r\n"));
+    free(response);
+
+    /* Malformed ids are rejected before a session is created. */
+    response=run_chat_request_session(&runtime,&table,
+        "{\"session_id\":\"bad id\",\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]}",
+        &status);
+    CHECK(status==FG_OK);
+    CHECK(response&&strstr(response,"400 Bad Request"));
+    free(response);
+    api_session_table_destroy(&table,&runtime);
+    CHECK(test_session_live==0);
+}
+
 int main(void) {
+    test_session_table_resolve_and_eviction();
+    test_session_id_echo_and_explicit_continuation();
     test_openai_tools_request();
     test_openai_structured_text_content();
     test_image_content_parts();
