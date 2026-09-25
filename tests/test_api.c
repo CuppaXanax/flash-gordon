@@ -92,6 +92,129 @@ void fg_runtime_session_end(fg_runtime *runtime,fg_runtime_session *session){
     (void)runtime;(void)session;
 }
 
+/* M3.2 scheduler mocks: the API tests drive handle_chat_completions directly,
+ * so the multiplex runner and batch-table entry points only need to link. */
+uint32_t fg_runtime_session_slot(const fg_runtime_session *session){
+    (void)session;return 0u;
+}
+
+fg_runtime_session *fg_runtime_active_session(const fg_runtime *runtime){
+    (void)runtime;return NULL;
+}
+
+uint32_t fg_runtime_owner_slots_free(const fg_runtime *runtime){
+    (void)runtime;return 2u;
+}
+
+uint32_t fg_runtime_prefill_microbatch(const fg_runtime *runtime){
+    (void)runtime;return 128u;
+}
+
+void fg_runtime_session_runner_abort(fg_runtime *runtime,fg_runtime_session *session){
+    (void)runtime;(void)session;
+}
+
+fg_status fg_runtime_reset_public_history_session(fg_runtime *runtime,
+    fg_runtime_session *session,fg_error *err){
+    (void)session;
+    return fg_runtime_reset_public_history(runtime,err);
+}
+
+fg_status fg_runtime_session_runner_begin(fg_runtime *runtime,fg_runtime_session *session,
+    const char *transcript,uint32_t max_tokens,const fg_sampler_config *sampler,
+    fg_generation_stats *stats,fg_error *err){
+    (void)runtime;(void)session;(void)transcript;(void)max_tokens;(void)sampler;
+    (void)stats;(void)err;
+    return FG_ERR_UNAVAILABLE;
+}
+
+fg_status fg_runtime_session_runner_resume_decode(fg_runtime *runtime,
+    fg_runtime_session *session,uint32_t max_tokens,fg_generation_stats *stats,
+    fg_error *err){
+    (void)runtime;(void)session;(void)max_tokens;(void)stats;(void)err;
+    return FG_ERR_UNAVAILABLE;
+}
+
+fg_status fg_runtime_session_runner_prefill(fg_runtime *runtime,fg_runtime_session *session,
+    uint32_t token_budget,bool *done,fg_error *err){
+    (void)runtime;(void)session;(void)token_budget;(void)err;
+    if(done)*done=true;
+    return FG_ERR_UNAVAILABLE;
+}
+
+fg_status fg_runtime_session_runner_batch(fg_runtime *runtime,
+    fg_runtime_session **sessions,uint32_t count,fg_decode_batch_table *table,
+    const fg_decode_batch_policy *policy,
+    fg_token_callback callbacks[FG_DECODE_BATCH_MAX_SLOTS],
+    void *contexts[FG_DECODE_BATCH_MAX_SLOTS],uint64_t now,bool left[],
+    fg_error *err){
+    (void)runtime;(void)sessions;(void)count;(void)table;(void)policy;(void)callbacks;
+    (void)contexts;(void)now;(void)err;
+    if(left)for(uint32_t i=0;i<count;i++)left[i]=true;
+    return FG_ERR_UNAVAILABLE;
+}
+
+fg_status fg_runtime_session_runner_finish(fg_runtime *runtime,fg_runtime_session *session,
+    fg_error *err){
+    (void)runtime;(void)session;(void)err;
+    return FG_ERR_UNAVAILABLE;
+}
+
+uint32_t fg_runtime_session_runner_generated(const fg_runtime_session *session){
+    (void)session;return 0u;
+}
+
+bool fg_runtime_session_runner_active(const fg_runtime_session *session){
+    (void)session;return false;
+}
+
+fg_status fg_runtime_session_runner_sync_frontier(fg_runtime *runtime,
+    const fg_runtime_session *session,fg_decode_batch_table *table,fg_error *err){
+    (void)runtime;(void)session;(void)table;(void)err;
+    return FG_OK;
+}
+
+void fg_decode_batch_policy_default(fg_decode_batch_policy *policy){
+    memset(policy,0,sizeof(*policy));
+}
+
+fg_status fg_decode_batch_table_init(fg_decode_batch_table *table,uint32_t depth,
+                                     fg_error *err){
+    (void)err;
+    memset(table,0,sizeof(*table));
+    table->depth=depth;
+    return FG_OK;
+}
+
+fg_status fg_decode_batch_sequence_enter(fg_decode_batch_table *table,uint64_t sequence_id,
+                                         uint32_t state_slot,fg_error *err){
+    (void)table;(void)sequence_id;(void)state_slot;(void)err;
+    return FG_OK;
+}
+
+fg_status fg_decode_batch_sequence_frontier(fg_decode_batch_table *table,
+                                            uint64_t sequence_id,uint32_t committed_tokens,
+                                            uint32_t token_index,const uint32_t position[4],
+                                            fg_error *err){
+    (void)table;(void)sequence_id;(void)committed_tokens;(void)token_index;
+    (void)position;(void)err;
+    return FG_OK;
+}
+
+/* The pre-M3.2 synchronous entry point, kept for the API tests: open the turn,
+ * run the legacy model call, close the turn. */
+static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
+                                         api_public_session *public_session,
+                                         api_session_table *sessions,
+                                         const http_request *http, fg_error *err) {
+    api_turn turn;
+    fg_status status = api_turn_open(&turn, *sink, runtime, public_session, sessions,
+                                     http, err);
+    if (status == FG_OK && turn.opened)
+        status = api_turn_run_legacy(&turn, err);
+    return api_turn_close(&turn, status, err);
+}
+
 const char *fg_execution_mode_name(fg_execution_mode mode){
     return mode==FG_EXECUTION_EXPERT_PARALLEL?"expert-parallel":"unsupported";
 }

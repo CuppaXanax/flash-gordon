@@ -6138,6 +6138,18 @@ uint32_t fg_runtime_session_slot(const fg_runtime_session *session){
     return session&&session->slot_assigned?session->state_slot:UINT32_MAX;
 }
 
+fg_runtime_session *fg_runtime_active_session(const fg_runtime *runtime){
+    return runtime?runtime->active_session:NULL;
+}
+
+uint32_t fg_runtime_owner_slots_free(const fg_runtime *runtime){
+    if(!runtime)return 0u;
+    uint32_t free_slots=0u;
+    for(uint32_t slot=0;slot<FG_OWNER_SESSION_MAX;slot++)
+        if(!runtime->slot_owner[slot])free_slots++;
+    return free_slots;
+}
+
 void fg_runtime_session_end(fg_runtime *runtime,fg_runtime_session *session){
     if(!runtime||!session||runtime->active_session!=session)return;
     session->ring_generation=runtime->ring_generation;
@@ -6352,6 +6364,21 @@ fg_status fg_runtime_session_runner_prefill(fg_runtime *runtime,fg_runtime_sessi
  * position).  No depth-B table step and no batch overhead; a session that is
  * also bound in a table gets its frontier mirrored so a later batch step
  * resumes from the same token. */
+fg_status fg_runtime_session_runner_sync_frontier(fg_runtime *runtime,
+    const fg_runtime_session *session,fg_decode_batch_table *table,fg_error *err){
+    if(!runtime||!session||!session->in_use){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid frontier sync session");
+        return FG_ERR_ARGUMENT;
+    }
+    if(!table)return FG_OK;
+    uint32_t index=fg_decode_batch_table_find(table,session->id);
+    if(index==FG_DECODE_BATCH_INVALID_SLOT)return FG_OK;
+    uint32_t count=(uint32_t)session->state.history_count;
+    uint32_t position[4]={session->state.state_position,session->state.state_position,
+                          session->state.state_position,0u};
+    return fg_decode_batch_sequence_frontier(table,session->id,count,count,position,err);
+}
+
 static fg_status runner_batch_direct(fg_runtime *runtime,fg_runtime_session *session,
     fg_decode_batch_table *table,fg_token_callback callback,void *context,
     bool *left,fg_error *err){
@@ -6402,16 +6429,8 @@ static fg_status runner_batch_direct(fg_runtime *runtime,fg_runtime_session *ses
         /* Mirror the committed frontier into the batch table when this session
          * has an entry, so a later B>=2 step starts exactly here. */
         if(table){
-            uint32_t index=fg_decode_batch_table_find(table,session->id);
-            if(index!=FG_DECODE_BATCH_INVALID_SLOT){
-                uint32_t position[4]={session->state.state_position,
-                                      session->state.state_position,
-                                      session->state.state_position,0u};
-                fg_status sync=fg_decode_batch_sequence_frontier(table,session->id,
-                    (uint32_t)session->state.history_count,
-                    (uint32_t)(session->state.history_count-1u),position,err);
-                if(sync!=FG_OK)return sync;
-            }
+            fg_status sync=fg_runtime_session_runner_sync_frontier(runtime,session,table,err);
+            if(sync!=FG_OK)return sync;
         }
     }
     if(*left&&table&&fg_decode_batch_table_find(table,session->id)!=
@@ -6566,6 +6585,12 @@ bool fg_runtime_session_runner_active(const fg_runtime_session *session){
     return session&&session->runner.active;
 }
 
+void fg_runtime_session_runner_abort(fg_runtime *runtime,fg_runtime_session *session){
+    (void)runtime;
+    if(!session||!session->in_use)return;
+    runtime_runner_reset(session);
+}
+
 fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
                                        const fg_runtime_options *requested,fg_error *err){
     if(!out||!path){fg_error_set(err,FG_ERR_ARGUMENT,"invalid runtime open arguments");return FG_ERR_ARGUMENT;}*out=NULL;
@@ -6658,6 +6683,24 @@ fg_status fg_runtime_reset(fg_runtime *runtime,fg_error *err){
 fg_status fg_runtime_reset_public_history(fg_runtime *runtime,fg_error *err){
     if(!runtime){fg_error_set(err,FG_ERR_ARGUMENT,"resident runtime is not open");return FG_ERR_ARGUMENT;}
     return runtime_reset_state(runtime,FG_PREFIX_RESET_PUBLIC_MISMATCH,err);
+}
+
+fg_status fg_runtime_reset_public_history_session(fg_runtime *runtime,
+    fg_runtime_session *session,fg_error *err){
+    if(!runtime||!session||!session->in_use){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid runtime session reset");
+        return FG_ERR_ARGUMENT;
+    }
+    /* A mismatch reset on a session that shares the ring with another live
+     * session must not wipe the other session's owner slot. */
+    if(runtime_other_live_session(runtime,session))
+        return runtime_reset_slot(runtime,session->state_slot,
+                                  FG_PREFIX_RESET_PUBLIC_MISMATCH,err);
+    return runtime_reset_state(runtime,FG_PREFIX_RESET_PUBLIC_MISMATCH,err);
+}
+
+uint32_t fg_runtime_prefill_microbatch(const fg_runtime *runtime){
+    return runtime&&runtime->manifest?runtime->manifest->prefill_microbatch:1u;
 }
 
 fg_status fg_runtime_reset_failure(fg_runtime *runtime,fg_error *err){
@@ -8276,6 +8319,324 @@ static fg_status depthb_render_prompt(const fg_tokenizer *tokenizer,const char *
     }
     if(status==FG_OK)status=fg_tokenizer_encode(tokenizer,rendered,true,tokens,err);
     free(rendered);
+    return status;
+}
+
+/* ---------------------------------------------------------------------------
+ * M3.2 concurrent selftest (--concurrent).
+ *
+ * Two scripted sessions are driven through the incremental runner that the
+ * serving scheduler uses: session X starts alone, session Y is admitted and
+ * cold-starts in owner slot 1 while X is decoding (the per-slot reset gate),
+ * Y's prefill chunk-yields to X's B=1 steps, then both share depth-B batch
+ * steps.  Per-session tokens and logits must equal the production B=1 oracle
+ * (depthb_decode_b1) for the same prompt, and slot 0's owner state digest must
+ * be identical across Y's admission.  Test-only CLI path.
+ * ------------------------------------------------------------------------- */
+typedef struct concurrent_sink {
+    depthb_capture *capture;
+    const fg_runtime_session *session;
+} concurrent_sink;
+
+static fg_status concurrent_capture_token(void *context,uint32_t token,const char *text,
+                                          size_t bytes,fg_error *err){
+    (void)text;(void)bytes;(void)err;
+    concurrent_sink *sink=context;
+    if(sink->capture->count<FG_DEPTHB_CAPTURE_MAX){
+        uint32_t index=sink->capture->count++;
+        sink->capture->token[index]=token;
+        float logit=sink->session->state.next_logit;
+        memcpy(&sink->capture->logit_bits[index],&logit,4u);
+    }
+    return FG_OK;
+}
+
+static fg_status concurrent_render(const fg_tokenizer *tokenizer,const char *text,
+                                   char **rendered_out,fg_tokens *tokens,fg_error *err){
+    fg_chat_message message={.role="user",.content=text};
+    fg_chat_render_options options={.think_mode=FG_CHAT_THINK_OFF};
+    char *rendered=NULL;
+    fg_status status=fg_chat_render(&message,1u,&options,&rendered,err);
+    if(status==FG_OK&&!rendered){
+        fg_error_set(err,FG_ERR_MISMATCH,"concurrent selftest renderer returned no transcript");
+        status=FG_ERR_MISMATCH;
+    }
+    if(status==FG_OK)status=fg_tokenizer_encode(tokenizer,rendered,true,tokens,err);
+    if(status!=FG_OK){free(rendered);return status;}
+    *rendered_out=rendered;
+    return FG_OK;
+}
+
+static bool concurrent_capture_equal(const depthb_capture *reference,
+                                     const depthb_capture *actual,const char *side){
+    bool ok=true;
+    if(reference->count!=actual->count){
+        fprintf(stderr,"CONCURRENT_MISMATCH %s count ref=%u got=%u\n",side,
+                reference->count,actual->count);
+        return false;
+    }
+    for(uint32_t i=0;i<reference->count;i++){
+        if(reference->token[i]!=actual->token[i]){
+            fprintf(stderr,"CONCURRENT_MISMATCH %s token[%u] ref=%u got=%u\n",side,i,
+                    reference->token[i],actual->token[i]);
+            ok=false;break;
+        }
+        if(reference->logit_bits[i]!=actual->logit_bits[i]){
+            float a,b;memcpy(&a,&reference->logit_bits[i],4u);memcpy(&b,&actual->logit_bits[i],4u);
+            fprintf(stderr,"CONCURRENT_MISMATCH %s logit[%u] ref=%.9g got=%.9g\n",side,i,a,b);
+            ok=false;break;
+        }
+    }
+    return ok;
+}
+
+static fg_status concurrent_step_one(fg_runtime *runtime,fg_runtime_session *session,
+    fg_decode_batch_table *table,const fg_decode_batch_policy *policy,depthb_capture *capture,
+    uint64_t now,bool *left,fg_error *err){
+    concurrent_sink sink={capture,session};
+    fg_token_callback callbacks[FG_DECODE_BATCH_MAX_SLOTS]={concurrent_capture_token};
+    void *contexts[FG_DECODE_BATCH_MAX_SLOTS]={&sink};
+    fg_runtime_session *single[1]={session};
+    return fg_runtime_session_runner_batch(runtime,single,1u,table,policy,callbacks,
+                                           contexts,now,left,err);
+}
+
+static fg_status concurrent_selftest_case(fg_runtime *runtime,const char *name,
+    const char *text_x,const char *text_y,uint32_t max_tokens,bool measure,bool *pass,
+    fg_error *err){
+    *pass=false;
+    fg_tokens tokens_x={0},tokens_y={0};
+    char *rendered_x=NULL,*rendered_y=NULL;
+    fg_status status=concurrent_render(runtime->coordinator.tokenizer,text_x,
+                                       &rendered_x,&tokens_x,err);
+    if(status==FG_OK)status=concurrent_render(runtime->coordinator.tokenizer,text_y,
+                                              &rendered_y,&tokens_y,err);
+    fg_sampler_config sampler;
+    fg_sampler_config_greedy(&sampler);
+    if(status==FG_OK)status=fg_sampler_config_validate(&sampler,err);
+    if(status==FG_OK&&(tokens_x.count<2u||tokens_y.count<2u||tokens_y.count>FG_MAX_CONTEXT-2u)){
+        fg_error_set(err,FG_ERR_LIMIT,"concurrent selftest prompt is too short");
+        status=FG_ERR_LIMIT;
+    }
+    /* Phase 1: the production B=1 oracle per owner slot, one session at a
+     * time, exactly as the depth-B selftest captures its reference. */
+    depthb_capture ref_x={0},ref_y={0},got_x={0},got_y={0};
+    double serial_x_ms=0.0,serial_y_ms=0.0,concurrent_ms=0.0;
+    if(status==FG_OK)status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
+    runtime->sampler=sampler;
+    runtime->coordinator.sampler=sampler;
+    if(status==FG_OK)status=coordinator_owner_transaction(&runtime->coordinator,
+        FG_OWNER_SESSION_PREPARE,1u,err);
+    if(status==FG_OK)status=depthb_decode_b1(runtime,1u,&tokens_y,max_tokens,&ref_y,
+        measure?&serial_y_ms:NULL,NULL,err);
+    if(status==FG_OK)status=coordinator_owner_transaction(&runtime->coordinator,
+        FG_OWNER_SESSION_COMMIT,1u,err);
+    if(status==FG_OK)status=depthb_decode_b1(runtime,0u,&tokens_x,max_tokens,&ref_x,
+        measure?&serial_x_ms:NULL,NULL,err);
+    /* Phase 2: the concurrent run on a fresh epoch. */
+    fg_runtime_session *x=NULL,*y=NULL;
+    fg_generation_stats stats_x={0},stats_y={0};
+    fg_decode_batch_table table={0};
+    fg_decode_batch_policy policy;
+    bool x_left=false,y_left=false,y_prefilled=false;
+    bool iso_pre=false,iso_post=false;
+    uint64_t digest_pre=0,digest_post=0;
+    if(status==FG_OK)status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
+    if(status==FG_OK)status=fg_decode_batch_table_init(&table,2u,err);
+    if(status==FG_OK)fg_decode_batch_policy_default(&policy);
+    runtime->sampler=sampler;
+    runtime->coordinator.sampler=sampler;
+    if(status==FG_OK)x=fg_runtime_session_acquire(runtime,7101u);
+    if(status==FG_OK&&!x){
+        fg_error_set(err,FG_ERR_OOM,"allocate concurrent selftest session X");
+        status=FG_ERR_OOM;
+    }
+    if(status==FG_OK)status=fg_runtime_session_begin(runtime,x,err);
+    if(status==FG_OK)status=fg_runtime_session_runner_begin(runtime,x,rendered_x,
+        max_tokens,&sampler,&stats_x,err);
+    double start=dispatch_ts();
+    if(status==FG_OK){
+        bool done=false;
+        status=fg_runtime_session_runner_prefill(runtime,x,(uint32_t)tokens_x.count,&done,err);
+        if(status==FG_OK&&!done){
+            fg_error_set(err,FG_ERR_MISMATCH,"concurrent selftest X prefill did not complete");
+            status=FG_ERR_MISMATCH;
+        }
+    }
+    if(status==FG_OK)fg_runtime_session_end(runtime,x);
+    /* Two solo B=1 steps while X is still alone. */
+    for(uint32_t step=0;status==FG_OK&&step<2u;step++){
+        bool left=false;
+        status=concurrent_step_one(runtime,x,&table,&policy,&got_x,(uint64_t)(step+1u),
+                                   &left,err);
+        if(status==FG_OK&&left&&step+1u<2u){
+            fg_error_set(err,FG_ERR_MISMATCH,"concurrent selftest X left before Y arrived");
+            status=FG_ERR_MISMATCH;
+        }
+        x_left=left;
+    }
+    if(status==FG_OK&&!x_left)digest_pre=depthb_session_digest(runtime,0u,&iso_pre);
+    /* Admit Y: slot-scoped cold start while X's slot 0 is live. */
+    if(status==FG_OK)y=fg_runtime_session_acquire(runtime,7102u);
+    if(status==FG_OK&&!y){
+        fg_error_set(err,FG_ERR_OOM,"allocate concurrent selftest session Y");
+        status=FG_ERR_OOM;
+    }
+    if(status==FG_OK)status=fg_runtime_session_begin(runtime,y,err);
+    if(status==FG_OK&&fg_runtime_session_slot(y)!=1u){
+        fg_error_set(err,FG_ERR_MISMATCH,"concurrent selftest Y did not get owner slot 1");
+        status=FG_ERR_MISMATCH;
+    }
+    if(status==FG_OK&&!x_left)digest_post=depthb_session_digest(runtime,0u,&iso_post);
+    if(status==FG_OK)status=fg_runtime_session_runner_begin(runtime,y,rendered_y,
+        max_tokens,&sampler,&stats_y,err);
+    if(status==FG_OK)fg_runtime_session_end(runtime,y);
+    fprintf(stderr,"CONCURRENT case=%s iso x_slot0 pre=%016llx post=%016llx valid=%d\n",
+            name,(unsigned long long)digest_pre,(unsigned long long)digest_post,
+            (iso_pre&&iso_post&&digest_pre==digest_post)?1:0);
+    if(status==FG_OK&&!(iso_pre&&iso_post&&digest_pre==digest_post)){
+        fg_error_set(err,FG_ERR_MISMATCH,
+                     "session X state changed across session Y's cold start");
+        status=FG_ERR_MISMATCH;
+    }
+    /* Phase 3: chunk-yield Y's prefill against X's B=1 steps, then batch. */
+    uint64_t now=3u;
+    uint32_t guard=0;
+    while(status==FG_OK&&(!x_left||!y_left)&&guard++<100000u){
+        if(!y_left&&!y_prefilled){
+            bool done=false;
+            status=fg_runtime_session_begin(runtime,y,err);
+            if(status==FG_OK)status=fg_runtime_session_runner_prefill(runtime,y,
+                runtime->manifest->prefill_microbatch,&done,err);
+            if(status==FG_OK)fg_runtime_session_end(runtime,y);
+            if(status!=FG_OK)break;
+            if(done){
+                y_prefilled=true;
+                uint32_t count=(uint32_t)tokens_y.count;
+                uint32_t position[4]={count,count,count,0u};
+                status=fg_decode_batch_sequence_enter(&table,fg_runtime_session_id(y),1u,err);
+                if(status==FG_OK)status=fg_decode_batch_sequence_frontier(&table,
+                    fg_runtime_session_id(y),count,(uint32_t)(count-1u),position,err);
+                if(status==FG_OK)status=fg_decode_batch_sequence_enter(&table,
+                    fg_runtime_session_id(x),0u,err);
+                if(status==FG_OK)status=fg_runtime_session_runner_sync_frontier(runtime,x,
+                    &table,err);
+            }
+            if(status==FG_OK&&!x_left&&!done){
+                bool left=false;
+                status=concurrent_step_one(runtime,x,&table,&policy,&got_x,now++,&left,err);
+                if(status==FG_OK)x_left=left;
+            }
+            continue;
+        }
+        if(x_left&&y_left)break;
+        if(!x_left&&!y_left){
+            fg_runtime_session *pair[2]={x,y};
+            concurrent_sink sinks[2]={{&got_x,x},{&got_y,y}};
+            fg_token_callback callbacks[FG_DECODE_BATCH_MAX_SLOTS]=
+                {concurrent_capture_token,concurrent_capture_token};
+            void *contexts[FG_DECODE_BATCH_MAX_SLOTS]={&sinks[0],&sinks[1]};
+            bool left[2]={false,false};
+            status=fg_runtime_session_runner_batch(runtime,pair,2u,&table,&policy,
+                callbacks,contexts,now++,left,err);
+            if(status==FG_OK){x_left=left[0];y_left=left[1];}
+        }else{
+            fg_runtime_session *one[1]={x_left?y:x};
+            depthb_capture *capture=x_left?&got_y:&got_x;
+            bool left=false;
+            status=concurrent_step_one(runtime,one[0],&table,&policy,capture,now++,&left,err);
+            if(status==FG_OK){
+                if(one[0]==x)x_left=left;else y_left=left;
+            }
+        }
+    }
+    concurrent_ms=dispatch_ts()-start;
+    /* Finish both turns through the runner tail. */
+    if(status==FG_OK&&x){
+        status=fg_runtime_session_begin(runtime,x,err);
+        if(status==FG_OK)status=fg_runtime_session_runner_finish(runtime,x,err);
+        fg_runtime_session_end(runtime,x);
+    }
+    if(status==FG_OK&&y){
+        status=fg_runtime_session_begin(runtime,y,err);
+        if(status==FG_OK)status=fg_runtime_session_runner_finish(runtime,y,err);
+        fg_runtime_session_end(runtime,y);
+    }
+    bool tokens_ok=status==FG_OK&&concurrent_capture_equal(&ref_x,&got_x,"x")&&
+                   concurrent_capture_equal(&ref_y,&got_y,"y");
+    if(measure&&status==FG_OK)
+        fprintf(stderr,"CONCURRENT case=%s serial_x=%.1fms serial_y=%.1fms "
+                "concurrent=%.1fms x=%u y=%u\n",name,serial_x_ms,serial_y_ms,concurrent_ms,
+                got_x.count,got_y.count);
+    fprintf(stderr,"CONCURRENT case=%s RESULT=%s x_tokens=%u/%u y_tokens=%u/%u\n",name,
+            tokens_ok?"PASS":"FAIL",got_x.count,ref_x.count,got_y.count,ref_y.count);
+    if(x)fg_runtime_session_release(runtime,x);
+    if(y)fg_runtime_session_release(runtime,y);
+    fg_tokens_free(&tokens_x);fg_tokens_free(&tokens_y);
+    free(rendered_x);free(rendered_y);
+    *pass=tokens_ok;
+    return status;
+}
+
+fg_status fg_concurrent_selftest_main(const char *manifest_path,uint32_t max_tokens,
+                                      uint32_t long_tokens,
+                                      const fg_runtime_options *requested,fg_error *err){
+    if(!manifest_path||!max_tokens||max_tokens+1u>FG_DEPTHB_CAPTURE_MAX){
+        fg_error_set(err,FG_ERR_ARGUMENT,
+                     "concurrent-selftest requires --manifest and --tokens 1..%u",
+                     FG_DEPTHB_CAPTURE_MAX-1u);
+        return FG_ERR_ARGUMENT;
+    }
+    fg_runtime *runtime=NULL;
+    fg_status status=fg_runtime_open_with_options(&runtime,manifest_path,requested,err);
+    if(status==FG_OK&&!(runtime->coordinator.ring_prefill&&runtime->coordinator.ring_decode)){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "concurrent-selftest requires ring prefill and ring decode");
+        status=FG_ERR_UNAVAILABLE;
+    }
+    static const char prompt_12[]="What is 6 times 2? Answer with the number only.";
+    static const char prompt_paris[]=
+        "What is the capital of France? Answer with the city name only.";
+    const char *text_x=prompt_12,*text_y=prompt_paris;
+    char *long_text=NULL;
+    if(status==FG_OK&&long_tokens){
+        /* Same filler as the depth-B long prompt; the prefill chunk-yield is
+         * what is under test, so the exact token count only needs to span many
+         * microbatches. */
+        static const char filler[]="The quick brown fox jumps over the lazy dog. ";
+        size_t repeats=(size_t)(long_tokens/8u)+8u;
+        size_t filler_bytes=strlen(filler);
+        long_text=malloc(repeats*filler_bytes+1u);
+        if(!long_text){
+            fg_error_set(err,FG_ERR_OOM,"allocate concurrent selftest long prompt");
+            status=FG_ERR_OOM;
+        }else{
+            for(size_t i=0;i<repeats;i++)memcpy(long_text+i*filler_bytes,filler,filler_bytes);
+            long_text[repeats*filler_bytes]=0;
+        }
+        if(status==FG_OK)text_y=long_text;
+    }
+    bool pass_all=true;
+    if(status==FG_OK){
+        bool pass=false;
+        status=concurrent_selftest_case(runtime,"short-pair",text_x,text_y,max_tokens,
+                                        true,&pass,err);
+        pass_all=pass_all&&pass;
+    }
+    if(status==FG_OK&&long_text){
+        bool pass=false;
+        status=concurrent_selftest_case(runtime,"long-short",text_x,long_text,max_tokens,
+                                        true,&pass,err);
+        pass_all=pass_all&&pass;
+    }
+    if(status==FG_OK&&!pass_all){
+        fg_error_set(err,FG_ERR_MISMATCH,"concurrent selftest parity mismatch");
+        status=FG_ERR_MISMATCH;
+    }
+    if(runtime)fprintf(stderr,"CONCURRENT_SELFTEST RESULT=%s tokens=%u long=%u\n",
+        status==FG_OK&&pass_all?"PASS":"FAIL",max_tokens,long_tokens);
+    free(long_text);
+    fg_runtime_close(runtime);
     return status;
 }
 

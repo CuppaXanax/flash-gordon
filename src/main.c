@@ -356,6 +356,7 @@ static fg_status depthb_selftest_cmd(int argc, char **argv, fg_error *err) {
     uint32_t abort_step = UINT32_MAX;
     bool serial_batch = false;
     bool serial_expert = false;
+    bool concurrent = false;
     fg_runtime_options runtime_options;
     fg_runtime_options_init(&runtime_options);
     for (int i = 2; i < argc; i++) {
@@ -365,6 +366,8 @@ static fg_status depthb_selftest_cmd(int argc, char **argv, fg_error *err) {
             serial_batch = true;
         } else if (!strcmp(argv[i], "--serial-expert")) {
             serial_expert = true;
+        } else if (!strcmp(argv[i], "--concurrent")) {
+            concurrent = true;
         } else if (!strcmp(argv[i], "--depth")) {
             const char *text = arg_value(&i, argc, argv, "--depth", err);
             if (text && parse_u32(text, "--depth", 1u, 2u, &depth, err) != FG_OK)
@@ -398,6 +401,9 @@ static fg_status depthb_selftest_cmd(int argc, char **argv, fg_error *err) {
         fg_error_set(err, FG_ERR_ARGUMENT, "depth-b-selftest requires --manifest");
         return FG_ERR_ARGUMENT;
     }
+    if (concurrent)
+        return fg_concurrent_selftest_main(manifest, max_tokens, long_tokens,
+                                           &runtime_options, err);
     return fg_depthb_selftest_main(manifest, depth, max_tokens, long_tokens, abort_step,
                                    serial_batch, serial_expert, &runtime_options, err);
 }

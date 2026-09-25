@@ -37,6 +37,19 @@ uint64_t fg_runtime_session_id(const fg_runtime_session *session);
  * live session gets 1 via a slot-scoped cold start); UINT32_MAX when the
  * session has no slot yet. */
 uint32_t fg_runtime_session_slot(const fg_runtime_session *session);
+/* Session currently bound to the runtime token-path state, or NULL. */
+fg_runtime_session *fg_runtime_active_session(const fg_runtime *runtime);
+/* Free owner state slots (0 when every slot is reserved by a live session). */
+uint32_t fg_runtime_owner_slots_free(const fg_runtime *runtime);
+/* Prefill pipeline group size; the engine's chunk-yield budget. */
+uint32_t fg_runtime_prefill_microbatch(const fg_runtime *runtime);
+/* Discard an active runner without committing (aborted prefill / waiting
+ * turn); the session stays usable for its next turn. */
+void fg_runtime_session_runner_abort(fg_runtime *runtime,fg_runtime_session *session);
+/* Public-history mismatch reset scoped to one session: slot-scoped while
+ * another session is live, the historical ring-wide reset otherwise. */
+fg_status fg_runtime_reset_public_history_session(fg_runtime *runtime,
+    fg_runtime_session *session,fg_error *err);
 /* Bind/unbind the session's token-path state to the runtime.  Begin cold-starts
  * the session when its saved state cannot be resumed (fresh session, or the
  * shared ring state was reset since the session last ran). */
@@ -153,6 +166,10 @@ fg_status fg_runtime_session_runner_finish(fg_runtime *runtime,fg_runtime_sessio
     fg_error *err);
 uint32_t fg_runtime_session_runner_generated(const fg_runtime_session *session);
 bool fg_runtime_session_runner_active(const fg_runtime_session *session);
+/* Record a session's committed frontier in a batch table when it has an entry,
+ * so a B>=2 step resumes exactly where a B=1 step left off. */
+fg_status fg_runtime_session_runner_sync_frontier(fg_runtime *runtime,
+    const fg_runtime_session *session,fg_decode_batch_table *table,fg_error *err);
 
 enum {
     FG_RUNTIME_MEDIA_IMAGE = 1u,
@@ -243,6 +260,12 @@ fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
                                   uint32_t max_tokens,uint32_t long_tokens,
                                   uint32_t abort_step,bool serial_batch,bool serial_expert,
                                   const fg_runtime_options *requested,fg_error *err);
+/* M3.2 test-only concurrent gate: two scripted sessions through the multiplex
+ * runner (per-slot cold start, chunk-yielded prefill, shared batch steps) with
+ * per-session token/logit parity against serial B=1 runs. */
+fg_status fg_concurrent_selftest_main(const char *manifest_path,uint32_t max_tokens,
+                                      uint32_t long_tokens,
+                                      const fg_runtime_options *requested,fg_error *err);
 fg_status fg_serve_main(const char *manifest_path, fg_error *err);
 fg_status fg_bench_main(const char *manifest_path, fg_error *err);
 fg_status fg_eval_main(const char *manifest_path,const char *prompt,uint32_t generate,fg_error *err);

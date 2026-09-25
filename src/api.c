@@ -3796,28 +3796,59 @@ static void api_session_id_generate(api_session_table *table,char output[48]) {
              (unsigned long long)(sequence & 0xffffffu));
 }
 
+static void api_session_table_release_entry(api_session_table *table,fg_runtime *runtime,
+                                            api_session_entry *entry) {
+    if (!table || !entry || !entry->in_use) return;
+    api_public_session_free(&entry->session);
+    fg_runtime_session_release(runtime,entry->runtime_session);
+    memset(entry,0,sizeof(*entry));
+}
+
+/* Evict the least-recently-used idle session entry; `slots_only` restricts the
+ * search to entries that actually hold an owner state slot.  Busy entries are
+ * live turns and always survive. */
+static api_session_entry *api_session_table_evict_idle(api_session_table *table,
+                                                       fg_runtime *runtime,
+                                                       bool slots_only) {
+    api_session_entry *candidate = NULL;
+    for (size_t i = 0; i < FG_API_SESSION_MAX; i++) {
+        api_session_entry *entry = &table->entries[i];
+        if (!entry->in_use || entry->busy) continue;
+        if (slots_only && fg_runtime_session_slot(entry->runtime_session) == UINT32_MAX)
+            continue;
+        if (!candidate || entry->last_used < candidate->last_used) candidate = entry;
+    }
+    if (candidate) api_session_table_release_entry(table, runtime, candidate);
+    return candidate;
+}
+
+static void api_session_table_drop(api_session_table *table,fg_runtime *runtime,
+                                  api_session_entry *entry) {
+    api_session_table_release_entry(table, runtime, entry);
+}
+
 static api_session_entry *api_session_table_new(api_session_table *table,fg_runtime *runtime,
                                                 api_connection *conn,const char *id,
                                                 fg_error *err) {
+    /* Owner state slots are the admission currency: an idle session that still
+     * holds one is evicted before a new session is created, so an aborted turn
+     * frees its slot for the next request. */
+    while (fg_runtime_owner_slots_free(runtime) == 0u)
+        if (!api_session_table_evict_idle(table, runtime, true)) break;
+    if (fg_runtime_owner_slots_free(runtime) == 0u) {
+        fg_error_set(err,FG_ERR_LIMIT,"all owner state slots are busy");
+        return NULL;
+    }
     api_session_entry *entry = NULL;
     for (size_t i = 0; i < FG_API_SESSION_MAX; i++) {
         if (!table->entries[i].in_use) { entry = &table->entries[i]; break; }
     }
     if (!entry) {
-        /* Evict the least-recently-used idle entry; a busy entry is the session
-         * currently being served and must survive until it completes. */
-        for (size_t i = 0; i < FG_API_SESSION_MAX; i++) {
-            api_session_entry *candidate = &table->entries[i];
-            if (candidate->busy) continue;
-            if (!entry || candidate->last_used < entry->last_used) entry = candidate;
-        }
+        entry = api_session_table_evict_idle(table, runtime, false);
         if (!entry) {
             fg_error_set(err,FG_ERR_LIMIT,"no free API session slot");
             return NULL;
         }
-        api_public_session_free(&entry->session);
-        fg_runtime_session_release(runtime,entry->runtime_session);
-        memset(entry,0,sizeof(*entry));
     }
     entry->runtime_session = fg_runtime_session_acquire(runtime, 0);
     if (!entry->runtime_session) {
@@ -3894,31 +3925,82 @@ static void api_session_table_destroy(api_session_table *table,fg_runtime *runti
     }
 }
 
-static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
-                                         api_public_session *public_session,
-                                         api_session_table *sessions,
-                                         const http_request *http, fg_error *err) {
+/* M3.2 parked turn: one in-flight chat request whose model phase can be
+ * suspended at a prefill chunk or decode step boundary and resumed without
+ * finalising the HTTP response.  The synchronous legacy path builds the same
+ * struct, so the request head (parse, session resolve, render, response open)
+ * and tail (generated parse, public-session commit, response close, slot
+ * release) exist exactly once. */
+typedef struct api_turn {
+    bool opened;              /* head complete: response may be open */
+    bool started;             /* model phase started (runner or legacy) */
+    bool left;                /* runner reported the turn finished */
+    bool prefill_done;        /* whole prompt prefilled */
+    bool stream_started;
+    bool generation_attempted;
+    bool public_continuation;
+    bool eligible;            /* multiplex-eligible (text-only, greedy, cold) */
+    bool owns_session;        /* resolved through the live session table */
+    api_session_entry *entry;
+    api_session_table *sessions;
+    api_public_session *public_session;
+    api_connection *connection;
+    api_sink sink;
+    http_request http;        /* body ownership stays with the queue entry */
+    api_chat_request request;
+    char *rendered;
+    char *rendered_continuation;
+    fg_chat_render_options render_options;
+    api_generation generation;
+    fg_generation_stats stats;
+    char id[96];
+} api_turn;
+
+static void api_turn_init(api_turn *turn) {
+    memset(turn, 0, sizeof(*turn));
+}
+
+static void api_turn_dispose(api_turn *turn) {
+    api_chat_request_free(&turn->request);
+    free(turn->rendered);
+    free(turn->rendered_continuation);
+    free(turn->generation.content.data);
+    free(turn->generation.visible_pending.data);
+    memset(turn, 0, sizeof(*turn));
+}
+
+/* Head: parse the request, resolve and bind its session, render the transcript,
+ * open the response.  Returns FG_OK when the caller should proceed (opened) or
+ * when an error response was already sent (`opened` stays false); a non-OK
+ * return is an engine-visible failure after the client was answered. */
+static fg_status api_turn_open(api_turn *turn, api_sink sink, fg_runtime *runtime,
+                               api_public_session *public_session,
+                               api_session_table *sessions, const http_request *http,
+                               fg_error *err) {
     memset(err, 0, sizeof(*err));
-    api_session_entry *session_entry = NULL;
-    bool keep_alive = sink->connection ? sink->connection->keep_alive : false;
+    api_turn_init(turn);
+    turn->sink = sink;
+    turn->connection = sink.connection;
+    turn->http = *http;
+    turn->sessions = sessions;
+    bool keep_alive = sink.connection ? sink.connection->keep_alive : false;
     json_value *root = parse_json_body(http->body, http->body_length, err);
     if (!root) {
         char message[sizeof(err->message)];
         snprintf(message, sizeof(message), "%s", err->message);
         fg_error send_err = {0};
-        api_send_error_response(sink, 400u, message, keep_alive, &send_err);
+        api_send_error_response(&turn->sink, 400u, message, keep_alive, &send_err);
         return FG_OK;
     }
-    api_chat_request request = {0};
     fg_status status =
-        parse_chat_request(root, fg_runtime_model_name(runtime), &request, err);
+        parse_chat_request(root, fg_runtime_model_name(runtime), &turn->request, err);
     json_free(root);
-    if (status == FG_OK && request.media_count) {
+    if (status == FG_OK && turn->request.media_count) {
         bool needs_video = false;
         bool needs_frames = false;
-        for (size_t i = 0; i < request.media_count; i++) {
-            if (request.media[i].kind == FG_RUNTIME_MEDIA_VIDEO) needs_video = true;
-            if (request.media[i].kind == FG_RUNTIME_MEDIA_VIDEO_FRAMES) needs_frames = true;
+        for (size_t i = 0; i < turn->request.media_count; i++) {
+            if (turn->request.media[i].kind == FG_RUNTIME_MEDIA_VIDEO) needs_video = true;
+            if (turn->request.media[i].kind == FG_RUNTIME_MEDIA_VIDEO_FRAMES) needs_frames = true;
         }
         const char *message = NULL;
         if (!fg_runtime_vision_available(runtime))
@@ -3932,8 +4014,7 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
                       "(static ffmpeg/ffprobe or the tower temporal token entry is missing)";
         if (message) {
             fg_error send_err = {0};
-            api_send_error_response(sink, 400u, message, keep_alive, &send_err);
-            api_chat_request_free(&request);
+            api_send_error_response(&turn->sink, 400u, message, keep_alive, &send_err);
             return FG_OK;
         }
     }
@@ -3941,87 +4022,86 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
         char message[sizeof(err->message)];
         snprintf(message, sizeof(message), "%s", err->message);
         fg_error send_err = {0};
-        api_send_error_response(sink, 400u, message, keep_alive, &send_err);
-        api_chat_request_free(&request);
+        api_send_error_response(&turn->sink, 400u, message, keep_alive, &send_err);
         return FG_OK;
     }
 
-    /* M3: bind the request to its live session.  Tests call this function with
-     * `sessions == NULL` and their own `public_session`. */
+    /* M3: bind the request to its live session.  Tests call the legacy path
+     * with `sessions == NULL` and their own `public_session`. */
     if (sessions) {
-        fg_status resolve = api_session_table_resolve(sessions, runtime, sink->connection,
-                                                      &request, &session_entry, err);
+        fg_status resolve = api_session_table_resolve(sessions, runtime, sink.connection,
+                                                      &turn->request, &turn->entry, err);
         if (resolve != FG_OK) {
             char message[sizeof(err->message)];
             snprintf(message, sizeof(message), "%s", err->message);
             fg_error send_err = {0};
-            api_send_error_response(sink, 503u, message, keep_alive, &send_err);
-            api_chat_request_free(&request);
+            api_send_error_response(&turn->sink, 503u, message, keep_alive, &send_err);
             return FG_OK;
         }
-        public_session = &session_entry->session;
-        session_entry->busy = true;
-        fg_status begin = fg_runtime_session_begin(runtime, session_entry->runtime_session, err);
+        public_session = &turn->entry->session;
+        turn->owns_session = true;
+        turn->entry->busy = true;
+        fg_status begin = fg_runtime_session_begin(runtime, turn->entry->runtime_session, err);
         if (begin != FG_OK) {
             char message[sizeof(err->message)];
             snprintf(message, sizeof(message), "%s", err->message);
             fg_error send_err = {0};
-            session_entry->busy = false;
-            api_send_error_response(sink, 500u, message, keep_alive, &send_err);
-            api_chat_request_free(&request);
+            turn->entry->busy = false;
+            api_send_error_response(&turn->sink, 500u, message, keep_alive, &send_err);
             return begin;
         }
     }
-
-    char *rendered = NULL;
-    fg_chat_render_options render_options = {
-        .tool_schemas = (const char *const *)request.tool_schemas,
-        .tool_schema_count = request.tool_schema_count,
-        .tool_choice = request.tool_choice,
-        .tool_choice_name = request.tool_choice_name,
+    turn->public_session = public_session;
+    turn->render_options = (fg_chat_render_options){
+        .tool_schemas = (const char *const *)turn->request.tool_schemas,
+        .tool_schema_count = turn->request.tool_schema_count,
+        .tool_choice = turn->request.tool_choice,
+        .tool_choice_name = turn->request.tool_choice_name,
     };
     /* Honor the /no_think directive: render an already-closed think block and
      * drop the directive from the user text, so short answers arrive without
      * spending the completion budget on stripped reasoning tokens. */
-    for (size_t i = 0; i < request.message_count; i++) {
-        if (!request.messages[i].content ||
-            strcmp(request.messages[i].role, "user") != 0) continue;
-        char *content = (char *)request.messages[i].content;
+    for (size_t i = 0; i < turn->request.message_count; i++) {
+        if (!turn->request.messages[i].content ||
+            strcmp(turn->request.messages[i].role, "user") != 0) continue;
+        char *content = (char *)turn->request.messages[i].content;
         size_t offset = 0;
         while (content[offset] == ' ' || content[offset] == '\n' ||
                content[offset] == '\t' || content[offset] == '\r') offset++;
         if (strncmp(content + offset, "/no_think", 9u) != 0) continue;
-        render_options.think_mode = FG_CHAT_THINK_OFF;
+        turn->render_options.think_mode = FG_CHAT_THINK_OFF;
         size_t rest = offset + 9u;
         while (content[rest] == ' ' || content[rest] == '\n' ||
                content[rest] == '\t' || content[rest] == '\r') rest++;
         memmove(content, content + rest, strlen(content + rest) + 1u);
     }
-    status = fg_chat_render(request.messages, request.message_count, &render_options,
-                            &rendered, err);
+    status = fg_chat_render(turn->request.messages, turn->request.message_count,
+                            &turn->render_options, &turn->rendered, err);
     char session_mismatch[512]={0};
-    bool public_continuation=status==FG_OK&&
-        api_public_session_prefix(public_session,&request,session_mismatch,
+    turn->public_continuation=status==FG_OK&&
+        api_public_session_prefix(public_session,&turn->request,session_mismatch,
                                   sizeof(session_mismatch));
-    char *rendered_continuation=NULL;
-    if(status==FG_OK&&public_session->valid&&!public_continuation){
+    if(status==FG_OK&&public_session->valid&&!turn->public_continuation){
         if(session_mismatch[0])
             fprintf(stderr,"SESSION_MISMATCH %s\n",session_mismatch);
         api_public_session_free(public_session);
-        status=fg_runtime_reset_public_history(runtime,err);
+        status=turn->owns_session?
+            fg_runtime_reset_public_history_session(
+                runtime,turn->entry->runtime_session,err):
+            fg_runtime_reset_public_history(runtime,err);
     }
-    if(public_continuation){
+    if(turn->public_continuation){
         size_t previous=public_session->transcript.message_count;
         size_t previous_system=fg_chat_leading_system_count(
             public_session->transcript.messages,previous);
-        size_t current_system=fg_chat_leading_system_count(request.messages,
-                                                           request.message_count);
+        size_t current_system=fg_chat_leading_system_count(turn->request.messages,
+                                                           turn->request.message_count);
         size_t skip=previous;
         if(current_system>=previous_system)skip+=current_system-previous_system;
         else skip-=previous_system-current_system;
-        status=fg_chat_render_continuation(request.messages+skip,
-                                           request.message_count-skip,
-                                           &render_options,&rendered_continuation,err);
+        status=fg_chat_render_continuation(turn->request.messages+skip,
+                                           turn->request.message_count-skip,
+                                           &turn->render_options,&turn->rendered_continuation,err);
         if(status==FG_OK){
             fg_chat_render_options previous_options={
                 .tool_schemas=(const char *const *)public_session->transcript.tool_schemas,
@@ -4030,21 +4110,21 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
                 .tool_choice_name=public_session->transcript.tool_choice_name,
             };
             char *tool_update=NULL;
-            status=fg_chat_render_tool_update(&previous_options,&render_options,
+            status=fg_chat_render_tool_update(&previous_options,&turn->render_options,
                                               &tool_update,err);
             if(status==FG_OK&&tool_update){
                 size_t update_length=strlen(tool_update);
-                size_t continuation_length=strlen(rendered_continuation);
+                size_t continuation_length=strlen(turn->rendered_continuation);
                 char *combined=malloc(update_length+continuation_length+1u);
                 if(!combined){
                     fg_error_set(err,FG_ERR_OOM,"allocate tool update continuation");
                     status=FG_ERR_OOM;
                 }else{
                     memcpy(combined,tool_update,update_length);
-                    memcpy(combined+update_length,rendered_continuation,
+                    memcpy(combined+update_length,turn->rendered_continuation,
                            continuation_length+1u);
-                    free(rendered_continuation);
-                    rendered_continuation=combined;
+                    free(turn->rendered_continuation);
+                    turn->rendered_continuation=combined;
                 }
             }
             free(tool_update);
@@ -4052,166 +4132,190 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
         if(status==FG_OK){
             char *system_update=NULL;
             status=fg_chat_render_system_update(public_session->transcript.messages,previous,
-                                                request.messages,request.message_count,
+                                                turn->request.messages,turn->request.message_count,
                                                 &system_update,err);
             if(status==FG_OK&&system_update){
                 size_t update_length=strlen(system_update);
-                size_t continuation_length=strlen(rendered_continuation);
+                size_t continuation_length=strlen(turn->rendered_continuation);
                 char *combined=malloc(update_length+continuation_length+1u);
                 if(!combined){
                     fg_error_set(err,FG_ERR_OOM,"allocate system update continuation");
                     status=FG_ERR_OOM;
                 }else{
                     memcpy(combined,system_update,update_length);
-                    memcpy(combined+update_length,rendered_continuation,
+                    memcpy(combined+update_length,turn->rendered_continuation,
                            continuation_length+1u);
-                    free(rendered_continuation);
-                    rendered_continuation=combined;
+                    free(turn->rendered_continuation);
+                    turn->rendered_continuation=combined;
                 }
             }
             free(system_update);
         }
     }
-    char id[96];
-    snprintf(id, sizeof(id), "chatcmpl-fg-%lld-%llu", (long long)time(NULL),
+    snprintf(turn->id, sizeof(turn->id), "chatcmpl-fg-%lld-%llu", (long long)time(NULL),
              ++api_request_sequence);
-    api_generation generation = {
-        .sink = *sink,
-        .stream = request.stream,
+    turn->generation = (api_generation){
+        .sink = sink,
+        .stream = turn->request.stream,
         .keep_alive = keep_alive,
-        .id = id,
+        .id = turn->id,
         .model = fg_runtime_model_name(runtime),
         .created = time(NULL),
-        .request = &request,
-        .think_closed = render_options.think_mode == FG_CHAT_THINK_OFF,
+        .request = &turn->request,
+        .think_closed = turn->render_options.think_mode == FG_CHAT_THINK_OFF,
         .runtime = runtime,
         .session_id = public_session ? public_session->id : NULL,
     };
-    bool stream_started=false;
-    if (status == FG_OK && request.stream) {
-        status = api_send_sse_headers(sink, generation.session_id, err);
-        if (status == FG_OK){stream_started=true;status = send_stream_start(&generation, err);}
-        if (status != FG_OK) generation.client_failed = true;
+    if (status == FG_OK && turn->request.stream) {
+        status = api_send_sse_headers(&turn->sink, turn->generation.session_id, err);
+        if (status == FG_OK){turn->stream_started=true;status = send_stream_start(&turn->generation, err);}
+        if (status != FG_OK) turn->generation.client_failed = true;
     }
-    fg_generation_stats stats = {0};
-    bool generation_attempted=false;
-    if(status==FG_OK)status=fg_runtime_set_sampler(runtime,&request.sampler,err);
-    if(status==FG_OK){
-        generation_attempted=true;
-        fg_runtime_media *media=NULL;
-        if(request.media_count){
-            media=calloc(request.media_count,sizeof(*media));
-            if(!media){
-                fg_error_set(err,FG_ERR_OOM,"allocate vision request media");
-                status=FG_ERR_OOM;
-            }else{
-                for(size_t item=0;item<request.media_count;item++){
-                    media[item].kind=request.media[item].kind;
-                    media[item].bytes=request.media[item].data;
-                    media[item].length=request.media[item].length;
-                    media[item].frames=(const uint8_t *const *)request.media[item].frames;
-                    media[item].frame_lengths=request.media[item].frame_lengths;
-                    media[item].frame_count=(uint32_t)request.media[item].frame_count;
-                    media[item].fps=request.media[item].fps;
-                    media[item].max_frames=request.media[item].max_frames;
-                }
+    if(status==FG_OK)status=fg_runtime_set_sampler(runtime,&turn->request.sampler,err);
+    if(status!=FG_OK)return status;
+    turn->opened=true;
+    return FG_OK;
+}
+
+/* The pre-M3.2 synchronous model call: vision, continuation and plain
+ * generate.  Used by the legacy engine path and by every request the
+ * scheduler cannot multiplex (media, continuation, non-greedy sampler). */
+static fg_status api_turn_run_legacy(api_turn *turn, fg_error *err) {
+    api_generation *generation = &turn->generation;
+    fg_runtime *runtime = generation->runtime;
+    api_public_session *public_session = turn->public_session;
+    fg_status status = FG_OK;
+    turn->generation_attempted = true;
+    fg_runtime_media *media=NULL;
+    if(turn->request.media_count){
+        media=calloc(turn->request.media_count,sizeof(*media));
+        if(!media){
+            fg_error_set(err,FG_ERR_OOM,"allocate vision request media");
+            status=FG_ERR_OOM;
+        }else{
+            for(size_t item=0;item<turn->request.media_count;item++){
+                media[item].kind=turn->request.media[item].kind;
+                media[item].bytes=turn->request.media[item].data;
+                media[item].length=turn->request.media[item].length;
+                media[item].frames=(const uint8_t *const *)turn->request.media[item].frames;
+                media[item].frame_lengths=turn->request.media[item].frame_lengths;
+                media[item].frame_count=(uint32_t)turn->request.media[item].frame_count;
+                media[item].fps=turn->request.media[item].fps;
+                media[item].max_frames=turn->request.media[item].max_frames;
             }
         }
-        /* The media identities of the stored session are the first
-         * `prefix_media` entries of the request media list (the prefix compare
-         * validated both their markers and their payload digests).  Only the
-         * entries after that are new suffix media and need tower work. */
-        size_t prefix_media=public_continuation?public_session->media_count:0u;
-        if(status==FG_OK&&public_continuation&&request.media_count&&
-           prefix_media<request.media_count){
-            bool prefix_miss=false;
-            status=fg_runtime_generate_vision_continuation(
-                runtime,rendered,rendered_continuation,media+prefix_media,
-                (uint32_t)(request.media_count-prefix_media),&prefix_miss,
-                request.max_tokens,api_token,&generation,api_interrupted,&generation,
-                &stats,err);
-            if(status==FG_ERR_UNAVAILABLE&&prefix_miss){
-                memset(&stats,0,sizeof(stats));
-                memset(err,0,sizeof(*err));
-                api_public_session_free(public_session);
-                status=fg_runtime_reset(runtime,err);
-                if(status==FG_OK)
-                    status=fg_runtime_generate_vision(runtime,rendered,media,
-                                                      (uint32_t)request.media_count,
-                                                      request.max_tokens,api_token,
-                                                      &generation,api_interrupted,
-                                                      &generation,&stats,err);
-            }
-        }else if(status==FG_OK&&request.media_count&&!public_continuation){
-            status=fg_runtime_generate_vision(runtime,rendered,media,
-                                              (uint32_t)request.media_count,
-                                              request.max_tokens,api_token,&generation,
-                                              api_interrupted,&generation,&stats,err);
-        }else if(status==FG_OK&&public_continuation){
-            bool prefix_miss=false;
-            status=fg_runtime_generate_continuation(
-                runtime,rendered,rendered_continuation,&prefix_miss,request.max_tokens,
-                api_token,&generation,api_interrupted,&generation,&stats,err);
-            if(status==FG_ERR_UNAVAILABLE&&prefix_miss){
-                memset(&stats,0,sizeof(stats));
-                memset(err,0,sizeof(*err));
-                api_public_session_free(public_session);
-                status=fg_runtime_reset(runtime,err);
-                if(status==FG_OK&&request.media_count)
-                    /* All media are in the prefix; the cold fallback still has
-                     * to run the tower for them. */
-                    status=fg_runtime_generate_vision(runtime,rendered,media,
-                                                      (uint32_t)request.media_count,
-                                                      request.max_tokens,api_token,
-                                                      &generation,api_interrupted,
-                                                      &generation,&stats,err);
-                else if(status==FG_OK)
-                    status=fg_runtime_generate(runtime,rendered,request.max_tokens,api_token,
-                                               &generation,api_interrupted,&generation,&stats,err);
-            }
-        }else if(status==FG_OK){
-            status=fg_runtime_generate(runtime,rendered,request.max_tokens,api_token,
-                                       &generation,api_interrupted,&generation,&stats,err);
-        }
-        free(media);
     }
+    /* The media identities of the stored session are the first `prefix_media`
+     * entries of the request media list (the prefix compare validated both
+     * their markers and their payload digests).  Only the entries after that
+     * are new suffix media and need tower work. */
+    size_t prefix_media=turn->public_continuation?public_session->media_count:0u;
+    if(status==FG_OK&&turn->public_continuation&&turn->request.media_count&&
+       prefix_media<turn->request.media_count){
+        bool prefix_miss=false;
+        status=fg_runtime_generate_vision_continuation(
+            runtime,turn->rendered,turn->rendered_continuation,media+prefix_media,
+            (uint32_t)(turn->request.media_count-prefix_media),&prefix_miss,
+            turn->request.max_tokens,api_token,generation,api_interrupted,generation,
+            &turn->stats,err);
+        if(status==FG_ERR_UNAVAILABLE&&prefix_miss){
+            memset(&turn->stats,0,sizeof(turn->stats));
+            memset(err,0,sizeof(*err));
+            api_public_session_free(public_session);
+            status=fg_runtime_reset(runtime,err);
+            if(status==FG_OK)
+                status=fg_runtime_generate_vision(runtime,turn->rendered,media,
+                                                  (uint32_t)turn->request.media_count,
+                                                  turn->request.max_tokens,api_token,
+                                                  generation,api_interrupted,
+                                                  generation,&turn->stats,err);
+        }
+    }else if(status==FG_OK&&turn->request.media_count&&!turn->public_continuation){
+        status=fg_runtime_generate_vision(runtime,turn->rendered,media,
+                                          (uint32_t)turn->request.media_count,
+                                          turn->request.max_tokens,api_token,generation,
+                                          api_interrupted,generation,&turn->stats,err);
+    }else if(status==FG_OK&&turn->public_continuation){
+        bool prefix_miss=false;
+        status=fg_runtime_generate_continuation(
+            runtime,turn->rendered,turn->rendered_continuation,&prefix_miss,
+            turn->request.max_tokens,api_token,generation,api_interrupted,generation,
+            &turn->stats,err);
+        if(status==FG_ERR_UNAVAILABLE&&prefix_miss){
+            memset(&turn->stats,0,sizeof(turn->stats));
+            memset(err,0,sizeof(*err));
+            api_public_session_free(public_session);
+            status=fg_runtime_reset(runtime,err);
+            if(status==FG_OK&&turn->request.media_count)
+                /* All media are in the prefix; the cold fallback still has
+                 * to run the tower for them. */
+                status=fg_runtime_generate_vision(runtime,turn->rendered,media,
+                                                  (uint32_t)turn->request.media_count,
+                                                  turn->request.max_tokens,api_token,
+                                                  generation,api_interrupted,
+                                                  generation,&turn->stats,err);
+            else if(status==FG_OK)
+                status=fg_runtime_generate(runtime,turn->rendered,turn->request.max_tokens,
+                                           api_token,generation,api_interrupted,generation,
+                                           &turn->stats,err);
+        }
+    }else if(status==FG_OK){
+        status=fg_runtime_generate(runtime,turn->rendered,turn->request.max_tokens,api_token,
+                                   generation,api_interrupted,generation,&turn->stats,err);
+    }
+    free(media);
+    return status;
+}
+
+/* Tail: parse the generated text, commit the public session, close the
+ * response, release the runtime session.  Also the sole cleanup point for a
+ * turn whose head already answered the client. */
+static fg_status api_turn_close(api_turn *turn, fg_status status, fg_error *err) {
+    if (!turn->opened) {
+        api_turn_dispose(turn);
+        return status;
+    }
+    api_generation *generation = &turn->generation;
+    fg_runtime *runtime = generation->runtime;
+    api_public_session *public_session = turn->public_session;
     fg_chat_generated generated={0};
     if(status==FG_OK)
-        status=fg_chat_parse_generated(generation.content.data?generation.content.data:"",
-                                       render_options.think_mode != FG_CHAT_THINK_OFF,
+        status=fg_chat_parse_generated(generation->content.data?generation->content.data:"",
+                                       turn->render_options.think_mode != FG_CHAT_THINK_OFF,
                                        &generated,err);
-    if(status==FG_OK)status=validate_generated_tools(&request,&generated,err);
+    if(status==FG_OK)status=validate_generated_tools(&turn->request,&generated,err);
     api_public_session pending_session={0};
     if(status==FG_OK)
-        status=api_public_session_build(&pending_session,&request,&generation,&generated,
+        status=api_public_session_build(&pending_session,&turn->request,generation,&generated,
                                         public_session?public_session->id:NULL,
                                         public_session?public_session->numeric_id:0u,err);
     if(status==FG_OK){
-        double prefill_tps=stats.prefill_seconds>0.0?
-            (double)stats.prefilled_tokens/stats.prefill_seconds:0.0;
-        double decode_tps=stats.decode_seconds>0.0?
-            (double)stats.generated_tokens/stats.decode_seconds:0.0;
+        double prefill_tps=turn->stats.prefill_seconds>0.0?
+            (double)turn->stats.prefilled_tokens/turn->stats.prefill_seconds:0.0;
+        double decode_tps=turn->stats.decode_seconds>0.0?
+            (double)turn->stats.generated_tokens/turn->stats.decode_seconds:0.0;
         fprintf(stderr,
                 "request %s: mode %s, prefix %s, reused %u, reset %s, "
                 "prefill %u/%u tokens "
                 "%.2f tok/s, generation %u tokens %.2f tok/s, context %u/%u "
                 "media %u image-tokens %u video-tokens %u video-frames %u tower %.2f s\n",
-                id,fg_execution_mode_name(stats.execution_mode),
-                stats.prefix_cache_hit?"hit":"miss",stats.reused_tokens,
-                fg_prefix_reset_reason_name(stats.reset_reason),stats.prefilled_tokens,
-                stats.prompt_tokens,prefill_tps,stats.generated_tokens,decode_tps,
-                stats.context_tokens,fg_runtime_context_limit(runtime),
-                (unsigned)request.media_count,stats.image_tokens,stats.video_tokens,
-                stats.video_frames,stats.tower_seconds);
+                turn->id,fg_execution_mode_name(turn->stats.execution_mode),
+                turn->stats.prefix_cache_hit?"hit":"miss",turn->stats.reused_tokens,
+                fg_prefix_reset_reason_name(turn->stats.reset_reason),
+                turn->stats.prefilled_tokens,turn->stats.prompt_tokens,prefill_tps,
+                turn->stats.generated_tokens,decode_tps,turn->stats.context_tokens,
+                fg_runtime_context_limit(runtime),(unsigned)turn->request.media_count,
+                turn->stats.image_tokens,turn->stats.video_tokens,
+                turn->stats.video_frames,turn->stats.tower_seconds);
     }
     const char *finish_reason = generated.tool_call_count ? "tool_calls" :
-        (stats.generated_tokens >= request.max_tokens ? "length" : "stop");
+        (turn->stats.generated_tokens >= turn->request.max_tokens ? "length" : "stop");
     bool response_committed=false;
     if (status == FG_OK) {
-        if (request.stream)
-            status = send_stream_end(&generation, &generated, finish_reason, err);
+        if (turn->request.stream)
+            status = send_stream_end(generation, &generated, finish_reason, err);
         else
-            status = send_completion(&generation, &generated, &stats, finish_reason, err);
+            status = send_completion(generation, &generated, &turn->stats, finish_reason, err);
         if(status==FG_OK){
             api_public_session_free(public_session);
             *public_session=pending_session;
@@ -4226,18 +4330,19 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
             status == FG_ERR_ARGUMENT || status == FG_ERR_FORMAT || status == FG_ERR_LIMIT ?
                 400u :
                 500u;
-        if(stream_started)send_stream_error(&generation,message,&send_err);
-        else api_send_error_response(sink, response_status, message, keep_alive, &send_err);
+        if(turn->stream_started)send_stream_error(generation,message,&send_err);
+        else api_send_error_response(&turn->sink, response_status, message,
+                                     generation->keep_alive, &send_err);
     }
-    free(generation.content.data);
-    free(generation.visible_pending.data);
+    free(generation->content.data); generation->content.data=NULL;
+    free(generation->visible_pending.data); generation->visible_pending.data=NULL;
     fg_chat_generated_free(&generated);
-    free(rendered);
-    free(rendered_continuation);
-    size_t request_media_count=request.media_count;
-    api_chat_request_free(&request);
+    free(turn->rendered); turn->rendered=NULL;
+    free(turn->rendered_continuation); turn->rendered_continuation=NULL;
+    size_t request_media_count=turn->request.media_count;
+    api_chat_request_free(&turn->request);
     api_public_session_free(&pending_session);
-    if(generation_attempted&&!response_committed){
+    if(turn->generation_attempted&&!response_committed){
         fg_error reset_error={0};
         api_public_session_free(public_session);
         if(status!=FG_ERR_INTERRUPTED&&
@@ -4251,25 +4356,391 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
      * the tower device).  The request already received its 5xx with the precise
      * error; the tower session is self-healing and the runtime was reset above,
      * so keep serving instead of taking the API down for one oversized image. */
-    if(status!=FG_OK&&request_media_count&&stats.prompt_tokens==0u&&
-       stats.generated_tokens==0u)
+    if(status!=FG_OK&&request_media_count&&turn->stats.prompt_tokens==0u&&
+       turn->stats.generated_tokens==0u)
         status=FG_OK;
     if(status==FG_ERR_INTERRUPTED)
         fprintf(stderr,"request %s: prefill interrupted after %u/%u tokens, "
                 "frontier %u, %.1f s, client_failed %d\n",
-                id,stats.prefilled_tokens,stats.prompt_tokens,stats.context_tokens,
-                stats.prefill_seconds,generation.client_failed?1:0);
-    if (generation.client_failed || status == FG_ERR_INTERRUPTED ||
-        (status == FG_ERR_IO && stats.prompt_tokens + stats.generated_tokens > 0u))
+                turn->id,turn->stats.prefilled_tokens,turn->stats.prompt_tokens,
+                turn->stats.context_tokens,turn->stats.prefill_seconds,
+                generation->client_failed?1:0);
+    if (generation->client_failed || status == FG_ERR_INTERRUPTED ||
+        (status == FG_ERR_IO && turn->stats.prompt_tokens + turn->stats.generated_tokens > 0u))
         status = FG_OK;
     else if (status == FG_ERR_ARGUMENT || status == FG_ERR_FORMAT || status == FG_ERR_LIMIT)
         status = FG_OK;
-    if (sessions) {
-        fg_runtime_session_end(runtime, session_entry->runtime_session);
-        session_entry->busy = false;
-        session_entry->last_used = ++sessions->sequence;
+    if (turn->entry) {
+        fg_runtime_session_end(runtime, turn->entry->runtime_session);
+        turn->entry->busy = false;
+        turn->entry->last_used = ++turn->sessions->sequence;
     }
+    api_turn_dispose(turn);
     return status;
+}
+
+/* ---------------------------------------------------------------------------
+ * M3.2 engine scheduler: at most two live chat turns share the ring.  A lone
+ * eligible turn (or any non-eligible turn) with no other live session runs on
+ * the production B=1 path; a prefill chunk-yields only when another session
+ * has work; two decode-ready sessions share depth-B batch steps.  Requests
+ * beyond the two owner slots stay in the M2 queue (bound 4).
+ * ------------------------------------------------------------------------- */
+
+typedef struct api_engine_scheduler {
+    fg_runtime *runtime;
+    api_engine_queue *queue;
+    api_session_table sessions;
+    api_turn *turns[FG_RUNTIME_SESSION_MAX];
+    size_t turn_count;
+    uint64_t now;
+    fg_decode_batch_table table;
+    fg_decode_batch_policy policy;
+} api_engine_scheduler;
+
+static void api_scheduler_init(api_engine_scheduler *scheduler, fg_runtime *runtime,
+                               api_engine_queue *queue) {
+    memset(scheduler, 0, sizeof(*scheduler));
+    scheduler->runtime = runtime;
+    scheduler->queue = queue;
+    fg_decode_batch_policy_default(&scheduler->policy);
+    fg_error ignored = {0};
+    (void)fg_decode_batch_table_init(&scheduler->table, 2u, &ignored);
+}
+
+static bool api_scheduler_eligible_turn(const api_turn *turn, const api_turn *other) {
+    if (!turn->owns_session || turn->public_continuation || turn->request.media_count)
+        return false;
+    if (fg_sampler_penalties_active(&turn->request.sampler) ||
+        turn->request.sampler.temperature != 0.0f)
+        return false;
+    if (!turn->entry || !turn->entry->runtime_session) return false;
+    if (other && memcmp(&turn->request.sampler, &other->request.sampler,
+                        sizeof(turn->request.sampler)))
+        return false;
+    return true;
+}
+
+static bool api_scheduler_queue_waiting(api_engine_queue *queue) {
+    pthread_mutex_lock(&queue->mutex);
+    bool waiting = queue->count > 0;
+    pthread_mutex_unlock(&queue->mutex);
+    return waiting;
+}
+
+static fg_status api_scheduler_bind(api_engine_scheduler *scheduler, api_turn *turn,
+                                    fg_error *err) {
+    fg_runtime *runtime = scheduler->runtime;
+    fg_runtime_session *session = turn->entry->runtime_session;
+    fg_runtime_session *active = fg_runtime_active_session(runtime);
+    if (active == session) return FG_OK;
+    if (active) fg_runtime_session_end(runtime, active);
+    return fg_runtime_session_begin(runtime, session, err);
+}
+
+static void api_scheduler_unbind(api_engine_scheduler *scheduler) {
+    fg_runtime_session *active = fg_runtime_active_session(scheduler->runtime);
+    if (active) fg_runtime_session_end(scheduler->runtime, active);
+}
+
+/* Run one prefill call: a single chunk while another turn has work, the whole
+ * remaining prompt for a lone turn (the production prefill shape). */
+static fg_status api_scheduler_prefill(api_engine_scheduler *scheduler, api_turn *turn,
+                                       bool chunk, fg_error *err) {
+    bool done = false;
+    uint32_t budget = chunk ? fg_runtime_prefill_microbatch(scheduler->runtime) : 0u;
+    fg_status status = api_scheduler_bind(scheduler, turn, err);
+    if (status == FG_OK)
+        status = fg_runtime_session_runner_prefill(scheduler->runtime,
+            turn->entry->runtime_session, budget, &done, err);
+    api_scheduler_unbind(scheduler);
+    if (status != FG_OK) return status;
+    if (done) {
+        turn->prefill_done = true;
+        fg_status enter = fg_decode_batch_sequence_enter(&scheduler->table,
+            fg_runtime_session_id(turn->entry->runtime_session),
+            fg_runtime_session_slot(turn->entry->runtime_session), err);
+        if (enter == FG_OK)
+            enter = fg_runtime_session_runner_sync_frontier(scheduler->runtime,
+                turn->entry->runtime_session, &scheduler->table, err);
+        if (enter != FG_OK) return enter;
+    }
+    return FG_OK;
+}
+
+static fg_status api_scheduler_decode_one(api_engine_scheduler *scheduler, api_turn *turn,
+                                          bool *left, fg_error *err) {
+    fg_runtime_session *session = turn->entry->runtime_session;
+    fg_token_callback callbacks[FG_DECODE_BATCH_MAX_SLOTS] = {api_token};
+    void *contexts[FG_DECODE_BATCH_MAX_SLOTS] = {&turn->generation};
+    fg_runtime_session *single[1] = {session};
+    return fg_runtime_session_runner_batch(scheduler->runtime, single, 1u,
+        &scheduler->table, &scheduler->policy, callbacks, contexts, ++scheduler->now,
+        left, err);
+}
+
+static fg_status api_scheduler_decode_batch(api_engine_scheduler *scheduler,
+                                            api_turn **turns, uint32_t count,
+                                            bool left[FG_DECODE_BATCH_MAX_SLOTS],
+                                            fg_error *err) {
+    fg_runtime_session *sessions[FG_DECODE_BATCH_MAX_SLOTS] = {NULL};
+    fg_token_callback callbacks[FG_DECODE_BATCH_MAX_SLOTS] = {NULL};
+    void *contexts[FG_DECODE_BATCH_MAX_SLOTS] = {NULL};
+    for (uint32_t i = 0; i < count; i++) {
+        sessions[i] = turns[i]->entry->runtime_session;
+        callbacks[i] = api_token;
+        contexts[i] = &turns[i]->generation;
+    }
+    return fg_runtime_session_runner_batch(scheduler->runtime, sessions, count,
+        &scheduler->table, &scheduler->policy, callbacks, contexts, ++scheduler->now,
+        left, err);
+}
+
+static fg_status api_scheduler_start(api_engine_scheduler *scheduler, api_turn *turn,
+                                     fg_error *err) {
+    if (!turn->eligible) {
+        turn->started = true;   /* the legacy call runs and completes in pump */
+        return FG_OK;
+    }
+    fg_status status = api_scheduler_bind(scheduler, turn, err);
+    if (status == FG_OK)
+        status = fg_runtime_session_runner_begin(scheduler->runtime,
+            turn->entry->runtime_session, turn->rendered, turn->request.max_tokens,
+            &turn->request.sampler, &turn->stats, err);
+    api_scheduler_unbind(scheduler);
+    if (status != FG_OK) return status;
+    turn->started = true;
+    return FG_OK;
+}
+
+static void api_scheduler_remove(api_engine_scheduler *scheduler, api_turn *turn) {
+    for (size_t i = 0; i < scheduler->turn_count; i++) {
+        if (scheduler->turns[i] != turn) continue;
+        for (size_t j = i + 1; j < scheduler->turn_count; j++)
+            scheduler->turns[j - 1] = scheduler->turns[j];
+        scheduler->turn_count--;
+        return;
+    }
+}
+
+/* Complete one turn: runner tail commit (when the turn decoded), response tail,
+ * transport completion and queue slot release.  Returns api_turn_close's
+ * softened status (non-OK is engine-fatal, exactly like the legacy loop). */
+static fg_status api_scheduler_complete(api_engine_scheduler *scheduler, api_turn *turn,
+                                        fg_status status, fg_error *err) {
+    api_connection *connection = turn->connection;
+    char *body = turn->http.body;
+    bool close_after = connection ? !connection->keep_alive : true;
+    bool client_gone = connection && atomic_load(&connection->client_gone);
+    if (turn->started && turn->eligible && turn->entry) {
+        fg_error finish_error = {0};
+        if (turn->prefill_done) {
+            fg_status finish = api_scheduler_bind(scheduler, turn, &finish_error);
+            if (finish == FG_OK)
+                finish = fg_runtime_session_runner_finish(scheduler->runtime,
+                    turn->entry->runtime_session, &finish_error);
+            api_scheduler_unbind(scheduler);
+            if (finish != FG_OK && status == FG_OK) {
+                status = finish;
+                *err = finish_error;
+            }
+        } else {
+            fg_runtime_session_runner_abort(scheduler->runtime,
+                                            turn->entry->runtime_session);
+        }
+    }
+    bool drop_session = turn->owns_session && turn->entry &&
+        (status == FG_ERR_INTERRUPTED || client_gone);
+    api_session_table *sessions = turn->sessions;
+    api_session_entry *entry = turn->entry;
+    status = api_turn_close(turn, status, err);
+    if (drop_session) {
+        /* An aborted turn's client is gone: drop the session so its owner
+         * slot is reusable by the next request. */
+        api_session_table_drop(sessions, scheduler->runtime, entry);
+    }
+    if (connection) api_connection_complete_response(connection, close_after);
+    free(body);
+    api_engine_queue_complete(scheduler->queue);
+    api_scheduler_remove(scheduler, turn);
+    free(turn);
+    return status;
+}
+
+/* Abort a live turn because its client disconnected: commit partial decode
+ * output like the production interrupt path, drop the session so its owner
+ * slot is reusable, and complete the transport entry. */
+static fg_status api_scheduler_abort(api_engine_scheduler *scheduler, api_turn *turn,
+                                     fg_error *err) {
+    turn->generation.client_failed = true;
+    if (turn->started && turn->eligible && turn->prefill_done)
+        return api_scheduler_complete(scheduler, turn, FG_OK, err);
+    return api_scheduler_complete(scheduler, turn, FG_ERR_INTERRUPTED, err);
+}
+
+/* One scheduler action per call: start, abort, complete, then advance. */
+static fg_status api_scheduler_pump(api_engine_scheduler *scheduler, fg_error *err) {
+    bool any_started = false;
+    for (size_t i = 0; i < scheduler->turn_count; i++) {
+        api_turn *turn = scheduler->turns[i];
+        if (turn->started && !turn->left) any_started = true;
+    }
+    /* 1. Start the next turn when the ring allows it.  A non-eligible turn
+     * runs strictly in admission order and never shares the ring. */
+    for (size_t i = 0; i < scheduler->turn_count; i++) {
+        api_turn *turn = scheduler->turns[i];
+        if (turn->started || turn->left) continue;
+        if (!turn->eligible && (i > 0u || any_started)) continue;
+        fg_status status = api_scheduler_start(scheduler, turn, err);
+        if (status != FG_OK) return api_scheduler_complete(scheduler, turn, status, err);
+        if (!turn->eligible) {
+            fg_status run = api_turn_run_legacy(turn, err);
+            return api_scheduler_complete(scheduler, turn, run, err);
+        }
+        return FG_OK;
+    }
+    /* 2. Abort a turn whose client disappeared. */
+    for (size_t i = 0; i < scheduler->turn_count; i++) {
+        api_turn *turn = scheduler->turns[i];
+        if (!turn->started) continue;
+        if (turn->connection && atomic_load(&turn->connection->client_gone))
+            return api_scheduler_abort(scheduler, turn, err);
+    }
+    /* 3. Complete a turn that the runner has finished. */
+    for (size_t i = 0; i < scheduler->turn_count; i++) {
+        api_turn *turn = scheduler->turns[i];
+        if (turn->started && turn->left)
+            return api_scheduler_complete(scheduler, turn, FG_OK, err);
+    }
+    /* 4. Advance: batch when two decode-ready sessions exist, otherwise one
+     * prefill chunk (only while another session has work) or one B=1 step. */
+    api_turn *decodable[FG_DECODE_BATCH_MAX_SLOTS];
+    uint32_t decodable_count = 0;
+    for (size_t i = 0; i < scheduler->turn_count; i++) {
+        api_turn *turn = scheduler->turns[i];
+        if (turn->started && turn->eligible && !turn->left && turn->prefill_done &&
+            decodable_count < FG_DECODE_BATCH_MAX_SLOTS)
+            decodable[decodable_count++] = turn;
+    }
+    if (decodable_count >= 2u) {
+        bool left[FG_DECODE_BATCH_MAX_SLOTS] = {false};
+        fg_status status = api_scheduler_decode_batch(scheduler, decodable,
+                                                      decodable_count, left, err);
+        if (status != FG_OK) return status;
+        for (uint32_t i = 0; i < decodable_count; i++)
+            if (left[i]) decodable[i]->left = true;
+        return FG_OK;
+    }
+    bool other_work = api_scheduler_queue_waiting(scheduler->queue);
+    uint32_t active = 0;
+    for (size_t i = 0; i < scheduler->turn_count; i++) {
+        api_turn *turn = scheduler->turns[i];
+        if (turn->started && turn->eligible && !turn->left) active++;
+    }
+    for (size_t i = 0; i < scheduler->turn_count; i++) {
+        api_turn *turn = scheduler->turns[i];
+        if (!turn->started || !turn->eligible || turn->left) continue;
+        if (!turn->prefill_done) {
+            fg_status status = api_scheduler_prefill(scheduler, turn,
+                other_work || active > 1u, err);
+            if (status != FG_OK) return status;
+        } else {
+            bool left = false;
+            fg_status status = api_scheduler_decode_one(scheduler, turn, &left, err);
+            if (status != FG_OK) return status;
+            if (left) turn->left = true;
+        }
+    }
+    return FG_OK;
+}
+
+/* Admit one popped queue entry into the scheduler. */
+static fg_status api_scheduler_admit(api_engine_scheduler *scheduler,
+                                     api_engine_request *engine_request, fg_error *err) {
+    api_turn *turn = calloc(1u, sizeof(*turn));
+    if (!turn) {
+        fg_error_set(err, FG_ERR_OOM, "allocate parked turn");
+        return FG_ERR_OOM;
+    }
+    api_sink sink = {
+        .fd = engine_request->connection->fd,
+        .connection = engine_request->connection,
+    };
+    fg_status status = api_turn_open(turn, sink, scheduler->runtime, NULL,
+                                     &scheduler->sessions, &engine_request->http, err);
+    engine_request->http.body = NULL;   /* ownership moved into the turn */
+    if (status != FG_OK) {
+        char *body = turn->http.body;
+        (void)api_turn_close(turn, status, err);
+        free(body);
+        api_engine_queue_complete(scheduler->queue);
+        free(turn);
+        return status;
+    }
+    if (!turn->opened) {
+        char *body = turn->http.body;
+        (void)api_turn_close(turn, FG_OK, err);
+        api_connection_complete_response(engine_request->connection,
+                                         !engine_request->connection->keep_alive);
+        free(body);
+        api_engine_queue_complete(scheduler->queue);
+        free(turn);
+        return FG_OK;
+    }
+    const api_turn *other = scheduler->turn_count ? scheduler->turns[0] : NULL;
+    turn->eligible = api_scheduler_eligible_turn(turn, other);
+    scheduler->turns[scheduler->turn_count++] = turn;
+    return FG_OK;
+}
+
+static void api_scheduler_shutdown(api_engine_scheduler *scheduler) {
+    while (scheduler->turn_count) {
+        api_turn *turn = scheduler->turns[0];
+        fg_error ignored = {0};
+        (void)api_scheduler_abort(scheduler, turn, &ignored);
+    }
+    api_session_table_destroy(&scheduler->sessions, scheduler->runtime);
+}
+
+/* Engine loop: the front-end thread owns the listener and every client socket;
+ * this thread admits FIFO requests, keeps at most two turns live on the ring
+ * and blocks only while it has nothing to advance. */
+static fg_status api_scheduler_run(api_engine_scheduler *scheduler, fg_error *err) {
+    const int timeout_ms = 200;
+    while (!api_stop_requested) {
+        while (scheduler->turn_count < 2u) {
+            api_engine_request engine_request;
+            if (!api_engine_queue_pop_wait(scheduler->queue, &engine_request, 0))
+                break;
+            if (atomic_load(&engine_request.connection->client_gone)) {
+                free(engine_request.http.body);
+                engine_request.http.body = NULL;
+                api_connection_complete_response(engine_request.connection, true);
+                api_engine_queue_complete(scheduler->queue);
+                continue;
+            }
+            fg_status status = api_scheduler_admit(scheduler, &engine_request, err);
+            if (status != FG_OK) return status;
+        }
+        if (scheduler->turn_count == 0) {
+            api_engine_request engine_request;
+            if (!api_engine_queue_pop_wait(scheduler->queue, &engine_request, timeout_ms))
+                continue;
+            if (atomic_load(&engine_request.connection->client_gone)) {
+                free(engine_request.http.body);
+                engine_request.http.body = NULL;
+                api_connection_complete_response(engine_request.connection, true);
+                api_engine_queue_complete(scheduler->queue);
+                continue;
+            }
+            fg_status status = api_scheduler_admit(scheduler, &engine_request, err);
+            if (status != FG_OK) return status;
+        }
+        fg_status status = api_scheduler_pump(scheduler, err);
+        if (status != FG_OK) return status;
+    }
+    api_scheduler_shutdown(scheduler);
+    return FG_OK;
 }
 
 static fg_status open_listener(const char *host, uint16_t port, int *listener, fg_error *err) {
@@ -4373,36 +4844,13 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
         return status;
     }
 
-    /* M3: live sessions survive across requests in the queue; the engine
+    /* M3: live sessions survive across requests in the queue; the scheduler
      * resolves each request to its session (explicit id, connection, or prefix
-     * extension) and binds its token-path state for the generation. */
-    api_session_table sessions;
-    memset(&sessions, 0, sizeof(sessions));
-    while (!api_stop_requested) {
-        api_engine_request engine_request;
-        if (!api_engine_queue_pop_wait(&queue, &engine_request, 200)) continue;
-        if (atomic_load(&engine_request.connection->client_gone)) {
-            /* The client disconnected while the request waited in the queue:
-             * cancel it without spending a token slot.  The front-end sweep
-             * handles the more common case; this closes the pop race. */
-            free(engine_request.http.body);
-            engine_request.http.body = NULL;
-            api_connection_complete_response(engine_request.connection, true);
-            api_engine_queue_complete(&queue);
-            continue;
-        }
-        api_sink sink = {
-            .fd = engine_request.connection->fd,
-            .connection = engine_request.connection,
-        };
-        status = handle_chat_completions(&sink, runtime, NULL, &sessions,
-                                         &engine_request.http, err);
-        api_connection_complete_response(engine_request.connection,
-                                         !engine_request.connection->keep_alive);
-        free(engine_request.http.body);
-        api_engine_queue_complete(&queue);
-        if (status != FG_OK) break;
-    }
+     * extension), keeps at most two turns live on the ring and runs a lone
+     * session on the production B=1 path. */
+    api_engine_scheduler scheduler;
+    api_scheduler_init(&scheduler, runtime, &queue);
+    status = api_scheduler_run(&scheduler, err);
 
     api_engine_queue_stop(&queue);
     api_frontend_stop(&frontend);
@@ -4411,7 +4859,6 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
     sigaction(SIGINT, &old_int, NULL);
     sigaction(SIGTERM, &old_term, NULL);
     sigaction(SIGPIPE, &old_pipe, NULL);
-    api_session_table_destroy(&sessions, runtime);
     fg_runtime_close(runtime);
     return status;
 }
