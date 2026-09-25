@@ -1892,6 +1892,12 @@ static fg_status depthb_owner_prepare(depthb_owner_runtime *depthb,uint32_t slot
         depthb->checkpoint_valid[slot]=false;
     }
     fg_status status=fg_owner_set_active_session(depthb->owner,slot,err);
+    if(status==FG_OK){
+        uint32_t ft[FG_LAYER_COUNT],c=0u;
+        if(fg_owner_qsa_frontier(depthb->owner,slot,ft)==FG_OK)
+            for(uint32_t fl=0u;fl<FG_LAYER_COUNT;fl++)if(ft[fl]>c)c=ft[fl];
+        fprintf(stderr,"OWNER_PREPARE rank=%u slot=%u committed=%u\n",depthb->self,slot,c);
+    }
     /* Slot 0's QSA session is opened at SESSION_BEGIN; a batch slot gets its
      * own state file the first time it is prepared.  The file name carries the
      * session so the two namespaces can never share a page stream. */
@@ -2459,6 +2465,15 @@ static fg_status begin_session(fg_fabric *fabric,const fg_manifest *manifest,
             depthb->checkpoint_valid[slot]=false;
         }
     if(status==FG_OK&&output)status=fg_output_history_reset(output,NULL,0u,err);
+    if(status==FG_OK&&owner){
+        uint32_t ft[FG_LAYER_COUNT],c0=0u,c1=0u;
+        if(fg_owner_qsa_frontier(owner,0u,ft)==FG_OK)
+            for(uint32_t fl=0u;fl<FG_LAYER_COUNT;fl++)if(ft[fl]>c0)c0=ft[fl];
+        if(fg_owner_qsa_frontier(owner,1u,ft)==FG_OK)
+            for(uint32_t fl=0u;fl<FG_LAYER_COUNT;fl++)if(ft[fl]>c1)c1=ft[fl];
+        fprintf(stderr,"WORKER_BEGIN rank=%u nonce=%llu active=%u c0=%u c1=%u\n",
+                self,(unsigned long long)request,fg_owner_active_session(owner),c0,c1);
+    }
     uint8_t wire[FG_OWNER_SESSION_CONTROL_BYTES];
     if(status==FG_OK){
         control.operation=FG_OWNER_SESSION_READY;
