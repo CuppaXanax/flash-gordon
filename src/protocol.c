@@ -1604,9 +1604,10 @@ static fg_status validate_owner_session_control(const fg_owner_session_control *
     bool initial=control->operation==FG_OWNER_SESSION_BEGIN||
                  control->operation==FG_OWNER_SESSION_READY;
     bool transactional=control->operation>=FG_OWNER_SESSION_PREPARE;
+    /* State digests ride only the transactional *replies*; requests carry the
+     * frontier digest alone.  RESET is a request, RESETTED its reply. */
     bool state_reply=control->operation==FG_OWNER_SESSION_PREPARED||
                      control->operation==FG_OWNER_SESSION_RESTORED||
-                     control->operation==FG_OWNER_SESSION_RESET||
                      control->operation==FG_OWNER_SESSION_RESETTED;
     if(initial&&(control->generation||control->committed_tokens||
                  !digest_zero(control->frontier_sha256)||

@@ -588,7 +588,8 @@ static void test_owner_controls(void){
             control.generation=9u;control.committed_tokens=41u;
             fill_digest(control.frontier_sha256,7u);
         }
-        if(operation==FG_OWNER_SESSION_PREPARED||operation==FG_OWNER_SESSION_RESTORED)
+        if(operation==FG_OWNER_SESSION_PREPARED||operation==FG_OWNER_SESSION_RESTORED||
+           operation==FG_OWNER_SESSION_RESETTED)
             fill_digest(control.state_sha256,9u);
         CHECK(fg_owner_session_control_encode(wire,&control,&error)==FG_OK);
         fg_owner_session_control decoded={0};
@@ -596,6 +597,16 @@ static void test_owner_controls(void){
         CHECK(decoded.operation==operation&&decoded.rank==3u&&
               decoded.generation==control.generation&&
               decoded.logical_context_tokens==8192u);
+        /* The M3.2 slot reset request must not carry a state digest (only its
+         * reply does); the reply must carry one. */
+        if(operation==FG_OWNER_SESSION_RESET||operation==FG_OWNER_SESSION_RESETTED){
+            fg_owner_session_control corrupted=control;
+            if(operation==FG_OWNER_SESSION_RESET)
+                fill_digest(corrupted.state_sha256,11u);
+            else
+                memset(corrupted.state_sha256,0,sizeof(corrupted.state_sha256));
+            CHECK(fg_owner_session_control_encode(wire,&corrupted,&error)==FG_ERR_MISMATCH);
+        }
     }
     wire[6]=FG_DECODE_BATCH_MAX_SLOTS;fg_owner_session_control decoded={0};
     CHECK(fg_owner_session_control_decode(&decoded,wire,sizeof(wire),&error)==FG_ERR_MISMATCH);
