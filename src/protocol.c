@@ -114,7 +114,7 @@ static bool message_type_supported(uint16_t version,fg_message_type type){
     if(version>=6u&&type>=FG_MSG_OUTPUT_SLICE&&type<=FG_MSG_OUTPUT_SLICE_HIDDEN)return true;
     if(version>=6u&&type>=FG_MSG_DECODE_BATCH_WORK&&type<=FG_MSG_DECODE_BATCH_RESULT)return true;
     if(version>=6u&&type>=FG_MSG_OUTPUT_BATCH_WORK&&type<=FG_MSG_OUTPUT_BATCH_RESULT)return true;
-    if(version>=6u&&type>=FG_MSG_SESSION_RESET&&type<=FG_MSG_SESSION_RESETTED)return true;
+    if(version>=6u&&type>=FG_MSG_SESSION_RESET&&type<=FG_MSG_SESSION_SELECTED)return true;
     return version>=6u&&type>=FG_MSG_SESSION_PREPARE&&type<=FG_MSG_SESSION_RESTORED;
 }
 
@@ -1589,7 +1589,7 @@ static bool digest_zero(const uint8_t digest[32]){uint8_t value=0;for(uint32_t i
 static fg_status validate_owner_session_control(const fg_owner_session_control *control,fg_error *err){
     if(!control||control->version!=FG_OWNER_SESSION_CONTROL_VERSION||
        control->operation<FG_OWNER_SESSION_BEGIN||
-       control->operation>FG_OWNER_SESSION_RESETTED||
+       control->operation>FG_OWNER_SESSION_SELECTED||
        control->rank>=FG_RANK_COUNT||control->position_mode>FG_POSITION_FOUR_AXIS||
        control->flags||control->state_slot>=FG_DECODE_BATCH_MAX_SLOTS||
        !control->session_nonce||digest_zero(control->identity_sha256)||

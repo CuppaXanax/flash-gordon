@@ -186,7 +186,10 @@ typedef enum fg_message_type {
     FG_MSG_OUTPUT_BATCH_RESULT = 54,
     /* M3.2 slot-scoped owner session reset (see FG_OWNER_SESSION_RESET). */
     FG_MSG_SESSION_RESET = 55,
-    FG_MSG_SESSION_RESETTED = 56
+    FG_MSG_SESSION_RESETTED = 56,
+    /* M3.2 owner session select for B=1 decode / prefill chunks. */
+    FG_MSG_SESSION_SELECT = 57,
+    FG_MSG_SESSION_SELECTED = 58
 } fg_message_type;
 
 typedef struct fg_gdn_state_fetch {
@@ -225,7 +228,11 @@ typedef enum fg_owner_session_operation {
      * and reset its QSA session without touching any other slot.  Used when a
      * second session is admitted while another session's slot is live. */
     FG_OWNER_SESSION_RESET = 9,
-    FG_OWNER_SESSION_RESETTED = 10
+    FG_OWNER_SESSION_RESETTED = 10,
+    /* Select one owner state slot for the single-token ring paths (B=1 decode,
+     * prefill chunks) without snapshotting or touching either session. */
+    FG_OWNER_SESSION_SELECT = 11,
+    FG_OWNER_SESSION_SELECTED = 12
 } fg_owner_session_operation;
 
 typedef struct fg_owner_session_control {

@@ -598,8 +598,10 @@ static void test_owner_controls(void){
               decoded.generation==control.generation&&
               decoded.logical_context_tokens==8192u);
         /* The M3.2 slot reset request must not carry a state digest (only its
-         * reply does); the reply must carry one. */
-        if(operation==FG_OWNER_SESSION_RESET||operation==FG_OWNER_SESSION_RESETTED){
+         * reply does); the reply must carry one.  SELECT carries none on either
+         * side. */
+        if(operation==FG_OWNER_SESSION_RESET||operation==FG_OWNER_SESSION_RESETTED||
+           operation==FG_OWNER_SESSION_SELECT||operation==FG_OWNER_SESSION_SELECTED){
             fg_owner_session_control corrupted=control;
             if(operation==FG_OWNER_SESSION_RESET)
                 fill_digest(corrupted.state_sha256,11u);

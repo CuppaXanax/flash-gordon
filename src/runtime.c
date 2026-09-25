@@ -1955,6 +1955,18 @@ static fg_status depthb_owner_reset(depthb_owner_runtime *depthb,uint32_t slot,
     return status;
 }
 
+/* Lightweight owner session select for the single-token ring paths: no
+ * snapshot, no QSA open, no state change beyond the active-session pointer. */
+static fg_status depthb_owner_select(depthb_owner_runtime *depthb,uint32_t slot,
+                                     fg_error *err){
+    if(!depthb||!depthb->owner||slot>=FG_OWNER_SESSION_MAX||
+       slot>=fg_owner_session_count(depthb->owner)){
+        fg_error_set(err,FG_ERR_MISMATCH,"owner state slot %u is not allocated",slot);
+        return FG_ERR_MISMATCH;
+    }
+    return fg_owner_set_active_session(depthb->owner,slot,err);
+}
+
 static fg_status depthb_owner_commit(depthb_owner_runtime *depthb,uint32_t slot,
                                      fg_error *err){
     if(!depthb||!depthb->owner||slot>=FG_OWNER_SESSION_MAX){
@@ -2026,6 +2038,11 @@ static fg_status handle_owner_session_transaction(fg_fabric *fabric,
             reply=FG_MSG_SESSION_RESETTED;
             control.operation=FG_OWNER_SESSION_RESETTED;
             break;
+        case FG_OWNER_SESSION_SELECT:
+            status=depthb_owner_select(depthb,control.state_slot,err);
+            reply=FG_MSG_SESSION_SELECTED;
+            control.operation=FG_OWNER_SESSION_SELECTED;
+            break;
         default:
             fg_error_set(err,FG_ERR_MISMATCH,
                          "unexpected owner session transaction op %u",control.operation);
@@ -2038,7 +2055,8 @@ static fg_status handle_owner_session_transaction(fg_fabric *fabric,
         memset(tokens,0,sizeof(tokens));
     depthb_transaction_digest(control.frontier_sha256,request,control.state_slot,
                               control.operation,tokens);
-    if(control.operation!=FG_OWNER_SESSION_COMMITTED)
+    if(control.operation!=FG_OWNER_SESSION_COMMITTED&&
+       control.operation!=FG_OWNER_SESSION_SELECTED)
         depthb_transaction_digest(control.state_sha256,request,control.state_slot,
                                   control.operation,tokens);
     else
@@ -3062,7 +3080,7 @@ static fg_status qsa_page_transport_ensure(qsa_page_transport *transport,fg_erro
 }
 
 #define FG_PREFILL_FRAMES 8u
-typedef struct fg_coordinator {const fg_manifest *manifest;fg_runtime_options options;fg_session_identity identity;fg_model *model;fg_expert_executor *expert;fg_owner_executor *owner;fg_fabric *fabric;fg_ngram_store *ngram;fg_tokenizer *tokenizer;prefill_worker_buffers prefill_expert[FG_PREFILL_FRAMES];prefill_layer_buffers prefill_layer[FG_PREFILL_FRAMES];qsa_page_transport qsa_pages;uint64_t session_id;uint8_t *async_recv_payloads[FG_GROUP_SIZE];const char *directory;atomic_uint transport_state;fg_sampler_config sampler;fg_sampler_state sampler_state;bool ring_prefill;fg_vk_tensor *ring_output[FG_PREFILL_FRAMES];bool ring_decode;uint8_t *decode_work_wire,*decode_result_wire;fg_layer_work decode_work;fg_layer_result decode_result;fg_output_slice *output_slice;depthb_owner_runtime depthb;layer_work_context depthb_work;uint32_t depthb_generation;uint32_t output_session;bool depthb_restore_pending;char ledger[FG_LEDGER_LINE_MAX];} fg_coordinator;
+typedef struct fg_coordinator {const fg_manifest *manifest;fg_runtime_options options;fg_session_identity identity;fg_model *model;fg_expert_executor *expert;fg_owner_executor *owner;fg_fabric *fabric;fg_ngram_store *ngram;fg_tokenizer *tokenizer;prefill_worker_buffers prefill_expert[FG_PREFILL_FRAMES];prefill_layer_buffers prefill_layer[FG_PREFILL_FRAMES];qsa_page_transport qsa_pages;uint64_t session_id;uint8_t *async_recv_payloads[FG_GROUP_SIZE];const char *directory;atomic_uint transport_state;fg_sampler_config sampler;fg_sampler_state sampler_state;bool ring_prefill;fg_vk_tensor *ring_output[FG_PREFILL_FRAMES];bool ring_decode;uint8_t *decode_work_wire,*decode_result_wire;fg_layer_work decode_work;fg_layer_result decode_result;fg_output_slice *output_slice;depthb_owner_runtime depthb;layer_work_context depthb_work;uint32_t depthb_generation;uint32_t output_session;uint8_t owner_slot;bool depthb_restore_pending;char ledger[FG_LEDGER_LINE_MAX];} fg_coordinator;
 
 static uint64_t coordinator_prefill_host_bytes(const prefill_worker_buffers *buffers){
     if(!buffers)return 0;
@@ -5041,9 +5059,18 @@ static fg_status coordinator_owner_transaction(fg_coordinator *coordinator,uint8
         case FG_OWNER_SESSION_COMMIT: status=depthb_owner_commit(depthb,slot,err);break;
         case FG_OWNER_SESSION_RESTORE: status=depthb_owner_restore(depthb,slot,err);break;
         case FG_OWNER_SESSION_RESET: status=depthb_owner_reset(depthb,slot,err);break;
+        case FG_OWNER_SESSION_SELECT: status=depthb_owner_select(depthb,slot,err);break;
         default:
             fg_error_set(err,FG_ERR_ARGUMENT,"invalid depth-B transaction op %u",operation);
             return FG_ERR_ARGUMENT;
+    }
+    if(status==FG_OK){
+        /* Track which owner slot the ring is currently pointed at so the
+         * single-token paths only pay the select round trip on a switch. */
+        if(operation==FG_OWNER_SESSION_COMMIT||operation==FG_OWNER_SESSION_RESTORE)
+            coordinator->owner_slot=0u;
+        else
+            coordinator->owner_slot=(uint8_t)slot;
     }
     if(ms)t_local=dispatch_ts()-t_local0;
     if(status!=FG_OK)return status;
@@ -5071,6 +5098,8 @@ static fg_status coordinator_owner_transaction(fg_coordinator *coordinator,uint8
             request_type=FG_MSG_SESSION_RESTORE;reply_type=FG_MSG_SESSION_RESTORED;break;
         case FG_OWNER_SESSION_RESET:
             request_type=FG_MSG_SESSION_RESET;reply_type=FG_MSG_SESSION_RESETTED;break;
+        case FG_OWNER_SESSION_SELECT:
+            request_type=FG_MSG_SESSION_SELECT;reply_type=FG_MSG_SESSION_SELECTED;break;
         default:
             fg_error_set(err,FG_ERR_ARGUMENT,"invalid depth-B transaction op %u",operation);
             return FG_ERR_ARGUMENT;
@@ -5909,9 +5938,23 @@ static fg_status runtime_reset_slot(fg_runtime *runtime,uint32_t slot,
     }
     runtime_clear_token_state(runtime,reason);
     runtime->coordinator.output_session=slot;
+    runtime->coordinator.owner_slot=(uint8_t)slot;
     runtime->session_started=true;
     runtime->state_ready=true;
     return FG_OK;
+}
+
+/* Point every rank's owner executor at `slot` for the single-token ring
+ * paths.  A no-op when the ring is already there (the solo path never pays a
+ * transaction), otherwise one lightweight SELECT round trip. */
+static fg_status runtime_ensure_slot(fg_runtime *runtime,uint32_t slot,fg_error *err){
+    if(slot>=FG_OWNER_SESSION_MAX){
+        fg_error_set(err,FG_ERR_ARGUMENT,"owner state slot %u is not allocated",slot);
+        return FG_ERR_ARGUMENT;
+    }
+    if(runtime->coordinator.owner_slot==slot)return FG_OK;
+    return coordinator_owner_transaction(&runtime->coordinator,
+        FG_OWNER_SESSION_SELECT,(uint8_t)slot,err);
 }
 
 static void runtime_slot_release(fg_runtime *runtime,fg_runtime_session *session){
@@ -5964,6 +6007,7 @@ static fg_status runtime_reset_state(fg_runtime *runtime,fg_prefix_reset_reason 
     }
     runtime_clear_token_state(runtime,reason);
     runtime->coordinator.output_session=0u;
+    runtime->coordinator.owner_slot=0u;
     runtime->session_started=true;
     runtime->state_ready=true;
     /* Every reset re-creates the owner sessions, so any other session's saved
@@ -6313,6 +6357,11 @@ fg_status fg_runtime_session_runner_prefill(fg_runtime *runtime,fg_runtime_sessi
     fg_session_runner *runner=&session->runner;
     *done=runner->prefilled;
     if(*done)return FG_OK;
+    /* The ring paths route output by the host-side session; keep it in sync
+     * even when the caller drives the session without binding it. */
+    runtime->coordinator.output_session=session->state.output_session;
+    fg_status slot_status=runtime_ensure_slot(runtime,session->state.output_session,err);
+    if(slot_status!=FG_OK)return slot_status;
     if(!token_budget)token_budget=1u;
     size_t remaining=runner->prompt_count-runner->prefill_cursor;
     uint32_t chunk=(uint32_t)(remaining<token_budget?remaining:token_budget);
@@ -6426,9 +6475,12 @@ static fg_status runner_decode_pending(fg_runtime *runtime,fg_runtime_session *s
     fg_decode_batch_table *table,bool *left,fg_error *err){
     fg_session_runner *runner=&session->runner;
     uint32_t next=0;float logit=0.0f;
-    fg_status status=coordinator_decode_token(&runtime->coordinator,session->state.history,
-        session->state.history_count,(uint32_t)session->state.history_count-1u,
-        session->state.state_position,&next,&logit,err);
+    runtime->coordinator.output_session=session->state.output_session;
+    fg_status status=runtime_ensure_slot(runtime,session->state.output_session,err);
+    if(status==FG_OK)
+        status=coordinator_decode_token(&runtime->coordinator,session->state.history,
+            session->state.history_count,(uint32_t)session->state.history_count-1u,
+            session->state.state_position,&next,&logit,err);
     if(status!=FG_OK)return status;
     session->state.next_token=next;
     session->state.next_logit=logit;
