@@ -6380,14 +6380,12 @@ fg_status fg_runtime_session_runner_sync_frontier(fg_runtime *runtime,
     return fg_decode_batch_sequence_frontier(table,session->id,count,count,position,err);
 }
 
-static fg_status runner_batch_direct(fg_runtime *runtime,fg_runtime_session *session,
-    fg_decode_batch_table *table,fg_token_callback callback,void *context,
-    bool *left,fg_error *err){
-    *left=false;
-    if(!session||!session->runner.active||!session->state.next_token_valid){
-        fg_error_set(err,FG_ERR_MISMATCH,"multiplex runner batch session is not decodable");
-        return FG_ERR_MISMATCH;
-    }
+/* Emit the pending token: render its text, hand it to the caller's sink and
+ * append it to the session history.  EOS renders the boundary text and reports
+ * `eos` instead (the production generate loop stops there). */
+static fg_status runner_emit_pending(fg_runtime *runtime,fg_runtime_session *session,
+    fg_token_callback callback,void *context,bool *eos,fg_error *err){
+    *eos=false;
     fg_session_runner *runner=&session->runner;
     uint32_t token=session->state.next_token;
     if(token==fg_tokenizer_eos(runtime->coordinator.tokenizer)){
@@ -6402,37 +6400,64 @@ static fg_status runner_batch_direct(fg_runtime *runtime,fg_runtime_session *ses
         runner->stopped_on_eos=true;
         runner->pending_boundary_bytes=eos_bytes+1u;
         runner->pending_eos=token;
+        *eos=true;
+        return FG_OK;
+    }
+    char decoded[4096];size_t bytes=0;
+    fg_status status=fg_tokenizer_decode_token(runtime->coordinator.tokenizer,token,
+                                               decoded,sizeof(decoded),&bytes,err);
+    if(status==FG_OK)status=callback(context,token,decoded,bytes,err);
+    if(status==FG_OK)status=runtime_render_append(&runner->candidate,
+        &runner->candidate_length,&runner->candidate_capacity,decoded,bytes,err);
+    if(status!=FG_OK)return status;
+    if(session->state.history_count>=session->state.history_capacity){
+        fg_error_set(err,FG_ERR_LIMIT,"multiplex history exceeds its reserved capacity");
+        return FG_ERR_LIMIT;
+    }
+    session->state.history[session->state.history_count++]=(int32_t)token;
+    runner->generated++;
+    return FG_OK;
+}
+
+/* Run the production B=1 ring step for a token that is already in the history
+ * and mirror the committed frontier into the batch table when it has an entry,
+ * so a later B>=2 step resumes exactly here. */
+static fg_status runner_decode_pending(fg_runtime *runtime,fg_runtime_session *session,
+    fg_decode_batch_table *table,bool *left,fg_error *err){
+    fg_session_runner *runner=&session->runner;
+    uint32_t next=0;float logit=0.0f;
+    fg_status status=coordinator_decode_token(&runtime->coordinator,session->state.history,
+        session->state.history_count,(uint32_t)session->state.history_count-1u,
+        session->state.state_position,&next,&logit,err);
+    if(status!=FG_OK)return status;
+    session->state.next_token=next;
+    session->state.next_logit=logit;
+    session->state.next_token_valid=true;
+    session->state.state_position++;
+    *left=runner->generated>=runner->max_tokens;
+    if(table){
+        fg_status sync=fg_runtime_session_runner_sync_frontier(runtime,session,table,err);
+        if(sync!=FG_OK)return sync;
+    }
+    return FG_OK;
+}
+
+static fg_status runner_batch_direct(fg_runtime *runtime,fg_runtime_session *session,
+    fg_decode_batch_table *table,fg_token_callback callback,void *context,
+    bool *left,fg_error *err){
+    *left=false;
+    if(!session||!session->runner.active||!session->state.next_token_valid){
+        fg_error_set(err,FG_ERR_MISMATCH,"multiplex runner batch session is not decodable");
+        return FG_ERR_MISMATCH;
+    }
+    bool eos=false;
+    fg_status status=runner_emit_pending(runtime,session,callback,context,&eos,err);
+    if(status!=FG_OK)return status;
+    if(eos){
         *left=true;
     }else{
-        char decoded[4096];size_t bytes=0;
-        fg_status status=fg_tokenizer_decode_token(runtime->coordinator.tokenizer,token,
-                                                   decoded,sizeof(decoded),&bytes,err);
-        if(status==FG_OK)status=callback(context,token,decoded,bytes,err);
-        if(status==FG_OK)status=runtime_render_append(&runner->candidate,
-            &runner->candidate_length,&runner->candidate_capacity,decoded,bytes,err);
+        status=runner_decode_pending(runtime,session,table,left,err);
         if(status!=FG_OK)return status;
-        if(session->state.history_count>=session->state.history_capacity){
-            fg_error_set(err,FG_ERR_LIMIT,"multiplex history exceeds its reserved capacity");
-            return FG_ERR_LIMIT;
-        }
-        session->state.history[session->state.history_count++]=(int32_t)token;
-        runner->generated++;
-        uint32_t next=0;float logit=0.0f;
-        status=coordinator_decode_token(&runtime->coordinator,session->state.history,
-            session->state.history_count,(uint32_t)session->state.history_count-1u,
-            session->state.state_position,&next,&logit,err);
-        if(status!=FG_OK)return status;
-        session->state.next_token=next;
-        session->state.next_logit=logit;
-        session->state.next_token_valid=true;
-        session->state.state_position++;
-        if(runner->generated>=runner->max_tokens)*left=true;
-        /* Mirror the committed frontier into the batch table when this session
-         * has an entry, so a later B>=2 step starts exactly here. */
-        if(table){
-            fg_status sync=fg_runtime_session_runner_sync_frontier(runtime,session,table,err);
-            if(sync!=FG_OK)return sync;
-        }
     }
     if(*left&&table&&fg_decode_batch_table_find(table,session->id)!=
        FG_DECODE_BATCH_INVALID_SLOT)
@@ -6455,48 +6480,24 @@ fg_status fg_runtime_session_runner_batch(fg_runtime *runtime,
         return runner_batch_direct(runtime,sessions[0],table,callbacks[0],
                                    contexts[0],left,err);
     bool ready[FG_DECODE_BATCH_MAX_SLOTS]={false};
-    bool leave_after[FG_DECODE_BATCH_MAX_SLOTS]={false};
-    uint32_t active=0;
+    uint32_t active=0,active_index=UINT32_MAX;
     for(uint32_t i=0;i<count;i++){
         left[i]=false;
         if(!sessions[i]||!sessions[i]->runner.active||!sessions[i]->state.next_token_valid){
             fg_error_set(err,FG_ERR_MISMATCH,"multiplex runner batch session is not decodable");
             return FG_ERR_MISMATCH;
         }
-        fg_runtime_session *session=sessions[i];
-        fg_session_runner *runner=&session->runner;
-        uint32_t token=session->state.next_token;
-        if(token==fg_tokenizer_eos(runtime->coordinator.tokenizer)){
-            const char *eos_text=NULL;size_t eos_bytes=0;
-            fg_status status=fg_tokenizer_token(runtime->coordinator.tokenizer,token,
-                                                &eos_text,&eos_bytes,NULL,err);
-            if(status==FG_OK)status=runtime_render_append(&runner->candidate,
-                &runner->candidate_length,&runner->candidate_capacity,eos_text,eos_bytes,err);
-            if(status==FG_OK)status=runtime_render_append(&runner->candidate,
-                &runner->candidate_length,&runner->candidate_capacity,"\n",1u,err);
-            if(status!=FG_OK)return status;
-            runner->stopped_on_eos=true;
-            runner->pending_boundary_bytes=eos_bytes+1u;
-            runner->pending_eos=token;
-            left[i]=true;
-            continue;
-        }
-        char decoded[4096];size_t bytes=0;
-        fg_status status=fg_tokenizer_decode_token(runtime->coordinator.tokenizer,token,
-                                                   decoded,sizeof(decoded),&bytes,err);
-        if(status==FG_OK)status=callbacks[i](contexts[i],token,decoded,bytes,err);
-        if(status==FG_OK)status=runtime_render_append(&runner->candidate,
-            &runner->candidate_length,&runner->candidate_capacity,decoded,bytes,err);
+        bool eos=false;
+        fg_status status=runner_emit_pending(runtime,sessions[i],callbacks[i],
+                                             contexts[i],&eos,err);
         if(status!=FG_OK)return status;
-        if(session->state.history_count>=session->state.history_capacity){
-            fg_error_set(err,FG_ERR_LIMIT,"multiplex history exceeds its reserved capacity");
-            return FG_ERR_LIMIT;
+        if(eos){
+            left[i]=true;
+        }else{
+            ready[i]=true;
+            active_index=i;
+            active++;
         }
-        session->state.history[session->state.history_count++]=(int32_t)token;
-        runner->generated++;
-        ready[i]=true;
-        active++;
-        leave_after[i]=runner->generated>=runner->max_tokens;
     }
     for(uint32_t i=0;i<count;i++){
         if(!left[i])continue;
@@ -6504,16 +6505,31 @@ fg_status fg_runtime_session_runner_batch(fg_runtime *runtime,
         if(status!=FG_OK)return status;
     }
     if(!active)return FG_OK;
+    if(active==1u){
+        /* One session left mid-call: keep the lone session on the exact
+         * production B=1 path rather than a one-slot batch step. */
+        bool single_left=false;
+        fg_status status=runner_decode_pending(runtime,sessions[active_index],table,
+                                               &single_left,err);
+        if(status!=FG_OK)return status;
+        left[active_index]=single_left;
+        if(single_left)return fg_decode_batch_sequence_leave(table,
+            sessions[active_index]->id,err);
+        return FG_OK;
+    }
     for(uint32_t i=0;i<count;i++)
         if(ready[i]){
             fg_status status=fg_decode_batch_sequence_ready(table,sessions[i]->id,now,err);
             if(status!=FG_OK)return status;
         }
     /* Histories are indexed by table sequence so the step can schedule freely;
-     * the outcomes are attributed back through the same table index. */
+     * the outcomes are attributed back through the same table index.  Sessions
+     * that left (EOS) or reached max_tokens in this call are already out of
+     * the table and take no part in the step. */
     const int32_t *histories[FG_DECODE_BATCH_SEQUENCE_MAX]={NULL};
     size_t counts[FG_DECODE_BATCH_SEQUENCE_MAX]={0};
     for(uint32_t i=0;i<count;i++){
+        if(left[i]||!ready[i])continue;
         uint32_t index=fg_decode_batch_table_find(table,sessions[i]->id);
         if(index==FG_DECODE_BATCH_INVALID_SLOT){
             fg_error_set(err,FG_ERR_MISMATCH,"batch session is not in the table");
@@ -6542,7 +6558,7 @@ fg_status fg_runtime_session_runner_batch(fg_runtime *runtime,
         session->state.state_position=outcome->position[0];
     }
     for(uint32_t i=0;i<count;i++){
-        if(left[i]||!leave_after[i])continue;
+        if(left[i]||sessions[i]->runner.generated<sessions[i]->runner.max_tokens)continue;
         left[i]=true;
         status=fg_decode_batch_sequence_leave(table,sessions[i]->id,err);
         if(status!=FG_OK)return status;
@@ -8370,15 +8386,28 @@ static fg_status concurrent_render(const fg_tokenizer *tokenizer,const char *tex
     return FG_OK;
 }
 
-static bool concurrent_capture_equal(const depthb_capture *reference,
+static bool concurrent_capture_equal(const fg_runtime *runtime,
+                                     const depthb_capture *reference,
                                      const depthb_capture *actual,const char *side){
     bool ok=true;
-    if(reference->count!=actual->count){
+    /* The runner stops on EOS like the production generate loop; the oracle
+     * decodes a fixed token count, so a shorter actual capture is valid when
+     * the oracle's next token is EOS. */
+    if(actual->count>reference->count){
         fprintf(stderr,"CONCURRENT_MISMATCH %s count ref=%u got=%u\n",side,
                 reference->count,actual->count);
         return false;
     }
-    for(uint32_t i=0;i<reference->count;i++){
+    if(actual->count<reference->count){
+        uint32_t eos=fg_tokenizer_eos(runtime->coordinator.tokenizer);
+        if(reference->token[actual->count]!=eos){
+            fprintf(stderr,"CONCURRENT_MISMATCH %s stopped at %u, oracle next=%u not EOS\n",
+                    side,actual->count,reference->token[actual->count]);
+            return false;
+        }
+        fprintf(stderr,"CONCURRENT note=%s eos_terminated tokens=%u\n",side,actual->count);
+    }
+    for(uint32_t i=0;i<actual->count;i++){
         if(reference->token[i]!=actual->token[i]){
             fprintf(stderr,"CONCURRENT_MISMATCH %s token[%u] ref=%u got=%u\n",side,i,
                     reference->token[i],actual->token[i]);
@@ -8566,8 +8595,8 @@ static fg_status concurrent_selftest_case(fg_runtime *runtime,const char *name,
         if(status==FG_OK)status=fg_runtime_session_runner_finish(runtime,y,err);
         fg_runtime_session_end(runtime,y);
     }
-    bool tokens_ok=status==FG_OK&&concurrent_capture_equal(&ref_x,&got_x,"x")&&
-                   concurrent_capture_equal(&ref_y,&got_y,"y");
+    bool tokens_ok=status==FG_OK&&concurrent_capture_equal(runtime,&ref_x,&got_x,"x")&&
+                   concurrent_capture_equal(runtime,&ref_y,&got_y,"y");
     if(measure&&status==FG_OK)
         fprintf(stderr,"CONCURRENT case=%s serial_x=%.1fms serial_y=%.1fms "
                 "concurrent=%.1fms x=%u y=%u\n",name,serial_x_ms,serial_y_ms,concurrent_ms,
