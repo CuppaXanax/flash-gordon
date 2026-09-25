@@ -14,6 +14,13 @@
 #define FG_NGRAM_PREFILL_MAX_BLOCKS (FG_NGRAM_PREFILL_MAX_ROWS*2u)
 #define FG_NGRAM_IO_SLOTS 64u
 #define FG_NGRAM_PREFILL_IO_BYTES ((uint64_t)FG_NGRAM_IO_SLOTS*FG_NGRAM_MAX_READ_BYTES)
+/* Asynchronous next-step read-ahead: one helper thread issues plain O_DIRECT
+ * preads for the rows the next lookup will need into a private buffer while the
+ * runtime keeps working; the main thread inserts the finished blocks into the
+ * n-gram cache at the next lookup.  The cache stays single-threaded and the
+ * mechanism is strictly best-effort: a missing or failed job just falls back to
+ * the synchronous path. */
+#define FG_NGRAM_PREFETCH_ROWS 64u
 /* Pageable worker shard mode (FG_NGRAM_PAGEABLE=1): map the sealed shard and
  * serve rows from the kernel page cache with bounded WILLNEED read-ahead
  * instead of pinning the whole shard.  The first FG_NGRAM_PAGEABLE_HOT_BYTES
@@ -82,5 +89,20 @@ fg_status fg_ngram_store_lookup_prefill(fg_ngram_store *store,const int32_t *tok
                                          size_t history_count,uint32_t first_token,
                                          uint32_t token_count,fg_vk_tensor **embedding,
                                          fg_error *err);
+/* Addresses the next single-token lookup would touch after `next_token` is
+   appended to a history of `history_count` tokens.  Only the two-token suffix
+   window participates, so a short tail copy is hashed with the same planner the
+   real lookup uses. */
+fg_status fg_q38_ngram_next_addresses(const int32_t *history,size_t history_count,
+                                      int32_t next_token,
+                                      uint64_t addresses[FG_NGRAM_HEAD_COUNT],
+                                      fg_error *err);
+/* Best-effort asynchronous read-ahead of up to FG_NGRAM_PREFETCH_ROWS row
+   addresses.  Starts (or reuses) the store's prefetch thread; a request while a
+   job is still running is dropped.  Never fails a caller on operational
+   grounds: a dropped or failed job simply leaves the blocks to the synchronous
+   path. */
+fg_status fg_ngram_store_prefetch(fg_ngram_store *store,const uint64_t *addresses,
+                                  uint32_t address_count,fg_error *err);
 
 #endif

@@ -6,6 +6,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +20,28 @@
 #define CACHE_SETS (CACHE_BLOCKS/CACHE_WAYS)
 typedef struct cache_entry{uint64_t offset;uint64_t stamp;bool valid;}cache_entry;
 struct fg_ngram_cache{uint8_t *data;cache_entry *entry;uint64_t stamp;};
-struct fg_ngram_store{int fd;fg_uring *ring;uint32_t slot,max_tokens,max_rows,max_blocks;uint64_t table_bytes,io_bytes;uint8_t *io_buffer;fg_ngram_cache *cache;fg_vk_context *vk;fg_vk_tensor *packed,*embedding,*embedding_view;uint32_t last_read_count;uint64_t last_read_bytes;double last_io_ms;};
+enum{NGAM_PREFETCH_EMPTY=0u,NGAM_PREFETCH_QUEUED=1u,NGAM_PREFETCH_RUNNING=2u,NGAM_PREFETCH_DONE=3u};
+typedef struct fg_ngram_prefetch{
+    int fd;
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    pthread_t thread;
+    bool thread_started;
+    bool stop;
+    uint8_t *buffer;
+    fg_ngram_read job_reads[FG_NGRAM_IO_SLOTS];
+    uint64_t job_rows[FG_NGRAM_PREFETCH_ROWS];
+    uint32_t job_read_count;
+    uint32_t job_row_count;
+    uint32_t state;
+    fg_status job_status;
+    double job_io_ms;
+    uint64_t issued;
+    uint64_t served;
+    uint64_t dropped;
+    double wait_ms;
+}fg_ngram_prefetch;
+struct fg_ngram_store{int fd;fg_uring *ring;uint32_t slot,max_tokens,max_rows,max_blocks;uint64_t table_bytes,io_bytes;uint8_t *io_buffer;fg_ngram_cache *cache;fg_vk_context *vk;fg_vk_tensor *packed,*embedding,*embedding_view;uint32_t last_read_count;uint64_t last_read_bytes;double last_io_ms;fg_ngram_prefetch *prefetch;};
 struct fg_ngram_resident{uint8_t *data;uint8_t *map;int fd;uint64_t row_begin,row_count,bytes,hot_bytes;bool pageable;};
 static int u64_cmp(const void *a,const void *b){uint64_t x=*(const uint64_t *)a,y=*(const uint64_t *)b;return x<y?-1:x>y;}
 static double ngram_ts(void){struct timespec value;clock_gettime(CLOCK_MONOTONIC,&value);return (double)value.tv_sec*1e3+(double)value.tv_nsec*1e-6;}
@@ -32,6 +54,88 @@ fg_status fg_ngram_plan_reads(const uint64_t *addresses,uint32_t count,uint64_t 
     for(uint32_t i=0;i<count;i++){if(addresses[i]>=table_bytes){free(blocks);fg_error_set(err,FG_ERR_FORMAT,"n-gram address is outside table");return FG_ERR_FORMAT;}blocks[i]=addresses[i]&~(uint64_t)(FG_NGRAM_BLOCK_BYTES-1u);}qsort(blocks,count,sizeof(*blocks),u64_cmp);
     uint32_t n=0;for(uint32_t i=0;i<count;){uint64_t off=blocks[i];while(i<count&&blocks[i]==off)i++;uint32_t bytes=FG_NGRAM_BLOCK_BYTES;if(i<count&&blocks[i]==off+FG_NGRAM_BLOCK_BYTES){bytes=FG_NGRAM_MAX_READ_BYTES;uint64_t second=blocks[i];while(i<count&&blocks[i]==second)i++;}if(off+bytes>padded_bytes){free(blocks);fg_error_set(err,FG_ERR_FORMAT,"n-gram direct-read plan exceeds padded table");return FG_ERR_FORMAT;}if(n>=cap){free(blocks);fg_error_set(err,FG_ERR_LIMIT,"n-gram read plan exceeds capacity");return FG_ERR_LIMIT;}reads[n++]=(fg_ngram_read){.offset=off,.bytes=bytes};}
     free(blocks);*out_count=n;return FG_OK;
+}
+static uint64_t ngram_prefetch_host_bytes_impl(const fg_ngram_prefetch *p){
+    if(!p)return 0;
+    return sizeof(*p)+(uint64_t)FG_NGRAM_IO_SLOTS*FG_NGRAM_MAX_READ_BYTES;
+}
+static void *ngram_prefetch_thread(void *context){
+    fg_ngram_prefetch *p=context;
+    fg_ngram_read reads[FG_NGRAM_IO_SLOTS];
+    for(;;){
+        pthread_mutex_lock(&p->mutex);
+        while(!p->stop&&p->state!=NGAM_PREFETCH_QUEUED)
+            pthread_cond_wait(&p->cond,&p->mutex);
+        if(p->stop){pthread_mutex_unlock(&p->mutex);break;}
+        uint32_t count=p->job_read_count;
+        memcpy(reads,p->job_reads,sizeof(reads[0])*(size_t)count);
+        uint8_t *buffer=p->buffer;
+        p->state=NGAM_PREFETCH_RUNNING;
+        pthread_mutex_unlock(&p->mutex);
+        fg_status status=FG_OK;
+        double io_start=ngram_ts();
+        for(uint32_t i=0;status==FG_OK&&i<count;i++){
+            uint8_t *destination=buffer+(uint64_t)i*FG_NGRAM_MAX_READ_BYTES;
+            ssize_t done;
+            do{done=pread(p->fd,destination,reads[i].bytes,(off_t)reads[i].offset);}
+            while(done<0&&errno==EINTR);
+            if(done!=(ssize_t)reads[i].bytes)status=FG_ERR_IO;
+        }
+        pthread_mutex_lock(&p->mutex);
+        p->job_status=status;
+        p->job_io_ms=ngram_ts()-io_start;
+        p->issued++;
+        p->state=NGAM_PREFETCH_DONE;
+        pthread_cond_broadcast(&p->cond);
+        pthread_mutex_unlock(&p->mutex);
+    }
+    return NULL;
+}
+static fg_ngram_prefetch *ngram_prefetch_create(fg_ngram_store *s){
+    if(s->prefetch)return s->prefetch;
+    fg_ngram_prefetch *p=calloc(1,sizeof(*p));
+    if(!p)return NULL;
+    p->fd=s->fd;
+    p->state=NGAM_PREFETCH_EMPTY;
+    p->job_status=FG_OK;
+    if(posix_memalign((void **)&p->buffer,FG_ALIGNMENT,
+                      (size_t)FG_NGRAM_IO_SLOTS*FG_NGRAM_MAX_READ_BYTES)!=0){
+        free(p);return NULL;
+    }
+    if(pthread_mutex_init(&p->mutex,NULL)!=0){free(p->buffer);free(p);return NULL;}
+    if(pthread_cond_init(&p->cond,NULL)!=0){
+        pthread_mutex_destroy(&p->mutex);free(p->buffer);free(p);return NULL;
+    }
+    if(pthread_create(&p->thread,NULL,ngram_prefetch_thread,p)!=0){
+        pthread_cond_destroy(&p->cond);pthread_mutex_destroy(&p->mutex);
+        free(p->buffer);free(p);return NULL;
+    }
+    p->thread_started=true;
+    s->prefetch=p;
+    return p;
+}
+static void ngram_prefetch_destroy(fg_ngram_prefetch *p){
+    if(!p)return;
+    if(p->thread_started){
+        pthread_mutex_lock(&p->mutex);
+        p->stop=true;
+        pthread_cond_broadcast(&p->cond);
+        pthread_mutex_unlock(&p->mutex);
+        pthread_join(p->thread,NULL);
+    }
+    pthread_cond_destroy(&p->cond);
+    pthread_mutex_destroy(&p->mutex);
+    free(p->buffer);
+    free(p);
+}
+static void ngram_prefetch_report(const fg_ngram_store *s,uint64_t *issued,
+                                  uint64_t *served,uint64_t *dropped,double *wait_ms){
+    *issued=0;*served=0;*dropped=0;*wait_ms=0.0;
+    fg_ngram_prefetch *p=s?s->prefetch:NULL;
+    if(!p)return;
+    pthread_mutex_lock(&p->mutex);
+    *issued=p->issued;*served=p->served;*dropped=p->dropped;*wait_ms=p->wait_ms;
+    pthread_mutex_unlock(&p->mutex);
 }
 uint64_t fg_ngram_store_vk_bytes(const fg_ngram_store *s){
     if(!s)return 0;
@@ -298,6 +402,28 @@ fg_status fg_q38_ngram_lookup_range(const int32_t *tokens,size_t history_count,
     return FG_OK;
 }
 
+fg_status fg_q38_ngram_next_addresses(const int32_t *history,size_t history_count,
+                                      int32_t next_token,
+                                      uint64_t addresses[FG_NGRAM_HEAD_COUNT],
+                                      fg_error *err){
+    if(!history||!history_count||!addresses||history_count>UINT32_MAX||
+       next_token<0||(uint32_t)next_token>=FG_Q38_VOCAB_SIZE){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid n-gram next-address request");
+        return FG_ERR_ARGUMENT;
+    }
+    /* A short tail copy is hashed with the same range planner: the fill only
+     * reads the position itself and its two predecessors, and the segment-start
+     * scan only looks two back, so a window of the last two history tokens plus
+     * the new one reproduces the full-history rows exactly. */
+    int32_t tail[3];
+    size_t count=0;
+    if(history_count>=2u)tail[count++]=history[history_count-2u];
+    tail[count++]=history[history_count-1u];
+    tail[count++]=(int32_t)next_token;
+    uint64_t rows[FG_NGRAM_HEAD_COUNT];
+    return fg_q38_ngram_lookup_range(tail,count,count-1u,1u,rows,addresses,err);
+}
+
 fg_status fg_ngram_store_open(fg_ngram_store **out,fg_vk_context *vk,const char *path,
                                uint64_t table_bytes,uint32_t max_tokens,fg_error *err){
     if(!out||!vk||!path||!table_bytes||!max_tokens||
@@ -305,12 +431,12 @@ fg_status fg_ngram_store_open(fg_ngram_store **out,fg_vk_context *vk,const char 
     fg_status status=fg_uring_create(&s->ring,FG_RING_STORAGE,64u,err);if(status==FG_OK)status=fg_uring_register_file(s->ring,s->fd,&s->slot,err);if(status==FG_OK&&posix_memalign((void **)&s->io_buffer,FG_ALIGNMENT,(size_t)s->io_bytes)!=0){fg_error_set(err,FG_ERR_OOM,"allocate bounded n-gram direct-read buffers");status=FG_ERR_OOM;}if(status==FG_OK)status=fg_uring_register_buffer(s->ring,s->io_buffer,s->io_bytes,err);if(status!=FG_OK){fg_ngram_store_close(s);return status;}*out=s;return FG_OK;
 }
 
-void fg_ngram_store_close(fg_ngram_store *s){if(!s)return;fg_vk_tensor_destroy(s->embedding_view);fg_vk_tensor_destroy(s->embedding);fg_vk_tensor_destroy(s->packed);fg_ngram_cache_destroy(s->cache);fg_uring_destroy(s->ring);if(s->fd>=0)close(s->fd);free(s->io_buffer);free(s);}
+void fg_ngram_store_close(fg_ngram_store *s){if(!s)return;fg_vk_tensor_destroy(s->embedding_view);fg_vk_tensor_destroy(s->embedding);fg_vk_tensor_destroy(s->packed);fg_ngram_cache_destroy(s->cache);ngram_prefetch_destroy(s->prefetch);s->prefetch=NULL;fg_uring_destroy(s->ring);if(s->fd>=0)close(s->fd);free(s->io_buffer);free(s);}
 
 uint64_t fg_ngram_store_host_bytes(const fg_ngram_store *s){
     if(!s)return 0;
     return s->io_bytes+(s->cache?fg_ngram_cache_memory_bytes():0u)+
-           fg_uring_host_bytes(s->ring);
+           fg_uring_host_bytes(s->ring)+ngram_prefetch_host_bytes_impl(s->prefetch);
 }
 uint64_t fg_ngram_store_io_host_bytes(const fg_ngram_store *s){
     return s?s->io_bytes:0u;
@@ -320,6 +446,99 @@ uint64_t fg_ngram_store_cache_host_bytes(const fg_ngram_store *s){
 }
 
 static bool cache_has(fg_ngram_cache *cache,uint64_t offset){const void *ignored=NULL;return fg_ngram_cache_get(cache,offset,&ignored);}
+
+fg_status fg_ngram_store_prefetch(fg_ngram_store *s,const uint64_t *addresses,
+                                  uint32_t address_count,fg_error *err){
+    if(!s||!addresses||!address_count||address_count>FG_NGRAM_PREFETCH_ROWS){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid n-gram prefetch request");
+        return FG_ERR_ARGUMENT;
+    }
+    if(s->fd<0)return FG_OK;
+    fg_ngram_prefetch *p=ngram_prefetch_create(s);
+    if(!p)return FG_OK;
+    pthread_mutex_lock(&p->mutex);
+    if(p->state!=NGAM_PREFETCH_EMPTY){
+        p->dropped++;
+        pthread_mutex_unlock(&p->mutex);
+        return FG_OK;
+    }
+    uint64_t probes[2u*FG_NGRAM_PREFETCH_ROWS];
+    uint32_t probe_count=0;
+    for(uint32_t i=0;i<address_count;i++){
+        if(addresses[i]>UINT64_MAX-(FG_NGRAM_ROW_BYTES-1u)){
+            pthread_mutex_unlock(&p->mutex);
+            return FG_OK;
+        }
+        probes[probe_count++]=addresses[i];
+        probes[probe_count++]=addresses[i]+FG_NGRAM_ROW_BYTES-1u;
+    }
+    fg_ngram_read plan[FG_NGRAM_IO_SLOTS];
+    uint32_t plan_count=0;
+    fg_error plan_error={0};
+    if(fg_ngram_plan_reads(probes,probe_count,s->table_bytes,plan,
+                           FG_NGRAM_IO_SLOTS,&plan_count,&plan_error)!=FG_OK||
+       !plan_count){
+        p->dropped++;
+        pthread_mutex_unlock(&p->mutex);
+        return FG_OK;
+    }
+    memcpy(p->job_reads,plan,sizeof(plan[0])*(size_t)plan_count);
+    memcpy(p->job_rows,addresses,sizeof(addresses[0])*(size_t)address_count);
+    p->job_read_count=plan_count;
+    p->job_row_count=address_count;
+    p->job_status=FG_OK;
+    p->job_io_ms=0.0;
+    p->state=NGAM_PREFETCH_QUEUED;
+    pthread_cond_broadcast(&p->cond);
+    pthread_mutex_unlock(&p->mutex);
+    return FG_OK;
+}
+
+/* Safe point: insert every finished job into the cache and, when the running
+ * job covers one of the rows this lookup needs, join it (its read started
+ * earlier than the synchronous one would have, so waiting is never worse). */
+static void ngram_prefetch_drain(fg_ngram_store *s,const uint64_t *addresses,
+                                 uint32_t address_count){
+    fg_ngram_prefetch *p=s?s->prefetch:NULL;
+    if(!p)return;
+    pthread_mutex_lock(&p->mutex);
+    if(p->state==NGAM_PREFETCH_EMPTY){
+        pthread_mutex_unlock(&p->mutex);
+        return;
+    }
+    if(p->state==NGAM_PREFETCH_RUNNING&&address_count<=FG_NGRAM_PREFETCH_ROWS){
+        bool covers=false;
+        for(uint32_t i=0;!covers&&i<p->job_row_count;i++)
+            for(uint32_t j=0;j<address_count;j++)
+                if(p->job_rows[i]==addresses[j]){covers=true;break;}
+        if(covers){
+            double wait_start=ngram_ts();
+            while(p->state==NGAM_PREFETCH_RUNNING)
+                pthread_cond_wait(&p->cond,&p->mutex);
+            p->wait_ms+=ngram_ts()-wait_start;
+        }
+    }
+    if(p->state==NGAM_PREFETCH_DONE){
+        if(p->job_status==FG_OK&&s->cache){
+            for(uint32_t i=0;i<p->job_read_count;i++){
+                const uint8_t *data=p->buffer+(uint64_t)i*FG_NGRAM_MAX_READ_BYTES;
+                fg_error ignored={0};
+                if(fg_ngram_cache_put(s->cache,p->job_reads[i].offset,data,
+                                      &ignored)==FG_OK)
+                    p->served++;
+                if(p->job_reads[i].bytes==FG_NGRAM_MAX_READ_BYTES)
+                    fg_ngram_cache_put(s->cache,
+                        p->job_reads[i].offset+FG_NGRAM_BLOCK_BYTES,
+                        data+FG_NGRAM_BLOCK_BYTES,&ignored);
+            }
+        }else p->dropped++;
+        p->state=NGAM_PREFETCH_EMPTY;
+        p->job_read_count=0;
+        p->job_row_count=0;
+        pthread_cond_broadcast(&p->cond);
+    }
+    pthread_mutex_unlock(&p->mutex);
+}
 
 static fg_status ensure_tensors(fg_ngram_store *s,fg_error *err){
     if(!s)return FG_ERR_ARGUMENT;
@@ -428,7 +647,16 @@ fg_status fg_ngram_store_lookup_prefill(fg_ngram_store *s,const int32_t *tokens,
         token_count,rows,addresses,err);
     if(status!=FG_OK)return status;
     if(ngram_locality_trace_enabled())for(uint32_t token=0;token<token_count;token++){char line[768];int used=snprintf(line,sizeof(line),"NGRAM_LOCALITY position=%u batch_first=%u batch_tokens=%u",first_token+token,first_token,token_count);for(uint32_t head=0;used>0&&(size_t)used<sizeof(line)&&head<FG_NGRAM_HEAD_COUNT;head++){int written=snprintf(line+(size_t)used,sizeof(line)-(size_t)used," h%u=%llu",head,(unsigned long long)addresses[(uint64_t)token*FG_NGRAM_HEAD_COUNT+head]);if(written<0||(size_t)written>=sizeof(line)-(size_t)used){used=-1;break;}used+=written;}if(used>0&&(size_t)used+1u<sizeof(line)){line[used++]='\n';line[used]=0;fputs(line,stderr);}}
-    uint32_t row_count=token_count*FG_NGRAM_HEAD_COUNT;double hash_end=ngram_ts();if(status==FG_OK)status=load_missing_blocks(s,addresses,row_count,err);double load_end=ngram_ts();if(status==FG_OK)status=pack_rows(s,addresses,row_count,err);double pack_end=ngram_ts();if(status==FG_OK)status=ngram_dequant_path(s,row_count,err);double dequant_end=ngram_ts();if(status==FG_OK){fg_vk_tensor_destroy(s->embedding_view);s->embedding_view=NULL;uint64_t bytes=(uint64_t)token_count*FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH*4u;if(bytes==fg_vk_tensor_bytes(s->embedding))*embedding=s->embedding;else{status=fg_vk_tensor_view(s->embedding,0,bytes,&s->embedding_view,err);if(status==FG_OK)*embedding=s->embedding_view;}}if(ngram_trace_enabled())fprintf(stderr,"NGRAM_TRACE first=%u tokens=%u rows=%u reads=%u bytes=%llu hash_ms=%.3f load_ms=%.3f io_ms=%.3f pack_ms=%.3f dequant_ms=%.3f total_ms=%.3f\n",first_token,token_count,row_count,s->last_read_count,(unsigned long long)s->last_read_bytes,hash_end-trace_start,load_end-hash_end,s->last_io_ms,pack_end-load_end,dequant_end-pack_end,ngram_ts()-trace_start);return status;
+    uint32_t row_count=token_count*FG_NGRAM_HEAD_COUNT;
+    double hash_end=ngram_ts();
+    if(status==FG_OK)ngram_prefetch_drain(s,addresses,row_count);
+    if(status==FG_OK)status=load_missing_blocks(s,addresses,row_count,err);
+    double load_end=ngram_ts();
+    if(status==FG_OK)status=pack_rows(s,addresses,row_count,err);
+    double pack_end=ngram_ts();
+    if(status==FG_OK)status=ngram_dequant_path(s,row_count,err);
+    double dequant_end=ngram_ts();
+    if(status==FG_OK){fg_vk_tensor_destroy(s->embedding_view);s->embedding_view=NULL;uint64_t bytes=(uint64_t)token_count*FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH*4u;if(bytes==fg_vk_tensor_bytes(s->embedding))*embedding=s->embedding;else{status=fg_vk_tensor_view(s->embedding,0,bytes,&s->embedding_view,err);if(status==FG_OK)*embedding=s->embedding_view;}}if(ngram_trace_enabled()){uint64_t pf_issued=0,pf_served=0,pf_dropped=0;double pf_wait=0.0;ngram_prefetch_report(s,&pf_issued,&pf_served,&pf_dropped,&pf_wait);fprintf(stderr,"NGRAM_TRACE first=%u tokens=%u rows=%u reads=%u bytes=%llu hash_ms=%.3f load_ms=%.3f io_ms=%.3f pack_ms=%.3f dequant_ms=%.3f total_ms=%.3f prefetch_issued=%llu prefetch_served=%llu prefetch_dropped=%llu prefetch_wait_ms=%.3f\n",first_token,token_count,row_count,s->last_read_count,(unsigned long long)s->last_read_bytes,hash_end-trace_start,load_end-hash_end,s->last_io_ms,pack_end-load_end,dequant_end-pack_end,ngram_ts()-trace_start,(unsigned long long)pf_issued,(unsigned long long)pf_served,(unsigned long long)pf_dropped,pf_wait);}return status;
 }
 
 fg_status fg_ngram_store_lookup(fg_ngram_store *s,const int32_t *tokens,size_t count,fg_vk_tensor **embedding,fg_error *err){

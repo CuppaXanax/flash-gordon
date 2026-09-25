@@ -5157,6 +5157,27 @@ static fg_status coordinator_decode_batch_step(fg_coordinator *coordinator,
         status=fg_decode_batch_step_advance(table,step,slot,&outcome,err);
     }
     double t_sample=ms?dispatch_ts():0.0;
+    /* One combined read-ahead for the next step's two lookups: the sampled
+     * tokens are known here, and the owner commit below overlaps the NVMe
+     * reads.  Slot 0's rows and slot 1's rows ride one job. */
+    if(status==FG_OK){
+        uint64_t pf_addresses[FG_DECODE_BATCH_MAX_SLOTS*FG_NGRAM_HEAD_COUNT];
+        uint32_t pf_rows=0;
+        for(uint32_t slot=0;slot<step->batch.slot_count;slot++){
+            uint64_t rows[FG_NGRAM_HEAD_COUNT];
+            fg_error ignored={0};
+            if(histories[slot]&&history_counts[slot]&&
+               fg_q38_ngram_next_addresses(histories[slot],history_counts[slot],
+                   (int32_t)step->outcomes[slot].next_token,rows,&ignored)==FG_OK){
+                memcpy(pf_addresses+pf_rows,rows,sizeof(rows));
+                pf_rows+=FG_NGRAM_HEAD_COUNT;
+            }
+        }
+        if(pf_rows){
+            fg_error ignored={0};
+            fg_ngram_store_prefetch(coordinator->ngram,pf_addresses,pf_rows,&ignored);
+        }
+    }
     if(status==FG_OK)status=fg_decode_batch_step_commit(table,step,err);
     else{
         fg_error rollback_error={0};
@@ -5168,6 +5189,19 @@ static fg_status coordinator_decode_batch_step(fg_coordinator *coordinator,
                   dispatch_ts()-t_sample,dispatch_ts()-t_step0,step->batch.slot_count);
     (void)t_embed0;(void)t_ngram0;
     return status;
+}
+
+/* Start the next decode step's n-gram read-ahead from the token that was just
+ * sampled.  Best-effort: a dropped job leaves the synchronous lookup to do the
+ * work, so no caller branches on the result. */
+static void coordinator_prefetch_next(fg_coordinator *coordinator,
+    const int32_t *history,size_t history_count,int32_t next_token){
+    if(!coordinator->ngram||!history||!history_count)return;
+    uint64_t addresses[FG_NGRAM_HEAD_COUNT];
+    fg_error ignored={0};
+    if(fg_q38_ngram_next_addresses(history,history_count,next_token,
+                                   addresses,&ignored)!=FG_OK)return;
+    fg_ngram_store_prefetch(coordinator->ngram,addresses,FG_NGRAM_HEAD_COUNT,&ignored);
 }
 
 static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
@@ -5422,6 +5456,8 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
         if(status==FG_OK)status=coordinator_output(coordinator,token_index,input,next_token,
             logit,err);
     }
+    if(status==FG_OK)
+        coordinator_prefetch_next(coordinator,history,history_count,(int32_t)*next_token);
     if(trace){t_output=dispatch_ts();
         fg_vk_counters decode_counters={0};fg_vk_get_counters(vk,&decode_counters);
         fprintf(stderr,"RING_DECODE token=%u embed_ms=%.3f ngram_ms=%.3f send_ms=%.3f "
@@ -5876,6 +5912,9 @@ static fg_status runtime_generate_tokens(
         status=coordinator_output(&runtime->coordinator,(uint32_t)runtime->history_count-1u,
                                   last_hyper,&next,&logit,err);
     fg_vk_tensor_destroy(last_hyper);
+    if(status==FG_OK&&prefill_offset<prompt->count&&runtime->coordinator.ring_decode)
+        coordinator_prefetch_next(&runtime->coordinator,runtime->history,
+                                  runtime->history_count,(int32_t)next);
     if(status==FG_OK&&prefill_offset<prompt->count){
         runtime->next_token=next;
         runtime->next_logit=logit;
@@ -6892,6 +6931,11 @@ static fg_status depthb_prefill_sample(fg_runtime *runtime,const fg_tokens *prom
         if(status==FG_OK)status=coordinator_output(&runtime->coordinator,
             (uint32_t)prompt->count-1u,last,next,logit,err);
         fg_vk_tensor_destroy(last);
+        /* The first decode step's rows are known now; overlap the NVMe read
+         * with the batch-table setup that follows. */
+        if(status==FG_OK)
+            coordinator_prefetch_next(&runtime->coordinator,history,
+                prompt->count,(int32_t)*next);
     }
     return status;
 }
