@@ -1892,12 +1892,6 @@ static fg_status depthb_owner_prepare(depthb_owner_runtime *depthb,uint32_t slot
         depthb->checkpoint_valid[slot]=false;
     }
     fg_status status=fg_owner_set_active_session(depthb->owner,slot,err);
-    if(status==FG_OK){
-        uint32_t ft[FG_LAYER_COUNT],c=0u;
-        if(fg_owner_qsa_frontier(depthb->owner,slot,ft)==FG_OK)
-            for(uint32_t fl=0u;fl<FG_LAYER_COUNT;fl++)if(ft[fl]>c)c=ft[fl];
-        fprintf(stderr,"OWNER_PREPARE rank=%u slot=%u committed=%u\n",depthb->self,slot,c);
-    }
     /* Slot 0's QSA session is opened at SESSION_BEGIN; a batch slot gets its
      * own state file the first time it is prepared.  The file name carries the
      * session so the two namespaces can never share a page stream. */
@@ -3958,6 +3952,9 @@ struct fg_runtime {
     /* Owner state slot reservations: `slot_owner[s]` is the live session id
      * holding slot s, or 0 while the slot is free. */
     uint64_t slot_owner[FG_OWNER_SESSION_MAX];
+    /* The owner session namespace exists (coordinator_open ran BEGIN).  Every
+     * later ring-wide reset must BEGIN again; see runtime_reset_state. */
+    bool owner_session_open;
 };
 
 static fg_status coordinator_begin_session(fg_coordinator *coordinator,fg_error *err){
@@ -6014,7 +6011,12 @@ static fg_status runtime_reset_state(fg_runtime *runtime,fg_prefix_reset_reason 
     fg_status status=runtime_reset_preflight(runtime,err);
     if(status!=FG_OK)return status;
     status=fg_owner_reset_state(runtime->coordinator.owner,err);
-    if(status==FG_OK&&runtime->session_started)
+    /* Every ring-wide reset after open must BEGIN a fresh owner session
+     * namespace on every rank; only the open-time reset skips it because
+     * coordinator_open already ran BEGIN.  (The per-session session_started
+     * flag cannot decide this: ending a session clears it, which used to leave
+     * the workers on the previous namespace after an explicit reset.) */
+    if(status==FG_OK&&runtime->owner_session_open)
         status=coordinator_begin_session(&runtime->coordinator,err);
     if(status!=FG_OK){
         runtime->state_ready=false;
@@ -6704,6 +6706,9 @@ fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
         status=coordinator_open(&runtime->coordinator,runtime->manifest,
                                 runtime->directory,&runtime->options,err);
     if(status==FG_OK)status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
+    /* The open-time reset above reused the namespace coordinator_open created;
+     * every later ring-wide reset BEGINs again (see runtime_reset_state). */
+    if(status==FG_OK)runtime->owner_session_open=true;
     /* The next session to begin adopts this state (see runtime_session_begin). */
     if(status==FG_OK)runtime->bootstrap_pending=true;
     if(status!=FG_OK){fg_runtime_close(runtime);return status;}*out=runtime;return FG_OK;
