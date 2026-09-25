@@ -1143,3 +1143,33 @@ PASS). The session's arc, in order:
   task sessions the UI could not cancel; kill the opencode process to clear
   them, and checkpoint-commit agent work early (the killed kernel instance's
   uncommitted shader/test was recovered from its worktree).
+
+## 0ai. TEARDOWN FIX + BATCH-BLOCK ROUNDS (2026-09-24)
+
+- A rank-0 wedge during batched-block bring-up exposed a **pre-existing
+  double-free** (on main since the flag purge): `fg_output_slice_create` /
+  `fg_output_hc_create(foreign=false)` stored model-owned tensor views and their
+  destructors freed them, then `fg_model_close` freed the same views again -
+  every clean shutdown/restart of rank 0 or rank 4. ASan pinned it (`vk.c:310`
+  <- `output.c:300` <- `coordinator_close`), fixed by an ownership flag
+  (`b61db99`), proven with an ASan negative control plus five hardened stop/start
+  cycles per affected rank, deployed as `20260924-teardown`.
+- Batched decode block (branch `feat/batch-block-r1`, parked, fail-closed): two
+  defects found and fixed - the pair GDN consumed the un-residual input, and the
+  two slots' QSA sessions share one attention scratch so the held-back GR write
+  read the wrong token's block; plus the B=1/B=2 logit-bit gap root-caused (r4
+  slices vs the r8 relay head use different reduction trees; the depth-B selftest
+  routes its B=1 reference through the relay for the gate, the permanent fix -
+  adding slice widths to the r8 list - would change serving logits and needs its
+  own round). Parity is now clean, but the measured 2-slot speedup is only
+  ~1.19x (100.2 vs 119.6 ms/step): the ring is assembly/hop/wake-bound (assemble
+  25 ms n-gram wake, sampling relays 6 ms), and the b2 dense saving is ~1.2 ms of
+  a ~40 ms/token step - far under the 1.56x byte ceiling. Multi-session value now
+  hinges on the overhead cuts (async n-gram prefetch, batched relay), not more
+  kernel batching.
+- API M1 (front-end split) and M2 (admission queue: FIFO, 429 + Retry-After at
+  4, queued-client cancel) are live; probes answer in ~7-10 ms during prefill and
+  the vision tower, keep-alive and frontier-preserving abort unchanged.
+- Spare blades now carry a satellite: `.50` runs bge-m3 embeddings (:8091) and
+  bge-reranker-v2-m3 (:8092) under llama.cpp Vulkan systemd units; `.52`/`.53`
+  are mapped for a utility chat and SDXL; ops notes in FLEET_OPERATIONS.md §9.

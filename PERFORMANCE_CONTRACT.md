@@ -67,19 +67,24 @@ bandwidth-bound; remaining kernel headroom is small. See
 
 ## Multi-session status
 
-The engine still serves one generation at a time. The HTTP front-end is now a
+The engine still serves one generation at a time. The HTTP front-end is a
 dedicated thread ([docs/API_CONCURRENCY.md](docs/API_CONCURRENCY.md), M1
 landed): keep-alive, chunked SSE, front-end heartbeats and concurrent
-`/health`/`/v1/models` no longer share the token loop; a second concurrent chat
-request still gets 503 + Retry-After until the M2 request queue lands, but it
-is rejected immediately (0.7 ms measured during a 512px vision turn, versus
-2.6 s before). A depth-B batch path
+`/health`/`/v1/models` no longer share the token loop; probes answer in ~7-10 ms
+during prefill and the vision tower (was ~2 s and 2.6 s). M2 admits concurrent
+chat requests into a FIFO queue (bound 4, `429` + `Retry-After` past it, queued
+clients that disconnect are canceled); the engine still runs one generation at a
+time. A depth-B batch path
 exists (`src/decode_batch.c`: batch table, FIFO scheduler, owner session slots
-with PREPARE/COMMIT/RESTORE transactions) and is byte-identical at B=1, but B=2
-measures 1.25-1.46x the sequential aggregate against a 1.6x target because the
-ring executes the two slots' blocks serially. It therefore stays fail-closed and
-test-only; the next step is a batched decode block (one weight pass per layer
-for both tokens), which projects 1.7-2.0x.
+with PREPARE/COMMIT/RESTORE transactions) and is byte-identical at B=1. The
+batched decode block (branch `feat/batch-block-r1`) is parity-clean after two
+fixes (a pair-GDN residual and a shared QSA attention scratch), but measures
+only ~1.19x for two slots (100.2 vs 119.6 ms/step) against the 1.6x target:
+the ring step is assembly/hop/wake-bound (25 ms n-gram assemble, 6 ms sampling
+relays) and the batch-2 dense saving is ~1.2 ms of a ~40 ms/token step - under
+the measured 1.56x byte ceiling. It stays fail-closed and test-only; the
+multi-session lever is the overhead cuts (async n-gram prefetch, batched
+sampling relays), then M3 session multiplexing.
 
 ## Do not claim
 
