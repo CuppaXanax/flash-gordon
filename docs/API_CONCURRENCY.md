@@ -3,7 +3,11 @@
 Design note for the front-end/engine split. Status: **M2 landed** (2026-09-24,
 branch `feat/api-m2-admission`); M1 landed as `ee25e7e` (2026-09-24, branch
 `feat/api-m1-frontend`, deployed to the 8-blade fleet as live dir
-`20260924-api-m1`); M3 (multi-session generation) is not started.
+`20260924-api-m1`); **M3.1 landed** on `feat/batch-block-r1` (`08448c0` +
+`723be95`: per-session runtime state, live session table, public `session_id` /
+`X-Flash-Gordon-Session`, fleet-validated); M3.2 (two-session decode) is in
+progress - runner primitives on the branch, blockers in
+`docs/M3_SESSION_MULTIPLEXING.md` section 11.
 
 ## M2: bounded FIFO admission on the engine queue (landed)
 

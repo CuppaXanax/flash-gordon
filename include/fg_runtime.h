@@ -1,6 +1,7 @@
 #ifndef FLASH_GORDON_RUNTIME_H
 #define FLASH_GORDON_RUNTIME_H
 
+#include "fg_decode_batch.h"
 #include "fg_manifest.h"
 #include "fg_prefix.h"
 #include "fg_sampler.h"
@@ -113,6 +114,41 @@ typedef struct fg_generation_stats {
 typedef fg_status (*fg_token_callback)(void *context,uint32_t token,const char *text,
                                       size_t bytes,fg_error *err);
 typedef bool (*fg_interrupt_fn)(void *context);
+
+/* M3.2 multiplex runner (text-only, penalty-free): drive a bound session one
+ * phase at a time so an engine scheduler can share the ring between two
+ * sessions.  The runner mirrors the production B=1 phase order (plan, prefill
+ * pipeline + output head, decode loop) but returns between chunks/steps.  A
+ * lone active session never uses these entry points; it stays on
+ * fg_runtime_generate*. */
+fg_status fg_runtime_session_runner_begin(fg_runtime *runtime,fg_runtime_session *session,
+    const char *transcript,uint32_t max_tokens,const fg_sampler_config *sampler,
+    fg_generation_stats *stats,fg_error *err);
+/* Resume a session that stopped mid-decode (clean yield or client stop): the
+ * rendered transcript and pending token come from the bound session state. */
+fg_status fg_runtime_session_runner_resume_decode(fg_runtime *runtime,
+    fg_runtime_session *session,uint32_t max_tokens,fg_generation_stats *stats,
+    fg_error *err);
+/* Prefill at most `token_budget` prompt tokens (one pipeline group); `done` is
+ * set when the prompt is complete and the first sampled token is pending. */
+fg_status fg_runtime_session_runner_prefill(fg_runtime *runtime,fg_runtime_session *session,
+    uint32_t token_budget,bool *done,fg_error *err);
+/* Emit every session's pending token, then run one depth-B ring step for the
+ * batch table.  Sessions whose pending token is EOS or that reached
+ * max_tokens are reported in `left`; they have left the table already.
+ * `callbacks`/`contexts` are indexed by the caller's session array. */
+fg_status fg_runtime_session_runner_batch(fg_runtime *runtime,
+    fg_runtime_session **sessions,uint32_t count,fg_decode_batch_table *table,
+    const fg_decode_batch_policy *policy,
+    fg_token_callback callbacks[FG_DECODE_BATCH_MAX_SLOTS],
+    void *contexts[FG_DECODE_BATCH_MAX_SLOTS],uint64_t now,bool left[],
+    fg_error *err);
+/* Commit the runner's rendered transcript/frontier/stats; the session stays
+ * bound and must be ended by the caller. */
+fg_status fg_runtime_session_runner_finish(fg_runtime *runtime,fg_runtime_session *session,
+    fg_error *err);
+uint32_t fg_runtime_session_runner_generated(const fg_runtime_session *session);
+bool fg_runtime_session_runner_active(const fg_runtime_session *session);
 
 enum {
     FG_RUNTIME_MEDIA_IMAGE = 1u,

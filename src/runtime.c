@@ -3813,6 +3813,28 @@ typedef struct fg_session_state {
     uint32_t output_session;
 } fg_session_state;
 
+/* M3.2 incremental runner: the production phase order (plan, prefill pipeline
+ * + output head, decode loop) split at chunk/step boundaries so an engine
+ * scheduler can alternate two sessions on one ring.  Never used for a lone
+ * active session. */
+typedef struct fg_session_runner {
+    uint32_t *prompt;
+    size_t prompt_count;
+    size_t prefill_cursor;
+    char *candidate;
+    size_t candidate_length,candidate_capacity;
+    uint32_t position_bias;
+    uint32_t max_tokens;
+    uint32_t generated;
+    bool prefilled;
+    bool stopped_on_eos;
+    size_t pending_boundary_bytes;
+    uint32_t pending_eos;
+    bool active;
+    struct timespec prefill_start,decode_start;
+    fg_generation_stats *stats;
+} fg_session_runner;
+
 struct fg_runtime_session {
     uint64_t id;
     /* Owner-ring generation the saved state belongs to; resume is refused when
@@ -3821,6 +3843,7 @@ struct fg_runtime_session {
     bool adopted;
     bool in_use;
     fg_session_state state;
+    fg_session_runner runner;
 };
 
 struct fg_runtime {
@@ -5899,6 +5922,8 @@ static void runtime_session_store(fg_runtime *runtime,fg_session_state *state){
     runtime->coordinator.output_session=0u;
 }
 
+static void runtime_runner_reset(fg_runtime_session *session);
+
 fg_runtime_session *fg_runtime_session_acquire(fg_runtime *runtime,uint64_t id){
     if(!runtime)return NULL;
     if(id){
@@ -5934,6 +5959,7 @@ void fg_runtime_session_release(fg_runtime *runtime,fg_runtime_session *session)
     if(runtime->active_session==session)return;
     free(session->state.rendered_history);
     free(session->state.history);
+    runtime_runner_reset(session);
     memset(session,0,sizeof(*session));
 }
 
@@ -5988,6 +6014,349 @@ void fg_runtime_session_end(fg_runtime *runtime,fg_runtime_session *session){
     session->ring_generation=runtime->ring_generation;
     runtime_session_store(runtime,&session->state);
     runtime->active_session=NULL;
+}
+
+/* ---------- M3.2 multiplex runner ---------- */
+
+static fg_status runtime_render_append(char **rendered,size_t *length,size_t *capacity,
+                                       const char *text,size_t bytes,fg_error *err);
+
+static void runtime_runner_reset(fg_runtime_session *session){
+    fg_session_runner *runner=&session->runner;
+    free(runner->prompt);
+    free(runner->candidate);
+    memset(runner,0,sizeof(*runner));
+}
+
+fg_status fg_runtime_session_runner_begin(fg_runtime *runtime,fg_runtime_session *session,
+    const char *transcript,uint32_t max_tokens,const fg_sampler_config *sampler,
+    fg_generation_stats *stats,fg_error *err){
+    if(!runtime||!session||!transcript||!max_tokens||!sampler||
+       runtime->active_session!=session||session->runner.active){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid multiplex runner begin");
+        return FG_ERR_ARGUMENT;
+    }
+    if(!runtime->state_ready){
+        fg_error_set(err,FG_ERR_MISMATCH,"resident runtime requires a successful reset");
+        return FG_ERR_MISMATCH;
+    }
+    fg_status status=fg_sampler_config_validate(sampler,err);
+    if(status!=FG_OK)return status;
+    if(fg_sampler_penalties_active(sampler)){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,
+                     "multiplex runner is restricted to penalty-free sampler configs");
+        return FG_ERR_UNAVAILABLE;
+    }
+    runtime->sampler=*sampler;
+    runtime->coordinator.sampler=*sampler;
+    fg_sampler_state_init(&runtime->coordinator.sampler_state,sampler->seed);
+    fg_tokens tokens={0};
+    status=fg_tokenizer_encode(runtime->coordinator.tokenizer,transcript,true,&tokens,err);
+    if(status!=FG_OK)return status;
+    fg_prefix_plan plan={0};
+    if(status==FG_OK)status=fg_prefix_plan_tokens(
+        runtime->history,runtime->history_count,runtime->next_token_valid,
+        tokens.data,tokens.count,runtime->empty_reason,&plan,err);
+    if(status==FG_OK&&runtime->coordinator.ring_prefill&&plan.hit){
+        bool resumable=runtime->coordinator.ring_decode&&runtime->prefix_continuation&&
+            plan.prefill_offset==(size_t)runtime->state_frontier;
+        if(!resumable){
+            plan.hit=false;plan.exact_frontier=false;plan.reused_tokens=0;
+            plan.prefill_offset=0;plan.prefill_tokens=tokens.count;
+            plan.reset_reason=runtime->coordinator.ring_decode?
+                FG_PREFIX_RESET_FRONTIER_UNAVAILABLE:FG_PREFIX_RESET_COLD_START;
+        }
+    }
+    uint32_t position_bias=0;
+    if(status==FG_OK&&plan.hit&&plan.prefill_offset==(size_t)runtime->state_frontier&&
+       runtime->state_position>(uint32_t)runtime->state_frontier)
+        position_bias=runtime->state_position-(uint32_t)runtime->state_frontier;
+    if(status==FG_OK&&(!tokens.count||
+       tokens.count+(size_t)max_tokens>runtime->context_limit)){
+        fg_error_set(err,FG_ERR_LIMIT,"prompt plus generation would use %zu of %u context tokens",
+                     tokens.count+(size_t)max_tokens,runtime->context_limit);
+        status=FG_ERR_LIMIT;
+    }
+    if(status==FG_OK)status=runtime_reserve_history(runtime,tokens.count+(size_t)max_tokens,err);
+    char *candidate=NULL;
+    if(status==FG_OK){
+        size_t candidate_length=strlen(transcript);
+        candidate=malloc(candidate_length+1u);
+        if(!candidate){fg_error_set(err,FG_ERR_OOM,"copy multiplex runner transcript");status=FG_ERR_OOM;}
+        else memcpy(candidate,transcript,candidate_length+1u);
+    }
+    size_t prefill_offset=0;
+    if(status==FG_OK&&!plan.hit&&runtime->history_count)
+        status=runtime_reset_state(runtime,plan.reset_reason,err);
+    if(status==FG_OK){
+        prefill_offset=plan.hit?plan.prefill_offset:0u;
+        for(size_t i=prefill_offset;i<tokens.count;i++)
+            runtime->history[i]=(int32_t)tokens.data[i];
+        runtime->history_count=tokens.count;
+    }
+    if(status==FG_OK&&prefill_offset==tokens.count&&!runtime->next_token_valid){
+        fg_error_set(err,FG_ERR_MISMATCH,"resumed multiplex session has no pending token");
+        status=FG_ERR_MISMATCH;
+    }
+    if(status!=FG_OK){
+        free(candidate);
+        fg_tokens_free(&tokens);
+        return status;
+    }
+    fg_session_runner *runner=&session->runner;
+    runtime_runner_reset(session);
+    runner->prompt=tokens.data;          /* ownership moves to the runner */
+    runner->prompt_count=tokens.count;
+    runner->candidate=candidate;
+    runner->candidate_length=strlen(transcript);
+    runner->candidate_capacity=runner->candidate_length+1u;
+    runner->prefill_cursor=prefill_offset;
+    runner->position_bias=position_bias;
+    runner->max_tokens=max_tokens;
+    runner->prefilled=prefill_offset==tokens.count;
+    runner->stats=stats;
+    runner->active=true;
+    clock_gettime(CLOCK_MONOTONIC,&runner->prefill_start);
+    runner->decode_start=runner->prefill_start;
+    if(stats){
+        memset(stats,0,sizeof(*stats));
+        stats->execution_mode=FG_EXECUTION_EXPERT_PARALLEL;
+        stats->prompt_tokens=(uint32_t)tokens.count;
+        stats->prefilled_tokens=(uint32_t)(tokens.count-prefill_offset);
+        stats->reused_tokens=(uint32_t)plan.reused_tokens;
+        stats->prefix_cache_hit=plan.hit;
+        stats->exact_frontier=plan.exact_frontier;
+        stats->reset_reason=plan.reset_reason;
+    }
+    return FG_OK;
+}
+
+fg_status fg_runtime_session_runner_resume_decode(fg_runtime *runtime,
+    fg_runtime_session *session,uint32_t max_tokens,fg_generation_stats *stats,
+    fg_error *err){
+    if(!runtime||!session||!max_tokens||runtime->active_session!=session||
+       session->runner.active){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid multiplex runner decode resume");
+        return FG_ERR_ARGUMENT;
+    }
+    if(!runtime->state_ready||!runtime->next_token_valid||!runtime->history_count){
+        fg_error_set(err,FG_ERR_MISMATCH,"multiplex session has no decodable state");
+        return FG_ERR_MISMATCH;
+    }
+    fg_session_runner *runner=&session->runner;
+    runtime_runner_reset(session);
+    runner->candidate=runtime->rendered_history;   /* ownership moves to the runner */
+    runner->candidate_length=runtime->rendered_history_length;
+    runner->candidate_capacity=runner->candidate_length+1u;
+    runtime->rendered_history=NULL;
+    runtime->rendered_history_length=0;
+    runner->max_tokens=max_tokens;
+    runner->generated=stats?stats->generated_tokens:0u;
+    runner->prefilled=true;
+    runner->stats=stats;
+    runner->active=true;
+    clock_gettime(CLOCK_MONOTONIC,&runner->decode_start);
+    return FG_OK;
+}
+
+fg_status fg_runtime_session_runner_prefill(fg_runtime *runtime,fg_runtime_session *session,
+    uint32_t token_budget,bool *done,fg_error *err){
+    if(!runtime||!session||!done||runtime->active_session!=session||
+       !session->runner.active){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid multiplex runner prefill");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_session_runner *runner=&session->runner;
+    *done=runner->prefilled;
+    if(*done)return FG_OK;
+    if(!token_budget)token_budget=1u;
+    size_t remaining=runner->prompt_count-runner->prefill_cursor;
+    uint32_t chunk=(uint32_t)(remaining<token_budget?remaining:token_budget);
+    fg_vk_tensor *output=NULL;
+    uint32_t prefilled=0;
+    fg_status status=coordinator_prefill_pipeline(&runtime->coordinator,runtime->history,
+        runtime->history_count,runner->prompt+runner->prefill_cursor,
+        (uint32_t)runner->prefill_cursor,chunk,NULL,runner->position_bias,
+        &runtime->prefill_profiled,NULL,NULL,&output,&prefilled,err);
+    prefill_worker_buffers_release_result_wire(&runtime->coordinator.prefill_expert[0]);
+    prefill_worker_buffers_release_result_wire(&runtime->coordinator.prefill_expert[1]);
+    prefill_worker_buffers_release_result_wire(&runtime->coordinator.prefill_expert[2]);
+    if(status!=FG_OK)return status;
+    runner->prefill_cursor+=prefilled;
+    if(runner->prefill_cursor<runner->prompt_count){
+        *done=false;
+        return FG_OK;
+    }
+    uint32_t final_count=prefilled%runtime->manifest->prefill_microbatch;
+    if(!final_count)final_count=runtime->manifest->prefill_microbatch;
+    fg_vk_tensor *last=NULL;
+    status=fg_vk_tensor_view(output,(uint64_t)(final_count-1u)*FG_HYPER_WIDTH*4u,
+                             FG_HYPER_WIDTH*4u,&last,err);
+    uint32_t next=0;float logit=0.0f;
+    if(status==FG_OK)status=coordinator_output(&runtime->coordinator,
+        (uint32_t)runtime->history_count-1u,last,&next,&logit,err);
+    fg_vk_tensor_destroy(last);
+    if(status==FG_OK&&runtime->coordinator.ring_decode)
+        coordinator_prefetch_next(&runtime->coordinator,runtime->history,
+                                  runtime->history_count,(int32_t)next);
+    if(status==FG_OK){
+        runtime->next_token=next;
+        runtime->next_logit=logit;
+        runtime->next_token_valid=true;
+        runtime->state_position=(uint32_t)runner->prompt_count+runner->position_bias;
+        runner->prefilled=true;
+        clock_gettime(CLOCK_MONOTONIC,&runner->decode_start);
+        if(runner->stats){
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC,&now);
+            runner->stats->prefill_seconds=elapsed_seconds(&runner->prefill_start,&now);
+        }
+    }
+    *done=runner->prefilled;
+    return status;
+}
+
+fg_status fg_runtime_session_runner_batch(fg_runtime *runtime,
+    fg_runtime_session **sessions,uint32_t count,fg_decode_batch_table *table,
+    const fg_decode_batch_policy *policy,
+    fg_token_callback callbacks[FG_DECODE_BATCH_MAX_SLOTS],
+    void *contexts[FG_DECODE_BATCH_MAX_SLOTS],uint64_t now,bool left[],
+    fg_error *err){
+    if(!runtime||!sessions||!count||count>FG_DECODE_BATCH_MAX_SLOTS||!table||
+       !policy||!callbacks||!contexts||!left){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid multiplex runner batch");
+        return FG_ERR_ARGUMENT;
+    }
+    bool ready[FG_DECODE_BATCH_MAX_SLOTS]={false};
+    bool leave_after[FG_DECODE_BATCH_MAX_SLOTS]={false};
+    uint32_t active=0;
+    for(uint32_t i=0;i<count;i++){
+        left[i]=false;
+        if(!sessions[i]||!sessions[i]->runner.active||!sessions[i]->state.next_token_valid){
+            fg_error_set(err,FG_ERR_MISMATCH,"multiplex runner batch session is not decodable");
+            return FG_ERR_MISMATCH;
+        }
+        fg_runtime_session *session=sessions[i];
+        fg_session_runner *runner=&session->runner;
+        uint32_t token=session->state.next_token;
+        if(token==fg_tokenizer_eos(runtime->coordinator.tokenizer)){
+            const char *eos_text=NULL;size_t eos_bytes=0;
+            fg_status status=fg_tokenizer_token(runtime->coordinator.tokenizer,token,
+                                                &eos_text,&eos_bytes,NULL,err);
+            if(status==FG_OK)status=runtime_render_append(&runner->candidate,
+                &runner->candidate_length,&runner->candidate_capacity,eos_text,eos_bytes,err);
+            if(status==FG_OK)status=runtime_render_append(&runner->candidate,
+                &runner->candidate_length,&runner->candidate_capacity,"\n",1u,err);
+            if(status!=FG_OK)return status;
+            runner->stopped_on_eos=true;
+            runner->pending_boundary_bytes=eos_bytes+1u;
+            runner->pending_eos=token;
+            left[i]=true;
+            continue;
+        }
+        char decoded[4096];size_t bytes=0;
+        fg_status status=fg_tokenizer_decode_token(runtime->coordinator.tokenizer,token,
+                                                   decoded,sizeof(decoded),&bytes,err);
+        if(status==FG_OK)status=callbacks[i](contexts[i],token,decoded,bytes,err);
+        if(status==FG_OK)status=runtime_render_append(&runner->candidate,
+            &runner->candidate_length,&runner->candidate_capacity,decoded,bytes,err);
+        if(status!=FG_OK)return status;
+        if(session->state.history_count>=session->state.history_capacity){
+            fg_error_set(err,FG_ERR_LIMIT,"multiplex history exceeds its reserved capacity");
+            return FG_ERR_LIMIT;
+        }
+        session->state.history[session->state.history_count++]=(int32_t)token;
+        runner->generated++;
+        ready[i]=true;
+        active++;
+        leave_after[i]=runner->generated>=runner->max_tokens;
+    }
+    for(uint32_t i=0;i<count;i++){
+        if(!left[i])continue;
+        fg_status status=fg_decode_batch_sequence_leave(table,sessions[i]->id,err);
+        if(status!=FG_OK)return status;
+    }
+    if(!active)return FG_OK;
+    for(uint32_t i=0;i<count;i++)
+        if(ready[i]){
+            fg_status status=fg_decode_batch_sequence_ready(table,sessions[i]->id,now,err);
+            if(status!=FG_OK)return status;
+        }
+    fg_decode_batch scheduled={0};
+    fg_status status=fg_decode_batch_schedule(table,policy,now,&scheduled,err);
+    if(status!=FG_OK)return status;
+    const int32_t *histories[FG_DECODE_BATCH_MAX_SLOTS]={NULL};
+    size_t counts[FG_DECODE_BATCH_MAX_SLOTS]={0};
+    fg_runtime_session *ordered[FG_DECODE_BATCH_MAX_SLOTS]={NULL};
+    for(uint32_t slot=0;slot<scheduled.slot_count;slot++){
+        uint64_t id=table->sequences[scheduled.slots[slot].sequence].sequence_id;
+        fg_runtime_session *session=NULL;
+        for(uint32_t i=0;i<count;i++)
+            if(sessions[i]->id==id){session=sessions[i];break;}
+        if(!session){
+            fg_error_set(err,FG_ERR_MISMATCH,"batch schedule names an unknown session");
+            return FG_ERR_MISMATCH;
+        }
+        ordered[slot]=session;
+        histories[slot]=session->state.history;
+        counts[slot]=session->state.history_count;
+    }
+    fg_decode_batch_step step={0};
+    status=coordinator_decode_batch_step(&runtime->coordinator,table,policy,
+        histories,counts,now,false,&step,err);
+    if(status!=FG_OK)return status;
+    for(uint32_t slot=0;slot<scheduled.slot_count;slot++){
+        fg_runtime_session *session=ordered[slot];
+        const fg_decode_batch_outcome *outcome=&step.outcomes[slot];
+        session->state.next_token=outcome->next_token;
+        session->state.next_logit=outcome->logit;
+        session->state.next_token_valid=true;
+        session->state.state_position=outcome->position[0];
+    }
+    for(uint32_t i=0;i<count;i++){
+        if(left[i]||!leave_after[i])continue;
+        left[i]=true;
+        status=fg_decode_batch_sequence_leave(table,sessions[i]->id,err);
+        if(status!=FG_OK)return status;
+    }
+    return FG_OK;
+}
+
+fg_status fg_runtime_session_runner_finish(fg_runtime *runtime,fg_runtime_session *session,
+    fg_error *err){
+    if(!runtime||!session||runtime->active_session!=session||!session->runner.active){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid multiplex runner finish");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_session_runner *runner=&session->runner;
+    runtime->empty_reason=FG_PREFIX_RESET_NONE;
+    runtime->state_frontier=(uint32_t)runtime->history_count;
+    free(runtime->rendered_history);
+    runtime->rendered_history=runner->candidate;
+    runtime->rendered_history_length=runner->candidate_length;
+    runtime->pending_boundary_bytes=runner->pending_boundary_bytes;
+    runtime->pending_eos_token=runner->pending_eos;
+    runtime->pending_eos_valid=runner->stopped_on_eos;
+    runner->candidate=NULL;
+    runner->candidate_length=0;
+    runner->candidate_capacity=0;
+    if(runner->stats){
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC,&now);
+        runner->stats->generated_tokens=runner->generated;
+        runner->stats->context_tokens=(uint32_t)runtime->history_count;
+        runner->stats->decode_seconds=elapsed_seconds(&runner->decode_start,&now);
+    }
+    runner->active=false;
+    return FG_OK;
+}
+
+uint32_t fg_runtime_session_runner_generated(const fg_runtime_session *session){
+    return session?session->runner.generated:0u;
+}
+
+bool fg_runtime_session_runner_active(const fg_runtime_session *session){
+    return session&&session->runner.active;
 }
 
 fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
@@ -6067,6 +6436,7 @@ void fg_runtime_close(fg_runtime *runtime){
         if(!session->in_use)continue;
         free(session->state.rendered_history);
         free(session->state.history);
+        runtime_runner_reset(session);
         session->state.rendered_history=NULL;
         session->state.history=NULL;
     }

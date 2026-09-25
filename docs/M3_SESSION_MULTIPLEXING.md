@@ -1,9 +1,12 @@
 # M3: session multiplexing (concurrent generation)
 
-Design note for the multi-session engine milestone.  Status: **design only**
-(2026-09-24); nothing in this document is implemented.  It builds on M1
-(front-end/engine split), M2 (bounded FIFO admission on `api_engine_queue`) and
-the depth-B ring decode (`src/decode_batch.c`, `docs/DEPTH_B_DECODE_RING.md`,
+Design note for the multi-session engine milestone.  Status: **M3.1 landed**
+(branch `feat/batch-block-r1`, commits `08448c0` + `723be95`, fleet-validated
+2026-09-24); **M3.2 in progress** - the incremental runner primitives are on the
+branch (`fg_runtime_session_runner_*`, not yet wired into serving), and the
+exact blockers are in section 11.  It builds on M1 (front-end/engine split), M2
+(bounded FIFO admission on `api_engine_queue`) and the depth-B ring decode
+(`src/decode_batch.c`, `docs/DEPTH_B_DECODE_RING.md`,
 `docs/BATCHED_DECODE_BLOCK.md`) that reached parity and measured 74.6 ms/step
 for two sequences in the round that wrote this note.
 
@@ -281,3 +284,69 @@ Fleet gates:
    (the sampler state is per session; the batch math is per token).  The
    depth-B selftest is the oracle; the concurrent mode must reproduce it
    exactly, which is also the strongest isolation test.
+
+## 11. M3.1 status (landed) and M3.2 blockers (2026-09-24)
+
+### M3.1 - landed and fleet-validated
+
+Commits `08448c0` (session objects + public identity) and `723be95` (bootstrap
+capture stays live; cold starts always BEGIN) on `feat/batch-block-r1`.
+`fg_runtime_session` owns the token-path state (history, frontier, position,
+sampler, rendered transcript); `api_session_table` resolves a request by
+explicit `session_id`, by its connection (keep-alive default), or by strict
+prefix extension of the most recent session; the server echoes
+`X-Flash-Gordon-Session`.  The first session adopts the state `fg_runtime_open`
+created, so the single-session path is byte-identical; a session whose ring
+generation was reset by another session cold-starts instead of resuming a stale
+frontier.  Fleet gates (bin `f049a224a72db397c031c1d4`):
+byte identity `sha256(d7b851e9...)`, `correctness64` `[12]`/`[Paris]`,
+`pi-stability` PASS (4k 323.11 / short 26.56 / 32k 23.73 vs main
+323.08 / 26.93 / 24.00), battery + `check-flags` PASS, depth-B selftest PASS
+(batch-2 decode 78.7 ms/step in that window, aggregate 25.4 tok/s).
+
+### M3.2 - primitives on the branch, not wired; exact blockers
+
+The incremental runner (`src/runtime.c`): `fg_runtime_session_runner_begin`
+(plan + prompt/history setup), `runner_prefill` (one
+`coordinator_prefill_pipeline` sub-range per call, final output head on the last
+chunk), `runner_resume_decode` (continue a clean decode yield), `runner_batch`
+(emit pending tokens, one `coordinator_decode_batch_step`, table bookkeeping
+including EOS/max leave), `runner_finish` (rendered transcript/frontier/stats).
+It mirrors the production phase order and is not called from the serving path
+yet; it must be validated with a `--concurrent` selftest mode before wiring.
+
+Blockers, in the order they must be solved:
+
+1. **Per-slot cold start (the hard one).**  `runtime_reset_state` is ring-wide:
+   `fg_owner_reset_state` zeroes every owner session slot and
+   `coordinator_begin_session` recreates the single QSA namespace, so admitting
+   a second session would wipe the first session's slot-0 state.  The depth-B
+   selftest only ever runs both slots inside one BEGIN epoch.  Required:
+   `fg_owner_reset_session_slot(executor, slot)` (zero that slot's GDN
+   conv/recurrent + PLE, reset its QSA session and recreate its mirror file)
+   and a slot-scoped cold start in the runner that skips BEGIN and uses
+   `coordinator_owner_transaction(PREPARE, slot)` (whose lazy slot!=0 mirror
+   open already exists in `depthb_owner_prepare`).  Session A keeps slot 0, the
+   admitted session gets slot 1; `coordinator->output_session` and the batch
+   table's `state_slot` follow the session.
+2. **API engine refactor.**  `handle_chat_completions` is synchronous: it owns
+   the request body, rendered transcript, SSE state and stats until the
+   response is finished.  A queue-triggered yield must park that state
+   (`api_parked_request`) without finalising the response, and the engine needs
+   a scheduler pump that alternates prefill chunks and batch steps, finishes
+   each parked request through the existing tail, and keeps the solo path
+   untouched (park only when the queue has work, so a lone session never leaves
+   the production `fg_runtime_generate*` path).
+3. **First-cut eligibility.**  The batch step requires a penalty-free sampler
+   and one shared `coordinator->sampler` config; media, tool continuations and
+   prefix continuations stay serial until M3.3.
+4. **Prefill chunking validation.**  `runner_prefill` passes the full prompt as
+   the history and one frame-group sub-range per call; it needs the
+   `--concurrent` selftest parity check against the serial prefill before the
+   API path uses it.
+5. **M3.3 hardening** (abort churn, slow-client backpressure, slot rebind on
+   session replacement) as designed in sections 3-7.
+
+Until 1 and 2 are done and the two-session gates in section 9 pass, M3.2 stays
+fail-closed on `feat/batch-block-r1`; production remains `20260924-teardown`
+(main `c238858`).
