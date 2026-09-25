@@ -1173,3 +1173,35 @@ PASS). The session's arc, in order:
 - Spare blades now carry a satellite: `.50` runs bge-m3 embeddings (:8091) and
   bge-reranker-v2-m3 (:8092) under llama.cpp Vulkan systemd units; `.52`/`.53`
   are mapped for a utility chat and SDXL; ops notes in FLEET_OPERATIONS.md §9.
+
+## 0aj. WIND-DOWN AUDIT: M3 PARKED, PRODUCTION VERIFIED (2026-09-25)
+
+- M3 (session multiplexing) is **parked, fail-closed** on `feat/batch-block-r1`
+  (rebased `ca3179d`, pushed). M3.1 shipped per-session objects, the public
+  `session_id`, the per-slot reset and the `api_parked_request` park/pump; the
+  two-client run reached 24.8 tok/s aggregate (11.4 + 13.4 per session). It was
+  **not promoted**: the hard solo gate caught a real regression - the scheduler
+  passed `budget=0` for a lone turn and the runner clamped it to one token per
+  pump, so solo prefill fell to 9.35 TPS against main's 294.7 - and chunk-yield
+  costs 26.4 ms/token against 0.46 serial. Blockers and next steps are in
+  `docs/M3_SESSION_MULTIPLEXING.md` §11. The batched block itself tops out at
+  1.19x (the ring step is assembly- and wake-bound), so multi-session economics
+  need the overhead cuts before M3 is worth another round.
+- Production was never switched to any M3 build; the fleet serves
+  `20260924-teardown` (bin `9b4b8f7f...`) and every candidate/test live dir is
+  parked as `hold-*` so a canonical restart cannot pick a broken build.
+- Post-churn verification: `tools/pi-stability.ps1` PASS (6 stages, 8/8 ranks,
+  ledger sealed; short decode 27.19, 4K prefill 346.6, 32K 24.07, `[12]` and
+  `[Paris]`).
+- **Governor decode-park found and fixed**: the SMU governor boosts to 2000 MHz
+  under prefill but parks at 1000 whenever decode's ~10% utilization falls below
+  `load-target.lower` - which is why sustained generations measured 19-22 TPS
+  while short windows showed 25-27. All 8 blades now run `lower = 0.05` (backup
+  `config.toml.orig-fg`; revert is restore plus a governor restart), which holds
+  the boosted clock through decode and still parks at idle. Measured: a
+  3,072-token generation held 1800-2000 MHz for 140 s at **26.26 TPS**; the
+  pi-perf decode turn passed at **24.57** (was 19.05); temps peaked 71 C.
+- Loose ends for the audit: the serving rank-0 process was last started by a
+  `pf-run/restore` script and logs to `/home/xander/pf-run/restore-rank-0.log`,
+  so `fleet/pi-perf-verify.ps1` needs `-Rank0Log` until the next canonical
+  restart; origin still carries historical `perf/*` and `fix/*` branches.
