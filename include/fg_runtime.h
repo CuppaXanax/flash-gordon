@@ -33,6 +33,10 @@ fg_runtime_session *fg_runtime_session_acquire(fg_runtime *runtime,uint64_t id);
 fg_runtime_session *fg_runtime_session_find(fg_runtime *runtime,uint64_t id);
 void fg_runtime_session_release(fg_runtime *runtime,fg_runtime_session *session);
 uint64_t fg_runtime_session_id(const fg_runtime_session *session);
+/* Owner state slot the live session holds (0 for the first session; a second
+ * live session gets 1 via a slot-scoped cold start); UINT32_MAX when the
+ * session has no slot yet. */
+uint32_t fg_runtime_session_slot(const fg_runtime_session *session);
 /* Bind/unbind the session's token-path state to the runtime.  Begin cold-starts
  * the session when its saved state cannot be resumed (fresh session, or the
  * shared ring state was reset since the session last ran). */

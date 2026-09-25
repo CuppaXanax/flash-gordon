@@ -1936,6 +1936,25 @@ static fg_status depthb_owner_prepare(depthb_owner_runtime *depthb,uint32_t slot
     return status;
 }
 
+/* Slot-scoped cold start: clear one session's owner state (and its staged
+ * checkpoint) and select it, leaving every other slot untouched.  A later
+ * PREPARE re-opens the slot's QSA mirror if this slot never had one. */
+static fg_status depthb_owner_reset(depthb_owner_runtime *depthb,uint32_t slot,
+                                    fg_error *err){
+    if(!depthb||!depthb->owner||slot>=FG_OWNER_SESSION_MAX||
+       slot>=fg_owner_session_count(depthb->owner)){
+        fg_error_set(err,FG_ERR_MISMATCH,"owner state slot %u is not allocated",slot);
+        return FG_ERR_MISMATCH;
+    }
+    if(depthb->checkpoint_valid[slot]){
+        fg_owner_session_snapshot_release(&depthb->checkpoint[slot]);
+        depthb->checkpoint_valid[slot]=false;
+    }
+    fg_status status=fg_owner_reset_session_slot(depthb->owner,slot,err);
+    if(status==FG_OK)status=fg_owner_set_active_session(depthb->owner,slot,err);
+    return status;
+}
+
 static fg_status depthb_owner_commit(depthb_owner_runtime *depthb,uint32_t slot,
                                      fg_error *err){
     if(!depthb||!depthb->owner||slot>=FG_OWNER_SESSION_MAX){
@@ -2001,6 +2020,11 @@ static fg_status handle_owner_session_transaction(fg_fabric *fabric,
             status=depthb_owner_restore(depthb,control.state_slot,err);
             reply=FG_MSG_SESSION_RESTORED;
             control.operation=FG_OWNER_SESSION_RESTORED;
+            break;
+        case FG_OWNER_SESSION_RESET:
+            status=depthb_owner_reset(depthb,control.state_slot,err);
+            reply=FG_MSG_SESSION_RESETTED;
+            control.operation=FG_OWNER_SESSION_RESETTED;
             break;
         default:
             fg_error_set(err,FG_ERR_MISMATCH,
@@ -2865,7 +2889,7 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_
     if(status==FG_OK&&output){handoff=calloc(1,sizeof(*handoff));if(!handoff){fg_error_set(err,FG_ERR_OOM,"allocate output handoff state");status=FG_ERR_OOM;}}
     if(status==FG_OK)status=token_profile_prepare(fg_model_vk(model),err);
     uint8_t *bulk_receive=prefill.receive;uint32_t bulk_capacity=prefill.receive_capacity;if(qsa.enabled&&qsa.receive_capacity>bulk_capacity){bulk_receive=qsa.receive_wire;bulk_capacity=qsa.receive_capacity;}if(layer_work.work_capacity>bulk_capacity){bulk_receive=layer_work.work_wire;bulk_capacity=layer_work.work_capacity;}uint64_t session_id=0;
-    while(status==FG_OK){uint32_t peer=0,bytes=0;fg_frame_header header;fg_fabric_class ready_class;fg_fabric_recv_timing receive_timing={0};receive_timing.poll_start_ns=critical_ns();int32_t split_wait_ms=worker_output_split_pending(handoff)?worker_output_split_remaining_ms(handoff):-1;if(split_wait_ms==0){status=worker_output_split_timeout(handoff,self,err);break;}status=split_wait_ms>0?fg_fabric_wait_ready_timeout(fabric,3u,split_wait_ms,&peer,&ready_class,err):fg_fabric_wait_ready(fabric,3u,&peer,&ready_class,err);if(status==FG_ERR_LIMIT){if(worker_output_split_pending(handoff)&&worker_output_split_remaining_ms(handoff)==0)status=worker_output_split_timeout(handoff,self,err);else status=FG_OK;}receive_timing.ready_ns=critical_ns();if(status!=FG_OK)break;if(ready_class==FG_FABRIC_BULK){status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_BULK,&header,bulk_receive,bulk_capacity,&bytes,&receive_timing,err);fg_message_type type=status==FG_OK?fg_frame_type(&header):0;if(status==FG_OK&&type==FG_MSG_PREFILL_LAYER_WORK)status=handle_prefill_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_PREFILL_WORK)status=handle_prefill_expert_work(fabric,expert,manifest,self,session_id,peer,&header,bulk_receive,bytes,&prefill,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_APPEND)status=handle_qsa_page_append(&qsa,manifest,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_BARRIER)status=handle_qsa_page_barrier(fabric,&qsa,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_FETCH)status=handle_qsa_page_fetch(fabric,&qsa,owner,manifest,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_GDN_STATE_FETCH)status=handle_gdn_state_fetch(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_DECODE_LAYER_WORK)status=handle_decode_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_DECODE_BATCH_WORK)status=handle_decode_batch_work(fabric,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,&depthb,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_BATCH_WORK)status=handle_output_batch_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,bulk_receive,bytes,hyper,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_HIDDEN)status=handle_output_hidden(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,bulk_receive,bytes,hyper,handoff,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_SLICE_HIDDEN)status=handle_output_slice_hidden(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,bulk_receive,bytes,hyper,handoff,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported bulk message %u",self,type);status=FG_ERR_FORMAT;}continue;}status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_CONTROL,&header,control,control_capacity,&bytes,&receive_timing,err);if(status!=FG_OK)break;fg_message_type type=fg_frame_type(&header);if(type==FG_MSG_DECODE_WORK){if(!session_id||fg_frame_request_id(&header)!=session_id){fg_error_set(err,FG_ERR_MISMATCH,"stale expert work request");status=FG_ERR_MISMATCH;}else status=handle_expert_work(fabric,expert,fg_model_vk(model),self,peer,&header,control,bytes,&receive_timing,ew_result,ew_wire,err);    }else if(type==FG_MSG_NGRAM_WORK)status=handle_ngram_work(fabric,ngram,FG_FABRIC_BULK,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_SESSION_BEGIN){fg_output_handoff_reset(handoff);status=begin_session(fabric,manifest,directory,&qsa,owner,self,peer,&header,control,bytes,&session_id,output,&depthb,err);}else if(type==FG_MSG_SESSION_PREPARE||type==FG_MSG_SESSION_COMMIT||type==FG_MSG_SESSION_RESTORE)status=handle_owner_session_transaction(fabric,&depthb,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_OUTPUT_HISTORY)status=handle_output_history(fabric,output,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_OUTPUT_WORK)status=handle_output_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,err);else if(type==FG_MSG_OUTPUT_CONFIG)status=handle_output_config(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,control,bytes,hyper,handoff,err);else if(type==FG_MSG_OUTPUT_PARTIAL)status=handle_output_partial(fabric,output,output_slice,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,handoff,err);else{fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported control message %u",self,type);status=FG_ERR_FORMAT;}}
+    while(status==FG_OK){uint32_t peer=0,bytes=0;fg_frame_header header;fg_fabric_class ready_class;fg_fabric_recv_timing receive_timing={0};receive_timing.poll_start_ns=critical_ns();int32_t split_wait_ms=worker_output_split_pending(handoff)?worker_output_split_remaining_ms(handoff):-1;if(split_wait_ms==0){status=worker_output_split_timeout(handoff,self,err);break;}status=split_wait_ms>0?fg_fabric_wait_ready_timeout(fabric,3u,split_wait_ms,&peer,&ready_class,err):fg_fabric_wait_ready(fabric,3u,&peer,&ready_class,err);if(status==FG_ERR_LIMIT){if(worker_output_split_pending(handoff)&&worker_output_split_remaining_ms(handoff)==0)status=worker_output_split_timeout(handoff,self,err);else status=FG_OK;}receive_timing.ready_ns=critical_ns();if(status!=FG_OK)break;if(ready_class==FG_FABRIC_BULK){status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_BULK,&header,bulk_receive,bulk_capacity,&bytes,&receive_timing,err);fg_message_type type=status==FG_OK?fg_frame_type(&header):0;if(status==FG_OK&&type==FG_MSG_PREFILL_LAYER_WORK)status=handle_prefill_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_PREFILL_WORK)status=handle_prefill_expert_work(fabric,expert,manifest,self,session_id,peer,&header,bulk_receive,bytes,&prefill,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_APPEND)status=handle_qsa_page_append(&qsa,manifest,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_BARRIER)status=handle_qsa_page_barrier(fabric,&qsa,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_FETCH)status=handle_qsa_page_fetch(fabric,&qsa,owner,manifest,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_GDN_STATE_FETCH)status=handle_gdn_state_fetch(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_DECODE_LAYER_WORK)status=handle_decode_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_DECODE_BATCH_WORK)status=handle_decode_batch_work(fabric,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,&depthb,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_BATCH_WORK)status=handle_output_batch_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,bulk_receive,bytes,hyper,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_HIDDEN)status=handle_output_hidden(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,bulk_receive,bytes,hyper,handoff,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_SLICE_HIDDEN)status=handle_output_slice_hidden(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,bulk_receive,bytes,hyper,handoff,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported bulk message %u",self,type);status=FG_ERR_FORMAT;}continue;}status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_CONTROL,&header,control,control_capacity,&bytes,&receive_timing,err);if(status!=FG_OK)break;fg_message_type type=fg_frame_type(&header);if(type==FG_MSG_DECODE_WORK){if(!session_id||fg_frame_request_id(&header)!=session_id){fg_error_set(err,FG_ERR_MISMATCH,"stale expert work request");status=FG_ERR_MISMATCH;}else status=handle_expert_work(fabric,expert,fg_model_vk(model),self,peer,&header,control,bytes,&receive_timing,ew_result,ew_wire,err);    }else if(type==FG_MSG_NGRAM_WORK)status=handle_ngram_work(fabric,ngram,FG_FABRIC_BULK,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_SESSION_BEGIN){fg_output_handoff_reset(handoff);status=begin_session(fabric,manifest,directory,&qsa,owner,self,peer,&header,control,bytes,&session_id,output,&depthb,err);}else if(type==FG_MSG_SESSION_PREPARE||type==FG_MSG_SESSION_COMMIT||type==FG_MSG_SESSION_RESTORE||type==FG_MSG_SESSION_RESET)status=handle_owner_session_transaction(fabric,&depthb,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_OUTPUT_HISTORY)status=handle_output_history(fabric,output,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_OUTPUT_WORK)status=handle_output_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,err);else if(type==FG_MSG_OUTPUT_CONFIG)status=handle_output_config(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,control,bytes,hyper,handoff,err);else if(type==FG_MSG_OUTPUT_PARTIAL)status=handle_output_partial(fabric,output,output_slice,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,handoff,err);else{fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported control message %u",self,type);status=FG_ERR_FORMAT;}}
     fg_vk_tensor_destroy(hyper);free(handoff);
     for(uint32_t slot=0;slot<FG_OWNER_SESSION_MAX;slot++)
         if(depthb.checkpoint_valid[slot])fg_owner_session_snapshot_release(&depthb.checkpoint[slot]);
@@ -3842,6 +3866,11 @@ struct fg_runtime_session {
     uint64_t ring_generation;
     bool adopted;
     bool in_use;
+    /* Owner state slot this session owns while it is live.  Session 0 is the
+     * legacy namespace; a second live session gets slot 1 and a slot-scoped
+     * cold start, so its admission never wipes the first session's state. */
+    uint32_t state_slot;
+    bool slot_assigned;
     fg_session_state state;
     fg_session_runner runner;
 };
@@ -3893,6 +3922,9 @@ struct fg_runtime {
     uint64_t ring_generation;
     bool bootstrap_pending;
     fg_runtime_session *active_session;
+    /* Owner state slot reservations: `slot_owner[s]` is the live session id
+     * holding slot s, or 0 while the slot is free. */
+    uint64_t slot_owner[FG_OWNER_SESSION_MAX];
 };
 
 static fg_status coordinator_begin_session(fg_coordinator *coordinator,fg_error *err){
@@ -5008,6 +5040,7 @@ static fg_status coordinator_owner_transaction(fg_coordinator *coordinator,uint8
         case FG_OWNER_SESSION_PREPARE: status=depthb_owner_prepare(depthb,slot,err);break;
         case FG_OWNER_SESSION_COMMIT: status=depthb_owner_commit(depthb,slot,err);break;
         case FG_OWNER_SESSION_RESTORE: status=depthb_owner_restore(depthb,slot,err);break;
+        case FG_OWNER_SESSION_RESET: status=depthb_owner_reset(depthb,slot,err);break;
         default:
             fg_error_set(err,FG_ERR_ARGUMENT,"invalid depth-B transaction op %u",operation);
             return FG_ERR_ARGUMENT;
@@ -5028,10 +5061,20 @@ static fg_status coordinator_owner_transaction(fg_coordinator *coordinator,uint8
     if(fg_owner_qsa_frontier(depthb->owner,slot,local_tokens)!=FG_OK)
         memset(local_tokens,0,sizeof(local_tokens));
     depthb_transaction_digest(control.frontier_sha256,request,slot,operation,local_tokens);
-    fg_message_type request_type=operation==FG_OWNER_SESSION_PREPARE?FG_MSG_SESSION_PREPARE:
-        operation==FG_OWNER_SESSION_COMMIT?FG_MSG_SESSION_COMMIT:FG_MSG_SESSION_RESTORE;
-    fg_message_type reply_type=operation==FG_OWNER_SESSION_PREPARE?FG_MSG_SESSION_PREPARED:
-        operation==FG_OWNER_SESSION_COMMIT?FG_MSG_SESSION_COMMITTED:FG_MSG_SESSION_RESTORED;
+    fg_message_type request_type=0,reply_type=0;
+    switch(operation){
+        case FG_OWNER_SESSION_PREPARE:
+            request_type=FG_MSG_SESSION_PREPARE;reply_type=FG_MSG_SESSION_PREPARED;break;
+        case FG_OWNER_SESSION_COMMIT:
+            request_type=FG_MSG_SESSION_COMMIT;reply_type=FG_MSG_SESSION_COMMITTED;break;
+        case FG_OWNER_SESSION_RESTORE:
+            request_type=FG_MSG_SESSION_RESTORE;reply_type=FG_MSG_SESSION_RESTORED;break;
+        case FG_OWNER_SESSION_RESET:
+            request_type=FG_MSG_SESSION_RESET;reply_type=FG_MSG_SESSION_RESETTED;break;
+        default:
+            fg_error_set(err,FG_ERR_ARGUMENT,"invalid depth-B transaction op %u",operation);
+            return FG_ERR_ARGUMENT;
+    }
     for(uint32_t peer=1;peer<FG_RANK_COUNT;peer++){
         uint8_t wire[FG_OWNER_SESSION_CONTROL_BYTES];
         control.rank=(uint8_t)peer;
@@ -5800,10 +5843,8 @@ static fg_status runtime_reserve_history(fg_runtime *runtime,size_t count,fg_err
     runtime->history=history;runtime->history_capacity=capacity;return FG_OK;
 }
 
-static fg_status runtime_reset_state(fg_runtime *runtime,fg_prefix_reset_reason reason,
-                                     fg_error *err){
+static fg_status runtime_reset_preflight(fg_runtime *runtime,fg_error *err){
     fg_status status=FG_OK;
-
     if(!transport_ready(&runtime->coordinator.transport_state)&&
        runtime->coordinator.qsa_pages.warm_outstanding){
         fg_error drain_error={0};
@@ -5823,14 +5864,10 @@ static fg_status runtime_reset_state(fg_runtime *runtime,fg_prefix_reset_reason 
                      "distributed transport is not reusable; reopen the runtime");
         return FG_ERR_UNAVAILABLE;
     }
-    status=fg_owner_reset_state(runtime->coordinator.owner,err);
-    if(status==FG_OK&&runtime->session_started)
-        status=coordinator_begin_session(&runtime->coordinator,err);
+    return FG_OK;
+}
 
-    if(status!=FG_OK){
-        runtime->state_ready=false;
-        return status;
-    }
+static void runtime_clear_token_state(fg_runtime *runtime,fg_prefix_reset_reason reason){
     runtime->state_ready=false;
     runtime->history_count=0;
     runtime->state_frontier=0;
@@ -5838,7 +5875,6 @@ static fg_status runtime_reset_state(fg_runtime *runtime,fg_prefix_reset_reason 
     runtime->next_token_valid=false;
     runtime->next_token=0;
     runtime->next_logit=0.0f;
-    runtime->coordinator.output_session=0u;
     runtime->empty_reason=reason;
     free(runtime->rendered_history);
     runtime->rendered_history=NULL;
@@ -5846,8 +5882,88 @@ static fg_status runtime_reset_state(fg_runtime *runtime,fg_prefix_reset_reason 
     runtime->pending_boundary_bytes=0;
     runtime->pending_eos_token=0;
     runtime->pending_eos_valid=false;
-    if(status==FG_OK)runtime->session_started=true;
+}
+
+/* M3.2 slot-scoped cold start: reset exactly one owner state slot and re-open
+ * its QSA mirror through the existing PREPARE transaction, leaving every other
+ * live session's slot untouched.  Does not create a new ring-wide session
+ * namespace (no BEGIN), so the other session continues uninterrupted. */
+static fg_status runtime_reset_slot(fg_runtime *runtime,uint32_t slot,
+                                    fg_prefix_reset_reason reason,fg_error *err){
+    if(slot>=FG_OWNER_SESSION_MAX||
+       slot>=fg_owner_session_count(runtime->coordinator.owner)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"owner state slot %u is not allocated",slot);
+        return FG_ERR_ARGUMENT;
+    }
+    fg_status status=runtime_reset_preflight(runtime,err);
     if(status!=FG_OK)return status;
+    status=coordinator_owner_transaction(&runtime->coordinator,FG_OWNER_SESSION_RESET,
+                                         (uint8_t)slot,err);
+    if(status==FG_OK)
+        status=coordinator_owner_transaction(&runtime->coordinator,FG_OWNER_SESSION_PREPARE,
+                                             (uint8_t)slot,err);
+    if(status!=FG_OK){
+        runtime->state_ready=false;
+        return status;
+    }
+    runtime_clear_token_state(runtime,reason);
+    runtime->coordinator.output_session=slot;
+    runtime->session_started=true;
+    runtime->state_ready=true;
+    return FG_OK;
+}
+
+static void runtime_slot_release(fg_runtime *runtime,fg_runtime_session *session){
+    if(!runtime||!session||!session->slot_assigned)return;
+    if(session->state_slot<FG_OWNER_SESSION_MAX&&
+       runtime->slot_owner[session->state_slot]==session->id)
+        runtime->slot_owner[session->state_slot]=0u;
+    session->slot_assigned=false;
+    session->state_slot=0u;
+}
+
+static fg_status runtime_slot_acquire(fg_runtime *runtime,fg_runtime_session *session,
+                                      uint32_t *slot,fg_error *err){
+    if(session->slot_assigned){
+        *slot=session->state_slot;
+        return FG_OK;
+    }
+    for(uint32_t candidate=0;candidate<FG_OWNER_SESSION_MAX;candidate++){
+        if(runtime->slot_owner[candidate])continue;
+        runtime->slot_owner[candidate]=session->id;
+        session->state_slot=candidate;
+        session->slot_assigned=true;
+        *slot=candidate;
+        return FG_OK;
+    }
+    fg_error_set(err,FG_ERR_LIMIT,"no free owner state slot for a new session");
+    return FG_ERR_LIMIT;
+}
+
+static bool runtime_other_live_session(const fg_runtime *runtime,
+                                       const fg_runtime_session *session){
+    for(uint32_t i=0;i<FG_RUNTIME_SESSION_MAX;i++){
+        const fg_runtime_session *other=&runtime->sessions[i];
+        if(other==session||!other->in_use||!other->slot_assigned)continue;
+        return true;
+    }
+    return false;
+}
+
+static fg_status runtime_reset_state(fg_runtime *runtime,fg_prefix_reset_reason reason,
+                                     fg_error *err){
+    fg_status status=runtime_reset_preflight(runtime,err);
+    if(status!=FG_OK)return status;
+    status=fg_owner_reset_state(runtime->coordinator.owner,err);
+    if(status==FG_OK&&runtime->session_started)
+        status=coordinator_begin_session(&runtime->coordinator,err);
+    if(status!=FG_OK){
+        runtime->state_ready=false;
+        return status;
+    }
+    runtime_clear_token_state(runtime,reason);
+    runtime->coordinator.output_session=0u;
+    runtime->session_started=true;
     runtime->state_ready=true;
     /* Every reset re-creates the owner sessions, so any other session's saved
      * frontier is stale from here on. */
@@ -5957,6 +6073,7 @@ fg_runtime_session *fg_runtime_session_find(fg_runtime *runtime,uint64_t id){
 void fg_runtime_session_release(fg_runtime *runtime,fg_runtime_session *session){
     if(!runtime||!session||!session->in_use)return;
     if(runtime->active_session==session)return;
+    runtime_slot_release(runtime,session);
     free(session->state.rendered_history);
     free(session->state.history);
     runtime_runner_reset(session);
@@ -5978,6 +6095,9 @@ fg_status fg_runtime_session_begin(fg_runtime *runtime,fg_runtime_session *sessi
         fg_error_set(err,FG_ERR_MISMATCH,"runtime already has an active session");
         return FG_ERR_MISMATCH;
     }
+    uint32_t slot=0;
+    fg_status slot_status=runtime_slot_acquire(runtime,session,&slot,err);
+    if(slot_status!=FG_OK)return slot_status;
     if(runtime->bootstrap_pending&&!session->adopted){
         /* The first session adopts the state fg_runtime_open created instead of
          * paying an extra owner BEGIN; single-session output stays byte
@@ -5992,21 +6112,30 @@ fg_status fg_runtime_session_begin(fg_runtime *runtime,fg_runtime_session *sessi
              session->ring_generation==runtime->ring_generation){
         runtime_session_load(runtime,&session->state);
     }else{
+        bool other_live=runtime_other_live_session(runtime,session);
         runtime_session_load(runtime,&session->state);
-        /* The runtime is open, so its owners already hold a session namespace:
-         * a cold start must BEGIN a fresh one.  (session_started is per
-         * session and false for a new object; the open-time reset is the only
-         * reset that legitimately skips BEGIN.) */
+        /* A lone cold start keeps the production path: ring-wide owner reset
+         * and a fresh BEGIN namespace at slot 0.  A cold start admitted while
+         * another session is live resets only this session's slot and re-opens
+         * its QSA mirror through the existing PREPARE transaction, so the other
+         * session's owner state is never touched. */
         runtime->session_started=true;
-        fg_status status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
+        fg_status status=other_live?
+            runtime_reset_slot(runtime,slot,FG_PREFIX_RESET_COLD_START,err):
+            runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
         if(status!=FG_OK){
             runtime_session_store(runtime,&session->state);
             return status;
         }
+        session->ring_generation=runtime->ring_generation;
         runtime->bootstrap_pending=false;
     }
     runtime->active_session=session;
     return FG_OK;
+}
+
+uint32_t fg_runtime_session_slot(const fg_runtime_session *session){
+    return session&&session->slot_assigned?session->state_slot:UINT32_MAX;
 }
 
 void fg_runtime_session_end(fg_runtime *runtime,fg_runtime_session *session){
@@ -6087,7 +6216,9 @@ fg_status fg_runtime_session_runner_begin(fg_runtime *runtime,fg_runtime_session
     }
     size_t prefill_offset=0;
     if(status==FG_OK&&!plan.hit&&runtime->history_count)
-        status=runtime_reset_state(runtime,plan.reset_reason,err);
+        status=runtime_other_live_session(runtime,session)?
+            runtime_reset_slot(runtime,session->state_slot,plan.reset_reason,err):
+            runtime_reset_state(runtime,plan.reset_reason,err);
     if(status==FG_OK){
         prefill_offset=plan.hit?plan.prefill_offset:0u;
         for(size_t i=prefill_offset;i<tokens.count;i++)
@@ -6216,6 +6347,79 @@ fg_status fg_runtime_session_runner_prefill(fg_runtime *runtime,fg_runtime_sessi
     return status;
 }
 
+/* Lone decode step: the exact production B=1 body (emit the pending token,
+ * append it to the session history, run coordinator_decode_token, advance the
+ * position).  No depth-B table step and no batch overhead; a session that is
+ * also bound in a table gets its frontier mirrored so a later batch step
+ * resumes from the same token. */
+static fg_status runner_batch_direct(fg_runtime *runtime,fg_runtime_session *session,
+    fg_decode_batch_table *table,fg_token_callback callback,void *context,
+    bool *left,fg_error *err){
+    *left=false;
+    if(!session||!session->runner.active||!session->state.next_token_valid){
+        fg_error_set(err,FG_ERR_MISMATCH,"multiplex runner batch session is not decodable");
+        return FG_ERR_MISMATCH;
+    }
+    fg_session_runner *runner=&session->runner;
+    uint32_t token=session->state.next_token;
+    if(token==fg_tokenizer_eos(runtime->coordinator.tokenizer)){
+        const char *eos_text=NULL;size_t eos_bytes=0;
+        fg_status status=fg_tokenizer_token(runtime->coordinator.tokenizer,token,
+                                            &eos_text,&eos_bytes,NULL,err);
+        if(status==FG_OK)status=runtime_render_append(&runner->candidate,
+            &runner->candidate_length,&runner->candidate_capacity,eos_text,eos_bytes,err);
+        if(status==FG_OK)status=runtime_render_append(&runner->candidate,
+            &runner->candidate_length,&runner->candidate_capacity,"\n",1u,err);
+        if(status!=FG_OK)return status;
+        runner->stopped_on_eos=true;
+        runner->pending_boundary_bytes=eos_bytes+1u;
+        runner->pending_eos=token;
+        *left=true;
+    }else{
+        char decoded[4096];size_t bytes=0;
+        fg_status status=fg_tokenizer_decode_token(runtime->coordinator.tokenizer,token,
+                                                   decoded,sizeof(decoded),&bytes,err);
+        if(status==FG_OK)status=callback(context,token,decoded,bytes,err);
+        if(status==FG_OK)status=runtime_render_append(&runner->candidate,
+            &runner->candidate_length,&runner->candidate_capacity,decoded,bytes,err);
+        if(status!=FG_OK)return status;
+        if(session->state.history_count>=session->state.history_capacity){
+            fg_error_set(err,FG_ERR_LIMIT,"multiplex history exceeds its reserved capacity");
+            return FG_ERR_LIMIT;
+        }
+        session->state.history[session->state.history_count++]=(int32_t)token;
+        runner->generated++;
+        uint32_t next=0;float logit=0.0f;
+        status=coordinator_decode_token(&runtime->coordinator,session->state.history,
+            session->state.history_count,(uint32_t)session->state.history_count-1u,
+            session->state.state_position,&next,&logit,err);
+        if(status!=FG_OK)return status;
+        session->state.next_token=next;
+        session->state.next_logit=logit;
+        session->state.next_token_valid=true;
+        session->state.state_position++;
+        if(runner->generated>=runner->max_tokens)*left=true;
+        /* Mirror the committed frontier into the batch table when this session
+         * has an entry, so a later B>=2 step starts exactly here. */
+        if(table){
+            uint32_t index=fg_decode_batch_table_find(table,session->id);
+            if(index!=FG_DECODE_BATCH_INVALID_SLOT){
+                uint32_t position[4]={session->state.state_position,
+                                      session->state.state_position,
+                                      session->state.state_position,0u};
+                fg_status sync=fg_decode_batch_sequence_frontier(table,session->id,
+                    (uint32_t)session->state.history_count,
+                    (uint32_t)(session->state.history_count-1u),position,err);
+                if(sync!=FG_OK)return sync;
+            }
+        }
+    }
+    if(*left&&table&&fg_decode_batch_table_find(table,session->id)!=
+       FG_DECODE_BATCH_INVALID_SLOT)
+        return fg_decode_batch_sequence_leave(table,session->id,err);
+    return FG_OK;
+}
+
 fg_status fg_runtime_session_runner_batch(fg_runtime *runtime,
     fg_runtime_session **sessions,uint32_t count,fg_decode_batch_table *table,
     const fg_decode_batch_policy *policy,
@@ -6227,6 +6431,9 @@ fg_status fg_runtime_session_runner_batch(fg_runtime *runtime,
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid multiplex runner batch");
         return FG_ERR_ARGUMENT;
     }
+    if(count==1u)
+        return runner_batch_direct(runtime,sessions[0],table,callbacks[0],
+                                   contexts[0],left,err);
     bool ready[FG_DECODE_BATCH_MAX_SLOTS]={false};
     bool leave_after[FG_DECODE_BATCH_MAX_SLOTS]={false};
     uint32_t active=0;

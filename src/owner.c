@@ -506,6 +506,43 @@ fg_status fg_owner_reset_state(fg_owner_executor *e,fg_error *err){
         if(e->qsa[session])status=fg_qsa_session_reset(e->qsa[session],err);
     return status;
 }
+/* M3.2 slot-scoped cold start.  Unlike fg_owner_reset_state this never walks
+ * another session's state: a session admitted while a second session holds its
+ * slot only clears its own GDN/PLE tensors and QSA namespace.  Callers must be
+ * at a safe point (between ring steps/prefill chunks). */
+fg_status fg_owner_reset_session_slot(fg_owner_executor *e,uint32_t session,fg_error *err){
+    if(!e||!session_allocated(e,session)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"owner session %u is not allocated",session);
+        return FG_ERR_ARGUMENT;
+    }
+    for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){
+        if(e->gdn_state[session][layer].conv_state)
+            memset(fg_vk_tensor_map(e->gdn_state[session][layer].conv_state),0,
+                   (size_t)fg_vk_tensor_bytes(e->gdn_state[session][layer].conv_state));
+        if(e->gdn_state[session][layer].recurrent_state)
+            memset(fg_vk_tensor_map(e->gdn_state[session][layer].recurrent_state),0,
+                   (size_t)fg_vk_tensor_bytes(e->gdn_state[session][layer].recurrent_state));
+    }
+    if(e->ples_state[session])
+        memset(fg_vk_tensor_map(e->ples_state[session]),0,
+               (size_t)fg_vk_tensor_bytes(e->ples_state[session]));
+    /* The staged write and frame pipeline belong to the reset boundary: a
+     * slot-scoped reset only runs between steps, so every frame's write has
+     * already been consumed.  Clear them the same way the ring-wide reset
+     * does, then invalidate static runs recorded against this session. */
+    memset(&e->pending_write,0,sizeof(e->pending_write));
+    for(uint32_t slot=0;slot<FG_OWNER_SLOT_COUNT;slot++){
+        memset(&e->decode_slots[slot].pending_write,0,
+               sizeof(e->decode_slots[slot].pending_write));
+        e->decode_slots[slot].active=false;
+        e->prefill_slots[slot].active=false;
+    }
+    for(uint32_t static_slot=0;static_slot<FG_VK_STATIC_SLOTS;static_slot++)
+        if(e->static_run_session_valid[static_slot]&&
+           e->static_run_session[static_slot]==session)
+            e->static_run_session_valid[static_slot]=false;
+    return e->qsa[session]?fg_qsa_session_reset(e->qsa[session],err):FG_OK;
+}
 fg_status fg_owner_qsa_checkpoint(fg_owner_executor *executor,fg_error *err){if(!executor||!OWNER_QSA(executor)){fg_error_set(err,FG_ERR_ARGUMENT,"owner QSA checkpoint is unavailable");return FG_ERR_ARGUMENT;}return fg_qsa_session_checkpoint(OWNER_QSA(executor),err);}
 
 static fg_vk_tensor *weight(fg_owner_executor *executor,uint32_t layer,const char *suffix,fg_error *err){char name[FG_TENSOR_NAME_MAX];int length=snprintf(name,sizeof(name),"blk.%u.%s",layer,suffix);if(length<0||(uint32_t)length>=sizeof(name)){fg_error_set(err,FG_ERR_LIMIT,"owner tensor name overflow");return NULL;}fg_vk_tensor *tensor=fg_model_tensor(executor->model,name);if(!tensor)fg_error_set(err,FG_ERR_MISMATCH,"owner rank is missing %s",name);return tensor;}

@@ -183,7 +183,10 @@ typedef enum fg_message_type {
      * routes plus their 40 KiB hyper states, and one result returns both
      * tokens (see fg_output_batch_work). */
     FG_MSG_OUTPUT_BATCH_WORK = 53,
-    FG_MSG_OUTPUT_BATCH_RESULT = 54
+    FG_MSG_OUTPUT_BATCH_RESULT = 54,
+    /* M3.2 slot-scoped owner session reset (see FG_OWNER_SESSION_RESET). */
+    FG_MSG_SESSION_RESET = 55,
+    FG_MSG_SESSION_RESETTED = 56
 } fg_message_type;
 
 typedef struct fg_gdn_state_fetch {
@@ -217,7 +220,12 @@ typedef enum fg_owner_session_operation {
     FG_OWNER_SESSION_COMMIT = 5,
     FG_OWNER_SESSION_COMMITTED = 6,
     FG_OWNER_SESSION_RESTORE = 7,
-    FG_OWNER_SESSION_RESTORED = 8
+    FG_OWNER_SESSION_RESTORED = 8,
+    /* M3.2 slot-scoped cold start: zero one owner state slot's GDN/PLE state
+     * and reset its QSA session without touching any other slot.  Used when a
+     * second session is admitted while another session's slot is live. */
+    FG_OWNER_SESSION_RESET = 9,
+    FG_OWNER_SESSION_RESETTED = 10
 } fg_owner_session_operation;
 
 typedef struct fg_owner_session_control {

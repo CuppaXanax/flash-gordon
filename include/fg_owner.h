@@ -111,6 +111,12 @@ bool fg_owner_owns_layer(const fg_owner_executor *executor,uint32_t layer);
 fg_vk_tensor *fg_owner_prefill_input(fg_owner_executor *executor);
 uint64_t fg_owner_qsa_host_bytes(const fg_owner_executor *executor);
 fg_status fg_owner_reset_state(fg_owner_executor *executor,fg_error *err);
+/* M3.2 per-slot cold start: zero exactly one owner state slot (that session's
+ * GDN conv/recurrent and PLE state), reset that slot's QSA session, and
+ * invalidate its static-run bindings.  Every other session slot is untouched,
+ * so admitting a second session never wipes the first session's state. */
+fg_status fg_owner_reset_session_slot(fg_owner_executor *executor,uint32_t session,
+                                      fg_error *err);
 fg_status fg_owner_qsa_checkpoint(fg_owner_executor *executor,fg_error *err);
 fg_status fg_owner_gr_read(fg_owner_executor *executor,uint32_t layer,bool ffn,const fg_vk_tensor *hyper_input,
                            fg_vk_tensor **mixed,const fg_vk_tensor **residual,fg_vk_tensor **injection,fg_error *err);
