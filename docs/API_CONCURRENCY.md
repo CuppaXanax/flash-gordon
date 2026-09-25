@@ -5,9 +5,14 @@ branch `feat/api-m2-admission`); M1 landed as `ee25e7e` (2026-09-24, branch
 `feat/api-m1-frontend`, deployed to the 8-blade fleet as live dir
 `20260924-api-m1`); **M3.1 landed** on `feat/batch-block-r1` (`08448c0` +
 `723be95`: per-session runtime state, live session table, public `session_id` /
-`X-Flash-Gordon-Session`, fleet-validated); M3.2 (two-session decode) is in
-progress - runner primitives on the branch, blockers in
-`docs/M3_SESSION_MULTIPLEXING.md` section 11.
+`X-Flash-Gordon-Session`, fleet-validated); M3.2 (two-session decode) is
+implemented on the branch: parked turns (`api_turn_open/run_legacy/close`), the
+`api_scheduler_*` engine loop (max two live turns, chunk-yielded prefill,
+depth-B batch when both decode, lone session on the B=1 runner step), per-slot
+cold start and owner-session select.  The `--concurrent` selftest and the two
+real-client/abort HTTP gates pass; the full promotion gate set is not yet
+re-run, so it stays fail-closed.  Evidence:
+`bc-250-dbg/results/m3b-20260924-2314/EVIDENCE.md`.
 
 ## M2: bounded FIFO admission on the engine queue (landed)
 

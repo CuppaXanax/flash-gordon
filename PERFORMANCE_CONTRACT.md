@@ -67,24 +67,22 @@ bandwidth-bound; remaining kernel headroom is small. See
 
 ## Multi-session status
 
-The engine still serves one generation at a time. The HTTP front-end is a
-dedicated thread ([docs/API_CONCURRENCY.md](docs/API_CONCURRENCY.md), M1
-landed): keep-alive, chunked SSE, front-end heartbeats and concurrent
-`/health`/`/v1/models` no longer share the token loop; probes answer in ~7-10 ms
-during prefill and the vision tower (was ~2 s and 2.6 s). M2 admits concurrent
-chat requests into a FIFO queue (bound 4, `429` + `Retry-After` past it, queued
-clients that disconnect are canceled); the engine still runs one generation at a
-time. A depth-B batch path
-exists (`src/decode_batch.c`: batch table, FIFO scheduler, owner session slots
-with PREPARE/COMMIT/RESTORE transactions) and is byte-identical at B=1. The
-batched decode block (branch `feat/batch-block-r1`) is parity-clean after two
-fixes (a pair-GDN residual and a shared QSA attention scratch), but measures
-only ~1.19x for two slots (100.2 vs 119.6 ms/step) against the 1.6x target:
-the ring step is assembly/hop/wake-bound (25 ms n-gram assemble, 6 ms sampling
-relays) and the batch-2 dense saving is ~1.2 ms of a ~40 ms/token step - under
-the measured 1.56x byte ceiling. It stays fail-closed and test-only; the
-multi-session lever is the overhead cuts (async n-gram prefetch, batched
-sampling relays), then M3 session multiplexing.
+M3.2 two-session serving is implemented on `feat/batch-block-r1` but **not
+promoted** (fail-closed): parked turns, the two-turn engine scheduler, per-slot
+cold start and owner-session select. A lone eligible session runs the
+production B=1 runner step and never pays a batch or select round trip; a
+second session batch-steps through the depth-B table (74.6 ms/step measured,
+~25.9 tok/s aggregate in the depth-B gate) and a long prefill chunk-yields one
+128-token group at a time, only while another session has work. The
+`--concurrent` selftest (short pair + 2K chunk-yielded prefill) passes with
+per-session byte parity and an unchanged slot-0 state digest; two real clients
+decode concurrently at ~11.4/13.4 tok/s per session with `/health` probes
+<= 9.3 ms and abort churn leaving the survivor byte-identical. The solo path is
+byte-identical to `main` on the pinned greedy requests (3 runs each), but the
+full soak/battery/depth-B re-run on the final binary is still pending, so
+production remains `20260924-teardown` and the numbers above are gate
+evidence, not a production claim.  See
+`bc-250-dbg/results/m3b-20260924-2314/EVIDENCE.md`.
 
 ## Do not claim
 

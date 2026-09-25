@@ -2,9 +2,11 @@
 
 Design note for the multi-session engine milestone.  Status: **M3.1 landed**
 (branch `feat/batch-block-r1`, commits `08448c0` + `723be95`, fleet-validated
-2026-09-24); **M3.2 in progress** - the incremental runner primitives are on the
-branch (`fg_runtime_session_runner_*`, not yet wired into serving), and the
-exact blockers are in section 11.  It builds on M1 (front-end/engine split), M2
+2026-09-24); **M3.2 implemented and partially gated** - both blockers are
+resolved (section 11), the engine scheduler and the `--concurrent` selftest are
+on the branch, and the HTTP two-client/abort gates pass; the full promotion
+gate set (depth-B + soak + battery + heartbeats on the final binary) is not yet
+re-run, so it stays fail-closed.  It builds on M1 (front-end/engine split), M2
 (bounded FIFO admission on `api_engine_queue`) and the depth-B ring decode
 (`src/decode_batch.c`, `docs/DEPTH_B_DECODE_RING.md`,
 `docs/BATCHED_DECODE_BLOCK.md`) that reached parity and measured 74.6 ms/step
@@ -304,6 +306,36 @@ byte identity `sha256(d7b851e9...)`, `correctness64` `[12]`/`[Paris]`,
 323.08 / 26.93 / 24.00), battery + `check-flags` PASS, depth-B selftest PASS
 (batch-2 decode 78.7 ms/step in that window, aggregate 25.4 tok/s).
 
+### M3.2 - blockers resolved, gates in progress (2026-09-24 round 2)
+
+Both structural blockers now have code and fleet evidence
+(`bc-250-dbg/results/m3b-20260924-2314/EVIDENCE.md`):
+
+1. **Per-slot cold start** - `fg_owner_reset_session_slot` (`src/owner.c`) plus
+   the `FG_OWNER_SESSION_RESET/RESETTED` owner transaction carry a slot-scoped
+   reset to all ranks; `runtime_reset_slot` (`src/runtime.c`) is the cold start
+   (RESET + the existing PREPARE lazy QSA mirror open, no ring-wide BEGIN) and
+   each live session reserves an owner slot.  The `--concurrent` selftest shows
+   session X's slot-0 digest identical before and after session Y's cold start
+   (`a0793599ac7b27c4`).
+2. **API park/pump** - `handle_chat_completions` is now
+   `api_turn_open`/`api_turn_run_legacy`/`api_turn_close`, and `api_scheduler_run`
+   (at most two live turns, chunk-yield, depth-B batch, B=1 runner step for a
+   lone session, client-gone abort with session drop) replaces the synchronous
+   engine loop.  The runtime binding is taken per scheduler step, and worker
+   owner-session selection rides `SESSION_SELECT/SELECTED` before each direct
+   decode/prefill call.
+3. **First-cut eligibility** - text-only, non-continuation, penalty-free,
+   `temperature == 0`, identical sampler configs; everything else stays on the
+   synchronous legacy path and runs strictly solo.
+4. **Prefill chunking** - validated: the 2K-token chunk-yielded prefill
+   reproduces the serial prefill's tokens and logits exactly.
+
+Gates on the final binary still owed before promotion: depth-B selftest,
+`pi-stability` soak bands, fleet battery, and the SSE heartbeat probe.
+
+<details><summary>Original blocker list (historical)</summary>
+
 ### M3.2 - primitives on the branch, not wired; exact blockers
 
 The incremental runner (`src/runtime.c`): `fg_runtime_session_runner_begin`
@@ -350,3 +382,5 @@ Blockers, in the order they must be solved:
 Until 1 and 2 are done and the two-session gates in section 9 pass, M3.2 stays
 fail-closed on `feat/batch-block-r1`; production remains `20260924-teardown`
 (main `c238858`).
+
+</details>
