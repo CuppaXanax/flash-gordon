@@ -5580,8 +5580,10 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
         if(status==FG_OK)status=coordinator_output(coordinator,token_index,input,next_token,
             logit,err);
     }
-    if(status==FG_OK)
-        coordinator_prefetch_next(coordinator,history,history_count,(int32_t)*next_token);
+    /* No per-step read-ahead here: production B=1 rarely misses after the first
+     * decode (the prefill sample issues that one prefetch), and issuing a job
+     * every ring step keeps the NVMe busy for no lookup benefit - measured as a
+     * ~7% short-decode regression on the fleet. */
     if(trace){t_output=dispatch_ts();
         fg_vk_counters decode_counters={0};fg_vk_get_counters(vk,&decode_counters);
         fprintf(stderr,"RING_DECODE token=%u embed_ms=%.3f ngram_ms=%.3f send_ms=%.3f "
