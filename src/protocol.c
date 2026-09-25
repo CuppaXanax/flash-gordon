@@ -113,6 +113,7 @@ static bool message_type_supported(uint16_t version,fg_message_type type){
     if(version>=6u&&type>=FG_MSG_GDN_STATE_FETCH&&type<=FG_MSG_OUTPUT_HIDDEN)return true;
     if(version>=6u&&type>=FG_MSG_OUTPUT_SLICE&&type<=FG_MSG_OUTPUT_SLICE_HIDDEN)return true;
     if(version>=6u&&type>=FG_MSG_DECODE_BATCH_WORK&&type<=FG_MSG_DECODE_BATCH_RESULT)return true;
+    if(version>=6u&&type>=FG_MSG_OUTPUT_BATCH_WORK&&type<=FG_MSG_OUTPUT_BATCH_RESULT)return true;
     return version>=6u&&type>=FG_MSG_SESSION_PREPARE&&type<=FG_MSG_SESSION_RESTORED;
 }
 
