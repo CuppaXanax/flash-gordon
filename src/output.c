@@ -135,6 +135,9 @@ struct fg_output_slice {
     fg_vk_tensor *ids;
     fg_vk_tensor *topk_scores[2];
     fg_vk_tensor *topk_ids[2];
+    /* The hc_* tensors are borrowed from the model on the local path and
+     * loaded copies on the foreign path; only owned copies may be destroyed. */
+    bool hc_owned;
     uint32_t first_row;
     uint32_t rows;
     uint32_t groups;
@@ -152,6 +155,8 @@ struct fg_output_hc {
     fg_vk_tensor *up;
     fg_vk_tensor *hidden;
     fg_vk_tensor *hyper;
+    /* Borrowed on the local path (model-owned), loaded copies when foreign. */
+    bool hc_owned;
 };
 
 static fg_status output_slice_require(fg_model *model,fg_error *err){
@@ -243,6 +248,7 @@ fg_status fg_output_slice_create(fg_output_slice **out,fg_model *model,uint32_t 
     if(status!=FG_OK)return status;
     status=fg_vk_tensor_view(base,offset,bytes,&slice->weight,err);
     if(status==FG_OK)fg_vk_tensor_set_format(slice->weight,fg_vk_tensor_get_format(base));
+    slice->hc_owned=false;
     slice->hc_norm=fg_model_tensor(model,"output_hc_norm.weight");
     slice->hc_down=fg_model_tensor(model,"output_hc_down.weight");
     slice->hc_up=fg_model_tensor(model,"output_hc_up.weight");
@@ -276,6 +282,7 @@ fg_status fg_output_slice_create_foreign(fg_output_slice **out,fg_model *model,
     fg_output_slice *slice=NULL;
     status=output_slice_alloc(&slice,model,ways,first_row,rows,err);
     if(status!=FG_OK)return status;
+    slice->hc_owned=true;
     status=foreign_tensor_load(vk,weight,pack_dir,offset,bytes,"output slice",&slice->weight,err);
     if(status==FG_OK&&ways==FG_OUTPUT_SPLIT_WAYS_MIN)
         status=foreign_tensor_load(vk,hc_norm,pack_dir,0u,hc_norm->bytes,
@@ -297,8 +304,11 @@ void fg_output_slice_destroy(fg_output_slice *slice){
     fg_vk_tensor_destroy(slice->hyper);fg_vk_tensor_destroy(slice->hidden);
     fg_vk_tensor_destroy(slice->up);fg_vk_tensor_destroy(slice->activated);
     fg_vk_tensor_destroy(slice->down);fg_vk_tensor_destroy(slice->normalized);
-    fg_vk_tensor_destroy(slice->hc_up);fg_vk_tensor_destroy(slice->hc_down);
-    fg_vk_tensor_destroy(slice->hc_norm);fg_vk_tensor_destroy(slice->weight);free(slice);
+    if(slice->hc_owned){
+        fg_vk_tensor_destroy(slice->hc_up);fg_vk_tensor_destroy(slice->hc_down);
+        fg_vk_tensor_destroy(slice->hc_norm);
+    }
+    fg_vk_tensor_destroy(slice->weight);free(slice);
 }
 
 uint32_t fg_output_slice_ways(const fg_output_slice *slice){return slice?slice->ways:0u;}
@@ -378,7 +388,7 @@ fg_status fg_output_hc_create(fg_output_hc **out,fg_model *model,const char *pac
     *out=NULL;
     fg_output_hc *hc=calloc(1,sizeof(*hc));
     if(!hc){fg_error_set(err,FG_ERR_OOM,"allocate output HC executor");return FG_ERR_OOM;}
-    hc->model=model;
+    hc->model=model;hc->hc_owned=foreign;
     fg_status status=FG_OK;
     if(foreign){
         const fg_manifest *manifest=fg_model_manifest(model);
@@ -423,8 +433,11 @@ void fg_output_hc_destroy(fg_output_hc *hc){
     fg_vk_tensor_destroy(hc->hyper);fg_vk_tensor_destroy(hc->hidden);
     fg_vk_tensor_destroy(hc->up);fg_vk_tensor_destroy(hc->activated);
     fg_vk_tensor_destroy(hc->down);fg_vk_tensor_destroy(hc->normalized);
-    fg_vk_tensor_destroy(hc->hc_up);fg_vk_tensor_destroy(hc->hc_down);
-    fg_vk_tensor_destroy(hc->hc_norm);free(hc);
+    if(hc->hc_owned){
+        fg_vk_tensor_destroy(hc->hc_up);fg_vk_tensor_destroy(hc->hc_down);
+        fg_vk_tensor_destroy(hc->hc_norm);
+    }
+    free(hc);
 }
 
 fg_status fg_output_hc_run(fg_output_hc *hc,const void *hyper,float *hidden,fg_error *err){
