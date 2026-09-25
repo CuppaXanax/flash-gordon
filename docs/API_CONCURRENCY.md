@@ -216,3 +216,8 @@ workstream; do not bolt it onto the token loop.
   the queue, which is the prerequisite for multiple in-flight sessions; M2
   now admits more than one request and the engine still runs them one at a
   time.
+- The M3 plan (session lifecycle, admission/scheduling on the owner slots,
+  abort/isolation, state/QSA/prefix interactions, failure semantics, test
+  plan) is `docs/M3_SESSION_MULTIPLEXING.md`; the depth-B batch step it builds
+  on measured 74.6 ms/step for two sequences after the ring overhead cuts
+  (`bc-250-dbg/results/overheads-20260924-2310/EVIDENCE.md`).
