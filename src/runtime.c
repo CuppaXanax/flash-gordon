@@ -2907,7 +2907,7 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_
     if(status==FG_OK&&output){handoff=calloc(1,sizeof(*handoff));if(!handoff){fg_error_set(err,FG_ERR_OOM,"allocate output handoff state");status=FG_ERR_OOM;}}
     if(status==FG_OK)status=token_profile_prepare(fg_model_vk(model),err);
     uint8_t *bulk_receive=prefill.receive;uint32_t bulk_capacity=prefill.receive_capacity;if(qsa.enabled&&qsa.receive_capacity>bulk_capacity){bulk_receive=qsa.receive_wire;bulk_capacity=qsa.receive_capacity;}if(layer_work.work_capacity>bulk_capacity){bulk_receive=layer_work.work_wire;bulk_capacity=layer_work.work_capacity;}uint64_t session_id=0;
-    while(status==FG_OK){uint32_t peer=0,bytes=0;fg_frame_header header;fg_fabric_class ready_class;fg_fabric_recv_timing receive_timing={0};receive_timing.poll_start_ns=critical_ns();int32_t split_wait_ms=worker_output_split_pending(handoff)?worker_output_split_remaining_ms(handoff):-1;if(split_wait_ms==0){status=worker_output_split_timeout(handoff,self,err);break;}status=split_wait_ms>0?fg_fabric_wait_ready_timeout(fabric,3u,split_wait_ms,&peer,&ready_class,err):fg_fabric_wait_ready(fabric,3u,&peer,&ready_class,err);if(status==FG_ERR_LIMIT){if(worker_output_split_pending(handoff)&&worker_output_split_remaining_ms(handoff)==0)status=worker_output_split_timeout(handoff,self,err);else status=FG_OK;}receive_timing.ready_ns=critical_ns();if(status!=FG_OK)break;if(ready_class==FG_FABRIC_BULK){status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_BULK,&header,bulk_receive,bulk_capacity,&bytes,&receive_timing,err);fg_message_type type=status==FG_OK?fg_frame_type(&header):0;if(status==FG_OK&&type==FG_MSG_PREFILL_LAYER_WORK)status=handle_prefill_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_PREFILL_WORK)status=handle_prefill_expert_work(fabric,expert,manifest,self,session_id,peer,&header,bulk_receive,bytes,&prefill,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_APPEND)status=handle_qsa_page_append(&qsa,manifest,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_BARRIER)status=handle_qsa_page_barrier(fabric,&qsa,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_FETCH)status=handle_qsa_page_fetch(fabric,&qsa,owner,manifest,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_GDN_STATE_FETCH)status=handle_gdn_state_fetch(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_DECODE_LAYER_WORK)status=handle_decode_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_DECODE_BATCH_WORK)status=handle_decode_batch_work(fabric,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,&depthb,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_BATCH_WORK)status=handle_output_batch_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,bulk_receive,bytes,hyper,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_HIDDEN)status=handle_output_hidden(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,bulk_receive,bytes,hyper,handoff,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_SLICE_HIDDEN)status=handle_output_slice_hidden(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,bulk_receive,bytes,hyper,handoff,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported bulk message %u",self,type);status=FG_ERR_FORMAT;}continue;}status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_CONTROL,&header,control,control_capacity,&bytes,&receive_timing,err);if(status!=FG_OK)break;fg_message_type type=fg_frame_type(&header);if(type==FG_MSG_DECODE_WORK){if(!session_id||fg_frame_request_id(&header)!=session_id){fg_error_set(err,FG_ERR_MISMATCH,"stale expert work request");status=FG_ERR_MISMATCH;}else status=handle_expert_work(fabric,expert,fg_model_vk(model),self,peer,&header,control,bytes,&receive_timing,ew_result,ew_wire,err);    }else if(type==FG_MSG_NGRAM_WORK)status=handle_ngram_work(fabric,ngram,FG_FABRIC_BULK,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_SESSION_BEGIN){fg_output_handoff_reset(handoff);status=begin_session(fabric,manifest,directory,&qsa,owner,self,peer,&header,control,bytes,&session_id,output,&depthb,err);}else if(type==FG_MSG_SESSION_PREPARE||type==FG_MSG_SESSION_COMMIT||type==FG_MSG_SESSION_RESTORE||type==FG_MSG_SESSION_RESET)status=handle_owner_session_transaction(fabric,&depthb,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_OUTPUT_HISTORY)status=handle_output_history(fabric,output,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_OUTPUT_WORK)status=handle_output_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,err);else if(type==FG_MSG_OUTPUT_CONFIG)status=handle_output_config(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,control,bytes,hyper,handoff,err);else if(type==FG_MSG_OUTPUT_PARTIAL)status=handle_output_partial(fabric,output,output_slice,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,handoff,err);else{fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported control message %u",self,type);status=FG_ERR_FORMAT;}}
+    while(status==FG_OK){uint32_t peer=0,bytes=0;fg_frame_header header;fg_fabric_class ready_class;fg_fabric_recv_timing receive_timing={0};receive_timing.poll_start_ns=critical_ns();int32_t split_wait_ms=worker_output_split_pending(handoff)?worker_output_split_remaining_ms(handoff):-1;if(split_wait_ms==0){status=worker_output_split_timeout(handoff,self,err);break;}status=split_wait_ms>0?fg_fabric_wait_ready_timeout(fabric,3u,split_wait_ms,&peer,&ready_class,err):fg_fabric_wait_ready(fabric,3u,&peer,&ready_class,err);if(status==FG_ERR_LIMIT){if(worker_output_split_pending(handoff)&&worker_output_split_remaining_ms(handoff)==0)status=worker_output_split_timeout(handoff,self,err);else status=FG_OK;}receive_timing.ready_ns=critical_ns();if(status!=FG_OK)break;if(ready_class==FG_FABRIC_BULK){status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_BULK,&header,bulk_receive,bulk_capacity,&bytes,&receive_timing,err);fg_message_type type=status==FG_OK?fg_frame_type(&header):0;if(status==FG_OK&&type==FG_MSG_PREFILL_LAYER_WORK)status=handle_prefill_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_PREFILL_WORK)status=handle_prefill_expert_work(fabric,expert,manifest,self,session_id,peer,&header,bulk_receive,bytes,&prefill,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_APPEND)status=handle_qsa_page_append(&qsa,manifest,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_BARRIER)status=handle_qsa_page_barrier(fabric,&qsa,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_QSA_PAGE_FETCH)status=handle_qsa_page_fetch(fabric,&qsa,owner,manifest,self,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_GDN_STATE_FETCH)status=handle_gdn_state_fetch(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,err);else if(status==FG_OK&&type==FG_MSG_DECODE_LAYER_WORK)status=handle_decode_layer_work(fabric,owner,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,err);else if(status==FG_OK&&type==FG_MSG_DECODE_BATCH_WORK)status=handle_decode_batch_work(fabric,manifest,self,session_id,peer,&header,bulk_receive,bytes,&layer_work,&depthb,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_BATCH_WORK)status=handle_output_batch_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,bulk_receive,bytes,hyper,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_HIDDEN)status=handle_output_hidden(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,bulk_receive,bytes,hyper,handoff,err);else if(status==FG_OK&&type==FG_MSG_OUTPUT_SLICE_HIDDEN)status=handle_output_slice_hidden(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,bulk_receive,bytes,hyper,handoff,err);else if(status==FG_OK){fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported bulk message %u",self,type);status=FG_ERR_FORMAT;}continue;}status=fg_fabric_recv_timed(fabric,peer,FG_FABRIC_CONTROL,&header,control,control_capacity,&bytes,&receive_timing,err);if(status!=FG_OK)break;fg_message_type type=fg_frame_type(&header);if(type==FG_MSG_DECODE_WORK){if(!session_id||fg_frame_request_id(&header)!=session_id){fg_error_set(err,FG_ERR_MISMATCH,"stale expert work request");status=FG_ERR_MISMATCH;}else status=handle_expert_work(fabric,expert,fg_model_vk(model),self,peer,&header,control,bytes,&receive_timing,ew_result,ew_wire,err);    }else if(type==FG_MSG_NGRAM_WORK)status=handle_ngram_work(fabric,ngram,FG_FABRIC_BULK,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_SESSION_BEGIN){fg_output_handoff_reset(handoff);status=begin_session(fabric,manifest,directory,&qsa,owner,self,peer,&header,control,bytes,&session_id,output,&depthb,err);}else if(type==FG_MSG_SESSION_PREPARE||type==FG_MSG_SESSION_COMMIT||type==FG_MSG_SESSION_RESTORE||type==FG_MSG_SESSION_RESET||type==FG_MSG_SESSION_SELECT)status=handle_owner_session_transaction(fabric,&depthb,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_OUTPUT_HISTORY)status=handle_output_history(fabric,output,self,session_id,peer,&header,control,bytes,err);else if(type==FG_MSG_OUTPUT_WORK)status=handle_output_work(fabric,output,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,err);else if(type==FG_MSG_OUTPUT_CONFIG)status=handle_output_config(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,control,bytes,hyper,handoff,err);else if(type==FG_MSG_OUTPUT_PARTIAL)status=handle_output_partial(fabric,output,output_slice,fg_model_vk(model),self,session_id,peer,&header,control,bytes,hyper,handoff,err);else{fg_error_set(err,FG_ERR_FORMAT,"rank %u received unsupported control message %u",self,type);status=FG_ERR_FORMAT;}}
     fg_vk_tensor_destroy(hyper);free(handoff);
     for(uint32_t slot=0;slot<FG_OWNER_SESSION_MAX;slot++)
         if(depthb.checkpoint_valid[slot])fg_owner_session_snapshot_release(&depthb.checkpoint[slot]);
@@ -8513,10 +8513,12 @@ static fg_status concurrent_selftest_case(fg_runtime *runtime,const char *name,
         FG_OWNER_SESSION_PREPARE,1u,err);
     if(status==FG_OK)status=depthb_decode_b1(runtime,1u,&tokens_y,max_tokens,&ref_y,
         measure?&serial_y_ms:NULL,NULL,err);
+    if(status!=FG_OK)fprintf(stderr,"CONCURRENT_FAIL case=%s at=oracle-y msg=%s\n",name,err->message);
     if(status==FG_OK)status=coordinator_owner_transaction(&runtime->coordinator,
         FG_OWNER_SESSION_COMMIT,1u,err);
     if(status==FG_OK)status=depthb_decode_b1(runtime,0u,&tokens_x,max_tokens,&ref_x,
         measure?&serial_x_ms:NULL,NULL,err);
+    if(status!=FG_OK)fprintf(stderr,"CONCURRENT_FAIL case=%s at=oracle-x msg=%s\n",name,err->message);
     /* Phase 2: the concurrent run on a fresh epoch. */
     fg_runtime_session *x=NULL,*y=NULL;
     fg_generation_stats stats_x={0},stats_y={0};
@@ -8526,6 +8528,7 @@ static fg_status concurrent_selftest_case(fg_runtime *runtime,const char *name,
     bool iso_pre=false,iso_post=false;
     uint64_t digest_pre=0,digest_post=0;
     if(status==FG_OK)status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
+    if(status!=FG_OK)fprintf(stderr,"CONCURRENT_FAIL case=%s at=phase2-reset msg=%s\n",name,err->message);
     if(status==FG_OK)status=fg_decode_batch_table_init(&table,2u,err);
     if(status==FG_OK)fg_decode_batch_policy_default(&policy);
     runtime->sampler=sampler;
@@ -8538,6 +8541,7 @@ static fg_status concurrent_selftest_case(fg_runtime *runtime,const char *name,
     if(status==FG_OK)status=fg_runtime_session_begin(runtime,x,err);
     if(status==FG_OK)status=fg_runtime_session_runner_begin(runtime,x,rendered_x,
         max_tokens,&sampler,&stats_x,err);
+    if(status!=FG_OK)fprintf(stderr,"CONCURRENT_FAIL case=%s at=x-runner-begin msg=%s\n",name,err->message);
     double start=dispatch_ts();
     if(status==FG_OK){
         bool done=false;
@@ -8547,6 +8551,7 @@ static fg_status concurrent_selftest_case(fg_runtime *runtime,const char *name,
             status=FG_ERR_MISMATCH;
         }
     }
+    if(status!=FG_OK)fprintf(stderr,"CONCURRENT_FAIL case=%s at=x-prefill msg=%s\n",name,err->message);
     if(status==FG_OK)fg_runtime_session_end(runtime,x);
     /* Two solo B=1 steps while X is still alone. */
     for(uint32_t step=0;status==FG_OK&&step<2u;step++){
@@ -8559,6 +8564,7 @@ static fg_status concurrent_selftest_case(fg_runtime *runtime,const char *name,
         }
         x_left=left;
     }
+    if(status!=FG_OK)fprintf(stderr,"CONCURRENT_FAIL case=%s at=x-steps msg=%s\n",name,err->message);
     if(status==FG_OK&&!x_left)digest_pre=depthb_session_digest(runtime,0u,&iso_pre);
     /* Admit Y: slot-scoped cold start while X's slot 0 is live. */
     if(status==FG_OK)y=fg_runtime_session_acquire(runtime,7102u);
@@ -8571,6 +8577,7 @@ static fg_status concurrent_selftest_case(fg_runtime *runtime,const char *name,
         fg_error_set(err,FG_ERR_MISMATCH,"concurrent selftest Y did not get owner slot 1");
         status=FG_ERR_MISMATCH;
     }
+    if(status!=FG_OK)fprintf(stderr,"CONCURRENT_FAIL case=%s at=y-begin msg=%s\n",name,err->message);
     if(status==FG_OK&&!x_left)digest_post=depthb_session_digest(runtime,0u,&iso_post);
     if(status==FG_OK)status=fg_runtime_session_runner_begin(runtime,y,rendered_y,
         max_tokens,&sampler,&stats_y,err);
@@ -8594,6 +8601,7 @@ static fg_status concurrent_selftest_case(fg_runtime *runtime,const char *name,
                 runtime->manifest->prefill_microbatch,&done,err);
             if(status==FG_OK)fg_runtime_session_end(runtime,y);
             if(status!=FG_OK)break;
+            if(status!=FG_OK)fprintf(stderr,"CONCURRENT_FAIL case=%s at=y-prefill-chunk msg=%s\n",name,err->message);
             if(done){
                 y_prefilled=true;
                 uint32_t count=(uint32_t)tokens_y.count;
@@ -8624,6 +8632,7 @@ static fg_status concurrent_selftest_case(fg_runtime *runtime,const char *name,
             bool left[2]={false,false};
             status=fg_runtime_session_runner_batch(runtime,pair,2u,&table,&policy,
                 callbacks,contexts,now++,left,err);
+            if(status!=FG_OK)fprintf(stderr,"CONCURRENT_FAIL case=%s at=batch msg=%s\n",name,err->message);
             if(status==FG_OK){x_left=left[0];y_left=left[1];}
         }else{
             fg_runtime_session *one[1]={x_left?y:x};
