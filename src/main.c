@@ -16,7 +16,8 @@ static void usage(FILE *file) {
             "Flash Gordon %u.%u - Qwen3.8-Flash-Next BC250 appliance\n\n"
             "Usage:\n"
             "  flash-gordon pack --output DIR --source FILE [--source FILE ...] "
-            "[--router-profile FILE | --expert-map FILE] [--profile NAME] [--dry-run]\n"
+            "[--source-sha256 HEX ...] [--router-profile FILE | --expert-map FILE] "
+            "[--profile NAME] [--dry-run]\n"
             "  flash-gordon pack-tower --output DIR --source FILE [--source FILE ...] "
             "[--dry-run]\n"
             "  flash-gordon verify --manifest FILE --pack-dir DIR --source FILE "
@@ -138,7 +139,10 @@ static fg_status parse_runtime_option(int *index, int argc, char **argv,
 static fg_status pack_cmd(int argc, char **argv, fg_error *err) {
     fg_pack_options options = {0};
     const char **sources = calloc((size_t)argc, sizeof(*sources));
-    if (!sources) {
+    const char **digests = calloc((size_t)argc, sizeof(*digests));
+    if (!sources || !digests) {
+        free(digests);
+        free(sources);
         fg_error_set(err, FG_ERR_OOM, "allocate source arguments");
         return FG_ERR_OOM;
     }
@@ -147,6 +151,9 @@ static fg_status pack_cmd(int argc, char **argv, fg_error *err) {
             options.output_dir = arg_value(&i, argc, argv, "--output", err);
         else if (!strcmp(argv[i], "--source"))
             sources[options.source_count++] = arg_value(&i, argc, argv, "--source", err);
+        else if (!strcmp(argv[i], "--source-sha256"))
+            digests[options.source_sha256_count++] =
+                arg_value(&i, argc, argv, "--source-sha256", err);
         else if (!strcmp(argv[i], "--router-profile"))
             options.router_profile_path =
                 arg_value(&i, argc, argv, "--router-profile", err);
@@ -156,6 +163,7 @@ static fg_status pack_cmd(int argc, char **argv, fg_error *err) {
             const char *profile = arg_value(&i, argc, argv, "--profile", err);
             if (profile &&
                 fg_runtime_profile_parse(profile, &options.runtime_profile, err)!=FG_OK) {
+                free(digests);
                 free(sources);
                 return err->code;
             }
@@ -164,16 +172,20 @@ static fg_status pack_cmd(int argc, char **argv, fg_error *err) {
             options.dry_run = true;
         else {
             fg_error_set(err, FG_ERR_ARGUMENT, "unknown pack option: %s", argv[i]);
+            free(digests);
             free(sources);
             return FG_ERR_ARGUMENT;
         }
         if (err->code != FG_OK) {
+            free(digests);
             free(sources);
             return err->code;
         }
     }
     options.source_paths = sources;
+    options.source_sha256 = digests;
     fg_status status = fg_pack_run(&options, err);
+    free(digests);
     free(sources);
     return status;
 }

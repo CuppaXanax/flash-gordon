@@ -11,6 +11,11 @@ typedef struct fg_pack_options {
     const char *output_dir;
     const char **source_paths;
     uint32_t source_count;
+    /* Optional explicit source identities: one lowercase/uppercase hex SHA-256
+     * per --source, in the same order.  When present they replace the canonical
+     * UD-Q4_K_XL size/SHA pins and are verified by a full-file hash. */
+    const char **source_sha256;
+    uint32_t source_sha256_count;
     const char *router_profile_path;
     const char *expert_map_path;
     uint32_t runtime_profile;

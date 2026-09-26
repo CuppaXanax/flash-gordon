@@ -698,6 +698,42 @@ static void test_tensor_classification(void){
     CHECK(fg_gguf_tensor_kind("blk.0.ffn_down_exps.weight")==FG_TENSOR_ROUTED_EXPERT);
 }
 
+static void test_pack_source_digest(void){
+    char source[128],dir[128];snprintf(source,sizeof(source),"/tmp/fg-srcsha-%ld.gguf",(long)getpid());snprintf(dir,sizeof(dir),"/tmp/fg-srcsha-%ld-pack",(long)getpid());
+    FILE *f=fopen(source,"wb");CHECK(f!=NULL);if(!f)return;
+    put_u32(f,0x46554747u);put_u32(f,3);put_u64(f,1);put_u64(f,0);
+    put_string(f,"token_embd.weight");put_u32(f,1);put_u64(f,1);put_u32(f,0);put_u64(f,0);
+    while((ftell(f)&31)!=0)fputc(0,f);
+    float one=1.0f;CHECK(fwrite(&one,1,4,f)==4);fclose(f);
+    uint8_t digest[32],composite[32];char hex[65];fg_error err={0};
+    CHECK(fg_sha256_file(source,digest,&err)==FG_OK);fg_sha256_hex(digest,hex);
+    fg_sha256 h;fg_sha256_init(&h);fg_sha256_update(&h,digest,32);fg_sha256_final(&h,composite);
+    const char *sources[]={source};
+    const char *wrong[]={"0000000000000000000000000000000000000000000000000000000000000000"};
+    const char *right[]={hex};
+    const char *short_digest[]={"abcd"};
+    const char *too_many[]={hex,hex};
+    fg_pack_options bad={.output_dir=dir,.source_paths=sources,.source_count=1,.source_sha256=wrong,.source_sha256_count=1,.skip_model_validation=true};
+    CHECK(fg_pack_run(&bad,&err)==FG_ERR_MISMATCH);
+    fg_pack_options bad_hex={.output_dir=dir,.source_paths=sources,.source_count=1,.source_sha256=short_digest,.source_sha256_count=1,.skip_model_validation=true};
+    CHECK(fg_pack_run(&bad_hex,&err)==FG_ERR_ARGUMENT);
+    fg_pack_options bad_count={.output_dir=dir,.source_paths=sources,.source_count=1,.source_sha256=too_many,.source_sha256_count=2,.skip_model_validation=true};
+    CHECK(fg_pack_run(&bad_count,&err)==FG_ERR_ARGUMENT);
+    struct stat none;CHECK(stat(dir,&none)!=0&&errno==ENOENT);
+    fg_pack_options ok={.output_dir=dir,.source_paths=sources,.source_count=1,.source_sha256=right,.source_sha256_count=1,.skip_model_validation=true};
+    fg_status pack_rc=fg_pack_run(&ok,&err);if(pack_rc!=FG_OK)fprintf(stderr,"digest pack error: %s\n",err.message);
+    CHECK(pack_rc==FG_OK);
+    fg_manifest *m=malloc(sizeof(*m));CHECK(m!=NULL);
+    if(m){char manifest_path[160];snprintf(manifest_path,sizeof(manifest_path),"%s/manifest.fgm",dir);
+        CHECK(fg_manifest_read(manifest_path,m,&err)==FG_OK);
+        CHECK(!memcmp(m->source_sha256,composite,32));free(m);}
+    char p[160];
+    for(unsigned r=0;r<8;r++){snprintf(p,sizeof(p),"%s/rank-%02u.fgw",dir,r);unlink(p);}
+    snprintf(p,sizeof(p),"%s/manifest.fgm",dir);unlink(p);
+    snprintf(p,sizeof(p),"%s/ngram.iq4nl",dir);unlink(p);
+    rmdir(dir);unlink(source);
+}
+
 static void test_pack_tower(void){
     fg_error err={0};
     test_tensor_classification();
@@ -940,4 +976,4 @@ static void test_output_history_protocol(void){
     CHECK(fg_output_history_decode(&decoded,storage,8u,wire,bytes,&err)==FG_ERR_FORMAT);
 }
 
-int main(void){test_sha();test_model_name();test_ledger();test_topology();test_profile();test_expert_map();test_expert_map_file();test_expert_map_single();test_expert_map_owners();test_sealed_expert_map();test_deployment_profile();test_native_262k_profile_geometry();test_protocol();test_layer_protocol();test_decode_layer_protocol();test_qsa_block_protocol();test_qsa_page_protocol();test_prefill_chunk_frontiers();test_qsa_locality_metrics();test_output_protocol();test_output_history_protocol();test_ngram_protocol();test_ngram();test_ngram_suffix();test_ngram_planner_batch_capacity();test_qsa_scratch_geometry();test_qsa_state();test_qsa_state_failed_create_cleanup();test_qsa_state_batch();test_qsa_state_write_batch();test_qsa_replica_queue();test_lazy_qsa_clear_barrier();test_prefill_storage_geometry();test_qsa_page_cache();test_q38_math();test_cooked_q8();test_pack_cooked_q8();test_pack_cooked_experts();test_decode_protocol();test_prefill_protocol();test_pack();test_pack_tower();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}
+int main(void){test_sha();test_model_name();test_ledger();test_topology();test_profile();test_expert_map();test_expert_map_file();test_expert_map_single();test_expert_map_owners();test_sealed_expert_map();test_deployment_profile();test_native_262k_profile_geometry();test_protocol();test_layer_protocol();test_decode_layer_protocol();test_qsa_block_protocol();test_qsa_page_protocol();test_prefill_chunk_frontiers();test_qsa_locality_metrics();test_output_protocol();test_output_history_protocol();test_ngram_protocol();test_ngram();test_ngram_suffix();test_ngram_planner_batch_capacity();test_qsa_scratch_geometry();test_qsa_state();test_qsa_state_failed_create_cleanup();test_qsa_state_batch();test_qsa_state_write_batch();test_qsa_replica_queue();test_lazy_qsa_clear_barrier();test_prefill_storage_geometry();test_qsa_page_cache();test_q38_math();test_cooked_q8();test_pack_cooked_q8();test_pack_cooked_experts();test_decode_protocol();test_prefill_protocol();test_pack();test_pack_source_digest();test_pack_tower();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}

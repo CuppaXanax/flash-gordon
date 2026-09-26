@@ -43,19 +43,36 @@ static uint8_t hex_nibble(char value){
     return UINT8_MAX;
 }
 
-static bool canonical_digest(uint32_t shard,uint8_t digest[32]){
-    if(shard>=4u)return false;
-    const char *hex=q38_ud_q4_k_xl[shard].sha256_hex;
+static bool parse_sha256_hex(const char *hex,uint8_t digest[32]){
+    if(!hex)return false;
     for(uint32_t i=0;i<32u;i++){uint8_t hi=hex_nibble(hex[i*2u]),lo=hex_nibble(hex[i*2u+1u]);if(hi==UINT8_MAX||lo==UINT8_MAX)return false;digest[i]=(uint8_t)((hi<<4u)|lo);}return hex[64]==0;
 }
 
+static bool canonical_digest(uint32_t shard,uint8_t digest[32]){
+    if(shard>=4u)return false;
+    return parse_sha256_hex(q38_ud_q4_k_xl[shard].sha256_hex,digest);
+}
+
 static fg_status hash_pack_sources(const fg_pack_options *options,uint8_t composite[32],fg_error *err){
-    if(!options->skip_model_validation&&options->source_count!=4u){fg_error_set(err,FG_ERR_MISMATCH,"canonical UD-Q4_K_XL pack requires exactly four shards");return FG_ERR_MISMATCH;}
+    bool explicit_digests=options->source_sha256_count!=0u;
+    if(explicit_digests&&(!options->source_sha256||
+                          options->source_sha256_count!=options->source_count)){
+        fg_error_set(err,FG_ERR_ARGUMENT,
+                     "pack expects one --source-sha256 digest per --source");
+        return FG_ERR_ARGUMENT;
+    }
+    if(!explicit_digests&&!options->skip_model_validation&&options->source_count!=4u){fg_error_set(err,FG_ERR_MISMATCH,"canonical UD-Q4_K_XL pack requires exactly four shards");return FG_ERR_MISMATCH;}
     fg_sha256 source_hash;fg_sha256_init(&source_hash);
     for(uint32_t shard=0;shard<options->source_count;shard++){
         struct stat info;if(stat(options->source_paths[shard],&info)!=0||info.st_size<0){fg_error_set(err,FG_ERR_IO,"stat source %s: %s",options->source_paths[shard],strerror(errno));return FG_ERR_IO;}
         uint8_t digest[32];
-        if(!options->skip_model_validation){
+        if(explicit_digests){
+            uint8_t expected[32];
+            if(!parse_sha256_hex(options->source_sha256[shard],expected)){fg_error_set(err,FG_ERR_ARGUMENT,"source shard %u digest is not 64 hex characters",shard+1u);return FG_ERR_ARGUMENT;}
+            fg_status status=fg_sha256_file(options->source_paths[shard],digest,err);
+            if(status!=FG_OK)return status;
+            if(memcmp(digest,expected,32)!=0){fg_error_set(err,FG_ERR_MISMATCH,"source shard %u SHA-256 mismatch",shard+1u);return FG_ERR_MISMATCH;}
+        }else if(!options->skip_model_validation){
             if((uint64_t)info.st_size!=q38_ud_q4_k_xl[shard].bytes||!canonical_digest(shard,digest)){fg_error_set(err,FG_ERR_MISMATCH,"canonical UD-Q4_K_XL shard %u has the wrong size",shard+1u);return FG_ERR_MISMATCH;}
             if(!options->dry_run){uint8_t expected[32];fg_status status=fg_sha256_file(options->source_paths[shard],digest,err);if(status!=FG_OK)return status;if(!canonical_digest(shard,expected)||memcmp(digest,expected,32)!=0){fg_error_set(err,FG_ERR_MISMATCH,"canonical UD-Q4_K_XL shard %u SHA-256 mismatch",shard+1u);return FG_ERR_MISMATCH;}}
         }else if(options->dry_run){
@@ -64,7 +81,7 @@ static fg_status hash_pack_sources(const fg_pack_options *options,uint8_t compos
         fg_sha256_update(&source_hash,digest,32);
     }
     fg_sha256_final(&source_hash,composite);
-    if(options->dry_run&&!options->skip_model_validation)fprintf(stderr,"pack dry-run: canonical shard sizes/schema verified; payload SHA-256 verification is deferred to the full pack\n");
+    if(options->dry_run&&!options->skip_model_validation&&!explicit_digests)fprintf(stderr,"pack dry-run: canonical shard sizes/schema verified; payload SHA-256 verification is deferred to the full pack\n");
     return FG_OK;
 }
 

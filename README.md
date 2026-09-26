@@ -164,6 +164,8 @@ tool syntax is not exposed as assistant content.
 
 The production pack path is bound to the four official Unsloth `UD-Q4_K_XL` shard sizes and SHA-256 identities. A dry run verifies the complete real GGUF metadata and canonical sizes without reading 111 GB of tensor payload; the full pack hashes every shard and fails before writing a deployment manifest if any payload differs.
 
+`--source-sha256 HEX` (repeatable, exactly one per `--source`, same order) replaces those canonical pins with caller-supplied identities. Each shard is then verified with a full-file SHA-256 hash while the complete GGUF metadata, tensor-type and tensor-shape validation (`fg_q38_validate_gguf`) stays enabled. This packs a schema-compatible re-quantization from a different upstream (for example an abliterated release with the same dynamic quant mix) without touching the runtime or its kernels.
+
 `--router-profile FILE` accepts whitespace-separated `layer expert frequency` rows. Optional `--expert-map FILE` accepts one `layer=N ranks=R0,...,R511` row per layer for an explicit placement; the two options are mutually exclusive. Without either option, expert residency is round-robin. Every mode enforces exactly 128 experts on each of the four ranks participating in a layer. The map is a pack-time input only: ownership is sealed into the manifest, and rank/eval runtime never reads or requires the source map file. Maps derived from qualification prompts are oracle-only diagnostics and cannot qualify a release.
 Ordinary `pack` seals native-262K context and 128-token chunks. No profile flag
 is needed. For an existing pack, `upgrade-manifest --profile
