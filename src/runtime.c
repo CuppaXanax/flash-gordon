@@ -7213,7 +7213,7 @@ fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
 uint32_t fg_runtime_context_tokens(const fg_runtime *runtime){return runtime?(uint32_t)runtime->history_count:0u;}
 uint32_t fg_runtime_context_limit(const fg_runtime *runtime){return runtime?runtime->context_limit:0u;}
 const char *fg_runtime_ledger(const fg_runtime *runtime){return runtime?runtime->coordinator.ledger:NULL;}
-const char *fg_runtime_model_name(const fg_runtime *runtime){return runtime?"Qwen3.8-Flash-Next":NULL;}
+const char *fg_runtime_model_name(const fg_runtime *runtime){return runtime?fg_runtime_model_name_resolve(&runtime->options):NULL;}
 fg_mtp_capability fg_runtime_mtp_capability(const fg_runtime *runtime){
     return runtime?runtime->mtp_capability:FG_MTP_CAPABILITY_UNSUPPORTED;
 }

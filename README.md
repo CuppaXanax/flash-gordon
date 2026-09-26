@@ -65,7 +65,10 @@ with compact prefill, generation, and context-usage metrics.
 
 Both `chat` and `api` accept the runtime-shape contract
 `--context-tokens`, `--gpu-index-tokens`, `--qsa-hot-tokens`, and
-`--qsa-page-cache-mib`.
+`--qsa-page-cache-mib`. Both also accept `--model-name NAME` (default
+`Qwen3.8-Flash-Next`): the name advertised by `GET /v1/models` and required on
+chat requests, so a start script can serve a second sealed pack under its own
+name with the same binary.
 Experimental component contracts use `--experimental-context`,
 `--experimental-mtp`, and `--experimental-vision`; those component flags remain
 disabled. Default packing seals logical/index/compatibility-hint/cache budgets

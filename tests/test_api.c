@@ -3562,6 +3562,34 @@ static void test_content_compare_tolerance(void) {
     CHECK(!strcmp(reason, "message[1].content@2 stored=\"swer\" echoed=\"5wer\""));
 }
 
+static void test_model_name_admission(void) {
+    const char *matching =
+        "{\"model\":\"Qwen3.8-Flash-Next\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+    const char *other =
+        "{\"model\":\"Qwen3.8-Flash-Next-Uncensored\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+    const char *unnamed =
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START, .generated = "hello"};
+    char *response = run_chat_request(&runtime, &session, matching, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "200 OK"));
+    free(response);
+    response = run_chat_request(&runtime, &session, other, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "400 Bad Request"));
+    CHECK(response && strstr(response,
+        "model must match the loaded model 'Qwen3.8-Flash-Next'"));
+    free(response);
+    response = run_chat_request(&runtime, &session, unnamed, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "200 OK"));
+    free(response);
+    api_public_session_free(&session);
+    fg_runtime_close(&runtime);
+}
+
 int main(void) {
     test_openai_tools_request();
     test_openai_structured_text_content();
@@ -3595,6 +3623,7 @@ int main(void) {
     test_json_nul_and_member_limit();
     test_client_socket_timeouts();
     test_model_capabilities();
+    test_model_name_admission();
     test_media_prefix_continuation_and_identity();
     test_media_continuation_runtime_miss_falls_back_cold();
     test_live_prefix_hit_divergence_and_reset();

@@ -124,6 +124,13 @@ static fg_status parse_runtime_option(int *index, int argc, char **argv,
         options->specified |= FG_RUNTIME_OPTION_PREFIX_CONT;
         return FG_OK;
     }
+    if (!strcmp(flag, "--model-name")) {
+        const char *name = arg_value(index, argc, argv, flag, err);
+        if (!name) return FG_ERR_ARGUMENT;
+        fg_status status = fg_runtime_model_name_validate(name, err);
+        if (status == FG_OK) options->model_name = name;
+        return status;
+    }
     *handled = false;
     return FG_OK;
 }

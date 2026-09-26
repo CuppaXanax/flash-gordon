@@ -12,6 +12,7 @@
 #include "fg_qsa_replica.h"
 #include "fg_qsa_cache.h"
 #include "fg_qsa_state.h"
+#include "fg_runtime.h"
 #include "fg_sha256.h"
 #include "fg_topology.h"
 
@@ -33,6 +34,26 @@ static int failures;
 #define CHECK(x) do{if(!(x)){fprintf(stderr,"FAIL %s:%d: %s\n",__FILE__,__LINE__,#x);failures++;}}while(0)
 
 static void test_sha(void){fg_sha256 c;uint8_t d[32];char hex[65];fg_sha256_init(&c);fg_sha256_update(&c,"abc",3);fg_sha256_final(&c,d);fg_sha256_hex(d,hex);CHECK(strcmp(hex,"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")==0);}
+
+static void test_model_name(void){
+    fg_error err={0};
+    fg_runtime_options options;
+    fg_runtime_options_init(&options);
+    CHECK(strcmp(fg_runtime_model_name_resolve(NULL),FG_RUNTIME_DEFAULT_MODEL_NAME)==0);
+    CHECK(strcmp(fg_runtime_model_name_resolve(&options),FG_RUNTIME_DEFAULT_MODEL_NAME)==0);
+    options.model_name="Qwen3.8-Flash-Next-Uncensored";
+    CHECK(strcmp(fg_runtime_model_name_resolve(&options),"Qwen3.8-Flash-Next-Uncensored")==0);
+    options.model_name="";
+    CHECK(strcmp(fg_runtime_model_name_resolve(&options),FG_RUNTIME_DEFAULT_MODEL_NAME)==0);
+    CHECK(fg_runtime_model_name_validate("Qwen3.8-Flash-Next-Uncensored",&err)==FG_OK);
+    CHECK(fg_runtime_model_name_validate("", &err)==FG_ERR_ARGUMENT);
+    CHECK(fg_runtime_model_name_validate(NULL, &err)==FG_ERR_ARGUMENT);
+    CHECK(fg_runtime_model_name_validate("bad\"name\t", &err)==FG_ERR_ARGUMENT);
+    char long_name[FG_RUNTIME_MODEL_NAME_MAX+2u];
+    memset(long_name,'a',sizeof(long_name)-1u);
+    long_name[sizeof(long_name)-1u]=0;
+    CHECK(fg_runtime_model_name_validate(long_name, &err)==FG_ERR_ARGUMENT);
+}
 
 static void test_ledger(void){
     fg_manifest *manifest=malloc(sizeof(*manifest));
@@ -919,4 +940,4 @@ static void test_output_history_protocol(void){
     CHECK(fg_output_history_decode(&decoded,storage,8u,wire,bytes,&err)==FG_ERR_FORMAT);
 }
 
-int main(void){test_sha();test_ledger();test_topology();test_profile();test_expert_map();test_expert_map_file();test_expert_map_single();test_expert_map_owners();test_sealed_expert_map();test_deployment_profile();test_native_262k_profile_geometry();test_protocol();test_layer_protocol();test_decode_layer_protocol();test_qsa_block_protocol();test_qsa_page_protocol();test_prefill_chunk_frontiers();test_qsa_locality_metrics();test_output_protocol();test_output_history_protocol();test_ngram_protocol();test_ngram();test_ngram_suffix();test_ngram_planner_batch_capacity();test_qsa_scratch_geometry();test_qsa_state();test_qsa_state_failed_create_cleanup();test_qsa_state_batch();test_qsa_state_write_batch();test_qsa_replica_queue();test_lazy_qsa_clear_barrier();test_prefill_storage_geometry();test_qsa_page_cache();test_q38_math();test_cooked_q8();test_pack_cooked_q8();test_pack_cooked_experts();test_decode_protocol();test_prefill_protocol();test_pack();test_pack_tower();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}
+int main(void){test_sha();test_model_name();test_ledger();test_topology();test_profile();test_expert_map();test_expert_map_file();test_expert_map_single();test_expert_map_owners();test_sealed_expert_map();test_deployment_profile();test_native_262k_profile_geometry();test_protocol();test_layer_protocol();test_decode_layer_protocol();test_qsa_block_protocol();test_qsa_page_protocol();test_prefill_chunk_frontiers();test_qsa_locality_metrics();test_output_protocol();test_output_history_protocol();test_ngram_protocol();test_ngram();test_ngram_suffix();test_ngram_planner_batch_capacity();test_qsa_scratch_geometry();test_qsa_state();test_qsa_state_failed_create_cleanup();test_qsa_state_batch();test_qsa_state_write_batch();test_qsa_replica_queue();test_lazy_qsa_clear_barrier();test_prefill_storage_geometry();test_qsa_page_cache();test_q38_math();test_cooked_q8();test_pack_cooked_q8();test_pack_cooked_experts();test_decode_protocol();test_prefill_protocol();test_pack();test_pack_tower();if(failures){fprintf(stderr,"%d test(s) failed\n",failures);return 1;}puts("core tests: PASS");return 0;}

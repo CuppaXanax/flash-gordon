@@ -68,6 +68,33 @@ void fg_runtime_options_init(fg_runtime_options *options){
     if(options)memset(options,0,sizeof(*options));
 }
 
+const char *fg_runtime_model_name_resolve(const fg_runtime_options *options){
+    return options&&options->model_name&&options->model_name[0]?
+        options->model_name:FG_RUNTIME_DEFAULT_MODEL_NAME;
+}
+
+fg_status fg_runtime_model_name_validate(const char *name,fg_error *err){
+    if(!name||!name[0]){
+        fg_error_set(err,FG_ERR_ARGUMENT,"served model name must be non-empty");
+        return FG_ERR_ARGUMENT;
+    }
+    size_t length=strlen(name);
+    if(length>FG_RUNTIME_MODEL_NAME_MAX){
+        fg_error_set(err,FG_ERR_ARGUMENT,"served model name exceeds %u characters",
+                     (unsigned)FG_RUNTIME_MODEL_NAME_MAX);
+        return FG_ERR_ARGUMENT;
+    }
+    for(size_t i=0;i<length;i++){
+        unsigned char character=(unsigned char)name[i];
+        if(character<0x20u||character>0x7eu){
+            fg_error_set(err,FG_ERR_ARGUMENT,
+                         "served model name must be printable ASCII");
+            return FG_ERR_ARGUMENT;
+        }
+    }
+    return FG_OK;
+}
+
 fg_status fg_runtime_profile_apply(fg_manifest *manifest,uint32_t profile,fg_error *err){
     if(!manifest){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid runtime profile manifest");
@@ -275,6 +302,7 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
     }
     resolved->experimental_flags=input.experimental_flags;
     resolved->no_prefix_continuation=input.no_prefix_continuation;
+    resolved->model_name=input.model_name;
     resolved->specified=mask;
     if(resolved->prefill_microbatch!=manifest->prefill_microbatch||
        resolved->prefill_window!=manifest->prefill_window){

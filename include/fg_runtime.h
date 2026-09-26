@@ -49,6 +49,9 @@ typedef enum fg_mtp_capability {
     FG_MTP_CAPABILITY_ENABLED = 2
 } fg_mtp_capability;
 
+#define FG_RUNTIME_DEFAULT_MODEL_NAME "Qwen3.8-Flash-Next"
+#define FG_RUNTIME_MODEL_NAME_MAX 96u
+
 typedef struct fg_runtime_options {
     uint32_t logical_context_tokens;
     uint32_t gpu_index_tokens;
@@ -59,6 +62,11 @@ typedef struct fg_runtime_options {
     uint32_t experimental_flags;
     uint32_t specified;
     bool no_prefix_continuation;
+    /* Served model name for /v1/models and request admission.  NULL or empty
+     * selects FG_RUNTIME_DEFAULT_MODEL_NAME; the option is CLI/start-script
+     * driven so a second sealed pack can be served under its own name without
+     * an environment flag or a binary change. */
+    const char *model_name;
 } fg_runtime_options;
 
 typedef struct fg_runtime_profile_definition {
@@ -113,6 +121,8 @@ typedef struct fg_runtime_media {
 } fg_runtime_media;
 
 void fg_runtime_options_init(fg_runtime_options *options);
+const char *fg_runtime_model_name_resolve(const fg_runtime_options *options);
+fg_status fg_runtime_model_name_validate(const char *name,fg_error *err);
 const fg_runtime_profile_definition *fg_runtime_profile_definition_get(uint32_t profile);
 fg_status fg_runtime_profile_parse(const char *name,uint32_t *profile,fg_error *err);
 fg_status fg_runtime_profile_validate(const fg_runtime_options *options,
