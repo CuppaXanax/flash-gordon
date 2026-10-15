@@ -1,0 +1,48 @@
+{
+  "health": {
+    "status": "ok",
+    "busy": false
+  },
+  "models": {
+    "object": "list",
+    "data": [
+      {
+        "id": "Qwen3.8-Flash-Next-Uncensored",
+        "object": "model",
+        "created": 0,
+        "owned_by": "flash-gordon",
+        "capabilities": {
+          "native_context": 262144,
+          "experimental_context": 0,
+          "tools": true,
+          "mtp": false,
+          "image": true,
+          "video": true,
+          "video_frames": true
+        }
+      }
+    ]
+  },
+  "chat": {
+    "id": "chatcmpl-fg-1792073225-17",
+    "object": "chat.completion",
+    "created": 1792073225,
+    "model": "Qwen3.8-Flash-Next-Uncensored",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "reasoning_content": "The user is asking me to simply reply with \"OK.\" This is a straightforward instruction. I should respond with just \"OK.\" and nothing else.\n",
+          "content": "OK."
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 14,
+      "completion_tokens": 35,
+      "total_tokens": 49
+    }
+  }
+}

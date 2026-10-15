@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "LIVE pid=162707 exe=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon args=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon api --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --model-name Qwen3.8-Flash-Next-Uncensored --host 0.0.0.0 --port 8080 --context-tokens 262144 --gpu-index-tokens 262144 --qsa-hot-tokens 0 --qsa-page-cache-mib 700 \nSTDOUT /home/xander/flash-gordon-live/20261015-decode-operator/rank-0-plain.log\n/home/xander/flash-gordon-live/20260926-abl2/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated/manifest.fgm: OK\n/home/xander/hc-decode\nSCRATCH_REMAINING=0",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "LIVE pid=94609 exe=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon args=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 1 \nSTDOUT /home/xander/flash-gordon-live/20261015-decode-operator/rank-1-plain.log\n/home/xander/flash-gordon-live/20260926-abl2/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated/manifest.fgm: OK\n/home/xander/hc-decode\nSCRATCH_REMAINING=0",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "LIVE pid=90702 exe=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon args=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 2 \nSTDOUT /home/xander/flash-gordon-live/20261015-decode-operator/rank-2-plain.log\n/home/xander/flash-gordon-live/20260926-abl2/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated/manifest.fgm: OK\n/home/xander/hc-decode\nSCRATCH_REMAINING=0",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "LIVE pid=90327 exe=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon args=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 3 \nSTDOUT /home/xander/flash-gordon-live/20261015-decode-operator/rank-3-plain.log\n/home/xander/flash-gordon-live/20260926-abl2/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated/manifest.fgm: OK\n/home/xander/hc-decode\nSCRATCH_REMAINING=0",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "LIVE pid=91407 exe=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon args=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 4 \nSTDOUT /home/xander/flash-gordon-live/20261015-decode-operator/rank-4-plain.log\n/home/xander/flash-gordon-live/20260926-abl2/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated/manifest.fgm: OK\n/home/xander/hc-decode\nSCRATCH_REMAINING=0",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "LIVE pid=90358 exe=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon args=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 5 \nSTDOUT /home/xander/flash-gordon-live/20261015-decode-operator/rank-5-plain.log\n/home/xander/flash-gordon-live/20260926-abl2/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated/manifest.fgm: OK\n/home/xander/hc-decode\nSCRATCH_REMAINING=0",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "LIVE pid=90660 exe=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon args=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 6 \nSTDOUT /home/xander/flash-gordon-live/20261015-decode-operator/rank-6-plain.log\n/home/xander/flash-gordon-live/20260926-abl2/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated/manifest.fgm: OK\n/home/xander/hc-decode\nSCRATCH_REMAINING=0",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "LIVE pid=91709 exe=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon args=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 7 \nSTDOUT /home/xander/flash-gordon-live/20261015-decode-operator/rank-7-plain.log\n/home/xander/flash-gordon-live/20260926-abl2/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated/manifest.fgm: OK\n/home/xander/hc-decode\nSCRATCH_REMAINING=0",
+    "Stderr": ""
+  }
+]

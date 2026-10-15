@@ -1,0 +1,143 @@
+{
+  "schema": 1,
+  "base_git": "1863c95",
+  "candidate_release": "/home/xander/flash-gordon-live/20261015-decode-r2",
+  "candidate_sha256": "c57e043095b15da22808c949efceb4f7f22bc5403615de63df62fc7288e93246",
+  "candidate_full_run": "20261015-064339.json",
+  "candidate_correctness_pass": true,
+  "candidate_errors": [],
+  "promoted": false,
+  "reason": "Not strictly better: 128K client decode and long prefill regress versus BASELINE.json; device selection remains an experimental branch result.",
+  "deployed_release": "/home/xander/flash-gordon-live/20260926-abl2",
+  "deployed_sha256": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2",
+  "restored_quick_run": "20261015-070323.json",
+  "restored_correctness_pass": true,
+  "decode": [
+    {
+      "case": "context-32k",
+      "baseline_client_tps": 24.44,
+      "candidate_client_tps": 25.278760289942426,
+      "baseline_ms_per_token": 40.9165302782324,
+      "candidate_ms_per_token": 39.55890196078431,
+      "tps_change_percent": 3.4319160799608284,
+      "baseline_engine_tps": 23.84,
+      "candidate_engine_tps": 25.401971
+    },
+    {
+      "case": "context-128k",
+      "baseline_client_tps": 22.32,
+      "candidate_client_tps": 22.11936879579354,
+      "baseline_ms_per_token": 44.80286738351254,
+      "candidate_ms_per_token": 45.20924666666667,
+      "tps_change_percent": -0.8988853235056382,
+      "baseline_engine_tps": 21.77,
+      "candidate_engine_tps": 22.228784
+    },
+    {
+      "case": "short-context",
+      "baseline_client_tps": 26.76,
+      "candidate_client_tps": 26.606297363547284,
+      "baseline_ms_per_token": 37.369207772795214,
+      "candidate_ms_per_token": 37.58508695652175,
+      "tps_change_percent": -0.5743745756828011,
+      "baseline_engine_tps": 25.8,
+      "candidate_engine_tps": 25.197455
+    }
+  ],
+  "prefill": {
+    "baseline": [
+      {
+        "target": "4K",
+        "usage_prompt_tokens": 4156,
+        "client_prompt_tokens_over_cold_stream_ttft_tps": 339.91,
+        "engine_prefill_tps": 355.12,
+        "client_ttft_ms": 12226.82,
+        "prefix_cache": "miss",
+        "reused_tokens": 0
+      },
+      {
+        "target": "32K",
+        "usage_prompt_tokens": 32829,
+        "client_prompt_tokens_over_cold_stream_ttft_tps": 357.02,
+        "engine_prefill_tps": 420.86,
+        "client_ttft_ms": 91952.51,
+        "prefix_cache": "miss",
+        "reused_tokens": 0
+      },
+      {
+        "target": "128K",
+        "usage_prompt_tokens": 131128,
+        "client_prompt_tokens_over_cold_stream_ttft_tps": 415.58,
+        "engine_prefill_tps": 415.47,
+        "client_ttft_ms": 315527.54,
+        "prefix_cache": "miss",
+        "reused_tokens": 0
+      }
+    ],
+    "candidate": [
+      {
+        "name": "prefill-4k",
+        "target_prompt_tokens": 4096,
+        "engine_prompt_nonce": "2492bf2b5b6c42499c9b42861d630ada",
+        "stream_prompt_nonce": "5ee703020cc342959eb080c57d5885b2",
+        "stream_first_content_ms": 12544.0566,
+        "stream_wall_seconds": 12.6037559,
+        "stream_visible_delta_events": 1,
+        "usage_prompt_tokens": 4156,
+        "stream_usage_prompt_tokens": null,
+        "client_prefill_tps": 331.3122805903156,
+        "engine_prefill_tps": 315.963962,
+        "engine_prefill_seconds": 13.153398814,
+        "engine_prefilled_tokens": 4156.0,
+        "engine_reused_tokens": 0.0,
+        "prefix_cache": "miss",
+        "cold_measurement": true,
+        "stream_completion_usage": null,
+        "usage_source": "same-size independently salted non-stream prompt; stream endpoint omits usage",
+        "nonstream_wall_seconds": 13.2588025
+      },
+      {
+        "name": "prefill-32k",
+        "target_prompt_tokens": 32768,
+        "engine_prompt_nonce": "540817ead63c4aaabd33d4ac4480c72b",
+        "stream_prompt_nonce": "2f8d668359004ad19dc00abfc64a3046",
+        "stream_first_content_ms": 90897.9661,
+        "stream_wall_seconds": 90.9613913,
+        "stream_visible_delta_events": 1,
+        "usage_prompt_tokens": 32823,
+        "stream_usage_prompt_tokens": null,
+        "client_prefill_tps": 361.0971885101398,
+        "engine_prefill_tps": 358.473079,
+        "engine_prefill_seconds": 91.563361112,
+        "engine_prefilled_tokens": 32823.0,
+        "engine_reused_tokens": 0.0,
+        "prefix_cache": "miss",
+        "cold_measurement": true,
+        "stream_completion_usage": null,
+        "usage_source": "same-size independently salted non-stream prompt; stream endpoint omits usage",
+        "nonstream_wall_seconds": 91.7019979
+      },
+      {
+        "name": "prefill-128k",
+        "target_prompt_tokens": 131072,
+        "engine_prompt_nonce": "7bc6b36b044d40a7831501b99e496894",
+        "stream_prompt_nonce": "5b5e28fc15774c8babfd7bb6b0ab93d0",
+        "stream_first_content_ms": 371072.1106,
+        "stream_wall_seconds": 371.1397108,
+        "stream_visible_delta_events": 1,
+        "usage_prompt_tokens": 131138,
+        "stream_usage_prompt_tokens": null,
+        "client_prefill_tps": 353.4030078088008,
+        "engine_prefill_tps": 352.22443,
+        "engine_prefill_seconds": 372.313755122,
+        "engine_prefilled_tokens": 131138.0,
+        "engine_reused_tokens": 0.0,
+        "prefix_cache": "miss",
+        "cold_measurement": true,
+        "stream_completion_usage": null,
+        "usage_source": "same-size independently salted non-stream prompt; stream endpoint omits usage",
+        "nonstream_wall_seconds": 372.596848
+      }
+    ]
+  }
+}

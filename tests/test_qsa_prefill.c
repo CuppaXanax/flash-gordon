@@ -213,6 +213,70 @@ static int select_resolve_parity(fg_qsa_session *s,uint32_t tokens){
     return 1;
 }
 
+static int select_resolve_resident(fg_qsa_session *s){
+    fg_vk_context *vk=fg_model_vk(s->model);
+    uint32_t max_blocks=s->max_blocks;
+    fg_qsa_page_cache_destroy(s->cache);s->cache=NULL;
+    fg_vk_tensor_destroy(s->cache_records);s->cache_records=NULL;
+    s->max_blocks=s->cache_pages=1024u;
+    REQUIRE(ensure_page_cache(s,&error)==FG_OK);
+    qsa_cache_reset(s);
+    uint32_t reference[512],selected[512],count_ref=0,count=0;
+    bool fallback=false;
+    REQUIRE(fg_vk_begin(vk,&error)==FG_OK);
+    REQUIRE(select_blocks(s,0u,s->index_query_view,4095u,reference,
+        &count_ref,false,&error)==FG_OK);
+    for(uint32_t block=0;block<1024u;block++){
+        uint32_t slot=0;bool hit=false;
+        REQUIRE(qsa_cache_acquire(s,3u,block,&slot,&hit,&error)==FG_OK);
+    }
+    REQUIRE(s->cached_prefix[0]==1024u);
+    uint8_t *records=fg_vk_tensor_map(s->cache_records);
+    for(uint64_t i=0;i<fg_vk_tensor_bytes(s->cache_records);i++)
+        records[i]=(uint8_t)(i*17u+(i/FG_QSA_PAGE_RECORD_BYTES)*31u);
+    REQUIRE(fg_vk_begin(vk,&error)==FG_OK);
+    fg_vk_counters before={0},after={0};
+    fg_vk_get_counters(vk,&before);
+    REQUIRE(select_blocks_resolve(s,0u,s->index_query_view,4095u,selected,
+        &count,&fallback,&error)==FG_OK);
+    fg_vk_get_counters(vk,&after);
+    REQUIRE(fg_vk_batch_active(vk));
+    REQUIRE(after.submissions==before.submissions&&count==count_ref&&!fallback);
+    REQUIRE(fg_vk_qsa_record_gather(vk,s->selected_records,s->cache_records,
+        s->select_resolved,0u,s->cache_pages*FG_Q38_QSA_COMPRESS_RATIO,
+        count,1023u*FG_Q38_QSA_COMPRESS_RATIO,3u,&error)==FG_OK);
+    fg_vk_get_counters(vk,&after);
+    REQUIRE(fg_vk_batch_active(vk)&&after.submissions==before.submissions);
+    REQUIRE(fg_vk_end(vk,&error)==FG_OK);
+    uint32_t slots[512];
+    REQUIRE(fg_vk_tensor_read(s->select_resolved,0,slots,count*4u,&error)==FG_OK);
+    REQUIRE(!memcmp(slots,reference,count*4u));
+    uint64_t gathered_bytes=(uint64_t)count*FG_QSA_PAGE_RECORD_BYTES+
+        3u*FG_Q38_QSA_TOKEN_RECORD_BYTES;
+    uint8_t *gathered=malloc((size_t)gathered_bytes);
+    REQUIRE(gathered);
+    REQUIRE(fg_vk_tensor_read(s->selected_records,0,gathered,gathered_bytes,&error)==FG_OK);
+    for(uint32_t i=0;i<count;i++)
+        REQUIRE(!memcmp(gathered+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,
+            records+(uint64_t)reference[i]*FG_QSA_PAGE_RECORD_BYTES,FG_QSA_PAGE_RECORD_BYTES));
+    REQUIRE(!memcmp(gathered+(uint64_t)count*FG_QSA_PAGE_RECORD_BYTES,
+        records+1023u*FG_QSA_PAGE_RECORD_BYTES,3u*FG_Q38_QSA_TOKEN_RECORD_BYTES));
+    free(gathered);
+    qsa_slot_evict(s,3u,0u);
+    REQUIRE(s->cached_prefix[0]==0u);
+    REQUIRE(fg_vk_begin(vk,&error)==FG_OK);
+    REQUIRE(select_blocks_resolve(s,0u,s->index_query_view,4095u,selected,
+        &count,&fallback,&error)==FG_OK);
+    REQUIRE(!fg_vk_batch_active(vk));
+    qsa_cache_reset(s);
+    REQUIRE(s->cached_prefix[0]==0u);
+    fg_qsa_page_cache_destroy(s->cache);s->cache=NULL;
+    fg_vk_tensor_destroy(s->cache_records);s->cache_records=NULL;
+    s->max_blocks=max_blocks;s->cache_pages=2u;
+    REQUIRE(ensure_page_cache(s,&error)==FG_OK);
+    return 1;
+}
+
 typedef struct fetch_fixture {uint8_t pages[6][FG_QSA_PAGE_RECORD_BYTES];uint32_t calls,pages_read;bool fail;} fetch_fixture;
 static fg_status fetch_pages(void *opaque,uint32_t layer,const uint32_t *blocks,
     uint32_t count,uint8_t *records,fg_error *err){
@@ -543,7 +607,8 @@ int main(void){
     if(ok)ok=lazy_index_segment(session)&&fill_index_rows(session);
     if(ok)ok=selection_window_boundary(session);
     if(ok)ok=selection_parity(session,131071u)&&selection_parity(session,2045u);
-    if(ok)ok=select_resolve_mirror(session)&&select_resolve_parity(session,8191u);
+    if(ok)ok=select_resolve_mirror(session)&&select_resolve_parity(session,8191u)&&
+        select_resolve_resident(session);
     if(ok)ok=causal_attention(session)&&causal_attention_weighted(session)&&gather_eviction(session,false)&&gather_eviction(session,true);
     if(ok)ok=split_merge_selected(session,5u,8u)&&split_merge_selected(session,100u,1u)&&
         split_merge_selected(session,2051u,8u);

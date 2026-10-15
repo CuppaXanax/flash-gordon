@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #define FG_OUTPUT_TOPK_CAPACITY (((FG_Q38_VOCAB_SIZE+4095u)/4096u)*512u)
@@ -17,6 +18,33 @@
 static bool output_trace_enabled(void){
     const char *enabled=getenv("FG_OUTPUT_TRACE");
     return enabled&&*enabled&&strcmp(enabled,"0")!=0;
+}
+
+typedef struct output_timing {bool trace,profile;double start_ms;} output_timing;
+static double output_now_ms(void){
+    struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);
+    return (double)t.tv_sec*1000.0+(double)t.tv_nsec*1e-6;
+}
+static output_timing output_timing_begin(fg_vk_context *vk){
+    const char *trace=getenv("FG_DECODE_RING_TRACE"),*profile=getenv("FG_DECODE_PROFILE");
+    output_timing timing={.trace=trace&&*trace&&strcmp(trace,"0")!=0};
+    if(timing.trace)timing.start_ms=output_now_ms();
+    if(profile&&*profile&&strcmp(profile,"0")!=0&&!fg_vk_profile_active(vk)){
+        fg_error ignored={0};
+        timing.profile=fg_vk_profile_begin(vk,&ignored)==FG_OK;
+    }
+    return timing;
+}
+static void output_timing_end(fg_vk_context *vk,output_timing timing,
+    uint32_t rank,const char *kind,fg_status status){
+    fg_vk_profile profile={0};fg_error ignored={0};
+    bool captured=timing.profile&&fg_vk_profile_end(vk,&profile,&ignored)==FG_OK;
+    if(timing.trace||captured)
+        fprintf(stderr,"OUTPUT_SERVICE rank=%u kind=%s wall_ms=%.3f gpu_ms=%.3f "
+            "kernel_ms=%.3f wait_ms=%.3f submissions=%llu status=%d\n",rank,kind,
+            timing.trace?output_now_ms()-timing.start_ms:0.0,
+            captured?profile.gpu_ms:0.0,captured?profile.kernel_ms:0.0,
+            captured?profile.wait_ms:0.0,(unsigned long long)profile.submissions,(int)status);
 }
 
 struct fg_output_executor {
@@ -371,11 +399,13 @@ fg_status fg_output_slice_run_hidden(fg_output_slice *slice,const void *hidden,
         fg_error_set(err,FG_ERR_ARGUMENT,"output slice cannot run inside a Vulkan batch");
         return FG_ERR_ARGUMENT;
     }
+    output_timing timing=output_timing_begin(vk);
     fg_status status=fg_vk_tensor_write(slice->hidden,0,hidden,
         (uint64_t)FG_HIDDEN_SIZE*4u,err);
     if(status==FG_OK)status=fg_vk_begin(vk,err);
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"output_slice",err);
     if(status==FG_OK)status=output_slice_reduce(slice,value,id,err);
+    output_timing_end(vk,timing,fg_model_rank(slice->model),"slice",status);
     return status;
 }
 
@@ -450,6 +480,7 @@ fg_status fg_output_hc_run(fg_output_hc *hc,const void *hyper,float *hidden,fg_e
         fg_error_set(err,FG_ERR_ARGUMENT,"output HC chain cannot run inside a Vulkan batch");
         return FG_ERR_ARGUMENT;
     }
+    output_timing timing=output_timing_begin(vk);
     fg_status status=fg_vk_tensor_write(hc->hyper,0,hyper,
         (uint64_t)FG_Q38_HYPER_WIDTH*4u,err);
     if(status==FG_OK)status=fg_vk_begin(vk,err);
@@ -458,8 +489,9 @@ fg_status fg_output_hc_run(fg_output_hc *hc,const void *hyper,float *hidden,fg_e
         hc->normalized,hc->down,hc->activated,hc->up,hc->hidden,hc->hyper,err);
     if(status==FG_OK){fg_status end_status=fg_vk_end(vk,err);if(end_status!=FG_OK)status=end_status;}
     if(status!=FG_OK&&fg_vk_batch_active(vk)){fg_error ignored={0};fg_vk_abort(vk,&ignored);}
-    if(status!=FG_OK)return status;
-    return fg_vk_tensor_read(hc->hidden,0,hidden,(uint64_t)FG_HIDDEN_SIZE*4u,err);
+    if(status==FG_OK)status=fg_vk_tensor_read(hc->hidden,0,hidden,(uint64_t)FG_HIDDEN_SIZE*4u,err);
+    output_timing_end(vk,timing,fg_model_rank(hc->model),"hc",status);
+    return status;
 }
 
 static fg_status output_hc_chain(fg_vk_context *vk,const fg_vk_tensor *hc_norm,

@@ -797,7 +797,9 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
         status=FG_ERR_MISMATCH;
     }
     bool trace=decode_ring_trace_enabled();struct timespec t_begin={0};
-    if(trace)clock_gettime(CLOCK_MONOTONIC,&t_begin);
+    fg_vk_counters counters_before={0};
+    if(trace){clock_gettime(CLOCK_MONOTONIC,&t_begin);
+        fg_vk_get_counters(context->vk,&counters_before);}
     fg_vk_tensor *input=status==FG_OK?fg_owner_prefill_input(owner):NULL;
     if(status==FG_OK&&!input){
         fg_error_set(err,FG_ERR_UNAVAILABLE,"worker decode input storage is unavailable");
@@ -946,15 +948,19 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
                 self,work->token_index,output_owner);
     }
     if(trace&&status==FG_OK){struct timespec t_end;clock_gettime(CLOCK_MONOTONIC,&t_end);
+        fg_vk_counters counters_after={0};fg_vk_get_counters(context->vk,&counters_after);
         fprintf(stderr,"RING_DECODE_BLOCK rank=%u token=%u layers=%u..%u write_ms=%.3f "
-            "block_ms=%.3f read_ms=%.3f publish_ms=%.3f egress_ms=%.3f total_ms=%.3f\n",
+            "block_ms=%.3f read_ms=%.3f publish_ms=%.3f egress_ms=%.3f total_ms=%.3f "
+            "submissions=%llu dispatches=%llu\n",
             self,work->token_index,(unsigned)work->layer,last,
             elapsed_seconds(&t_begin,&t_written)*1000.0,
             elapsed_seconds(&t_written,&t_block)*1000.0,
             elapsed_seconds(&t_block,&t_read)*1000.0,
             elapsed_seconds(&t_read,&t_publish)*1000.0,
             elapsed_seconds(&t_publish,&t_end)*1000.0,
-            elapsed_seconds(&t_begin,&t_end)*1000.0);}
+            elapsed_seconds(&t_begin,&t_end)*1000.0,
+            (unsigned long long)(counters_after.submissions-counters_before.submissions),
+            (unsigned long long)(counters_after.dispatches-counters_before.dispatches));}
     return status;
 }
 
@@ -5280,7 +5286,7 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
             "first_hop_ms=%.3f own_layers=%u..%u own_ms=%.3f own_run_ms=%.3f "
             "own_read_ms=%.3f tail_ms=%.3f output_ms=%.3f total_ms=%.3f handoff=%u "
             "submissions_total=%llu dispatches_total=%llu\n",
-            token_index,t_sent-t0,t_ngram-t_embed,t_sent-t_ngram,t_own_recv-t_sent,
+            token_index,t_embed-t0,t_ngram-t_embed,t_sent-t_ngram,t_own_recv-t_sent,
             own_first,own_last,
             t_own_end-t_own_recv,t_own_run-t_own_recv,t_own_read-t_own_run,
             t_final-t_own_end,t_output-t_final,t_output-t0,direct?1u:0u,

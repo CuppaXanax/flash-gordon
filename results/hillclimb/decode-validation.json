@@ -1,0 +1,38 @@
+{
+  "test-r1.json": {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "QSA causal tiles, 128k segment boundary, cache eviction and deduplicated fetch: PASS\nOwner GPU reduction: shuffled slots, tile tails, live scratch and invalid routes PASS\nFlash Gordon native Vulkan production-dimension oracles: PASS\nFlash Gordon native Vulkan production-dimension oracles: PASS\nFlash Gordon native Vulkan production-dimension oracles: PASS\nFlash Gordon native Vulkan production-dimension oracles: PASS",
+    "Stderr": "Flash Gordon Vulkan device: AMD BC-250 (RADV GFX1013)\n  [qsa_record_gather] ... ok\nFlash Gordon Vulkan device: AMD BC-250 (RADV GFX1013)\n  [qsa_attention] ... ok\nFlash Gordon Vulkan device: AMD BC-250 (RADV GFX1013)\n  [pipeline_flush_parity] ... ok\nFlash Gordon Vulkan device: AMD BC-250 (RADV GFX1013)\n  [batch_submission_parity] ... ok\n"
+  },
+  "test-r2-focused.json": {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "QSA causal tiles, 128k segment boundary, cache eviction and deduplicated fetch: PASS\nOwner GPU reduction: shuffled slots, tile tails, live scratch and invalid routes PASS\nFlash Gordon native Vulkan production-dimension oracles: PASS\nFlash Gordon native Vulkan production-dimension oracles: PASS\nFlash Gordon native Vulkan production-dimension oracles: PASS\nFlash Gordon native Vulkan production-dimension oracles: PASS\nFlash Gordon native Vulkan production-dimension oracles: PASS\nFlash Gordon native Vulkan production-dimension oracles: PASS\nFlash Gordon native Vulkan production-dimension oracles: PASS",
+    "Stderr": "Flash Gordon Vulkan device: AMD BC-250 (RADV GFX1013)\n  [qsa_record_gather] ... ok\nFlash Gordon Vulkan device: AMD BC-250 (RADV GFX1013)\n  [qsa_attention] ... ok\nFlash Gordon Vulkan device: AMD BC-250 (RADV GFX1013)\n  [pipeline_flush_parity] ... ok\nFlash Gordon Vulkan device: AMD BC-250 (RADV GFX1013)\n  [batch_submission_parity] ... ok\nFlash Gordon Vulkan device: AMD BC-250 (RADV GFX1013)\n  [output_argmax] ... ok\nFlash Gordon Vulkan device: AMD BC-250 (RADV GFX1013)\n  [output_split_combine_4way] ... ok\nFlash Gordon Vulkan device: AMD BC-250 (RADV GFX1013)\n  [q8_cooked_view_slice_quad] ... ok\n"
+  },
+  "test-fabric-baseline.json": {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "fabric candidate=1 original=1",
+    "Stderr": "FAIL tests/test_fabric.c:186: fg_output_config_decode(&decoded,bad,sizeof(bad),&error)!=FG_OK\nFAIL tests/test_fabric.c:186: fg_output_config_decode(&decoded,bad,sizeof(bad),&error)!=FG_OK\n"
+  },
+  "ledger_unittests": {
+    "command": "python -m unittest discover -s tests -p test_decode_ledger.py -v",
+    "tests": 4,
+    "pass": true
+  },
+  "test-final-qsa.json": {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "QSA causal tiles, 128k segment boundary, cache eviction and deduplicated fetch: PASS\nFGFLAGS code=35 test=11 doc=46 removed=18 status=PASS\nc57e043095b15da22808c949efceb4f7f22bc5403615de63df62fc7288e93246  flash-gordon",
+    "Stderr": ""
+  },
+  "all_rank_shader_hashes_match_original": true,
+  "final_local_gates": {
+    "flags": "FGFLAGS code=35 test=11 doc=46 removed=18 status=PASS",
+    "ledger_unittests": 4,
+    "operator_powershell_syntax": "PASS",
+    "operator_bash_syntax": "PASS"
+  }
+}

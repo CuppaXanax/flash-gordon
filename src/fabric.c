@@ -69,6 +69,8 @@ static void fabric_profile_recv(const fg_fabric *f,uint32_t peer,
         if(timing->profile_poll_start_ns&&timing->profile_ready_ns&&
            timing->profile_ready_ns>=timing->profile_poll_start_ns)
             wait_ns=timing->profile_ready_ns-timing->profile_poll_start_ns;
+        else if(timing->poll_start_ns&&timing->ready_ns>=timing->poll_start_ns)
+            wait_ns=timing->ready_ns-timing->poll_start_ns;
         if(timing->profile_ready_ns&&timing->profile_header_end_ns&&
            timing->profile_header_end_ns>=timing->profile_ready_ns)
             header_ns=timing->profile_header_end_ns-timing->profile_ready_ns;
@@ -89,13 +91,15 @@ static void fabric_profile_recv(const fg_fabric *f,uint32_t peer,
         "\"message_type\":%u,\"payload_bytes\":%u,\"framed_bytes\":%llu,"
         "\"wall_ms\":%.6f,\"mode\":\"%s\",\"wait_ms\":%.6f,"
         "\"header_ms\":%.6f,\"payload_ms\":%.6f,\"validation_ms\":%.6f,"
-        "\"status\":%d}\n",
+        "\"request\":%llu,\"sequence\":%u,\"status\":%d}\n",
         f->rank,peer,fabric_class_name(cls),
         status==FG_OK&&h?(unsigned)fg_frame_type(h):0u,
         payload,(unsigned long long)(sizeof(fg_frame_header)+(uint64_t)payload),
         (double)(end-start)/1000000.0,direct?"direct":"io_uring",
         (double)wait_ns/1000000.0,(double)header_ns/1000000.0,
-        (double)payload_ns/1000000.0,(double)validate_ns/1000000.0,(int)status);
+        (double)payload_ns/1000000.0,(double)validate_ns/1000000.0,
+        (unsigned long long)(status==FG_OK&&h?fg_frame_request_id(h):0u),
+        status==FG_OK&&h?fg_frame_sequence(h):0u,(int)status);
     pthread_mutex_unlock(&fabric_profile_mutex);
 }
 static int socket_configure(int fd){int one=1;if(setsockopt(fd,IPPROTO_TCP,TCP_NODELAY,&one,sizeof(one))||setsockopt(fd,SOL_SOCKET,SO_KEEPALIVE,&one,sizeof(one)))return -1;

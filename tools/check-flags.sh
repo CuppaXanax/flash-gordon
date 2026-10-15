@@ -52,6 +52,7 @@ expected_code="$(printf '%s\n' \
     FG_PREFILL_RING \
     FG_PREFIX_TRACE \
     FG_PROFILE_TOKEN \
+    FG_QSA_DEVICE_SELECT \
     FG_QSA_LOCALITY_MIB \
     FG_QSA_LOCALITY_TRACE \
     FG_QSA_PREFETCH_TRACE \

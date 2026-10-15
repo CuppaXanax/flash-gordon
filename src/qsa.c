@@ -40,6 +40,7 @@ struct fg_qsa_session {
     fg_vk_tensor *key_q8,*value_q4,*index_key_q8;
     fg_vk_tensor *scores[2],*ids[2],*selected_records,*attention,*output;
     fg_vk_tensor *slot_table,*select_resolved,*select_flags;
+    uint32_t cached_prefix[FG_QSA_MAX_LAYERS];
     fg_vk_tensor *tile_scores[FG_QSA_PREFILL_QUERY_TILE][2];
     fg_vk_tensor *tile_ids[FG_QSA_PREFILL_QUERY_TILE][2];
     fg_vk_tensor *tile_records[FG_QSA_PREFILL_QUERY_TILE];
@@ -308,6 +309,9 @@ static void qsa_slot_store(fg_qsa_session *s,uint32_t layer,uint32_t block,uint3
     if(index<0||block>=s->max_blocks)return;
     ((uint32_t *)fg_vk_tensor_map(s->slot_table))[(uint64_t)index*
         s->max_blocks+block]=slot;
+    if(slot==UINT32_MAX){
+        if(block<s->cached_prefix[index])s->cached_prefix[index]=block;
+    }else if(block==s->cached_prefix[index])s->cached_prefix[index]++;
 }
 static void qsa_slot_evict(void *opaque,uint32_t layer,uint32_t block){
     qsa_slot_store(opaque,layer,block,UINT32_MAX);
@@ -326,6 +330,7 @@ static fg_status qsa_cache_acquire_soft(fg_qsa_session *s,uint32_t layer,uint32_
 }
 static void qsa_cache_reset(fg_qsa_session *s){
     fg_qsa_page_cache_reset(s->cache);
+    memset(s->cached_prefix,0,sizeof(s->cached_prefix));
     if(s->slot_table)
         memset(fg_vk_tensor_map(s->slot_table),0xff,
                (size_t)fg_vk_tensor_bytes(s->slot_table));
@@ -884,6 +889,18 @@ static fg_status select_blocks_resolve(fg_qsa_session *s,uint32_t slot,
             s->ids[side],s->slot_table,count,s->max_blocks,
             (uint32_t)slot*s->max_blocks,err);
     }
+    /* No page can be recycled when the entire session fits. A restored or
+     * sparsely warmed cache must first establish a complete resident prefix. */
+    const char *device_select=getenv("FG_QSA_DEVICE_SELECT");
+    bool resident=status==FG_OK&&!s->locality&&
+        !(device_select&&strcmp(device_select,"0")==0)&&
+        (uint64_t)s->cache_pages>=(uint64_t)s->layer_count*s->max_blocks&&
+        s->cached_prefix[slot]>=(tokens+FG_Q38_QSA_COMPRESS_RATIO-1u)/
+            FG_Q38_QSA_COMPRESS_RATIO;
+    if(resident){
+        *selected_count=count;*fallback=false;
+        return FG_OK;
+    }
     bool ended=status==FG_OK&&fg_vk_batch_active(vk);
     if(ended)status=fg_vk_end(vk,err);
     if(trace)end_done=qsa_now_ms();
@@ -1006,7 +1023,7 @@ static fg_status attend_cache(fg_qsa_session *s,uint32_t slot,uint32_t tokens,
     }else if(use_resolve){
         status=select_blocks_resolve(s,slot,index_query,tokens,selected,
                                      &selected_count,&fallback,err);
-        restart_batch=resume_batch;
+        restart_batch=resume_batch&&!fg_vk_batch_active(vk);
         resolved=status==FG_OK&&!fallback;
     }else{
         status=select_blocks(s,slot,index_query,tokens,selected,&selected_count,false,err);

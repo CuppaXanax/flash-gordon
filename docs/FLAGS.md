@@ -34,6 +34,7 @@ Status values:
 | `FG_PREFILL_RING` | `1` | Layer-ring prefill. `0` restores the non-ring prefill path. | validated default |
 | `FG_DECODE_RING` | `1` | Layer-ring decode. `0` restores the legacy expert-parallel decode replay. | validated default |
 | `FG_WORKER_OWNER` | `1` | Worker-side owner executor. `0` opts out. | validated default |
+| `FG_QSA_DEVICE_SELECT` | `1` | Keep selected cache slots on the GPU when capacity covers the whole session and its visible page prefix is resident. `0` restores flag/slot readback; sparse, evicting and locality-traced sessions retain the readback path. Numerically validated branch default, not promoted to production after the full harness. | validated default |
 | `FG_NGRAM_PAGEABLE` | `1` (on) | Worker n-gram shard mode. The shard is mapped (`mmap` + `MADV_RANDOM`) and served from the kernel page cache with a 128 MiB mlocked hot prefix and bounded `posix_fadvise(WILLNEED)` read-ahead; `0` restores mlock of the whole shard. Measured equal-or-better at 4K-151K and returns 3.7-3.9 GiB of host headroom per worker. | validated default |
 | `FG_PACK_EMBED_RANK` | rank 7 | Packer placement override for `token_embd.weight` (0-7). | packer option |
 
@@ -59,7 +60,7 @@ slice ranks (the foreign loader names the exact missing span at startup).
 |---|---|---|---|
 | `FG_FRAME_TRACE` | unset (off) | Per-frame send/receive traces (fabric, owners, n-gram, QSA). | profiling |
 | `FG_FABRIC_PROFILE` | unset (off) | JSON fabric service records to stderr. | profiling |
-| `FG_DECODE_PROFILE` | unset (off) | Per-token decode phase timings and Vulkan profile dump. | profiling |
+| `FG_DECODE_PROFILE` | unset (off) | Per-token decode phase timings and Vulkan profile dump, including output HC and vocabulary slices. Disables static replay and serializes profiled flushes; not a production throughput measurement. | profiling |
 | `FG_PREFILL_PROFILE` | unset (off) | Per-layer prefill kernel profile dump. | profiling |
 | `FG_PREFILL_PROFILE_CHUNK` | unset (profile all) | Restricts `FG_PREFILL_PROFILE` capture to one microbatch index. | profiling |
 | `FG_OUTPUT_TRACE` | unset (off) | Per-token greedy output trace on the output owner. | profiling |
@@ -69,7 +70,7 @@ slice ranks (the foreign loader names the exact missing span at startup).
 | `FG_TRACE_ROUTES` | unset (off) | Router/expert route traces. | profiling |
 | `FG_PREFIX_TRACE` | unset (off) | Prefix reuse diagnostics (counts, mismatch positions and reasons only). | profiling |
 | `FG_GENERATE_TRACE` | unset (off) | Generation loop breakdown (interrupt/tokenizer/callback/render/decode). | profiling |
-| `FG_DECODE_RING_TRACE` | unset (off) | Ring decode issue/stage/done traces. | profiling |
+| `FG_DECODE_RING_TRACE` | unset (off) | Ring decode issue/stage/done traces, per-block submission counters and output service wall time. `embed_ms` is embedding-only; add `ngram_ms` and `send_ms` for coordinator preparation. | profiling |
 | `FG_RING_TRACE` | unset (off) | Ring prefill issue/stage/done traces. | profiling |
 | `FG_PROFILE_TOKEN` | unset (off) | Selects a single token index; enables the detailed per-token captures below. | profiling |
 | `FG_NGRAM_VERIFY` | unset (off) | Verified n-gram row comparison for the `FG_PROFILE_TOKEN` token. | profiling |
