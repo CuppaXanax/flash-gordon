@@ -1,0 +1,6 @@
+{
+  "IP": "192.168.42.50",
+  "ExitCode": 0,
+  "Stdout": "e47363dfb6359627419fec08588b19d4e56754b7b946e0568f678976eca56d94  baseline/fg_moe_decode_down_reduce.spv\n22a4450d0ef8f4566997b5aa7f145eb7557bd94b25eb194b07c95b5671541398  baseline/fg_moe_decode_gate_up.spv\n22a4450d0ef8f4566997b5aa7f145eb7557bd94b25eb194b07c95b5671541398  vulkan/fg_moe_decode_gate_up.spv\n3916631065fdf76702d1c4838a1082e5007016582e6f4d346a621c414aa55ece  vulkan/fg_moe_decode_down_reduce.spv\n80a0210f441efbb96abfb9d46acb94464223874bb8b1066ae12c21f637070265  vulkan/fg_moe_decode_down_q8.spv\nReal model manifest unavailable on permitted blade",
+  "Stderr": ""
+}

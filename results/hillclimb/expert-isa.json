@@ -1,0 +1,6 @@
+{
+  "IP": "192.168.42.50",
+  "ExitCode": 0,
+  "Stdout": "Candidate and original Q5 ISA captured; subgroup sizes:\napi_subgroup_size: 64",
+  "Stderr": ""
+}

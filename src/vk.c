@@ -58,7 +58,7 @@ struct fg_vk_context {
     VkCommandBuffer command_swap;bool static_active;uint32_t static_slot_active;uint32_t static_saved_set_count;
     uint32_t batch_set_base;
     VkPhysicalDeviceMemoryProperties memory;char device_name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
-    bool subgroup_topk;bool integer_dot_product;
+    bool subgroup_topk;bool integer_dot_product;bool subgroup_expert_q8;
     uint32_t batch_depth;uint32_t batch_set_count;VkDescriptorSet descriptor_sets[FG_VK_BATCH_MAX_SETS];bool batch_has_dispatch;bool barrier_elide_next;
     fg_vk_descriptor_cache descriptor_cache[FG_VK_BATCH_MAX_SETS];bool descriptor_cache_valid[FG_VK_BATCH_MAX_SETS];
     VkDescriptorSet static_descriptor_sets[FG_VK_STATIC_SET_COUNT];fg_vk_descriptor_cache static_descriptor_cache[FG_VK_STATIC_SET_COUNT];bool static_descriptor_cache_valid[FG_VK_STATIC_SET_COUNT];
@@ -78,7 +78,7 @@ struct fg_vk_context {
     fg_vk_kernel dense_cooked_tile,router_top10,expert_major_pack;
     fg_vk_kernel decode_tile_schedule;
     fg_vk_kernel kquant_cooked_grouped,kquant_cooked_grouped_int,q5_1_cooked_grouped,q8_0_grouped,q8_0_cooked_grouped;
-    fg_vk_kernel moe_decode_gate_up,moe_decode_down_reduce;
+    fg_vk_kernel moe_decode_gate_up,moe_decode_down_reduce,moe_decode_down_q8;
     fg_vk_kernel moe_decode_shared_add;
     fg_vk_kernel moe_prefill_reduce,moe_prefill_shard_reduce;
 };
@@ -152,6 +152,7 @@ static fg_status read_shader(const char *file,uint32_t **words,size_t *bytes,fg_
 }
 
 static void destroy_kernel(fg_vk_context *context,fg_vk_kernel *kernel){
+    if(kernel==&context->moe_decode_down_reduce)destroy_kernel(context,&context->moe_decode_down_q8);
     if(kernel==&context->moe_q5_1)destroy_kernel(context,&context->moe_q5_1_cooked);
     if(kernel==&context->kquant)destroy_kernel(context,&context->kquant_cooked);
     if(kernel==&context->dense_cooked)destroy_kernel(context,&context->dense_cooked_r8);
@@ -211,6 +212,9 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
 #endif
     if(c->active_compute_units>256u)c->active_compute_units=0u;
     vkGetPhysicalDeviceMemoryProperties(c->physical,&c->memory);VkPhysicalDeviceSubgroupProperties subgroup={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};VkPhysicalDeviceProperties2 properties2={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&subgroup};vkGetPhysicalDeviceProperties2(c->physical,&properties2);c->subgroup_topk=properties.limits.maxComputeWorkGroupInvocations>=1024u&&properties.limits.maxComputeWorkGroupSize[0]>=1024u&&subgroup.subgroupSize>=32u&&subgroup.subgroupSize<=64u&&(subgroup.supportedStages&VK_SHADER_STAGE_COMPUTE_BIT)!=0u&&(subgroup.supportedOperations&(VK_SUBGROUP_FEATURE_BASIC_BIT|VK_SUBGROUP_FEATURE_BALLOT_BIT|VK_SUBGROUP_FEATURE_ARITHMETIC_BIT))==(VK_SUBGROUP_FEATURE_BASIC_BIT|VK_SUBGROUP_FEATURE_BALLOT_BIT|VK_SUBGROUP_FEATURE_ARITHMETIC_BIT);
+    c->subgroup_expert_q8=subgroup.subgroupSize>=32u&&
+        (subgroup.supportedStages&VK_SHADER_STAGE_COMPUTE_BIT)!=0u&&
+        (subgroup.supportedOperations&VK_SUBGROUP_FEATURE_SHUFFLE_BIT)!=0u;
     bool integer_dot_extension=device_has_extension(c->physical,"VK_KHR_shader_integer_dot_product");
     VkPhysicalDeviceShaderIntegerDotProductPropertiesKHR integer_dot_properties={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_PROPERTIES_KHR};
     if(integer_dot_extension){VkPhysicalDeviceProperties2 integer_properties={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&integer_dot_properties};vkGetPhysicalDeviceProperties2(c->physical,&integer_properties);}
@@ -233,7 +237,8 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
     c->dense_cooked_split_reduce=(fg_vk_kernel){.file="fg_dense_q8_0_cooked_split_reduce.spv",.bindings=2,.push_bytes=8};
     c->dense_cooked_split_reduce_silu=(fg_vk_kernel){.file="fg_dense_q8_0_cooked_split_reduce_silu.spv",.bindings=3,.push_bytes=12};
     c->moe_q5_1=(fg_vk_kernel){.file="fg_moe_q5_1_down.spv",.bindings=4,.push_bytes=28};c->moe_q5_1_cooked=(fg_vk_kernel){.file="fg_moe_q5_1_down_cooked.spv",.bindings=4,.push_bytes=28};c->moe_q8_0=(fg_vk_kernel){.file="fg_moe_q8_0_down.spv",.bindings=4,.push_bytes=28};c->moe_q8_0_cooked=(fg_vk_kernel){.file="fg_moe_q8_0_down_cooked.spv",.bindings=4,.push_bytes=28};c->moe_reduce=(fg_vk_kernel){.file="fg_moe_reduce.spv",.bindings=4,.push_bytes=12};c->kquant=(fg_vk_kernel){.file="fg_moe_kquant.spv",.bindings=4,.push_bytes=36};c->kquant_cooked=(fg_vk_kernel){.file="fg_moe_kquant_cooked.spv",.bindings=4,.push_bytes=32};
-    c->moe_decode_gate_up=(fg_vk_kernel){.file="fg_moe_decode_gate_up.spv",.bindings=5,.push_bytes=32};c->moe_decode_down_reduce=(fg_vk_kernel){.file="fg_moe_decode_down_reduce.spv",.bindings=5,.push_bytes=28};c->moe_decode_shared_add=(fg_vk_kernel){.file="fg_moe_shared_add.spv",.bindings=4,.push_bytes=4};
+    c->moe_decode_gate_up=(fg_vk_kernel){.file="fg_moe_decode_gate_up.spv",.bindings=5,.push_bytes=32};
+    c->moe_decode_down_reduce=(fg_vk_kernel){.file="fg_moe_decode_down_reduce.spv",.bindings=5,.push_bytes=28};c->moe_decode_down_q8=(fg_vk_kernel){.file="fg_moe_decode_down_q8.spv",.bindings=5,.push_bytes=28};c->moe_decode_shared_add=(fg_vk_kernel){.file="fg_moe_shared_add.spv",.bindings=4,.push_bytes=4};
     c->bench_stream=(fg_vk_kernel){.file="fg_bench_stream.spv",.bindings=3,.push_bytes=20};c->bench_dequant=(fg_vk_kernel){.file="fg_bench_dequant.spv",.bindings=3,.push_bytes=20};c->bench_dot_nored=(fg_vk_kernel){.file="fg_bench_dot_nored.spv",.bindings=3,.push_bytes=20};
     c->bench_stream_wide=(fg_vk_kernel){.file="fg_bench_stream_wide.spv",.bindings=3,.push_bytes=20};c->bench_stream_vec=(fg_vk_kernel){.file="fg_bench_stream_vec.spv",.bindings=3,.push_bytes=20};
     c->bench_cooked_layout=(fg_vk_kernel){.file="fg_bench_cooked_layout.spv",.bindings=3,.push_bytes=32};
@@ -709,7 +714,9 @@ fg_status fg_vk_expert_graph_create(fg_vk_context *c,fg_vk_expert_graph **out,fg
         struct{uint32_t out_dim,in_dim,blocks,tile_bytes,expert_stride,slots,down_type;}down_reduce_push={hidden_width,mid_width,mid_width/FG_QK8_0,down_q51?(uint32_t)fg_q5_1_cooked_tile_bytes(mid_width):down_q8?(uint32_t)fg_q8_0_cooked_tile_bytes(mid_width):0u,down_expert_stride,slots,down_type};
         const fg_vk_tensor *gate_up_bindings[]={gate_weights,up_weights,activation,tiles,mid},*down_reduce_bindings[]={down_weights,tiles,mid,gates,reduced};
         status=expert_graph_dispatch(graph,&c->moe_decode_gate_up,gate_up_bindings,&gate_up_push,(mid_width+7u)/8u,slots,1u,false,err);
-        if(status==FG_OK)status=expert_graph_dispatch(graph,&c->moe_decode_down_reduce,down_reduce_bindings,&down_reduce_push,down_q8?(hidden_width+7u)/8u:(hidden_width+15u)/16u,1u,1u,true,err);
+        bool wide_q8=down_q8&&c->subgroup_expert_q8;
+        uint32_t down_groups=wide_q8?(hidden_width+1u)/2u:down_q8?(hidden_width+7u)/8u:(hidden_width+15u)/16u;
+        if(status==FG_OK)status=expert_graph_dispatch(graph,wide_q8?&c->moe_decode_down_q8:&c->moe_decode_down_reduce,down_reduce_bindings,&down_reduce_push,down_groups,1u,1u,true,err);
     }else{
         const fg_vk_tensor *gate_bindings[]={gate_weights,activation,tiles,gate},*up_bindings[]={up_weights,activation,tiles,up},*swiglu_bindings[]={gate,up,mid},*down_bindings[]={down_weights,tiles,mid,down},*reduce_bindings[]={down,gates,tiles,reduced};fg_vk_kernel *gate_kernel=gate_cooked?&c->kquant_cooked:&c->kquant,*up_kernel=up_cooked?&c->kquant_cooked:&c->kquant,*down_kernel=down_q51?&c->moe_q5_1_cooked:down_q8?&c->moe_q8_0_cooked:down_type==7u?&c->moe_q5_1:&c->moe_q8_0;const void *gate_parameters=gate_cooked?(const void *)&gate_cooked_push:(const void *)&gate_push,*up_parameters=up_cooked?(const void *)&up_cooked_push:(const void *)&up_push,*down_parameters=(down_q51||down_q8)?(const void *)&down_cooked_push:(const void *)&down_push;status=expert_graph_dispatch(graph,gate_kernel,gate_bindings,gate_parameters,(mid_width+7u)/8u,slots,1u,false,err);if(status==FG_OK)status=expert_graph_dispatch(graph,up_kernel,up_bindings,up_parameters,(mid_width+7u)/8u,slots,1u,false,err);if(status==FG_OK)status=expert_graph_dispatch(graph,&c->swiglu,swiglu_bindings,&swiglu_push,(slots*mid_width+255u)/256u,1u,1u,true,err);if(status==FG_OK)status=expert_graph_dispatch(graph,down_kernel,down_bindings,down_parameters,(hidden_width+7u)/8u,slots,1u,true,err);if(status==FG_OK)status=expert_graph_dispatch(graph,&c->moe_reduce,reduce_bindings,&reduce_push,(hidden_width+255u)/256u,1u,1u,true,err);
     }
@@ -1529,8 +1536,9 @@ fg_status fg_vk_moe_decode_down_reduce(fg_vk_context *c,fg_vk_tensor *out,
     }
     struct{uint32_t out_dim,in_dim,blocks,tile_bytes,expert_stride,slots,down_type;}push={output_width,input_width,input_width/FG_QK8_0,(uint32_t)tile_bytes,expert_stride,slots,down_type};
     const fg_vk_tensor *bindings[]={down_weights,tiles,input,gates,out};
-    uint32_t groups=q8_cooked?(output_width+7u)/8u:(output_width+15u)/16u;
-    return dispatch(c,&c->moe_decode_down_reduce,bindings,&push,groups,1u,1u,err);
+    bool cooked=q8_cooked&&c->subgroup_expert_q8;
+    uint32_t groups=cooked?(output_width+1u)/2u:q8_cooked?(output_width+7u)/8u:(output_width+15u)/16u;
+    return dispatch(c,cooked?&c->moe_decode_down_q8:&c->moe_decode_down_reduce,bindings,&push,groups,1u,1u,err);
 }
 
 /* Decode common-path finish: fold the shared-expert contribution (scaled by

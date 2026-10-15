@@ -21,8 +21,8 @@
    The pair shares one scale/fifth-bit word pair and one activation read per
    block, which halves the activation traffic per weight byte, and the cooked
    Q5_1 weights are read as aligned uvec2 words.  The Q5_1 block loop batches
-   four owned blocks per iteration (a 4x2-block stride walk) so a wave keeps
-   four weight streams in flight; the block accumulation order is untouched,
+   two owned blocks per iteration (a 2x2-block stride walk) so a wave keeps
+   two weight streams in flight; the block accumulation order is untouched,
    so the batch is bit-identical to the unbatched walk.  The cooked Q8_0 path
    gives each lane two four-value words of a row block (one uvec2) and two
    accumulators, so its quant and scale loads per value halve as well.
@@ -194,16 +194,6 @@ void main() {
             uint in_vec = input_base + parity * 8u + seg * 2u;
             uint bit_base = seg * 8u;
             uint block = parity;
-            for (; block + 6u < pc.blocks; block += 8u) {
-                FG_DOWN_PAIR(0u, 0u, 0u)
-                FG_DOWN_PAIR(96u, 96u, 16u)
-                FG_DOWN_PAIR(192u, 192u, 32u)
-                FG_DOWN_PAIR(288u, 288u, 48u)
-                sm_uvec += 384u;
-                hw_uvec += 384u;
-                qt_uvec += 384u;
-                in_vec += 64u;
-            }
             for (; block + 2u < pc.blocks; block += 4u) {
                 FG_DOWN_PAIR(0u, 0u, 0u)
                 FG_DOWN_PAIR(96u, 96u, 16u)
