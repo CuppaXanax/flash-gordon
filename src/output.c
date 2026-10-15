@@ -31,6 +31,7 @@ struct fg_output_executor {
      * by session_slot so interleaved sessions never share output history. */
     fg_vk_tensor *history_counts;
     uint32_t session_slot;
+    uint32_t eval_dump_count;
     fg_vk_tensor *vocabulary_ids;
     fg_vk_tensor *topk_scores[2];
     fg_vk_tensor *topk_ids[2];
@@ -62,8 +63,7 @@ static const fg_tensor_record *manifest_record(const fg_manifest *manifest,const
 }
 
 static fg_vk_tensor_format record_format(const fg_tensor_record *record){
-    return record->layout==FG_TENSOR_LAYOUT_Q8_0_COOKED?
-        FG_VK_TENSOR_FORMAT_Q8_0_COOKED:FG_VK_TENSOR_FORMAT_DEFAULT;
+    return fg_vk_dense_saved_format(record->ggml_type,record->layout);
 }
 
 static fg_status foreign_tensor_load(fg_vk_context *vk,const fg_tensor_record *record,
@@ -185,7 +185,11 @@ static fg_status output_weight_span(const fg_tensor_record *record,uint32_t firs
         start=((uint64_t)first_row/FG_Q8_0_COOK_ROWS)*tile;
         span=tiles*tile;
     }else{
-        uint64_t row_bytes=(uint64_t)(record->shape[0]/32u)*FG_Q8_0_BLOCK_BYTES;
+        uint64_t shape[4]={record->shape[0],1u,0u,0u},row_bytes=0u;
+        if(!fg_gguf_tensor_bytes(record->ggml_type,2u,shape,&row_bytes)){
+            fg_error_set(err,FG_ERR_FORMAT,"unsupported output slice row type");
+            return FG_ERR_FORMAT;
+        }
         start=(uint64_t)first_row*row_bytes;
         span=(uint64_t)rows*row_bytes;
     }
@@ -561,6 +565,30 @@ fg_status fg_output_greedy(fg_output_executor *executor,const fg_vk_tensor *hype
     while(status==FG_OK&&count>1u){uint32_t next=0;status=fg_vk_argmax_reduce(vk,executor->topk_scores[slot],executor->topk_ids[slot],scores,ids,count,&next,err);scores=executor->topk_scores[slot];ids=executor->topk_ids[slot];count=next;slot^=1u;}
     if(status==FG_OK){fg_status end_status=fg_vk_end(vk,err);if(end_status!=FG_OK)status=end_status;}if(status!=FG_OK&&fg_vk_batch_active(vk)){fg_error ignored={0};fg_vk_abort(vk,&ignored);}
     if(status!=FG_OK)return status;
+    const char *dump_path=getenv("FG_EVAL_LOGITS");
+    const char *dump_directory=getenv("FG_EVAL_LOGITS_DIR");
+    char numbered_path[1200];
+    if(dump_directory&&*dump_directory){
+        int n=snprintf(numbered_path,sizeof(numbered_path),"%s/%04u.fgl",
+                       dump_directory,executor->eval_dump_count);
+        if(n<0||(size_t)n>=sizeof(numbered_path)){
+            fg_error_set(err,FG_ERR_LIMIT,"eval dump path is too long");return FG_ERR_LIMIT;
+        }
+        dump_path=numbered_path;
+    }
+    if(dump_path&&*dump_path){
+        FILE *file=fopen(dump_path,dump_directory&&*dump_directory?"wbx":"wb");
+        const uint32_t vocab=FG_Q38_VOCAB_SIZE;
+        bool written=file&&fwrite("FGLOG01\n",1u,8u,file)==8u&&
+            fwrite(&vocab,sizeof(vocab),1u,file)==1u&&
+            fwrite(fg_vk_tensor_const_map(logits),sizeof(float),vocab,file)==vocab;
+        if(file&&fclose(file)!=0)written=false;
+        if(!written){
+            fg_error_set(err,FG_ERR_IO,"write full-vocabulary eval logits: %s",dump_path);
+            return FG_ERR_IO;
+        }
+        executor->eval_dump_count++;
+    }
     const float *values=fg_vk_tensor_map((fg_vk_tensor *)scores);const uint32_t *indices=fg_vk_tensor_map((fg_vk_tensor *)ids);uint32_t best=indices[0];float best_value=values[0];
     if(best>=FG_Q38_VOCAB_SIZE||!isfinite(best_value)){fg_error_set(err,FG_ERR_MISMATCH,"invalid output finalist at token %u",best);return FG_ERR_MISMATCH;}
     if(output_trace_enabled()){

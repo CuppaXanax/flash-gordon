@@ -1,0 +1,6 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_control_flow_attributes : require
+#define TYPE 13
+#define TK 16
+#include "fg_dense_soa_tile_impl.glsl"

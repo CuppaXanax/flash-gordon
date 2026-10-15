@@ -1,0 +1,2409 @@
+{
+  "date": "2026-10-15",
+  "branch": "cuppaxanax/q4-dense",
+  "same_engine_release": "/home/xander/flash-gordon-live/20261015-q4-foreign",
+  "candidate_binary_sha256": "de8e1067732baaf9bb49083fbdebc55a991c78619d4156624f6ec03ddfc2022b",
+  "evaluator_sha256": "a05d0beb5cbb4f7355808ddb945f74306a7ebe212a8b94726ada1a560fa889d2",
+  "source_archive_sha256": "b719fc746ad29d94409c255c340724c38183e8796473968605a9d44b091db555",
+  "baseline_sha256": "089f798462e11d25608ae5dfa3b073aa959934958c2d0d3426735de8f7874f72",
+  "q8_control_correctness": [
+    {
+      "name": "arithmetic",
+      "prompt": "What is 17 plus 25? Output 64 copies of the answer, 42, separated by spaces; no other text.",
+      "text": "42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 4",
+      "sha256": "26ff83171aca5bd145b8d5b73313aee6e274f33280be55fe4116a0381d6325fb",
+      "reference_match": true,
+      "actual_tokens": 64,
+      "requested_max_tokens": 64,
+      "finish_reason": "length"
+    },
+    {
+      "name": "capital",
+      "prompt": "What is the capital city of Japan? Output 64 copies of the answer, Tokyo, separated by spaces; no other text.",
+      "text": "Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo",
+      "sha256": "80d07c2e9250d888aa835691e70ed687f6580b101bc6ee67cd6dc5c17a556782",
+      "reference_match": true,
+      "actual_tokens": 56,
+      "requested_max_tokens": 64,
+      "finish_reason": "stop"
+    },
+    {
+      "name": "sequence",
+      "prompt": "Continue 2, 4, 6, 8. Output 32 repetitions of \"10, 12\", separated by spaces; no other text.",
+      "text": "10, 12 10, 12 10, 12 10, 12 10, 12 10, 12 10, 12 10, 12 10, 12 1",
+      "sha256": "10b8098a28f003813a0b30cbd7b2389f7340e94d218a28d172d3145af988231f",
+      "reference_match": true,
+      "actual_tokens": 64,
+      "requested_max_tokens": 64,
+      "finish_reason": "length"
+    },
+    {
+      "name": "spelling",
+      "prompt": "Spell \"accommodation\". Output 64 copies of the correct spelling separated by spaces; no other text.",
+      "text": "accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation",
+      "sha256": "7ade073192c7b8db384ff0039572edf88777f54f8f823f1c4e478307bc4036c6",
+      "reference_match": true,
+      "actual_tokens": 58,
+      "requested_max_tokens": 64,
+      "finish_reason": "stop"
+    },
+    {
+      "name": "logic",
+      "prompt": "Which is heavier: one kilogram of steel or one kilogram of feathers? Output 64 copies of \"They weigh the same.\" separated by spaces; no other text.",
+      "text": "They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same",
+      "sha256": "d496f28da6272c18d4a43595f3efc6c44b1d254d19bd1f25b17584afc098f752",
+      "reference_match": true,
+      "actual_tokens": 64,
+      "requested_max_tokens": 64,
+      "finish_reason": "length"
+    }
+  ],
+  "plans": {
+    "ordinary": {
+      "quality": {
+        "corpus_sha256": "4fc3d274599c174a93de8b98e272dd6b9e5dc0c8ceb1eefba17271337c6a14d7",
+        "samples": 80,
+        "full_vocab": 248320,
+        "mean_kld": 0.10432441503037806,
+        "p99_kld": 0.6921010354745954,
+        "top1_agreement": 0.8375,
+        "passed": false,
+        "rows": [
+          {
+            "id": "00-0",
+            "kld": 8.316011721102728e-09,
+            "top1": true
+          },
+          {
+            "id": "00-1",
+            "kld": 0.009796215947827303,
+            "top1": true
+          },
+          {
+            "id": "00-2",
+            "kld": 0.017779108949415475,
+            "top1": true
+          },
+          {
+            "id": "00-3",
+            "kld": 0.10572345185087854,
+            "top1": true
+          },
+          {
+            "id": "01-0",
+            "kld": 1.642293564312583e-07,
+            "top1": true
+          },
+          {
+            "id": "01-1",
+            "kld": 0.0010571544516641922,
+            "top1": true
+          },
+          {
+            "id": "01-2",
+            "kld": 0.18309350643111574,
+            "top1": false
+          },
+          {
+            "id": "01-3",
+            "kld": 0.2696169066052127,
+            "top1": true
+          },
+          {
+            "id": "02-0",
+            "kld": 1.46097753734257e-09,
+            "top1": true
+          },
+          {
+            "id": "02-1",
+            "kld": 0.02485009875103743,
+            "top1": true
+          },
+          {
+            "id": "02-2",
+            "kld": 0.10784103908659094,
+            "top1": true
+          },
+          {
+            "id": "02-3",
+            "kld": 0.0765600475119212,
+            "top1": true
+          },
+          {
+            "id": "03-0",
+            "kld": 7.192988251210428e-09,
+            "top1": true
+          },
+          {
+            "id": "03-1",
+            "kld": 0.37584659849590984,
+            "top1": true
+          },
+          {
+            "id": "03-2",
+            "kld": 0.3518075712613765,
+            "top1": false
+          },
+          {
+            "id": "03-3",
+            "kld": 0.5780371067882528,
+            "top1": false
+          },
+          {
+            "id": "04-0",
+            "kld": 1.8126386830216237e-08,
+            "top1": true
+          },
+          {
+            "id": "04-1",
+            "kld": 0.10304278821323333,
+            "top1": true
+          },
+          {
+            "id": "04-2",
+            "kld": 0.06502656202242808,
+            "top1": false
+          },
+          {
+            "id": "04-3",
+            "kld": 0.11839424755941398,
+            "top1": false
+          },
+          {
+            "id": "05-0",
+            "kld": 1.1934697878303986e-07,
+            "top1": true
+          },
+          {
+            "id": "05-1",
+            "kld": 0.006611023491835652,
+            "top1": true
+          },
+          {
+            "id": "05-2",
+            "kld": 0.03531820786638653,
+            "top1": true
+          },
+          {
+            "id": "05-3",
+            "kld": 0.2203388492831602,
+            "top1": true
+          },
+          {
+            "id": "06-0",
+            "kld": 3.920375059897817e-07,
+            "top1": true
+          },
+          {
+            "id": "06-1",
+            "kld": 0.5319031197594324,
+            "top1": false
+          },
+          {
+            "id": "06-2",
+            "kld": 0.1343266189052758,
+            "top1": true
+          },
+          {
+            "id": "06-3",
+            "kld": 0.3974472584889894,
+            "top1": false
+          },
+          {
+            "id": "07-0",
+            "kld": 3.358887807198934e-08,
+            "top1": true
+          },
+          {
+            "id": "07-1",
+            "kld": 0.00909284480764874,
+            "top1": true
+          },
+          {
+            "id": "07-2",
+            "kld": 0.03549348136858289,
+            "top1": true
+          },
+          {
+            "id": "07-3",
+            "kld": 0.18805727931478372,
+            "top1": true
+          },
+          {
+            "id": "08-0",
+            "kld": 7.172084539483131e-09,
+            "top1": true
+          },
+          {
+            "id": "08-1",
+            "kld": 0.04238140628939713,
+            "top1": true
+          },
+          {
+            "id": "08-2",
+            "kld": 0.05366960833857435,
+            "top1": false
+          },
+          {
+            "id": "08-3",
+            "kld": 0.038651362740327065,
+            "top1": true
+          },
+          {
+            "id": "09-0",
+            "kld": 4.124239421264978e-08,
+            "top1": true
+          },
+          {
+            "id": "09-1",
+            "kld": 0.056639130581540555,
+            "top1": true
+          },
+          {
+            "id": "09-2",
+            "kld": 0.03249019706688068,
+            "top1": true
+          },
+          {
+            "id": "09-3",
+            "kld": 0.28728623094711186,
+            "top1": true
+          },
+          {
+            "id": "10-0",
+            "kld": 1.921750411681745e-08,
+            "top1": true
+          },
+          {
+            "id": "10-1",
+            "kld": 0.14274005609493973,
+            "top1": true
+          },
+          {
+            "id": "10-2",
+            "kld": 0.008621143041341041,
+            "top1": true
+          },
+          {
+            "id": "10-3",
+            "kld": 0.0980177186109334,
+            "top1": false
+          },
+          {
+            "id": "11-0",
+            "kld": 1.2733294089931357e-08,
+            "top1": true
+          },
+          {
+            "id": "11-1",
+            "kld": 0.6921010354745954,
+            "top1": false
+          },
+          {
+            "id": "11-2",
+            "kld": 0.21066235913409223,
+            "top1": true
+          },
+          {
+            "id": "11-3",
+            "kld": 0.3219238432298465,
+            "top1": true
+          },
+          {
+            "id": "12-0",
+            "kld": 5.7766480517176225e-12,
+            "top1": true
+          },
+          {
+            "id": "12-1",
+            "kld": 0.5784754716675485,
+            "top1": false
+          },
+          {
+            "id": "12-2",
+            "kld": 0.014180978125169162,
+            "top1": true
+          },
+          {
+            "id": "12-3",
+            "kld": 0.057716805217613236,
+            "top1": true
+          },
+          {
+            "id": "13-0",
+            "kld": 1.904678078608012e-09,
+            "top1": true
+          },
+          {
+            "id": "13-1",
+            "kld": 0.1104437948240709,
+            "top1": true
+          },
+          {
+            "id": "13-2",
+            "kld": 0.0020213151486629336,
+            "top1": true
+          },
+          {
+            "id": "13-3",
+            "kld": 0.024758894484399243,
+            "top1": true
+          },
+          {
+            "id": "14-0",
+            "kld": 3.4225715654577737e-07,
+            "top1": true
+          },
+          {
+            "id": "14-1",
+            "kld": 0.004590895474098859,
+            "top1": true
+          },
+          {
+            "id": "14-2",
+            "kld": 0.03395903728305709,
+            "top1": true
+          },
+          {
+            "id": "14-3",
+            "kld": 0.40894416652519133,
+            "top1": true
+          },
+          {
+            "id": "15-0",
+            "kld": 1.8072595570730778e-09,
+            "top1": true
+          },
+          {
+            "id": "15-1",
+            "kld": 0.00807910635486477,
+            "top1": true
+          },
+          {
+            "id": "15-2",
+            "kld": 0.005728930683051333,
+            "top1": true
+          },
+          {
+            "id": "15-3",
+            "kld": 0.0507574637481599,
+            "top1": true
+          },
+          {
+            "id": "16-0",
+            "kld": 1.74892201607391e-07,
+            "top1": true
+          },
+          {
+            "id": "16-1",
+            "kld": 0.08366507574576487,
+            "top1": true
+          },
+          {
+            "id": "16-2",
+            "kld": 0.12943321906084798,
+            "top1": true
+          },
+          {
+            "id": "16-3",
+            "kld": 0.07809393023517226,
+            "top1": true
+          },
+          {
+            "id": "17-0",
+            "kld": 9.032941272792063e-09,
+            "top1": true
+          },
+          {
+            "id": "17-1",
+            "kld": 0.005294185820056987,
+            "top1": true
+          },
+          {
+            "id": "17-2",
+            "kld": 0.10264953769943667,
+            "top1": true
+          },
+          {
+            "id": "17-3",
+            "kld": 0.19383917352657642,
+            "top1": false
+          },
+          {
+            "id": "18-0",
+            "kld": 2.469914364563021e-09,
+            "top1": true
+          },
+          {
+            "id": "18-1",
+            "kld": 0.006850962426998502,
+            "top1": true
+          },
+          {
+            "id": "18-2",
+            "kld": 0.021007742485795025,
+            "top1": true
+          },
+          {
+            "id": "18-3",
+            "kld": 0.08958081939498186,
+            "top1": true
+          },
+          {
+            "id": "19-0",
+            "kld": 1.3908986673553602e-09,
+            "top1": true
+          },
+          {
+            "id": "19-1",
+            "kld": 0.09223498443816652,
+            "top1": true
+          },
+          {
+            "id": "19-2",
+            "kld": 0.10677022060119622,
+            "top1": true
+          },
+          {
+            "id": "19-3",
+            "kld": 0.20462995427222352,
+            "top1": false
+          }
+        ]
+      },
+      "gates": {
+        "passed": false,
+        "quality_passed": false,
+        "greedy_correctness_passed": false,
+        "performance_passed": false,
+        "threshold_percent": 3,
+        "metrics": [
+          {
+            "name": "prefill/4K/client_prefill_tps",
+            "baseline": 339.91,
+            "candidate": 369.4996685399398,
+            "higher_is_better": true,
+            "worse_percent": -8.70514799209785,
+            "passed": true
+          },
+          {
+            "name": "prefill/4K/engine_prefill_tps",
+            "baseline": 355.12,
+            "candidate": 333.659116,
+            "higher_is_better": true,
+            "worse_percent": 6.043276638882633,
+            "passed": false
+          },
+          {
+            "name": "prefill/4K/stream_first_content_ms",
+            "baseline": 12226.82,
+            "candidate": 11242.2293,
+            "higher_is_better": false,
+            "worse_percent": -8.05271280676414,
+            "passed": true
+          },
+          {
+            "name": "prefill/32K/client_prefill_tps",
+            "baseline": 357.02,
+            "candidate": 356.87429443958723,
+            "higher_is_better": true,
+            "worse_percent": 0.04081159610462848,
+            "passed": true
+          },
+          {
+            "name": "prefill/32K/engine_prefill_tps",
+            "baseline": 420.86,
+            "candidate": 367.730923,
+            "higher_is_better": true,
+            "worse_percent": 12.623931236040487,
+            "passed": false
+          },
+          {
+            "name": "prefill/32K/stream_first_content_ms",
+            "baseline": 91952.51,
+            "candidate": 91984.7703,
+            "higher_is_better": false,
+            "worse_percent": 0.03508365350768372,
+            "passed": true
+          },
+          {
+            "name": "prefill/128K/client_prefill_tps",
+            "baseline": 415.58,
+            "candidate": 349.12284657967115,
+            "higher_is_better": true,
+            "worse_percent": 15.991422450630166,
+            "passed": false
+          },
+          {
+            "name": "prefill/128K/engine_prefill_tps",
+            "baseline": 415.47,
+            "candidate": 346.962736,
+            "higher_is_better": true,
+            "worse_percent": 16.489100055358996,
+            "passed": false
+          },
+          {
+            "name": "prefill/128K/stream_first_content_ms",
+            "baseline": 315527.54,
+            "candidate": 375598.4499,
+            "higher_is_better": false,
+            "worse_percent": 19.03824620190049,
+            "passed": false
+          },
+          {
+            "name": "decode/short-context/client_sse_inter_event_tps_excluding_first",
+            "baseline": 26.76,
+            "candidate": 30.64510178711626,
+            "higher_is_better": true,
+            "worse_percent": -14.518317590120544,
+            "passed": true
+          },
+          {
+            "name": "decode/short-context/engine_decode_tps",
+            "baseline": 25.8,
+            "candidate": 28.987229,
+            "higher_is_better": true,
+            "worse_percent": -12.353600775193785,
+            "passed": true
+          },
+          {
+            "name": "decode/short-context/inter_event_p50_ms",
+            "baseline": 40.73,
+            "candidate": 40.60759999999982,
+            "higher_is_better": false,
+            "worse_percent": -0.3005155904742818,
+            "passed": true
+          },
+          {
+            "name": "decode/short-context/inter_event_p90_ms",
+            "baseline": 42.03,
+            "candidate": 41.598999999999705,
+            "higher_is_better": false,
+            "worse_percent": -1.0254580061867635,
+            "passed": true
+          },
+          {
+            "name": "decode/context-32k/client_sse_inter_event_tps_excluding_first",
+            "baseline": 24.44,
+            "candidate": 27.758527027617795,
+            "higher_is_better": true,
+            "worse_percent": -13.57826116046561,
+            "passed": true
+          },
+          {
+            "name": "decode/context-32k/engine_decode_tps",
+            "baseline": 23.84,
+            "candidate": 27.643401,
+            "higher_is_better": true,
+            "worse_percent": -15.953863255033562,
+            "passed": true
+          },
+          {
+            "name": "decode/context-32k/inter_event_p50_ms",
+            "baseline": 40.75,
+            "candidate": 40.65089999999873,
+            "higher_is_better": false,
+            "worse_percent": -0.24319018405219994,
+            "passed": true
+          },
+          {
+            "name": "decode/context-32k/inter_event_p90_ms",
+            "baseline": 41.55,
+            "candidate": 41.64519999999993,
+            "higher_is_better": false,
+            "worse_percent": 0.2291215403127156,
+            "passed": true
+          },
+          {
+            "name": "decode/context-128k/client_sse_inter_event_tps_excluding_first",
+            "baseline": 22.32,
+            "candidate": 24.47859653435486,
+            "higher_is_better": true,
+            "worse_percent": -9.671131426321056,
+            "passed": true
+          },
+          {
+            "name": "decode/context-128k/engine_decode_tps",
+            "baseline": 21.77,
+            "candidate": 24.304067,
+            "higher_is_better": true,
+            "worse_percent": -11.640179145613239,
+            "passed": true
+          },
+          {
+            "name": "decode/context-128k/inter_event_p50_ms",
+            "baseline": 44.68,
+            "candidate": 40.72200000000066,
+            "higher_is_better": false,
+            "worse_percent": -8.858549686659211,
+            "passed": true
+          },
+          {
+            "name": "decode/context-128k/inter_event_p90_ms",
+            "baseline": 45.43,
+            "candidate": 41.57239999999911,
+            "higher_is_better": false,
+            "worse_percent": -8.491305304866593,
+            "passed": true
+          },
+          {
+            "name": "ttft/chat-30-token-ceiling",
+            "baseline": 2096.32,
+            "candidate": 1904.3421,
+            "higher_is_better": false,
+            "worse_percent": -9.157852808731493,
+            "passed": true
+          },
+          {
+            "name": "ttft/4k-cold",
+            "baseline": 12226.82,
+            "candidate": 11242.2293,
+            "higher_is_better": false,
+            "worse_percent": -8.05271280676414,
+            "passed": true
+          },
+          {
+            "name": "ttft/agent-style-cached-3.9k-prefix",
+            "baseline": 713.04,
+            "candidate": 681.3103,
+            "higher_is_better": false,
+            "worse_percent": -4.449918658139795,
+            "passed": true
+          },
+          {
+            "name": "concurrency/chat-style",
+            "baseline": 0.59,
+            "candidate": 0.5638889147860094,
+            "higher_is_better": true,
+            "worse_percent": 4.42560766338822,
+            "passed": false
+          },
+          {
+            "name": "concurrency/chat-style/wall_seconds",
+            "baseline": 15.28,
+            "candidate": 15.9605904,
+            "higher_is_better": false,
+            "worse_percent": 4.454125654450269,
+            "passed": false
+          },
+          {
+            "name": "concurrency/agent-style",
+            "baseline": 2.1,
+            "candidate": 0.9400923045297407,
+            "higher_is_better": true,
+            "worse_percent": 55.23369978429806,
+            "passed": false
+          },
+          {
+            "name": "concurrency/agent-style/wall_seconds",
+            "baseline": 15.27,
+            "candidate": 15.95588,
+            "higher_is_better": false,
+            "worse_percent": 4.49168303863785,
+            "passed": false
+          },
+          {
+            "name": "concurrency/aggregate",
+            "baseline": 2.68,
+            "candidate": 1.5037037727626918,
+            "higher_is_better": true,
+            "worse_percent": 43.89165027004881,
+            "passed": false
+          },
+          {
+            "name": "full/elapsed_seconds",
+            "baseline": 930.04,
+            "candidate": 1063.5685651,
+            "higher_is_better": false,
+            "worse_percent": 14.357292707840518,
+            "passed": false
+          }
+        ],
+        "failed_metrics": [
+          "prefill/4K/engine_prefill_tps",
+          "prefill/32K/engine_prefill_tps",
+          "prefill/128K/client_prefill_tps",
+          "prefill/128K/engine_prefill_tps",
+          "prefill/128K/stream_first_content_ms",
+          "concurrency/chat-style",
+          "concurrency/chat-style/wall_seconds",
+          "concurrency/agent-style",
+          "concurrency/agent-style/wall_seconds",
+          "concurrency/aggregate",
+          "full/elapsed_seconds"
+        ]
+      },
+      "greedy_correctness": [
+        {
+          "name": "arithmetic",
+          "prompt": "What is 17 plus 25? Output 64 copies of the answer, 42, separated by spaces; no other text.",
+          "text": "42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 4",
+          "sha256": "26ff83171aca5bd145b8d5b73313aee6e274f33280be55fe4116a0381d6325fb",
+          "reference_match": true,
+          "actual_tokens": 64,
+          "requested_max_tokens": 64,
+          "finish_reason": "length"
+        },
+        {
+          "name": "capital",
+          "prompt": "What is the capital city of Japan? Output 64 copies of the answer, Tokyo, separated by spaces; no other text.",
+          "text": "Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo",
+          "sha256": "51f98e6224e0d33a7517ea7d78fb64b47aa41ccc5a4adc5055440eb2a1c04ec6",
+          "reference_match": false,
+          "actual_tokens": 58,
+          "requested_max_tokens": 64,
+          "finish_reason": "stop"
+        },
+        {
+          "name": "sequence",
+          "prompt": "Continue 2, 4, 6, 8. Output 32 repetitions of \"10, 12\", separated by spaces; no other text.",
+          "text": "10, 12 10, 12 10, 12 10, 12 10, 12 10, 12 10, 12 10, 12 10, 12 1",
+          "sha256": "10b8098a28f003813a0b30cbd7b2389f7340e94d218a28d172d3145af988231f",
+          "reference_match": true,
+          "actual_tokens": 64,
+          "requested_max_tokens": 64,
+          "finish_reason": "length"
+        },
+        {
+          "name": "spelling",
+          "prompt": "Spell \"accommodation\". Output 64 copies of the correct spelling separated by spaces; no other text.",
+          "text": "accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation",
+          "sha256": "6fc1517907512c14d70a3c7c7d6f46e4a967e04595a69dbcacc34c805a9cfb89",
+          "reference_match": false,
+          "actual_tokens": 59,
+          "requested_max_tokens": 64,
+          "finish_reason": "stop"
+        },
+        {
+          "name": "logic",
+          "prompt": "Which is heavier: one kilogram of steel or one kilogram of feathers? Output 64 copies of \"They weigh the same.\" separated by spaces; no other text.",
+          "text": "They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same",
+          "sha256": "d496f28da6272c18d4a43595f3efc6c44b1d254d19bd1f25b17584afc098f752",
+          "reference_match": true,
+          "actual_tokens": 64,
+          "requested_max_tokens": 64,
+          "finish_reason": "length"
+        }
+      ],
+      "harness_metadata": {
+        "timestamp": "2026-10-15T08:17:32.6049398-07:00",
+        "base_url": "http://192.168.42.42:8080/v1",
+        "quick": false,
+        "model": "Qwen3.8-Flash-Next-Uncensored",
+        "ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10399105024,10478870528,9725636608,9723674624,10404847616,9985818624,9725636608,10247962624 dense=961921024,307683328,288452608,286490624,967663616,286490624,288452608,286490624 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=80691552256 manifest_sha=1276b70e25019a5b topology_sha=a3c587f62144ba50",
+        "git_sha": null,
+        "server_headers": {
+          "Connection": "keep-alive",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "95",
+          "X-Flash-Gordon-Prefilled-Tokens": "95",
+          "X-Flash-Gordon-Reused-Tokens": "0",
+          "X-Flash-Gordon-Prefix-Cache": "miss",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "cold-start",
+          "X-Flash-Gordon-Completion-Tokens": "1",
+          "X-Flash-Gordon-Context-Tokens": "96",
+          "X-Flash-Gordon-Prefill-Seconds": "2.100142041",
+          "X-Flash-Gordon-Prefill-TPS": "45.235036",
+          "X-Flash-Gordon-Decode-Seconds": "0.082070120",
+          "X-Flash-Gordon-Decode-TPS": "12.184703",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10399105024,10478870528,9725636608,9723674624,10404847616,9985818624,9725636608,10247962624 dense=961921024,307683328,288452608,286490624,967663616,286490624,288452608,286490624 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=80691552256 manifest_sha=1276b70e25019a5b topology_sha=a3c587f62144ba50",
+          "Content-Type": "application/json",
+          "Content-Length": "288"
+        },
+        "notes": [
+          "SSE delta timestamps measure visible content events; the API does not expose token IDs or engine metric headers on streamed responses.",
+          "ignore_eos/min_tokens are not implemented by src/api.c. Decode requests use greedy sampling and report actual usage token counts; max_tokens is only a ceiling.",
+          "Long-context engine decode headers come from a cached follow-on non-stream continuation, not the exact SSE generation. This preserves the long KV context without a second cold prefill."
+        ],
+        "run_id": "46c5e50080b24ac59632126635600063",
+        "reference_write_requested": false,
+        "capacity_headers": [],
+        "concurrency_wall_seconds": 15.9608405,
+        "correctness_pass": false,
+        "elapsed_seconds": 1063.5685651
+      },
+      "startup_resident": [
+        {
+          "ip": "192.168.42.42",
+          "allocated_extent_bytes": 15567122432,
+          "apparent_bytes": 81766173399,
+          "available_disk_bytes": 123477610496,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4/manifest.fgm",
+          "processes": [
+            {
+              "drm_bytes": {
+                "drm-memory-cpu": 0,
+                "drm-memory-gtt": 11730505728,
+                "drm-memory-vram": 153149440,
+                "drm-resident-gtt": 11730505728,
+                "drm-resident-vram": 153149440,
+                "drm-total-gtt": 4169728,
+                "drm-total-vram": 11879485440
+              },
+              "drm_clients": 1,
+              "exe": "/home/xander/flash-gordon-live/20261015-q4-foreign/flash-gordon",
+              "pid": 168523,
+              "rss_bytes": 83439616
+            }
+          ]
+        },
+        {
+          "ip": "192.168.42.43",
+          "allocated_extent_bytes": 12767682560,
+          "apparent_bytes": 21421468383,
+          "available_disk_bytes": 55850795008,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4/manifest.fgm",
+          "processes": [
+            {
+              "drm_bytes": {
+                "drm-memory-cpu": 0,
+                "drm-memory-gtt": 10807050240,
+                "drm-memory-vram": 333742080,
+                "drm-resident-gtt": 10807050240,
+                "drm-resident-vram": 333742080,
+                "drm-total-gtt": 4169728,
+                "drm-total-vram": 11136622592
+              },
+              "drm_clients": 1,
+              "exe": "/home/xander/flash-gordon-live/20261015-q4-foreign/flash-gordon",
+              "pid": 100378,
+              "rss_bytes": 187457536
+            }
+          ]
+        },
+        {
+          "ip": "192.168.42.44",
+          "allocated_extent_bytes": 11209142272,
+          "apparent_bytes": 20668234463,
+          "available_disk_bytes": 57745498112,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4/manifest.fgm",
+          "processes": [
+            {
+              "drm_bytes": {
+                "drm-memory-cpu": 0,
+                "drm-memory-gtt": 10053816320,
+                "drm-memory-vram": 331698176,
+                "drm-resident-gtt": 10053816320,
+                "drm-resident-vram": 331698176,
+                "drm-total-gtt": 4169728,
+                "drm-total-vram": 10381344768
+              },
+              "drm_clients": 1,
+              "exe": "/home/xander/flash-gordon-live/20261015-q4-foreign/flash-gordon",
+              "pid": 96327,
+              "rss_bytes": 187351040
+            }
+          ]
+        },
+        {
+          "ip": "192.168.42.45",
+          "allocated_extent_bytes": 10798301184,
+          "apparent_bytes": 10798295775,
+          "available_disk_bytes": 15008350208,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4/manifest.fgm",
+          "processes": [
+            {
+              "drm_bytes": {
+                "drm-memory-cpu": 0,
+                "drm-memory-gtt": 10375864320,
+                "drm-memory-vram": 173629440,
+                "drm-resident-gtt": 10375864320,
+                "drm-resident-vram": 173629440,
+                "drm-total-gtt": 4169728,
+                "drm-total-vram": 10545324032
+              },
+              "drm_clients": 1,
+              "exe": "/home/xander/flash-gordon-live/20261015-q4-foreign/flash-gordon",
+              "pid": 95970,
+              "rss_bytes": 187904000
+            }
+          ]
+        },
+        {
+          "ip": "192.168.42.46",
+          "allocated_extent_bytes": 10942603264,
+          "apparent_bytes": 10942597855,
+          "available_disk_bytes": 66720006144,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4/manifest.fgm",
+          "processes": [
+            {
+              "drm_bytes": {
+                "drm-memory-cpu": 0,
+                "drm-memory-gtt": 10409017344,
+                "drm-memory-vram": 491487232,
+                "drm-resident-gtt": 10409017344,
+                "drm-resident-vram": 491487232,
+                "drm-total-gtt": 4169728,
+                "drm-total-vram": 10896334848
+              },
+              "drm_clients": 1,
+              "exe": "/home/xander/flash-gordon-live/20261015-q4-foreign/flash-gordon",
+              "pid": 97334,
+              "rss_bytes": 187486208
+            }
+          ]
+        },
+        {
+          "ip": "192.168.42.47",
+          "allocated_extent_bytes": 11060445184,
+          "apparent_bytes": 11060439775,
+          "available_disk_bytes": 47209394176,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4/manifest.fgm",
+          "processes": [
+            {
+              "drm_bytes": {
+                "drm-memory-cpu": 0,
+                "drm-memory-gtt": 10638008320,
+                "drm-memory-vram": 173629440,
+                "drm-resident-gtt": 10638008320,
+                "drm-resident-vram": 173629440,
+                "drm-total-gtt": 4169728,
+                "drm-total-vram": 10807468032
+              },
+              "drm_clients": 1,
+              "exe": "/home/xander/flash-gordon-live/20261015-q4-foreign/flash-gordon",
+              "pid": 95997,
+              "rss_bytes": 187940864
+            }
+          ]
+        },
+        {
+          "ip": "192.168.42.48",
+          "allocated_extent_bytes": 10263392256,
+          "apparent_bytes": 10263386847,
+          "available_disk_bytes": 50499465216,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4/manifest.fgm",
+          "processes": [
+            {
+              "drm_bytes": {
+                "drm-memory-cpu": 0,
+                "drm-memory-gtt": 9729806336,
+                "drm-memory-vram": 486187008,
+                "drm-resident-gtt": 9729806336,
+                "drm-resident-vram": 486187008,
+                "drm-total-gtt": 4169728,
+                "drm-total-vram": 10211823616
+              },
+              "drm_clients": 1,
+              "exe": "/home/xander/flash-gordon-live/20261015-q4-foreign/flash-gordon",
+              "pid": 96304,
+              "rss_bytes": 187158528
+            }
+          ]
+        },
+        {
+          "ip": "192.168.42.49",
+          "allocated_extent_bytes": 12067012608,
+          "apparent_bytes": 21727431391,
+          "available_disk_bytes": 11152314368,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4/manifest.fgm",
+          "processes": [
+            {
+              "drm_bytes": {
+                "drm-memory-cpu": 0,
+                "drm-memory-gtt": 10900152320,
+                "drm-memory-vram": 177561600,
+                "drm-resident-gtt": 10900152320,
+                "drm-resident-vram": 177561600,
+                "drm-total-gtt": 4169728,
+                "drm-total-vram": 11073544192
+              },
+              "drm_clients": 1,
+              "exe": "/home/xander/flash-gordon-live/20261015-q4-foreign/flash-gordon",
+              "pid": 97417,
+              "rss_bytes": 187772928
+            }
+          ]
+        }
+      ]
+    },
+    "protected": {
+      "quality": {
+        "corpus_sha256": "4fc3d274599c174a93de8b98e272dd6b9e5dc0c8ceb1eefba17271337c6a14d7",
+        "samples": 80,
+        "full_vocab": 248320,
+        "mean_kld": 0.07250135131342257,
+        "p99_kld": 1.0109592109742032,
+        "top1_agreement": 0.8125,
+        "passed": false,
+        "rows": [
+          {
+            "id": "00-0",
+            "kld": 9.884096607195201e-08,
+            "top1": true
+          },
+          {
+            "id": "00-1",
+            "kld": 0.011065481861927485,
+            "top1": true
+          },
+          {
+            "id": "00-2",
+            "kld": 0.0035732350692941803,
+            "top1": true
+          },
+          {
+            "id": "00-3",
+            "kld": 0.008540025973249635,
+            "top1": true
+          },
+          {
+            "id": "01-0",
+            "kld": 1.243623944266764e-08,
+            "top1": true
+          },
+          {
+            "id": "01-1",
+            "kld": 0.027647635991102062,
+            "top1": true
+          },
+          {
+            "id": "01-2",
+            "kld": 0.03984250825968393,
+            "top1": false
+          },
+          {
+            "id": "01-3",
+            "kld": 0.10021858343651117,
+            "top1": true
+          },
+          {
+            "id": "02-0",
+            "kld": 6.357640821695475e-10,
+            "top1": true
+          },
+          {
+            "id": "02-1",
+            "kld": 0.014825468356844135,
+            "top1": true
+          },
+          {
+            "id": "02-2",
+            "kld": 0.041260950671526526,
+            "top1": true
+          },
+          {
+            "id": "02-3",
+            "kld": 0.05052738392104938,
+            "top1": false
+          },
+          {
+            "id": "03-0",
+            "kld": 3.973873593087073e-08,
+            "top1": true
+          },
+          {
+            "id": "03-1",
+            "kld": 0.34133921255432415,
+            "top1": true
+          },
+          {
+            "id": "03-2",
+            "kld": 0.0338030232185915,
+            "top1": false
+          },
+          {
+            "id": "03-3",
+            "kld": 0.06486342453374731,
+            "top1": true
+          },
+          {
+            "id": "04-0",
+            "kld": 9.492923513200581e-09,
+            "top1": true
+          },
+          {
+            "id": "04-1",
+            "kld": 0.11413855113509244,
+            "top1": true
+          },
+          {
+            "id": "04-2",
+            "kld": 0.12021762530756866,
+            "top1": false
+          },
+          {
+            "id": "04-3",
+            "kld": 0.07019416167990584,
+            "top1": false
+          },
+          {
+            "id": "05-0",
+            "kld": 3.826417911069814e-08,
+            "top1": true
+          },
+          {
+            "id": "05-1",
+            "kld": 0.17212807476924646,
+            "top1": false
+          },
+          {
+            "id": "05-2",
+            "kld": 0.004528492483527298,
+            "top1": true
+          },
+          {
+            "id": "05-3",
+            "kld": 0.2690697871605077,
+            "top1": true
+          },
+          {
+            "id": "06-0",
+            "kld": 4.090226109784857e-08,
+            "top1": true
+          },
+          {
+            "id": "06-1",
+            "kld": 0.18058235021198146,
+            "top1": true
+          },
+          {
+            "id": "06-2",
+            "kld": 0.043104432286963756,
+            "top1": true
+          },
+          {
+            "id": "06-3",
+            "kld": 0.1488622422667354,
+            "top1": false
+          },
+          {
+            "id": "07-0",
+            "kld": 4.870823960943383e-09,
+            "top1": true
+          },
+          {
+            "id": "07-1",
+            "kld": 0.08855466366695472,
+            "top1": true
+          },
+          {
+            "id": "07-2",
+            "kld": 0.02580497694956678,
+            "top1": true
+          },
+          {
+            "id": "07-3",
+            "kld": 0.05729089111739599,
+            "top1": true
+          },
+          {
+            "id": "08-0",
+            "kld": 6.0974363758282035e-09,
+            "top1": true
+          },
+          {
+            "id": "08-1",
+            "kld": 0.07340959082258924,
+            "top1": false
+          },
+          {
+            "id": "08-2",
+            "kld": 0.03189560681585068,
+            "top1": false
+          },
+          {
+            "id": "08-3",
+            "kld": 0.0326607890210163,
+            "top1": true
+          },
+          {
+            "id": "09-0",
+            "kld": 2.0299036176075234e-08,
+            "top1": true
+          },
+          {
+            "id": "09-1",
+            "kld": 0.0018662137261097917,
+            "top1": true
+          },
+          {
+            "id": "09-2",
+            "kld": 0.013328926507409909,
+            "top1": true
+          },
+          {
+            "id": "09-3",
+            "kld": 0.11882761215091003,
+            "top1": true
+          },
+          {
+            "id": "10-0",
+            "kld": 5.0915192333082086e-08,
+            "top1": true
+          },
+          {
+            "id": "10-1",
+            "kld": 0.09519364553281147,
+            "top1": true
+          },
+          {
+            "id": "10-2",
+            "kld": 0.015012191778829223,
+            "top1": true
+          },
+          {
+            "id": "10-3",
+            "kld": 0.07084815632219041,
+            "top1": false
+          },
+          {
+            "id": "11-0",
+            "kld": 2.210290362990896e-08,
+            "top1": true
+          },
+          {
+            "id": "11-1",
+            "kld": 1.0109592109742032,
+            "top1": false
+          },
+          {
+            "id": "11-2",
+            "kld": 0.11562420665767027,
+            "top1": true
+          },
+          {
+            "id": "11-3",
+            "kld": 0.20188791299164513,
+            "top1": true
+          },
+          {
+            "id": "12-0",
+            "kld": 6.945591663287339e-11,
+            "top1": true
+          },
+          {
+            "id": "12-1",
+            "kld": 0.23713731452432715,
+            "top1": false
+          },
+          {
+            "id": "12-2",
+            "kld": 0.10696097204562528,
+            "top1": true
+          },
+          {
+            "id": "12-3",
+            "kld": 0.05728228302064887,
+            "top1": true
+          },
+          {
+            "id": "13-0",
+            "kld": 1.0156652920578116e-10,
+            "top1": true
+          },
+          {
+            "id": "13-1",
+            "kld": 0.1533774221552071,
+            "top1": true
+          },
+          {
+            "id": "13-2",
+            "kld": 0.0041430516556205995,
+            "top1": true
+          },
+          {
+            "id": "13-3",
+            "kld": 0.1669376222741692,
+            "top1": true
+          },
+          {
+            "id": "14-0",
+            "kld": 5.82112419924175e-07,
+            "top1": true
+          },
+          {
+            "id": "14-1",
+            "kld": 0.008944347846052468,
+            "top1": true
+          },
+          {
+            "id": "14-2",
+            "kld": 0.0032913582913767204,
+            "top1": true
+          },
+          {
+            "id": "14-3",
+            "kld": 0.16315834138334265,
+            "top1": true
+          },
+          {
+            "id": "15-0",
+            "kld": 1.3489235772718275e-08,
+            "top1": true
+          },
+          {
+            "id": "15-1",
+            "kld": 0.00420798293608697,
+            "top1": true
+          },
+          {
+            "id": "15-2",
+            "kld": 0.021549597664890018,
+            "top1": true
+          },
+          {
+            "id": "15-3",
+            "kld": 0.07590560579663119,
+            "top1": true
+          },
+          {
+            "id": "16-0",
+            "kld": 6.891289507519618e-09,
+            "top1": true
+          },
+          {
+            "id": "16-1",
+            "kld": 0.022905351175440486,
+            "top1": true
+          },
+          {
+            "id": "16-2",
+            "kld": 0.015835569106882105,
+            "top1": true
+          },
+          {
+            "id": "16-3",
+            "kld": 0.03902499500138869,
+            "top1": true
+          },
+          {
+            "id": "17-0",
+            "kld": 2.9220817103224874e-09,
+            "top1": true
+          },
+          {
+            "id": "17-1",
+            "kld": 0.02168418271939066,
+            "top1": true
+          },
+          {
+            "id": "17-2",
+            "kld": 0.0291993368540359,
+            "top1": true
+          },
+          {
+            "id": "17-3",
+            "kld": 0.11708377428808676,
+            "top1": false
+          },
+          {
+            "id": "18-0",
+            "kld": 4.3499339590555355e-09,
+            "top1": true
+          },
+          {
+            "id": "18-1",
+            "kld": 0.08876141499882687,
+            "top1": true
+          },
+          {
+            "id": "18-2",
+            "kld": 0.14484288442291576,
+            "top1": true
+          },
+          {
+            "id": "18-3",
+            "kld": 0.39577829428104705,
+            "top1": false
+          },
+          {
+            "id": "19-0",
+            "kld": 1.6230950988758816e-09,
+            "top1": true
+          },
+          {
+            "id": "19-1",
+            "kld": 0.018364870051027292,
+            "top1": true
+          },
+          {
+            "id": "19-2",
+            "kld": 0.0295087591297517,
+            "top1": true
+          },
+          {
+            "id": "19-3",
+            "kld": 0.06072457111095994,
+            "top1": false
+          }
+        ]
+      },
+      "gates": {
+        "passed": false,
+        "quality_passed": false,
+        "greedy_correctness_passed": false,
+        "performance_passed": false,
+        "threshold_percent": 3,
+        "metrics": [
+          {
+            "name": "prefill/4K/client_prefill_tps",
+            "baseline": 339.91,
+            "candidate": 344.9029450988881,
+            "higher_is_better": true,
+            "worse_percent": -1.468902091403046,
+            "passed": true
+          },
+          {
+            "name": "prefill/4K/engine_prefill_tps",
+            "baseline": 355.12,
+            "candidate": 326.198382,
+            "higher_is_better": true,
+            "worse_percent": 8.144181685064211,
+            "passed": false
+          },
+          {
+            "name": "prefill/4K/stream_first_content_ms",
+            "baseline": 12226.82,
+            "candidate": 12061.3641,
+            "higher_is_better": false,
+            "worse_percent": -1.353221033760199,
+            "passed": true
+          },
+          {
+            "name": "prefill/32K/client_prefill_tps",
+            "baseline": 357.02,
+            "candidate": 352.985310276577,
+            "higher_is_better": true,
+            "worse_percent": 1.1301018776043281,
+            "passed": true
+          },
+          {
+            "name": "prefill/32K/engine_prefill_tps",
+            "baseline": 420.86,
+            "candidate": 356.19124,
+            "higher_is_better": true,
+            "worse_percent": 15.365860381124364,
+            "passed": false
+          },
+          {
+            "name": "prefill/32K/stream_first_content_ms",
+            "baseline": 91952.51,
+            "candidate": 92998.2043,
+            "higher_is_better": false,
+            "worse_percent": 1.1372112626398145,
+            "passed": true
+          },
+          {
+            "name": "prefill/128K/client_prefill_tps",
+            "baseline": 415.58,
+            "candidate": 341.624738949072,
+            "higher_is_better": true,
+            "worse_percent": 17.795673769413344,
+            "passed": false
+          },
+          {
+            "name": "prefill/128K/engine_prefill_tps",
+            "baseline": 415.47,
+            "candidate": 341.814959,
+            "higher_is_better": true,
+            "worse_percent": 17.72812501504322,
+            "passed": false
+          },
+          {
+            "name": "prefill/128K/stream_first_content_ms",
+            "baseline": 315527.54,
+            "candidate": 383830.5165,
+            "higher_is_better": false,
+            "worse_percent": 21.6472313320099,
+            "passed": false
+          },
+          {
+            "name": "decode/short-context/client_sse_inter_event_tps_excluding_first",
+            "baseline": 26.76,
+            "candidate": 29.48266734420366,
+            "higher_is_better": true,
+            "worse_percent": -10.174392168175107,
+            "passed": true
+          },
+          {
+            "name": "decode/short-context/engine_decode_tps",
+            "baseline": 25.8,
+            "candidate": 28.034455,
+            "higher_is_better": true,
+            "worse_percent": -8.660678294573643,
+            "passed": true
+          },
+          {
+            "name": "decode/short-context/inter_event_p50_ms",
+            "baseline": 40.73,
+            "candidate": 40.73499999999967,
+            "higher_is_better": false,
+            "worse_percent": 0.012275963662355949,
+            "passed": true
+          },
+          {
+            "name": "decode/short-context/inter_event_p90_ms",
+            "baseline": 42.03,
+            "candidate": 41.677799999999934,
+            "higher_is_better": false,
+            "worse_percent": -0.8379728765169348,
+            "passed": true
+          },
+          {
+            "name": "decode/context-32k/client_sse_inter_event_tps_excluding_first",
+            "baseline": 24.44,
+            "candidate": 26.67547675719682,
+            "higher_is_better": true,
+            "worse_percent": -9.146795242212846,
+            "passed": true
+          },
+          {
+            "name": "decode/context-32k/engine_decode_tps",
+            "baseline": 23.84,
+            "candidate": 26.571466,
+            "higher_is_better": true,
+            "worse_percent": -11.457491610738257,
+            "passed": true
+          },
+          {
+            "name": "decode/context-32k/inter_event_p50_ms",
+            "baseline": 40.75,
+            "candidate": 40.61119999999937,
+            "higher_is_better": false,
+            "worse_percent": -0.3406134969340613,
+            "passed": true
+          },
+          {
+            "name": "decode/context-32k/inter_event_p90_ms",
+            "baseline": 41.55,
+            "candidate": 41.80919999999992,
+            "higher_is_better": false,
+            "worse_percent": 0.6238267148012566,
+            "passed": true
+          },
+          {
+            "name": "decode/context-128k/client_sse_inter_event_tps_excluding_first",
+            "baseline": 22.32,
+            "candidate": 24.104724307603842,
+            "higher_is_better": true,
+            "worse_percent": -7.996076646970618,
+            "passed": true
+          },
+          {
+            "name": "decode/context-128k/engine_decode_tps",
+            "baseline": 21.77,
+            "candidate": 24.108564,
+            "higher_is_better": true,
+            "worse_percent": -10.742140560404234,
+            "passed": true
+          },
+          {
+            "name": "decode/context-128k/inter_event_p50_ms",
+            "baseline": 44.68,
+            "candidate": 41.42249999999967,
+            "higher_is_better": false,
+            "worse_percent": -7.290734109221864,
+            "passed": true
+          },
+          {
+            "name": "decode/context-128k/inter_event_p90_ms",
+            "baseline": 45.43,
+            "candidate": 41.99799999999959,
+            "higher_is_better": false,
+            "worse_percent": -7.5544794188870945,
+            "passed": true
+          },
+          {
+            "name": "ttft/chat-30-token-ceiling",
+            "baseline": 2096.32,
+            "candidate": 1882.8617,
+            "higher_is_better": false,
+            "worse_percent": -10.182524614562672,
+            "passed": true
+          },
+          {
+            "name": "ttft/4k-cold",
+            "baseline": 12226.82,
+            "candidate": 12061.3641,
+            "higher_is_better": false,
+            "worse_percent": -1.353221033760199,
+            "passed": true
+          },
+          {
+            "name": "ttft/agent-style-cached-3.9k-prefix",
+            "baseline": 713.04,
+            "candidate": 680.7298,
+            "higher_is_better": false,
+            "worse_percent": -4.531330640637277,
+            "passed": true
+          },
+          {
+            "name": "concurrency/chat-style",
+            "baseline": 0.59,
+            "candidate": 0.5943339686191136,
+            "higher_is_better": true,
+            "worse_percent": -0.7345709523921329,
+            "passed": true
+          },
+          {
+            "name": "concurrency/chat-style/wall_seconds",
+            "baseline": 15.28,
+            "candidate": 15.1430012,
+            "higher_is_better": false,
+            "worse_percent": -0.8965890052355929,
+            "passed": true
+          },
+          {
+            "name": "concurrency/agent-style",
+            "baseline": 2.1,
+            "candidate": 1.2559671162954025,
+            "higher_is_better": true,
+            "worse_percent": 40.19204208117131,
+            "passed": false
+          },
+          {
+            "name": "concurrency/agent-style/wall_seconds",
+            "baseline": 15.27,
+            "candidate": 15.1277846,
+            "higher_is_better": false,
+            "worse_percent": -0.9313385723641043,
+            "passed": true
+          },
+          {
+            "name": "concurrency/aggregate",
+            "baseline": 2.68,
+            "candidate": 1.8490390134816868,
+            "higher_is_better": true,
+            "worse_percent": 31.006006959638555,
+            "passed": false
+          },
+          {
+            "name": "full/elapsed_seconds",
+            "baseline": 930.04,
+            "candidate": 1084.1991389,
+            "higher_is_better": false,
+            "worse_percent": 16.57553856823362,
+            "passed": false
+          }
+        ],
+        "failed_metrics": [
+          "prefill/4K/engine_prefill_tps",
+          "prefill/32K/engine_prefill_tps",
+          "prefill/128K/client_prefill_tps",
+          "prefill/128K/engine_prefill_tps",
+          "prefill/128K/stream_first_content_ms",
+          "concurrency/agent-style",
+          "concurrency/aggregate",
+          "full/elapsed_seconds"
+        ]
+      },
+      "greedy_correctness": [
+        {
+          "name": "arithmetic",
+          "prompt": "What is 17 plus 25? Output 64 copies of the answer, 42, separated by spaces; no other text.",
+          "text": "42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 4",
+          "sha256": "26ff83171aca5bd145b8d5b73313aee6e274f33280be55fe4116a0381d6325fb",
+          "reference_match": true,
+          "actual_tokens": 64,
+          "requested_max_tokens": 64,
+          "finish_reason": "length"
+        },
+        {
+          "name": "capital",
+          "prompt": "What is the capital city of Japan? Output 64 copies of the answer, Tokyo, separated by spaces; no other text.",
+          "text": "Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo",
+          "sha256": "72ecccfcc6e967c37157bc36b37f81c2792492f4bf8cdfe597f14c65eb21d0ce",
+          "reference_match": false,
+          "actual_tokens": 62,
+          "requested_max_tokens": 64,
+          "finish_reason": "stop"
+        },
+        {
+          "name": "sequence",
+          "prompt": "Continue 2, 4, 6, 8. Output 32 repetitions of \"10, 12\", separated by spaces; no other text.",
+          "text": "10, 12 10, 12 10, 12 10, 12 10, 12 10, 12 10, 12 10, 12 10, 12 1",
+          "sha256": "10b8098a28f003813a0b30cbd7b2389f7340e94d218a28d172d3145af988231f",
+          "reference_match": true,
+          "actual_tokens": 64,
+          "requested_max_tokens": 64,
+          "finish_reason": "length"
+        },
+        {
+          "name": "spelling",
+          "prompt": "Spell \"accommodation\". Output 64 copies of the correct spelling separated by spaces; no other text.",
+          "text": "accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation",
+          "sha256": "2b11984bdb77727fed0b17df6e5ae4b90220b1baae246829c45aa546a20575ae",
+          "reference_match": false,
+          "actual_tokens": 61,
+          "requested_max_tokens": 64,
+          "finish_reason": "stop"
+        },
+        {
+          "name": "logic",
+          "prompt": "Which is heavier: one kilogram of steel or one kilogram of feathers? Output 64 copies of \"They weigh the same.\" separated by spaces; no other text.",
+          "text": "They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same",
+          "sha256": "d496f28da6272c18d4a43595f3efc6c44b1d254d19bd1f25b17584afc098f752",
+          "reference_match": true,
+          "actual_tokens": 64,
+          "requested_max_tokens": 64,
+          "finish_reason": "length"
+        }
+      ],
+      "harness_metadata": {
+        "timestamp": "2026-10-15T08:59:14.9776203-07:00",
+        "base_url": "http://192.168.42.42:8080/v1",
+        "quick": false,
+        "model": "Qwen3.8-Flash-Next-Uncensored",
+        "ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10432528384,10511310848,9758076928,9757097984,10437287936,10019241984,9758076928,10281385984 dense=995344384,340123648,320892928,319913984,1000103936,319913984,320892928,319913984 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=80955006976 manifest_sha=b5846b2d1990a0b7 topology_sha=a3c587f62144ba50",
+        "git_sha": null,
+        "server_headers": {
+          "Connection": "keep-alive",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "97",
+          "X-Flash-Gordon-Prefilled-Tokens": "97",
+          "X-Flash-Gordon-Reused-Tokens": "0",
+          "X-Flash-Gordon-Prefix-Cache": "miss",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "cold-start",
+          "X-Flash-Gordon-Completion-Tokens": "1",
+          "X-Flash-Gordon-Context-Tokens": "98",
+          "X-Flash-Gordon-Prefill-Seconds": "2.277165049",
+          "X-Flash-Gordon-Prefill-TPS": "42.596825",
+          "X-Flash-Gordon-Decode-Seconds": "0.085001198",
+          "X-Flash-Gordon-Decode-TPS": "11.764540",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10432528384,10511310848,9758076928,9757097984,10437287936,10019241984,9758076928,10281385984 dense=995344384,340123648,320892928,319913984,1000103936,319913984,320892928,319913984 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=80955006976 manifest_sha=b5846b2d1990a0b7 topology_sha=a3c587f62144ba50",
+          "Content-Type": "application/json",
+          "Content-Length": "288"
+        },
+        "notes": [
+          "SSE delta timestamps measure visible content events; the API does not expose token IDs or engine metric headers on streamed responses.",
+          "ignore_eos/min_tokens are not implemented by src/api.c. Decode requests use greedy sampling and report actual usage token counts; max_tokens is only a ceiling.",
+          "Long-context engine decode headers come from a cached follow-on non-stream continuation, not the exact SSE generation. This preserves the long KV context without a second cold prefill."
+        ],
+        "run_id": "3aca54bb31da448fb504fe8fd13ef8b1",
+        "reference_write_requested": false,
+        "capacity_headers": [],
+        "concurrency_wall_seconds": 15.1432323,
+        "correctness_pass": false,
+        "elapsed_seconds": 1084.1991389
+      },
+      "startup_resident": [
+        {
+          "ip": "192.168.42.42",
+          "allocated_extent_bytes": 12452904960,
+          "apparent_bytes": 21944437463,
+          "available_disk_bytes": 123934461952,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4-protected/manifest.fgm",
+          "processes": [
+            {
+              "drm_bytes": {
+                "drm-memory-cpu": 0,
+                "drm-memory-gtt": 11763929088,
+                "drm-memory-vram": 153161728,
+                "drm-resident-gtt": 11763929088,
+                "drm-resident-vram": 153161728,
+                "drm-total-gtt": 4169728,
+                "drm-total-vram": 11912921088
+              },
+              "drm_clients": 1,
+              "exe": "/home/xander/flash-gordon-live/20261015-q4-foreign/flash-gordon",
+              "pid": 170566,
+              "rss_bytes": 81580032
+            }
+          ]
+        },
+        {
+          "ip": "192.168.42.43",
+          "allocated_extent_bytes": 12800122880,
+          "apparent_bytes": 21486349023,
+          "available_disk_bytes": 54944002048,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4-protected/manifest.fgm",
+          "processes": [
+            {
+              "drm_bytes": {
+                "drm-memory-cpu": 0,
+                "drm-memory-gtt": 10839490560,
+                "drm-memory-vram": 333754368,
+                "drm-resident-gtt": 10839490560,
+                "drm-resident-vram": 333754368,
+                "drm-total-gtt": 4169728,
+                "drm-total-vram": 11169075200
+              },
+              "drm_clients": 1,
+              "exe": "/home/xander/flash-gordon-live/20261015-q4-foreign/flash-gordon",
+              "pid": 102452,
+              "rss_bytes": 187281408
+            }
+          ]
+        },
+        {
+          "ip": "192.168.42.44",
+          "allocated_extent_bytes": 11241582592,
+          "apparent_bytes": 20733115103,
+          "available_disk_bytes": 57653489664,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4-protected/manifest.fgm",
+          "processes": [
+            {
+              "drm_bytes": {
+                "drm-memory-cpu": 0,
+                "drm-memory-gtt": 10086256640,
+                "drm-memory-vram": 331702272,
+                "drm-resident-gtt": 10086256640,
+                "drm-resident-vram": 331702272,
+                "drm-total-gtt": 4169728,
+                "drm-total-vram": 10413789184
+              },
+              "drm_clients": 1,
+              "exe": "/home/xander/flash-gordon-live/20261015-q4-foreign/flash-gordon",
+              "pid": 98433,
+              "rss_bytes": 187244544
+            }
+          ]
+        },
+        {
+          "ip": "192.168.42.45",
+          "allocated_extent_bytes": 10831724544,
+          "apparent_bytes": 10831719135,
+          "available_disk_bytes": 15727079424,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4-protected/manifest.fgm",
+          "processes": [
+            {
+              "drm_bytes": {
+                "drm-memory-cpu": 0,
+                "drm-memory-gtt": 10409287680,
+                "drm-memory-vram": 173641728,
+                "drm-resident-gtt": 10409287680,
+                "drm-resident-vram": 173641728,
+                "drm-total-gtt": 4169728,
+                "drm-total-vram": 10578759680
+              },
+              "drm_clients": 1,
+              "exe": "/home/xander/flash-gordon-live/20261015-q4-foreign/flash-gordon",
+              "pid": 98033,
+              "rss_bytes": 187875328
+            }
+          ]
+        },
+        {
+          "ip": "192.168.42.46",
+          "allocated_extent_bytes": 10975043584,
+          "apparent_bytes": 10975038175,
+          "available_disk_bytes": 66751434752,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4-protected/manifest.fgm",
+          "processes": [
+            {
+              "drm_bytes": {
+                "drm-memory-cpu": 0,
+                "drm-memory-gtt": 10441457664,
+                "drm-memory-vram": 491487232,
+                "drm-resident-gtt": 10441457664,
+                "drm-resident-vram": 491487232,
+                "drm-total-gtt": 4169728,
+                "drm-total-vram": 10928775168
+              },
+              "drm_clients": 1,
+              "exe": "/home/xander/flash-gordon-live/20261015-q4-foreign/flash-gordon",
+              "pid": 99497,
+              "rss_bytes": 187305984
+            }
+          ]
+        },
+        {
+          "ip": "192.168.42.47",
+          "allocated_extent_bytes": 11093868544,
+          "apparent_bytes": 11093863135,
+          "available_disk_bytes": 47928877056,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4-protected/manifest.fgm",
+          "processes": [
+            {
+              "drm_bytes": {
+                "drm-memory-cpu": 0,
+                "drm-memory-gtt": 10671431680,
+                "drm-memory-vram": 173645824,
+                "drm-resident-gtt": 10671431680,
+                "drm-resident-vram": 173645824,
+                "drm-total-gtt": 4169728,
+                "drm-total-vram": 10840907776
+              },
+              "drm_clients": 1,
+              "exe": "/home/xander/flash-gordon-live/20261015-q4-foreign/flash-gordon",
+              "pid": 98100,
+              "rss_bytes": 187981824
+            }
+          ]
+        },
+        {
+          "ip": "192.168.42.48",
+          "allocated_extent_bytes": 10295832576,
+          "apparent_bytes": 10295827167,
+          "available_disk_bytes": 50679558144,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4-protected/manifest.fgm",
+          "processes": [
+            {
+              "drm_bytes": {
+                "drm-memory-cpu": 0,
+                "drm-memory-gtt": 9762246656,
+                "drm-memory-vram": 486191104,
+                "drm-resident-gtt": 9762246656,
+                "drm-resident-vram": 486191104,
+                "drm-total-gtt": 4169728,
+                "drm-total-vram": 10244268032
+              },
+              "drm_clients": 1,
+              "exe": "/home/xander/flash-gordon-live/20261015-q4-foreign/flash-gordon",
+              "pid": 98377,
+              "rss_bytes": 187129856
+            }
+          ]
+        },
+        {
+          "ip": "192.168.42.49",
+          "allocated_extent_bytes": 12100435968,
+          "apparent_bytes": 21793295071,
+          "available_disk_bytes": 11810054144,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4-protected/manifest.fgm",
+          "processes": [
+            {
+              "drm_bytes": {
+                "drm-memory-cpu": 0,
+                "drm-memory-gtt": 10933575680,
+                "drm-memory-vram": 177573888,
+                "drm-resident-gtt": 10933575680,
+                "drm-resident-vram": 177573888,
+                "drm-total-gtt": 4169728,
+                "drm-total-vram": 11106979840
+              },
+              "drm_clients": 1,
+              "exe": "/home/xander/flash-gordon-live/20261015-q4-foreign/flash-gordon",
+              "pid": 99501,
+              "rss_bytes": 188014592
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "endstate": {
+    "promoted": false,
+    "release": "/home/xander/flash-gordon-live/20260926-abl2",
+    "manifest": "/home/xander/fg-ring-pack-abliterated/manifest.fgm"
+  },
+  "final_api": {
+    "health": {
+      "status": "ok",
+      "busy": false
+    },
+    "models": {
+      "object": "list",
+      "data": [
+        {
+          "id": "Qwen3.8-Flash-Next-Uncensored",
+          "object": "model",
+          "created": 0,
+          "owned_by": "flash-gordon",
+          "capabilities": {
+            "native_context": 262144,
+            "experimental_context": 0,
+            "tools": true,
+            "mtp": false,
+            "image": true,
+            "video": true,
+            "video_frames": true
+          }
+        }
+      ]
+    },
+    "chat": {
+      "id": "chatcmpl-fg-1792081248-2",
+      "object": "chat.completion",
+      "created": 1792081248,
+      "model": "Qwen3.8-Flash-Next-Uncensored",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "reasoning_content": "The user asks \"What is 2+2?\" and wants just the digit as the answer. 2+2 = 4.\n",
+            "content": "4"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 23,
+        "completion_tokens": 32,
+        "total_tokens": 55
+      }
+    },
+    "verified_at": "2026-10-15T09:20:50.4922607-07:00"
+  },
+  "final_owner_verification": [
+    {
+      "ip": "192.168.42.42",
+      "active": [
+        {
+          "args": [
+            "/home/xander/flash-gordon-live/20260926-abl2/flash-gordon",
+            "api",
+            "--manifest",
+            "/home/xander/fg-ring-pack-abliterated/manifest.fgm",
+            "--model-name",
+            "Qwen3.8-Flash-Next-Uncensored",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "8080",
+            "--context-tokens",
+            "262144",
+            "--gpu-index-tokens",
+            "262144",
+            "--qsa-hot-tokens",
+            "0",
+            "--qsa-page-cache-mib",
+            "700"
+          ],
+          "exe": "/home/xander/flash-gordon-live/20260926-abl2/flash-gordon",
+          "pid": 170947
+        }
+      ],
+      "available_disk_bytes": 125086117888,
+      "original_sha256": {
+        "binary": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2",
+        "manifest": "35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb"
+      },
+      "packs": {
+        "fg-ring-pack-abliterated-q4": {
+          "allocated_extent_bytes": 14493372416,
+          "apparent_bytes": 80692423383,
+          "manifest_sha256": "0b6be8d28ca31dee068a646bfabd6cf18b1ec7ce50e869453e8fcbdb8e5d0bff"
+        },
+        "fg-ring-pack-abliterated-q4-protected": {
+          "allocated_extent_bytes": 11379154944,
+          "apparent_bytes": 20870687447,
+          "manifest_sha256": "3ee6bd13d3fab0747df021c0ae1a4140d0be23e757f771f794a185477bfd0e36"
+        }
+      },
+      "removed": [
+        "/home/xander/hc-q4/stage-qualify-ordinary",
+        "/home/xander/hc-q4/stage-qualify-protected",
+        "/home/xander/fg-ring-pack-abliterated-q4-teacher",
+        "/home/xander/flash-gordon-live/20261015-q4-ordinary",
+        "/home/xander/flash-gordon-live/20261015-q4-foreign/operator/prompts-r3-teacher.fgev",
+        "/home/xander/flash-gordon-live/20261015-q4-foreign/operator/prompts-r3-ordinary.fgev",
+        "/home/xander/flash-gordon-live/20261015-q4-foreign/operator/prompts-r3-protected.fgev",
+        "/home/xander/hc-q4/qualify"
+      ]
+    },
+    {
+      "ip": "192.168.42.43",
+      "active": [
+        {
+          "args": [
+            "/home/xander/flash-gordon-live/20260926-abl2/flash-gordon",
+            "rank",
+            "--manifest",
+            "/home/xander/fg-ring-pack-abliterated/manifest.fgm",
+            "--rank",
+            "1"
+          ],
+          "exe": "/home/xander/flash-gordon-live/20260926-abl2/flash-gordon",
+          "pid": 102837
+        }
+      ],
+      "available_disk_bytes": 55558901760,
+      "original_sha256": {
+        "binary": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2",
+        "manifest": "35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb"
+      },
+      "packs": {
+        "fg-ring-pack-abliterated-q4": {
+          "allocated_extent_bytes": 12230803456,
+          "apparent_bytes": 20884589279,
+          "manifest_sha256": "0b6be8d28ca31dee068a646bfabd6cf18b1ec7ce50e869453e8fcbdb8e5d0bff"
+        },
+        "fg-ring-pack-abliterated-q4-protected": {
+          "allocated_extent_bytes": 12263243776,
+          "apparent_bytes": 20949469919,
+          "manifest_sha256": "3ee6bd13d3fab0747df021c0ae1a4140d0be23e757f771f794a185477bfd0e36"
+        }
+      },
+      "removed": [
+        "/home/xander/hc-q4/stage-qualify-ordinary",
+        "/home/xander/hc-q4/stage-qualify-protected",
+        "/home/xander/fg-ring-pack-abliterated-q4-teacher",
+        "/home/xander/flash-gordon-live/20261015-q4-ordinary",
+        "/home/xander/hc-q4/qualify"
+      ]
+    },
+    {
+      "ip": "192.168.42.44",
+      "active": [
+        {
+          "args": [
+            "/home/xander/flash-gordon-live/20260926-abl2/flash-gordon",
+            "rank",
+            "--manifest",
+            "/home/xander/fg-ring-pack-abliterated/manifest.fgm",
+            "--rank",
+            "2"
+          ],
+          "exe": "/home/xander/flash-gordon-live/20260926-abl2/flash-gordon",
+          "pid": 98828
+        }
+      ],
+      "available_disk_bytes": 58268291072,
+      "original_sha256": {
+        "binary": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2",
+        "manifest": "35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb"
+      },
+      "packs": {
+        "fg-ring-pack-abliterated-q4": {
+          "allocated_extent_bytes": 10672263168,
+          "apparent_bytes": 20131355359,
+          "manifest_sha256": "0b6be8d28ca31dee068a646bfabd6cf18b1ec7ce50e869453e8fcbdb8e5d0bff"
+        },
+        "fg-ring-pack-abliterated-q4-protected": {
+          "allocated_extent_bytes": 10704703488,
+          "apparent_bytes": 20196235999,
+          "manifest_sha256": "3ee6bd13d3fab0747df021c0ae1a4140d0be23e757f771f794a185477bfd0e36"
+        }
+      },
+      "removed": [
+        "/home/xander/hc-q4/stage-qualify-ordinary",
+        "/home/xander/hc-q4/stage-qualify-protected",
+        "/home/xander/fg-ring-pack-abliterated-q4-teacher",
+        "/home/xander/flash-gordon-live/20261015-q4-ordinary",
+        "/home/xander/hc-q4/qualify"
+      ]
+    },
+    {
+      "ip": "192.168.42.45",
+      "active": [
+        {
+          "args": [
+            "/home/xander/flash-gordon-live/20260926-abl2/flash-gordon",
+            "rank",
+            "--manifest",
+            "/home/xander/fg-ring-pack-abliterated/manifest.fgm",
+            "--rank",
+            "3"
+          ],
+          "exe": "/home/xander/flash-gordon-live/20260926-abl2/flash-gordon",
+          "pid": 98433
+        }
+      ],
+      "available_disk_bytes": 16878538752,
+      "original_sha256": {
+        "binary": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2",
+        "manifest": "35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb"
+      },
+      "packs": {
+        "fg-ring-pack-abliterated-q4": {
+          "allocated_extent_bytes": 9724551168,
+          "apparent_bytes": 9724545759,
+          "manifest_sha256": "0b6be8d28ca31dee068a646bfabd6cf18b1ec7ce50e869453e8fcbdb8e5d0bff"
+        },
+        "fg-ring-pack-abliterated-q4-protected": {
+          "allocated_extent_bytes": 9757974528,
+          "apparent_bytes": 9757969119,
+          "manifest_sha256": "3ee6bd13d3fab0747df021c0ae1a4140d0be23e757f771f794a185477bfd0e36"
+        }
+      },
+      "removed": [
+        "/home/xander/hc-q4/stage-qualify-ordinary",
+        "/home/xander/hc-q4/stage-qualify-protected",
+        "/home/xander/fg-ring-pack-abliterated-q4-teacher",
+        "/home/xander/flash-gordon-live/20261015-q4-ordinary",
+        "/home/xander/hc-q4/qualify"
+      ]
+    },
+    {
+      "ip": "192.168.42.46",
+      "active": [
+        {
+          "args": [
+            "/home/xander/flash-gordon-live/20260926-abl2/flash-gordon",
+            "rank",
+            "--manifest",
+            "/home/xander/fg-ring-pack-abliterated/manifest.fgm",
+            "--rank",
+            "4"
+          ],
+          "exe": "/home/xander/flash-gordon-live/20260926-abl2/flash-gordon",
+          "pid": 99882
+        }
+      ],
+      "available_disk_bytes": 67874152448,
+      "original_sha256": {
+        "binary": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2",
+        "manifest": "35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb"
+      },
+      "packs": {
+        "fg-ring-pack-abliterated-q4": {
+          "allocated_extent_bytes": 10405724160,
+          "apparent_bytes": 10405718751,
+          "manifest_sha256": "0b6be8d28ca31dee068a646bfabd6cf18b1ec7ce50e869453e8fcbdb8e5d0bff"
+        },
+        "fg-ring-pack-abliterated-q4-protected": {
+          "allocated_extent_bytes": 10438164480,
+          "apparent_bytes": 10438159071,
+          "manifest_sha256": "3ee6bd13d3fab0747df021c0ae1a4140d0be23e757f771f794a185477bfd0e36"
+        }
+      },
+      "removed": [
+        "/home/xander/hc-q4/stage-qualify-ordinary",
+        "/home/xander/hc-q4/stage-qualify-protected",
+        "/home/xander/fg-ring-pack-abliterated-q4-teacher",
+        "/home/xander/flash-gordon-live/20261015-q4-ordinary",
+        "/home/xander/flash-gordon-live/20261015-q4-foreign/operator/logits-r3-teacher",
+        "/home/xander/flash-gordon-live/20261015-q4-foreign/operator/logits-r3-teacher.tar.gz",
+        "/home/xander/flash-gordon-live/20261015-q4-foreign/operator/logits-r3-ordinary",
+        "/home/xander/flash-gordon-live/20261015-q4-foreign/operator/logits-r3-ordinary.tar.gz",
+        "/home/xander/flash-gordon-live/20261015-q4-foreign/operator/logits-r3-protected",
+        "/home/xander/flash-gordon-live/20261015-q4-foreign/operator/logits-r3-protected.tar.gz",
+        "/home/xander/hc-q4/qualify"
+      ]
+    },
+    {
+      "ip": "192.168.42.47",
+      "active": [
+        {
+          "args": [
+            "/home/xander/flash-gordon-live/20260926-abl2/flash-gordon",
+            "rank",
+            "--manifest",
+            "/home/xander/fg-ring-pack-abliterated/manifest.fgm",
+            "--rank",
+            "5"
+          ],
+          "exe": "/home/xander/flash-gordon-live/20260926-abl2/flash-gordon",
+          "pid": 98494
+        }
+      ],
+      "available_disk_bytes": 49080680448,
+      "original_sha256": {
+        "binary": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2",
+        "manifest": "35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb"
+      },
+      "packs": {
+        "fg-ring-pack-abliterated-q4": {
+          "allocated_extent_bytes": 9986695168,
+          "apparent_bytes": 9986689759,
+          "manifest_sha256": "0b6be8d28ca31dee068a646bfabd6cf18b1ec7ce50e869453e8fcbdb8e5d0bff"
+        },
+        "fg-ring-pack-abliterated-q4-protected": {
+          "allocated_extent_bytes": 10020118528,
+          "apparent_bytes": 10020113119,
+          "manifest_sha256": "3ee6bd13d3fab0747df021c0ae1a4140d0be23e757f771f794a185477bfd0e36"
+        }
+      },
+      "removed": [
+        "/home/xander/hc-q4/stage-qualify-ordinary",
+        "/home/xander/hc-q4/stage-qualify-protected",
+        "/home/xander/fg-ring-pack-abliterated-q4-teacher",
+        "/home/xander/flash-gordon-live/20261015-q4-ordinary",
+        "/home/xander/hc-q4/qualify"
+      ]
+    },
+    {
+      "ip": "192.168.42.48",
+      "active": [
+        {
+          "args": [
+            "/home/xander/flash-gordon-live/20260926-abl2/flash-gordon",
+            "rank",
+            "--manifest",
+            "/home/xander/fg-ring-pack-abliterated/manifest.fgm",
+            "--rank",
+            "6"
+          ],
+          "exe": "/home/xander/flash-gordon-live/20260926-abl2/flash-gordon",
+          "pid": 98761
+        }
+      ],
+      "available_disk_bytes": 51289903104,
+      "original_sha256": {
+        "binary": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2",
+        "manifest": "35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb"
+      },
+      "packs": {
+        "fg-ring-pack-abliterated-q4": {
+          "allocated_extent_bytes": 9726513152,
+          "apparent_bytes": 9726507743,
+          "manifest_sha256": "0b6be8d28ca31dee068a646bfabd6cf18b1ec7ce50e869453e8fcbdb8e5d0bff"
+        },
+        "fg-ring-pack-abliterated-q4-protected": {
+          "allocated_extent_bytes": 9758953472,
+          "apparent_bytes": 9758948063,
+          "manifest_sha256": "3ee6bd13d3fab0747df021c0ae1a4140d0be23e757f771f794a185477bfd0e36"
+        }
+      },
+      "removed": [
+        "/home/xander/hc-q4/stage-qualify-ordinary",
+        "/home/xander/hc-q4/stage-qualify-protected",
+        "/home/xander/fg-ring-pack-abliterated-q4-teacher",
+        "/home/xander/flash-gordon-live/20261015-q4-ordinary",
+        "/home/xander/hc-q4/qualify"
+      ]
+    },
+    {
+      "ip": "192.168.42.49",
+      "active": [
+        {
+          "args": [
+            "/home/xander/flash-gordon-live/20260926-abl2/flash-gordon",
+            "rank",
+            "--manifest",
+            "/home/xander/fg-ring-pack-abliterated/manifest.fgm",
+            "--rank",
+            "7"
+          ],
+          "exe": "/home/xander/flash-gordon-live/20260926-abl2/flash-gordon",
+          "pid": 99897
+        }
+      ],
+      "available_disk_bytes": 12962521088,
+      "original_sha256": {
+        "binary": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2",
+        "manifest": "35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb"
+      },
+      "packs": {
+        "fg-ring-pack-abliterated-q4": {
+          "allocated_extent_bytes": 10993262592,
+          "apparent_bytes": 20653681375,
+          "manifest_sha256": "0b6be8d28ca31dee068a646bfabd6cf18b1ec7ce50e869453e8fcbdb8e5d0bff"
+        },
+        "fg-ring-pack-abliterated-q4-protected": {
+          "allocated_extent_bytes": 11026685952,
+          "apparent_bytes": 20719545055,
+          "manifest_sha256": "3ee6bd13d3fab0747df021c0ae1a4140d0be23e757f771f794a185477bfd0e36"
+        }
+      },
+      "removed": [
+        "/home/xander/hc-q4/stage-qualify-ordinary",
+        "/home/xander/hc-q4/stage-qualify-protected",
+        "/home/xander/fg-ring-pack-abliterated-q4-teacher",
+        "/home/xander/flash-gordon-live/20261015-q4-ordinary",
+        "/home/xander/hc-q4/qualify"
+      ]
+    }
+  ],
+  "validation": {
+    "python_tests": 12,
+    "optional_skips": 1,
+    "native_cooker_mapping_test_owners": 8,
+    "vulkan_model_loader_blade": "192.168.42.52",
+    "mock_staging": "passed",
+    "quality_recomputations": "both byte-identical",
+    "worker_zero_runtime_cook_logs": 7,
+    "coordinator_allocation_log": "[rank 0] replicated model: 1.528 GiB (1225 manifest tensors from 8 ranks)\nCOORDINATOR_VK_COMPONENTS model=11078316032 family=38010880 owner_state=13238272 pingpong=10485760 owner_activation=378880 expert_activation=378880 qsa_positions=3145728 qsa_index=35651584 qsa_record_cache=648019968 ngram=0 prefill_token=4096 known_total=11827630080 unclassified=49708336\nCOORDINATOR_VK_LEDGER model_arena=11078316032 qsa_index=35651584 qsa_record_cache=648019968 ngram_payload=0 qsa_aux_shared=14336000 final_requested=11877338416 final_allocated=11877338432 live_allocations=66"
+  },
+  "capture_archives": {
+    "r3-teacher": {
+      "sha256": "6bcb41e150f078663706aa0756025704c7d5028223a98c9c3f5e69c61c2c6ca5",
+      "bytes": 72760100
+    },
+    "r3-ordinary": {
+      "sha256": "71cb86d6db62ae15d1f8d7b29f790f2f4fe8d924014e18f96fe312ec93bf4acd",
+      "bytes": 72752191
+    },
+    "r3-protected": {
+      "sha256": "62ff34a3a011eeae87efc7e630b107599ce3d3259bac3b4d651fad6fb9800c43",
+      "bytes": 72728915
+    }
+  }
+}

@@ -37,6 +37,14 @@ fg_status fg_tensor_record_expected_bytes(const fg_tensor_record *record,uint64_
                 return FG_ERR_FORMAT;
             }
             return FG_OK;
+        case FG_TENSOR_LAYOUT_DENSE_SOA:
+        case FG_TENSOR_LAYOUT_DENSE_COMPACT:
+            if(record->kind==FG_TENSOR_COMMON&&record->dims==2u&&
+               record->shape[0]<=UINT32_MAX&&record->shape[1]<=UINT32_MAX)
+                matrix=record->layout==FG_TENSOR_LAYOUT_DENSE_COMPACT?
+                    fg_dense_compact_bytes((uint32_t)record->shape[0],(uint32_t)record->shape[1],record->ggml_type):
+                    fg_dense_soa_bytes((uint32_t)record->shape[0],(uint32_t)record->shape[1],record->ggml_type);
+            break;
         case FG_TENSOR_LAYOUT_Q8_0_COOKED:
             if(record->dims==2u&&record->shape[0]<=UINT32_MAX&&
                record->shape[1]<=UINT32_MAX)
@@ -243,7 +251,12 @@ static const fg_gguf_tensor *find_gguf(const fg_gguf *g,const char *name){
 static fg_status require_tensor(const fg_gguf *g,const char *name,const tensor_spec *s,fg_error *err){
     const fg_gguf_tensor *t=find_gguf(g,name);
     if(!t){fg_error_set(err,FG_ERR_MISMATCH,"Qwen3.8 tensor is missing or duplicated: %s",name);return FG_ERR_MISMATCH;}
-    if(t->type!=s->type_a&&(s->type_b==UINT32_MAX||t->type!=s->type_b)){
+    bool dense=s->dims==2u&&s->type_a==8u&&
+        strcmp(name,"token_embd.weight")!=0;
+    bool dense_type=dense&&((t->type==20u&&s->shape[0]%32u==0u)||
+        ((t->type==12u||t->type==13u||t->type==14u)&&s->shape[0]%256u==0u));
+    bool bf16_router=t->type==30u&&strcmp(s->suffix,"ffn_gate_inp.weight")==0;
+    if(!bf16_router&&!dense_type&&t->type!=s->type_a&&(s->type_b==UINT32_MAX||t->type!=s->type_b)){
         fg_error_set(err,FG_ERR_MISMATCH,"Qwen3.8 tensor %s has quant type %u, expected %u%s",name,t->type,s->type_a,s->type_b==UINT32_MAX?"":" or alternate");return FG_ERR_MISMATCH;
     }
     if(t->dims!=s->dims){fg_error_set(err,FG_ERR_MISMATCH,"Qwen3.8 tensor %s has %u dimensions, expected %u",name,t->dims,s->dims);return FG_ERR_MISMATCH;}

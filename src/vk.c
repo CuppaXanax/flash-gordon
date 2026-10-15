@@ -69,7 +69,7 @@ struct fg_vk_context {
     fg_vk_memory_stats memory_stats;
     fg_vk_profile_dispatch profile_dispatches[FG_VK_PROFILE_MAX_DISPATCHES];fg_vk_profile profile;
     fg_vk_kernel quant_q8k,quant_q8,quant_q4,dequant_iq4nl,embedding,embedding_batch,swiglu,silu_scaled,dense,dense_f32,dense_bf16,rms,gr,hc_inject_partial,gr_partial,hc_finalize,gr_write,ple_gate,ple_gate_prefill,ple_conv,ple_conv_prefill,ple_conv_add,add,apply_penalties,gdn_conv,gdn_conv_prefill,gdn_recurrent,gdn_recurrent_algebraic,gdn_recurrent_prefill,gdn_prefill_qk_norm,gdn_prefill_recurrence,gdn_prefill_output,qsa_prepare,qsa_prepare_prefill,qsa_index_prepare,qsa_index_prepare_prefill,qsa_record_commit,qsa_record_gather,qsa_score,qsa_attention,qsa_attention_split,qsa_decode_attention_split,qsa_attention_merge,qsa_attention_split_batch,qsa_attention_merge_batch,qsa_record_gather_batch,qsa_select_resolve,qsa_resident_commit,qsa_resident_select,qsa_resident_merge,qsa_resident_attention,topk_v2,topk_select,topk_select_fallback,moe_q5_1,moe_q5_1_cooked,moe_q8_0,moe_q8_0_cooked,moe_reduce,kquant,kquant_cooked;
-    fg_vk_kernel argmax,dense_subgroup,dense_cooked,dense_cooked_r8;
+    fg_vk_kernel argmax,dense_subgroup,dense_cooked,dense_cooked_r8,dense_quant[37];
     /* Decomposition benchmark kernels */
     fg_vk_kernel bench_stream,bench_dequant,bench_dot_nored;
     fg_vk_kernel dense_cooked_split,dense_cooked_split_reduce,dense_cooked_split_reduce_silu;
@@ -152,6 +152,8 @@ static fg_status read_shader(const char *file,uint32_t **words,size_t *bytes,fg_
 }
 
 static void destroy_kernel(fg_vk_context *context,fg_vk_kernel *kernel){
+    if(kernel==&context->dense)
+        for(uint32_t i=0;i<37u;i++)destroy_kernel(context,&context->dense_quant[i]);
     if(kernel==&context->moe_q5_1)destroy_kernel(context,&context->moe_q5_1_cooked);
     if(kernel==&context->kquant)destroy_kernel(context,&context->kquant_cooked);
     if(kernel==&context->dense_cooked)destroy_kernel(context,&context->dense_cooked_r8);
@@ -730,7 +732,121 @@ fg_status fg_vk_quantize_q4_0(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_ten
 fg_status fg_vk_dequantize_iq4_nl(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *input,uint32_t rows,uint32_t width,fg_error *err){uint64_t input_bytes=(uint64_t)rows*(width/32u)*18u;if(!c||!rows||!width||width%32u||!tensor_range(input,0,input_bytes)||!tensor_range(out,0,(uint64_t)rows*width*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid IQ4_NL dequantization dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t rows,width;}push={rows,width};const fg_vk_tensor *bindings[]={input,out};return dispatch(c,&c->dequant_iq4nl,bindings,&push,(rows*width+255u)/256u,1,1,err);}
 fg_status fg_vk_swiglu(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *gate,const fg_vk_tensor *up,uint32_t values,fg_error *err){if(!c||!values||!tensor_range(gate,0,(uint64_t)values*4u)||!tensor_range(up,0,(uint64_t)values*4u)||!tensor_range(out,0,(uint64_t)values*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid SwiGLU dispatch");return FG_ERR_ARGUMENT;}const fg_vk_tensor *bindings[]={gate,up,out};return dispatch(c,&c->swiglu,bindings,&values,(values+255u)/256u,1,1,err);}
 
-fg_status fg_vk_dense_q8_0_f32(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *w,const fg_vk_tensor *x,uint32_t in,uint32_t rows,uint32_t tokens,float scale,fg_error *err){if(w&&w->format==FG_VK_TENSOR_FORMAT_Q8_0_COOKED)return fg_vk_dense_q8_0_cooked(c,out,w,x,in,rows,tokens,scale,err);uint64_t row_bytes=(uint64_t)(in/32u)*34u;if(!c||in==0||in%32u||!tensor_range(w,0,row_bytes*rows)||!tensor_range(x,0,(uint64_t)in*tokens*4u)||!tensor_range(out,0,(uint64_t)rows*tokens*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Q8_0 dense dispatch");return FG_ERR_ARGUMENT;}struct {uint32_t out_dim,n_tok,blocks,row_bytes;float scale;} push={rows,tokens,in/32u,(uint32_t)row_bytes,scale};const fg_vk_tensor *bindings[]={w,x,out};return dispatch(c,&c->dense,bindings,&push,rows,tokens,1,err);}
+fg_vk_tensor_format fg_vk_dense_format(uint32_t type){
+    switch(type){
+        case 12u:return FG_VK_TENSOR_FORMAT_Q4_K;
+        case 13u:return FG_VK_TENSOR_FORMAT_Q5_K;
+        case 14u:return FG_VK_TENSOR_FORMAT_Q6_K;
+        case 20u:return FG_VK_TENSOR_FORMAT_IQ4_NL;
+        case 30u:return FG_VK_TENSOR_FORMAT_BF16_ROUTER;
+        default:return FG_VK_TENSOR_FORMAT_DEFAULT;
+    }
+}
+
+fg_vk_tensor_format fg_vk_dense_saved_format(uint32_t type,uint32_t layout){
+    if(layout==FG_TENSOR_LAYOUT_DENSE_SOA||layout==FG_TENSOR_LAYOUT_DENSE_COMPACT){
+        if(type!=12u&&type!=13u&&type!=20u)return FG_VK_TENSOR_FORMAT_DEFAULT;
+        uint32_t base=layout==FG_TENSOR_LAYOUT_DENSE_COMPACT?
+            FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K:FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K;
+        return (fg_vk_tensor_format)(base+(type==12u?0u:type==13u?1u:2u));
+    }
+    if(layout==FG_TENSOR_LAYOUT_Q8_0_COOKED&&type==8u)
+        return FG_VK_TENSOR_FORMAT_Q8_0_COOKED;
+    return fg_vk_dense_format(type);
+}
+
+uint32_t fg_vk_subgroup_size(const fg_vk_context *c){
+    if(!c)return 0u;
+    VkPhysicalDeviceSubgroupProperties subgroup={
+        .sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+    VkPhysicalDeviceProperties2 properties={
+        .sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&subgroup};
+    vkGetPhysicalDeviceProperties2(c->physical,&properties);
+    return subgroup.subgroupSize;
+}
+
+fg_status fg_vk_dense_quant(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *w,
+                            const fg_vk_tensor *x,uint32_t in,uint32_t rows,
+                            uint32_t tokens,float scale,fg_error *err){
+    uint32_t type=0u,block=256u,bytes=0u;
+    bool compact=w&&w->format>=FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K&&
+        w->format<=FG_VK_TENSOR_FORMAT_DENSE_COMPACT_IQ4_NL;
+    bool soa=w&&((w->format>=FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K&&
+        w->format<=FG_VK_TENSOR_FORMAT_DENSE_SOA_IQ4_NL)||compact);
+    bool cooked=w&&(w->format==FG_VK_TENSOR_FORMAT_DENSE_Q4_K_COOKED||
+                    w->format==FG_VK_TENSOR_FORMAT_DENSE_Q5_K_COOKED);
+    if(w)switch(w->format){
+        case FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K:
+        case FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K:
+        case FG_VK_TENSOR_FORMAT_DENSE_Q4_K_COOKED:
+        case FG_VK_TENSOR_FORMAT_Q4_K:type=12u;bytes=144u;break;
+        case FG_VK_TENSOR_FORMAT_DENSE_SOA_Q5_K:
+        case FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q5_K:
+        case FG_VK_TENSOR_FORMAT_DENSE_Q5_K_COOKED:
+        case FG_VK_TENSOR_FORMAT_Q5_K:type=13u;bytes=176u;break;
+        case FG_VK_TENSOR_FORMAT_Q6_K:type=14u;bytes=210u;break;
+        case FG_VK_TENSOR_FORMAT_DENSE_SOA_IQ4_NL:
+        case FG_VK_TENSOR_FORMAT_DENSE_COMPACT_IQ4_NL:
+        case FG_VK_TENSOR_FORMAT_IQ4_NL:type=20u;block=32u;bytes=18u;break;
+        default:break;
+    }
+    uint64_t row_bytes=(uint64_t)(in/block)*bytes;
+    if(!c||!type||!in||in%block||!rows||!tokens||(cooked&&rows%FG_K_QUANT_COOK_ROWS)||row_bytes>UINT32_MAX||
+       !tensor_range(w,0,compact?fg_dense_compact_bytes(in,rows,type):soa?fg_dense_soa_bytes(in,rows,type):row_bytes*rows)||
+       !tensor_range(x,0,(uint64_t)in*tokens*4u)||
+       !tensor_range(out,0,(uint64_t)rows*tokens*4u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid quantized dense dispatch");
+        return FG_ERR_ARGUMENT;
+    }
+    struct{uint32_t input_width,output_width,tokens,type,row_bytes;float scale;}
+        push={in,rows,tokens,type|(cooked?256u:0u),(uint32_t)row_bytes,scale};
+    const fg_vk_tensor *bindings[]={w,x,out};
+    uint32_t index=soa?(type==12u?5u:type==13u?6u:7u):type==20u?3u:type-12u;
+    static const char *files[]={"fg_dense_q4_k.spv","fg_dense_q5_k.spv",
+        "fg_dense_q6_k.spv","fg_dense_iq4_nl.spv",NULL,"fg_dense_soa.spv",
+        "fg_dense_soa_q5.spv","fg_dense_soa_iq4.spv","fg_dense_soa_r4.spv",
+        "fg_dense_soa_q5_r4.spv","fg_dense_soa_long.spv","fg_dense_soa_mid.spv",
+        "fg_dense_soa_tile.spv","fg_dense_soa_q5_tile.spv","fg_dense_soa_iq4_tile.spv",
+        "fg_dense_soa_tile8.spv","fg_dense_soa_q5_tile8.spv","fg_dense_soa_iq4_tile8.spv",
+        "fg_dense_soa_tile16.spv","fg_dense_soa_q5_tile16.spv","fg_dense_soa_iq4_tile16.spv",
+        "fg_dense_compact.spv","fg_dense_compact_q5.spv","fg_dense_compact_iq4.spv",
+        "fg_dense_compact_r4.spv","fg_dense_compact_q5_r4.spv","fg_dense_compact_long.spv",
+        "fg_dense_compact_mid.spv","fg_dense_compact_tile.spv","fg_dense_compact_q5_tile.spv",
+        "fg_dense_compact_iq4_tile.spv","fg_dense_compact_tile8.spv","fg_dense_compact_q5_tile8.spv",
+        "fg_dense_compact_iq4_tile8.spv","fg_dense_compact_tile16.spv",
+        "fg_dense_compact_q5_tile16.spv","fg_dense_compact_iq4_tile16.spv"};
+    uint32_t row_tile=soa?8u:4u;
+    uint32_t token_tile=tokens<=8u?8u:tokens<=16u?16u:32u;
+    if(soa){
+        if(type==20u)row_tile=4u;
+        else if(rows<=1024u){
+            row_tile=4u;index=type==12u?(in>=8192u?10u:8u):9u;
+        }else if(type==12u&&in==2560u&&rows==6144u)index=11u;
+        if(tokens>1u)index=(type==12u?12u:type==13u?13u:14u)+
+            (token_tile==8u?3u:token_tile==16u?6u:0u);
+    }
+    const char *file=files[index];
+    if(compact){
+        index+=16u;file=files[index];
+        if(type==20u&&tokens==1u){
+            row_tile=4u;
+            const char *variant=getenv("FG_BENCH_IQ_VARIANT");
+            if(variant){
+                if(strcmp(variant,"r4w32")==0){file="fg_dense_compact_iq4_r4w32.spv";row_tile=4u;}
+                else if(strcmp(variant,"r8w32")==0){file="fg_dense_compact_iq4_r8w32.spv";row_tile=8u;}
+                else if(strcmp(variant,"r4w128")==0){file="fg_dense_compact_iq4_r4w128.spv";row_tile=4u;}
+                else if(strcmp(variant,"r8w128")==0){file="fg_dense_compact_iq4_r8w128.spv";row_tile=8u;}
+            }
+        }
+    }
+    if(!c->dense_quant[index].file)c->dense_quant[index]=(fg_vk_kernel){
+        .file=file,.bindings=3,.push_bytes=24};
+    return dispatch(c,&c->dense_quant[index],bindings,&push,
+        soa&&tokens>1u?(rows+63u)/64u:(rows+row_tile-1u)/row_tile,
+        soa&&tokens>1u?(tokens+token_tile-1u)/token_tile:tokens,1u,err);
+}
+
+fg_status fg_vk_dense_q8_0_f32(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *w,const fg_vk_tensor *x,uint32_t in,uint32_t rows,uint32_t tokens,float scale,fg_error *err){if(w&&w->format>=FG_VK_TENSOR_FORMAT_Q4_K)return fg_vk_dense_quant(c,out,w,x,in,rows,tokens,scale,err);if(w&&w->format==FG_VK_TENSOR_FORMAT_Q8_0_COOKED)return fg_vk_dense_q8_0_cooked(c,out,w,x,in,rows,tokens,scale,err);uint64_t row_bytes=(uint64_t)(in/32u)*34u;if(!c||in==0||in%32u||!tensor_range(w,0,row_bytes*rows)||!tensor_range(x,0,(uint64_t)in*tokens*4u)||!tensor_range(out,0,(uint64_t)rows*tokens*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Q8_0 dense dispatch");return FG_ERR_ARGUMENT;}struct {uint32_t out_dim,n_tok,blocks,row_bytes;float scale;} push={rows,tokens,in/32u,(uint32_t)row_bytes,scale};const fg_vk_tensor *bindings[]={w,x,out};return dispatch(c,&c->dense,bindings,&push,rows,tokens,1,err);}
 fg_status fg_vk_dense_q8_0_subgroup(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *w,const fg_vk_tensor *x,uint32_t in,uint32_t rows,uint32_t tokens,float scale,fg_error *err){uint64_t row_bytes=(uint64_t)(in/32u)*34u;if(!c||!w||w->format!=FG_VK_TENSOR_FORMAT_DEFAULT||in==0||in%32u||!tensor_range(w,0,row_bytes*rows)||!tensor_range(x,0,(uint64_t)in*tokens*4u)||!tensor_range(out,0,(uint64_t)rows*tokens*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid subgroup Q8_0 dense dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t out_dim,n_tok,blocks,row_bytes;float scale;}push={rows,tokens,in/32u,(uint32_t)row_bytes,scale};const fg_vk_tensor *bindings[]={w,x,out};return dispatch(c,&c->dense_subgroup,bindings,&push,rows,tokens,1,err);}
 fg_status fg_vk_dense_q8_0_cooked(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *w,const fg_vk_tensor *x,uint32_t in,uint32_t rows,uint32_t tokens,float scale,fg_error *err){if(tokens>1u)return fg_vk_dense_q8_0_cooked_prefill(c,out,w,x,in,rows,tokens,scale,err);uint32_t blocks=in/FG_QK8_0;uint64_t quant_offset=fg_align_up_u64(FG_Q8_0_COOK_ROWS*(uint64_t)blocks*sizeof(uint16_t),FG_Q8_0_COOK_ALIGNMENT),tile_bytes=fg_align_up_u64(quant_offset+FG_Q8_0_COOK_ROWS*(uint64_t)blocks*FG_QK8_0,FG_Q8_0_COOK_ALIGNMENT),tiles=((uint64_t)rows+FG_Q8_0_COOK_ROWS-1u)/FG_Q8_0_COOK_ROWS;if(!c||!in||in%FG_QK8_0||tile_bytes>UINT32_MAX||tiles>UINT64_MAX/tile_bytes||!tensor_range(w,0,tile_bytes*tiles)||!tensor_range(x,0,(uint64_t)in*tokens*4u)||!tensor_range(out,0,(uint64_t)rows*tokens*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid cooked Q8_0 dense dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t out_dim,n_tok,blocks,tile_bytes;float scale;}push={rows,tokens,blocks,(uint32_t)tile_bytes,scale};const fg_vk_tensor *bindings[]={w,x,out};return dispatch(c,&c->dense_cooked,bindings,&push,(rows+3u)/4u,tokens,1,err);}
 fg_status fg_vk_dense_q8_0_cooked_prefill(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *w,const fg_vk_tensor *x,uint32_t in,uint32_t rows,uint32_t tokens,float scale,fg_error *err){uint32_t blocks=in/FG_QK8_0;uint64_t tile_bytes=fg_q8_0_cooked_tile_bytes(in),matrix_bytes=fg_q8_0_cooked_matrix_bytes(in,rows);if(!c||!w||!blocks||!rows||tokens<2u||tile_bytes>UINT32_MAX||w->format!=FG_VK_TENSOR_FORMAT_Q8_0_COOKED||!tensor_range(w,0,matrix_bytes)||!tensor_range(x,0,(uint64_t)in*tokens*4u)||!tensor_range(out,0,(uint64_t)rows*tokens*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid token-tiled cooked Q8_0 prefill dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t out_dim,tokens,blocks,tile_bytes;float scale;}push={rows,tokens,blocks,(uint32_t)tile_bytes,scale};const fg_vk_tensor *bindings[]={w,x,out};return dispatch(c,&c->dense_cooked_tile,bindings,&push,(rows+63u)/64u,(tokens+31u)/32u,1u,err);}
@@ -755,7 +871,21 @@ fg_status fg_vk_embedding_q8_0(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_te
     struct{uint32_t token,width,rows,copies;}push={token,width,rows,copies};const fg_vk_tensor *bindings[]={weights,out};return dispatch(c,&c->embedding,bindings,&push,(width*copies+255u)/256u,1,1,err);
 }
 fg_status fg_vk_embedding_q8_0_batch(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *weights,const fg_vk_tensor *token_ids,uint32_t token_count,uint32_t width,uint32_t rows,uint32_t copies,fg_error *err){uint64_t row_bytes=(uint64_t)(width/32u)*34u,total=(uint64_t)token_count*width*copies;if(!c||!weights||weights->format!=FG_VK_TENSOR_FORMAT_DEFAULT||!token_count||!width||width%32u||!rows||!copies||!tensor_range(weights,0,row_bytes*rows)||!tensor_range(token_ids,0,(uint64_t)token_count*4u)||!tensor_range(out,0,total*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid batched Q8_0 embedding dispatch");return FG_ERR_ARGUMENT;}const uint32_t *ids=fg_vk_tensor_map((fg_vk_tensor *)token_ids);for(uint32_t i=0;i<token_count;i++)if(ids[i]>=rows){fg_error_set(err,FG_ERR_FORMAT,"embedding token %u is outside vocabulary",i);return FG_ERR_FORMAT;}struct{uint32_t token_count,width,rows,copies;}push={token_count,width,rows,copies};const fg_vk_tensor *bindings[]={weights,token_ids,out};return dispatch(c,&c->embedding_batch,bindings,&push,(uint32_t)((total+255u)/256u),1,1,err);}
-fg_status fg_vk_dense_f32(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *weights,const fg_vk_tensor *input,uint32_t input_width,uint32_t output_width,uint32_t tokens,fg_error *err){if(!c||!input_width||!output_width||!tokens||!tensor_range(weights,0,(uint64_t)input_width*output_width*4u)||!tensor_range(input,0,(uint64_t)input_width*tokens*4u)||!tensor_range(out,0,(uint64_t)output_width*tokens*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid F32 dense dispatch");return FG_ERR_ARGUMENT;}struct {uint32_t input_width,output_width,tokens;}push={input_width,output_width,tokens};const fg_vk_tensor *bindings[]={weights,input,out};return dispatch(c,&c->dense_f32,bindings,&push,output_width,tokens,1,err);}
+fg_status fg_vk_dense_f32(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *weights,const fg_vk_tensor *input,uint32_t input_width,uint32_t output_width,uint32_t tokens,fg_error *err){
+    bool bf16=weights&&weights->format==FG_VK_TENSOR_FORMAT_BF16_ROUTER;
+    if(!c||!input_width||(bf16&&input_width%2u)||!output_width||!tokens||
+       !tensor_range(weights,0,(uint64_t)input_width*output_width*(bf16?2u:4u))||
+       !tensor_range(input,0,(uint64_t)input_width*tokens*4u)||
+       !tensor_range(out,0,(uint64_t)output_width*tokens*4u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid F32/BF16 router dispatch");
+        return FG_ERR_ARGUMENT;
+    }
+    struct{uint32_t input_width,output_width,tokens;}push={input_width,output_width,tokens};
+    const fg_vk_tensor *bindings[]={weights,input,out};
+    if(bf16&&!c->dense_quant[4].file)c->dense_quant[4]=(fg_vk_kernel){
+        .file="fg_dense_router_bf16.spv",.bindings=3,.push_bytes=12};
+    return dispatch(c,bf16?&c->dense_quant[4]:&c->dense_f32,bindings,&push,output_width,tokens,1,err);
+}
 fg_status fg_vk_dense_bf16_f32(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *weights,const fg_vk_tensor *input,uint32_t input_width,uint32_t output_width,uint32_t tokens,fg_error *err){if(!c||!input_width||input_width%2u||!output_width||!tokens||!tensor_range(weights,0,(uint64_t)input_width*output_width*2u)||!tensor_range(input,0,(uint64_t)input_width*tokens*4u)||!tensor_range(out,0,(uint64_t)output_width*tokens*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid BF16 dense dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t input_width,output_width,tokens;}push={input_width,output_width,tokens};const fg_vk_tensor *bindings[]={weights,input,out};return dispatch(c,&c->dense_bf16,bindings,&push,output_width,tokens,1,err);}
 fg_status fg_vk_silu_scaled(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *input,uint32_t values,float input_scale,fg_error *err){if(!c||!values||!tensor_range(input,0,(uint64_t)values*4u)||!tensor_range(out,0,(uint64_t)values*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid scaled SiLU dispatch");return FG_ERR_ARGUMENT;}struct {uint32_t values;float scale;}push={values,input_scale};const fg_vk_tensor *bindings[]={input,out};return dispatch(c,&c->silu_scaled,bindings,&push,(values+255u)/256u,1,1,err);}
 fg_status fg_vk_group_rms_norm(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *x,const fg_vk_tensor *w,uint32_t width,uint32_t groups,uint32_t tokens,float epsilon,fg_error *err){uint64_t values=(uint64_t)width*groups*tokens;if(!c||!width||!groups||!tokens||!tensor_range(x,0,values*4u)||!tensor_range(w,0,(uint64_t)width*groups*4u)||!tensor_range(out,0,values*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid grouped RMS dispatch");return FG_ERR_ARGUMENT;}struct {uint32_t width,groups,tokens;float epsilon;} push={width,groups,tokens,epsilon};const fg_vk_tensor *bindings[]={x,w,out};return dispatch(c,&c->rms,bindings,&push,groups,tokens,1,err);}

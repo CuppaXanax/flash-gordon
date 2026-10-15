@@ -1,0 +1,6 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define TYPE 12
+#define WG 64u
+#define ROWS 4u
+#include "fg_dense_compact_gemv.glsl"

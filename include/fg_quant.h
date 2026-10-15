@@ -24,6 +24,8 @@ uint64_t fg_q8_0_cooked_tile_bytes(uint32_t input_width);
 uint64_t fg_q8_0_cooked_matrix_bytes(uint32_t input_width,uint32_t rows);
 bool fg_cook_q8_0_rows(const void *input,void *output,uint64_t output_bytes,
 					   uint32_t input_width,uint32_t rows);
+bool fg_uncook_q8_0_rows(const void *input,void *output,uint64_t output_bytes,
+					     uint32_t input_width,uint32_t rows);
 uint64_t fg_q5_1_cooked_tile_bytes(uint32_t input_width);
 uint64_t fg_q5_1_cooked_matrix_bytes(uint32_t input_width,uint32_t rows);
 bool fg_cook_q5_1_rows(const void *input,void *output,uint64_t output_bytes,
@@ -32,6 +34,14 @@ uint64_t fg_k_quant_cooked_tile_bytes(uint32_t input_width,uint32_t ggml_type);
 uint64_t fg_k_quant_cooked_matrix_bytes(uint32_t input_width,uint32_t rows,uint32_t ggml_type);
 bool fg_cook_k_quant_rows(const void *input,void *output,uint64_t output_bytes,
 						  uint32_t input_width,uint32_t rows,uint32_t ggml_type);
+uint64_t fg_dense_soa_bytes(uint32_t input_width,uint32_t rows,uint32_t type);
+uint64_t fg_dense_compact_bytes(uint32_t input_width,uint32_t rows,uint32_t type);
+bool fg_dense_prefer_compact(uint32_t input_width,uint32_t rows,uint32_t type);
+bool fg_cook_dense_compact(const void *input,void *output,uint64_t output_bytes,
+                          uint32_t input_width,uint32_t rows,uint32_t type);
+/* Q4_K/Q5_K/IQ4_NL, eight-row tiles; source and destination must not overlap. */
+bool fg_cook_dense_soa(const void *input,void *output,uint64_t output_bytes,
+                       uint32_t input_width,uint32_t rows,uint32_t type);
 void fg_dequantize_q8_0(const void *input,float *output,uint64_t values);
 void fg_dequantize_q4_0(const void *input,float *output,uint64_t values);
 void fg_dequantize_iq4_nl(const void *input,float *output,uint64_t values);

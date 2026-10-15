@@ -18,8 +18,28 @@ typedef enum fg_vk_tensor_format {
     FG_VK_TENSOR_FORMAT_Q8_0_COOKED = 1,
     FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED = 2,
     FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED = 3,
-    FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED = 4
+    FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED = 4,
+    FG_VK_TENSOR_FORMAT_Q4_K = 5,
+    FG_VK_TENSOR_FORMAT_Q5_K = 6,
+    FG_VK_TENSOR_FORMAT_Q6_K = 7,
+    FG_VK_TENSOR_FORMAT_IQ4_NL = 8,
+    FG_VK_TENSOR_FORMAT_DENSE_Q4_K_COOKED = 9,
+    FG_VK_TENSOR_FORMAT_DENSE_Q5_K_COOKED = 10,
+    FG_VK_TENSOR_FORMAT_BF16_ROUTER = 11,
+    FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K = 12,
+    FG_VK_TENSOR_FORMAT_DENSE_SOA_Q5_K = 13,
+    FG_VK_TENSOR_FORMAT_DENSE_SOA_IQ4_NL = 14,
+    FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K = 15,
+    FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q5_K = 16,
+    FG_VK_TENSOR_FORMAT_DENSE_COMPACT_IQ4_NL = 17
 } fg_vk_tensor_format;
+
+fg_vk_tensor_format fg_vk_dense_format(uint32_t ggml_type);
+fg_vk_tensor_format fg_vk_dense_saved_format(uint32_t ggml_type,uint32_t layout);
+fg_status fg_vk_dense_quant(fg_vk_context *context,fg_vk_tensor *out,
+                            const fg_vk_tensor *weights,const fg_vk_tensor *input,
+                            uint32_t input_width,uint32_t output_width,
+                            uint32_t tokens,float scale,fg_error *err);
 
 #define FG_VK_PROFILE_MAX_KERNELS 64u
 /* Pre-recorded token-invariant runs; each slot owns a private descriptor set
@@ -71,6 +91,7 @@ void fg_vk_close(fg_vk_context *context);
 const char *fg_vk_device_name(const fg_vk_context *context);
 bool fg_vk_integer_dot_product_enabled(const fg_vk_context *context);
 uint32_t fg_vk_active_compute_units(const fg_vk_context *context);
+uint32_t fg_vk_subgroup_size(const fg_vk_context *context);
 uint32_t fg_vk_hc_inject_pieces(const fg_vk_context *context);
 
 fg_status fg_vk_profile_begin(fg_vk_context *context,fg_error *err);

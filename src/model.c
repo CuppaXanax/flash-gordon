@@ -59,6 +59,72 @@ static fg_status cook_runtime_tensor(const fg_tensor_record *record,void *data,f
 static fg_status cook_rank_experts(const fg_manifest *manifest,uint32_t rank,void *arena,uint64_t arena_bytes,fg_error *err){uint32_t tensors=0;uint64_t bytes=0;for(uint32_t i=0;i<manifest->tensor_count;i++){const fg_tensor_record *record=&manifest->tensors[i];fg_tensor_layout layout=runtime_layout(record);if(record->rank!=rank||layout==(fg_tensor_layout)record->layout)continue;if(record->offset>arena_bytes||record->bytes>arena_bytes-record->offset){fg_error_set(err,FG_ERR_FORMAT,"tensor %.96s lies outside rank arena",record->name);return FG_ERR_FORMAT;}fg_status status=cook_runtime_tensor(record,(uint8_t *)arena+record->offset,layout,err);if(status!=FG_OK)return status;tensors++;bytes+=record->bytes;}fprintf(stderr,"[rank %u] cooked %u runtime tensors (%.3f GiB) in the verified Vulkan arena\n",rank,tensors,(double)bytes/(1ull<<30));return FG_OK;}
 
 static fg_status build_tensor_lookup(fg_model *model,fg_error *err){
+    for(uint32_t i=0;i<model->manifest->tensor_count;i++){
+        const fg_tensor_record *record=&model->manifest->tensors[i];
+        if(record->kind==FG_TENSOR_COMMON&&record->dims==2u&&model->tensor[i]){
+            fg_vk_tensor_format format=fg_vk_dense_saved_format(record->ggml_type,record->layout);
+            if(record->layout==FG_TENSOR_LAYOUT_DENSE_SOA||
+               record->layout==FG_TENSOR_LAYOUT_DENSE_COMPACT){
+                fg_vk_tensor_set_format(model->tensor[i],format);
+                continue;
+            }
+            const char *cook=getenv("FG_DENSE_K_COOKED");
+            const char *soa=getenv("FG_DENSE_SOA");
+            if(soa&&strcmp(soa,"1")==0&&record->layout==FG_TENSOR_LAYOUT_GGML&&
+               strcmp(record->name,"output.weight")!=0&&
+               strcmp(record->name,"token_embd.weight")!=0&&
+               (record->ggml_type==12u||record->ggml_type==13u||record->ggml_type==20u)&&
+               record->shape[0]<=UINT32_MAX&&record->shape[1]<=UINT32_MAX){
+                uint64_t size=fg_dense_soa_bytes((uint32_t)record->shape[0],
+                    (uint32_t)record->shape[1],record->ggml_type);
+                if(!size||model->weight_bytes>model->manifest->persistent_cap_bytes||
+                   size>model->manifest->persistent_cap_bytes-model->weight_bytes){
+                    fg_error_set(err,FG_ERR_LIMIT,"dense SoA staging exceeds persistent cap");
+                    return FG_ERR_LIMIT;
+                }
+                fg_vk_tensor *replacement=NULL;
+                fg_status status=fg_vk_tensor_create(model->vk,size,&replacement,err);
+                if(status!=FG_OK)return status;
+                bool converted=fg_cook_dense_soa(fg_vk_tensor_const_map(model->tensor[i]),
+                    fg_vk_tensor_map(replacement),size,(uint32_t)record->shape[0],
+                    (uint32_t)record->shape[1],record->ggml_type);
+                if(!converted){
+                    fg_vk_tensor_destroy(replacement);
+                    fg_error_set(err,FG_ERR_FORMAT,"cook dense SoA tensor");
+                    return FG_ERR_FORMAT;
+                }
+                fg_vk_tensor_destroy(model->tensor[i]);model->tensor[i]=replacement;
+                model->weight_bytes+=size;
+                format=record->ggml_type==12u?FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K:
+                    record->ggml_type==13u?FG_VK_TENSOR_FORMAT_DENSE_SOA_Q5_K:
+                    FG_VK_TENSOR_FORMAT_DENSE_SOA_IQ4_NL;
+            }else if(cook&&strcmp(cook,"1")==0&&
+               strcmp(record->name,"output.weight")!=0&&
+               (record->ggml_type==12u||record->ggml_type==13u)&&
+               record->shape[0]<=UINT32_MAX&&record->shape[1]<=UINT32_MAX&&
+               fg_k_quant_cooked_matrix_bytes((uint32_t)record->shape[0],
+                   (uint32_t)record->shape[1],record->ggml_type)==record->bytes){
+                void *temporary=malloc((size_t)record->bytes);
+                void *mapped=fg_vk_tensor_map(model->tensor[i]);
+                if(!temporary){
+                    fg_error_set(err,FG_ERR_OOM,"allocate dense K cooking buffer");
+                    return FG_ERR_OOM;
+                }
+                bool converted=fg_cook_k_quant_rows(mapped,temporary,record->bytes,
+                    (uint32_t)record->shape[0],(uint32_t)record->shape[1],record->ggml_type);
+                if(converted)memcpy(mapped,temporary,(size_t)record->bytes);
+                free(temporary);
+                if(!converted){
+                    fg_error_set(err,FG_ERR_FORMAT,"cook dense K tensor");
+                    return FG_ERR_FORMAT;
+                }
+                format=record->ggml_type==12u?FG_VK_TENSOR_FORMAT_DENSE_Q4_K_COOKED:
+                    FG_VK_TENSOR_FORMAT_DENSE_Q5_K_COOKED;
+            }
+            if(format!=FG_VK_TENSOR_FORMAT_DEFAULT)
+                fg_vk_tensor_set_format(model->tensor[i],format);
+        }
+    }
     uint32_t capacity=1u;while(capacity<model->manifest->tensor_count*2u)capacity<<=1u;model->tensor_lookup=calloc(capacity,sizeof(*model->tensor_lookup));if(!model->tensor_lookup){fg_error_set(err,FG_ERR_OOM,"allocate model tensor lookup");return FG_ERR_OOM;}model->tensor_lookup_capacity=capacity;
     for(uint32_t i=0;i<model->manifest->tensor_count;i++)if(model->tensor[i]){const char *name=model->manifest->tensors[i].name;uint32_t slot=(uint32_t)tensor_name_hash(name)&(capacity-1u);while(model->tensor_lookup[slot]){uint32_t existing=model->tensor_lookup[slot]-1u;if(strcmp(model->manifest->tensors[existing].name,name)==0)break;slot=(slot+1u)&(capacity-1u);}if(!model->tensor_lookup[slot])model->tensor_lookup[slot]=i+1u;}
     return FG_OK;
