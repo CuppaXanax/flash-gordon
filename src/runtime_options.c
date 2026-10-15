@@ -301,6 +301,10 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
         return FG_ERR_MISMATCH;
     }
     resolved->experimental_flags=input.experimental_flags;
+    resolved->sessions=input.sessions?input.sessions:1u;
+    if(resolved->sessions>2u){
+        fg_error_set(err,FG_ERR_ARGUMENT,"sessions must be 1 or 2");return FG_ERR_ARGUMENT;
+    }
     resolved->no_prefix_continuation=input.no_prefix_continuation;
     resolved->model_name=input.model_name;
     resolved->specified=mask;

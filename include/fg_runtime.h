@@ -19,6 +19,10 @@ static inline bool fg_runtime_ring_enabled(void){
 }
 
 typedef struct fg_runtime fg_runtime;
+struct fg_fabric;
+fg_status fg_runtime_enable_pipeline(fg_runtime *runtime,fg_runtime **second,fg_error *err);
+fg_status fg_runtime_activate(fg_runtime *runtime,fg_error *err);
+struct fg_fabric *fg_runtime_fabric(fg_runtime *runtime);
 #define FG_RUNTIME_BOOT_CONTEXT_TOKENS FG_MANIFEST_DEFAULT_CONTEXT_TOKENS
 #define FG_RUNTIME_QSA_HOT_TOKENS 8192u
 #define FG_RUNTIME_QSA_CACHE_MIN_BYTES (UINT64_C(16) << 20u)
@@ -53,6 +57,7 @@ typedef enum fg_mtp_capability {
 #define FG_RUNTIME_MODEL_NAME_MAX 96u
 
 typedef struct fg_runtime_options {
+    uint32_t sessions;
     uint32_t logical_context_tokens;
     uint32_t gpu_index_tokens;
     uint32_t qsa_hot_tokens;

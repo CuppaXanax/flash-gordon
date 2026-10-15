@@ -412,6 +412,13 @@ static void test_runtime_option_contract(void){
     CHECK(legacy&&decoded);fg_error error={0};fg_runtime_options resolved={0},requested={0};
     if(current){
         CHECK(fg_runtime_options_resolve(&resolved,current,NULL,&error)==FG_OK);
+        CHECK(resolved.sessions==1u);
+        requested.sessions=2u;
+        CHECK(fg_runtime_options_resolve(&resolved,current,&requested,&error)==FG_OK);
+        CHECK(resolved.sessions==2u);
+        requested.sessions=3u;
+        CHECK(fg_runtime_options_resolve(&resolved,current,&requested,&error)==FG_ERR_ARGUMENT);
+        CHECK(fg_runtime_options_resolve(&resolved,current,NULL,&error)==FG_OK);
         CHECK(resolved.logical_context_tokens==8192u&&resolved.gpu_index_tokens==8192u&&
               resolved.qsa_hot_tokens==8192u&&resolved.qsa_page_cache_bytes==0u);
         uint32_t qsa_capacity=0u;

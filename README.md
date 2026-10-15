@@ -82,6 +82,12 @@ generation beyond the logical limit, and bounds owner state to that limit.
 
 ## OpenAI-compatible API
 
+The default generation engine is single-session FIFO. Opt in to independent
+two-session ring pipelining with `flash-gordon api ... --sessions 2` and distinct
+top-level OpenAI `user` strings for chat and agent conversations. See
+[docs/MULTI_SESSION.md](docs/MULTI_SESSION.md) for state ownership, bounded
+prefill scheduling, memory admission and the pending fleet qualification gates.
+
 For a quick eight-blade bring-up, smoke benchmark and terminal chat from Windows:
 
 ```powershell

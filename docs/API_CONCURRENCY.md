@@ -3,7 +3,10 @@
 Design note for the front-end/engine split. Status: **M2 landed** (2026-09-24,
 branch `feat/api-m2-admission`); M1 landed as `ee25e7e` (2026-09-24, branch
 `feat/api-m1-frontend`, deployed to the 8-blade fleet as live dir
-`20260924-api-m1`); M3 (multi-session generation) is not started.
+`20260924-api-m1`). Independent two-session ring generation is now an opt-in
+`--sessions 2` path; see [MULTI_SESSION.md](MULTI_SESSION.md) for design,
+qualification status and deployment commands. The M2 contract below remains
+the default with `--sessions 1`.
 
 ## M2: bounded FIFO admission on the engine queue (landed)
 

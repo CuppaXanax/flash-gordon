@@ -24,7 +24,7 @@ typedef enum fg_vk_tensor_format {
 #define FG_VK_PROFILE_MAX_KERNELS 64u
 /* Pre-recorded token-invariant runs; each slot owns a private descriptor set
  * window so a dynamic epoch reset can never rewrite its bindings. */
-#define FG_VK_STATIC_SLOTS 4u
+#define FG_VK_STATIC_SLOTS 8u
 
 typedef struct fg_vk_profile_kernel {
     const char *scope;
