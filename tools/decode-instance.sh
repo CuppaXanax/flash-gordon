@@ -8,9 +8,9 @@ manifest=${4:-/home/xander/fg-ring-pack-abliterated/manifest.fgm}
 tag=${5:-run}
 [[ $release =~ ^/home/xander/flash-gordon-live/[0-9]{8}-q4[-a-zA-Z0-9]*$ ||
    $release == /home/xander/flash-gordon-live/20260926-abl2 ]]
-[[ $manifest =~ ^/home/xander/fg-ring-pack-abliterated(-q4(-protected|-teacher)?)?/manifest\.fgm$ ]]
+[[ $manifest =~ ^/home/xander/fg-ring-pack-abliterated(-q4(-protected|-teacher|-control|-ablate-[a-z0-9-]+|-mixed)?)?/manifest\.fgm$ ]]
 [[ $tag =~ ^[a-z0-9-]+$ ]]
-case "$mode" in plain|trace|profile|quality|numerics) ;; *) exit 2 ;; esac
+case "$mode" in plain|trace|profile|prefill|quality|numerics) ;; *) exit 2 ;; esac
 rank=$(( $(ip -4 addr show | grep -oP '192\.168\.42\.\K[0-9]+' | head -1) - 42 ))
 ((rank >= 0 && rank < 8))
 run="$release/operator"
@@ -55,6 +55,8 @@ start)
   flags=(FG_SHADER_DIR="$release/vulkan" MESA_SHADER_CACHE_DIR="$run/.mesa-cache")
   if [[ $mode == profile ]]; then
     flags+=(FG_DECODE_PROFILE=1 FG_DECODE_RING_TRACE=1 FG_FABRIC_PROFILE=1 FG_GENERATE_TRACE=1)
+  elif [[ $mode == prefill ]]; then
+    flags+=(FG_PREFILL_PROFILE=1)
   elif [[ $mode == trace ]]; then
     flags+=(FG_DECODE_RING_TRACE=1 FG_FABRIC_PROFILE=1 FG_GENERATE_TRACE=1)
   elif [[ $mode == numerics ]]; then
@@ -67,6 +69,7 @@ start)
   nohup env -u FG_DENSE_SOA -u FG_DENSE_K_COOKED -u FG_EVAL_LOGITS \
     -u FG_EVAL_LOGITS_DIR -u FG_DECODE_PROFILE -u FG_DECODE_RING_TRACE \
     -u FG_FABRIC_PROFILE -u FG_GENERATE_TRACE -u FG_NUMERICS_TRACE -u FG_GDN_DIAG \
+    -u FG_PREFILL_PROFILE -u FG_PREFILL_PROFILE_CHUNK -u FG_PROFILE_TOKEN \
     "${flags[@]}" "$release/flash-gordon" "${args[@]}" >"$log" 2>&1 </dev/null &
   pid=$!
   echo "$pid" >"$run/rank-$rank.pid"

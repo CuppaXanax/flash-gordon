@@ -3,9 +3,9 @@ param(
     [Parameter(Mandatory)][ValidateSet('stop','start','logs','status')][string]$Action,
     [Parameter(Mandatory)][ValidatePattern('^/home/xander/flash-gordon-live/([0-9]{8}-q4[-a-zA-Z0-9]*|20260926-abl2)$')][string]$Release,
     [Parameter(Mandatory)][string]$FleetScript,
-    [ValidatePattern('^/home/xander/fg-ring-pack-abliterated(-q4(-protected|-teacher)?)?/manifest\.fgm$')]
+    [ValidatePattern('^/home/xander/fg-ring-pack-abliterated(-q4(-protected|-teacher|-control|-ablate-[a-z0-9-]+|-mixed)?)?/manifest\.fgm$')]
     [string]$Manifest='/home/xander/fg-ring-pack-abliterated/manifest.fgm',
-    [ValidateSet('plain','trace','profile','quality','numerics')][string]$Mode='plain',
+    [ValidateSet('plain','trace','profile','prefill','quality','numerics')][string]$Mode='plain',
     [ValidatePattern('^[a-z0-9-]+$')][string]$CaptureTag='run',
     [ValidateRange(0,7)][int[]]$Ranks=@(0..7)
 )

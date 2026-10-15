@@ -100,6 +100,12 @@ test-fg-dense-rates:
 tools/q4-repack: tools/q4_repack.c $(TEST_COMMON)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
 
+tools/q4-extract-pack: tools/q4_extract_pack.c $(TEST_COMMON)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
+tools/q4-compare-packs: tools/q4_compare_packs.c $(TEST_COMMON)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
 tools/q4-eval-batch: tools/q4_eval_batch.c $(filter-out src/main.o,$(OBJ))
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
 
@@ -171,7 +177,7 @@ test-gdn-fleet: tests/test_fg_vk
 	done
 
 clean:
-	rm -f tests/test_q4_repack tests/test_q4_repack.d tools/q4-repack tools/q4-repack.d tools/q4-eval-batch tools/q4-eval-batch.d
+	rm -f tests/test_q4_repack tests/test_q4_repack.d tools/q4-repack tools/q4-repack.d tools/q4-extract-pack tools/q4-extract-pack.d tools/q4-compare-packs tools/q4-compare-packs.d tools/q4-eval-batch tools/q4-eval-batch.d
 	rm -f tests/test_prefill_collective flash-gordon $(OBJ) $(DEP) vendor/*.o vendor/*.d tests/*.o tests/test_core tests/test_session tests/test_prefix tests/test_chat tests/test_chat_runtime tests/test_api tests/test_sampler tests/test_ngram_deployment tests/test_expert_prefill tests/test_qsa_prefill tests/test_owner_reduce tests/test_prefill_dispatch tests/test_decode_batch tests/test_expert_prefill.d tests/test_prefill_dispatch.d tests/test_decode_batch.d tests/test_fg_vk tests/test_hc_down_split tests/test_model_load tests/test_qsa_model_load tests/test_tokenizer tests/test_fabric tests/test_video vulkan/*.spv
 
--include $(DEP) tests/test_expert_prefill.d tests/test_prefill_dispatch.d tests/test_decode_batch.d tests/test_q4_repack.d tools/q4-repack.d tools/q4-eval-batch.d
+-include $(DEP) tests/test_expert_prefill.d tests/test_prefill_dispatch.d tests/test_decode_batch.d tests/test_q4_repack.d tools/q4-repack.d tools/q4-extract-pack.d tools/q4-compare-packs.d tools/q4-eval-batch.d

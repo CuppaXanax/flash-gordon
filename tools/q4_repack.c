@@ -15,6 +15,22 @@
 
 static bool use_reflink;
 static uint64_t reflink_bytes;
+static uint32_t family_mask=UINT32_MAX;
+static const char *family_names[]={"gdn-qkv","gdn-out","gdn-other","qsa",
+    "shared-gate","shared-up","shared-down","hc","other"};
+
+static uint32_t tensor_family(const char *name){
+    if(strstr(name,".attn_qkv.weight"))return 0u;
+    if(strstr(name,".ssm_out.weight"))return 1u;
+    if(strstr(name,".attn_gate.weight"))return 2u;
+    if(strstr(name,".attn_q.weight")||strstr(name,".attn_k.weight")||
+       strstr(name,".attn_v.weight")||strstr(name,".attn_output.weight"))return 3u;
+    if(strstr(name,".ffn_gate_shexp.weight"))return 4u;
+    if(strstr(name,".ffn_up_shexp.weight"))return 5u;
+    if(strstr(name,".ffn_down_shexp.weight"))return 6u;
+    if(strstr(name,".hc_")||!strncmp(name,"output_hc_",10u))return 7u;
+    return 8u;
+}
 
 static bool owner_record(const fg_manifest *m,const fg_tensor_record *t,int owner){
     if(owner<0||t->rank==(uint32_t)owner)return true;
@@ -70,7 +86,8 @@ static int cook_tensor(FILE *source,const fg_gguf_tensor *t,FILE *out,bool compa
     void *raw=malloc((size_t)t->bytes),*cooked=malloc((size_t)bytes);
     int ok=raw&&cooked&&fseeko(source,(off_t)t->offset,SEEK_SET)==0&&
         fread(raw,1u,(size_t)t->bytes,source)==t->bytes&&
-        (compact?fg_cook_dense_compact(raw,cooked,bytes,(uint32_t)t->shape[0],(uint32_t)t->shape[1],t->type):
+        (t->type==8u?fg_cook_q8_0_rows(raw,cooked,bytes,(uint32_t)t->shape[0],(uint32_t)t->shape[1]):
+         compact?fg_cook_dense_compact(raw,cooked,bytes,(uint32_t)t->shape[0],(uint32_t)t->shape[1],t->type):
          fg_cook_dense_soa(raw,cooked,bytes,(uint32_t)t->shape[0],(uint32_t)t->shape[1],t->type));
     if(ok){
         fg_sha256 digest;fg_sha256_init(&digest);fg_sha256_update(&digest,cooked,(size_t)bytes);
@@ -82,17 +99,27 @@ static int cook_tensor(FILE *source,const fg_gguf_tensor *t,FILE *out,bool compa
 
 int main(int argc,char **argv){
     if(argc<5){
-        fprintf(stderr,"usage: q4-repack OLD.fgm OLD_PACK DENSE.gguf NEW_DIR [RANK] [--keep-q8-head] [--cook-dense] [--reflink] [--plan]\n");
+        fprintf(stderr,"usage: q4-repack OLD.fgm OLD_PACK DENSE.gguf NEW_DIR [RANK] [--keep-q8-head] [--keep-original-routers] [--cook-dense] [--reflink] [--family NAME] [--plan]\n");
         return 2;
     }
     int only=-1;
-    bool keep_q8_head=false;
+    bool keep_q8_head=false,keep_original_routers=false;
     bool cook_dense=false,plan=false;
     for(int i=5;i<argc;i++){
         if(strcmp(argv[i],"--keep-q8-head")==0){keep_q8_head=true;continue;}
+        if(strcmp(argv[i],"--keep-original-routers")==0){keep_original_routers=true;continue;}
         if(strcmp(argv[i],"--cook-dense")==0){cook_dense=true;continue;}
         if(strcmp(argv[i],"--plan")==0){plan=true;continue;}
         if(strcmp(argv[i],"--reflink")==0){use_reflink=true;continue;}
+        if(strcmp(argv[i],"--family")==0){
+            if(++i==argc)return 2;
+            uint32_t bit=0u;
+            for(uint32_t j=0;j<sizeof(family_names)/sizeof(family_names[0]);j++)
+                if(!strcmp(argv[i],family_names[j]))bit=1u<<j;
+            if(!bit)return 2;
+            if(family_mask==UINT32_MAX)family_mask=0u;
+            family_mask|=bit;continue;
+        }
         char *end=NULL;long rank=strtol(argv[i],&end,10);
         if(!end||end==argv[i]||*end||rank<0||rank>=FG_RANK_COUNT||only>=0)return 2;
         only=(int)rank;
@@ -129,7 +156,7 @@ int main(int argc,char **argv){
             const fg_gguf_tensor *replacement=NULL;
             bool router=t->kind==FG_TENSOR_COMMON&&t->ggml_type==0u&&
                 strstr(t->name,".ffn_gate_inp.weight")!=NULL;
-            if(router){
+            if(router&&!keep_original_routers){
                 for(uint64_t j=0;j<g.tensor_count;j++)
                     if(strcmp(t->name,g.tensors[j].name)==0&&g.tensors[j].type==30u)
                         replacement=&g.tensors[j];
@@ -146,13 +173,14 @@ int main(int argc,char **argv){
                 }
             }
             if(t->kind==FG_TENSOR_COMMON&&t->dims==2u&&t->ggml_type==8u&&
+               (family_mask&(1u<<tensor_family(t->name)))&&
                strcmp(t->name,"token_embd.weight")!=0&&
                !(keep_q8_head&&strcmp(t->name,"output.weight")==0)){
                 for(uint64_t j=0;j<g.tensor_count;j++)
                     if(strcmp(t->name,g.tensors[j].name)==0)replacement=&g.tensors[j];
                 if(!replacement||replacement->dims!=2u||
                    memcmp(replacement->shape,t->shape,2u*sizeof(uint64_t))||
-                   !(replacement->type==12u||replacement->type==13u||
+                   !(replacement->type==8u||replacement->type==12u||replacement->type==13u||
                      replacement->type==14u||replacement->type==20u)){
                     fprintf(stderr,"missing/invalid replacement: %s\n",t->name);
                     if(out)fclose(out);
@@ -166,9 +194,11 @@ int main(int argc,char **argv){
             }
             uint8_t hash[32];
             if(replacement){
-                bool eligible=cook_dense&&(replacement->type==12u||replacement->type==13u||replacement->type==20u);
-                bool compact=eligible&&fg_dense_prefer_compact((uint32_t)t->shape[0],(uint32_t)t->shape[1],replacement->type);
-                uint64_t bytes=eligible?(compact?fg_dense_compact_bytes((uint32_t)t->shape[0],(uint32_t)t->shape[1],replacement->type):
+                bool q8=cook_dense&&replacement->type==8u;
+                bool eligible=cook_dense&&(q8||replacement->type==12u||replacement->type==13u||replacement->type==20u);
+                bool compact=eligible&&!q8&&fg_dense_prefer_compact((uint32_t)t->shape[0],(uint32_t)t->shape[1],replacement->type);
+                uint64_t bytes=q8?fg_q8_0_cooked_matrix_bytes((uint32_t)t->shape[0],(uint32_t)t->shape[1]):
+                    eligible?(compact?fg_dense_compact_bytes((uint32_t)t->shape[0],(uint32_t)t->shape[1],replacement->type):
                     fg_dense_soa_bytes((uint32_t)t->shape[0],(uint32_t)t->shape[1],replacement->type)):replacement->bytes;
                 if(!bytes||(!plan&&!(eligible?cook_tensor(dense,replacement,copy_record?out:NULL,compact,bytes,hash):
                    copy_tensor(dense,replacement->offset,replacement->bytes,copy_record?out:NULL,hash)))){
@@ -176,8 +206,12 @@ int main(int argc,char **argv){
                     if(old)fclose(old);
                     free(old_dir);goto done;
                 }
+                if(!plan&&replacement->type==8u&&t->layout==FG_TENSOR_LAYOUT_Q8_0_COOKED)
+                    printf("CONTROL_Q8 name=%s identical=%u\n",t->name,
+                           (unsigned)(!memcmp(hash,t->sha256,32u)));
                 t->bytes=bytes;t->ggml_type=replacement->type;
-                t->layout=eligible?(compact?FG_TENSOR_LAYOUT_DENSE_COMPACT:FG_TENSOR_LAYOUT_DENSE_SOA):FG_TENSOR_LAYOUT_GGML;
+                t->layout=q8?FG_TENSOR_LAYOUT_Q8_0_COOKED:
+                    eligible?(compact?FG_TENSOR_LAYOUT_DENSE_COMPACT:FG_TENSOR_LAYOUT_DENSE_SOA):FG_TENSOR_LAYOUT_GGML;
                 if(!plan)memcpy(t->sha256,hash,32u);
                 replaced++;
             }else if(out&&copy_record){

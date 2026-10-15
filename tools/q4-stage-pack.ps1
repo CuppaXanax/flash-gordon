@@ -4,7 +4,10 @@ param(
     [Parameter(Mandatory)][string]$SourceArchive,
     [Parameter(Mandatory)][string]$OutputDir,
     [ValidatePattern('^[a-z0-9-]+$')][string]$Label = "q4-compact",
-    [ValidateSet('dense-q4','dense-protected')][string]$OverlayName = 'dense-q4',
+    [ValidatePattern('^[a-z0-9-]+$')][string]$OverlayName = 'dense-q4',
+    [ValidatePattern('^/home/xander/hc-q4[-a-z0-9/]*$')]
+    [string]$OverlayDirectory = '/home/xander/hc-q4',
+    [switch]$ParallelOwners,
     [switch]$AfterLease
 )
 $ErrorActionPreference = "Stop"
@@ -16,6 +19,7 @@ $fleet = Join-Path $PSScriptRoot "Invoke-Q4Fleet.ps1"
 $command = Join-Path $OutputDir "stage-command.sh"
 $targets = @(42..49 | ForEach-Object { "192.168.42.$_" })
 $root = "/home/xander/hc-q4/stage-$Label"
+$ownerCommands = @()
 function Run-Remote([string[]]$Addresses, [string]$Text, [hashtable]$Transfer = @{}) {
     [IO.File]::WriteAllText($command, $Text, [Text.UTF8Encoding]::new($false))
     $result = @(& $fleet -ScriptPath $command -Targets $Addresses -PassThru @Transfer)
@@ -32,8 +36,9 @@ test -s /home/xander/hc-q4/dense-q4.gguf
 printf 'OVERLAY_SHA '
 sha256sum /home/xander/hc-q4/dense-q4.gguf | cut -d' ' -f1
 '@
-    $fetch = Run-Remote @('192.168.42.53') ($fetchScript.Replace('dense-q4.gguf',"$OverlayName.gguf")) @{
-        DownloadSource="/home/xander/hc-q4/$OverlayName.gguf"; DownloadPath=$overlay
+    $overlayRemote = "$OverlayDirectory/$OverlayName.gguf"
+    $fetch = Run-Remote @('192.168.42.53') ($fetchScript.Replace('/home/xander/hc-q4/dense-q4.gguf',$overlayRemote)) @{
+        DownloadSource=$overlayRemote; DownloadPath=$overlay
     }
     $match = [regex]::Match($fetch[0].Stdout, 'OVERLAY_SHA ([a-f0-9]{64})')
     $overlaySha = (Get-FileHash -LiteralPath $overlay -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -108,8 +113,23 @@ printf 'CANDIDATE_SHA '
 sha256sum "$root/pack/manifest.fgm" | cut -d' ' -f1
 '@
         $pack = $pack.Replace('__LABEL__',$Label).Replace('__BASELINE_SHA__',$baselineHashes[0]).Replace('__RANK__',"$($rankMap[$ip])")
-        $results += Run-Remote @($ip) $pack
+        if ($ParallelOwners) {
+            $path = Join-Path $OutputDir "pack-$ip.sh"
+            [IO.File]::WriteAllText($path,$pack.Replace("`r",''))
+            $ownerCommands += @{IP=$ip; Path=$path}
+        } else {
+            $results += Run-Remote @($ip) $pack
+            $results | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $OutputDir "staged.json")
+        }
+    }
+    if ($ParallelOwners) {
+        $results = @($ownerCommands | ForEach-Object -Parallel {
+            & $using:fleet -ScriptPath $_.Path -Targets @($_.IP) -PassThru
+        } -ThrottleLimit 8)
         $results | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $OutputDir "staged.json")
+        if ($results.Count -ne 8 -or @($results | Where-Object ExitCode -ne 0).Count) {
+            throw "Owner-local repack failed; inspect staged.json. No services were changed."
+        }
     }
     $candidateHashes = @($results | ForEach-Object {
         $m = [regex]::Match($_.Stdout, 'CANDIDATE_SHA ([a-f0-9]{64})')
@@ -121,4 +141,7 @@ sha256sum "$root/pack/manifest.fgm" | cut -d' ' -f1
     Write-Host "Not deployed. Baseline remains required for external-artifact symlinks. Run KLD/top-1 gates separately."
 } finally {
     Remove-Item -LiteralPath $command -ErrorAction SilentlyContinue
+    foreach ($item in $ownerCommands) {
+        Remove-Item -LiteralPath $item.Path -ErrorAction SilentlyContinue
+    }
 }

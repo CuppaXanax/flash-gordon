@@ -71,6 +71,25 @@ uint64_t fg_q8_0_cooked_matrix_bytes(uint32_t input_width,uint32_t rows){uint64_
 
 bool fg_cook_q8_0_rows(const void *input,void *output,uint64_t output_bytes,uint32_t input_width,uint32_t rows){uint64_t tile_bytes=fg_q8_0_cooked_tile_bytes(input_width),required=fg_q8_0_cooked_matrix_bytes(input_width,rows);if(!input||!output||!tile_bytes||!required||output_bytes<required)return false;uint32_t blocks=input_width/FG_QK8_0;uint64_t mask=FG_Q8_0_COOK_ALIGNMENT-1u,quant_offset=(FG_Q8_0_COOK_ROWS*(uint64_t)blocks*sizeof(uint16_t)+mask)&~mask;const uint8_t *source=input;uint8_t *destination=output;memset(destination,0,(size_t)required);for(uint32_t row=0;row<rows;row++)for(uint32_t block=0;block<blocks;block++){const uint8_t *src=source+((uint64_t)row*blocks+block)*FG_Q8_0_BLOCK_BYTES;uint8_t *dst=destination+(uint64_t)(row/FG_Q8_0_COOK_ROWS)*tile_bytes;uint32_t tile_row=row%FG_Q8_0_COOK_ROWS;memcpy(dst+((uint64_t)block*FG_Q8_0_COOK_ROWS+tile_row)*sizeof(uint16_t),src,sizeof(uint16_t));memcpy(dst+quant_offset+((uint64_t)tile_row*blocks+block)*FG_QK8_0,src+sizeof(uint16_t),FG_QK8_0);}return true;}
 
+bool fg_uncook_q8_0_rows(const void *input,void *output,uint64_t output_bytes,
+                         uint32_t input_width,uint32_t rows){
+    uint64_t tile_bytes=fg_q8_0_cooked_tile_bytes(input_width);
+    uint64_t blocks=input_width/FG_QK8_0,required=blocks*FG_Q8_0_BLOCK_BYTES*rows;
+    if(!input||!output||!tile_bytes||!fg_q8_0_cooked_matrix_bytes(input_width,rows)||
+       output_bytes<required)return false;
+    uint64_t mask=FG_Q8_0_COOK_ALIGNMENT-1u;
+    uint64_t quant_offset=(FG_Q8_0_COOK_ROWS*blocks*sizeof(uint16_t)+mask)&~mask;
+    const uint8_t *source=input;uint8_t *destination=output;
+    for(uint32_t row=0;row<rows;row++)for(uint64_t block=0;block<blocks;block++){
+        const uint8_t *src=source+(row/FG_Q8_0_COOK_ROWS)*tile_bytes;
+        uint32_t tile_row=row%FG_Q8_0_COOK_ROWS;
+        uint8_t *dst=destination+((uint64_t)row*blocks+block)*FG_Q8_0_BLOCK_BYTES;
+        memcpy(dst,src+(block*FG_Q8_0_COOK_ROWS+tile_row)*sizeof(uint16_t),sizeof(uint16_t));
+        memcpy(dst+sizeof(uint16_t),src+quant_offset+(tile_row*blocks+block)*FG_QK8_0,FG_QK8_0);
+    }
+    return true;
+}
+
 uint64_t fg_q5_1_cooked_tile_bytes(uint32_t input_width){if(!input_width||input_width%FG_QK8_0)return 0;return(uint64_t)(input_width/FG_QK8_0)*FG_Q5_1_COOK_ROWS*FG_Q5_1_BLOCK_BYTES;}
 
 uint64_t fg_q5_1_cooked_matrix_bytes(uint32_t input_width,uint32_t rows){uint64_t tile_bytes=fg_q5_1_cooked_tile_bytes(input_width);if(!tile_bytes||!rows||rows%FG_Q5_1_COOK_ROWS)return 0;uint64_t tiles=rows/FG_Q5_1_COOK_ROWS;return tiles>UINT64_MAX/tile_bytes?0:tiles*tile_bytes;}

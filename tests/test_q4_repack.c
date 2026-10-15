@@ -7,6 +7,16 @@
 int main(void){
     const uint32_t types[]={12u,13u,20u};
     int ok=1;
+    ok=ok&&tensor_family("blk.0.attn_qkv.weight")==0u&&
+        tensor_family("blk.0.ssm_out.weight")==1u&&
+        tensor_family("blk.0.attn_gate.weight")==2u&&
+        tensor_family("blk.3.attn_output.weight")==3u&&
+        tensor_family("blk.0.ffn_gate_shexp.weight")==4u&&
+        tensor_family("blk.0.ffn_up_shexp.weight")==5u&&
+        tensor_family("blk.0.ffn_down_shexp.weight")==6u&&
+        tensor_family("blk.0.hc_attn_down.weight")==7u&&
+        tensor_family("output_hc_up.weight")==7u&&
+        tensor_family("blk.1.ple_key.weight")==8u;
     for(uint32_t i=0u;i<3u;i++){
         ok=ok&&fg_vk_dense_saved_format(types[i],FG_TENSOR_LAYOUT_DENSE_SOA)==
             (fg_vk_tensor_format)(FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K+i);
@@ -30,11 +40,13 @@ int main(void){
         ok=ok&&(owner_record(&topology,&global,owner)==(owner==0));
         ok=ok&&owner_record(&topology,&global,-1);
     }
-    for(uint32_t i=0;ok&&i<3u;i++)for(uint32_t compact=0;ok&&compact<2u;compact++){
-        uint32_t type=types[i],block=type==20u?32u:256u,bs=type==12u?144u:type==13u?176u:18u;
+    for(uint32_t i=0;ok&&i<4u;i++)for(uint32_t compact=0;ok&&compact<(i==3u?1u:2u);compact++){
+        uint32_t type=i==3u?8u:types[i],block=(type==20u||type==8u)?32u:256u;
+        uint32_t bs=type==8u?34u:type==12u?144u:type==13u?176u:18u;
         fg_gguf_tensor t={.type=type,.dims=2u,.shape={512u,17u}};
         t.bytes=(512u/block)*bs*17u;
-        uint64_t bytes=compact?fg_dense_compact_bytes(512u,17u,type):fg_dense_soa_bytes(512u,17u,type);
+        uint64_t bytes=type==8u?fg_q8_0_cooked_matrix_bytes(512u,17u):
+            compact?fg_dense_compact_bytes(512u,17u,type):fg_dense_soa_bytes(512u,17u,type);
         uint8_t *raw=calloc(1u,(size_t)t.bytes),*expected=malloc((size_t)bytes),*got=malloc((size_t)bytes);
         FILE *source=fopen(".q4-repack-source.bin","wb+x"),*out=fopen(".q4-repack-cooked.bin","wb+x");
         ok=raw&&expected&&got&&source&&out;
@@ -45,10 +57,17 @@ int main(void){
             ok=fwrite(raw,1u,(size_t)t.bytes,source)==t.bytes&&fflush(source)==0&&
                 cook_tensor(source,&t,out,compact!=0u,bytes,hash)&&fflush(out)==0&&
                 fseeko(out,0,SEEK_SET)==0&&fread(got,1u,(size_t)bytes,out)==bytes&&
-                (compact?fg_cook_dense_compact(raw,expected,bytes,512u,17u,type):
+                (type==8u?fg_cook_q8_0_rows(raw,expected,bytes,512u,17u):
+                 compact?fg_cook_dense_compact(raw,expected,bytes,512u,17u,type):
                     fg_cook_dense_soa(raw,expected,bytes,512u,17u,type))&&
                 memcmp(got,expected,(size_t)bytes)==0&&
                 fg_sha256_file(".q4-repack-cooked.bin",actual,&error)==FG_OK&&memcmp(hash,actual,32u)==0;
+            if(ok&&type==8u){
+                memset(expected,0,(size_t)bytes);
+                ok=!fg_uncook_q8_0_rows(got,expected,t.bytes-1u,512u,17u)&&
+                    fg_uncook_q8_0_rows(got,expected,t.bytes,512u,17u)&&
+                    !memcmp(raw,expected,(size_t)t.bytes);
+            }
         }
         if(out){fclose(out);unlink(".q4-repack-cooked.bin");}
         if(source){fclose(source);unlink(".q4-repack-source.bin");}

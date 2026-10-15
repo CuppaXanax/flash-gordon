@@ -496,6 +496,17 @@ fg_status fg_expert_prefill_enqueue(fg_expert_executor *executor,const fg_prefil
             executor->schedule[tile*words+1u+index%width]=prefill_pair_id(&work->pairs[pair]);
         }
     }
+    const char *profile=getenv("FG_PREFILL_PROFILE");
+    if(status==FG_OK&&profile&&*profile&&strcmp(profile,"0")){
+        uint32_t distinct=0u,maximum=0u;
+        for(uint32_t local=0;local<local_count;local++){
+            if(counts[local])distinct++;
+            if(counts[local]>maximum)maximum=counts[local];
+        }
+        fprintf(stderr,"PREFILL_ROUTE rank=%u layer=%u tokens=%u pairs=%u "
+            "distinct=%u tiles=%u width=%u max_count=%u\n",rank,(unsigned)work->layer,
+            (unsigned)work->token_count,work->pair_count,distinct,tile_count,width,maximum);
+    }
     fg_vk_context *vk=fg_model_vk(executor->model);uint32_t dense_pairs=(uint32_t)work->token_count*FG_TOP_K;
     if(status==FG_OK)status=fg_vk_tensor_write(executor->activation,0,work->activations_q8k,(uint64_t)work->token_count*FG_Q8K_ACTIVATION_BYTES,err);
     if(status==FG_OK)status=fg_vk_tensor_write(

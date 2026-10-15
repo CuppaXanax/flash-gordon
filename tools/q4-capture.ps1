@@ -6,6 +6,7 @@ param(
     [Parameter(Mandatory)][string]$OutputDir,
     [string]$Coordinator = "192.168.42.42",
     [string]$OutputOwner = "192.168.42.46",
+    [string]$Corpus = "",
     [switch]$ResidentBatch,
     [ValidatePattern('^[a-z0-9-]+$')][string]$CaptureTag = "capture"
 )
@@ -14,8 +15,11 @@ $fleet = Join-Path $PSScriptRoot "Invoke-Q4Fleet.ps1"
 $OutputDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDir)
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 $contexts = Join-Path $OutputDir "contexts.jsonl"
-& python (Join-Path $PSScriptRoot "q4_quality.py") --contexts $contexts
+$corpusArgs = @()
+if ($Corpus) { $corpusArgs = @('--corpus',(Get-Item -LiteralPath $Corpus).FullName) }
+& python (Join-Path $PSScriptRoot "q4_quality.py") @corpusArgs --contexts $contexts
 if ($LASTEXITCODE) { throw "Context generation failed" }
+$expectedRows = @(Get-Content $contexts).Count
 $script = Join-Path $OutputDir "capture-command.sh"
 function Run-Fleet([string]$Target, [string]$Text, [string]$Download = "",
     [string]$Source = "/home/xander/hc-q4/eval-latest.fgl",
@@ -39,7 +43,7 @@ $manifest64 = Base64 $Manifest
 try {
     if ($ResidentBatch) {
         $frames = Join-Path $OutputDir "prompts.fgev"
-        & python (Join-Path $PSScriptRoot "q4_quality.py") --framed-contexts $frames
+        & python (Join-Path $PSScriptRoot "q4_quality.py") @corpusArgs --framed-contexts $frames
         if ($LASTEXITCODE) { throw "Framed corpus generation failed" }
         $command = @'
 set -euo pipefail
@@ -54,12 +58,12 @@ export MESA_SHADER_CACHE_DIR="$build/operator/.mesa-cache"
         Run-Fleet $Coordinator $command "" "" $frames "$BuildDir/operator/prompts-$CaptureTag.fgev"
         $archive = Join-Path $OutputDir "logits.tar.gz"
         $remote = "$BuildDir/operator/logits-$CaptureTag.tar.gz"
-        Run-Fleet $OutputOwner "set -e; test `"`$(find '$BuildDir/operator/logits-$CaptureTag' -name '*.fgl' | wc -l)`" -eq 80; tar -czf '$remote' -C '$BuildDir/operator/logits-$CaptureTag' ." $archive $remote
+        Run-Fleet $OutputOwner "set -e; test `"`$(find '$BuildDir/operator/logits-$CaptureTag' -name '*.fgl' | wc -l)`" -eq $expectedRows; tar -czf '$remote' -C '$BuildDir/operator/logits-$CaptureTag' ." $archive $remote
         & tar -xf $archive -C $OutputDir
         if ($LASTEXITCODE) { throw "Capture extraction failed" }
-        & python (Join-Path $PSScriptRoot "q4_quality.py") --import-numbered $OutputDir
+        & python (Join-Path $PSScriptRoot "q4_quality.py") @corpusArgs --import-numbered $OutputDir
         if ($LASTEXITCODE) { throw "Capture validation/import failed" }
-        Write-Host "Captured and validated all 80 resident teacher-forced frontiers"
+        Write-Host "Captured and validated all $expectedRows resident teacher-forced frontiers"
         return
     }
     foreach ($line in Get-Content -LiteralPath $contexts -Encoding utf8) {

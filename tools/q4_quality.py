@@ -71,9 +71,20 @@ def compare(teacher, student):
     return max(0.0, kld), top_t == top_s
 
 
+def validate_capture_corpus(directory, items):
+    recorded=json.loads((directory/"corpus.json").read_text(encoding="utf-8-sig"))
+    if (not isinstance(recorded,list) or any(not isinstance(x,list) or len(x)!=2
+            or not all(isinstance(value,str) for value in x) for x in recorded)):
+        raise ValueError("invalid capture corpus metadata")
+    by_id=dict(recorded)
+    if len(by_id)!=len(recorded) or any(by_id.get(key)!=text for key,text in items):
+        raise ValueError("capture corpus does not match frozen text")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--contexts", type=Path, help="write fixed teacher-forced contexts as JSONL")
+    p.add_argument("--corpus", type=Path, help="frozen JSON [id, rendered-context] pairs")
     p.add_argument("--framed-contexts", type=Path, help="write length-framed UTF-8 contexts for resident batch capture")
     p.add_argument("--import-numbered", type=Path, help="validate and rename a resident batch's numbered dumps")
     p.add_argument("--teacher", type=Path)
@@ -82,7 +93,12 @@ def main():
     p.add_argument("--capture", type=Path, help="capture directory, using --command")
     p.add_argument("--command", help='JSON argv; substitute {prompt} and {output}; must run eval --generate 0 and retrieve worker dump')
     args = p.parse_args()
-    items = list(contexts())
+    items = json.loads(args.corpus.read_text(encoding="utf-8-sig")) if args.corpus else list(contexts())
+    if (not items or len(items)>1024 or any(not isinstance(x,(list,tuple)) or len(x)!=2
+        or not all(isinstance(y,str) and y for y in x) or "\0" in x[1] for x in items)
+        or len({x[0] for x in items}) != len(items)
+        or any(not all(c.isalnum() or c in "-_" for c in x[0]) for x in items)):
+        raise ValueError("invalid or duplicate frozen corpus")
     if args.framed_contexts:
         with args.framed_contexts.open("xb") as file:
             file.write(b"FGEVAL01")
@@ -129,6 +145,8 @@ def main():
         return
     if not all((args.teacher, args.candidate, args.output)):
         p.error("--teacher, --candidate and --output are required")
+    for directory in (args.teacher,args.candidate):
+        validate_capture_corpus(directory,items)
     corpus = hashlib.sha256(json.dumps(items, ensure_ascii=False).encode()).hexdigest()
     rows = []
     for key, _ in items:

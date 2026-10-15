@@ -59,17 +59,35 @@ def main():
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--ggml-library", type=Path, required=True)
     p.add_argument("--protected", action="store_true")
+    dense_precision = p.add_mutually_exclusive_group()
+    dense_precision.add_argument("--q5-dense", action="store_true",
+                   help="use Q5_K for all Q4_K-eligible matrices; non-256 rows remain IQ4_NL")
+    dense_precision.add_argument("--q6-dense", action="store_true",
+                   help="use Q6_K for all Q4_K/Q5_K-eligible matrices; non-256 rows remain IQ4_NL")
+    p.add_argument("--q8-control", action="store_true",
+                   help="requantize the same dense projection set to Q8_0")
     p.add_argument("--threads", type=int, default=min(8, os.cpu_count() or 1))
     p.add_argument("--imatrix", type=Path)
+    p.add_argument("--q8-overrides", type=Path,
+                   help="deployed Q8 GGUF for explicitly identified source mismatches")
+    p.add_argument("--override-map", type=Path,
+                   help="q4_compare_source JSON; only its differing tensors are overridden")
+    p.add_argument("--deployed-dense-only", action="store_true",
+                   help="emit only matrices named by --q8-overrides; preserve head/embedding/router in the pack")
     p.add_argument("--bf16-routers", action="store_true", default=True, help="default: narrow only if every stored F32 value is BF16-exact")
     p.add_argument("--keep-f32-routers", action="store_false", dest="bf16_routers")
     args = p.parse_args()
+    if bool(args.q8_overrides) != bool(args.override_map):
+        p.error("--q8-overrides and --override-map are required together")
+    if args.deployed_dense_only and not args.q8_overrides:
+        p.error("--deployed-dense-only requires the deployed Q8 reference")
     if args.threads < 1:
         p.error("--threads must be positive")
     lib = ctypes.CDLL(str(args.ggml_library.resolve()))
     if sys.byteorder != "little":
         raise ValueError("quantizer requires a little-endian host")
-    converters = {1: lib.ggml_fp16_to_fp32_row, 30: lib.ggml_bf16_to_fp32_row}
+    converters = {1: lib.ggml_fp16_to_fp32_row, 30: lib.ggml_bf16_to_fp32_row,
+                  8: lib.dequantize_row_q8_0}
     for convert in converters.values():
         convert.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int64]
         convert.restype = None
@@ -78,9 +96,39 @@ def main():
                       ctypes.c_int64, ctypes.c_int64, ctypes.c_int64, ctypes.c_void_p]
     quant.restype = ctypes.c_size_t
     metadata, ts, source_base, align = header(str(args.source))
+    overrides, override_base = {}, 0
+    if args.q8_overrides:
+        _, reference, override_base, _ = header(str(args.q8_overrides))
+        reference = {t["name"]: t for t in reference}
+        mapping = json.loads(args.override_map.read_text())
+        with args.q8_overrides.open("rb") as file:
+            for row in mapping["rows"]:
+                if row["identical"]:
+                    continue
+                name = row["name"]
+                if name in overrides:
+                    raise ValueError(f"duplicate source override: {name}")
+                t = reference.get(name)
+                if not t or t["type"] != 8 or t["shape"] != row["shape"]:
+                    raise ValueError(f"source override type/shape: {name}")
+                n = math.prod(t["shape"])//32*34
+                file.seek(override_base+t["offset"])
+                payload = file.read(n)
+                if len(payload) != n or hashlib.sha256(payload).hexdigest() != row["production_sha256"]:
+                    raise ValueError(f"source override hash: {name}")
+                overrides[name] = dict(t, sha256=row["production_sha256"])
+        if not overrides or set(overrides)-{t["name"] for t in ts}:
+            raise ValueError("empty or unmatched source overrides")
+        if args.deployed_dense_only:
+            if any(t["type"] != 8 or len(t["shape"]) != 2 or t["name"] in
+                   ("output.weight","token_embd.weight") for t in reference.values()):
+                raise ValueError("deployed dense reference must contain only nonhead Q8 matrices")
+            ts = [t for t in ts if t["name"] in reference]
+            if {t["name"] for t in ts} != set(reference):
+                raise ValueError("missing deployed dense source tensors")
     importance = {}
     imatrix_report = None
-    if args.imatrix:
+    if args.imatrix and not args.q8_control:
         _, entries, im_base, _ = header(str(args.imatrix))
         entries = {t["name"]: t for t in entries}
         with args.imatrix.open("rb") as file:
@@ -116,12 +164,25 @@ def main():
                      and t["name"] not in importance])
     keys = (string("general.file_type"), string("general.quantization_version"))
     metadata = [item for item in metadata if not item.startswith(keys)]
-    metadata.extend((keys[0]+struct.pack("<II", 4, 17 if args.protected else 15),
+    metadata.extend((keys[0]+struct.pack("<II", 4, 7 if args.q8_control else 18 if args.q6_dense else 17 if args.protected or args.q5_dense else 15),
                      keys[1]+struct.pack("<II", 4, 2)))
     cursor = 0
     for t in ts:
         t["source_type"], t["source_offset"] = t["type"], t["offset"]
+        if t["name"] in overrides:
+            ref = overrides[t["name"]]
+            if t["shape"] != ref["shape"]:
+                raise ValueError(f"BF16/reference shape mismatch: {t['name']}")
+            t["bf16_source_type"] = t["source_type"]
+            t["source_type"], t["source_offset"] = 8, ref["offset"]
+            t["source_reference_sha256"] = ref["sha256"]
         t["type"] = target(t, args.protected, args.bf16_routers)
+        if args.q5_dense and t["type"] == 12:
+            t["type"] = 13
+        if args.q6_dense and t["type"] in (12, 13):
+            t["type"] = 14
+        if args.q8_control and t["type"] in (12, 13, 14, 20):
+            t["type"] = 8
         if t["type"] == 30 and t["source_type"] == 0:
             with args.source.open("rb") as file:
                 file.seek(source_base+t["source_offset"])
@@ -172,11 +233,14 @@ def main():
             raise ValueError("quantizer byte mismatch")
         return output.raw
 
-    with args.source.open("rb") as src, partial.open("wb") as dst, \
+    with args.source.open("rb") as src, \
+            (args.q8_overrides or args.source).open("rb") as reference, partial.open("wb") as dst, \
             ThreadPoolExecutor(max_workers=args.threads) as pool:
         dst.write(h)
         for t in ts:
-            src.seek(source_base+t["source_offset"])
+            input_file = reference if t["name"] in overrides else src
+            input_base = override_base if t["name"] in overrides else source_base
+            input_file.seek(input_base+t["source_offset"])
             dst.seek(len(h)+t["offset"])
             width = t["shape"][0]
             rows = 1
@@ -193,8 +257,10 @@ def main():
                 produced += len(result)
             for first in range(0, rows, 64):
                 n = min(64, rows-first)
-                raw = src.read(n*width*(4 if t["source_type"] == 0 else 2))
-                if len(raw) != n*width*(4 if t["source_type"] == 0 else 2):
+                source_block, source_size = SIZES[t["source_type"]]
+                source_bytes = n*width//source_block*source_size
+                raw = input_file.read(source_bytes)
+                if len(raw) != source_bytes:
                     raise ValueError(f"short source tensor: {t['name']}")
                 pending.append(pool.submit(encode, raw, n, width,
                                            t["source_type"], t["type"],
@@ -209,8 +275,12 @@ def main():
             print(t["name"], t["type"], t["bytes"], flush=True)
     partial.replace(args.output)
     args.output.with_suffix(".json").write_text(json.dumps(dict(
-        source=str(args.source), protected=args.protected, threads=args.threads,
+        source=str(args.source), protected=args.protected, q5_dense=args.q5_dense,
+        q6_dense=args.q6_dense,
+        q8_control=args.q8_control, threads=args.threads,
         imatrix=imatrix_report,
+        q8_source_overrides=str(args.q8_overrides) if args.q8_overrides else None,
+        q8_source_override_count=len(overrides),
         router="BF16 only when F32 round-trip is exact; otherwise F32", tensors=ts), indent=2)+"\n")
     lib.ggml_quantize_free()
 

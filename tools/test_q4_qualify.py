@@ -1,6 +1,8 @@
 import copy
+import json
 import os
 from pathlib import Path
+import shutil
 import struct
 import sys
 import unittest
@@ -9,9 +11,61 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent))
 from q4_qualify import evaluate
 import q4_quality
+import q4_make_contexts
+import q4_profile_report
 
 
 class Gates(unittest.TestCase):
+    def test_capture_corpus_binding_and_subsets(self):
+        scratch=Path(f".q4-corpus-test-{os.getpid()}")
+        scratch.mkdir()
+        try:
+            path=scratch/"corpus.json"
+            path.write_text(json.dumps([["first","中文"],["second","different text"]],
+                ensure_ascii=False),encoding="utf-8")
+            q4_quality.validate_capture_corpus(scratch,[("first","中文")])
+            q4_quality.validate_capture_corpus(scratch,[("second","different text")])
+            with self.assertRaisesRegex(ValueError,"frozen text"):
+                q4_quality.validate_capture_corpus(scratch,[("second","wrong text")])
+            path.write_text(json.dumps([["first","text"],["first","text"]]))
+            with self.assertRaises(ValueError):
+                q4_quality.validate_capture_corpus(scratch,[("first","text")])
+        finally:
+            shutil.rmtree(scratch)
+
+    def test_profile_coverage_and_route_geometry(self):
+        scratch=Path(f".q4-profile-test-{os.getpid()}")
+        scratch.mkdir()
+        try:
+            text=("PREFILL_ROUTE rank={rank} layer=1 tokens=128 pairs=5 distinct=2 "
+                  "tiles=2 width=16 max_count=3\n"
+                  "PREFILL_LAYER_KERNEL rank={rank} layer=1 scope=dense "
+                  "kernel=test calls=1 gpu_ms=1.0\n"
+                  "PREFILL_WORKER rank={rank} layer=1 tokens=128 decode_ms=1.0 "
+                  "forward_ms=2.0 compute_ms=3.0 send_ms=4.0 total_ms=10.0\n"
+                  "PREFILL_BLOCK_LAYER rank={rank} layer=1 ms=3.0\n"
+                  "PREFILL_LAYER_PROFILE rank={rank} layer=1 gpu_ms=2.0 kernel_ms=1.0\n")
+            for rank in range(8):
+                (scratch/f"test-rank-{rank}.log").write_text(text.format(rank=rank))
+            report=q4_profile_report.collect(scratch,"test")
+            self.assertEqual(report["route_totals"]["pairs"],40)
+            self.assertEqual(report["route_totals"]["tile_occupancy"],40/256)
+            self.assertIn("not all expert GPU work",report["coverage"])
+            self.assertEqual(report["worker_rpc_timings"]["0:1:N128"]["send_ms"],4)
+            for prefix,value in (("test","a"*64),("other","b"*64)):
+                (scratch/f"{prefix}-131072.json").write_text(
+                    json.dumps({"request_sha256":value,"unicode":"\u200d"},ensure_ascii=False),
+                    encoding="utf-8")
+            with patch.object(sys,"argv",["profile","--directory",str(scratch),
+                    "--baseline","test","--candidate","other","--output",str(scratch/"out.json")]):
+                with self.assertRaisesRegex(ValueError,"request body hashes"):
+                    q4_profile_report.main()
+            (scratch/"test-rank-0.log").write_text(text.format(rank=0).replace("gpu_ms=1.0","gpu_ms=nan"))
+            with self.assertRaises(ValueError):
+                q4_profile_report.collect(scratch,"test")
+        finally:
+            shutil.rmtree(scratch)
+
     def fixture(self):
         baseline = dict(prefill=[], decode=[], ttft=[], concurrency={}, runs={"full": {"elapsed_seconds": 100}})
         run = dict(prefill=[], decode=[], ttft=[], concurrency={}, metadata={"elapsed_seconds": 100},
@@ -86,6 +140,22 @@ class Gates(unittest.TestCase):
             self.assertEqual(offset, len(raw))
         finally:
             path.unlink(missing_ok=True)
+
+    def test_frozen_teacher_prefixes_and_utf8(self):
+        raw = bytearray(b"FGCONT01")
+        pieces = (b"a", b"\xe4", b"\xb8\xad", b"b")
+        for prompt in range(20):
+            for step, piece in enumerate(pieces):
+                raw.extend(struct.pack("<IIII", prompt, step, 100+step, len(piece)))
+                raw.extend(piece)
+        contexts, positions = q4_make_contexts.expand(bytes(raw), 3)
+        self.assertEqual(len(contexts), 60)
+        self.assertEqual([p["continuation_step"] for p in positions[:3]], [0, 1, 3])
+        self.assertTrue(contexts[2][1].endswith("a中"))
+        with self.assertRaises(ValueError):
+            q4_make_contexts.expand(bytes(raw[:-1]), 3)
+        with self.assertRaises(ValueError):
+            q4_make_contexts.expand(bytes(raw), 4)
 
 
 if __name__ == "__main__":
