@@ -79,8 +79,11 @@ GGUF-native names and layouts are retained.
 
 `tools/q4_check_source.py` checks shapes and 60 sampled Q8 blocks from 20 dense
 families against the published abliterated UD-Q4_K_XL source. Its bounds include
-Q8 scale rounding. **This is not a deployed-pack identity proof.** The current
-abliterated pack still needs manifest/provenance and numerical qualification.
+Q8 scale rounding. **This is not a deployed-pack identity proof.** Full-ring
+qualification against the actual deployed pack is recorded in
+`results/hillclimb/q4-qualify.md`: ordinary and protected overlays both fail
+the numerical quality gates. Do not deploy either on the strength of kernel
+parity or published-source sampling.
 
 On the artifact blade:
 
@@ -112,9 +115,10 @@ Each output's JSON inventory records type, bytes, and tensor SHA256.
 
 ## Repacking — orchestrator lease required
 
-No production blade was contacted and no complete expert-bearing pack was
-created by this experiment. The `.53` artifacts are dense overlays, **not
-standalone serving packs**. Use a new directory; never overwrite the baseline.
+The initial kernel-only experiment did not contact production. Full-ring
+qualification is recorded separately in `results/hillclimb/q4-qualify.md`.
+The `.53` artifacts are dense overlays, **not standalone serving packs**.
+Use a new directory; never overwrite the baseline.
 Keep the original pack: external tokenizer/ngram/host-cache files are symlinked
 to its absolute paths.
 
@@ -128,14 +132,14 @@ git archive --format=tar --output=.\q4-stage.tar HEAD
   -OutputDir .\results\q4-stage-compact -Label q4-compact -AfterLease
 ```
 
-**Do not run this now.** Without `-AfterLease`, it refuses before any network
+**Run only while holding the production lease.** Without `-AfterLease`, it refuses before any network
 access. It retrieves the preserved `.53` overlay, checks transfer hashes,
 discovers the baseline manifest, builds on every owner, validates identical
 source manifests and six layers/rank, derives ranks from manifest endpoints,
 cooks/seals each pack, and requires identical candidate manifest hashes.
 `preflight.json` and `staged.json` retain per-rank byte ledgers. Offline tests
 mock every network call and cover mismatched hashes and non-IP-order ranks.
-Full owner-local repacking still needs the actual baseline and quality gates.
+Staging does not constitute quality qualification or promotion.
 
 For manual single-owner staging only, substitute its manifest-derived rank:
 
@@ -147,7 +151,7 @@ old=/home/xander/fg-ring-pack-abliterated
 manifest="$old/manifest.fgm"
 rank=0
 ./tools/q4-repack "$manifest" "$old" /home/xander/hc-q4/dense-q4.gguf \
-  /home/xander/hc-q4/pack-q4 "$rank" --keep-q8-head --cook-dense
+  /home/xander/hc-q4/pack-q4 "$rank" --keep-q8-head --cook-dense --reflink
 # Read-only planning: no output created; does not verify source payloads/routers.
 ./tools/q4-repack "$manifest" "$old" /home/xander/hc-q4/dense-q4.gguf \
   /home/xander/hc-q4/unused --keep-q8-head --cook-dense --plan
@@ -156,22 +160,51 @@ rank=0
 The manifest basename above is an example, not a claim about the deployment.
 The repacker emits a new sealed `manifest.fgm`.
 It verifies hashes of copied originals and computes replacement hashes.
-Per-owner mode includes local experts plus common tensors in foreign sparse
-rank files (needed for replicated common weights and foreign output slices).
+Per-owner mode includes owned layer tensors and experts. The coordinator and
+four-way head/HC helpers additionally retain the required rank-4 global tensors
+in a sparse foreign rank file; other foreign per-layer files are unnecessary.
+This also accepts the actual original owner-local installations, which do not
+contain every rank file.
 Other owners' expert extents are intentionally sparse; this is an owner-local
 installation, not a complete portable pack. Run it on **every** owner and require
 identical new manifest SHA256 across owners. To make a complete portable pack
 from a complete original pack, omit the rank argument.
 
-Do not point production at the new manifest until all gates below pass.
-Repacking against the real pack, per-owner sparse behavior, and ring startup
-remain untested without a lease.
+`--reflink` clones unchanged, aligned extents on supporting filesystems while
+still reading and SHA256-verifying every copied tensor. Unsupported ranges fall
+back to ordinary copying: check free space first. Shared extents remain
+copy-on-write; neither original tensor bytes nor their manifest are changed.
+`du` counts shared extents in both directories, so use filesystem free-space
+deltas as well as allocated/apparent sizes. Mutable `.state` artifacts are never
+linked into the new pack.
+
+Do not promote the new manifest until all gates below pass. Runtime QSA state
+is written beside its manifest, so even the Q8 teacher must use a private pack
+view: byte-identical manifest plus links to immutable original artifacts,
+excluding state files. `q4-qualify-ready.sh` constructs that view.
 
 ## Full-vocabulary quality capture
 
+`FG_EVAL_LOGITS_DIR=/home/xander/flash-gordon-live/RELEASE/operator/logits-TAG`
+must be set when starting the **output-owner worker** for resident capture.
+`make tools/q4-eval-batch` links the same engine objects as `flash-gordon`.
+`q4-capture.ps1 -ResidentBatch -CaptureTag TAG` uploads a length-framed exact
+UTF-8 corpus and evaluates all 80 independent contexts in one resident runtime,
+resetting before each frontier. Its discarded prediction never enters the next
+context. Numbered dumps use exclusive creation; import requires every finite,
+complete vocabulary row and refuses stale destinations.
+
+The lifecycle wrapper's `quality` mode sets the directory on the output owner.
+Its `plain` mode explicitly clears capture/profile flags before performance
+measurement. `q4-qualify-live.ps1` combines teacher/candidate capture, the full
+unmodified main-worktree harness, all comparable baseline metric gates, and a
+`finally` rollback to the immutable original release unless promotion passes.
+Use a fresh `-Attempt` after an interrupted capture; do not reuse dump files.
+
+For the slower, one-process-per-context compatibility flow,
 `FG_EVAL_LOGITS=/home/xander/hc-q4/eval-latest.fgl` must be set when starting
 the **output-owner worker**, not merely the coordinator. Start baseline workers
-with this branch's executable and the original manifest, preserving their
+with this branch's executable and the private Q8 teacher manifest, preserving their
 normal rank/listen/peer arguments. Then repeat with the candidate manifest.
 The dump is taken by the ordinary greedy output path after GPU completion;
 it is not supported for sampled/penalized output or split-head greedy decode.
@@ -182,7 +215,7 @@ From the worktree in PowerShell 7, with no concurrent eval/generation traffic:
 ```powershell
 & .\tools\q4-capture.ps1 `
   -BuildDir /home/xander/hc-q4/code `
-  -Manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm `
+  -Manifest /home/xander/fg-ring-pack-abliterated-q4-teacher/manifest.fgm `
   -OutputDir .\results\q4-teacher
 
 # Restart candidate workers with its manifest, same dump environment and flags.

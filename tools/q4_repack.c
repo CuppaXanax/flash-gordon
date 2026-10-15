@@ -10,15 +10,38 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <linux/fs.h>
+#include <sys/ioctl.h>
+
+static bool use_reflink;
+static uint64_t reflink_bytes;
+
+static bool owner_record(const fg_manifest *m,const fg_tensor_record *t,int owner){
+    if(owner<0||t->rank==(uint32_t)owner)return true;
+    bool helper=owner==0||owner==1||owner==2||
+        (uint32_t)owner==m->layer_owner[FG_LAYER_COUNT-1u];
+    /* Workers load owned layers; head/HC helpers additionally need rank 4 globals. */
+    return helper&&t->rank==4u&&t->kind==FG_TENSOR_COMMON&&t->layer>=FG_LAYER_COUNT;
+}
 
 static int copy_tensor(FILE *src,uint64_t off,uint64_t bytes,FILE *dst,
                        uint8_t digest[32]){
     uint8_t *buffer=malloc(8u<<20u);
     if(!buffer||fseeko(src,(off_t)off,SEEK_SET)!=0){free(buffer);return 0;}
+    bool cloned=false;
+    if(dst&&use_reflink&&fflush(dst)==0){
+        off_t offset=ftello(dst);
+        struct file_clone_range range={.src_fd=fileno(src),.src_offset=off,
+            .src_length=bytes,.dest_offset=(uint64_t)offset};
+        if(offset>=0&&ioctl(fileno(dst),FICLONERANGE,&range)==0){
+            cloned=true;reflink_bytes+=bytes;
+            if(fseeko(dst,offset+(off_t)bytes,SEEK_SET)!=0){free(buffer);return 0;}
+        }
+    }
     fg_sha256 hash;fg_sha256_init(&hash);
     while(bytes){
         size_t n=bytes>(8u<<20u)?8u<<20u:(size_t)bytes;
-        if(fread(buffer,1u,n,src)!=n||(dst&&fwrite(buffer,1u,n,dst)!=n)){
+        if(fread(buffer,1u,n,src)!=n||(dst&&!cloned&&fwrite(buffer,1u,n,dst)!=n)){
             free(buffer);return 0;
         }
         fg_sha256_update(&hash,buffer,n);bytes-=n;
@@ -59,7 +82,7 @@ static int cook_tensor(FILE *source,const fg_gguf_tensor *t,FILE *out,bool compa
 
 int main(int argc,char **argv){
     if(argc<5){
-        fprintf(stderr,"usage: q4-repack OLD.fgm OLD_PACK DENSE.gguf NEW_DIR [RANK] [--keep-q8-head] [--cook-dense] [--plan]\n");
+        fprintf(stderr,"usage: q4-repack OLD.fgm OLD_PACK DENSE.gguf NEW_DIR [RANK] [--keep-q8-head] [--cook-dense] [--reflink] [--plan]\n");
         return 2;
     }
     int only=-1;
@@ -69,6 +92,7 @@ int main(int argc,char **argv){
         if(strcmp(argv[i],"--keep-q8-head")==0){keep_q8_head=true;continue;}
         if(strcmp(argv[i],"--cook-dense")==0){cook_dense=true;continue;}
         if(strcmp(argv[i],"--plan")==0){plan=true;continue;}
+        if(strcmp(argv[i],"--reflink")==0){use_reflink=true;continue;}
         char *end=NULL;long rank=strtol(argv[i],&end,10);
         if(!end||end==argv[i]||*end||rank<0||rank>=FG_RANK_COUNT||only>=0)return 2;
         only=(int)rank;
@@ -91,7 +115,7 @@ int main(int argc,char **argv){
         bool full=only<0||(uint32_t)only==rank;
         bool emit=full;
         for(uint32_t i=0;!emit&&i<m->tensor_count;i++)
-            if(m->tensors[i].rank==rank&&m->tensors[i].kind==FG_TENSOR_COMMON)emit=true;
+            if(m->tensors[i].rank==rank&&owner_record(m,&m->tensors[i],only))emit=true;
         if(emit&&!plan){
             snprintf(path,sizeof(path),"%s/rank-%02u.fgw",old_dir,rank);
             old=fopen(path,"rb");if(!old){free(old_dir);goto done;}
@@ -101,7 +125,7 @@ int main(int argc,char **argv){
         for(uint32_t i=0;i<m->tensor_count;i++){
             fg_tensor_record *t=&m->tensors[i];
             if(t->rank!=rank||t->kind==FG_TENSOR_HOST_CACHE)continue;
-            bool copy_record=full||t->kind==FG_TENSOR_COMMON;
+            bool copy_record=owner_record(m,t,only);
             const fg_gguf_tensor *replacement=NULL;
             bool router=t->kind==FG_TENSOR_COMMON&&t->ggml_type==0u&&
                 strstr(t->name,".ffn_gate_inp.weight")!=NULL;
@@ -206,7 +230,7 @@ int main(int argc,char **argv){
     struct dirent *entry;
     while((entry=readdir(dir))){
         if(entry->d_name[0]=='.'||!strncmp(entry->d_name,"rank-",5u)||
-           strstr(entry->d_name,".fgm"))continue;
+           strstr(entry->d_name,".fgm")||strstr(entry->d_name,".state"))continue;
         char source[2048],destination[2048];
         snprintf(source,sizeof(source),"%s/%s",old_dir,entry->d_name);
         snprintf(destination,sizeof(destination),"%s/%s",argv[4],entry->d_name);
@@ -222,7 +246,8 @@ int main(int argc,char **argv){
     if(fg_q38_validate_packed_manifest(m,&err)!=FG_OK)goto done;
     char path[2048];snprintf(path,sizeof(path),"%s/manifest.fgm",argv[4]);
     if(fg_manifest_write(path,m,&err)!=FG_OK)goto done;
-    printf("replaced=%u rank=%d manifest=%s\n",replaced,only,path);rc=0;
+    printf("replaced=%u rank=%d manifest=%s reflink_bytes=%llu\n",replaced,only,path,
+           (unsigned long long)reflink_bytes);rc=0;
 done:
     if(dense)fclose(dense);
     fg_gguf_close(&g);free(m);

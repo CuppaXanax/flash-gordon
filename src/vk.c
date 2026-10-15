@@ -743,6 +743,18 @@ fg_vk_tensor_format fg_vk_dense_format(uint32_t type){
     }
 }
 
+fg_vk_tensor_format fg_vk_dense_saved_format(uint32_t type,uint32_t layout){
+    if(layout==FG_TENSOR_LAYOUT_DENSE_SOA||layout==FG_TENSOR_LAYOUT_DENSE_COMPACT){
+        if(type!=12u&&type!=13u&&type!=20u)return FG_VK_TENSOR_FORMAT_DEFAULT;
+        uint32_t base=layout==FG_TENSOR_LAYOUT_DENSE_COMPACT?
+            FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K:FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K;
+        return (fg_vk_tensor_format)(base+(type==12u?0u:type==13u?1u:2u));
+    }
+    if(layout==FG_TENSOR_LAYOUT_Q8_0_COOKED&&type==8u)
+        return FG_VK_TENSOR_FORMAT_Q8_0_COOKED;
+    return fg_vk_dense_format(type);
+}
+
 uint32_t fg_vk_subgroup_size(const fg_vk_context *c){
     if(!c)return 0u;
     VkPhysicalDeviceSubgroupProperties subgroup={

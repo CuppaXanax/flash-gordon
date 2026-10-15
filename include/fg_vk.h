@@ -35,6 +35,7 @@ typedef enum fg_vk_tensor_format {
 } fg_vk_tensor_format;
 
 fg_vk_tensor_format fg_vk_dense_format(uint32_t ggml_type);
+fg_vk_tensor_format fg_vk_dense_saved_format(uint32_t ggml_type,uint32_t layout);
 fg_status fg_vk_dense_quant(fg_vk_context *context,fg_vk_tensor *out,
                             const fg_vk_tensor *weights,const fg_vk_tensor *input,
                             uint32_t input_width,uint32_t output_width,

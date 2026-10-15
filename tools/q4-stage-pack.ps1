@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)][string]$SourceArchive,
     [Parameter(Mandatory)][string]$OutputDir,
     [ValidatePattern('^[a-z0-9-]+$')][string]$Label = "q4-compact",
+    [ValidateSet('dense-q4','dense-protected')][string]$OverlayName = 'dense-q4',
     [switch]$AfterLease
 )
 $ErrorActionPreference = "Stop"
@@ -24,13 +25,16 @@ function Run-Remote([string[]]$Addresses, [string]$Text, [hashtable]$Transfer = 
     return $result
 }
 try {
-    $overlay = Join-Path $OutputDir "dense-q4.gguf"
-    $fetch = Run-Remote @('192.168.42.53') @'
+    $overlay = Join-Path $OutputDir "$OverlayName.gguf"
+    $fetchScript = @'
 set -euo pipefail
 test -s /home/xander/hc-q4/dense-q4.gguf
 printf 'OVERLAY_SHA '
 sha256sum /home/xander/hc-q4/dense-q4.gguf | cut -d' ' -f1
-'@ @{DownloadSource="/home/xander/hc-q4/dense-q4.gguf"; DownloadPath=$overlay}
+'@
+    $fetch = Run-Remote @('192.168.42.53') ($fetchScript.Replace('dense-q4.gguf',"$OverlayName.gguf")) @{
+        DownloadSource="/home/xander/hc-q4/$OverlayName.gguf"; DownloadPath=$overlay
+    }
     $match = [regex]::Match($fetch[0].Stdout, 'OVERLAY_SHA ([a-f0-9]{64})')
     $overlaySha = (Get-FileHash -LiteralPath $overlay -Algorithm SHA256).Hash.ToLowerInvariant()
     if (-not $match.Success -or $match.Groups[1].Value -ne $overlaySha) { throw "Overlay transfer SHA256 mismatch" }
@@ -60,7 +64,8 @@ sha256sum "$manifest" | cut -d' ' -f1
 mkdir code
 tar -xf code.tar -C code
 cd code
-make -j8 flash-gordon tools/q4-repack shaders > "$root/build.log" 2>&1 || { tail -60 "$root/build.log"; exit 1; }
+make -j8 flash-gordon tools/q4-repack tools/q4-eval-batch tests/test_q4_repack shaders > "$root/build.log" 2>&1 || { tail -60 "$root/build.log"; exit 1; }
+./tests/test_q4_repack
 ./tools/q4-repack "$manifest" "$old" "$root/dense-q4.gguf" "$root/unused" \
   --keep-q8-head --cook-dense --plan | tee "$root/plan.txt"
 '@
@@ -96,7 +101,7 @@ printf '%s  %s\n' __BASELINE_SHA__ "$manifest" | sha256sum -c -
 cd "$root/code"
 unset FG_DENSE_SOA FG_DENSE_K_COOKED
 ./tools/q4-repack "$manifest" /home/xander/fg-ring-pack-abliterated \
-  "$root/dense-q4.gguf" "$root/pack" __RANK__ --keep-q8-head --cook-dense
+  "$root/dense-q4.gguf" "$root/pack" __RANK__ --keep-q8-head --cook-dense --reflink
 ./tools/q4-repack "$root/pack/manifest.fgm" "$root/pack" "$root/dense-q4.gguf" \
   "$root/unused" --keep-q8-head --cook-dense --plan | tee "$root/sealed-resident-ledger.txt"
 printf 'CANDIDATE_SHA '

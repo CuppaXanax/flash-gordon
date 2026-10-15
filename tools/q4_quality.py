@@ -74,6 +74,8 @@ def compare(teacher, student):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--contexts", type=Path, help="write fixed teacher-forced contexts as JSONL")
+    p.add_argument("--framed-contexts", type=Path, help="write length-framed UTF-8 contexts for resident batch capture")
+    p.add_argument("--import-numbered", type=Path, help="validate and rename a resident batch's numbered dumps")
     p.add_argument("--teacher", type=Path)
     p.add_argument("--candidate", type=Path)
     p.add_argument("--output", type=Path)
@@ -81,6 +83,28 @@ def main():
     p.add_argument("--command", help='JSON argv; substitute {prompt} and {output}; must run eval --generate 0 and retrieve worker dump')
     args = p.parse_args()
     items = list(contexts())
+    if args.framed_contexts:
+        with args.framed_contexts.open("xb") as file:
+            file.write(b"FGEVAL01")
+            for _, prompt in items:
+                raw = prompt.encode("utf-8")
+                file.write(struct.pack("<I", len(raw)))
+                file.write(raw)
+        return
+    if args.import_numbered:
+        root = args.import_numbered
+        numbered = sorted(root.glob("[0-9][0-9][0-9][0-9].fgl"))
+        if len(numbered) != len(items):
+            raise ValueError(f"expected {len(items)} fresh full-vocabulary dumps")
+        for i, (key, _) in enumerate(items):
+            source = root/f"{i:04}.fgl"
+            read(source)
+            if root.joinpath(key+".fgl").exists():
+                raise ValueError(f"refuse stale imported capture: {key}")
+        for i, (key, _) in enumerate(items):
+            root.joinpath(f"{i:04}.fgl").rename(root/(key+".fgl"))
+        root.joinpath("corpus.json").write_text(json.dumps(items, ensure_ascii=False)+"\n", encoding="utf-8")
+        return
     if args.capture:
         if not args.command:
             p.error("--capture requires --command")
