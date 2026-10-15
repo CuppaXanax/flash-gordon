@@ -23,10 +23,10 @@ bool fg_protocol_version_supported(uint16_t version){
 bool fg_output_split_way_for_rank(uint32_t ways,uint32_t rank,uint32_t *way){
     uint32_t slot=UINT32_MAX;
     if(ways==FG_OUTPUT_SPLIT_WAYS_MIN){
-        if(rank==4u)slot=0u;
+        if(rank==FG_OUTPUT_RANK)slot=0u;
         else if(rank==0u)slot=1u;
     }else if(ways==FG_OUTPUT_SPLIT_WAYS_MAX){
-        if(rank==4u)slot=0u;
+        if(rank==FG_OUTPUT_RANK)slot=0u;
         else if(rank==0u)slot=1u;
         else if(rank==1u)slot=2u;
         else if(rank==2u)slot=3u;
@@ -37,9 +37,9 @@ bool fg_output_split_way_for_rank(uint32_t ways,uint32_t rank,uint32_t *way){
 }
 
 uint32_t fg_output_split_rank(uint32_t ways,uint32_t way){
-    if(ways==FG_OUTPUT_SPLIT_WAYS_MIN)return way==0u?4u:way==1u?0u:UINT32_MAX;
+    if(ways==FG_OUTPUT_SPLIT_WAYS_MIN)return way==0u?FG_OUTPUT_RANK:way==1u?0u:UINT32_MAX;
     if(ways==FG_OUTPUT_SPLIT_WAYS_MAX)
-        return way==0u?4u:way==1u?0u:way==2u?1u:way==3u?2u:UINT32_MAX;
+        return way==0u?FG_OUTPUT_RANK:way==1u?0u:way==2u?1u:way==3u?2u:UINT32_MAX;
     return UINT32_MAX;
 }
 
@@ -74,7 +74,7 @@ fg_status fg_output_split_timeout_error(const fg_output_handoff *state,uint32_t 
     missing[0]=0;
     for(uint32_t way=0u;way<ways;way++){
         uint32_t rank=fg_output_split_rank(ways,way);
-        if(rank==UINT32_MAX||rank==4u)continue;
+        if(rank==UINT32_MAX||rank==FG_OUTPUT_RANK)continue;
         bool seen=false;
         for(uint32_t i=0u;i<state->remote_count;i++)
             if(state->remote_rank[i]==rank)seen=true;
@@ -287,6 +287,7 @@ fg_status fg_prefill_work_decode(fg_prefill_work *work,uint8_t *activation_stora
 static fg_status validate_prefill_result(const fg_prefill_result *result,fg_error *err){
     if(!result||result->layer>=FG_LAYER_COUNT||result->source_rank>=FG_RANK_COUNT||result->destination_rank>=FG_RANK_COUNT||
        !(result->contributor_mask&(1u<<result->source_rank))||
+       (result->contributor_mask&~((1u<<FG_RANK_COUNT)-1u))||
        !result->token_count||result->token_count>FG_PREFILL_MAX_TOKENS||
        result->pair_count>(uint32_t)result->token_count*FG_TOP_K||!result->pairs||!result->outputs){
         fg_error_set(err,FG_ERR_FORMAT,"invalid prefill result header");return FG_ERR_FORMAT;
@@ -319,7 +320,8 @@ fg_status fg_prefill_result_encode(uint8_t *output,uint32_t capacity,uint32_t *b
     uint32_t required=FG_PREFILL_RESULT_HEADER_BYTES+result->pair_count*FG_PREFILL_RESULT_PAIR_BYTES+result->token_count*FG_HIDDEN_SIZE*4u;
     if(required>FG_MAX_FRAME_BYTES||capacity<required){fg_error_set(err,FG_ERR_LIMIT,"prefill result buffer is too small");return FG_ERR_LIMIT;}
     memset(output,0,FG_PREFILL_RESULT_HEADER_BYTES);output[0]=result->layer;output[1]=result->source_rank;output[2]=result->destination_rank;output[3]=FG_PREFILL_RESULT_VERSION;
-    put_u32_be(output+4u,result->first_position);put_u16_be(output+8u,result->token_count);put_u16_be(output+10u,result->pair_count);output[12]=result->contributor_mask;
+    put_u32_be(output+4u,result->first_position);put_u16_be(output+8u,result->token_count);put_u16_be(output+10u,result->pair_count);output[12]=(uint8_t)result->contributor_mask;
+    if(FG_RANK_COUNT!=8u)output[13]=(uint8_t)(result->contributor_mask>>8u);
     uint32_t offset=FG_PREFILL_RESULT_HEADER_BYTES;
     for(uint32_t i=0;i<result->pair_count;i++,offset+=4u){put_u16_be(output+offset,result->pairs[i].token_slot);output[offset+2u]=result->pairs[i].routing_slot;output[offset+3u]=0u;}
     for(uint32_t i=0;i<result->token_count*FG_HIDDEN_SIZE;i++)put_f32_be(output+offset+i*4u,result->outputs[i]);
@@ -330,8 +332,8 @@ fg_status fg_prefill_result_decode(fg_prefill_result *result,fg_prefill_result_p
     if(!result||!pair_storage||!output_storage||!payload||bytes<FG_PREFILL_RESULT_HEADER_BYTES){fg_error_set(err,FG_ERR_ARGUMENT,"invalid prefill result input");return FG_ERR_ARGUMENT;}
     uint16_t token_count=get_u16_be(payload+8u),pair_count=get_u16_be(payload+10u);
     uint64_t required=FG_PREFILL_RESULT_HEADER_BYTES+(uint64_t)pair_count*4u+(uint64_t)token_count*FG_HIDDEN_SIZE*4u;
-    if(payload[3]!=FG_PREFILL_RESULT_VERSION||!payload[12]||payload[13]||payload[14]||payload[15]||!token_count||token_count>FG_PREFILL_MAX_TOKENS||pair_count>(uint32_t)token_count*FG_TOP_K||required!=bytes||pair_capacity<pair_count||output_capacity_values<(uint64_t)token_count*FG_HIDDEN_SIZE){fg_error_set(err,FG_ERR_FORMAT,"invalid prefill shard result version, size or header");return FG_ERR_FORMAT;}
-    memset(result,0,sizeof(*result));result->layer=payload[0];result->source_rank=payload[1];result->contributor_mask=payload[12];result->destination_rank=payload[2];result->first_position=get_u32_be(payload+4u);result->token_count=token_count;result->pair_count=pair_count;result->pairs=pair_storage;result->outputs=output_storage;
+    if(payload[3]!=FG_PREFILL_RESULT_VERSION||(!payload[12]&&!payload[13])||(FG_RANK_COUNT==8u&&payload[13])||payload[14]||payload[15]||!token_count||token_count>FG_PREFILL_MAX_TOKENS||pair_count>(uint32_t)token_count*FG_TOP_K||required!=bytes||pair_capacity<pair_count||output_capacity_values<(uint64_t)token_count*FG_HIDDEN_SIZE){fg_error_set(err,FG_ERR_FORMAT,"invalid prefill shard result version, size or header");return FG_ERR_FORMAT;}
+    memset(result,0,sizeof(*result));result->layer=payload[0];result->source_rank=payload[1];result->contributor_mask=(uint16_t)(payload[12]|((uint16_t)payload[13]<<8u));result->destination_rank=payload[2];result->first_position=get_u32_be(payload+4u);result->token_count=token_count;result->pair_count=pair_count;result->pairs=pair_storage;result->outputs=output_storage;
     uint32_t offset=FG_PREFILL_RESULT_HEADER_BYTES;
     for(uint32_t i=0;i<pair_count;i++,offset+=4u){pair_storage[i].token_slot=get_u16_be(payload+offset);pair_storage[i].routing_slot=payload[offset+2u];if(payload[offset+3u]){fg_error_set(err,FG_ERR_FORMAT,"non-zero prefill result pair reserved byte");return FG_ERR_FORMAT;}}
     for(uint32_t i=0;i<token_count*FG_HIDDEN_SIZE;i++)output_storage[i]=get_f32_be(payload+offset+i*4u);
@@ -1153,13 +1155,13 @@ fg_status fg_qsa_page_barrier_decode(fg_qsa_page_barrier *barrier,
     return FG_OK;
 }
 
-static fg_status validate_output_work(const fg_output_work *work,fg_error *err){if(!work||work->source_rank>=FG_RANK_COUNT||work->destination_rank!=4u||work->session_slot>=FG_DECODE_BATCH_MAX_SLOTS){fg_error_set(err,FG_ERR_FORMAT,"invalid output work route");return FG_ERR_FORMAT;}if((work->sampler.temperature!=0.0f||work->sampler.top_p!=0.0f||work->sampler.top_k!=0u||work->sampler.presence_penalty!=0.0f||work->sampler.frequency_penalty!=0.0f||work->sampler.repetition_penalty!=0.0f||work->sampler.min_p!=0.0f)&&fg_sampler_config_validate(&work->sampler,err)!=FG_OK)return FG_ERR_FORMAT;if(!isfinite(work->uniform)||work->uniform<0.0f||work->uniform>=1.0f){fg_error_set(err,FG_ERR_FORMAT,"invalid output sampler draw");return FG_ERR_FORMAT;}for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(work->hyper[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite output input at %u",i);return FG_ERR_FORMAT;}return FG_OK;}
+static fg_status validate_output_work(const fg_output_work *work,fg_error *err){if(!work||work->source_rank>=FG_RANK_COUNT||work->destination_rank!=FG_OUTPUT_RANK||work->session_slot>=FG_DECODE_BATCH_MAX_SLOTS){fg_error_set(err,FG_ERR_FORMAT,"invalid output work route");return FG_ERR_FORMAT;}if((work->sampler.temperature!=0.0f||work->sampler.top_p!=0.0f||work->sampler.top_k!=0u||work->sampler.presence_penalty!=0.0f||work->sampler.frequency_penalty!=0.0f||work->sampler.repetition_penalty!=0.0f||work->sampler.min_p!=0.0f)&&fg_sampler_config_validate(&work->sampler,err)!=FG_OK)return FG_ERR_FORMAT;if(!isfinite(work->uniform)||work->uniform<0.0f||work->uniform>=1.0f){fg_error_set(err,FG_ERR_FORMAT,"invalid output sampler draw");return FG_ERR_FORMAT;}for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)if(!isfinite(work->hyper[i])){fg_error_set(err,FG_ERR_FORMAT,"non-finite output input at %u",i);return FG_ERR_FORMAT;}return FG_OK;}
 
 fg_status fg_output_work_encode(uint8_t output[FG_OUTPUT_WORK_BYTES],const fg_output_work *work,fg_error *err){if(!output){fg_error_set(err,FG_ERR_ARGUMENT,"output work buffer is null");return FG_ERR_ARGUMENT;}fg_status status=validate_output_work(work,err);if(status!=FG_OK)return status;output[0]=work->source_rank;output[1]=work->destination_rank;output[2]=0;output[3]=work->session_slot;put_u32_be(output+4u,work->token_index);put_f32_be(output+8u,work->sampler.temperature);put_f32_be(output+12u,work->sampler.top_p);put_u32_be(output+16u,work->sampler.top_k);put_f32_be(output+20u,work->uniform);put_f32_be(output+24u,work->sampler.presence_penalty);put_f32_be(output+28u,work->sampler.frequency_penalty);put_f32_be(output+32u,work->sampler.repetition_penalty);put_f32_be(output+36u,work->sampler.min_p);for(uint32_t i=0,offset=FG_OUTPUT_WORK_HEADER_BYTES;i<FG_HYPER_WIDTH;i++,offset+=4u)put_f32_be(output+offset,work->hyper[i]);output[3]=work->session_slot;return FG_OK;}
 
 fg_status fg_output_work_decode(fg_output_work *work,const uint8_t *payload,uint32_t bytes,fg_error *err){if(!work||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid output work input");return FG_ERR_ARGUMENT;}if(bytes!=FG_OUTPUT_WORK_BYTES||payload[2]){fg_error_set(err,FG_ERR_FORMAT,"invalid output work size or reserved bytes");return FG_ERR_FORMAT;}memset(work,0,sizeof(*work));work->source_rank=payload[0];work->destination_rank=payload[1];work->session_slot=payload[3];work->token_index=get_u32_be(payload+4u);work->sampler.temperature=get_f32_be(payload+8u);work->sampler.top_p=get_f32_be(payload+12u);work->sampler.top_k=get_u32_be(payload+16u);work->uniform=get_f32_be(payload+20u);work->sampler.presence_penalty=get_f32_be(payload+24u);work->sampler.frequency_penalty=get_f32_be(payload+28u);work->sampler.repetition_penalty=get_f32_be(payload+32u);work->sampler.min_p=get_f32_be(payload+36u);for(uint32_t i=0,offset=FG_OUTPUT_WORK_HEADER_BYTES;i<FG_HYPER_WIDTH;i++,offset+=4u)work->hyper[i]=get_f32_be(payload+offset);return validate_output_work(work,err);}
 
-static fg_status validate_output_config(const fg_output_config *config,fg_error *err){if(!config||config->source_rank>=FG_RANK_COUNT||config->destination_rank!=4u||config->session_slot>=FG_DECODE_BATCH_MAX_SLOTS){fg_error_set(err,FG_ERR_FORMAT,"invalid output config route");return FG_ERR_FORMAT;}if((config->sampler.temperature!=0.0f||config->sampler.top_p!=0.0f||config->sampler.top_k!=0u||config->sampler.presence_penalty!=0.0f||config->sampler.frequency_penalty!=0.0f||config->sampler.repetition_penalty!=0.0f||config->sampler.min_p!=0.0f)&&fg_sampler_config_validate(&config->sampler,err)!=FG_OK)return FG_ERR_FORMAT;if(!isfinite(config->uniform)||config->uniform<0.0f||config->uniform>=1.0f){fg_error_set(err,FG_ERR_FORMAT,"invalid output config sampler draw");return FG_ERR_FORMAT;}return FG_OK;}
+static fg_status validate_output_config(const fg_output_config *config,fg_error *err){if(!config||config->source_rank>=FG_RANK_COUNT||config->destination_rank!=FG_OUTPUT_RANK||config->session_slot>=FG_DECODE_BATCH_MAX_SLOTS){fg_error_set(err,FG_ERR_FORMAT,"invalid output config route");return FG_ERR_FORMAT;}if((config->sampler.temperature!=0.0f||config->sampler.top_p!=0.0f||config->sampler.top_k!=0u||config->sampler.presence_penalty!=0.0f||config->sampler.frequency_penalty!=0.0f||config->sampler.repetition_penalty!=0.0f||config->sampler.min_p!=0.0f)&&fg_sampler_config_validate(&config->sampler,err)!=FG_OK)return FG_ERR_FORMAT;if(!isfinite(config->uniform)||config->uniform<0.0f||config->uniform>=1.0f){fg_error_set(err,FG_ERR_FORMAT,"invalid output config sampler draw");return FG_ERR_FORMAT;}return FG_OK;}
 
 fg_status fg_output_config_encode(uint8_t output[FG_OUTPUT_CONFIG_BYTES],const fg_output_config *config,fg_error *err){if(!output){fg_error_set(err,FG_ERR_ARGUMENT,"output config buffer is null");return FG_ERR_ARGUMENT;}fg_status status=validate_output_config(config,err);if(status!=FG_OK)return status;output[0]=config->source_rank;output[1]=config->destination_rank;output[2]=config->flags;output[3]=config->session_slot;put_u32_be(output+4u,config->token_index);put_f32_be(output+8u,config->sampler.temperature);put_f32_be(output+12u,config->sampler.top_p);put_u32_be(output+16u,config->sampler.top_k);put_f32_be(output+20u,config->uniform);put_f32_be(output+24u,config->sampler.presence_penalty);put_f32_be(output+28u,config->sampler.frequency_penalty);put_f32_be(output+32u,config->sampler.repetition_penalty);put_f32_be(output+36u,config->sampler.min_p);return FG_OK;}
 
@@ -1272,7 +1274,7 @@ void fg_output_handoff_take(fg_output_handoff *state,fg_output_config *config,fg
     handoff_clear_partials(state);
 }
 
-static fg_status validate_output_result(const fg_output_result *result,fg_error *err){if(!result||result->source_rank!=4u||result->destination_rank>=FG_RANK_COUNT||result->token>=FG_Q38_VOCAB_SIZE||!isfinite(result->logit)){fg_error_set(err,FG_ERR_FORMAT,"invalid output result");return FG_ERR_FORMAT;}return FG_OK;}
+static fg_status validate_output_result(const fg_output_result *result,fg_error *err){if(!result||result->source_rank!=FG_OUTPUT_RANK||result->destination_rank>=FG_RANK_COUNT||result->token>=FG_Q38_VOCAB_SIZE||!isfinite(result->logit)){fg_error_set(err,FG_ERR_FORMAT,"invalid output result");return FG_ERR_FORMAT;}return FG_OK;}
 
 fg_status fg_output_result_encode(uint8_t output[FG_OUTPUT_RESULT_BYTES],const fg_output_result *result,fg_error *err){if(!output){fg_error_set(err,FG_ERR_ARGUMENT,"output result buffer is null");return FG_ERR_ARGUMENT;}fg_status status=validate_output_result(result,err);if(status!=FG_OK)return status;output[0]=result->source_rank;output[1]=result->destination_rank;output[2]=0;output[3]=0;put_u32_be(output+4u,result->token_index);put_u32_be(output+8u,result->token);put_f32_be(output+12u,result->logit);return FG_OK;}
 
@@ -1468,7 +1470,7 @@ fg_status fg_owner_session_control_decode(fg_owner_session_control *control,
 fg_status fg_expert_results_validate_route(const fg_manifest *manifest,uint32_t layer,uint32_t position,uint32_t owner_rank,const uint16_t expert_ids[FG_TOP_K],const fg_expert_result *results,uint32_t result_count,fg_error *err){
     if(!manifest||!expert_ids||!results||layer>=FG_LAYER_COUNT||owner_rank>=FG_RANK_COUNT||result_count==0||result_count>FG_GROUP_SIZE){fg_error_set(err,FG_ERR_ARGUMENT,"invalid expert result route validation arguments");return FG_ERR_ARGUMENT;}
     if(owner_rank!=0u&&manifest->layer_owner[layer]!=owner_rank){fg_error_set(err,FG_ERR_MISMATCH,"expert result destination is not layer owner");return FG_ERR_MISMATCH;}
-    bool seen_expert[FG_EXPERT_COUNT]={0},seen_rank[FG_RANK_COUNT]={0},seen_slot[FG_TOP_K]={0};
+    bool seen_expert[FG_EXPERT_COUNT]={0},seen_rank[FG_MAX_RANK_COUNT]={0},seen_slot[FG_TOP_K]={0};
     for(uint32_t slot=0;slot<FG_TOP_K;slot++){
         if(expert_ids[slot]>=FG_EXPERT_COUNT||seen_expert[expert_ids[slot]]){fg_error_set(err,FG_ERR_FORMAT,"invalid canonical expert at slot %u",slot);return FG_ERR_FORMAT;}
         seen_expert[expert_ids[slot]]=true;
@@ -1509,8 +1511,8 @@ fg_status fg_partition_route(const fg_manifest *m,uint32_t layer,const uint16_t 
 
 fg_status fg_partition_prefill_routes(const fg_manifest *manifest,uint32_t layer,uint16_t token_count,const uint16_t *expert_ids,const float *gates,fg_prefill_route routes[FG_GROUP_SIZE],uint32_t *route_count,fg_prefill_pair *pair_storage,uint32_t pair_capacity,fg_error *err){
     if(!manifest||layer>=FG_LAYER_COUNT||!token_count||token_count>FG_PREFILL_MAX_TOKENS||!expert_ids||!gates||!routes||!route_count||!pair_storage||pair_capacity<(uint32_t)token_count*FG_TOP_K){fg_error_set(err,FG_ERR_ARGUMENT,"invalid prefill route partition arguments");return FG_ERR_ARGUMENT;}
-    uint32_t counts[FG_RANK_COUNT]={0};for(uint32_t token=0;token<token_count;token++){uint64_t seen[FG_EXPERT_COUNT/64u]={0};for(uint32_t slot=0;slot<FG_TOP_K;slot++){uint32_t index=token*FG_TOP_K+slot,expert=expert_ids[index];if(expert>=FG_EXPERT_COUNT||!isfinite(gates[index])||(seen[expert>>6u]&(UINT64_C(1)<<(expert&63u)))){fg_error_set(err,FG_ERR_FORMAT,"invalid prefill expert token %u slot %u",token,slot);return FG_ERR_FORMAT;}seen[expert>>6u]|=UINT64_C(1)<<(expert&63u);uint32_t rank=manifest->expert_rank[layer][expert];if(!fg_topology_rank_in_layer(manifest,layer,rank)){fg_error_set(err,FG_ERR_MISMATCH,"prefill expert %u is outside layer %u group",expert,layer);return FG_ERR_MISMATCH;}counts[rank]++;}}
-    memset(routes,0,FG_GROUP_SIZE*sizeof(*routes));*route_count=0;uint32_t used=0,route_for_rank[FG_RANK_COUNT];for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)route_for_rank[rank]=UINT32_MAX;
+    uint32_t counts[FG_MAX_RANK_COUNT]={0};for(uint32_t token=0;token<token_count;token++){uint64_t seen[FG_EXPERT_COUNT/64u]={0};for(uint32_t slot=0;slot<FG_TOP_K;slot++){uint32_t index=token*FG_TOP_K+slot,expert=expert_ids[index];if(expert>=FG_EXPERT_COUNT||!isfinite(gates[index])||(seen[expert>>6u]&(UINT64_C(1)<<(expert&63u)))){fg_error_set(err,FG_ERR_FORMAT,"invalid prefill expert token %u slot %u",token,slot);return FG_ERR_FORMAT;}seen[expert>>6u]|=UINT64_C(1)<<(expert&63u);uint32_t rank=manifest->expert_rank[layer][expert];if(!fg_topology_rank_in_layer(manifest,layer,rank)){fg_error_set(err,FG_ERR_MISMATCH,"prefill expert %u is outside layer %u group",expert,layer);return FG_ERR_MISMATCH;}counts[rank]++;}}
+    memset(routes,0,FG_GROUP_SIZE*sizeof(*routes));*route_count=0;uint32_t used=0,route_for_rank[FG_MAX_RANK_COUNT];for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)route_for_rank[rank]=UINT32_MAX;
     uint32_t routed_mask=0u;
     for(uint32_t group_slot=0;group_slot<FG_GROUP_SIZE;group_slot++){uint32_t rank=manifest->layer_groups[layer][group_slot];if(routed_mask&(1u<<rank))continue;routed_mask|=(1u<<rank);if(!counts[rank])continue;uint32_t route=(*route_count)++;route_for_rank[rank]=route;routes[route].destination_rank=(uint8_t)rank;routes[route].pair_count=(uint16_t)counts[rank];routes[route].pairs=pair_storage+used;used+=counts[rank];}
     if(used>pair_capacity){fg_error_set(err,FG_ERR_LIMIT,"prefill route partition exceeds pair storage");return FG_ERR_LIMIT;}
@@ -1522,7 +1524,7 @@ fg_status fg_partition_prefill_routes(const fg_manifest *manifest,uint32_t layer
 /* Validate an entire subtree against the original routing list, not merely the
  * mask claimed by its sender. Every expected token/slot must occur exactly once. */
 fg_status fg_prefill_result_validate_subset(const fg_manifest *manifest,
-    const fg_prefill_work *work,uint8_t mask,const fg_prefill_result *result,fg_error *err){
+    const fg_prefill_work *work,uint16_t mask,const fg_prefill_result *result,fg_error *err){
     if(!manifest||!work||!mask){fg_error_set(err,FG_ERR_ARGUMENT,"invalid prefill subtree validation");return FG_ERR_ARGUMENT;}
     fg_status status=validate_prefill_work(work,err);
     if(status==FG_OK)status=validate_prefill_result(result,err);
@@ -1534,7 +1536,7 @@ fg_status fg_prefill_result_validate_subset(const fg_manifest *manifest,
     }
     uint32_t first=result->first_position-work->first_position;
     bool expected[FG_PREFILL_MAX_TOKENS][FG_TOP_K]={{false}};
-    uint32_t count=0;uint8_t observed=0;
+    uint32_t count=0;uint16_t observed=0;
     for(uint32_t i=0;i<work->pair_count;i++){
         const fg_prefill_pair *pair=&work->pairs[i];
         uint32_t rank=manifest->expert_rank[work->layer][pair->expert_id];
@@ -1542,7 +1544,7 @@ fg_status fg_prefill_result_validate_subset(const fg_manifest *manifest,
             fg_error_set(err,FG_ERR_MISMATCH,"prefill contributor outside layer group");return FG_ERR_MISMATCH;
         }
         if(mask&(1u<<rank)){
-            observed|=(uint8_t)(1u<<rank);
+            observed|=(uint16_t)(1u<<rank);
             if(pair->token_slot>=first&&pair->token_slot<first+result->token_count){
                 expected[pair->token_slot-first][pair->routing_slot]=true;count++;
             }
@@ -1570,7 +1572,7 @@ fg_status fg_prefill_results_validate_route(const fg_manifest *manifest,uint32_t
         .destination_rank=(uint8_t)owner_rank,.first_position=first_position,
         .token_count=token_count,.pair_count=(uint16_t)(token_count*FG_TOP_K),
         .activations_q8k=&dummy,.pairs=pairs};
-    uint8_t seen=0;uint32_t received=0;
+    uint16_t seen=0;uint32_t received=0;
     for(uint32_t r=0;r<result_count;r++){
         if(results[r].first_position!=first_position||results[r].token_count!=token_count||
            (seen&results[r].contributor_mask)){fg_error_set(err,FG_ERR_MISMATCH,"overlapping prefill subtrees");return FG_ERR_MISMATCH;}

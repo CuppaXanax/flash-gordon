@@ -47,6 +47,18 @@ class AnalyzerTests(unittest.TestCase):
         self.assertTrue(result["partial"])
         self.assertEqual(result["missing_rank_ids"], [7])
 
+    def test_twelve_rank_topology(self):
+        records = [stage(rank, rank) for rank in range(12)]
+        for record in records:
+            MOD._validate_record(record, 1, rank_count=12)
+        result = MOD.analyze(records, rank_count=12)
+        self.assertFalse(result["partial"])
+        self.assertTrue(result["stage_service"]["groups"][0]["complete_stage_coverage"])
+        with self.assertRaises(MOD.ProfileError):
+            MOD._validate_record(records[-1], 1)
+        with self.assertRaises(MOD.ProfileError):
+            MOD.analyze(records[:-1], rank_count=12)
+
     def test_prefill_max_stage_formula_and_ttft(self):
         result = MOD.analyze(self.complete())
         group = result["stage_service"]["groups"][0]

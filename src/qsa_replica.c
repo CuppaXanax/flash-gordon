@@ -99,7 +99,7 @@ fg_status fg_qsa_replica_create(fg_qsa_replica **out,fg_qsa_replica_send_fn send
 }
 
 fg_status fg_qsa_replica_reserve(fg_qsa_replica *replica,uint32_t count,
-                                 uint8_t *buffers[FG_RANK_COUNT],fg_error *err){
+                                 uint8_t *buffers[FG_MAX_RANK_COUNT],fg_error *err){
     if(!replica||!buffers||!count||count>FG_QSA_REPLICA_DEPTH){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA replica reservation");
         return FG_ERR_ARGUMENT;

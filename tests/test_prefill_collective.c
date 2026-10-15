@@ -115,12 +115,46 @@ static int run_rank(const fg_manifest *manifest,uint32_t rank){
     if(status!=FG_OK&&!scenario){fprintf(stderr,"collective rank %u: %s\n",rank,err.message);return 1;}
     return 0;
 }
-int main(void){
+static int test_local_ring_launch(void){
+    fg_error err={0};fg_manifest *manifest=malloc(sizeof(*manifest));
+    uint32_t capacity=FG_PREFILL_LAYER_WORK_MAX_BYTES,bytes=0u,validated=0u;
+    uint8_t *wire=malloc(capacity);fg_frame_header header;
+    float hyper[FG_HYPER_WIDTH]={0},ngram[FG_NGRAM_EMBED_VALUES]={0};
+    float got_hyper[FG_HYPER_WIDTH],got_ngram[FG_NGRAM_EMBED_VALUES];
+    uint32_t positions[3]={7u,7u,7u},got_positions[3];
+    if(!manifest||!wire){free(manifest);free(wire);return 1;}
+    fg_status status=fg_rank_count_set(12u,&err);
+    if(status==FG_OK)fg_manifest_init(manifest);
+    hyper[15]=1.25f;ngram[19]=-0.5f;
+    if(status==FG_OK)status=ring_send_block_work(NULL,manifest,0u,99u,0u,0u,
+        7u,1u,positions,hyper,ngram,wire,capacity,&header,&bytes,&err);
+    if(status==FG_OK)status=fg_frame_validate_version(&header,manifest->protocol_version,
+        wire,&validated,&err);
+    fg_prefill_layer_work work={0};
+    if(status==FG_OK)status=fg_prefill_layer_work_decode(&work,manifest->protocol_version,
+        got_positions,3u,got_hyper,FG_HYPER_WIDTH,got_ngram,FG_NGRAM_EMBED_VALUES,
+        wire,bytes,&err);
+    int failed=status!=FG_OK||validated!=bytes||work.layer!=0u||
+        work.source_rank!=0u||work.destination_rank!=0u||
+        fg_frame_type(&header)!=FG_MSG_PREFILL_LAYER_WORK||
+        fg_frame_request_id(&header)!=99u||fg_frame_sequence(&header)!=7u*FG_LAYER_COUNT||
+        work.flags!=FG_LAYER_WORK_HAS_NGRAM||
+        memcmp(positions,got_positions,sizeof(positions))||
+        memcmp(hyper,got_hyper,sizeof(hyper))||memcmp(ngram,got_ngram,sizeof(ngram));
+    if(failed)fprintf(stderr,"local ring launch: %s\n",err.message);
+    free(wire);free(manifest);
+    if(fg_rank_count_set(8u,&err)!=FG_OK)return 1;
+    if(!failed)puts("Twelve-rank local first-stage inbox and PLE payload PASS");
+    return failed;
+}
+int main(int argc,char **argv){
+    if(test_local_ring_launch())return 1;
+    if(argc==2&&!strcmp(argv[1],"--local-ring-launch"))return 0;
     for(scenario=0;scenario<5u;scenario++){
         fg_manifest *manifest=malloc(sizeof(*manifest));if(!manifest)return 1;
         fg_manifest_init(manifest);uint32_t base=16000u+(uint32_t)(getpid()%300u)*32u+scenario*16u;
         for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)snprintf(manifest->ranks[rank].endpoint,sizeof(manifest->ranks[rank].endpoint),"127.0.0.1:%u",base+rank*2u);
-        pid_t children[FG_RANK_COUNT];
+        pid_t children[FG_MAX_RANK_COUNT];
         for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){
             children[rank]=fork();if(children[rank]<0)return 1;
             if(!children[rank])_exit(run_rank(manifest,rank));

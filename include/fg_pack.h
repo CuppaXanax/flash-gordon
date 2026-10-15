@@ -25,6 +25,17 @@ typedef struct fg_pack_options {
 
 fg_status fg_pack_run(const fg_pack_options *options, fg_error *err);
 
+typedef struct fg_repack_options {
+    const char *input_dir;
+    const char *output_dir;
+    uint32_t rank_count;
+    const char *endpoint_prefix;
+    uint32_t endpoint_first;
+    bool skip_model_validation; /* Unit-test fixtures only. */
+} fg_repack_options;
+
+fg_status fg_repack_run(const fg_repack_options *options,fg_error *err);
+
 typedef struct fg_pack_tower_options {
     const char *output_dir;
     const char **source_paths;

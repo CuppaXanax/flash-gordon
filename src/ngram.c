@@ -64,7 +64,20 @@ static const uint64_t q38_ngram_offset[FG_NGRAM_HEAD_COUNT]={0,20000003,40000026
 
 fg_status fg_q38_ngram_head_range(uint32_t head_begin,uint32_t head_count,uint64_t *row_begin,uint64_t *row_count,fg_error *err){if(!row_begin||!row_count||head_begin>=FG_NGRAM_HEAD_COUNT||!head_count||head_count>FG_NGRAM_HEAD_COUNT-head_begin){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Qwen3.8 n-gram head range");return FG_ERR_ARGUMENT;}uint32_t head_end=head_begin+head_count;uint64_t begin=q38_ngram_offset[head_begin],end=head_end<FG_NGRAM_HEAD_COUNT?q38_ngram_offset[head_end]:q38_ngram_offset[FG_NGRAM_HEAD_COUNT-1u]+q38_ngram_vocab[FG_NGRAM_HEAD_COUNT-1u];*row_begin=begin;*row_count=end-begin;return FG_OK;}
 
-fg_status fg_q38_ngram_rank_range(uint32_t rank,uint64_t *row_begin,uint64_t *row_count,fg_error *err){static const uint64_t begin[FG_RANK_COUNT]={0u,0u,46666896u,93333792u,140000688u,180000846u,226667743u,273334639u},count[FG_RANK_COUNT]={0u,46666896u,46666896u,46666896u,40000158u,46666897u,46666896u,46666897u};if(!row_begin||!row_count||rank==0u||rank>=FG_RANK_COUNT){fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident n-gram rank");return FG_ERR_ARGUMENT;}*row_begin=begin[rank];*row_count=count[rank];return FG_OK;}
+fg_status fg_q38_ngram_rank_range(uint32_t rank,uint64_t *row_begin,uint64_t *row_count,fg_error *err){
+    static const uint64_t begin[8]={0u,0u,46666896u,93333792u,140000688u,180000846u,226667743u,273334639u};
+    static const uint64_t count[8]={0u,46666896u,46666896u,46666896u,40000158u,46666897u,46666896u,46666897u};
+    if(!row_begin||!row_count||rank==0u||rank>=FG_RANK_COUNT){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid resident n-gram rank");return FG_ERR_ARGUMENT;
+    }
+    if(FG_RANK_COUNT==8u){*row_begin=begin[rank];*row_count=count[rank];}
+    else{
+        const uint64_t rows=UINT64_C(320001536),shards=FG_RANK_COUNT-1u;
+        *row_begin=rows*(rank-1u)/shards;
+        *row_count=rows*rank/shards-*row_begin;
+    }
+    return FG_OK;
+}
 
 void fg_ngram_resident_close(fg_ngram_resident *resident){if(!resident)return;if(resident->map){if(resident->hot_bytes)munlock(resident->map,(size_t)resident->hot_bytes);munmap(resident->map,(size_t)resident->bytes);if(resident->fd>=0)close(resident->fd);}else if(resident->data){munlock(resident->data,(size_t)resident->bytes);free(resident->data);}free(resident);}
 bool fg_ngram_resident_pageable(const fg_ngram_resident *resident){return resident&&resident->pageable;}

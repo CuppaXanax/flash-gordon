@@ -89,6 +89,9 @@ static bool qsa_service_weight(const fg_tensor_record *record){
 static bool coordinator_common(const fg_manifest *manifest,
                                const fg_tensor_record *record,uint32_t rank){
     if(record->kind!=FG_TENSOR_COMMON)return false;
+    if(manifest->rank_count!=8u&&
+       (!strcmp(record->name,"output.weight")||!strncmp(record->name,"output_hc_",10u)))
+        return false;
     return record->layer>=FG_LAYER_COUNT||manifest->layer_owner[record->layer]==rank;
 }
 

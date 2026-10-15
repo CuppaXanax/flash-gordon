@@ -1,7 +1,7 @@
 #Requires -Version 7.4
 <#
 .SYNOPSIS
-Build the current checkout, start eight EP blades, smoke-test, and chat.
+Build the current checkout, start the configured ring, smoke-test, and chat.
 .EXAMPLE
 pwsh -File .\tools\start-smoke-chat.ps1
 .EXAMPLE
@@ -19,6 +19,8 @@ SmokeOnly checks an already running API, without SSH or deployment.
 [CmdletBinding()]
 param(
     [string]$SshUser,
+    [ValidateSet(4,6,8,12,16)][int]$RankCount = 8,
+    [ValidatePattern('^[A-Za-z0-9_.-]+$')][string]$Model = 'Qwen3.8-Flash-Next',
     [ValidateSet('Password','Key')][string]$Auth = 'Password',
     [string]$FleetScript = (Join-Path $PSScriptRoot '../../bc-250-dbg/Invoke-BC250Fleet.ps1'),
     [string]$IdentityFile = "$HOME/.ssh/bc250-admin",
@@ -39,9 +41,8 @@ $runId = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString
 $results = Join-Path $repo "results/smoke-$runId"
 $null = New-Item -ItemType Directory -Path $results
 $base = if ($BaseUrl) { $BaseUrl.TrimEnd('/') } elseif ($env:FG_BASE_URL) { $env:FG_BASE_URL.TrimEnd('/') } else { "http://192.0.2.42:$Port/v1" }
-$model = 'Qwen3.8-Flash-Next'
 $prefix = if ($env:FG_FLEET_PREFIX) { $env:FG_FLEET_PREFIX } else { "192.0.2." }
-$targets = @(42..49 | ForEach-Object { "$prefix$_" })
+$targets = @(42..(41 + $RankCount) | ForEach-Object { "$prefix$_" })
 $fleetArguments = @{ Auth=$Auth; IdentityFile=$IdentityFile; PassThru=$true }
 if ($SshUser) { $fleetArguments.User = $SshUser }
 $script:remoteSequence = 0
@@ -85,7 +86,7 @@ if (!$SmokeOnly) {
     }
     if ($ManifestName -notmatch '^[A-Za-z0-9_.-]+$' -or ($SshUser -and $SshUser -notmatch '^[A-Za-z0-9_-]+$')) { throw 'Invalid manifest name or SSH username.' }
     $branch = & git -C $repo branch --show-current
-    Write-Host "Deploying current working files from $repo ($branch) to ranks 0-7."
+    Write-Host "Deploying current working files from $repo ($branch) to $RankCount ranks."
     $release = "$RemoteDirectory/$runId"
     $liveManifest = "$PackDirectory/manifest-live-$runId.fgm"
     foreach ($target in $targets) {
@@ -94,7 +95,7 @@ if (!$SmokeOnly) {
     $snapshot = Join-Path $results 'source'
     $null = New-Item -ItemType Directory -Path $snapshot
     $files = @('Makefile','glslc')
-    foreach ($directory in @('src','include','shaders')) {
+    foreach ($directory in @('src','include','shaders','vendor')) {
         $files += Get-ChildItem -LiteralPath (Join-Path $repo $directory) -File -Recurse |
             Where-Object Extension -In @('.c','.h','.comp') |
             ForEach-Object { [IO.Path]::GetRelativePath($repo, $_.FullName) }
@@ -105,7 +106,7 @@ if (!$SmokeOnly) {
         [IO.File]::WriteAllText($destination, [IO.File]::ReadAllText((Join-Path $repo $file)).Replace("`r`n","`n"))
     }
     $archive = Join-Path $results 'source.tar.gz'
-    & tar -czf $archive -C $snapshot Makefile glslc src include shaders
+    & tar -czf $archive -C $snapshot Makefile glslc src include shaders vendor
     if ($LASTEXITCODE) { throw 'Source archive failed.' }
     Copy-Remote $archive "${SshUser}@$($targets[0]):$release/source.tar.gz"
     $build = @'
@@ -124,6 +125,10 @@ sha256sum flash-gordon runtime.tar.gz '__LIVE__'
     $manifestCopy = Join-Path $results 'manifest.fgm'
     Copy-Remote "${SshUser}@$($targets[0]):$release/runtime.tar.gz" $runtimeArchive
     Copy-Remote "${SshUser}@$($targets[0]):$liveManifest" $manifestCopy
+    $manifestBytes = [IO.File]::ReadAllBytes($manifestCopy)
+    if ([BitConverter]::ToUInt32($manifestBytes,20) -ne $RankCount) {
+        throw "Manifest rank count does not match -RankCount $RankCount; repack before deploying."
+    }
     $expectedArchive = (Get-FileHash -LiteralPath $runtimeArchive -Algorithm SHA256).Hash.ToLowerInvariant()
     $expectedManifest = (Get-FileHash -LiteralPath $manifestCopy -Algorithm SHA256).Hash.ToLowerInvariant()
     foreach ($target in $targets | Select-Object -Skip 1) {
@@ -156,8 +161,8 @@ for proc in /proc/[0-9]*; do
 done
 '@
     foreach ($target in $targets) { Remote $target ($stop.Replace('__PACK__',$PackDirectory)) }
-    foreach ($rank in @(1..7) + @(0)) {
-        $arguments = if ($rank -eq 0) { "api --manifest '$liveManifest' --host 0.0.0.0 --port $Port" } else { "rank --manifest '$liveManifest' --rank $rank" }
+    foreach ($rank in @(1..($RankCount - 1)) + @(0)) {
+        $arguments = if ($rank -eq 0) { "api --manifest '$liveManifest' --model-name '$Model' --host 0.0.0.0 --port $Port" } else { "rank --manifest '$liveManifest' --rank $rank" }
         Remote $targets[$rank] "set -eu; cd '$release'; nohup ./flash-gordon $arguments >server.log 2>&1 < /dev/null & echo `$! >server.pid; echo 'Started rank $rank; log: $release/server.log'"
     }
     Write-Host "Waiting for model loading. Logs on each blade: $release/server.log"

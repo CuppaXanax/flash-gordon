@@ -12,6 +12,7 @@ tests/*.d
 
 # Test binaries
 tests/test_core
+tests/test_topology
 tests/test_session
 tests/test_chat
 tests/test_api

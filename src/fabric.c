@@ -16,7 +16,7 @@
 #include <unistd.h>
 
 typedef struct fabric_channel{int fd;uint32_t fixed_slot;pthread_mutex_t send_mutex;bool mutex_ready;}fabric_channel;
-struct fg_fabric{uint32_t rank;uint16_t protocol_version;fg_uring *ring;fabric_channel peer[FG_RANK_COUNT][2];};
+struct fg_fabric{uint32_t rank;uint16_t protocol_version;fg_uring *ring;fabric_channel peer[FG_MAX_RANK_COUNT][2];};
 typedef struct fabric_hello{uint32_t magic_be;uint16_t version_be;uint8_t rank;uint8_t channel;uint8_t manifest_sha256[32];}fabric_hello;
 
 static uint16_t swap16(uint16_t x){return (uint16_t)((x>>8)|(x<<8));}

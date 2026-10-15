@@ -43,13 +43,14 @@ param(
     [string]$Model = "Qwen3.8-Flash-Next",
     [string]$FleetRunner = $(if ($env:FG_FLEET_RUNNER) { $env:FG_FLEET_RUNNER } else { "D:\workspace\bc-250-dbg\Invoke-BC250Fleet.ps1" }),
     [string]$FleetUser = "xander",
+    [ValidateSet(4,6,8,12,16)][int]$RankCount = 8,
     [int]$RequestTimeoutSec = 1800,
     [double]$MinPrefillTps = 240.0,
     [double]$MinDecodeTps = 22.0,
     # Production expert-parallel layout: rank:layer-count runs in layer order.
     # Override only for a deliberately different placement.
     [string]$ExpectedBlocks = "1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6",
-    # Optional exact per-rank sealed weight bytes, comma list of eight values.
+    # Optional exact per-rank sealed weight bytes, one value per rank.
     [string]$ExpectedWeights = "",
     [int]$ExpectedLogical = 262144,
     [switch]$SkipPerf,
@@ -68,6 +69,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+if ($RankCount -ne 8 -and !$PSBoundParameters.ContainsKey('ExpectedBlocks')) {
+    $ExpectedBlocks = (0..($RankCount - 1) | ForEach-Object { "${_}:$([int](48 / $RankCount))" }) -join ','
+}
 $Invariant = [Globalization.CultureInfo]::InvariantCulture
 $script:failures = 0
 $script:logged = [Collections.Generic.List[string]]::new()
@@ -167,11 +171,11 @@ rank=$(( ${ip##*.} - 42 ))
 count=$(pgrep -cf 'flash-gordon[^ ]* (api|rank|eval)( |$)' || true)
 echo "rank=$rank alive=$count"
 '@
-    $path = Join-Path ([IO.Path]::GetTempPath()) ("fg-stab-{0}.sh" -f [guid]::NewGuid().ToString("N").Substring(0, 8))
+    $path = Join-Path $PSScriptRoot ("fg-stab-{0}.sh" -f [guid]::NewGuid().ToString("N").Substring(0, 8))
     [IO.File]::WriteAllText($path, $scriptText.Replace("`r", ""), [Text.UTF8Encoding]::new($false))
     try {
         $prefix = if ($env:FG_FLEET_PREFIX) { $env:FG_FLEET_PREFIX } else { "192.0.2." }
-        $targets = @(42..49 | ForEach-Object { "$prefix$_" })
+        $targets = @(42..(41 + $RankCount) | ForEach-Object { "$prefix$_" })
         try {
             $records = @(& $FleetRunner -ScriptPath $path -Targets $targets -User $FleetUser -Auth Password -PassThru -CommandTimeout 120)
         } catch {
@@ -236,7 +240,7 @@ function Test-Ledger {
     $problems = [Collections.Generic.List[string]]::new()
     if (-not $line.StartsWith("FG_LEDGER ")) { $problems.Add("missing FG_LEDGER prefix") }
     $expected = [ordered]@{
-        rank = "0"; ranks = "8"; layers = "48"; experts = "512"; topk = "10";
+        rank = "0"; ranks = [string]$RankCount; layers = "48"; experts = "512"; topk = "10";
         hidden = "2560"; layer_mode = "single"; batch = "128"; window = "2";
         prefill_frames = "8"; ring_prefill = "1"; ring_decode = "1"
     }
@@ -258,15 +262,16 @@ function Test-Ledger {
         $expectedHops = 0
         if ($owners[0] -ne 0) { $expectedHops++ }
         $expectedHops += $owners.Count - 1
-        if ($owners[-1] -ne 4) { $expectedHops++ }
+        if ($RankCount -ne 8) { $expectedHops += 2 }
+        elseif ($owners[-1] -ne 4) { $expectedHops++ }
         if ([string]$fields["wire_hops"] -ne [string]$expectedHops) {
             $problems.Add("wire_hops=$([string]$fields['wire_hops']) expected $expectedHops")
         }
     }
     $weights = @()
     if ($fields["weights"]) { $weights = @($fields["weights"] -split ',') }
-    if ($weights.Count -ne 8) {
-        $problems.Add("weights has $($weights.Count) entries, expected 8")
+    if ($weights.Count -ne $RankCount) {
+        $problems.Add("weights has $($weights.Count) entries, expected $RankCount")
     } else {
         foreach ($value in $weights) {
             if ($value -notmatch '^\d+$' -or [uint64]$value -lt 1GB) {

@@ -110,7 +110,7 @@ static fg_status open_pack_output(pack_output *out,const char *final_path,
 }
 
 static fg_status open_outputs(const fg_pack_options *o,
-                              pack_output rank[FG_RANK_COUNT],
+                              pack_output rank[FG_MAX_RANK_COUNT],
                               pack_output *ngram,
                               fg_error *err){
     if(o->dry_run)return FG_OK;
@@ -142,7 +142,7 @@ static void discard_output(pack_output *out){
     if(out->committed&&out->final_path[0])unlink(out->final_path);
 }
 
-static fg_status close_outputs(pack_output rank[FG_RANK_COUNT],pack_output *ngram,fg_error *err){
+static fg_status close_outputs(pack_output rank[FG_MAX_RANK_COUNT],pack_output *ngram,fg_error *err){
     fg_status status=FG_OK;
     for(uint32_t r=0;r<FG_RANK_COUNT;r++){
         fg_status one=finalize_output(&rank[r],err);
@@ -152,7 +152,7 @@ static fg_status close_outputs(pack_output rank[FG_RANK_COUNT],pack_output *ngra
     return status==FG_OK?one:status;
 }
 
-static void discard_outputs(pack_output rank[FG_RANK_COUNT],pack_output *ngram){
+static void discard_outputs(pack_output rank[FG_MAX_RANK_COUNT],pack_output *ngram){
     for(uint32_t r=0;r<FG_RANK_COUNT;r++)discard_output(&rank[r]);
     discard_output(ngram);
 }
@@ -168,7 +168,7 @@ static fg_status commit_output(pack_output *out,fg_error *err){
     return FG_OK;
 }
 
-static fg_status commit_outputs(pack_output rank[FG_RANK_COUNT],pack_output *ngram,fg_error *err){
+static fg_status commit_outputs(pack_output rank[FG_MAX_RANK_COUNT],pack_output *ngram,fg_error *err){
     for(uint32_t r=0;r<FG_RANK_COUNT;r++){
         fg_status status=commit_output(&rank[r],err);
         if(status!=FG_OK)return status;
@@ -210,15 +210,15 @@ static uint32_t common_owner(const fg_manifest *m,const fg_gguf_tensor *tensor,i
             char *end=NULL;unsigned long rank=strtoul(override,&end,10);
             if(end&&!*end&&rank<FG_RANK_COUNT)return (uint32_t)rank;
         }
-        return FG_RANK_COUNT-1u;
+        return FG_RANK_COUNT==8u?FG_RANK_COUNT-1u:0u;
     }
     if(strcmp(tensor->name,"output.weight")==0||
-       strncmp(tensor->name,"output_hc_",10u)==0)return 4u;
+       strncmp(tensor->name,"output_hc_",10u)==0)return FG_OUTPUT_RANK;
     return 0u;
 }
 
 static fg_status pack_common(const fg_gguf_tensor *t,FILE *src,fg_manifest *m,
-                             pack_output rank[FG_RANK_COUNT],pack_output *ngram,
+                             pack_output rank[FG_MAX_RANK_COUNT],pack_output *ngram,
                              fg_error *err){
     fg_tensor_kind kind=fg_gguf_tensor_kind(t->name);
 
@@ -247,7 +247,7 @@ static fg_status pack_common(const fg_gguf_tensor *t,FILE *src,fg_manifest *m,
     return rc;
 }
 
-static fg_status pack_expert_tensor(const fg_gguf *g,const fg_gguf_tensor *t,FILE *src,fg_manifest *m,pack_output rank[FG_RANK_COUNT],fg_error *err){
+static fg_status pack_expert_tensor(const fg_gguf *g,const fg_gguf_tensor *t,FILE *src,fg_manifest *m,pack_output rank[FG_MAX_RANK_COUNT],fg_error *err){
     (void)g;int layer=fg_gguf_tensor_layer(t->name);if(layer<0||t->shape[t->dims-1]!=FG_EXPERT_COUNT||t->bytes%FG_EXPERT_COUNT){fg_error_set(err,FG_ERR_FORMAT,"routed tensor %s is not a 512-expert layer tensor",t->name);return FG_ERR_FORMAT;}uint64_t expert_bytes=t->bytes/FG_EXPERT_COUNT;fg_tensor_layout layout=expert_layout(t);
 
     uint16_t processed=0u;
@@ -385,7 +385,7 @@ fg_status fg_pack_run(const fg_pack_options *o,fg_error *err){
         fg_gguf_close(&g);fg_error_set(err,FG_ERR_OOM,"allocate manifest");
         return FG_ERR_OOM;
     }
-    pack_output rank[FG_RANK_COUNT]={0},ngram={0};
+    pack_output rank[FG_MAX_RANK_COUNT]={0},ngram={0};
     bool tokenizer_attempted=false;
     fg_manifest_init(m);
     uint32_t profile=o->runtime_profile==FG_RUNTIME_PROFILE_NONE?

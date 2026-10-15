@@ -652,7 +652,7 @@ static fg_status moe_reduce_into(fg_owner_executor *e,uint32_t layer,uint32_t po
     fg_status route_status=fg_expert_results_validate_route(manifest,layer,position,owner,expert_ids,results,result_count,err);if(route_status!=FG_OK)return route_status;
     /* Check for pre-reduced results (routing_slot 0xFF = worker already applied gates) */
     bool has_prereduced=false;
-    const float *prereduced[FG_RANK_COUNT]={0};
+    const float *prereduced[FG_MAX_RANK_COUNT]={0};
     for(uint32_t r=0;r<result_count;r++)for(uint32_t i=0;i<results[r].selected_count;i++){if(results[r].routing_slots[i]==0xFFu){uint32_t source=results[r].source_rank;if(prereduced[source]){fg_error_set(err,FG_ERR_MISMATCH,"duplicate pre-reduced expert result from rank %u",source);return FG_ERR_MISMATCH;}has_prereduced=true;prereduced[source]=results[r].outputs[i];}else{slot_output[results[r].routing_slots[i]]=results[r].outputs[i];}}
     if(!has_prereduced){for(uint32_t slot=0;slot<FG_TOP_K;slot++){if(!slot_output[slot]){fg_error_set(err,FG_ERR_MISMATCH,"missing expert result slot %u",slot);return FG_ERR_MISMATCH;}}}
     float shared_scale=1.0f/(1.0f+expf(-*(const float *)fg_vk_tensor_map(shared_scalar)));
@@ -677,7 +677,7 @@ fg_status fg_owner_moe_reduce(fg_owner_executor *e,uint32_t layer,uint32_t posit
 
 static fg_status moe_reduce_batch_into(fg_owner_executor *e,uint32_t layer,uint32_t first_position,uint16_t token_count,const uint16_t *expert_ids,const float *gates,const fg_prefill_result *results,uint32_t result_count,fg_vk_tensor *shared_output,fg_vk_tensor *shared_scalar,fg_vk_tensor *reduced,fg_vk_tensor **output,fg_error *err){
     if(!e||!token_count||token_count>e->max_tokens||!expert_ids||!gates||!results||!result_count||result_count>FG_GROUP_SIZE||!shared_output||!shared_scalar||!reduced||!output||!owns_layer(e,layer)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner MoE batch reduction arguments");return FG_ERR_ARGUMENT;}fg_status status=fg_prefill_results_validate_route(fg_model_manifest(e->model),layer,first_position,fg_model_rank(e->model),token_count,expert_ids,results,result_count,err);if(status!=FG_OK)return status;
-    const float *rank_outputs[FG_RANK_COUNT]={0};
+    const float *rank_outputs[FG_MAX_RANK_COUNT]={0};
     for(uint32_t r=0;r<result_count;r++)rank_outputs[results[r].source_rank]=results[r].outputs;
     fg_vk_context *vk=fg_model_vk(e->model);
     if(fg_vk_batch_active(vk)){

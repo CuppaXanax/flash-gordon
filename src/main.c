@@ -17,7 +17,9 @@ static void usage(FILE *file) {
             "Usage:\n"
             "  flash-gordon pack --output DIR --source FILE [--source FILE ...] "
             "[--source-sha256 HEX ...] [--router-profile FILE | --expert-map FILE] "
-            "[--profile NAME] [--dry-run]\n"
+            "[--ranks N] [--profile NAME] [--dry-run]\n"
+            "  flash-gordon repack --input DIR --output DIR --ranks N "
+            "[--endpoint-prefix PREFIX --endpoint-first N]\n"
             "  flash-gordon pack-tower --output DIR --source FILE [--source FILE ...] "
             "[--dry-run]\n"
             "  flash-gordon verify --manifest FILE --pack-dir DIR --source FILE "
@@ -159,6 +161,12 @@ static fg_status pack_cmd(int argc, char **argv, fg_error *err) {
                 arg_value(&i, argc, argv, "--router-profile", err);
         else if (!strcmp(argv[i], "--expert-map"))
             options.expert_map_path = arg_value(&i, argc, argv, "--expert-map", err);
+        else if (!strcmp(argv[i], "--ranks")) {
+            uint32_t count=0u;
+            if(parse_u32(arg_value(&i,argc,argv,"--ranks",err),"--ranks",
+                         4u,FG_MAX_RANK_COUNT,&count,err)==FG_OK)
+                (void)fg_rank_count_set(count,err);
+        }
         else if (!strcmp(argv[i], "--profile")) {
             const char *profile = arg_value(&i, argc, argv, "--profile", err);
             if (profile &&
@@ -188,6 +196,30 @@ static fg_status pack_cmd(int argc, char **argv, fg_error *err) {
     free(digests);
     free(sources);
     return status;
+}
+
+static fg_status repack_cmd(int argc,char **argv,fg_error *err){
+    fg_repack_options options={.rank_count=FG_DEFAULT_RANK_COUNT,.endpoint_first=42u};
+    for(int i=2;i<argc;i++){
+        if(!strcmp(argv[i],"--input"))
+            options.input_dir=arg_value(&i,argc,argv,"--input",err);
+        else if(!strcmp(argv[i],"--output"))
+            options.output_dir=arg_value(&i,argc,argv,"--output",err);
+        else if(!strcmp(argv[i],"--ranks")){
+            if(parse_u32(arg_value(&i,argc,argv,"--ranks",err),"--ranks",
+                         4u,FG_MAX_RANK_COUNT,&options.rank_count,err)!=FG_OK)return err->code;
+        }else if(!strcmp(argv[i],"--endpoint-prefix"))
+            options.endpoint_prefix=arg_value(&i,argc,argv,"--endpoint-prefix",err);
+        else if(!strcmp(argv[i],"--endpoint-first")){
+            if(parse_u32(arg_value(&i,argc,argv,"--endpoint-first",err),"--endpoint-first",
+                         0u,255u,&options.endpoint_first,err)!=FG_OK)return err->code;
+        }else{
+            fg_error_set(err,FG_ERR_ARGUMENT,"unknown repack option: %s",argv[i]);
+            return FG_ERR_ARGUMENT;
+        }
+        if(err->code!=FG_OK)return err->code;
+    }
+    return fg_repack_run(&options,err);
 }
 
 static fg_status pack_tower_cmd(int argc, char **argv, fg_error *err) {
@@ -502,6 +534,7 @@ int main(int argc, char **argv) {
         status = api_cmd(argc, argv, &err);
     else if (!strcmp(argv[1], "depth-b-selftest"))
         status = depthb_selftest_cmd(argc, argv, &err);
+    else if (!strcmp(argv[1], "repack")) status=repack_cmd(argc,argv,&err);
     else if (!strcmp(argv[1], "rank") || !strcmp(argv[1], "serve") ||
              !strcmp(argv[1], "bench") || !strcmp(argv[1], "eval") ||
              !strcmp(argv[1], "inspect"))

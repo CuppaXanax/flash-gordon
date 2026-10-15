@@ -65,12 +65,14 @@ static uint32_t ledger_wire_hops(const fg_manifest *manifest){
     uint32_t hops=manifest->layer_owner[0u]!=0u?1u:0u;
     for(uint32_t layer=1u;layer<FG_LAYER_COUNT;layer++)
         if(manifest->layer_owner[layer]!=manifest->layer_owner[layer-1u])hops++;
+    /* The collocated full head uses the coordinator relay, not split handoff. */
+    if(manifest->rank_count!=8u)return hops+2u;
     if(manifest->layer_owner[FG_LAYER_COUNT-1u]!=fg_output_owner_rank(manifest))hops++;
     return hops;
 }
 
-static void ledger_rank_bytes(const fg_manifest *manifest,uint64_t weights[FG_RANK_COUNT],
-                              uint64_t experts[FG_RANK_COUNT]){
+static void ledger_rank_bytes(const fg_manifest *manifest,uint64_t weights[FG_MAX_RANK_COUNT],
+                              uint64_t experts[FG_MAX_RANK_COUNT]){
     for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){
         weights[rank]=0u;
         experts[rank]=0u;
@@ -111,7 +113,7 @@ fg_status fg_ledger_format(char *buffer,size_t capacity,
                      "ledger manifest geometry is not the sealed fleet geometry");
         return FG_ERR_MISMATCH;
     }
-    uint64_t weights[FG_RANK_COUNT],experts[FG_RANK_COUNT],dense[FG_RANK_COUNT];
+    uint64_t weights[FG_MAX_RANK_COUNT],experts[FG_MAX_RANK_COUNT],dense[FG_MAX_RANK_COUNT];
     ledger_rank_bytes(manifest,weights,experts);
     uint64_t total=0u;
     for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){

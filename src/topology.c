@@ -25,8 +25,8 @@ static void topology_fingerprint(const fg_manifest *m,uint8_t out[32]){
     fg_sha256_update(&hash,domain,sizeof(domain)-1u);
     topology_hash_u32(&hash,m->execution_mode);
     topology_hash_u32(&hash,m->stage_count);
-    fg_sha256_update(&hash,m->stage_ranks,sizeof(m->stage_ranks));
-    for(uint32_t i=0;i<FG_RESERVED_LAYER_OFFSETS;i++)
+    fg_sha256_update(&hash,m->stage_ranks,m->rank_count);
+    for(uint32_t i=0;i<=m->rank_count;i++)
         topology_hash_u32(&hash,m->layer_offsets[i]);
     topology_hash_u32(&hash,m->slot_count);
     fg_sha256_update(&hash,m->layer_owner,sizeof(m->layer_owner));
@@ -55,6 +55,12 @@ void fg_topology_set_expert_parallel_metadata(fg_manifest *m){
 void fg_topology_build(fg_manifest *m) {
     if(!m)return;
     for(uint32_t l=0;l<FG_LAYER_COUNT;l++){
+        if(m->rank_count!=8u){
+            uint32_t owner=l/(FG_LAYER_COUNT/m->rank_count);
+            m->layer_owner[l]=(uint8_t)owner;
+            for(uint32_t g=0;g<FG_GROUP_SIZE;g++)m->layer_groups[l][g]=(uint8_t)owner;
+            continue;
+        }
         m->layer_owner[l]=(uint8_t)(l%FG_RANK_COUNT);
         for(uint32_t g=0;g<FG_GROUP_SIZE;g++)
             m->layer_groups[l][g]=(uint8_t)((l+ep_delta[g])%FG_RANK_COUNT);
@@ -118,11 +124,17 @@ fg_status fg_topology_assign_profile(fg_manifest *m,const double frequency[FG_LA
 fg_status fg_topology_assign_map(fg_manifest *m,const uint16_t expert_rank[FG_LAYER_COUNT][FG_EXPERT_COUNT],fg_error *err){
     if(!m||!expert_rank){fg_error_set(err,FG_ERR_ARGUMENT,"expert map is null");return FG_ERR_ARGUMENT;}
     for(uint32_t l=0;l<FG_LAYER_COUNT;l++){
-        uint16_t count[FG_RANK_COUNT]={0};uint32_t distinct[FG_GROUP_SIZE];uint32_t participants=0u;
+        uint16_t count[FG_MAX_RANK_COUNT]={0};uint32_t distinct[FG_GROUP_SIZE];uint32_t participants=0u;
         for(uint32_t e=0;e<FG_EXPERT_COUNT;e++){
             uint32_t rank=expert_rank[l][e];
             if(rank>=FG_RANK_COUNT){fg_error_set(err,FG_ERR_FORMAT,"layer %u expert %u assigned to rank %u outside the fleet",l,e,rank);return FG_ERR_FORMAT;}
-            if(!count[rank])distinct[participants++]=rank;
+            if(!count[rank]){
+                if(participants==FG_GROUP_SIZE){
+                    fg_error_set(err,FG_ERR_FORMAT,"layer %u has too many expert owners",l);
+                    return FG_ERR_FORMAT;
+                }
+                distinct[participants++]=rank;
+            }
             count[rank]++;
         }
         if(participants==1u){
@@ -176,7 +188,7 @@ fg_status fg_topology_validate(const fg_manifest *m,fg_error *err){
             return FG_ERR_FORMAT;
         }
         uint32_t distinct[FG_GROUP_SIZE];uint32_t participants=layer_distinct_ranks(m,layer,distinct);
-        uint16_t counts[FG_RANK_COUNT]={0};
+        uint16_t counts[FG_MAX_RANK_COUNT]={0};
         if(participants==1u){
             uint32_t rank=distinct[0];
             if(rank>=FG_RANK_COUNT){

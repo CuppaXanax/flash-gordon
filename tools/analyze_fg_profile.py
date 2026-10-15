@@ -51,7 +51,7 @@ def _required(record: dict[str, Any], fields: Iterable[str], line: int) -> None:
         raise ProfileError(f"line {line}: missing {', '.join(missing)}")
 
 
-def _validate_record(record: Any, line: int) -> dict[str, Any]:
+def _validate_record(record: Any, line: int, rank_count: int = RANK_COUNT) -> dict[str, Any]:
     if not isinstance(record, dict):
         raise ProfileError(f"line {line}: record must be a JSON object")
     schema = record.get("schema")
@@ -68,8 +68,8 @@ def _validate_record(record: Any, line: int) -> dict[str, Any]:
         if not isinstance(record["status"], int) or isinstance(record["status"], bool):
             raise ProfileError(f"line {line}: status must be an integer")
         rank = record.get("rank", record.get("local_rank"))
-        if not isinstance(rank, int) or isinstance(rank, bool) or rank < 0 or rank >= RANK_COUNT:
-            raise ProfileError(f"line {line}: rank is outside 0..{RANK_COUNT - 1}")
+        if not isinstance(rank, int) or isinstance(rank, bool) or rank < 0 or rank >= rank_count:
+            raise ProfileError(f"line {line}: rank is outside 0..{rank_count - 1}")
         for field in ("wall_ms", "gpu_ms", "kernel_ms") if kind == "stage_service" else ("wall_ms",) if kind == "fabric_service" else ("gpu_ms",):
             if _number(record[field], field, line) < 0:
                 raise ProfileError(f"line {line}: {field} must be nonnegative")
@@ -80,8 +80,8 @@ def _validate_record(record: Any, line: int) -> dict[str, Any]:
                 raise ProfileError(f"line {line}: tokens must be a positive integer")
             if not isinstance(record["sequence"], int) or record["sequence"] < 0:
                 raise ProfileError(f"line {line}: sequence must be a nonnegative integer")
-            if not isinstance(record["stage"], int) or record["stage"] < 0 or record["stage"] >= RANK_COUNT:
-                raise ProfileError(f"line {line}: stage is outside 0..{RANK_COUNT - 1}")
+            if not isinstance(record["stage"], int) or record["stage"] < 0 or record["stage"] >= rank_count:
+                raise ProfileError(f"line {line}: stage is outside 0..{rank_count - 1}")
             if not isinstance(record["first_token"], int) or record["first_token"] < 0:
                 raise ProfileError(f"line {line}: first_token must be a nonnegative integer")
             if not isinstance(record["terminal"], bool):
@@ -104,7 +104,7 @@ def _validate_record(record: Any, line: int) -> dict[str, Any]:
     return record
 
 
-def load_jsonl(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
+def load_jsonl(paths: Iterable[str | Path], rank_count: int = RANK_COUNT) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for path_value in paths:
         path = Path(path_value)
@@ -120,7 +120,7 @@ def load_jsonl(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
                     parsed = json.loads(raw)
                 except json.JSONDecodeError as exc:
                     raise ProfileError(f"{path}:{line_number}: malformed JSON: {exc.msg}") from exc
-                records.append(_validate_record(parsed, line_number))
+                records.append(_validate_record(parsed, line_number, rank_count))
     if not records:
         raise ProfileError("no JSONL records supplied")
     return records
@@ -135,7 +135,7 @@ def _summary(values: list[float]) -> dict[str, Any]:
             "max_ms": max(values), "mean_ms": statistics.fmean(values)}
 
 
-def _stage_analysis(records: list[dict[str, Any]]) -> dict[str, Any]:
+def _stage_analysis(records: list[dict[str, Any]], rank_count: int = RANK_COUNT) -> dict[str, Any]:
     stages = [record for record in records if record.get("record_type") == "stage_service"
               and record["status"] == 0]
     by_group: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
@@ -156,7 +156,7 @@ def _stage_analysis(records: list[dict[str, Any]]) -> dict[str, Any]:
                    "service": _summary(values)}
             stage_rows.append(row)
             representative[stage] = statistics.median(values)
-        complete = set(representative) == set(range(RANK_COUNT))
+        complete = set(representative) == set(range(rank_count))
         stage_values = list(representative.values())
         max_service = max(stage_values) if stage_values else None
         total_service = sum(stage_values) if stage_values else None
@@ -182,7 +182,7 @@ def _stage_analysis(records: list[dict[str, Any]]) -> dict[str, Any]:
                     raise ProfileError("duplicate stage record in a decode sequence")
                 sequence_stages[record["stage"]]=float(record["wall_ms"])
             sums = [sum(values.values()) for values in by_sequence.values()
-                    if complete and set(values)==set(range(RANK_COUNT))]
+                    if complete and set(values)==set(range(rank_count))]
             common["decode_comparable_sequences"] = len(sums)
             common["decode_observed_critical_path_sum_ms"] = _summary(sums) if sums else None
             common["decode_steady_state_max_stage_tps"] = 1000.0 / max_service if complete and max_service else None
@@ -248,13 +248,17 @@ def _expert_counterfactual(records: list[dict[str, Any]]) -> list[dict[str, Any]
 
 
 def analyze(records: list[dict[str, Any]], allow_partial: bool = False,
-            metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+            metadata: dict[str, Any] | None = None, rank_count: int = RANK_COUNT) -> dict[str, Any]:
+    if rank_count not in (4, 6, 8, 12, 16):
+        raise ProfileError("rank count must divide 48 and be in [4,16]")
     stage_records = [record for record in records if record.get("record_type") == "stage_service"]
     rank_ids = sorted({record["rank"] for record in stage_records} | {record["local_rank"] for record in records if record.get("record_type") == "fabric_service"})
-    missing = [rank for rank in range(RANK_COUNT) if rank not in rank_ids]
+    if any(rank < 0 or rank >= rank_count for rank in rank_ids):
+        raise ProfileError("measurement rank is outside the requested fleet")
+    missing = [rank for rank in range(rank_count) if rank not in rank_ids]
     if missing and not allow_partial:
         raise ProfileError(f"fleet-incomplete: missing rank IDs {missing}; pass --allow-partial to inspect partial data")
-    stage = _stage_analysis(records)
+    stage = _stage_analysis(records, rank_count)
     expert_balance=_expert_counterfactual(records)
     straggler_ranks=sorted({rank for group in stage["groups"]
         if group["slowest_stage"] is not None for row in group["stages"]
@@ -293,7 +297,8 @@ def _table(result: dict[str, Any]) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("files", nargs="+", help="JSONL measurement files")
-    parser.add_argument("--allow-partial", action="store_true", help="permit reports missing one or more of the eight ranks")
+    parser.add_argument("--ranks", type=int, choices=(4, 6, 8, 12, 16), default=8)
+    parser.add_argument("--allow-partial", action="store_true", help="permit reports missing configured ranks")
     parser.add_argument("--metadata", help="optional JSON metadata object or file")
     args = parser.parse_args(argv)
     try:
@@ -304,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
             metadata = json.loads(raw)
             if not isinstance(metadata, dict):
                 raise ProfileError("metadata must be a JSON object")
-        result = analyze(load_jsonl(args.files), args.allow_partial, metadata)
+        result = analyze(load_jsonl(args.files, args.ranks), args.allow_partial, metadata, args.ranks)
     except (OSError, ProfileError, json.JSONDecodeError) as exc:
         print(f"fg profile analysis error: {exc}", file=sys.stderr)
         return 2

@@ -34,9 +34,9 @@ static fg_status fake_expert(fg_expert_executor *,const fg_prefill_work *,
 static const fg_manifest *test_manifest;
 static unsigned sends,receives,shared_calls,local_calls,fail_send,expected_sends;
 static bool fail_shared,fail_local,stale_reply;
-static uint8_t *replies[FG_RANK_COUNT];
-static uint32_t reply_bytes[FG_RANK_COUNT];
-static fg_frame_header headers[FG_RANK_COUNT];
+static uint8_t *replies[FG_MAX_RANK_COUNT];
+static uint32_t reply_bytes[FG_MAX_RANK_COUNT];
+static fg_frame_header headers[FG_MAX_RANK_COUNT];
 static int failures;
 #define CHECK(x) do{if(!(x)){fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#x);failures++;}}while(0)
 

@@ -13,8 +13,7 @@ typedef struct fg_output_hc fg_output_hc;
  * rank 0 reduces the remaining rows and returns its per-slice argmax.  The
  * split boundary must stay a multiple of FG_Q8_0_COOK_ROWS. */
 static inline uint32_t fg_output_owner_rank(const fg_manifest *manifest){
-    (void)manifest;
-    return 4u;
+    return manifest&&manifest->rank_count!=8u?manifest->rank_count-1u:4u;
 }
 
 fg_status fg_output_slice_create(fg_output_slice **out,fg_model *model,uint32_t ways,

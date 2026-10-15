@@ -193,8 +193,8 @@ fg_status fg_runtime_profile_apply(fg_manifest *manifest,uint32_t profile,fg_err
         manifest->protocol_version=FG_PROTOCOL_VERSION;
     }
     for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)
-        manifest->ranks[rank].scratch_bytes=fg_q38_runtime_scratch_bytes(
-            rank,manifest->prefill_microbatch,manifest->prefill_window,
+        manifest->ranks[rank].scratch_bytes=fg_q38_runtime_scratch_bytes_for_manifest(
+            manifest,rank,manifest->prefill_microbatch,manifest->prefill_window,
             manifest->max_context);
     fg_q38_account_session_state(manifest);
     return FG_OK;

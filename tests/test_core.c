@@ -520,7 +520,7 @@ static void test_qsa_replica_queue(void){
     fg_qsa_replica *replica=NULL;
     CHECK(fg_qsa_replica_create(&replica,replica_probe_send,&probe,
                                 FG_QSA_PAGE_APPEND_MAX_BYTES,&err)==FG_OK);
-    uint8_t *buffers[FG_RANK_COUNT]={0};
+    uint8_t *buffers[FG_MAX_RANK_COUNT]={0};
     CHECK(fg_qsa_replica_reserve(replica,2u,buffers,&err)==FG_OK);
     buffers[0][0]=1u;buffers[1][0]=2u;
     fg_qsa_replica_item items[2]={

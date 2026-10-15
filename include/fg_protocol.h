@@ -54,7 +54,7 @@
 #define FG_PREFILL_PAIR_BYTES 12u
 #define FG_PREFILL_RESULT_HEADER_BYTES 16u
 #define FG_PREFILL_RESULT_PAIR_BYTES 4u
-#define FG_PREFILL_RESULT_VERSION 3u
+#define FG_PREFILL_RESULT_VERSION (FG_RANK_COUNT==8u?3u:4u)
 #define FG_PREFILL_REDUCE_TILE_TOKENS 16u
 #define FG_PREFILL_WORK_VERSION 1u
 #define FG_PREFILL_WORK_MAX_BYTES (FG_PREFILL_WORK_HEADER_BYTES+FG_PREFILL_MAX_TOKENS*FG_Q8K_ACTIVATION_BYTES+FG_PREFILL_MAX_PAIRS*FG_PREFILL_PAIR_BYTES)
@@ -300,7 +300,7 @@ typedef struct fg_prefill_result {
     uint8_t layer;
     uint8_t source_rank;
     uint8_t destination_rank;
-    uint8_t contributor_mask;
+    uint16_t contributor_mask;
     uint32_t first_position;
     uint16_t token_count;
     uint16_t pair_count;
@@ -638,7 +638,7 @@ fg_status fg_partition_prefill_routes(const fg_manifest *manifest,uint32_t layer
                                       uint32_t *route_count,fg_prefill_pair *pair_storage,
                                       uint32_t pair_capacity,fg_error *err);
 fg_status fg_prefill_result_validate_subset(const fg_manifest *manifest,
-    const fg_prefill_work *work,uint8_t contributor_mask,
+    const fg_prefill_work *work,uint16_t contributor_mask,
     const fg_prefill_result *result,fg_error *err);
 fg_status fg_prefill_results_validate_route(const fg_manifest *manifest,uint32_t layer,
                                             uint32_t first_position,uint32_t owner_rank,

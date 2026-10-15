@@ -169,7 +169,27 @@ static size_t manifest_bytes(const fg_manifest *manifest){
         return FG_MANIFEST_V4_BYTES;
     if(manifest->format_version==FG_MANIFEST_SESSION_FORMAT_VERSION)
         return FG_MANIFEST_V5_BYTES;
-    return sizeof(*manifest);
+    return manifest->rank_count==8u?sizeof(fg_manifest_wire8):sizeof(*manifest);
+}
+
+static void manifest_wire8(fg_manifest *m,fg_manifest_wire8 *wire,bool encode){
+    if(encode)memset(wire,0,sizeof(*wire));
+    else memset(m,0,sizeof(*m));
+#define COPY_FIELD(field) do{if(encode)memcpy(&wire->field,&m->field,sizeof(wire->field)); \
+    else memcpy(&m->field,&wire->field,sizeof(wire->field));}while(0)
+    if(encode)memcpy(wire->prefix,m,sizeof(wire->prefix));
+    else memcpy(m,wire->prefix,sizeof(wire->prefix));
+    COPY_FIELD(ranks);COPY_FIELD(layer_owner);COPY_FIELD(layer_groups);
+    COPY_FIELD(expert_rank);COPY_FIELD(tensors);
+    if(encode)memcpy(wire->session.prefix,&m->session,sizeof(wire->session.prefix));
+    else memcpy(&m->session,wire->session.prefix,sizeof(wire->session.prefix));
+    COPY_FIELD(session.rank_state_format_sha256);
+    COPY_FIELD(session.logical_context_tokens);COPY_FIELD(session.reserved);
+    COPY_FIELD(execution_mode);COPY_FIELD(stage_count);COPY_FIELD(stage_ranks);
+    COPY_FIELD(layer_offsets);COPY_FIELD(slot_count);COPY_FIELD(topology_sha256);
+    COPY_FIELD(topology_reserved);COPY_FIELD(ngram_shard_count);
+    COPY_FIELD(deployment_reserved);COPY_FIELD(ngram_shards);COPY_FIELD(host_resident_bytes);
+#undef COPY_FIELD
 }
 
 static void manifest_digest(const fg_manifest *manifest,uint8_t out[32]){
@@ -177,8 +197,14 @@ static void manifest_digest(const fg_manifest *manifest,uint8_t out[32]){
     fg_manifest *copy=malloc(sizeof(*copy));
     if(!copy){memset(out,0,32);return;}
     memcpy(copy,manifest,sizeof(*copy));memset(copy->manifest_sha256,0,32);
-    fg_sha256 hash;fg_sha256_init(&hash);fg_sha256_update(&hash,copy,bytes);
-    fg_sha256_final(&hash,out);free(copy);
+    fg_manifest_wire8 *wire=NULL;
+    if(manifest->rank_count==8u){
+        wire=malloc(sizeof(*wire));
+        if(!wire){free(copy);memset(out,0,32);return;}
+        manifest_wire8(copy,wire,true);
+    }
+    fg_sha256 hash;fg_sha256_init(&hash);fg_sha256_update(&hash,wire?(void *)wire:(void *)copy,bytes);
+    fg_sha256_final(&hash,out);free(wire);free(copy);
 }
 
 void fg_manifest_init(fg_manifest *manifest){
@@ -186,7 +212,7 @@ void fg_manifest_init(fg_manifest *manifest){
     manifest->magic=FG_MANIFEST_MAGIC;
     manifest->format_version=FG_MANIFEST_FORMAT_VERSION;
     manifest->protocol_version=FG_PROTOCOL_VERSION;
-    manifest->header_bytes=(uint32_t)sizeof(*manifest);
+    manifest->header_bytes=(uint32_t)FG_MANIFEST_SIZE;
     manifest->rank_count=FG_RANK_COUNT;manifest->layer_count=FG_LAYER_COUNT;
     manifest->expert_count=FG_EXPERT_COUNT;manifest->hidden_size=FG_HIDDEN_SIZE;
     manifest->top_k=FG_TOP_K;
@@ -198,8 +224,8 @@ void fg_manifest_init(fg_manifest *manifest){
     manifest->session.position_mode=FG_POSITION_TEXT;
     fg_topology_build(manifest);(void)fg_topology_assign_round_robin(manifest,NULL);
     for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)
-        manifest->ranks[rank].scratch_bytes=fg_q38_runtime_scratch_bytes(
-            rank,manifest->prefill_microbatch,manifest->prefill_window,manifest->max_context);
+        manifest->ranks[rank].scratch_bytes=fg_q38_runtime_scratch_bytes_for_manifest(
+            manifest,rank,manifest->prefill_microbatch,manifest->prefill_window,manifest->max_context);
     build_contract(manifest,&manifest->session);
 }
 
@@ -244,7 +270,7 @@ fg_status fg_manifest_validate(const fg_manifest *manifest,fg_error *err){
     bool session_format=manifest->format_version==FG_MANIFEST_SESSION_FORMAT_VERSION;
     bool current=manifest->format_version==FG_MANIFEST_FORMAT_VERSION;
     uint32_t expected_header=legacy?(uint32_t)FG_MANIFEST_V4_BYTES:
-        session_format?(uint32_t)FG_MANIFEST_V5_BYTES:(uint32_t)sizeof(*manifest);
+        session_format?(uint32_t)FG_MANIFEST_V5_BYTES:(uint32_t)manifest_bytes(manifest);
     uint32_t expected_protocol=manifest_minimum_protocol(manifest);
     if((!legacy&&!session_format&&!current)||manifest->header_bytes!=expected_header||
        manifest->protocol_version!=expected_protocol){
@@ -258,6 +284,17 @@ fg_status fg_manifest_validate(const fg_manifest *manifest,fg_error *err){
        manifest->top_k!=FG_TOP_K){
         fg_error_set(err,FG_ERR_MISMATCH,"manifest model constants do not match this binary");
         return FG_ERR_MISMATCH;
+    }
+    if(current&&manifest->rank_count!=8u){
+        for(uint32_t rank=manifest->rank_count;rank<FG_MAX_RANK_COUNT;rank++){
+            uint8_t value=0u;
+            const uint8_t *record=(const uint8_t *)&manifest->ranks[rank];
+            for(size_t i=0;i<sizeof(manifest->ranks[rank]);i++)value|=record[i];
+            for(uint32_t i=0;i<32u;i++)value|=manifest->session.rank_state_format_sha256[rank][i];
+            if(value||manifest->host_resident_bytes[rank]||manifest->stage_ranks[rank]){
+                fg_error_set(err,FG_ERR_FORMAT,"unused rank metadata is non-zero");return FG_ERR_FORMAT;
+            }
+        }
     }
     if(!manifest->native_context||manifest->native_context>manifest->max_context||
        manifest->max_context>FG_MAX_CONTEXT){
@@ -278,7 +315,7 @@ fg_status fg_manifest_validate(const fg_manifest *manifest,fg_error *err){
                          "invalid v6 resident n-gram metadata header");
             return FG_ERR_FORMAT;
         }
-        for(uint32_t i=manifest->ngram_shard_count;i<FG_NGRAM_SHARD_COUNT;i++){
+        for(uint32_t i=manifest->ngram_shard_count;i<FG_MAX_RANK_COUNT-1u;i++){
             uint8_t value=0u;
             const uint8_t *bytes=(const uint8_t *)&manifest->ngram_shards[i];
             for(size_t j=0;j<sizeof(manifest->ngram_shards[i]);j++)value|=bytes[j];
@@ -402,8 +439,8 @@ fg_status fg_manifest_validate(const fg_manifest *manifest,fg_error *err){
             }
             resident+=additions[i];
         }
-        uint64_t required_scratch=fg_q38_runtime_scratch_bytes(
-            rank_index,manifest->prefill_microbatch,manifest->prefill_window,
+        uint64_t required_scratch=fg_q38_runtime_scratch_bytes_for_manifest(
+            manifest,rank_index,manifest->prefill_microbatch,manifest->prefill_window,
             manifest->max_context);
         if(required_scratch==UINT64_MAX||rank->scratch_bytes<required_scratch){
             fg_error_set(err,FG_ERR_LIMIT,
@@ -504,7 +541,7 @@ fg_status fg_manifest_write(const char *path,fg_manifest *manifest,fg_error *err
     if(!path||!manifest){fg_error_set(err,FG_ERR_ARGUMENT,"invalid manifest write");return FG_ERR_ARGUMENT;}
     if(manifest->format_version==FG_MANIFEST_FORMAT_VERSION){
         manifest->protocol_version=FG_PROTOCOL_VERSION;
-        manifest->header_bytes=(uint32_t)sizeof(*manifest);
+        manifest->header_bytes=(uint32_t)manifest_bytes(manifest);
         fg_topology_seal(manifest);
         fg_status topology_status=fg_topology_validate(manifest,err);
         if(topology_status!=FG_OK)return topology_status;
@@ -538,7 +575,14 @@ fg_status fg_manifest_write(const char *path,fg_manifest *manifest,fg_error *err
     }
     FILE *file=fopen(temporary,"wb");
     if(!file){fg_error_set(err,FG_ERR_IO,"create %s: %s",temporary,strerror(errno));return FG_ERR_IO;}
-    bool ok=fwrite(manifest,1,bytes,file)==bytes&&fflush(file)==0&&fsync(fileno(file))==0;
+    fg_manifest_wire8 *wire=NULL;
+    if(manifest->rank_count==8u){
+        wire=malloc(sizeof(*wire));
+        if(!wire){fclose(file);unlink(temporary);fg_error_set(err,FG_ERR_OOM,"serialize manifest");return FG_ERR_OOM;}
+        manifest_wire8(manifest,wire,true);
+    }
+    bool ok=fwrite(wire?(void *)wire:(void *)manifest,1,bytes,file)==bytes&&fflush(file)==0&&fsync(fileno(file))==0;
+    free(wire);
     int close_status=fclose(file);
     if(!ok||close_status){
         fg_error_set(err,FG_ERR_IO,"write %s: %s",temporary,strerror(errno));
@@ -597,15 +641,20 @@ fg_status fg_manifest_read(const char *path,fg_manifest *manifest,fg_error *err)
     FILE *file=fopen(path,"rb");
     if(!file){fg_error_set(err,FG_ERR_IO,"open %s: %s",path,strerror(errno));return FG_ERR_IO;}
     fg_manifest probe;memset(&probe,0,sizeof(probe));
-    size_t probe_bytes=offsetof(fg_manifest,rank_count);
+    size_t probe_bytes=offsetof(fg_manifest,layer_count);
     if(fread(&probe,1,probe_bytes,file)!=probe_bytes){
         fclose(file);fg_error_set(err,FG_ERR_FORMAT,"manifest %s has a truncated header",path);
         return FG_ERR_FORMAT;
     }
+    if((probe.format_version<7u&&probe.rank_count!=8u)||
+       (probe.format_version==7u&&probe.rank_count==8u)||
+       fg_rank_count_set(probe.rank_count,err)!=FG_OK){
+        fclose(file);fg_error_set(err,FG_ERR_FORMAT,"invalid manifest rank count");return FG_ERR_FORMAT;
+    }
     size_t expected;
     if(probe.format_version==FG_MANIFEST_LEGACY_FORMAT_VERSION)expected=FG_MANIFEST_V4_BYTES;
     else if(probe.format_version==FG_MANIFEST_SESSION_FORMAT_VERSION)expected=FG_MANIFEST_V5_BYTES;
-    else if(probe.format_version==FG_MANIFEST_FORMAT_VERSION)expected=sizeof(*manifest);
+    else if(probe.format_version==FG_MANIFEST_FORMAT_VERSION)expected=manifest_bytes(&probe);
     else{
         fclose(file);fg_error_set(err,FG_ERR_MISMATCH,"manifest %s has unsupported version %u",
                                   path,probe.format_version);return FG_ERR_MISMATCH;
@@ -615,7 +664,13 @@ fg_status fg_manifest_read(const char *path,fg_manifest *manifest,fg_error *err)
         return FG_ERR_FORMAT;
     }
     memset(manifest,0,sizeof(*manifest));
-    size_t read_bytes=fread(manifest,1,expected,file);int extra=fgetc(file);fclose(file);
+    fg_manifest_wire8 *wire=NULL;
+    if(probe.rank_count==8u){
+        wire=calloc(1,sizeof(*wire));
+        if(!wire){fclose(file);fg_error_set(err,FG_ERR_OOM,"read manifest");return FG_ERR_OOM;}
+    }
+    size_t read_bytes=fread(wire?(void *)wire:(void *)manifest,1,expected,file);int extra=fgetc(file);fclose(file);
+    if(wire){manifest_wire8(manifest,wire,false);free(wire);}
     if(read_bytes!=expected||extra!=EOF){
         fg_error_set(err,FG_ERR_FORMAT,"manifest %s has wrong size",path);return FG_ERR_FORMAT;
     }

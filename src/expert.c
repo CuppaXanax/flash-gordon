@@ -568,7 +568,7 @@ fg_status fg_expert_prefill_finish(fg_expert_executor *executor,const fg_prefill
                (uint64_t)work->token_count*FG_HIDDEN_SIZE*4u);
         memset(result,0,sizeof(*result));result->layer=work->layer;
         result->source_rank=(uint8_t)rank;result->destination_rank=work->source_rank;
-        result->contributor_mask=(uint8_t)(1u<<rank);
+        result->contributor_mask=(uint16_t)(1u<<rank);
         result->first_position=work->first_position;result->token_count=work->token_count;
         result->pair_count=work->pair_count;result->pairs=pair_storage;
         result->outputs=output_storage;

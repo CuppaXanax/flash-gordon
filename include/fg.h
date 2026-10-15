@@ -10,7 +10,10 @@
 #define FG_PROTOCOL_MIN_VERSION 5u
 #define FG_PROTOCOL_VERSION 6u
 #define FG_PROTOCOL_MAX_VERSION FG_PROTOCOL_VERSION
-#define FG_RANK_COUNT 8u
+#define FG_MAX_RANK_COUNT 16u
+#define FG_DEFAULT_RANK_COUNT 8u
+#define FG_RANK_COUNT (fg_rank_count())
+#define FG_OUTPUT_RANK (fg_rank_count()==8u?4u:fg_rank_count()-1u)
 #define FG_LAYER_COUNT 48u
 #define FG_EXPERT_COUNT 512u
 #define FG_EXPERTS_PER_RANK 128u
@@ -31,7 +34,7 @@
 #define FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_256_NAME "native-262k-microbatch-256"
 #define FG_RUNTIME_PROFILE_NATIVE_262K_PAGE_CACHE_BYTES (UINT64_C(16) << 20u)
 /* Preserve the sealed manifest ABI; retired stage fields must be zero. */
-#define FG_RESERVED_LAYER_OFFSETS (FG_RANK_COUNT + 1u)
+#define FG_RESERVED_LAYER_OFFSETS (FG_MAX_RANK_COUNT + 1u)
 #define FG_PACK_RANK_TRANSIENT_BYTES (UINT64_C(512) << 20u)
 #define FG_PACK_DRIVER_RESERVE_BYTES (UINT64_C(512) << 20u)
 #define FG_PERSISTENT_CAP_BYTES UINT64_C(11166914969) /* 10.4 GiB */
@@ -60,6 +63,8 @@ typedef struct fg_error {
 } fg_error;
 
 void fg_error_set(fg_error *err, fg_status code, const char *fmt, ...);
+uint32_t fg_rank_count(void);
+fg_status fg_rank_count_set(uint32_t count, fg_error *err);
 uint64_t fg_align_up_u64(uint64_t value, uint64_t alignment);
 bool fg_is_aligned_u64(uint64_t value, uint64_t alignment);
 

@@ -1,10 +1,11 @@
 # Flash Gordon
 
-Flash Gordon is a Linux-only C17 inference appliance specialized for Qwen3.8-Flash-Next on eight BC250 blades. It deliberately has no generic-model compatibility layer.
+Flash Gordon is a Linux-only C17 inference appliance specialized for Qwen3.8-Flash-Next on BC250 blades. Eight ranks remain the qualified default; runtime-configurable rings support 4, 6, 8, 12 or 16 ranks. It deliberately has no generic-model compatibility layer.
 
-The sole runtime uses expert parallelism: the coordinator executes the common
-graph and dispatches routed experts to their owning blades. Pipeline parallelism
-has been removed; retired packs are rejected and must be repacked for EP.
+The default runtime uses an owner-local layer ring, retaining the expert-parallel
+execution/manifest contract and compatibility path. Retired pipeline-format
+packs are still rejected. See [N_RANK.md](docs/N_RANK.md) for lossless packed-weight
+repacking, twelve-blade deployment commands, head placement and memory gates.
 The product contract and remaining implementation work are in [PRD.md](PRD.md).
 
 The current operating point is summarized in

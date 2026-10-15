@@ -104,8 +104,8 @@ fg_status fg_manifest_validate_tensor_storage(const fg_manifest *manifest,fg_err
         fg_error_set(err,FG_ERR_OOM,"allocate tensor range validation");
         return FG_ERR_OOM;
     }
-    uint32_t range_count=0u,rank_counts[FG_RANK_COUNT]={0};
-    uint64_t high_water[FG_RANK_COUNT]={0};
+    uint32_t range_count=0u,rank_counts[FG_MAX_RANK_COUNT]={0};
+    uint64_t high_water[FG_MAX_RANK_COUNT]={0};
     for(uint32_t i=0;i<manifest->tensor_count;i++){
         const fg_tensor_record *record=&manifest->tensors[i];uint64_t expected=0u;
         fg_status status=fg_tensor_record_expected_bytes(record,&expected,err);
@@ -215,6 +215,13 @@ static uint64_t runtime_scratch_bytes(uint32_t rank,uint32_t microbatch,uint32_t
 }
 
 uint64_t fg_q38_runtime_scratch_bytes(uint32_t rank,uint32_t microbatch,uint32_t window,uint32_t max_context){
+    if(FG_RANK_COUNT!=8u){
+        bool qsa=false;
+        for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
+            if(layer/(FG_LAYER_COUNT/FG_RANK_COUNT)==rank)qsa=true;
+        return runtime_scratch_bytes(rank,microbatch,window,max_context,
+                                     rank==0u,qsa,rank==FG_OUTPUT_RANK);
+    }
     return runtime_scratch_bytes(rank,microbatch,window,max_context,rank==1u,
                                  rank==3u||rank==7u,rank==4u);
 }
@@ -222,8 +229,15 @@ uint64_t fg_q38_runtime_scratch_bytes(uint32_t rank,uint32_t microbatch,uint32_t
 uint64_t fg_q38_runtime_scratch_bytes_for_manifest(const fg_manifest *manifest,
                                                    uint32_t rank,uint32_t microbatch,
                                                    uint32_t window,uint32_t max_context){
-    if(!manifest)return UINT64_MAX;
-    return fg_q38_runtime_scratch_bytes(rank,microbatch,window,max_context);
+    if(!manifest||rank>=manifest->rank_count)return UINT64_MAX;
+    /* The legacy ledger is part of the eight-rank pack identity. */
+    if(manifest->rank_count==8u)
+        return fg_q38_runtime_scratch_bytes(rank,microbatch,window,max_context);
+    bool qsa=false;
+    for(uint32_t layer=3u;layer<FG_LAYER_COUNT;layer+=4u)
+        if(manifest->layer_owner[layer]==rank)qsa=true;
+    return runtime_scratch_bytes(rank,microbatch,window,max_context,
+        manifest->layer_owner[1u]==rank,qsa,rank==manifest->rank_count-1u);
 }
 
 typedef struct tensor_spec {
@@ -356,14 +370,7 @@ static bool digest_nonzero(const uint8_t digest[32]){
 
 static bool canonical_ngram_rank_range(uint32_t rank,uint64_t *row_begin,
                                        uint64_t *row_count){
-    static const uint64_t begin[FG_RANK_COUNT]={
-        0u,0u,46666896u,93333792u,140000688u,180000846u,226667743u,273334639u
-    };
-    static const uint64_t count[FG_RANK_COUNT]={
-        0u,46666896u,46666896u,46666896u,40000158u,46666897u,46666896u,46666897u
-    };
-    if(rank==0u||rank>=FG_RANK_COUNT)return false;
-    *row_begin=begin[rank];*row_count=count[rank];return true;
+    return fg_q38_ngram_rank_range(rank,row_begin,row_count,NULL)==FG_OK;
 }
 
 fg_status fg_q38_validate_ngram_shards(const fg_manifest *manifest,fg_error *err){
@@ -411,7 +418,7 @@ fg_status fg_q38_validate_ngram_shards(const fg_manifest *manifest,fg_error *err
         return FG_ERR_MISMATCH;
     }
     uint64_t next_row=0u;
-    bool seen[FG_RANK_COUNT]={0};
+    bool seen[FG_MAX_RANK_COUNT]={0};
     for(uint32_t i=0;i<manifest->ngram_shard_count;i++){
         const fg_ngram_shard_record *record=&manifest->ngram_shards[i];
         uint32_t rank=record->logical_rank;
@@ -551,7 +558,7 @@ fg_status fg_q38_validate_packed_manifest(const fg_manifest *m,fg_error *err){
         if(r->layer<FG_LAYER_COUNT&&r->kind==FG_TENSOR_COMMON&&r->rank!=m->layer_owner[r->layer]){
             free(names);free(synthetic.tensors);fg_error_set(err,FG_ERR_MISMATCH,"owner tensor %s is on rank %u, expected %u",r->name,r->rank,m->layer_owner[r->layer]);return FG_ERR_MISMATCH;
         }
-        uint32_t terminal_rank=4u;
+        uint32_t terminal_rank=FG_OUTPUT_RANK;
         if(strcmp(r->name,"token_embd.weight")==0){
             bool storage_ok=r->kind==FG_TENSOR_COMMON&&r->layout==FG_TENSOR_LAYOUT_GGML;
             if(!storage_ok){free(names);free(synthetic.tensors);fg_error_set(err,FG_ERR_MISMATCH,"token embedding storage is invalid");return FG_ERR_MISMATCH;}

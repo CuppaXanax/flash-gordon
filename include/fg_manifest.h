@@ -6,7 +6,7 @@
 #define FG_MANIFEST_MAGIC UINT64_C(0x314d47464e574f51) /* QOWNFGM1 */
 #define FG_MANIFEST_LEGACY_FORMAT_VERSION 4u
 #define FG_MANIFEST_SESSION_FORMAT_VERSION 5u
-#define FG_MANIFEST_FORMAT_VERSION 6u
+#define FG_MANIFEST_FORMAT_VERSION (FG_RANK_COUNT==8u?6u:7u)
 #define FG_MANIFEST_CONTRACT_VERSION 1u
 #define FG_MANIFEST_DEFAULT_CONTEXT_TOKENS 8192u
 #define FG_MAX_TENSORS 4096u
@@ -99,7 +99,7 @@ typedef struct fg_manifest_contract {
     uint8_t quantization_sha256[32];
     uint8_t state_format_sha256[32];
     uint8_t component_sha256[FG_COMPONENT_COUNT][32];
-    uint8_t rank_state_format_sha256[FG_RANK_COUNT][32];
+    uint8_t rank_state_format_sha256[FG_MAX_RANK_COUNT][32];
     uint32_t logical_context_tokens;
     uint8_t reserved[60];
 } fg_manifest_contract;
@@ -135,7 +135,7 @@ typedef struct fg_manifest {
     uint8_t source_sha256[32];
     uint8_t quant_profile_sha256[32];
     uint8_t manifest_sha256[32];
-    fg_rank_record ranks[FG_RANK_COUNT];
+    fg_rank_record ranks[FG_MAX_RANK_COUNT];
     uint8_t layer_owner[FG_LAYER_COUNT];
     uint8_t layer_groups[FG_LAYER_COUNT][FG_GROUP_SIZE];
     uint16_t expert_rank[FG_LAYER_COUNT][FG_EXPERT_COUNT];
@@ -143,20 +143,49 @@ typedef struct fg_manifest {
     fg_manifest_contract session;
     uint32_t execution_mode;
     uint32_t stage_count;
-    uint8_t stage_ranks[FG_RANK_COUNT];
+    uint8_t stage_ranks[FG_MAX_RANK_COUNT];
     uint32_t layer_offsets[FG_RESERVED_LAYER_OFFSETS];
     uint32_t slot_count;
     uint8_t topology_sha256[32];
     uint8_t topology_reserved[32];
     uint32_t ngram_shard_count;
     uint32_t deployment_reserved;
-    fg_ngram_shard_record ngram_shards[FG_NGRAM_SHARD_COUNT];
-    uint64_t host_resident_bytes[FG_RANK_COUNT];
+    fg_ngram_shard_record ngram_shards[FG_MAX_RANK_COUNT-1u];
+    uint64_t host_resident_bytes[FG_MAX_RANK_COUNT];
 } fg_manifest;
 
-#define FG_MANIFEST_V4_BYTES ((size_t)offsetof(fg_manifest, session))
-#define FG_MANIFEST_V5_BYTES ((size_t)offsetof(fg_manifest, execution_mode))
-#define FG_MANIFEST_SIZE ((size_t)sizeof(fg_manifest))
+/* v4-v6 retain their original eight-rank disk ABI. */
+typedef struct fg_manifest_wire8_contract {
+    uint8_t prefix[offsetof(fg_manifest_contract,rank_state_format_sha256)];
+    uint8_t rank_state_format_sha256[8][32];
+    uint32_t logical_context_tokens;
+    uint8_t reserved[60];
+} fg_manifest_wire8_contract;
+
+typedef struct fg_manifest_wire8 {
+    uint8_t prefix[offsetof(fg_manifest,ranks)];
+    fg_rank_record ranks[8];
+    uint8_t layer_owner[FG_LAYER_COUNT];
+    uint8_t layer_groups[FG_LAYER_COUNT][FG_GROUP_SIZE];
+    uint16_t expert_rank[FG_LAYER_COUNT][FG_EXPERT_COUNT];
+    fg_tensor_record tensors[FG_MAX_TENSORS];
+    fg_manifest_wire8_contract session;
+    uint32_t execution_mode;
+    uint32_t stage_count;
+    uint8_t stage_ranks[8];
+    uint32_t layer_offsets[9];
+    uint32_t slot_count;
+    uint8_t topology_sha256[32];
+    uint8_t topology_reserved[32];
+    uint32_t ngram_shard_count;
+    uint32_t deployment_reserved;
+    fg_ngram_shard_record ngram_shards[7];
+    uint64_t host_resident_bytes[8];
+} fg_manifest_wire8;
+
+#define FG_MANIFEST_V4_BYTES ((size_t)offsetof(fg_manifest_wire8,session))
+#define FG_MANIFEST_V5_BYTES ((size_t)offsetof(fg_manifest_wire8,execution_mode))
+#define FG_MANIFEST_SIZE (FG_RANK_COUNT==8u?sizeof(fg_manifest_wire8):sizeof(fg_manifest))
 
 void fg_manifest_init(fg_manifest *manifest);
 fg_status fg_manifest_validate(const fg_manifest *manifest, fg_error *err);
