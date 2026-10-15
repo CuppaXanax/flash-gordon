@@ -69,7 +69,7 @@ struct fg_vk_context {
     fg_vk_memory_stats memory_stats;
     fg_vk_profile_dispatch profile_dispatches[FG_VK_PROFILE_MAX_DISPATCHES];fg_vk_profile profile;
     fg_vk_kernel quant_q8k,quant_q8,quant_q4,dequant_iq4nl,embedding,embedding_batch,swiglu,silu_scaled,dense,dense_f32,dense_bf16,rms,gr,hc_inject_partial,gr_partial,hc_finalize,gr_write,ple_gate,ple_gate_prefill,ple_conv,ple_conv_prefill,ple_conv_add,add,apply_penalties,gdn_conv,gdn_conv_prefill,gdn_recurrent,gdn_recurrent_algebraic,gdn_recurrent_prefill,gdn_prefill_qk_norm,gdn_prefill_recurrence,gdn_prefill_output,qsa_prepare,qsa_prepare_prefill,qsa_index_prepare,qsa_index_prepare_prefill,qsa_record_commit,qsa_record_gather,qsa_score,qsa_attention,qsa_attention_split,qsa_decode_attention_split,qsa_attention_merge,qsa_attention_split_batch,qsa_attention_merge_batch,qsa_record_gather_batch,qsa_select_resolve,qsa_resident_commit,qsa_resident_select,qsa_resident_merge,qsa_resident_attention,topk_v2,topk_select,topk_select_fallback,moe_q5_1,moe_q5_1_cooked,moe_q8_0,moe_q8_0_cooked,moe_reduce,kquant,kquant_cooked;
-    fg_vk_kernel argmax,dense_subgroup,dense_cooked,dense_cooked_r8,dense_quant[21];
+    fg_vk_kernel argmax,dense_subgroup,dense_cooked,dense_cooked_r8,dense_quant[37];
     /* Decomposition benchmark kernels */
     fg_vk_kernel bench_stream,bench_dequant,bench_dot_nored;
     fg_vk_kernel dense_cooked_split,dense_cooked_split_reduce,dense_cooked_split_reduce_silu;
@@ -153,7 +153,7 @@ static fg_status read_shader(const char *file,uint32_t **words,size_t *bytes,fg_
 
 static void destroy_kernel(fg_vk_context *context,fg_vk_kernel *kernel){
     if(kernel==&context->dense)
-        for(uint32_t i=0;i<21u;i++)destroy_kernel(context,&context->dense_quant[i]);
+        for(uint32_t i=0;i<37u;i++)destroy_kernel(context,&context->dense_quant[i]);
     if(kernel==&context->moe_q5_1)destroy_kernel(context,&context->moe_q5_1_cooked);
     if(kernel==&context->kquant)destroy_kernel(context,&context->kquant_cooked);
     if(kernel==&context->dense_cooked)destroy_kernel(context,&context->dense_cooked_r8);
@@ -757,25 +757,30 @@ fg_status fg_vk_dense_quant(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tenso
                             const fg_vk_tensor *x,uint32_t in,uint32_t rows,
                             uint32_t tokens,float scale,fg_error *err){
     uint32_t type=0u,block=256u,bytes=0u;
-    bool soa=w&&w->format>=FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K&&
-        w->format<=FG_VK_TENSOR_FORMAT_DENSE_SOA_IQ4_NL;
+    bool compact=w&&w->format>=FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K&&
+        w->format<=FG_VK_TENSOR_FORMAT_DENSE_COMPACT_IQ4_NL;
+    bool soa=w&&((w->format>=FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K&&
+        w->format<=FG_VK_TENSOR_FORMAT_DENSE_SOA_IQ4_NL)||compact);
     bool cooked=w&&(w->format==FG_VK_TENSOR_FORMAT_DENSE_Q4_K_COOKED||
                     w->format==FG_VK_TENSOR_FORMAT_DENSE_Q5_K_COOKED);
     if(w)switch(w->format){
+        case FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K:
         case FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K:
         case FG_VK_TENSOR_FORMAT_DENSE_Q4_K_COOKED:
         case FG_VK_TENSOR_FORMAT_Q4_K:type=12u;bytes=144u;break;
         case FG_VK_TENSOR_FORMAT_DENSE_SOA_Q5_K:
+        case FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q5_K:
         case FG_VK_TENSOR_FORMAT_DENSE_Q5_K_COOKED:
         case FG_VK_TENSOR_FORMAT_Q5_K:type=13u;bytes=176u;break;
         case FG_VK_TENSOR_FORMAT_Q6_K:type=14u;bytes=210u;break;
         case FG_VK_TENSOR_FORMAT_DENSE_SOA_IQ4_NL:
+        case FG_VK_TENSOR_FORMAT_DENSE_COMPACT_IQ4_NL:
         case FG_VK_TENSOR_FORMAT_IQ4_NL:type=20u;block=32u;bytes=18u;break;
         default:break;
     }
     uint64_t row_bytes=(uint64_t)(in/block)*bytes;
     if(!c||!type||!in||in%block||!rows||!tokens||(cooked&&rows%FG_K_QUANT_COOK_ROWS)||row_bytes>UINT32_MAX||
-       !tensor_range(w,0,soa?fg_dense_soa_bytes(in,rows,type):row_bytes*rows)||
+       !tensor_range(w,0,compact?fg_dense_compact_bytes(in,rows,type):soa?fg_dense_soa_bytes(in,rows,type):row_bytes*rows)||
        !tensor_range(x,0,(uint64_t)in*tokens*4u)||
        !tensor_range(out,0,(uint64_t)rows*tokens*4u)){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid quantized dense dispatch");
@@ -791,7 +796,13 @@ fg_status fg_vk_dense_quant(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tenso
         "fg_dense_soa_q5_r4.spv","fg_dense_soa_long.spv","fg_dense_soa_mid.spv",
         "fg_dense_soa_tile.spv","fg_dense_soa_q5_tile.spv","fg_dense_soa_iq4_tile.spv",
         "fg_dense_soa_tile8.spv","fg_dense_soa_q5_tile8.spv","fg_dense_soa_iq4_tile8.spv",
-        "fg_dense_soa_tile16.spv","fg_dense_soa_q5_tile16.spv","fg_dense_soa_iq4_tile16.spv"};
+        "fg_dense_soa_tile16.spv","fg_dense_soa_q5_tile16.spv","fg_dense_soa_iq4_tile16.spv",
+        "fg_dense_compact.spv","fg_dense_compact_q5.spv","fg_dense_compact_iq4.spv",
+        "fg_dense_compact_r4.spv","fg_dense_compact_q5_r4.spv","fg_dense_compact_long.spv",
+        "fg_dense_compact_mid.spv","fg_dense_compact_tile.spv","fg_dense_compact_q5_tile.spv",
+        "fg_dense_compact_iq4_tile.spv","fg_dense_compact_tile8.spv","fg_dense_compact_q5_tile8.spv",
+        "fg_dense_compact_iq4_tile8.spv","fg_dense_compact_tile16.spv",
+        "fg_dense_compact_q5_tile16.spv","fg_dense_compact_iq4_tile16.spv"};
     uint32_t row_tile=soa?8u:4u;
     uint32_t token_tile=tokens<=8u?8u:tokens<=16u?16u:32u;
     if(soa){
@@ -802,8 +813,22 @@ fg_status fg_vk_dense_quant(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tenso
         if(tokens>1u)index=(type==12u?12u:type==13u?13u:14u)+
             (token_tile==8u?3u:token_tile==16u?6u:0u);
     }
+    const char *file=files[index];
+    if(compact){
+        index+=16u;file=files[index];
+        if(type==20u&&tokens==1u){
+            row_tile=4u;
+            const char *variant=getenv("FG_BENCH_IQ_VARIANT");
+            if(variant){
+                if(strcmp(variant,"r4w32")==0){file="fg_dense_compact_iq4_r4w32.spv";row_tile=4u;}
+                else if(strcmp(variant,"r8w32")==0){file="fg_dense_compact_iq4_r8w32.spv";row_tile=8u;}
+                else if(strcmp(variant,"r4w128")==0){file="fg_dense_compact_iq4_r4w128.spv";row_tile=4u;}
+                else if(strcmp(variant,"r8w128")==0){file="fg_dense_compact_iq4_r8w128.spv";row_tile=8u;}
+            }
+        }
+    }
     if(!c->dense_quant[index].file)c->dense_quant[index]=(fg_vk_kernel){
-        .file=files[index],.bindings=3,.push_bytes=24};
+        .file=file,.bindings=3,.push_bytes=24};
     return dispatch(c,&c->dense_quant[index],bindings,&push,
         soa&&tokens>1u?(rows+63u)/64u:(rows+row_tile-1u)/row_tile,
         soa&&tokens>1u?(tokens+token_tile-1u)/token_tile:tokens,1u,err);

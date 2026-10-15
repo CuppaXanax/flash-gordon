@@ -2,6 +2,9 @@ layout(local_size_x=256) in;
 #ifndef TK
 #define TK 32
 #endif
+#ifndef COMPACT
+#define COMPACT 0
+#endif
 layout(set=0,binding=0) readonly buffer Weights { uint w[]; };
 layout(set=0,binding=1) readonly buffer Input { float x[]; };
 layout(set=0,binding=1) readonly buffer InputVector { vec4 x4[]; };
@@ -18,17 +21,17 @@ shared float grid_table[16];
 
 float dequant(uint row,uint group,uint i){
     uint groups=pc.input_width/32u;
-    uint tile=(row/8u)*groups*(TYPE==13?56u:TYPE==20?36u:48u),r=row&7u;
+    uint tile=(row/8u)*groups*(TYPE==13?(COMPACT!=0?45u:56u):TYPE==20?36u:(COMPACT!=0?37u:48u)),r=row&7u;
     uint q=0u;
     if(TYPE==13){
         uint bit=((i&15u)/4u)*40u+((i&3u)+(i/16u)*4u)*5u;
-        uint off=tile+groups*16u+(r*groups+group)*5u+(bit/32u);
+        uint off=tile+groups*(COMPACT!=0?5u:16u)+(r*groups+group)*5u+(bit/32u);
         uint shift=bit&31u;
         q=w[off]>>shift;
         if(shift>27u)q|=w[off+1u]<<(32u-shift);
         q&=31u;
     }else{
-        uint off=tile+groups*(TYPE==20?4u:16u)+(r*groups+group)*4u+((i&15u)/4u);
+        uint off=tile+groups*(TYPE==20?4u:COMPACT!=0?5u:16u)+(r*groups+group)*4u+((i&15u)/4u);
         q=(w[off]>>((i&3u)*8u+(i/16u)*4u))&15u;
     }
     if(TYPE==20){
@@ -38,6 +41,11 @@ float dequant(uint row,uint group,uint i){
 #endif
     }
     uint meta=tile+group*16u+r;
+    if(COMPACT!=0){
+        vec2 bases=unpackHalf2x16(w[tile+(group/8u)*8u+r]);
+        uint codes=w[tile+groups+group*4u+r/2u]>>((r&1u)*16u);
+        return (bases.x*float(codes&255u))*float(q)-bases.y*float((codes>>8u)&255u);
+    }
     return uintBitsToFloat(w[meta])*float(q)-uintBitsToFloat(w[meta+8u]);
 }
 

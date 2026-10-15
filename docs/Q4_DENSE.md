@@ -1,10 +1,14 @@
 # Experimental Q4 dense overlay
 
 **Kernel gate passed for ordinary Q4; NO-GO for deployment pending quality.**
-The exact SoA implementation beats paired cooked Q8 on all nine non-head
-GEMV shapes in three runs on `.51`, and all 63 prefill comparisons at
-N=8,16,32,64,128,256,512. The Q6 vocabulary head still loses; retain Q8 there.
-The protected Q5 plan is not a universal win. See
+The selected exact compact/wide implementation beats paired cooked Q8 on all
+nine non-head GEMV shapes in three warmed runs on **both `.51` and `.52`**,
+and all 63 prefill comparisons per blade at N=8,16,32,64,128,256,512.
+The protected Q5 variant also passes its nine GEMV comparisons on both blades;
+protected prefill was not requalified. The Q6 head still loses; retain Q8.
+See [`q4-compact.md`](../results/hillclimb/q4-compact.md) for the follow-up,
+single-copy sealed packs, staging commands, and the blocked live memory ledger.
+Historical wide-layout results remain in
 [`q4-kernels.md`](../results/hillclimb/q4-kernels.md) and its JSON evidence.
 The older ~93 GB/s cooked Q4/Q5 and ~65 GB/s Q6 results describe the superseded
 interleaved kernels, not the new SoA path. These are synthetic GPU timestamp
@@ -34,21 +38,30 @@ No native int8 dot is used.
 8-row interleave, without changing on-disk GGUF bytes. The sliced vocabulary
 head remains raw. Default Q8 cooking is unchanged.
 
-### Exact SoA runtime path
+### Exact persisted SoA path (recommended)
 
-`FG_DENSE_SOA=1` selects the new layout for eligible common Q4_K, Q5_K, and
-IQ4_NL matrices; leave the older cooking flag unset. Embedding and output
-weights are excluded. Eight-row tiles store metadata separately from contiguous
-row-local quant streams. Q4_K expands to 24 bytes/32 weights, Q5_K to 28, and
-IQ4_NL retains 18. K-quant group scale/minimum products are exact FP32; IQ4
-keeps the original half-scale bits. No source dequantized value changes.
+`q4-repack --cook-dense --keep-q8-head` writes the selected GPU layout directly
+into the pack, with sealed tensor hashes and layout tags. The loader creates
+views into its verified weight arena: **no raw dense GPU copy, second dense
+allocation, or load-time recooking**. This remains true with legacy
+`FG_DENSE_SOA=1` accidentally set. Old executables reject these new layouts.
+Embedding and output weights are excluded.
 
-This is load-time cooking into **additional** Vulkan buffers, not an on-disk
-SoA pack. The verified raw arenas remain allocated; `fg_model_weight_bytes`
-includes the extra buffers, and exceeding the manifest's persistent cap is
-refused. Do not extrapolate the historical 4.4–4.9 GB/token ledger to this
-expanded format or its resident memory. Loader tests cover all three types,
-untouched embedding/head, cooked bytes/accounting, and cap refusal.
+Eight-row tiles retain contiguous quant streams and separate metadata.
+Compact Q4_K uses **18.5 bytes/32 weights (4.625 bpw)**; Q5_K uses **22.5
+(5.625 bpw)**. Original half d/dmin bits are shared by each 256-value block,
+with byte scale/min codes per 32-value group. Products are reconstructed
+exactly in FP32. IQ4_NL keeps its 18-byte layout and improved small-shape
+kernel. K=2560/M=640 or 512 retains wide Q4_K 24-byte/Q5_K 28-byte metadata,
+which wins those GEMVs. Selection is per stored matrix, not duplicated storage.
+Compact prefill remains faster than Q8, but can be slower than wide prefill.
+
+Legacy `FG_DENSE_SOA=1` on **raw** packs still cooks into additional buffers;
+it is an experimental compatibility path, not the deployment solution.
+Use the persisted path and leave both runtime cooking flags unset.
+Loader tests cover all three types, sealed roundtrips, every small-case
+row/token, ordinary and replicated loads, exact arena accounting/caps, and
+hash corruption. Do not extrapolate the historical 4.4–4.9 GB/token ledger.
 
 The measured ordinary plan uses Q4_K for every 256-aligned projection and
 IQ4_NL for K=320/640. It is not permission to downgrade protected projections
@@ -105,9 +118,26 @@ standalone serving packs**. Use a new directory; never overwrite the baseline.
 Keep the original pack: external tokenizer/ngram/host-cache files are symlinked
 to its absolute paths.
 
-After obtaining a fleet lease, transfer this branch/build and the chosen dense
-GGUF to every owner. Stop candidate workers before repacking. On each owner,
-substitute its actual rank (derive ranks from the manifest, not IP arithmetic):
+After `.42`–`.49` are released, these exact PowerShell commands stage all eight
+owner-local packs without starting/stopping workers or changing services:
+
+```powershell
+Set-Location D:\looking-glass-labs\fg-wt\q4-dense
+git archive --format=tar --output=.\q4-stage.tar HEAD
+& .\tools\q4-stage-pack.ps1 -SourceArchive .\q4-stage.tar `
+  -OutputDir .\results\q4-stage-compact -Label q4-compact -AfterLease
+```
+
+**Do not run this now.** Without `-AfterLease`, it refuses before any network
+access. It retrieves the preserved `.53` overlay, checks transfer hashes,
+discovers the baseline manifest, builds on every owner, validates identical
+source manifests and six layers/rank, derives ranks from manifest endpoints,
+cooks/seals each pack, and requires identical candidate manifest hashes.
+`preflight.json` and `staged.json` retain per-rank byte ledgers. Offline tests
+mock every network call and cover mismatched hashes and non-IP-order ranks.
+Full owner-local repacking still needs the actual baseline and quality gates.
+
+For manual single-owner staging only, substitute its manifest-derived rank:
 
 ```sh
 cd /home/xander/hc-q4/code
@@ -117,7 +147,10 @@ old=/home/xander/fg-ring-pack-abliterated
 manifest="$old/manifest.fgm"
 rank=0
 ./tools/q4-repack "$manifest" "$old" /home/xander/hc-q4/dense-q4.gguf \
-  /home/xander/hc-q4/pack-q4 "$rank" --keep-q8-head
+  /home/xander/hc-q4/pack-q4 "$rank" --keep-q8-head --cook-dense
+# Read-only planning: no output created; does not verify source payloads/routers.
+./tools/q4-repack "$manifest" "$old" /home/xander/hc-q4/dense-q4.gguf \
+  /home/xander/hc-q4/unused --keep-q8-head --cook-dense --plan
 ```
 
 The manifest basename above is an example, not a claim about the deployment.
@@ -215,10 +248,14 @@ router, embedding, HC, ngram, and PLE oracles before crashing in
 Vulkan, loader, output, and test sources (exit 139). Therefore **no full-suite
 pass is claimed**. All eight Python/native-quantizer tests pass on `.53`.
 
-**Remaining gates/limitations:** the ordinary kernel latency gate now passes
-on `.51`, not the protected Q5/head variants or a final 24-CU validation.
-The ≥300 GB/s goal is reached on only two large shapes using expanded cooked
-bytes; no Q4 shape reaches it using original compressed bytes.
+**Remaining gates/limitations:** the compact ordinary latency gate passes on
+both 40-CU `.51` and 24-CU `.52`; Q5 GEMV passes, but the Q6 head stays Q8.
+Compact reaches ~308 GB/s cooked and ~300 GB/s source on K=6144/M=2560
+on `.51`; most shapes remain below the 300 GB/s goal. Exact live eight-rank
+totals are unavailable: the baseline pack is absent on all permitted blades,
+and no cached full manifest was found. The new planner reports exact aligned
+weights and manifest residency budgets once that manifest is available;
+it does not measure live scratch/KV/driver allocation.
 Packed-FP16 MMQ remains future work. Deployment still requires
 real-pack source/identity and exact-router proof;
 complete ring startup and logits capture; KLD/top-1, router-top10, existing

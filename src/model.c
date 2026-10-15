@@ -63,6 +63,14 @@ static fg_status build_tensor_lookup(fg_model *model,fg_error *err){
         const fg_tensor_record *record=&model->manifest->tensors[i];
         if(record->kind==FG_TENSOR_COMMON&&record->dims==2u&&model->tensor[i]){
             fg_vk_tensor_format format=fg_vk_dense_format(record->ggml_type);
+            if(record->layout==FG_TENSOR_LAYOUT_DENSE_SOA||
+               record->layout==FG_TENSOR_LAYOUT_DENSE_COMPACT){
+                format=(fg_vk_tensor_format)((record->layout==FG_TENSOR_LAYOUT_DENSE_COMPACT?
+                    FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K:FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K)+
+                    (record->ggml_type==12u?0u:record->ggml_type==13u?1u:2u));
+                fg_vk_tensor_set_format(model->tensor[i],format);
+                continue;
+            }
             const char *cook=getenv("FG_DENSE_K_COOKED");
             const char *soa=getenv("FG_DENSE_SOA");
             if(soa&&strcmp(soa,"1")==0&&record->layout==FG_TENSOR_LAYOUT_GGML&&

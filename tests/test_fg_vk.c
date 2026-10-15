@@ -54,13 +54,18 @@ static float dense_quant_oracle(const uint8_t *p,uint32_t type,uint32_t col){
 
 static bool dense_test_cooked;
 static bool dense_test_soa;
+static bool dense_test_compact;
 static bool dense_soa_enabled(void){return dense_test_soa||getenv("FG_BENCH_DENSE_SOA");}
+static bool dense_compact_enabled(void){return dense_test_compact||getenv("FG_BENCH_DENSE_COMPACT");}
 
 static int quant_dense_shape(uint32_t type,uint32_t in,uint32_t rows,uint32_t tokens,bool bench){
+    bool compact=dense_compact_enabled()&&(!bench||!getenv("FG_BENCH_DENSE_SELECTED")||
+        fg_dense_prefer_compact(in,rows,type));
     uint32_t block=type==20u?32u:256u,bs=type==12u?144u:type==13u?176u:type==14u?210u:18u;
     uint64_t row_bytes=(uint64_t)(in/block)*bs,bytes=row_bytes*rows;
     fg_vk_tensor *w=tensor(NULL,bytes),*x=tensor(NULL,(uint64_t)in*tokens*4u),*y=tensor(NULL,(uint64_t)rows*tokens*4u);
     fg_vk_tensor *cooked=NULL;
+    fg_vk_tensor *prior=NULL;
     uint8_t *weights=NULL;
     float *input=NULL;
     int ok=w&&x&&y;
@@ -80,13 +85,14 @@ static int quant_dense_shape(uint32_t type,uint32_t in,uint32_t rows,uint32_t to
     if(!input){ok=0;goto done;}
     for(uint32_t i=0;i<in*tokens;i++)input[i]=sinf((float)(i+3u)*0.013f);
     ok=ok&&fg_vk_tensor_write(x,0,input,(uint64_t)in*tokens*4u,&error)==FG_OK;
-    if(dense_soa_enabled()&&type!=14u){
-        uint64_t size=fg_dense_soa_bytes(in,rows,type);
+    if((dense_soa_enabled()||dense_compact_enabled())&&type!=14u){
+        uint64_t size=compact?fg_dense_compact_bytes(in,rows,type):fg_dense_soa_bytes(in,rows,type);
         cooked=tensor(NULL,size);
         void *packed=malloc((size_t)size);
-        ok=ok&&cooked&&packed&&fg_cook_dense_soa(weights,packed,size,in,rows,type)&&
+        ok=ok&&cooked&&packed&&(compact?fg_cook_dense_compact(weights,packed,size,in,rows,type):
+            fg_cook_dense_soa(weights,packed,size,in,rows,type))&&
             fg_vk_tensor_write(cooked,0,packed,size,&error)==FG_OK;
-        if(ok&&type==13u){
+        if(ok&&type==13u&&!compact){
             const uint8_t *data=packed;
             uint32_t groups=in/32u;
             for(uint32_t col=0;ok&&col<in;col++){
@@ -99,9 +105,36 @@ static int quant_dense_shape(uint32_t type,uint32_t in,uint32_t rows,uint32_t to
                 if(got!=ref){fprintf(stderr,"CPU SoA col=%u got=%g ref=%g\n",col,got,ref);ok=0;}
             }
         }
+        if(ok&&compact&&type!=20u){
+            const uint8_t *data=packed;uint32_t groups=in/32u;
+            for(uint32_t col=0;ok&&col<in;col++){
+                uint32_t g=col/32u,j=col%32u;
+                uint16_t d,dm;memcpy(&d,data+(g/8u)*32u,2u);memcpy(&dm,data+(g/8u)*32u+2u,2u);
+                uint64_t meta=(uint64_t)groups*4u+g*16u,quant=(uint64_t)groups*20u+g*(type==12u?16u:20u);
+                uint32_t q;
+                if(type==12u)q=(data[quant+j%16u]>>((j/16u)*4u))&15u;
+                else{
+                    uint64_t bits=0u;quant+=(j%16u)/4u*5u;
+                    for(uint32_t b=0;b<5u;b++)bits|=(uint64_t)data[quant+b]<<(b*8u);
+                    q=(uint32_t)((bits>>((j%4u+(j/16u)*4u)*5u))&31u);
+                }
+                float got=(fg_f16_to_f32(d)*data[meta])*(float)q-fg_f16_to_f32(dm)*data[meta+1u];
+                if(got!=dense_quant_oracle(weights,type,col)){fprintf(stderr,"compact CPU mismatch col=%u\n",col);ok=0;}
+            }
+        }
         free(packed);
-        if(cooked)fg_vk_tensor_set_format(cooked,type==12u?FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K:
-            type==13u?FG_VK_TENSOR_FORMAT_DENSE_SOA_Q5_K:FG_VK_TENSOR_FORMAT_DENSE_SOA_IQ4_NL);
+        if(cooked)fg_vk_tensor_set_format(cooked,(fg_vk_tensor_format)(
+            (compact?FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K:FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K)+
+            (type==12u?0u:type==13u?1u:2u)));
+        if(ok&&bench&&compact){
+            uint64_t oldbytes=fg_dense_soa_bytes(in,rows,type);
+            void *old=malloc((size_t)oldbytes);prior=tensor(NULL,oldbytes);
+            ok=prior&&old&&fg_cook_dense_soa(weights,old,oldbytes,in,rows,type)&&
+                fg_vk_tensor_write(prior,0,old,oldbytes,&error)==FG_OK;
+            if(prior)fg_vk_tensor_set_format(prior,(fg_vk_tensor_format)(
+                FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K+(type==12u?0u:type==13u?1u:2u)));
+            free(old);
+        }
     }else if((dense_test_cooked||getenv("FG_BENCH_DENSE_COOKED"))&&(type==12u||type==13u)){
         cooked=tensor(NULL,bytes);
         ok=cooked&&fg_cook_k_quant_rows(weights,fg_vk_tensor_map(cooked),bytes,in,rows,type);
@@ -109,7 +142,8 @@ static int quant_dense_shape(uint32_t type,uint32_t in,uint32_t rows,uint32_t to
             FG_VK_TENSOR_FORMAT_DENSE_Q4_K_COOKED:FG_VK_TENSOR_FORMAT_DENSE_Q5_K_COOKED);
     }
     fg_vk_tensor *active=cooked?cooked:w;
-    if(ok&&!bench&&tokens==1u&&type==13u&&dense_soa_enabled()){
+    if(ok&&!bench&&tokens==1u&&((type==13u&&dense_soa_enabled())||
+       ((type==12u||type==13u)&&dense_compact_enabled()))){
         for(uint32_t col=0;ok&&col<in;col++){
             memset(input,0,(size_t)in*4u);input[col]=1.0f;
             ok=fg_vk_tensor_write(x,0,input,(uint64_t)in*4u,&error)==FG_OK&&
@@ -161,32 +195,45 @@ static int quant_dense_shape(uint32_t type,uint32_t in,uint32_t rows,uint32_t to
             fg_vk_tensor_set_format(q8,FG_VK_TENSOR_FORMAT_Q8_0_COOKED);
         }
         if(in==2560u&&rows==10240u)
-            for(uint32_t i=0;ok&&i<2048u;i++)
-                ok=fg_vk_dense_q8_0_f32(context,y,active,x,in,rows,1u,0.75f,&error)==FG_OK;
+            for(uint32_t warm=0;ok&&warm<64u;warm++){
+                ok=fg_vk_begin(context,&error)==FG_OK;
+                for(uint32_t i=0;ok&&i<256u;i++)
+                    ok=fg_vk_dense_q8_0_f32(context,y,(i&1u)?q8:active,x,in,rows,1u,0.75f,&error)==FG_OK;
+                if(ok)ok=fg_vk_end(context,&error)==FG_OK;
+            }
         for(uint32_t i=0;ok&&i<3u;i++)
             ok=fg_vk_dense_q8_0_f32(context,y,active,x,in,rows,tokens,0.75f,&error)==FG_OK&&
                 fg_vk_dense_q8_0_f32(context,y,q8,x,in,rows,tokens,0.75f,&error)==FG_OK;
+        for(uint32_t i=0;ok&&prior&&i<3u;i++)
+            ok=fg_vk_dense_q8_0_f32(context,y,prior,x,in,rows,tokens,0.75f,&error)==FG_OK;
         if(ok)ok=fg_vk_profile_begin(context,&error)==FG_OK&&fg_vk_begin(context,&error)==FG_OK;
-        for(uint32_t i=0;ok&&i<iterations;i++)for(uint32_t j=0;ok&&j<2u;j++)
-            ok=fg_vk_dense_q8_0_f32(context,y,((i+j)&1u)?q8:active,x,in,rows,tokens,0.75f,&error)==FG_OK;
+        for(uint32_t i=0;ok&&i<iterations;i++)for(uint32_t j=0;ok&&j<(prior?3u:2u);j++){
+            const fg_vk_tensor *variants[]={active,prior,q8};
+            const fg_vk_tensor *v=prior?variants[(i+j)%3u]:((i+j)&1u)?q8:active;
+            ok=fg_vk_dense_q8_0_f32(context,y,v,x,in,rows,tokens,0.75f,&error)==FG_OK;
+        }
         if(ok)ok=fg_vk_end(context,&error)==FG_OK&&fg_vk_profile_end(context,&profile,&error)==FG_OK;
         if(ok){
-            double ms=0.0,q8ms=0.0;uint64_t candidate_count=0u,q8_count=0u;
+            double ms=0.0,q8ms=0.0,prior_ms=0.0;uint64_t candidate_count=0u,q8_count=0u,prior_count=0u;
             for(uint32_t i=0;i<profile.kernel_count;i++){
                 const fg_vk_profile_kernel *k=&profile.kernels[i];
                 if(strstr(k->name,"fg_dense_q8_0_")==k->name){q8ms+=k->gpu_ms;q8_count+=k->invocations;}
+                else if(prior&&strstr(k->name,"fg_dense_soa")==k->name){prior_ms+=k->gpu_ms;prior_count+=k->invocations;}
                 else{ms+=k->gpu_ms;candidate_count+=k->invocations;}
             }
-            if(candidate_count!=iterations||q8_count!=iterations||ms<=0.0||q8ms<=0.0){
+            if(candidate_count!=iterations||q8_count!=iterations||(prior&&prior_count!=iterations)||ms<=0.0||q8ms<=0.0){
                 fprintf(stderr,"invalid paired dense profile\n");ok=0;
             }
-            ms/=iterations;q8ms/=iterations;
-            uint64_t cooked_bytes=dense_soa_enabled()&&type!=14u?fg_dense_soa_bytes(in,rows,type):bytes;
+            ms/=iterations;q8ms/=iterations;prior_ms/=iterations;
+            uint64_t cooked_bytes=compact&&type!=14u?fg_dense_compact_bytes(in,rows,type):
+                (dense_soa_enabled()||dense_compact_enabled())&&type!=14u?fg_dense_soa_bytes(in,rows,type):bytes;
+            if(!prior&&getenv("FG_BENCH_DENSE_SELECTED"))prior_ms=ms;
+            if(prior||getenv("FG_BENCH_DENSE_SELECTED"))fprintf(stderr,"DENSE_PRIOR type=%u K=%u M=%u N=%u gpu_us=%.3f weight_GBps=%.3f speedup=%.3f storage=%s\n",type,in,rows,tokens,prior_ms*1000.0,(double)fg_dense_soa_bytes(in,rows,type)/(prior_ms*1e6),prior_ms/ms,compact?"compact":"wide");
             fprintf(stderr,"DENSE_QUANT type=%u K=%u M=%u N=%u subgroup=%u source_bytes=%llu weight_bytes=%llu gpu_us=%.3f weight_GBps=%.3f q8_gpu_us=%.3f q8_GBps=%.3f speedup=%.3f break_even=%s parity=PASS\n",type,in,rows,tokens,fg_vk_subgroup_size(context),(unsigned long long)bytes,(unsigned long long)cooked_bytes,ms*1000.0,(double)cooked_bytes/(ms*1e6),q8ms*1000.0,(double)q8bytes/(q8ms*1e6),q8ms/ms,ms<q8ms?"PASS":"FAIL");
         }
         fg_vk_tensor_destroy(q8);free(raw);
     }
-done:free(input);free(weights);fg_vk_tensor_destroy(cooked);fg_vk_tensor_destroy(y);fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);return ok;
+done:free(input);free(weights);fg_vk_tensor_destroy(prior);fg_vk_tensor_destroy(cooked);fg_vk_tensor_destroy(y);fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);return ok;
 }
 
 static int test_dense_quant(void){
@@ -207,6 +254,7 @@ static int test_dense_quant_bench(void){
         {2560u,512u,13u},{2560u,248320u,14u}};
     int ok=1;
     for(uint32_t i=0;ok&&i<sizeof(shapes)/sizeof(shapes[0]);i++){
+        if(getenv("FG_BENCH_IQ_ONLY")&&shapes[i][2]!=20u)continue;
         if(getenv("FG_BENCH_DENSE_SKIP_HEAD")&&i==9u)continue;
         if(getenv("FG_BENCH_DENSE_ONLY_HEAD")&&i!=9u)continue;
         uint32_t type=getenv("FG_BENCH_DENSE_Q4_ONLY")&&shapes[i][2]==13u?12u:shapes[i][2];
@@ -233,9 +281,16 @@ static int test_dense_quant_soa(void){
             quant_dense_shape(types[i],512u,17u,33u,false)&&
             quant_dense_shape(types[i],512u,17u,512u,false);
     }
-    if(ok)ok=quant_dense_shape(20u,320u,19u,5u,false)&&
+    if(ok)ok=quant_dense_shape(20u,320u,19u,1u,false)&&quant_dense_shape(20u,320u,19u,5u,false)&&
         quant_dense_shape(20u,640u,19u,1u,false);
     dense_test_soa=false;
+    return ok;
+}
+
+static int test_dense_quant_compact(void){
+    dense_test_compact=true;
+    int ok=test_dense_quant_soa();
+    dense_test_compact=false;
     return ok;
 }
 
@@ -3685,6 +3740,7 @@ ok=run_test("q8_dense",test_q8_dense)&&ok;
 ok=run_test("dense_quant",test_dense_quant)&&ok;
 ok=run_test("dense_quant_cooked",test_dense_quant_cooked)&&ok;
 ok=run_test("dense_quant_soa",test_dense_quant_soa)&&ok;
+ok=run_test("dense_quant_compact",test_dense_quant_compact)&&ok;
 ok=run_test("router_bf16_exact",test_router_bf16_exact)&&ok;
 ok=run_test("dense_quant_bench",test_dense_quant_bench)&&ok;
 ok=run_test("q8_dense_subgroup",test_q8_dense_subgroup)&&ok;

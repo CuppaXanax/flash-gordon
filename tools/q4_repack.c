@@ -1,6 +1,7 @@
 #include "fg_pack.h"
 #include "fg_q38_schema.h"
 #include "fg_sha256.h"
+#include "fg_quant.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -40,15 +41,34 @@ static int router_lossless(FILE *old,const fg_tensor_record *t,FILE *dense,
     return 1;
 }
 
+static int cook_tensor(FILE *source,const fg_gguf_tensor *t,FILE *out,bool compact,
+                       uint64_t bytes,uint8_t hash[32]){
+    if(t->bytes>SIZE_MAX||bytes>SIZE_MAX)return 0;
+    void *raw=malloc((size_t)t->bytes),*cooked=malloc((size_t)bytes);
+    int ok=raw&&cooked&&fseeko(source,(off_t)t->offset,SEEK_SET)==0&&
+        fread(raw,1u,(size_t)t->bytes,source)==t->bytes&&
+        (compact?fg_cook_dense_compact(raw,cooked,bytes,(uint32_t)t->shape[0],(uint32_t)t->shape[1],t->type):
+         fg_cook_dense_soa(raw,cooked,bytes,(uint32_t)t->shape[0],(uint32_t)t->shape[1],t->type));
+    if(ok){
+        fg_sha256 digest;fg_sha256_init(&digest);fg_sha256_update(&digest,cooked,(size_t)bytes);
+        fg_sha256_final(&digest,hash);
+        ok=!out||fwrite(cooked,1u,(size_t)bytes,out)==bytes;
+    }
+    free(cooked);free(raw);return ok;
+}
+
 int main(int argc,char **argv){
-    if(argc<5||argc>7){
-        fprintf(stderr,"usage: q4-repack OLD.fgm OLD_PACK DENSE.gguf NEW_DIR [RANK] [--keep-q8-head]\n");
+    if(argc<5){
+        fprintf(stderr,"usage: q4-repack OLD.fgm OLD_PACK DENSE.gguf NEW_DIR [RANK] [--keep-q8-head] [--cook-dense] [--plan]\n");
         return 2;
     }
     int only=-1;
     bool keep_q8_head=false;
+    bool cook_dense=false,plan=false;
     for(int i=5;i<argc;i++){
         if(strcmp(argv[i],"--keep-q8-head")==0){keep_q8_head=true;continue;}
+        if(strcmp(argv[i],"--cook-dense")==0){cook_dense=true;continue;}
+        if(strcmp(argv[i],"--plan")==0){plan=true;continue;}
         char *end=NULL;long rank=strtol(argv[i],&end,10);
         if(!end||end==argv[i]||*end||rank<0||rank>=FG_RANK_COUNT||only>=0)return 2;
         only=(int)rank;
@@ -58,12 +78,13 @@ int main(int argc,char **argv){
     if(!m||fg_manifest_read(argv[1],m,&err)!=FG_OK||
        fg_q38_validate_packed_manifest(m,&err)!=FG_OK||
        fg_gguf_open(sources,1u,&g,&err)!=FG_OK)goto done;
-    char *old_dir=realpath(argv[2],NULL);
+    char *old_dir=plan?strdup(argv[2]):realpath(argv[2],NULL);
     if(!old_dir)goto done;
-    if(mkdir(argv[4],0755)!=0){free(old_dir);goto done;}
+    if(!plan&&mkdir(argv[4],0755)!=0){free(old_dir);goto done;}
     dense=fopen(argv[3],"rb");
     if(!dense){free(old_dir);goto done;}
     uint64_t cursor[FG_RANK_COUNT]={0};
+    uint64_t common_bytes[FG_RANK_COUNT]={0},expert_bytes[FG_RANK_COUNT]={0};
     uint32_t replaced=0u;
     for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){
         FILE *old=NULL,*out=NULL;char path[2048];
@@ -71,7 +92,7 @@ int main(int argc,char **argv){
         bool emit=full;
         for(uint32_t i=0;!emit&&i<m->tensor_count;i++)
             if(m->tensors[i].rank==rank&&m->tensors[i].kind==FG_TENSOR_COMMON)emit=true;
-        if(emit){
+        if(emit&&!plan){
             snprintf(path,sizeof(path),"%s/rank-%02u.fgw",old_dir,rank);
             old=fopen(path,"rb");if(!old){free(old_dir);goto done;}
             snprintf(path,sizeof(path),"%s/rank-%02u.fgw",argv[4],rank);
@@ -95,7 +116,7 @@ int main(int argc,char **argv){
                     if(old)fclose(old);
                     free(old_dir);goto done;
                 }
-                if(replacement&&copy_record&&!router_lossless(old,t,dense,replacement)){
+                if(replacement&&copy_record&&!plan&&!router_lossless(old,t,dense,replacement)){
                     fprintf(stderr,"router is not lossless vs current pack: %s\n",t->name);
                     fclose(out);fclose(old);free(old_dir);goto done;
                 }
@@ -121,14 +142,19 @@ int main(int argc,char **argv){
             }
             uint8_t hash[32];
             if(replacement){
-                if(!copy_tensor(dense,replacement->offset,replacement->bytes,
-                                copy_record?out:NULL,hash)){
+                bool eligible=cook_dense&&(replacement->type==12u||replacement->type==13u||replacement->type==20u);
+                bool compact=eligible&&fg_dense_prefer_compact((uint32_t)t->shape[0],(uint32_t)t->shape[1],replacement->type);
+                uint64_t bytes=eligible?(compact?fg_dense_compact_bytes((uint32_t)t->shape[0],(uint32_t)t->shape[1],replacement->type):
+                    fg_dense_soa_bytes((uint32_t)t->shape[0],(uint32_t)t->shape[1],replacement->type)):replacement->bytes;
+                if(!bytes||(!plan&&!(eligible?cook_tensor(dense,replacement,copy_record?out:NULL,compact,bytes,hash):
+                   copy_tensor(dense,replacement->offset,replacement->bytes,copy_record?out:NULL,hash)))){
                     if(out)fclose(out);
                     if(old)fclose(old);
                     free(old_dir);goto done;
                 }
-                t->bytes=replacement->bytes;t->ggml_type=replacement->type;
-                t->layout=FG_TENSOR_LAYOUT_GGML;memcpy(t->sha256,hash,32u);
+                t->bytes=bytes;t->ggml_type=replacement->type;
+                t->layout=eligible?(compact?FG_TENSOR_LAYOUT_DENSE_COMPACT:FG_TENSOR_LAYOUT_DENSE_SOA):FG_TENSOR_LAYOUT_GGML;
+                if(!plan)memcpy(t->sha256,hash,32u);
                 replaced++;
             }else if(out&&copy_record){
                 if(!copy_tensor(old,t->offset,t->bytes,out,hash)||
@@ -138,6 +164,8 @@ int main(int argc,char **argv){
                 }
             }
             t->offset=offset;cursor[rank]=fg_align_up_u64(offset+t->bytes,FG_ALIGNMENT);
+            if(t->kind==FG_TENSOR_COMMON)common_bytes[rank]+=fg_align_up_u64(t->bytes,FG_ALIGNMENT);
+            if(t->kind==FG_TENSOR_ROUTED_EXPERT)expert_bytes[rank]+=fg_align_up_u64(t->bytes,FG_ALIGNMENT);
         }
         if(out){
             int failed=fflush(out)!=0;
@@ -148,6 +176,29 @@ int main(int argc,char **argv){
             if(failed){free(old_dir);goto done;}
         }
         m->ranks[rank].persistent_bytes=cursor[rank];
+    }
+    if(plan){
+        for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){
+            uint32_t layers=0u;
+            for(uint32_t l=0;l<FG_LAYER_COUNT;l++)layers+=m->layer_owner[l]==rank;
+            uint64_t resident=0u;
+            if(fg_q38_rank_residency_bytes(m,rank,&resident,&err)!=FG_OK){free(old_dir);goto done;}
+            printf("PLAN_RANK rank=%u layers=%u resident_weight_bytes=%llu common_bytes=%llu expert_bytes=%llu endpoint=%s residency_budget_bytes=%llu\n",
+                rank,layers,(unsigned long long)cursor[rank],(unsigned long long)common_bytes[rank],
+                (unsigned long long)expert_bytes[rank],m->ranks[rank].endpoint,(unsigned long long)resident);
+        }
+        uint64_t foreign_global=0u,mtp=0u;
+        for(uint32_t i=0;i<m->tensor_count;i++){
+            const fg_tensor_record *t=&m->tensors[i];
+            if(t->kind==FG_TENSOR_COMMON&&t->layer>=FG_LAYER_COUNT&&t->rank!=0u)
+                foreign_global+=fg_align_up_u64(t->bytes,FG_ALIGNMENT);
+            if(t->kind==FG_TENSOR_MTP&&t->rank==0u)mtp+=fg_align_up_u64(t->bytes,FG_ALIGNMENT);
+        }
+        printf("PLAN_COORDINATOR_RING rank=0 resident_weight_bytes=%llu foreign_global_bytes=%llu\n",
+            (unsigned long long)(common_bytes[0]+expert_bytes[0]+foreign_global+mtp),
+            (unsigned long long)foreign_global);
+        printf("PLAN_ONLY: no output created; source hashes/router proof and runtime scratch/KV/driver budgets not verified.\n");
+        free(old_dir);rc=0;goto done;
     }
     /* Keep external tokenizer/ngram/host-cache artifacts byte-identical. */
     DIR *dir=opendir(old_dir);

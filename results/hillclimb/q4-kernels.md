@@ -1,5 +1,10 @@
 # Exact cooked Q4 dense kernels
 
+**Follow-up:** [`q4-compact.md`](q4-compact.md) supersedes the deployment layout
+and final blade coverage below: exact 18.5-byte/32 Q4 storage, improved IQ4,
+24-CU validation, single-copy sealed packs, and guarded eight-rank staging.
+This report retains the original wide-layout measurements unchanged.
+
 ## Verdict and scope
 
 **Ordinary Q4 kernel latency gate: PASS on 192.168.42.51. Deployment: NOT

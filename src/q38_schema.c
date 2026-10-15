@@ -37,6 +37,14 @@ fg_status fg_tensor_record_expected_bytes(const fg_tensor_record *record,uint64_
                 return FG_ERR_FORMAT;
             }
             return FG_OK;
+        case FG_TENSOR_LAYOUT_DENSE_SOA:
+        case FG_TENSOR_LAYOUT_DENSE_COMPACT:
+            if(record->kind==FG_TENSOR_COMMON&&record->dims==2u&&
+               record->shape[0]<=UINT32_MAX&&record->shape[1]<=UINT32_MAX)
+                matrix=record->layout==FG_TENSOR_LAYOUT_DENSE_COMPACT?
+                    fg_dense_compact_bytes((uint32_t)record->shape[0],(uint32_t)record->shape[1],record->ggml_type):
+                    fg_dense_soa_bytes((uint32_t)record->shape[0],(uint32_t)record->shape[1],record->ggml_type);
+            break;
         case FG_TENSOR_LAYOUT_Q8_0_COOKED:
             if(record->dims==2u&&record->shape[0]<=UINT32_MAX&&
                record->shape[1]<=UINT32_MAX)

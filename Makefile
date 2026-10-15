@@ -59,9 +59,11 @@ tests/test_sampler: tests/test_sampler.c src/sampler.o src/util.o
 test-sampler: tests/test_sampler
 	./tests/test_sampler
 
+test: tests/test_q4_repack
 test: tests/test_prefill_collective tests/test_core tests/test_session tests/test_prefix tests/test_chat tests/test_chat_runtime tests/test_api tests/test_ngram_deployment tests/test_prefill_dispatch tests/test_decode_batch tests/test_video
 	@bash tools/check-flags.sh
 	./tests/test_core
+	./tests/test_q4_repack
 	./tests/test_session
 	./tests/test_prefix
 	./tests/test_chat
@@ -83,6 +85,8 @@ vulkan/%.spv: shaders/%.comp
 vulkan/fg_dense_q4_k.spv vulkan/fg_dense_q5_k.spv vulkan/fg_dense_q6_k.spv vulkan/fg_dense_iq4_nl.spv: shaders/fg_dense_quant_impl.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_dense_soa*.comp)): shaders/fg_dense_soa_impl.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_dense_soa*tile*.comp)): shaders/fg_dense_soa_tile_impl.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_dense_compact*.comp)): shaders/fg_dense_soa_impl.glsl shaders/fg_dense_compact_gemv.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_dense_compact*tile*.comp)): shaders/fg_dense_soa_tile_impl.glsl
 
 tests/test_fg_vk: tests/test_fg_vk.o src/vk.o src/quant.o src/q38_math.o src/ngram.o src/uring.o src/sha256.o src/q38_schema.o src/gguf.o src/topology.o src/util.o src/output.o src/model.o src/loader.o src/manifest.o src/runtime_options.o src/sampler.o src/protocol.o | shaders
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS) -lvulkan
@@ -96,6 +100,8 @@ test-fg-dense-rates:
 tools/q4-repack: tools/q4_repack.c $(TEST_COMMON)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
+tests/test_q4_repack: tests/test_q4_repack.c tools/q4_repack.c $(TEST_COMMON)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_q4_repack.c $(TEST_COMMON) $(LDLIBS)
 
 tests/test_hc_down_split: tests/test_hc_down_split.o src/vk.o src/quant.o src/q38_math.o src/ngram.o src/uring.o src/sha256.o src/q38_schema.o src/gguf.o src/util.o | shaders
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS) -lvulkan
@@ -162,6 +168,7 @@ test-gdn-fleet: tests/test_fg_vk
 	done
 
 clean:
+	rm -f tests/test_q4_repack tests/test_q4_repack.d
 	rm -f tests/test_prefill_collective flash-gordon $(OBJ) $(DEP) vendor/*.o vendor/*.d tests/*.o tests/test_core tests/test_session tests/test_prefix tests/test_chat tests/test_chat_runtime tests/test_api tests/test_sampler tests/test_ngram_deployment tests/test_expert_prefill tests/test_qsa_prefill tests/test_owner_reduce tests/test_prefill_dispatch tests/test_decode_batch tests/test_expert_prefill.d tests/test_prefill_dispatch.d tests/test_decode_batch.d tests/test_fg_vk tests/test_hc_down_split tests/test_model_load tests/test_qsa_model_load tests/test_tokenizer tests/test_fabric tests/test_video vulkan/*.spv
 
--include $(DEP) tests/test_expert_prefill.d tests/test_prefill_dispatch.d tests/test_decode_batch.d
+-include $(DEP) tests/test_expert_prefill.d tests/test_prefill_dispatch.d tests/test_decode_batch.d tests/test_q4_repack.d

@@ -28,7 +28,10 @@ typedef enum fg_vk_tensor_format {
     FG_VK_TENSOR_FORMAT_BF16_ROUTER = 11,
     FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K = 12,
     FG_VK_TENSOR_FORMAT_DENSE_SOA_Q5_K = 13,
-    FG_VK_TENSOR_FORMAT_DENSE_SOA_IQ4_NL = 14
+    FG_VK_TENSOR_FORMAT_DENSE_SOA_IQ4_NL = 14,
+    FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K = 15,
+    FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q5_K = 16,
+    FG_VK_TENSOR_FORMAT_DENSE_COMPACT_IQ4_NL = 17
 } fg_vk_tensor_format;
 
 fg_vk_tensor_format fg_vk_dense_format(uint32_t ggml_type);

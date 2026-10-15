@@ -33,6 +33,10 @@ uint64_t fg_k_quant_cooked_matrix_bytes(uint32_t input_width,uint32_t rows,uint3
 bool fg_cook_k_quant_rows(const void *input,void *output,uint64_t output_bytes,
 						  uint32_t input_width,uint32_t rows,uint32_t ggml_type);
 uint64_t fg_dense_soa_bytes(uint32_t input_width,uint32_t rows,uint32_t type);
+uint64_t fg_dense_compact_bytes(uint32_t input_width,uint32_t rows,uint32_t type);
+bool fg_dense_prefer_compact(uint32_t input_width,uint32_t rows,uint32_t type);
+bool fg_cook_dense_compact(const void *input,void *output,uint64_t output_bytes,
+                          uint32_t input_width,uint32_t rows,uint32_t type);
 /* Q4_K/Q5_K/IQ4_NL, eight-row tiles; source and destination must not overlap. */
 bool fg_cook_dense_soa(const void *input,void *output,uint64_t output_bytes,
                        uint32_t input_width,uint32_t rows,uint32_t type);

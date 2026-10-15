@@ -21,14 +21,15 @@ static int test_q8_expert_load(void){
     enum{INPUT=64,OUTPUT=16};const uint64_t matrix_bytes=fg_q8_0_cooked_matrix_bytes(INPUT,OUTPUT),tensor_bytes=matrix_bytes*FG_EXPERTS_PER_RANK,file_bytes=fg_align_up_u64(tensor_bytes,FG_ALIGNMENT);if(!matrix_bytes||matrix_bytes*FG_EXPERTS_PER_RANK!=(uint64_t)(INPUT/FG_QK8_0)*FG_Q8_0_BLOCK_BYTES*OUTPUT*FG_EXPERTS_PER_RANK)return 1;char directory[128],path[160];snprintf(directory,sizeof(directory),"/tmp/fg-model-q8cook-%ld",(long)getpid());snprintf(path,sizeof(path),"%s/rank-00.fgw",directory);if(mkdir(directory,0700)!=0)return 1;uint8_t *source=aligned_alloc(FG_ALIGNMENT,(size_t)file_bytes),*expected=malloc((size_t)matrix_bytes),*candidate=malloc((size_t)matrix_bytes);if(!source||!expected||!candidate){free(candidate);free(expected);free(source);rmdir(directory);return 1;}for(uint64_t i=0;i<tensor_bytes;i++)source[i]=(uint8_t)(i*41u+13u);memset(source+tensor_bytes,0,(size_t)(file_bytes-tensor_bytes));FILE *stream=fopen(path,"wb");if(!stream||fwrite(source,1,(size_t)file_bytes,stream)!=(size_t)file_bytes||fclose(stream)!=0){if(stream)fclose(stream);free(candidate);free(expected);free(source);unlink(path);rmdir(directory);return 1;}fg_manifest *manifest=malloc(sizeof(*manifest));if(!manifest){free(candidate);free(expected);free(source);unlink(path);rmdir(directory);return 1;}fg_manifest_init(manifest);fg_tensor_record record={0};snprintf(record.name,sizeof(record.name),"blk.1.ffn_down_exps.weight.rank0");record.bytes=tensor_bytes;record.ggml_type=8u;record.dims=3u;record.shape[0]=INPUT;record.shape[1]=OUTPUT;record.shape[2]=FG_EXPERTS_PER_RANK;record.rank=0;record.layer=1;record.expert=UINT16_MAX;record.kind=FG_TENSOR_ROUTED_EXPERT;record.layout=FG_TENSOR_LAYOUT_GGML;fg_sha256 hash;fg_sha256_init(&hash);fg_sha256_update(&hash,source,(size_t)tensor_bytes);fg_sha256_final(&hash,record.sha256);fg_error error={0};int ok=fg_manifest_add_tensor(manifest,&record,&error)==FG_OK&&fg_cook_q8_0_rows(source,expected,matrix_bytes,INPUT,OUTPUT);fg_model *model=NULL;fg_status status=ok?fg_model_open(&model,manifest,directory,0,&error):FG_ERR_FORMAT;if(status==FG_ERR_UNAVAILABLE){fprintf(stderr,"SKIP cooked Q8 expert model load: %s\n",error.message);free(manifest);free(candidate);free(expected);free(source);unlink(path);rmdir(directory);return 77;}fg_vk_tensor *tensor=status==FG_OK?fg_model_tensor(model,record.name):NULL;ok=ok&&status==FG_OK&&tensor&&fg_vk_tensor_get_format(tensor)==FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED&&fg_vk_tensor_read(tensor,0,candidate,matrix_bytes,&error)==FG_OK&&memcmp(candidate,expected,(size_t)matrix_bytes)==0;fg_model_close(model);free(manifest);free(candidate);free(expected);free(source);unlink(path);rmdir(directory);if(!ok)fprintf(stderr,"cooked Q8 expert model load failed: %s\n",error.message);return ok?0:1;
 }
 
-static int test_common_projection_load(uint32_t type,bool soa){
+static int test_common_projection_load(uint32_t type,bool soa,bool disk,bool compact){
     enum{INPUT=256,OUTPUT=64,COUNT=4};
     const char *names[]={"blk.0.attn_qkv.weight","blk.3.attn_q.weight","token_embd.weight","output.weight"};
     uint32_t block=type==8u||type==20u?32u:256u;
     uint32_t block_bytes=type==8u?34u:type==20u?18u:type==12u?144u:176u;
     uint64_t bytes=(uint64_t)(INPUT/block)*block_bytes*OUTPUT;
-    uint64_t cooked_bytes=soa?fg_dense_soa_bytes(INPUT,OUTPUT,type):bytes;
-    uint64_t stride=fg_align_up_u64(bytes,FG_ALIGNMENT);
+    uint64_t cooked_bytes=!soa?bytes:compact?fg_dense_compact_bytes(INPUT,OUTPUT,type):fg_dense_soa_bytes(INPUT,OUTPUT,type);
+    uint64_t stride=fg_align_up_u64(disk&&cooked_bytes>bytes?cooked_bytes:bytes,FG_ALIGNMENT);
+    uint64_t arena_bytes=(COUNT-1u)*stride+fg_align_up_u64(bytes,FG_ALIGNMENT);
     uint8_t *source=calloc(COUNT,(size_t)stride),*expected=malloc((size_t)cooked_bytes);
     fg_manifest *manifest=malloc(sizeof(*manifest));fg_model *model=NULL;
     fg_error error={0};
@@ -51,14 +52,31 @@ static int test_common_projection_load(uint32_t type,bool soa){
         r.offset=i*stride;r.bytes=bytes;r.ggml_type=type;r.dims=2u;
         r.shape[0]=INPUT;r.shape[1]=OUTPUT;r.kind=FG_TENSOR_COMMON;
         r.layer=i==0u?0u:i==1u?3u:UINT16_MAX;r.expert=UINT16_MAX;
-        fg_sha256 hash;fg_sha256_init(&hash);fg_sha256_update(&hash,raw,(size_t)bytes);
+        if(disk&&i<2u){
+            ok=compact?fg_cook_dense_compact(raw,expected,cooked_bytes,INPUT,OUTPUT,type):
+                fg_cook_dense_soa(raw,expected,cooked_bytes,INPUT,OUTPUT,type);
+            memcpy(raw,expected,(size_t)cooked_bytes);r.bytes=cooked_bytes;
+            r.layout=compact?FG_TENSOR_LAYOUT_DENSE_COMPACT:FG_TENSOR_LAYOUT_DENSE_SOA;
+            uint64_t derived=0u;
+            ok=ok&&fg_tensor_record_expected_bytes(&r,&derived,&error)==FG_OK&&derived==r.bytes;
+        }
+        fg_sha256 hash;fg_sha256_init(&hash);fg_sha256_update(&hash,raw,(size_t)r.bytes);
         fg_sha256_final(&hash,r.sha256);
         ok=fg_manifest_add_tensor(manifest,&r,&error)==FG_OK;
     }
     if(ok){
         FILE *file=fopen(path,"wb");
         if(!file)ok=0;
-        else{ok=fwrite(source,(size_t)stride,COUNT,file)==COUNT;if(fclose(file))ok=0;}
+        else{ok=fwrite(source,1u,(size_t)arena_bytes,file)==arena_bytes;if(fclose(file))ok=0;}
+    }
+    if(ok&&disk){
+        char sealed[192];snprintf(sealed,sizeof(sealed),"%s/manifest.fgm",directory);
+        manifest->ranks[0].persistent_bytes=arena_bytes;
+        fg_manifest *check=malloc(sizeof(*check));
+        ok=check&&fg_manifest_write(sealed,manifest,&error)==FG_OK&&
+            fg_manifest_read(sealed,check,&error)==FG_OK;
+        if(ok)memcpy(manifest,check,sizeof(*check));
+        free(check);unlink(sealed);
     }
     if(soa)setenv("FG_DENSE_SOA","1",1);
     fg_status status=ok?fg_model_open(&model,manifest,directory,0u,&error):FG_ERR_IO;
@@ -68,22 +86,37 @@ static int test_common_projection_load(uint32_t type,bool soa){
         ok=tensor&&fg_vk_tensor_bytes(tensor)==(i<2u?cooked_bytes:bytes);
         if(i<2u){
             fg_vk_tensor_format format=!soa?FG_VK_TENSOR_FORMAT_Q8_0_COOKED:
-                type==12u?FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K:
-                type==13u?FG_VK_TENSOR_FORMAT_DENSE_SOA_Q5_K:FG_VK_TENSOR_FORMAT_DENSE_SOA_IQ4_NL;
+                (fg_vk_tensor_format)((compact?FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K:
+                    FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K)+(type==12u?0u:type==13u?1u:2u));
+            bool converted=true;
+            if(disk)memcpy(expected,source+i*stride,(size_t)cooked_bytes);
+            else converted=soa?fg_cook_dense_soa(source+i*stride,expected,cooked_bytes,INPUT,OUTPUT,type):
+                fg_cook_q8_0_rows(source+i*stride,expected,bytes,INPUT,OUTPUT);
             ok=ok&&fg_vk_tensor_get_format(tensor)==format&&
-                (soa?fg_cook_dense_soa(source+i*stride,expected,cooked_bytes,INPUT,OUTPUT,type):
-                    fg_cook_q8_0_rows(source+i*stride,expected,bytes,INPUT,OUTPUT))&&
+                converted&&
                 !memcmp(fg_vk_tensor_map(tensor),expected,(size_t)cooked_bytes);
         }else{
             ok=ok&&fg_vk_tensor_get_format(tensor)==fg_vk_dense_format(type)&&
                 !memcmp(fg_vk_tensor_map(tensor),source+i*stride,(size_t)bytes);
         }
     }
-    ok=ok&&fg_model_weight_bytes(model)==COUNT*stride+(soa?2u*cooked_bytes:0u);
+    ok=ok&&fg_model_weight_bytes(model)==arena_bytes+(soa&&!disk?2u*cooked_bytes:0u);
     fg_model_close(model);model=NULL;
     if(ok&&soa){
-        manifest->persistent_cap_bytes=COUNT*stride;
-        ok=fg_model_open(&model,manifest,directory,0u,&error)==FG_ERR_LIMIT;
+        manifest->persistent_cap_bytes=arena_bytes;
+        ok=fg_model_open(&model,manifest,directory,0u,&error)==(disk?FG_OK:FG_ERR_LIMIT);
+        fg_model_close(model);
+    }
+    if(ok&&disk){
+        model=NULL;
+        ok=fg_model_open_replicated(&model,manifest,directory,0u,&error)==FG_OK&&
+            fg_model_weight_bytes(model)==2u*fg_align_up_u64(cooked_bytes,FG_ALIGNMENT)+
+                2u*fg_align_up_u64(bytes,FG_ALIGNMENT);
+        fg_model_close(model);model=NULL;
+        FILE *file=fopen(path,"r+b");
+        ok=ok&&file&&fputc(source[0]^1u,file)!=EOF;
+        if(file&&fclose(file))ok=0;
+        if(ok)ok=fg_model_open(&model,manifest,directory,0u,&error)==FG_ERR_MISMATCH;
         fg_model_close(model);
     }
     if(soa)unsetenv("FG_DENSE_SOA");
@@ -96,10 +129,13 @@ static int test_common_projection_load(uint32_t type,bool soa){
 int main(void){
     int cooked=test_cooked_expert_load();if(cooked)return cooked;
     cooked=test_q8_expert_load();if(cooked)return cooked;
-    cooked=test_common_projection_load(8u,false);if(cooked)return cooked;
-    cooked=test_common_projection_load(12u,true);if(cooked)return cooked;
-    cooked=test_common_projection_load(13u,true);if(cooked)return cooked;
-    cooked=test_common_projection_load(20u,true);if(cooked)return cooked;
+    cooked=test_common_projection_load(8u,false,false,false);if(cooked)return cooked;
+    uint32_t types[]={12u,13u,20u};
+    for(uint32_t i=0;i<3u;i++){
+        cooked=test_common_projection_load(types[i],true,false,false);if(cooked)return cooked;
+        cooked=test_common_projection_load(types[i],true,true,false);if(cooked)return cooked;
+        cooked=test_common_projection_load(types[i],true,true,true);if(cooked)return cooked;
+    }
     char directory[128],path[160];snprintf(directory,sizeof(directory),"/tmp/fg-model-load-%ld",(long)getpid());snprintf(path,sizeof(path),"%s/rank-00.fgw",directory);if(mkdir(directory,0700)!=0){perror("mkdir");return 1;}uint8_t *bytes=aligned_alloc(FG_ALIGNMENT,FG_ALIGNMENT);if(!bytes)return 1;for(uint32_t i=0;i<FG_ALIGNMENT;i++)bytes[i]=(uint8_t)(i*29u+7u);FILE *stream=fopen(path,"wb");if(!stream||fwrite(bytes,1,FG_ALIGNMENT,stream)!=FG_ALIGNMENT||fwrite(bytes,1,FG_ALIGNMENT,stream)!=FG_ALIGNMENT||fclose(stream)!=0){perror("write rank artifact");free(bytes);return 1;}
     fg_manifest *manifest=malloc(sizeof(*manifest));if(!manifest){free(bytes);return 1;}fg_manifest_init(manifest);fg_tensor_record record={0};snprintf(record.name,sizeof(record.name),"probe.weight");record.bytes=FG_ALIGNMENT;record.ggml_type=8u;record.dims=2;record.shape[0]=32u;record.shape[1]=32u;record.rank=0;record.layer=UINT16_MAX;record.expert=UINT16_MAX;record.kind=FG_TENSOR_COMMON;record.layout=FG_TENSOR_LAYOUT_Q8_0_COOKED;fg_sha256 hash;fg_sha256_init(&hash);fg_sha256_update(&hash,bytes,FG_ALIGNMENT);fg_sha256_final(&hash,record.sha256);fg_error error={0};if(fg_manifest_add_tensor(manifest,&record,&error)!=FG_OK){fprintf(stderr,"manifest: %s\n",error.message);free(manifest);free(bytes);return 1;}fg_tensor_record generic=record;snprintf(generic.name,sizeof(generic.name),"generic.weight");generic.offset=FG_ALIGNMENT;generic.layout=FG_TENSOR_LAYOUT_GGML;if(fg_manifest_add_tensor(manifest,&generic,&error)!=FG_OK){fprintf(stderr,"manifest: %s\n",error.message);free(manifest);free(bytes);return 1;}
     fg_model *model=NULL;fg_status status=fg_model_open(&model,manifest,directory,0,&error);if(status==FG_ERR_UNAVAILABLE){fprintf(stderr,"SKIP direct Vulkan/io_uring model load: %s\n",error.message);unlink(path);rmdir(directory);free(manifest);free(bytes);return 77;}if(status!=FG_OK){fprintf(stderr,"model load: %s\n",error.message);unlink(path);rmdir(directory);free(manifest);free(bytes);return 1;}fg_vk_tensor *tensor=fg_model_tensor(model,"probe.weight"),*generic_tensor=fg_model_tensor(model,"generic.weight");const fg_tensor_record *found=fg_model_tensor_record(model,"probe.weight");uint8_t check[64];int ok=tensor&&generic_tensor&&found==&manifest->tensors[0]&&fg_vk_tensor_get_format(tensor)==FG_VK_TENSOR_FORMAT_Q8_0_COOKED&&fg_vk_tensor_get_format(generic_tensor)==FG_VK_TENSOR_FORMAT_DEFAULT&&!fg_model_tensor(model,"probe.weigh")&&!fg_model_tensor(model,"missing.weight")&&!fg_model_tensor_record(model,"missing.weight")&&fg_vk_tensor_read(tensor,0,check,sizeof(check),&error)==FG_OK&&memcmp(check,bytes,sizeof(check))==0&&fg_model_weight_bytes(model)==2u*FG_ALIGNMENT;fg_model_close(model);unlink(path);rmdir(directory);free(manifest);free(bytes);if(!ok){fprintf(stderr,"direct model load parity failed: %s\n",error.message);return 1;}puts("Flash Gordon fixed-buffer O_DIRECT to Vulkan arena: PASS");return 0;

@@ -1,0 +1,6 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define TYPE 13
+#define TK 16
+#define COMPACT 1
+#include "fg_dense_soa_tile_impl.glsl"

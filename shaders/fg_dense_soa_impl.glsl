@@ -4,6 +4,9 @@
 #ifndef ROWS
 #define ROWS 8u
 #endif
+#ifndef COMPACT
+#define COMPACT 0
+#endif
 layout(local_size_x=WG) in;
 layout(set=0,binding=0) readonly buffer Weights { uint w[]; };
 layout(set=0,binding=0) readonly buffer WideWeights { uvec4 w4[]; };
@@ -35,7 +38,7 @@ float product(uint p,vec4 a,vec4 b){
 }
 float value(uint base,uint groups,uint row,uint g,uint lane,vec4 a,vec4 b){
     if(TYPE==13u){
-        uint off=base+groups*16u+(row*groups+g)*5u+lane;
+        uint off=base+groups*(COMPACT!=0?5u:16u)+(row*groups+g)*5u+lane;
         uint p=w[off],next=w[off+1u],shift=lane*8u;
         uint lo=(p>>shift)|(shift==0u?0u:next<<(32u-shift));
         uint hi=next>>shift;
@@ -45,8 +48,18 @@ float value(uint base,uint groups,uint row,uint g,uint lane,vec4 a,vec4 b){
             ((lo>>30u)|(hi<<2u))&31u,(hi>>3u)&31u);
         return dot(q0,a)+dot(q1,b);
     }
-    uint p=w[base+groups*(TYPE==20u?4u:16u)+(row*groups+g)*4u+lane];
+    uint p=w[base+groups*(TYPE==20u?4u:COMPACT!=0?5u:16u)+(row*groups+g)*4u+lane];
     return product(p,a,b);
+}
+void compact_scales(uint base,uint groups,uint g,uint row,out vec4 d,out vec4 m){
+    uvec4 b=w4[(base+(g/8u)*8u+row)/4u];
+    vec2 b0=unpackHalf2x16(b.x),b1=unpackHalf2x16(b.y);
+    vec2 b2=unpackHalf2x16(b.z),b3=unpackHalf2x16(b.w);
+    uvec4 codes=w4[(base+groups+g*4u)/4u];
+    uvec2 c=row==0u?codes.xy:codes.zw;
+    vec4 a=vec4(unpack8(c.x)),v=vec4(unpack8(c.y));
+    d=vec4(b0.x,b1.x,b2.x,b3.x)*vec4(a.x,a.z,v.x,v.z);
+    m=vec4(b0.y,b1.y,b2.y,b3.y)*vec4(a.y,a.w,v.y,v.w);
 }
 void main(){
     uint lid=gl_LocalInvocationID.x,lane=lid&3u,cohort=lid>>2u;
@@ -56,10 +69,11 @@ void main(){
 #endif
     uint first=gl_WorkGroupID.x*ROWS,token=gl_WorkGroupID.y;
     uint groups=pc.input_width/32u;
-    uint base=(first/8u)*groups*(TYPE==13u?56u:TYPE==20u?36u:48u),row=first&7u;
+    uint base=(first/8u)*groups*(TYPE==13u?(COMPACT!=0?45u:56u):TYPE==20u?36u:(COMPACT!=0?37u:48u)),row=first&7u;
     vec4 acc0=vec4(0.0),acc1=vec4(0.0);
     for(uint i=0u;i<(groups+WG/4u-1u)/(WG/4u);i++){
         uint group=i*(WG/4u)+cohort;
+        if(COMPACT!=0&&TYPE==20u&&group>=groups)continue;
         bool live=group<groups;
         uint g=min(group,groups-1u);
         uint meta=base+g*16u;
@@ -71,6 +85,9 @@ void main(){
                 vec4(unpackHalf2x16(packed.z),unpackHalf2x16(packed.w));
             d1=vec4(unpackHalf2x16(packed.z),unpackHalf2x16(packed.w));
             m0=vec4(0.0);m1=vec4(0.0);
+        }else if(COMPACT!=0){
+            compact_scales(base,groups,g,row,d0,m0);
+            compact_scales(base,groups,g,4u,d1,m1);
         }
         vec4 a=live?x[token*(pc.input_width/4u)+g*8u+lane]:vec4(0.0);
         vec4 b=live?x[token*(pc.input_width/4u)+g*8u+lane+4u]:vec4(0.0);
@@ -86,6 +103,13 @@ void main(){
     }
     vec4 r0=vec4(subgroupAdd(acc0.x),subgroupAdd(acc0.y),subgroupAdd(acc0.z),subgroupAdd(acc0.w));
     vec4 r1=vec4(subgroupAdd(acc1.x),subgroupAdd(acc1.y),subgroupAdd(acc1.z),subgroupAdd(acc1.w));
+    if(COMPACT!=0&&TYPE==20u&&gl_NumSubgroups==1u){
+        if(subgroupElect())for(uint r=0u;r<4u;r++){
+            if(first+r<pc.output_width)y[token*pc.output_width+first+r]=r0[r]*pc.scale;
+            if(ROWS==8u&&first+r+4u<pc.output_width)y[token*pc.output_width+first+r+4u]=r1[r]*pc.scale;
+        }
+        return;
+    }
     if(subgroupElect()){sums0[gl_SubgroupID]=r0;sums1[gl_SubgroupID]=r1;}
     barrier();
     if(lid==0u){
