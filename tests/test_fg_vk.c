@@ -28,6 +28,161 @@ static void make_q5_1_row(uint8_t *row,uint32_t values,uint32_t phase){
     }
 }
 
+static float dense_quant_oracle(const uint8_t *p,uint32_t type,uint32_t col){
+    if(type==20u){
+        float values[32];fg_dequantize_iq4_nl(p+(col/32u)*18u,values,32u);
+        return values[col%32u];
+    }
+    p+=(col/256u)*(type==12u?144u:type==13u?176u:210u);
+    uint32_t i=col%256u;
+    if(type==14u){
+        uint32_t half=i/128u,j=i%128u,q=j/32u,l=j%32u;
+        uint32_t lo=(p[half*64u+(q%2u)*32u+l]>>((q/2u)*4u))&15u;
+        uint32_t hi=(p[128u+half*32u+l]>>(q*2u))&3u;
+        uint16_t d;memcpy(&d,p+208u,2u);
+        return fg_f16_to_f32(d)*(float)((int8_t)p[192u+i/16u])*
+            (float)((int32_t)(lo|(hi<<4u))-32);
+    }
+    uint32_t g=i/32u,j=i%32u,sc,mn;
+    if(g<4u){sc=p[4u+g]&63u;mn=p[8u+g]&63u;}
+    else{sc=(p[8u+g]&15u)|((p[g]>>6u)<<4u);mn=(p[8u+g]>>4u)|((p[4u+g]>>6u)<<4u);}
+    uint32_t q=(p[(type==12u?16u:48u)+(g/2u)*32u+j]>>((g%2u)*4u))&15u;
+    if(type==13u)q|=((p[16u+j]>>g)&1u)<<4u;
+    uint16_t d,dm;memcpy(&d,p,2u);memcpy(&dm,p+2u,2u);
+    return fg_f16_to_f32(d)*(float)(sc*q)-fg_f16_to_f32(dm)*(float)mn;
+}
+
+static bool dense_test_cooked;
+
+static int quant_dense_shape(uint32_t type,uint32_t in,uint32_t rows,uint32_t tokens,bool bench){
+    uint32_t block=type==20u?32u:256u,bs=type==12u?144u:type==13u?176u:type==14u?210u:18u;
+    uint64_t row_bytes=(uint64_t)(in/block)*bs,bytes=row_bytes*rows;
+    fg_vk_tensor *w=tensor(NULL,bytes),*x=tensor(NULL,(uint64_t)in*tokens*4u),*y=tensor(NULL,(uint64_t)rows*tokens*4u);
+    fg_vk_tensor *cooked=NULL;
+    int ok=w&&x&&y;
+    if(!ok)goto done;
+    fg_vk_tensor_set_format(w,fg_vk_dense_format(type));
+    uint8_t *weights=fg_vk_tensor_map(w);
+    for(uint64_t i=0;i<bytes;i++)weights[i]=(uint8_t)(i*73u+i/17u+19u);
+    for(uint32_t row=0;row<rows;row++)for(uint32_t b=0;b<in/block;b++){
+        uint8_t *p=weights+(uint64_t)row*row_bytes+(uint64_t)b*bs;
+        uint16_t d=fg_f32_to_f16(0.001f+(float)((row+b)%7u)*0.0001f);
+        memcpy(p+(type==14u?208u:0u),&d,2u);
+        if(type==12u||type==13u){uint16_t dm=fg_f32_to_f16(0.0007f);memcpy(p+2u,&dm,2u);}
+    }
+    float *input=fg_vk_tensor_map(x);
+    for(uint32_t i=0;i<in*tokens;i++)input[i]=sinf((float)(i+3u)*0.013f);
+    if((dense_test_cooked||getenv("FG_BENCH_DENSE_COOKED"))&&(type==12u||type==13u)){
+        cooked=tensor(NULL,bytes);
+        ok=cooked&&fg_cook_k_quant_rows(weights,fg_vk_tensor_map(cooked),bytes,in,rows,type);
+        if(cooked)fg_vk_tensor_set_format(cooked,type==12u?
+            FG_VK_TENSOR_FORMAT_DENSE_Q4_K_COOKED:FG_VK_TENSOR_FORMAT_DENSE_Q5_K_COOKED);
+    }
+    fg_vk_tensor *active=cooked?cooked:w;
+    if(ok)ok=fg_vk_dense_q8_0_f32(context,y,active,x,in,rows,tokens,0.75f,&error)==FG_OK;
+    if(ok){
+        const float *got=fg_vk_tensor_const_map(y);
+        uint32_t limit=bench?3u:rows;
+        for(uint32_t t=0;ok&&t<tokens;t++)for(uint32_t r=0;ok&&r<limit;r++){
+            uint32_t row=bench?(r*(rows-1u)/2u):r;
+            double ref=0.0,abs_sum=0.0;
+            for(uint32_t i=0;i<in;i++){
+                double v=(double)dense_quant_oracle(weights+(uint64_t)row*row_bytes,type,i)*input[(uint64_t)t*in+i];
+                ref+=v;abs_sum+=fabs(v);
+            }
+            ref*=0.75;
+            if(!isfinite(got[(uint64_t)t*rows+row])||
+               fabs(got[(uint64_t)t*rows+row]-ref)>2e-5*fmax(1.0,abs_sum)){
+                fprintf(stderr,"quant dense mismatch type=%u K=%u row=%u token=%u got=%g ref=%g\n",type,in,row,t,got[(uint64_t)t*rows+row],ref);ok=0;
+            }
+        }
+    }
+    if(ok&&bench){
+        const uint32_t iterations=20u;fg_vk_profile profile={0};
+        ok=fg_vk_profile_begin(context,&error)==FG_OK&&fg_vk_begin(context,&error)==FG_OK;
+        for(uint32_t i=0;ok&&i<iterations;i++)
+            ok=fg_vk_dense_q8_0_f32(context,y,active,x,in,rows,tokens,0.75f,&error)==FG_OK;
+        if(ok)ok=fg_vk_end(context,&error)==FG_OK&&fg_vk_profile_end(context,&profile,&error)==FG_OK;
+        double ms=profile.kernel_ms/iterations;
+        uint64_t q8bytes=fg_q8_0_cooked_matrix_bytes(in,rows);
+        uint8_t *raw=malloc((size_t)in/32u*34u*rows);
+        fg_vk_tensor *q8=raw?tensor(NULL,q8bytes):NULL;
+        ok=ok&&q8;
+        if(ok){
+            uint64_t blocks=(uint64_t)in/32u*rows;
+            memset(raw,1u,(size_t)blocks*34u);
+            uint16_t delta=fg_f32_to_f16(0.001f);
+            for(uint64_t i=0;i<blocks;i++)memcpy(raw+i*34u,&delta,2u);
+            ok=fg_cook_q8_0_rows(raw,fg_vk_tensor_map(q8),q8bytes,in,rows);
+            fg_vk_tensor_set_format(q8,FG_VK_TENSOR_FORMAT_Q8_0_COOKED);
+        }
+        fg_vk_profile baseline={0};
+        if(ok)ok=fg_vk_profile_begin(context,&error)==FG_OK&&fg_vk_begin(context,&error)==FG_OK;
+        for(uint32_t i=0;ok&&i<iterations;i++)
+            ok=fg_vk_dense_q8_0_f32(context,y,q8,x,in,rows,tokens,0.75f,&error)==FG_OK;
+        if(ok)ok=fg_vk_end(context,&error)==FG_OK&&fg_vk_profile_end(context,&baseline,&error)==FG_OK;
+        if(ok){
+            double q8ms=baseline.kernel_ms/iterations;
+            fprintf(stderr,"DENSE_QUANT type=%u K=%u M=%u N=%u subgroup=%u weight_bytes=%llu gpu_us=%.3f weight_GBps=%.3f q8_gpu_us=%.3f speedup=%.3f break_even=%s parity=PASS\n",type,in,rows,tokens,fg_vk_subgroup_size(context),(unsigned long long)bytes,ms*1000.0,(double)bytes/(ms*1e6),q8ms*1000.0,q8ms/ms,ms<q8ms?"PASS":"FAIL");
+        }
+        fg_vk_tensor_destroy(q8);free(raw);
+    }
+done:fg_vk_tensor_destroy(cooked);fg_vk_tensor_destroy(y);fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);return ok;
+}
+
+static int test_dense_quant(void){
+    uint32_t types[]={12u,13u,14u,20u};int ok=1;
+    for(uint32_t i=0;ok&&i<4u;i++){
+        ok=quant_dense_shape(types[i],512u,17u,1u,false)&&
+            quant_dense_shape(types[i],512u,17u,5u,false);
+    }
+    return ok&&quant_dense_shape(20u,320u,19u,5u,false)&&
+        quant_dense_shape(20u,640u,19u,1u,false);
+}
+
+static int test_dense_quant_bench(void){
+    if(!getenv("FG_BENCH_DENSE_QUANT"))return 1;
+    uint32_t shapes[][3]={{2560u,10240u,12u},{2560u,6144u,12u},
+        {6144u,2560u,13u},{2560u,12288u,13u},{10240u,320u,12u},
+        {320u,10240u,20u},{640u,2560u,20u},{2560u,640u,12u},
+        {2560u,512u,13u},{2560u,248320u,14u}};
+    int ok=1;
+    for(uint32_t i=0;ok&&i<sizeof(shapes)/sizeof(shapes[0]);i++)
+        ok=quant_dense_shape(shapes[i][2],shapes[i][0],shapes[i][1],1u,true);
+    return ok;
+}
+
+static int test_dense_quant_cooked(void){
+    dense_test_cooked=true;
+    int ok=quant_dense_shape(12u,512u,32u,1u,false)&&
+        quant_dense_shape(13u,512u,32u,5u,false);
+    dense_test_cooked=false;return ok;
+}
+
+static int test_router_bf16_exact(void){
+    enum{K=2560,M=512,N=3};
+    fg_vk_tensor *f32=tensor(NULL,(uint64_t)K*M*4u),*bf16=tensor(NULL,(uint64_t)K*M*2u);
+    fg_vk_tensor *x=tensor(NULL,(uint64_t)K*N*4u),*y0=tensor(NULL,(uint64_t)M*N*4u),*y1=tensor(NULL,(uint64_t)M*N*4u);
+    int ok=f32&&bf16&&x&&y0&&y1;
+    if(ok){
+        float *a=fg_vk_tensor_map(f32),*input=fg_vk_tensor_map(x);
+        uint16_t *b=fg_vk_tensor_map(bf16);
+        for(uint32_t i=0;i<K*M;i++){
+            float value=sinf((float)i*0.017f)*0.003f;uint32_t bits;
+            memcpy(&bits,&value,4u);bits&=0xffff0000u;
+            memcpy(a+i,&bits,4u);b[i]=(uint16_t)(bits>>16u);
+        }
+        for(uint32_t i=0;i<K*N;i++)input[i]=cosf((float)i*0.013f);
+        fg_vk_tensor_set_format(bf16,FG_VK_TENSOR_FORMAT_BF16_ROUTER);
+        ok=fg_vk_dense_f32(context,y0,f32,x,K,M,N,&error)==FG_OK&&
+            fg_vk_dense_f32(context,y1,bf16,x,K,M,N,&error)==FG_OK&&
+            memcmp(fg_vk_tensor_const_map(y0),fg_vk_tensor_const_map(y1),(size_t)M*N*4u)==0;
+        if(!ok)fprintf(stderr,"BF16 router does not match F32 bit-for-bit\n");
+    }
+    fg_vk_tensor_destroy(y1);fg_vk_tensor_destroy(y0);fg_vk_tensor_destroy(x);
+    fg_vk_tensor_destroy(bf16);fg_vk_tensor_destroy(f32);return ok;
+}
+
 static int test_q8_dense(void){
     enum{INPUT=32,OUTPUT=8};float source[INPUT*OUTPUT],x[INPUT],got[OUTPUT];uint8_t quantized[FG_Q8_0_BLOCK_BYTES*OUTPUT];
     for(uint32_t i=0;i<INPUT;i++)x[i]=cosf((float)i*0.17f);
@@ -3447,6 +3602,10 @@ ok=run_test("tensor_view_rebind",test_tensor_view_rebind)&&ok;
     ok=run_test("static_batch_replay",test_static_batch_replay)&&ok;
 ok=run_test("gpu_profile",test_gpu_profile)&&ok;
 ok=run_test("q8_dense",test_q8_dense)&&ok;
+ok=run_test("dense_quant",test_dense_quant)&&ok;
+ok=run_test("dense_quant_cooked",test_dense_quant_cooked)&&ok;
+ok=run_test("router_bf16_exact",test_router_bf16_exact)&&ok;
+ok=run_test("dense_quant_bench",test_dense_quant_bench)&&ok;
 ok=run_test("q8_dense_subgroup",test_q8_dense_subgroup)&&ok;
 ok=run_test("q8_dense_cooked",test_q8_dense_cooked)&&ok;
 ok=run_test("q8_subgroup_benchmark",test_q8_subgroup_benchmark)&&ok;
