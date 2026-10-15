@@ -36,6 +36,9 @@ Status values:
 | `FG_WORKER_OWNER` | `1` | Worker-side owner executor. `0` opts out. | validated default |
 | `FG_NGRAM_PAGEABLE` | `1` (on) | Worker n-gram shard mode. The shard is mapped (`mmap` + `MADV_RANDOM`) and served from the kernel page cache with a 128 MiB mlocked hot prefix and bounded `posix_fadvise(WILLNEED)` read-ahead; `0` restores mlock of the whole shard. Measured equal-or-better at 4K-151K and returns 3.7-3.9 GiB of host headroom per worker. | validated default |
 | `FG_PACK_EMBED_RANK` | rank 7 | Packer placement override for `token_embd.weight` (0-7). | packer option |
+| `FG_DENSE_K_COOKED` | unset (off) | Cook supported Q4_K/Q5_K weights to the dense cooked layout at load. | variant (opt-in) |
+| `FG_DENSE_SOA` | unset (off) | Convert supported dense GGML weights to SoA layout at load. | variant (opt-in) |
+| `FG_EXPERT_Q8_WIDE` | unset (off) | `1` opts into subgroup-shuffle wide Q8 MoE decode; off pending fleet A/B. | variant (opt-in) |
 
 Prefix continuation (resuming exact token-prefix extensions from the recorded
 owner-state frontier) is the default. Disable it per run with
@@ -63,6 +66,8 @@ slice ranks (the foreign loader names the exact missing span at startup).
 | `FG_PREFILL_PROFILE` | unset (off) | Per-layer prefill kernel profile dump. | profiling |
 | `FG_PREFILL_PROFILE_CHUNK` | unset (profile all) | Restricts `FG_PREFILL_PROFILE` capture to one microbatch index. | profiling |
 | `FG_OUTPUT_TRACE` | unset (off) | Per-token greedy output trace on the output owner. | profiling |
+| `FG_EVAL_LOGITS` | unset (off) | Write greedy evaluation logits to this file. | profiling |
+| `FG_EVAL_LOGITS_DIR` | unset (off) | Write numbered greedy evaluation logits (`%04u.fgl`) in this directory. | profiling |
 | `FG_NUMERICS_TRACE` | unset (off) | Hyper-state digests per layer/phase. Forces static replay off. | profiling |
 | `FG_GDN_DIAG` | unset (off) | GDN state diagnostics. | profiling |
 | `FG_DECODE_MS` | unset (off) | Per-token decode timings. | profiling |
@@ -100,6 +105,24 @@ slice ranks (the foreign loader names the exact missing span at startup).
 
 | Flag | Effect |
 |---|---|
+| `FG_BENCH_IQ_VARIANT` | Select the compact IQ4 shader variant (`r4w32`, `r8w32`, `r4w128`, or `r8w128`). |
+| `FG_BENCH_DENSE_COMPACT` | Enable compact dense storage for the dense benchmark. |
+| `FG_BENCH_DENSE_COOKED` | Benchmark cooked Q4_K/Q5_K dense weights. |
+| `FG_BENCH_DENSE_GGUF` | GGUF input path for the dense benchmark. |
+| `FG_BENCH_DENSE_N` | Set the dense benchmark token count. |
+| `FG_BENCH_DENSE_ONLY_HEAD` | Benchmark only the output-head shape. |
+| `FG_BENCH_DENSE_Q4_ONLY` | Use Q4_K for the Q5_K dense benchmark shape. |
+| `FG_BENCH_DENSE_QUANT` | Run the quantized dense benchmark. |
+| `FG_BENCH_DENSE_SELECTED` | Limit compact runs to selected shapes and print prior-path comparisons. |
+| `FG_BENCH_DENSE_SKIP_HEAD` | Skip the output-head shape in the dense benchmark. |
+| `FG_BENCH_DENSE_SOA` | Enable SoA dense storage for the dense benchmark. |
+| `FG_BENCH_EXPERT_FORMAT` | Select expert benchmark format (`q5`, `q4q8`, or `q4q5`). |
+| `FG_BENCH_IQ_ONLY` | Run only the IQ dense benchmark shape. |
+| `FG_BENCH_Q8_GGUF` | GGUF input path for the Q8_0 dense benchmark. |
+| `FG_BENCH_ROUTER` | Run the router benchmark instead of the parity check. |
+| `FG_BENCH_ROUTER_GGUF` | GGUF input path for the router benchmark. |
+| `FG_BENCH_ROUTER_N` | Set router benchmark token count (1-512). |
+| `FG_EXPERT_BOUND_DUMP` | Append expert down-projection bounds to this file. |
 | `FG_BENCH_PREFILL` | Prefill kernel benchmark output. |
 | `FG_BENCH_PREFILL_SHAPES` | Prefill shape sweep. |
 | `FG_BENCH_Q8_SUBGROUP` | Q8_0 subgroup vs generic dense benchmark. |

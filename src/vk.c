@@ -214,7 +214,8 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
 #endif
     if(c->active_compute_units>256u)c->active_compute_units=0u;
     vkGetPhysicalDeviceMemoryProperties(c->physical,&c->memory);VkPhysicalDeviceSubgroupProperties subgroup={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};VkPhysicalDeviceProperties2 properties2={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&subgroup};vkGetPhysicalDeviceProperties2(c->physical,&properties2);c->subgroup_topk=properties.limits.maxComputeWorkGroupInvocations>=1024u&&properties.limits.maxComputeWorkGroupSize[0]>=1024u&&subgroup.subgroupSize>=32u&&subgroup.subgroupSize<=64u&&(subgroup.supportedStages&VK_SHADER_STAGE_COMPUTE_BIT)!=0u&&(subgroup.supportedOperations&(VK_SUBGROUP_FEATURE_BASIC_BIT|VK_SUBGROUP_FEATURE_BALLOT_BIT|VK_SUBGROUP_FEATURE_ARITHMETIC_BIT))==(VK_SUBGROUP_FEATURE_BASIC_BIT|VK_SUBGROUP_FEATURE_BALLOT_BIT|VK_SUBGROUP_FEATURE_ARITHMETIC_BIT);
-    c->subgroup_expert_q8=subgroup.subgroupSize>=32u&&
+    const char *expert_q8_wide=getenv("FG_EXPERT_Q8_WIDE");
+    c->subgroup_expert_q8=expert_q8_wide&&strcmp(expert_q8_wide,"1")==0&&subgroup.subgroupSize>=32u&&
         (subgroup.supportedStages&VK_SHADER_STAGE_COMPUTE_BIT)!=0u&&
         (subgroup.supportedOperations&VK_SUBGROUP_FEATURE_SHUFFLE_BIT)!=0u;
     bool integer_dot_extension=device_has_extension(c->physical,"VK_KHR_shader_integer_dot_product");
