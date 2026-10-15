@@ -1,0 +1,6 @@
+{
+  "IP": "192.168.42.50",
+  "ExitCode": 0,
+  "Stdout": "active\nactive\nMainPID=1396\n\nMainPID=1397\n{\"status\":\"ok\"}\n{\"status\":\"ok\"}",
+  "Stderr": ""
+}

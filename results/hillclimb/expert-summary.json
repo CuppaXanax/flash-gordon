@@ -1,0 +1,227 @@
+{
+  "device": {
+    "ip": "192.168.42.50",
+    "reported_active_CU": 24,
+    "subgroup": 64
+  },
+  "method": "Three runs, 30 matched selections/run/format, ABBA order, 512-expert slabs",
+  "samples_per_variant_per_format": 90,
+  "deployed": false,
+  "runs": [
+    {
+      "run": 1,
+      "cases": [
+        {
+          "gate": 12,
+          "down": 7,
+          "before": {
+            "gate_up_us": 84.46,
+            "down_us": 60.64533333333333,
+            "pair_us": 145.10533333333333
+          },
+          "after": {
+            "gate_up_us": 84.73866666666667,
+            "down_us": 58.48533333333334,
+            "pair_us": 143.224
+          }
+        },
+        {
+          "gate": 13,
+          "down": 8,
+          "before": {
+            "gate_up_us": 83.96666666666667,
+            "down_us": 104.22,
+            "pair_us": 188.18666666666667
+          },
+          "after": {
+            "gate_up_us": 83.82666666666667,
+            "down_us": 59.51466666666667,
+            "pair_us": 143.34133333333332
+          }
+        },
+        {
+          "gate": 12,
+          "down": 8,
+          "before": {
+            "gate_up_us": 73.844,
+            "down_us": 104.18,
+            "pair_us": 178.024
+          },
+          "after": {
+            "gate_up_us": 73.39866666666667,
+            "down_us": 59.71333333333333,
+            "pair_us": 133.112
+          }
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "cases": [
+        {
+          "gate": 12,
+          "down": 7,
+          "before": {
+            "gate_up_us": 73.38,
+            "down_us": 52.512,
+            "pair_us": 125.892
+          },
+          "after": {
+            "gate_up_us": 73.58533333333334,
+            "down_us": 51.08133333333333,
+            "pair_us": 124.66666666666667
+          }
+        },
+        {
+          "gate": 13,
+          "down": 8,
+          "before": {
+            "gate_up_us": 84.15466666666667,
+            "down_us": 104.36266666666667,
+            "pair_us": 188.51733333333334
+          },
+          "after": {
+            "gate_up_us": 84.15466666666667,
+            "down_us": 59.50933333333333,
+            "pair_us": 143.664
+          }
+        },
+        {
+          "gate": 12,
+          "down": 8,
+          "before": {
+            "gate_up_us": 75.272,
+            "down_us": 106.30666666666667,
+            "pair_us": 181.57866666666666
+          },
+          "after": {
+            "gate_up_us": 75.30799999999999,
+            "down_us": 60.324,
+            "pair_us": 135.632
+          }
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "cases": [
+        {
+          "gate": 12,
+          "down": 7,
+          "before": {
+            "gate_up_us": 73.51333333333334,
+            "down_us": 52.48533333333334,
+            "pair_us": 125.99866666666667
+          },
+          "after": {
+            "gate_up_us": 73.8,
+            "down_us": 50.84,
+            "pair_us": 124.64
+          }
+        },
+        {
+          "gate": 13,
+          "down": 8,
+          "before": {
+            "gate_up_us": 84.23333333333333,
+            "down_us": 104.04933333333334,
+            "pair_us": 188.28266666666667
+          },
+          "after": {
+            "gate_up_us": 83.792,
+            "down_us": 59.544,
+            "pair_us": 143.336
+          }
+        },
+        {
+          "gate": 12,
+          "down": 8,
+          "before": {
+            "gate_up_us": 84.68266666666666,
+            "down_us": 116.18666666666667,
+            "pair_us": 200.86933333333334
+          },
+          "after": {
+            "gate_up_us": 84.504,
+            "down_us": 64.23333333333333,
+            "pair_us": 148.73733333333334
+          }
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "gate_type": 12,
+      "down_type": 7,
+      "layers": 43,
+      "bytes": 30720000,
+      "before": {
+        "gate_up_us": 77.11777777777777,
+        "down_us": 55.21422222222222,
+        "pair_us": 132.332,
+        "gate_up_GBps": 239.01103650981185,
+        "down_GBps": 222.5513555283663,
+        "pair_GBps": 232.14339691080013
+      },
+      "after": {
+        "gate_up_us": 77.37466666666667,
+        "down_us": 53.46888888888889,
+        "pair_us": 130.84355555555555,
+        "gate_up_GBps": 238.21750443728354,
+        "down_GBps": 229.8158846265741,
+        "pair_GBps": 234.784203697036
+      },
+      "pair_speedup": 1.0113757566287813
+    },
+    {
+      "gate_type": 13,
+      "down_type": 8,
+      "layers": 1,
+      "bytes": 39936000,
+      "before": {
+        "gate_up_us": 84.11822222222222,
+        "down_us": 104.21066666666667,
+        "pair_us": 188.32888888888888,
+        "gate_up_GBps": 267.81355341160065,
+        "down_GBps": 167.04623966836408,
+        "pair_GBps": 212.05456175956957
+      },
+      "after": {
+        "gate_up_us": 83.92444444444445,
+        "down_us": 59.522666666666666,
+        "pair_us": 143.4471111111111,
+        "gate_up_GBps": 268.431922893608,
+        "down_GBps": 292.46001523229245,
+        "pair_GBps": 278.4022605311753
+      },
+      "pair_speedup": 1.3128803182589945
+    },
+    {
+      "gate_type": 12,
+      "down_type": 8,
+      "layers": 4,
+      "bytes": 35840000,
+      "before": {
+        "gate_up_us": 77.93288888888888,
+        "down_us": 108.89111111111112,
+        "pair_us": 186.824,
+        "gate_up_GBps": 236.51118626282445,
+        "down_GBps": 159.86612518111875,
+        "pair_GBps": 191.83830771207124
+      },
+      "after": {
+        "gate_up_us": 77.73688888888888,
+        "down_us": 61.42355555555555,
+        "pair_us": 139.16044444444444,
+        "gate_up_GBps": 237.107507947035,
+        "down_GBps": 283.4091879336918,
+        "pair_GBps": 257.5444490931331
+      },
+      "pair_speedup": 1.3425079284982004
+    }
+  ],
+  "synthetic_48_layer_before_us": 6625.900888888888,
+  "synthetic_48_layer_after_us": 6326.361777777777,
+  "synthetic_saving_us": 299.5391111111112
+}
