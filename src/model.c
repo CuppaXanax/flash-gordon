@@ -64,7 +64,36 @@ static fg_status build_tensor_lookup(fg_model *model,fg_error *err){
         if(record->kind==FG_TENSOR_COMMON&&record->dims==2u&&model->tensor[i]){
             fg_vk_tensor_format format=fg_vk_dense_format(record->ggml_type);
             const char *cook=getenv("FG_DENSE_K_COOKED");
-            if(cook&&strcmp(cook,"1")==0&&
+            const char *soa=getenv("FG_DENSE_SOA");
+            if(soa&&strcmp(soa,"1")==0&&record->layout==FG_TENSOR_LAYOUT_GGML&&
+               strcmp(record->name,"output.weight")!=0&&
+               strcmp(record->name,"token_embd.weight")!=0&&
+               (record->ggml_type==12u||record->ggml_type==13u||record->ggml_type==20u)&&
+               record->shape[0]<=UINT32_MAX&&record->shape[1]<=UINT32_MAX){
+                uint64_t size=fg_dense_soa_bytes((uint32_t)record->shape[0],
+                    (uint32_t)record->shape[1],record->ggml_type);
+                if(!size||model->weight_bytes>model->manifest->persistent_cap_bytes||
+                   size>model->manifest->persistent_cap_bytes-model->weight_bytes){
+                    fg_error_set(err,FG_ERR_LIMIT,"dense SoA staging exceeds persistent cap");
+                    return FG_ERR_LIMIT;
+                }
+                fg_vk_tensor *replacement=NULL;
+                fg_status status=fg_vk_tensor_create(model->vk,size,&replacement,err);
+                if(status!=FG_OK)return status;
+                bool converted=fg_cook_dense_soa(fg_vk_tensor_const_map(model->tensor[i]),
+                    fg_vk_tensor_map(replacement),size,(uint32_t)record->shape[0],
+                    (uint32_t)record->shape[1],record->ggml_type);
+                if(!converted){
+                    fg_vk_tensor_destroy(replacement);
+                    fg_error_set(err,FG_ERR_FORMAT,"cook dense SoA tensor");
+                    return FG_ERR_FORMAT;
+                }
+                fg_vk_tensor_destroy(model->tensor[i]);model->tensor[i]=replacement;
+                model->weight_bytes+=size;
+                format=record->ggml_type==12u?FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K:
+                    record->ggml_type==13u?FG_VK_TENSOR_FORMAT_DENSE_SOA_Q5_K:
+                    FG_VK_TENSOR_FORMAT_DENSE_SOA_IQ4_NL;
+            }else if(cook&&strcmp(cook,"1")==0&&
                strcmp(record->name,"output.weight")!=0&&
                (record->ggml_type==12u||record->ggml_type==13u)&&
                record->shape[0]<=UINT32_MAX&&record->shape[1]<=UINT32_MAX&&

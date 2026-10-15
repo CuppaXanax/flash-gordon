@@ -41,14 +41,16 @@ static int router_lossless(FILE *old,const fg_tensor_record *t,FILE *dense,
 }
 
 int main(int argc,char **argv){
-    if(argc!=5&&argc!=6){
-        fprintf(stderr,"usage: q4-repack OLD.fgm OLD_PACK DENSE.gguf NEW_DIR [RANK]\n");
+    if(argc<5||argc>7){
+        fprintf(stderr,"usage: q4-repack OLD.fgm OLD_PACK DENSE.gguf NEW_DIR [RANK] [--keep-q8-head]\n");
         return 2;
     }
     int only=-1;
-    if(argc==6){
-        char *end=NULL;long rank=strtol(argv[5],&end,10);
-        if(!end||*end||rank<0||rank>=FG_RANK_COUNT)return 2;
+    bool keep_q8_head=false;
+    for(int i=5;i<argc;i++){
+        if(strcmp(argv[i],"--keep-q8-head")==0){keep_q8_head=true;continue;}
+        char *end=NULL;long rank=strtol(argv[i],&end,10);
+        if(!end||end==argv[i]||*end||rank<0||rank>=FG_RANK_COUNT||only>=0)return 2;
         only=(int)rank;
     }
     fg_error err={0};fg_manifest *m=malloc(sizeof(*m));fg_gguf g={0};
@@ -99,7 +101,8 @@ int main(int argc,char **argv){
                 }
             }
             if(t->kind==FG_TENSOR_COMMON&&t->dims==2u&&t->ggml_type==8u&&
-               strcmp(t->name,"token_embd.weight")!=0){
+               strcmp(t->name,"token_embd.weight")!=0&&
+               !(keep_q8_head&&strcmp(t->name,"output.weight")==0)){
                 for(uint64_t j=0;j<g.tensor_count;j++)
                     if(strcmp(t->name,g.tensors[j].name)==0)replacement=&g.tensors[j];
                 if(!replacement||replacement->dims!=2u||

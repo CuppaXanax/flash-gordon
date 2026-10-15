@@ -1,10 +1,14 @@
 # Experimental Q4 dense overlay
 
-**NO-GO for deployment.** Numerical kernel parity passes, but every measured
-production shape is slower than its paired Q8 baseline. The best cooked
-Q4/Q5 result is about 93 GB/s, versus a measured streaming roof near 451 GB/s.
-The Q6 vocabulary head reaches about 65 GB/s. These are GPU timestamp averages,
-not wall-clock serving throughput. Reduced bytes do not imply faster decode.
+**Kernel gate passed for ordinary Q4; NO-GO for deployment pending quality.**
+The exact SoA implementation beats paired cooked Q8 on all nine non-head
+GEMV shapes in three runs on `.51`, and all 63 prefill comparisons at
+N=8,16,32,64,128,256,512. The Q6 vocabulary head still loses; retain Q8 there.
+The protected Q5 plan is not a universal win. See
+[`q4-kernels.md`](../results/hillclimb/q4-kernels.md) and its JSON evidence.
+The older ~93 GB/s cooked Q4/Q5 and ~65 GB/s Q6 results describe the superseded
+interleaved kernels, not the new SoA path. These are synthetic GPU timestamp
+microbenchmarks, not wall-clock serving throughput or a model-quality result.
 
 ## Contents and compatibility
 
@@ -22,11 +26,34 @@ their original pack representation. The GGUF overlay includes a freshly
 quantized token embedding, but the repacker intentionally does not install it.
 
 Single- and multiple-token shader parity is checked against independent scalar
-oracles. Multiple-token dispatch currently repeats GEMV: **this is not a
-tile-reusing packed-FP16 MMQ implementation**. No native int8 dot is used.
+oracles. The new SoA path stages dequantized FP32 weights once per LDS tile
+for batched dispatch, with token-adaptive 8/16/32-column tiles. It is **not
+packed-FP16 MMQ**: no potentially lossy FP16 weight narrowing is performed.
+No native int8 dot is used.
 `FG_DENSE_K_COOKED=1` optionally cooks eligible Q4/Q5 matrices into the existing
 8-row interleave, without changing on-disk GGUF bytes. The sliced vocabulary
 head remains raw. Default Q8 cooking is unchanged.
+
+### Exact SoA runtime path
+
+`FG_DENSE_SOA=1` selects the new layout for eligible common Q4_K, Q5_K, and
+IQ4_NL matrices; leave the older cooking flag unset. Embedding and output
+weights are excluded. Eight-row tiles store metadata separately from contiguous
+row-local quant streams. Q4_K expands to 24 bytes/32 weights, Q5_K to 28, and
+IQ4_NL retains 18. K-quant group scale/minimum products are exact FP32; IQ4
+keeps the original half-scale bits. No source dequantized value changes.
+
+This is load-time cooking into **additional** Vulkan buffers, not an on-disk
+SoA pack. The verified raw arenas remain allocated; `fg_model_weight_bytes`
+includes the extra buffers, and exceeding the manifest's persistent cap is
+refused. Do not extrapolate the historical 4.4–4.9 GB/token ledger to this
+expanded format or its resident memory. Loader tests cover all three types,
+untouched embedding/head, cooked bytes/accounting, and cap refusal.
+
+The measured ordinary plan uses Q4_K for every 256-aligned projection and
+IQ4_NL for K=320/640. It is not permission to downgrade protected projections
+without the existing quality gates. `q4-repack --keep-q8-head` copies the
+original output weight rather than installing the overlay's slower Q6 head.
 
 ## Source and quantization
 
@@ -90,7 +117,7 @@ old=/home/xander/fg-ring-pack-abliterated
 manifest="$old/manifest.fgm"
 rank=0
 ./tools/q4-repack "$manifest" "$old" /home/xander/hc-q4/dense-q4.gguf \
-  /home/xander/hc-q4/pack-q4 "$rank"
+  /home/xander/hc-q4/pack-q4 "$rank" --keep-q8-head
 ```
 
 The manifest basename above is an example, not a claim about the deployment.
@@ -163,18 +190,21 @@ DS4_REMOTE_TEST_FILTER=router_bf16_exact ./tests/test_fg_vk
 FG_BENCH_DENSE_QUANT=1 DS4_REMOTE_TEST_FILTER=dense_quant_bench ./tests/test_fg_vk
 FG_BENCH_DENSE_COOKED=1 FG_BENCH_DENSE_QUANT=1 \
   DS4_REMOTE_TEST_FILTER=dense_quant_bench ./tests/test_fg_vk
+FG_BENCH_DENSE_SOA=1 FG_BENCH_DENSE_Q4_ONLY=1 FG_BENCH_DENSE_SKIP_HEAD=1 \
+  FG_BENCH_DENSE_QUANT=1 DS4_REMOTE_TEST_FILTER=dense_quant_bench ./tests/test_fg_vk
 ```
 
 Each benchmark prints subgroup size (64 on `.52`), logical weight bytes,
 GPU microseconds, decimal weight GB/s, same-shape Q8 latency, break-even, and
-scalar parity. There are 20 timed repetitions per shape. Raw and cooked runs
-check the first, middle, and last output rows against the scalar oracle;
-the smaller correctness cases check every row and token. The Q8 baseline uses
-an independently initialized, same-shaped payload, not numerically identical
-weights. Raw and cooked runs
-are sequential and may have different clocks/cache behavior; unchanged
-IQ4/Q6 differences between them are not evidence of cooked-layout improvement.
-No privileged hardware/power changes are made.
+scalar parity. There are 20 timed repetitions per candidate and Q8, alternating
+in the same profiled command batch and reversing order each pair. Benchmarks
+check 32 evenly sampled rows for every token; smaller correctness cases check
+every row/token. The Q8 baseline uses an independently initialized, same-shaped
+payload, not numerically identical weights. Separate experiment runs may still
+have different clocks/cache behavior; compare each candidate to its own paired
+baseline. Cooked GB/s counts the expanded SoA bytes, not the original compressed
+payload; both rates are reported in the new results. No privileged
+hardware/power changes are made.
 
 Observed regression limits on `.52`: the full make targets hit existing
 `test_hc_down_split` missing-topology link dependencies and a
@@ -185,8 +215,12 @@ router, embedding, HC, ngram, and PLE oracles before crashing in
 Vulkan, loader, output, and test sources (exit 139). Therefore **no full-suite
 pass is claimed**. All eight Python/native-quantizer tests pass on `.53`.
 
-**Blocking gates:** per-shape Q8 latency break-even; ≥300 GB/s large-shape goal;
-packed-FP16 tile-reusing MMQ; real-pack source/identity and exact-router proof;
+**Remaining gates/limitations:** the ordinary kernel latency gate now passes
+on `.51`, not the protected Q5/head variants or a final 24-CU validation.
+The ≥300 GB/s goal is reached on only two large shapes using expanded cooked
+bytes; no Q4 shape reaches it using original compressed bytes.
+Packed-FP16 MMQ remains future work. Deployment still requires
+real-pack source/identity and exact-router proof;
 complete ring startup and logits capture; KLD/top-1, router-top10, existing
 reference/Vulkan/prefill/decode/long-context gates. Nothing here authorizes
 deployment or claims the projected 4.4–4.9 GB/token is achieved serving speed.

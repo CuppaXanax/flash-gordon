@@ -100,6 +100,57 @@ static void k_scale_min(const uint8_t *block,uint32_t group,uint32_t *scale,uint
 static uint32_t q4_k_value(const uint8_t *block,uint32_t index){uint32_t group=index>>5u,i=index&31u;uint8_t packed=block[16u+(group>>1u)*32u+i];return (group&1u)?packed>>4u:packed&15u;}
 static uint32_t q5_k_value(const uint8_t *block,uint32_t index){uint32_t group=index>>5u,i=index&31u;uint8_t packed=block[48u+(group>>1u)*32u+i];uint32_t low=(group&1u)?packed>>4u:packed&15u,high=(block[16u+i]>>group)&1u;return low|(high<<4u);}
 
+uint64_t fg_dense_soa_bytes(uint32_t input_width,uint32_t rows,uint32_t type){
+    if(!rows||!input_width||input_width%(type==20u?32u:256u)||
+       (type!=12u&&type!=13u&&type!=20u))return 0;
+    uint64_t padded=((uint64_t)rows+7u)&~UINT64_C(7);
+    return padded*(input_width/32u)*(type==13u?28u:type==20u?18u:24u);
+}
+
+bool fg_cook_dense_soa(const void *input,void *output,uint64_t output_bytes,
+                       uint32_t input_width,uint32_t rows,uint32_t type){
+    uint64_t required=fg_dense_soa_bytes(input_width,rows,type);
+    if(!input||!output||!required||output_bytes<required||required>SIZE_MAX)return false;
+    uint32_t groups=input_width/32u,group_bytes=type==13u?28u:type==20u?18u:24u;
+    uint32_t source_bytes=type==12u?144u:type==13u?176u:18u;
+    const uint8_t *source=input;uint8_t *dst=output;
+    memset(dst,0,(size_t)required);
+    for(uint32_t row=0;row<rows;row++)for(uint32_t g=0;g<groups;g++){
+        const uint8_t *p=source+((uint64_t)row*(type==20u?groups:groups/8u)+
+            (type==20u?g:g/8u))*source_bytes;
+        uint64_t tile=(uint64_t)(row/8u)*groups*8u*group_bytes;
+        uint64_t meta=tile+((uint64_t)g*16u+row%8u)*4u;
+        float d=fg_f16_to_f32((uint16_t)p[0]|((uint16_t)p[1]<<8u)),m=0.0f;
+        if(type!=20u){
+            uint32_t sc,mn;k_scale_min(p,g%8u,&sc,&mn);
+            d*=(float)sc;
+            m=fg_f16_to_f32((uint16_t)p[2]|((uint16_t)p[3]<<8u))*(float)mn;
+        }
+        if(type==20u)memcpy(dst+tile+((uint64_t)g*8u+row%8u)*2u,p,2u);
+        else{memcpy(dst+meta,&d,4u);memcpy(dst+meta+32u,&m,4u);}
+        uint64_t quant=tile+(uint64_t)groups*(type==20u?16u:64u)+
+            ((uint64_t)(row%8u)*groups+g)*(type==13u?20u:16u);
+        if(type==13u){
+            for(uint32_t lane=0;lane<4u;lane++){
+                uint64_t packed=0u;
+                for(uint32_t j=0;j<8u;j++){
+                    uint32_t index=(g%8u)*32u+lane*4u+(j%4u)+(j/4u)*16u;
+                    packed|=(uint64_t)q5_k_value(p,index)<<(j*5u);
+                }
+                for(uint32_t j=0;j<5u;j++)dst[quant+lane*5u+j]=(uint8_t)(packed>>(j*8u));
+            }
+            continue;
+        }
+        for(uint32_t j=0;j<16u;j++){
+            uint32_t a,b;
+            if(type==20u){a=p[2u+j]&15u;b=p[2u+j]>>4u;}
+            else{a=q4_k_value(p,(g%8u)*32u+j);b=q4_k_value(p,(g%8u)*32u+j+16u);}
+            dst[quant+j]=(uint8_t)((a&15u)|((b&15u)<<4u));
+        }
+    }
+    return true;
+}
+
 static float dot_k_q8(const uint8_t *weights,const fg_block_q8_k *activation,uint64_t values,bool q5){
     const uint32_t block_bytes=q5?176u:144u;float result=0.0f;
     for(uint64_t block_index=0;block_index<values/FG_QK8_K;block_index++){
