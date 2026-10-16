@@ -1,8 +1,39 @@
 # Independent sessions through the ring
 
-Status: **implemented, local transport/API/harness tests passed; model and fleet
-qualification pending**. No fleet was accessed for this change. The ~2x target
-below is an acceptance criterion, not a measured model result.
+Status: **fleet-qualified NO-GO; do not promote this configuration**.
+The main-based integration was tested on .42–.49 against immutable original
+production with three fresh-salt paired rounds. The repaired `79b0efc` native
+build and mix-04 pack pass all 15 same-pack single-session canonical hashes,
+but the 11-metric screen has **2 corrected wins, 5 significant regressions and
+4 inconclusive metrics**. Every protected metric must pass independently;
+aggregate throughput does not excuse chat/prefill/TTFT losses.
+
+The first build failed on static descriptor slots 4–7; `79b0efc` repairs the
+dynamic-pool guard without weakening static window bounds. An eight-slot
+llvmpipe regression reproduces the old failure and passes after the repair.
+Three entirely fresh pairs were used for the repaired binary; failed-build
+samples were not pooled. Aggregate non-stream wall TPS rises from 18.636 to
+30.429, but chat falls from 18.977 to 15.215 and 4K engine prefill is only
+0.1224x original. The long-context inferential follow-up was skipped after the
+predeclared screen failed; no 32K/128K noninferiority claim is supported.
+
+A separate warm SSE forensic trial also fails sustained generation: the agent
+emits one actual token both isolated and loaded; chat emits 128, and both hashes
+match their own controls. It is not valid sustained concurrent-throughput
+evidence. The ~2x and memory gates below remain future acceptance criteria,
+not a promotion claim. Full paired evidence and the final capacity/restore
+receipts are published in `results\hillclimb\AB_QUALIFY.md` on
+`cuppaxanax/ab-harness`.
+
+The final capacity diagnostic was stopped at the user's wrap-up instruction
+after **178400/260075 prompt tokens**, not after a completed near-262K session.
+All eight sampled owners retained at least 2.195 GiB MemAvailable, with no new
+OOM, process swap or system-swap growth, but this is **not full-context
+qualification**. The original production release was restored, its pinned
+launchers restart-tested, real API generation verified and task scratch
+cleaned; .42–.49 are released. Three-pair df=2/76-comparison gating was
+acknowledged as too low-power for practical whole-candidate acceptance and
+left unchanged; redesign power before another qualification run.
 
 ## Contract
 
@@ -109,13 +140,13 @@ RSS, GPU/unified allocations, MemAvailable, disk use, major faults and swap,
 with both sessions live. Reject OOM, swap growth, cache thrashing or a reserve
 below 512 MiB. A prefill smoke test alone cannot qualify this.
 
-## Local validation (no fleet)
+## Targeted local validation
 
 From Windows:
 
 ```powershell
-Set-Location D:\looking-glass-labs\fg-wt\multisess
-wsl -d Ubuntu-24.04 -- bash -lc 'cd /mnt/d/looking-glass-labs/fg-wt/multisess && mkdir -p .build && export TMPDIR="$PWD/.build" && make -j8 && make -j8 test-multi-session tests/test_decode_batch && ./tests/test_decode_batch && bash tools/check-flags.sh'
+Set-Location D:\looking-glass-labs\fg-wt\multi-session-int
+wsl -d Ubuntu-24.04 -- bash -lc 'cd /mnt/d/looking-glass-labs/fg-wt/multi-session-int && mkdir -p .build && export TMPDIR="$PWD/.build" && make -j8 && make -j8 test-multi-session tests/test_decode_batch && ./tests/test_decode_batch && bash tools/check-flags.sh'
 python -m unittest tools.test_hillclimb_concurrency -v
 git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check
 ```
@@ -139,7 +170,7 @@ does not conceal or resolve those older fixtures.
 
 ## Future deployment: lease required
 
-**Do not execute this section while the Q4 qualification agent holds the fleet.**
+**Do not execute this section without the exclusive production fleet lease.**
 First checkpoint the working API, obtain the exclusive .42-.49 lease, and stop
 the previous deployment with its PID-scoped runbook. Preserve that deployment's
 binary, launch arguments, environment and manifest for full revision rollback.
@@ -152,8 +183,8 @@ a regular manifest copy and private state files. Never run it simultaneously
 with production on the same endpoints.
 
 ```powershell
-Set-Location D:\looking-glass-labs\fg-wt\multisess
-$runner = 'D:\looking-glass-labs\bc-250-dbg\Invoke-BC250Fleet.ps1'
+Set-Location D:\looking-glass-labs\fg-wt\multi-session-int
+$runner = 'D:\looking-glass-labs\fg-wt\ab-harness\tools\ab-fleet.ps1'
 $targets = @(42..49 | ForEach-Object { "192.168.42.$_" })
 $id = 'multisess-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
 $remote = "/home/xander/fg-experiments/$id"
@@ -161,7 +192,7 @@ $pack = '/home/xander/fg-ring-pack-abliterated'
 $manifest = 'manifest-native-262k.fgm'
 $local = New-Item -ItemType Directory -Force ".build\$id"
 $archive = Join-Path $local.FullName 'runtime.tar.gz'
-wsl -d Ubuntu-24.04 -- bash -lc 'cd /mnt/d/looking-glass-labs/fg-wt/multisess && export TMPDIR="$PWD/.build" && make -j8 && tar -czf .build/multisess-runtime.tar.gz flash-gordon vulkan'
+wsl -d Ubuntu-24.04 -- bash -lc 'cd /mnt/d/looking-glass-labs/fg-wt/multi-session-int && export TMPDIR="$PWD/.build" && make -j8 && tar -czf .build/multisess-runtime.tar.gz flash-gordon vulkan'
 if ($LASTEXITCODE) { throw 'Build failed' }
 Copy-Item .build\multisess-runtime.tar.gz $archive
 git rev-parse HEAD | Set-Content (Join-Path $local.FullName 'commit.txt')
@@ -209,7 +240,10 @@ ledger and pack identity with the local results.
 
 ## Qualification commands and gates
 
-With the exclusive lease still held:
+With the exclusive lease still held, these commands collect descriptive load
+diagnostics only. They do not replace the fresh-salt paired confidence-interval
+gates in `docs\AB_QUALIFICATION.md` on `cuppaxanax/ab-harness`. Inconclusive
+noninferiority is a rejection, not permission to promote.
 
 ```powershell
 $url = 'http://192.168.42.42:8080/v1'
@@ -235,7 +269,8 @@ isolated-versus-loaded chat hash. The long agent's isolated TPS, retention,
 same-prompt hash comparison and aggregate speedup are explicitly null, not
 invented from another request. This is a memory/load probe, not an independent
 long-context throughput or greedy-parity qualification.
-After the long request completes, it also sends a fresh chat on the existing
+If sustained-generation validation succeeds after the long request completes,
+it also sends a fresh chat on the existing
 chat identity while leaving the agent identity assigned. The result records
 that real chat response separately, exercising chat allocation/generation with
 the completed near-limit agent still resident.
