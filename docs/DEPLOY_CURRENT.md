@@ -1,24 +1,26 @@
 # Current production deployment
 
-**Current selection: main `a63a166` plus sealed mix-04, sessions 1, no new
-arithmetic flags.** The user explicitly authorized this promotion after the
-original paired study: mix-04 passed KL and had zero significant regressions.
-Its six inconclusive metrics remain inconclusive; this is a revised operator
-decision, **not a claim that the original noninferiority gate passed**.
-The historical decision/evidence in `results\hillclimb\AB_QUALIFY.md` is retained
-unchanged. Promotion, sanity and gap diagnostics are in
-`results\hillclimb\PROD_GAP.md` and `prod-gap`.
+**Current selection: adaptive scheduler `2d0f8a7` plus sealed mix-04,
+sessions 2; no new arithmetic flags.** Five alternating paired rounds passed
+the user's solo/no-clear-regression and aggregate-improvement promotion rule;
+all nine protected solo/TTFT metrics also passed pointwise strict
+noninferiority. This does **not** mean every older QoS/parity target passed:
+loaded chat gaps still miss the ~1.5x target, mixed-prefill aggregate wall
+throughput regresses, and cold mixed-agent outputs differ.
+[Full decision and measurements](https://github.com/CuppaXanax/flash-gordon/blob/cuppaxanax/multi-session-int/results/hillclimb/MULTI_SESSION_FLEET.md).
+Historical mix-04 quality evidence in `AB_QUALIFY.md` and `PROD_GAP.md`
+remains unchanged; the sealed pack and manifest were not modified.
 
 | Item | Current value |
 |---|---|
 | Owners | 192.168.42.42–192.168.42.49; ranks 0–7 |
 | API | `http://192.168.42.42:8080/v1` |
 | Model | `Qwen3.8-Flash-Next-Uncensored` |
-| Release | `/home/xander/flash-gordon-live/20261015-abq-main` |
-| Binary SHA256 | `1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789` |
+| Release | `/home/xander/flash-gordon-live/20261016-abq-multisess` |
+| Binary SHA256 | `de6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58` |
 | Manifest | `/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm` |
 | Manifest SHA256 | `0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252` |
-| Sessions / expert wide | Single session; `FG_EXPERT_Q8_WIDE=0` |
+| Sessions / expert wide | 2 sessions; `FG_EXPERT_Q8_WIDE=0` |
 | Retained operator | `/home/xander/flash-gordon-live/20261015-abq-operator` |
 
 The binary, weights and manifest of the original release are unchanged.
@@ -29,28 +31,28 @@ claimed. After reboot, run the persistent launcher on workers, then coordinator.
 
 ## Persistent launcher and exact commands
 
-Each owner retains `launch-current.sh`, `ab-instance.sh` and `current.json` in
+Each owner retains `launch-current.sh`, `ab-instance-multisess.sh` and `current.json` in
 the operator directory. The launcher pins the exact release/manifest, checks
 both SHA256 values before start, and derives its rank only from .42–.49.
-`ab-instance.sh` refuses duplicate serving processes. Stop enumerates owned
+`ab-instance-multisess.sh` refuses duplicate serving processes. Stop enumerates owned
 numeric PIDs and requires the exact executable and `--manifest` argument before
 TERM/wait; there is no name kill, forced kill, or floating "latest" symlink.
-Archived copies and restart/identity/health receipts are in
-`results\hillclimb\prod-gap\current`; the earlier original-launch receipts remain
-in `results\hillclimb\ab-current`.
+Current launcher and complete restart/identity/health receipts are in the
+[qualification archive](https://github.com/CuppaXanax/flash-gordon/tree/cuppaxanax/multi-session-int/results/hillclimb/multisess-fleet-20261016/selected).
+The earlier `prod-gap\current` and `ab-current` receipts are historical.
 
 Run as `xander`. Coordinator command, from the immutable release directory:
 
 ```bash
 nohup env \
-  FG_SHADER_DIR=/home/xander/flash-gordon-live/20261015-abq-main/vulkan \
+  FG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan \
   FG_EXPERT_Q8_WIDE=0 FG_RING_TRACE=1 \
-  /home/xander/flash-gordon-live/20261015-abq-main/flash-gordon api \
+  /home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon api \
   --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm \
   --model-name Qwen3.8-Flash-Next-Uncensored \
   --host 0.0.0.0 --port 8080 \
   --context-tokens 262144 --gpu-index-tokens 262144 \
-  --qsa-hot-tokens 0 --qsa-page-cache-mib 700 \
+  --qsa-hot-tokens 0 --qsa-page-cache-mib 700 --sessions 2 \
   >/home/xander/flash-gordon-live/20261015-abq-operator/rank-0.log \
   2>&1 </dev/null &
 echo "$!" >/home/xander/flash-gordon-live/20261015-abq-operator/rank-0.pid
@@ -60,9 +62,9 @@ Workers use the following command with `N=1` on .43 through `N=7` on .49:
 
 ```bash
 nohup env \
-  FG_SHADER_DIR=/home/xander/flash-gordon-live/20261015-abq-main/vulkan \
+  FG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan \
   FG_EXPERT_Q8_WIDE=0 \
-  /home/xander/flash-gordon-live/20261015-abq-main/flash-gordon rank \
+  /home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon rank \
   --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank "$N" \
   >"/home/xander/flash-gordon-live/20261015-abq-operator/rank-$N.log" \
   2>&1 </dev/null &
@@ -71,9 +73,29 @@ echo "$!" >"/home/xander/flash-gordon-live/20261015-abq-operator/rank-$N.pid"
 
 Do not enable `FG_DECODE_PROFILE`; it disables static replay and changes the
 measurement. No fusion/MTP or other experimental switches are part of this
-deployment. The executable does not receive `--sessions`.
+deployment. Only the coordinator receives `--sessions 2`. The QSA cache budget
+is per session. Clients need stable, distinct top-level OpenAI `user` values
+(for example `chat` and `agent`) for resident prefix affinity; omitting `user`
+does not provide durable conversation affinity.
 
-## One-command rollback
+## Roll back to previous main/mix-04 (sessions 1)
+
+From this worktree, with the exclusive fleet lease:
+
+```powershell
+pwsh -NoProfile -File .\tools\ab-rollback-main-mix04.ps1
+```
+
+This uses retained `launch-main-mix04.sh`/`main-mix04.json`, stops owned numeric
+PIDs through the current hash-pinned launcher, starts workers before coordinator,
+updates local live state, and verifies health/models/real generation. It restores
+`a63a166`, binary SHA256
+`1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789`,
+with the same sealed mix-04 manifest and no `--sessions` argument. The new
+wrapper is syntax-checked; its A configuration was exercised repeatedly in the
+paired study. The wrapper was not invoked after the final selected restart.
+
+## Historical original-Q8 rollback (not the main/mix-04 fallback)
 
 From the `cuppaxanax/ab-harness` worktree root, with the exclusive fleet lease:
 
@@ -123,12 +145,14 @@ Allow loading to finish, then verify `/health` reports `status=ok`,
 `/v1/models` lists the exact model above, and a real greedy chat returns visible
 content. `launch-current.sh status` reports process arguments and file hashes;
 the final archived verification additionally checks all eight live executable
-inodes, exact argv/environment and the immutable original identities.
+inodes, exact argv/environment and the pinned current identities.
 
-Final verification at **2026-10-15 23:50 UTC-07** passed after a fresh complete
-ring restart and experiment cleanup. All eight had only the pinned `FG_`
-environment above; `LD_PRELOAD` and every diagnostic trace/profile switch were
-absent. `/health` was `ok`, the model ID matched, and greedy chat returned `OK`.
-Receipts: `prod-gap\current\verify.json`, `prod-gap\final-cleanup.json`, and
-`prod-gap\final-api-health.json`. `/home/xander/hc-abq-gap` was removed on all
-eight only after its libraries were unmapped and all evidence downloaded.
+Final verification on **2026-10-16 UTC-07**, after the complete selected ring
+restart and observer cleanup, passed. All eight live executable/manifest hashes,
+argv and allowed FG environment were checked. Health/models and real greedy
+generation passed; a fresh genuine two-stream generation also passed after
+restart. Only the flags above are present; no `LD_PRELOAD` or decode profiler.
+[Final timestamp and API receipt](https://github.com/CuppaXanax/flash-gordon/blob/cuppaxanax/multi-session-int/results/hillclimb/multisess-fleet-20261016/final-api-health.json);
+the sibling `final-cleanup.json` verifies all-eight observer cleanup.
+Retained launchers survive logout; automatic host-boot/systemd persistence is
+not claimed.
