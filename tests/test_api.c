@@ -29,6 +29,7 @@ struct fg_runtime {
     size_t evaluated_length;
     fg_prefix_reset_reason empty_reason;
     const char *generated;
+    size_t generated_chunk_bytes;
     bool fail_after_prefill;
     bool force_continuation_miss;
     bool require_clean_generation;
@@ -181,7 +182,14 @@ fg_status fg_runtime_generate(fg_runtime *runtime, const char *rendered_transcri
     }
     const char *generated = runtime->generated ? runtime->generated :
         "hidden\n</think>\n\nanswer";
-    fg_status status = callback(callback_context, 42u, generated, strlen(generated), err);
+    fg_status status=FG_OK;
+    size_t total=strlen(generated),chunk=runtime->generated_chunk_bytes?
+        runtime->generated_chunk_bytes:total;
+    for(size_t offset=0;status==FG_OK&&offset<total;){
+        size_t bytes=total-offset;if(bytes>chunk)bytes=chunk;
+        status=callback(callback_context,42u,generated+offset,bytes,err);offset+=bytes;
+    }
+    if(!total)status=callback(callback_context,42u,"",0u,err);
     if (status != FG_OK) {
         free(runtime->history);
         runtime->history = NULL;
@@ -3624,7 +3632,89 @@ static void test_session_affinity(void){
     api_engine_queue_destroy(&queue);
 }
 
+static void test_stop_sequences(void){
+    const char *invalid[]={"1","true","[\"a\",1]","[\"\"]",
+        "\"\"","[\"a\",\"b\",\"c\",\"d\",\"e\"]","{}"};
+    fg_error err={0};
+    for(size_t i=0;i<sizeof(invalid)/sizeof(*invalid);i++){
+        char body[512];snprintf(body,sizeof(body),
+            "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stop\":%s}",invalid[i]);
+        json_value *root=parse_json_body(body,strlen(body),&err);
+        api_chat_request request={0};CHECK(root!=NULL);
+        CHECK(parse_chat_request(root,"Qwen3.8-Flash-Next",&request,&err)==FG_ERR_ARGUMENT);
+        api_chat_request_free(&request);json_free(root);
+    }
+    const char *valid[]={"null","[]","\"x\"","[\"x\",\"yz\"]"};
+    for(size_t i=0;i<sizeof(valid)/sizeof(*valid);i++){
+        char body[512];snprintf(body,sizeof(body),
+            "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stop\":%s}",valid[i]);
+        json_value *root=parse_json_body(body,strlen(body),&err);
+        api_chat_request request={0};CHECK(root!=NULL);
+        CHECK(parse_chat_request(root,"Qwen3.8-Flash-Next",&request,&err)==FG_OK);
+        api_chat_request_free(&request);json_free(root);
+    }
+    for(size_t chunk=1u;chunk<=12u;chunk++){
+        for(unsigned streaming=0;streaming<2u;streaming++){
+            char body[512];snprintf(body,sizeof(body),
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"/no_think hi\"}],"
+                "\"stop\":[\"<STOP>\",\"<END>\"],\"stream\":%s,\"max_tokens\":1}",
+                streaming?"true":"false");
+            fg_runtime runtime={.empty_reason=FG_PREFIX_RESET_COLD_START,
+                .generated="Alpha<STOP>hidden suffix",.generated_chunk_bytes=chunk};
+            api_public_session session={0};fg_status status=FG_OK;
+            char *response=run_chat_request(&runtime,&session,body,&status);
+            CHECK(status==FG_OK);CHECK(response&&strstr(response,"200 OK"));
+            CHECK(response&&!strstr(response,"STOP")&&!strstr(response,"hidden suffix"));
+            CHECK(response&&strstr(response,"\"finish_reason\":\"stop\""));
+            CHECK(runtime.reset_count>0u);
+            CHECK(runtime.history_length==0u&&runtime.evaluated_length==0u);
+            CHECK(!session.valid);
+            if(streaming)CHECK(response&&strstr(response,"data: [DONE]\n\n"));
+            else CHECK(response&&strstr(response,"\"content\":\"Alpha\""));
+            free(response);api_public_session_free(&session);fg_runtime_close(&runtime);
+        }
+        api_generation traced={.sink={.fd=-1},.token_hash_enabled=true};
+        fg_sha256_init(&traced.token_hash);
+        CHECK(api_token(&traced,7u,"same",4u,&err)==FG_OK);
+        CHECK(api_token(&traced,9u,"",0u,&err)==FG_OK);
+        fg_sha256 reference;fg_sha256_init(&reference);
+        api_digest_u32(&reference,7u);api_digest_u32(&reference,9u);
+        uint8_t got[32],expected[32];
+        fg_sha256_final(&traced.token_hash,got);fg_sha256_final(&reference,expected);
+        CHECK(traced.token_count==2u&&!memcmp(got,expected,32u));
+        free(traced.content.data);
+    }
+    struct {const char *output;const char *first;const char *second;const char *expected;bool match;} cases[]={
+        {"ab<ST","<STOP>","<END>","ab<ST",false},
+        {"<STOP>discard","<STOP>","<END>","",true},
+        {"abXYZdiscard","YZ","XYZ","ab",true},
+        {"abcd","abcd","bc","a",true},
+        {"ab<END>discard<STOP>","<STOP>","<END>","ab",true},
+        {"xaba","ababa","ZZZ","xaba",false},
+        {"ab<STOP><STOP>","<STOP>","<END>","ab",true},
+        {"ab\xE2\x98\x83rest","\xE2\x98\x83","<END>","ab",true}
+    };
+    for(size_t i=0;i<sizeof(cases)/sizeof(*cases);i++){
+        for(size_t chunk=1;chunk<=strlen(cases[i].output);chunk++){
+            api_chat_request request={.stop_count=2u,
+                .stop={(char *)cases[i].first,(char *)cases[i].second}};
+            api_generation generation={.request=&request,.sink={.fd=-1}};
+            for(size_t at=0;at<strlen(cases[i].output);){
+                size_t bytes=strlen(cases[i].output)-at;if(bytes>chunk)bytes=chunk;
+                CHECK(api_token(&generation,1u,cases[i].output+at,bytes,&err)==FG_OK);
+                at+=bytes;
+            }
+            CHECK(generation.stop_matched==cases[i].match);
+            CHECK(api_finish_tokens(&generation,&err)==FG_OK);
+            CHECK(!strcmp(generation.content.data?generation.content.data:"",cases[i].expected));
+            CHECK(api_interrupted(&generation)==cases[i].match);
+            free(generation.content.data);free(generation.stop_pending.data);
+        }
+    }
+}
+
 int main(void) {
+    test_stop_sequences();
     test_session_affinity();
     test_openai_tools_request();
     test_openai_structured_text_content();

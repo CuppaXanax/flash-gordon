@@ -30,13 +30,13 @@ stop_candidate() {
     local pid
     pid="$(cat "$root/candidate.pid")"
     [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
-    [[ -d "/proc/$pid" ]] || return 0
+    if [[ ! -d "/proc/$pid" ]]; then rm "$root/candidate.pid"; return 0; fi
     identity "$pid" "$root/release/flash-gordon" "$root/pack/manifest.fgm" || {
         echo "refusing non-owned PID $pid" >&2; return 1;
     }
     kill -TERM "$pid"
     for _ in {1..100}; do
-        [[ ! -e "/proc/$pid/exe" ]] && return 0
+        if [[ ! -e "/proc/$pid/exe" ]]; then rm "$root/candidate.pid"; return 0; fi
         sleep 0.2
     done
     echo "owned candidate did not stop; no forced kill" >&2
@@ -98,9 +98,26 @@ stage)
     done
     tar -xf "$root/corpus.tar" -C "$root/corpus"
     ;;
+stage-serving)
+    check_hashes
+    [[ ! -e "$root/candidate.pid" && ! -e "$root/watchdog.pid" ]]
+    mkdir -p "$root/release" "$root/pack" "$root/capture" "$root/.cache"
+    tar -xzf "$root/release.tar.gz" -C "$root/release"
+    (cd "$root/release"; sha256sum -c release.sha256)
+    cp "$pack/manifest.fgm" "$root/pack/manifest.fgm"
+    for source in "$pack"/rank-??.fgw "$pack"/ngram-rank-??.iq4nl \
+        "$pack"/ngram.iq4nl "$pack"/tokenizer; do
+        [[ -e "$source" ]] && ln -s "$source" "$root/pack/$(basename "$source")"
+    done
+    if [[ "$rank" == 0 ]]; then
+        "$root/release/tools/mtp-embedding" "$root/pack/manifest.fgm" "$root/embedding.fgme"
+        sha256sum "$root/embedding.fgme"
+    fi
+    ;;
 arm)
     deadline="${2:?absolute Unix restore deadline}"
     [[ "$deadline" =~ ^[0-9]+$ && "$deadline" -gt "$(date +%s)" ]]
+    printf '%s\n' "$deadline" > "$root/lease.deadline"
     nohup bash "$root/lease.sh" watchdog "$deadline" >"$root/watchdog.log" 2>&1 </dev/null &
     echo "$!" > "$root/watchdog.pid"
     sleep 0.1
@@ -137,6 +154,38 @@ start)
         TMPDIR="$root/.cache" XDG_CACHE_HOME="$root/.cache" \
         FG_SHADER_DIR="$root/release/vulkan" FG_EXPERT_Q8_WIDE=0 \
         "$root/release/flash-gordon" "${command[@]}" >"$root/rank-$rank.log" 2>&1 </dev/null &
+    echo "$!" > "$root/candidate.pid"
+    sleep 0.2
+    identity "$(cat "$root/candidate.pid")" "$root/release/flash-gordon" "$root/pack/manifest.fgm"
+    ;;
+start-serving)
+    phase="${2:?phase name}"; cap="${3:?maximum draft (0=off)}"
+    [[ "$phase" =~ ^[A-Za-z0-9_-]{1,32}$ && "$cap" =~ ^[0-3]$ ]]
+    [[ ! -e "$root/candidate.pid" && ! -e "$root/watchdog.cancel" ]]
+    [[ "$(( $(date +%s)+30 ))" -lt "$(cat "$root/lease.deadline")" ]]
+    command=(rank --manifest "$root/pack/manifest.fgm" --rank "$rank")
+    trace=()
+    if [[ "$rank" == 0 ]]; then
+        command=(api --manifest "$root/pack/manifest.fgm"
+            --model-name Qwen3.8-Flash-Next-Uncensored --host 0.0.0.0 --port 8080
+            --context-tokens 262144 --gpu-index-tokens 262144
+            --qsa-hot-tokens 0 --qsa-page-cache-mib 700 --sessions 2)
+        trace=(FG_RING_TRACE=1)
+        if [[ "$cap" != 0 ]]; then
+            command+=(--experimental-mtp --mtp-overlay "$root/native-q8.gguf"
+                --mtp-embedding "$root/embedding.fgme" --mtp-window 8192 --mtp-max-draft "$cap")
+        fi
+    fi
+    (
+        cd "$root/release"
+        exec nohup env -i HOME=/home/xander USER=xander PATH="$PATH" LANG=C.UTF-8 \
+            TMPDIR="$root/.cache" XDG_CACHE_HOME="$root/.cache" \
+            FG_SHADER_DIR="$root/release/vulkan" FG_EXPERT_Q8_WIDE=1 \
+            FG_ROOFLINE=2047 FG_ROOF_DENSE=19 FG_ROOF_QSA=3 FG_ROOF_EXPERT=33024 \
+            FG_ROOF_HC=96 FG_ROOF_RECURRENT=3 FG_ROOF_GDN=1 \
+            FG_NGRAM_LOCAL_CACHE=1 FG_DECODE_SUBMIT_GROUP=2 "${trace[@]}" \
+            "$root/release/flash-gordon" "${command[@]}"
+    ) >"$root/serving-$phase-rank-$rank.log" 2>&1 </dev/null &
     echo "$!" > "$root/candidate.pid"
     sleep 0.2
     identity "$(cat "$root/candidate.pid")" "$root/release/flash-gordon" "$root/pack/manifest.fgm"
@@ -192,7 +241,8 @@ evidence)
     if [[ "${#hashfiles[@]}" -gt 0 ]]; then sha256sum "${hashfiles[@]}" > capture-hashes.sha256; fi
     files=(capture/*.json capture/*.jsonl capture/*.u32 capture/routes-*.coverage
         capture/cases.tsv capture/qualification.*
-        rank-*.log watchdog*.log lease.sh capture-hashes.sha256 pack/manifest.fgm release/release.sha256)
+        rank-*.log serving-*.log serving-*.json watchdog*.log lease.sh
+        capture-hashes.sha256 pack/manifest.fgm release/release.sha256)
     tar -czf final-evidence.tar.gz "${files[@]}"
     sha256sum final-evidence.tar.gz
     ;;

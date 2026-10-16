@@ -17,12 +17,37 @@ DEP := tests/test_prefill_collective.d tests/test_owner_reduce.d $(OBJ:.o=.d) te
 TEST_COMMON := src/util.o src/manifest.o src/session.o src/topology.o src/sha256.o src/gguf.o src/q38_schema.o src/q38_math.o src/quant.o src/vk.o src/tokenizer.o src/pack.o src/uring.o src/loader.o src/ngram.o src/qsa_state.o src/qsa_locality.o src/qsa_cache.o src/qsa_owner.o src/qsa_replica.o src/protocol.o src/runtime_options.o src/sampler.o src/ledger.o
 DEP += tests/test_multi_session.d
 DEP += tests/test_mtp_wire.d tests/test_mtp_native.d tests/test_mtp_embedding.d tools/mtp-embedding.d
+DEP += tests/test_mtp_ring.d
+DEP += tests/mtp_ring_sse.d
+
+MTP_RING_WRAPS = fg_vk_tensor_create fg_vk_tensor_destroy fg_vk_tensor_write fg_vk_tensor_read \
+ fg_model_vk fg_model_rank fg_model_tensor fg_vk_embedding_q8_0_batch \
+ fg_ngram_store_lookup_prefill fg_tokenizer_eos fg_tokenizer_token fg_tokenizer_decode_token \
+ fg_output_slice_ways fg_output_hc_run \
+ fg_output_slice_run_hidden fg_owner_session_count fg_owner_active_session \
+ fg_owner_set_active_session fg_owner_prefill_input fg_owner_prefill_input_slot \
+ fg_owner_decode_results fg_owner_qsa_frontier fg_owner_session_device_snapshot \
+ fg_owner_session_rollback fg_owner_session_snapshot_release fg_expert_decode_chain_ready \
+ fg_owner_decode_small_n fg_owner_decode_block_chained fg_owner_prefill_layer_begin \
+ fg_owner_prefill_layer_finish fg_mtp_embedding_open fg_mtp_embedding_close \
+ fg_mtp_embedding_row fg_mtp_head_open_windowed fg_mtp_head_fork fg_mtp_head_close \
+ fg_mtp_head_frontier fg_mtp_head_reset fg_mtp_head_truncate fg_mtp_head_warm_replay \
+ fg_mtp_head_step_replay
+comma := ,
 
 .PHONY: all clean test test-sampler test-mtp test-mtp-capture test-ngram-deployment test-vulkan test-qsa-fleet test-gdn-fleet test-fg-profile-analysis test-tower test-decode-batch shaders
 all: flash-gordon shaders
 
 flash-gordon: $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
+
+tests/test_mtp_ring: tests/test_mtp_ring.c tests/mtp_ring_sse.o $(filter-out src/main.o src/runtime.o src/api.o,$(OBJ))
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(filter %.o,$^) \
+	 $(addprefix -Wl$(comma)--wrap=,$(MTP_RING_WRAPS)) $(LDLIBS)
+
+.PHONY: test-mtp-ring
+test-mtp-ring: tests/test_mtp_ring
+	@for reject in 0 1 2 3; do ./tests/test_mtp_ring 127.0.0.1 127.0.0.1 $$((29600+reject*20)) $$reject 2 || exit; done
 
 tests/test_core: tests/test_core.o $(TEST_COMMON)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
@@ -286,6 +311,7 @@ test-gdn-fleet: tests/test_fg_vk
 	done
 
 clean:
+	rm -f tests/test_mtp_ring
 	rm -f tests/test_mtp_wire tests/test_mtp_native tests/test_mtp_embedding tools/mtp-embedding tools/mtp-embedding.d
 	rm -f tests/test_mtp_capture_io tests/test_mtp_capture_io.d tools/mtp-acceptance tools/mtp-acceptance.d
 	rm -f tests/test_mtp tests/test_mtp.d tools/bench-decode-fusion tools/bench-decode-fusion.d tools/bench-mtp-head tools/bench-mtp-head.d

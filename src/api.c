@@ -122,6 +122,8 @@ typedef struct api_chat_request {
     api_media *media;
     size_t media_count;
     size_t media_capacity;
+    char *stop[4];
+    uint32_t stop_count;
 } api_chat_request;
 
 typedef struct api_media_identity {
@@ -197,6 +199,11 @@ typedef struct api_generation {
     bool client_failed;
     bool think_closed;
     bool output_stopped;
+    bool stop_matched;
+    api_buffer stop_pending;
+    bool token_hash_enabled;
+    uint32_t token_count;
+    fg_sha256 token_hash;
     bool visible_started;
     api_buffer visible_pending;
     char utf8_pending[4];
@@ -1245,6 +1252,7 @@ static bool request_has_tool_name(const api_chat_request *request, const char *n
 }
 
 static void api_chat_request_free(api_chat_request *request) {
+    for(uint32_t i=0;i<request->stop_count;i++)free(request->stop[i]);
     for (size_t i = 0; i < request->message_count; i++) {
         free((char *)request->messages[i].role);
         free((char *)request->messages[i].content);
@@ -1849,10 +1857,29 @@ static fg_status parse_chat_request(const json_value *root, const char *runtime_
     status = parse_sampler_controls(root,request,err);
     if (status == FG_OK) status = reject_control(root, "n", 1.0, err);
     if (status != FG_OK) return status;
-    if (json_object_has(root, "stop") || json_object_has(root, "logprobs")) {
+    if (json_object_has(root, "logprobs")) {
         fg_error_set(err, FG_ERR_ARGUMENT,
-                     "custom stop sequences and logprobs are not supported");
+                     "logprobs are not supported");
         return FG_ERR_ARGUMENT;
+    }
+    json_value *stop=json_object_get(root,"stop");
+    if(stop&&stop->type!=JSON_NULL){
+        size_t count=stop->type==JSON_ARRAY?stop->as.array.count:1u;
+        if((stop->type!=JSON_STRING&&stop->type!=JSON_ARRAY)||count>4u){
+            fg_error_set(err,FG_ERR_ARGUMENT,"stop must be a string or at most four strings");
+            return FG_ERR_ARGUMENT;
+        }
+        for(size_t i=0;i<count;i++){
+            const json_value *value=stop->type==JSON_ARRAY?stop->as.array.items[i]:stop;
+            size_t length=value->type==JSON_STRING?strlen(value->as.string):0u;
+            if(!length||length>256u){
+                fg_error_set(err,FG_ERR_ARGUMENT,"stop strings must contain 1..256 UTF-8 bytes");
+                return FG_ERR_ARGUMENT;
+            }
+            char *copy=strdup(value->as.string);
+            if(!copy){fg_error_set(err,FG_ERR_OOM,"allocate stop string");return FG_ERR_OOM;}
+            request->stop[request->stop_count++]=copy;
+        }
     }
 
     json_value *max_tokens = json_object_get(root, "max_tokens");
@@ -2356,6 +2383,7 @@ static bool api_client_gone(api_generation *generation) {
 static bool api_interrupted(void *context) {
     if (api_stop_requested) return true;
     api_generation *generation = context;
+    if(generation&&generation->stop_matched)return true;
     if (generation && api_client_gone(generation)) {
         generation->client_failed = true;
         return true;
@@ -2811,16 +2839,57 @@ static fg_status stream_reasoning(api_generation *generation, bool final, fg_err
     return queue_visible_content(generation, emit, emit_length, false, err);
 }
 
-static fg_status api_token(void *context, uint32_t token, const char *text, size_t length,
-                           fg_error *err) {
-    (void)token;
-    api_generation *generation = context;
+static fg_status api_emit_token_text(api_generation *generation,const char *text,
+    size_t length,fg_error *err){
     size_t previous=generation->content.length;
     fg_status status=buffer_append_n(&generation->content,text,length,err);
     if(status!=FG_OK||!generation->stream)return status;
     if(!generation->think_closed)return stream_reasoning(generation,false,err);
     if(!length)return FG_OK;
     return queue_visible_content(generation,generation->content.data+previous,length,false,err);
+}
+
+static fg_status api_finish_tokens(api_generation *generation,fg_error *err){
+    if(generation->stop_matched||!generation->stop_pending.length)return FG_OK;
+    fg_status status=api_emit_token_text(generation,generation->stop_pending.data,
+        generation->stop_pending.length,err);
+    if(status==FG_OK)pending_consume(&generation->stop_pending,generation->stop_pending.length);
+    return status;
+}
+
+static fg_status api_token(void *context,uint32_t token,const char *text,size_t length,
+    fg_error *err){
+    api_generation *g=context;
+    if(g->token_hash_enabled){api_digest_u32(&g->token_hash,token);g->token_count++;}
+    if(g->stop_matched)return FG_OK;
+    if(!length)return FG_OK;
+    if(!g->request||!g->request->stop_count)return api_emit_token_text(g,text,length,err);
+    fg_status status=buffer_append_n(&g->stop_pending,text,length,err);
+    if(status!=FG_OK)return status;
+    size_t boundary=g->stop_pending.length,match_end=SIZE_MAX,keep=0u;bool matched=false;
+    for(uint32_t i=0;i<g->request->stop_count;i++){
+        const char *stop=g->request->stop[i];size_t stop_length=strlen(stop);
+        const char *found=strstr(g->stop_pending.data,stop);
+        size_t at=found?(size_t)(found-g->stop_pending.data):SIZE_MAX;
+        if(found&&(at+stop_length<match_end||
+           (at+stop_length==match_end&&at<boundary))){
+            boundary=at;match_end=at+stop_length;matched=true;
+        }
+        size_t suffix=stop_length-1u;
+        if(suffix>g->stop_pending.length)suffix=g->stop_pending.length;
+        while(suffix){
+            if(!memcmp(g->stop_pending.data+g->stop_pending.length-suffix,stop,suffix))break;
+            suffix--;
+        }
+        if(suffix>keep)keep=suffix;
+    }
+    size_t emit=matched?boundary:g->stop_pending.length-keep;
+    if(emit)status=api_emit_token_text(g,g->stop_pending.data,emit,err);
+    if(status!=FG_OK)return status;
+    if(matched){
+        g->stop_matched=true;pending_consume(&g->stop_pending,g->stop_pending.length);
+    }else if(emit)pending_consume(&g->stop_pending,emit);
+    return FG_OK;
 }
 
 static fg_status send_stream_start(api_generation *generation, fg_error *err) {
@@ -2855,7 +2924,9 @@ static fg_status send_stream_start(api_generation *generation, fg_error *err) {
 static fg_status send_stream_end(api_generation *generation,
                                  const fg_chat_generated *generated,const char *reason,
                                  fg_error *err) {
-    fg_status reasoning=stream_reasoning(generation,true,err);
+    fg_status reasoning=api_finish_tokens(generation,err);
+    if(reasoning!=FG_OK)return reasoning;
+    reasoning=stream_reasoning(generation,true,err);
     if(reasoning!=FG_OK)return reasoning;
     if(generation->utf8_reasoning_pending_length){
         generation->utf8_reasoning_pending_length=0;
@@ -3902,8 +3973,10 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
         .created = time(NULL),
         .request = &request,
         .think_closed = render_options.think_mode == FG_CHAT_THINK_OFF,
+        .token_hash_enabled = getenv("FG_RING_TRACE")!=NULL,
         .runtime = runtime,
     };
+    if(generation.token_hash_enabled)fg_sha256_init(&generation.token_hash);
     bool stream_started=false;
     if (status == FG_OK && request.stream) {
         status = api_send_sse_headers(sink, err);
@@ -3993,6 +4066,16 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
         free(media);
     }
     fg_chat_generated generated={0};
+    if(status==FG_OK&&generation.token_hash_enabled){
+        uint8_t digest[32];char hex[65];
+        fg_sha256_final(&generation.token_hash,digest);
+        for(uint32_t i=0;i<32u;i++)snprintf(hex+2u*i,3u,"%02x",digest[i]);
+        fprintf(stderr,"API_TOKEN_HASH id=%s count=%u sha256=%s\n",
+            generation.id,generation.token_count,hex);
+    }
+    if(status==FG_OK)status=api_finish_tokens(&generation,err);
+    if(status==FG_OK&&generation.stop_matched)
+        status=fg_runtime_reset_public_history(runtime,err);
     if(status==FG_OK)
         status=fg_chat_parse_generated(generation.content.data?generation.content.data:"",
                                        render_options.think_mode != FG_CHAT_THINK_OFF,
@@ -4019,7 +4102,8 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
                 (unsigned)request.media_count,stats.image_tokens,stats.video_tokens,
                 stats.video_frames,stats.tower_seconds);
     }
-    const char *finish_reason = generated.tool_call_count ? "tool_calls" :
+    const char *finish_reason = generation.stop_matched ? "stop" :
+        generated.tool_call_count ? "tool_calls" :
         (stats.generated_tokens >= request.max_tokens ? "length" : "stop");
     bool response_committed=false;
     if (status == FG_OK) {
@@ -4030,8 +4114,10 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
             status = send_completion(&generation, &generated, &stats, finish_reason, err);
         if(status==FG_OK){
             api_public_session_free(public_session);
-            *public_session=pending_session;
-            memset(&pending_session,0,sizeof(pending_session));
+            if(!generation.stop_matched){
+                *public_session=pending_session;
+                memset(&pending_session,0,sizeof(pending_session));
+            }
             response_committed=true;
         }
     } else {
@@ -4047,6 +4133,7 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
     }
     free(generation.content.data);
     free(generation.visible_pending.data);
+    free(generation.stop_pending.data);
     fg_chat_generated_free(&generated);
     free(rendered);
     free(rendered_continuation);

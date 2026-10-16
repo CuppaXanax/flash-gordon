@@ -1,5 +1,51 @@
 # MTP serving foundation on the promoted multisession base
 
+## Two-host publication gate — 2026-10-16
+
+Integrated kernel base `822be55` plus serving/API tests passed on **.51/.52**.
+Eight logical ranks execute the real runtime/fabric/codecs/native manager,
+head fanout and owner transactions; **numerical compute is doubled**.
+This is not trained-model two-blade serving, measured acceptance or a TPS claim.
+The compile-time final-N1 seam uses the causal verifier; normal serial output
+transport remains a full-ring lease gate.
+
+* k1..3, rejection prefixes0/1/2 and all-accept: PASS on both hosts.
+* Actual generation loop: limits1..8, EOS at distances0..4, cancellation drain,
+  retained-prefix repair and subsequent generation: PASS.
+* Actual API SSE sink: ordered multi-token commit callbacks, split-stop
+  suppression, correct finish event and `[DONE]`: PASS.
+* Two simultaneously active coroutine jobs, **distinct token histories**,
+  private native/policy state and separate SSE sinks: PASS.
+* API stop parsing/malformed input, overlapping and UTF-8 stops, incomplete
+  prefix flushing, JSON/SSE parity and matched-stop prefix invalidation: PASS.
+* Both blades' actual GPU default0 component and N2/3/4 full-block oracles:
+  output/GDN state byte-exact against sequentialN1; causal prefixes, every
+  retained-input rollback length1..4 and other-session replay isolation: PASS.
+* Integrated C17 `-Werror` release/shader build, MTP/session/API/eight-rank
+  host regressions and flag registry: PASS. Python28 tests,4 optional skips.
+* New serving controller: syntax/no-lease denial and full seven-phase local
+  HTTP/fleet-double run pass; an injected K2 startup failure still restores,
+  checks API/identity and cleans up before propagating failure. These controller
+  doubles did not contact production.
+
+The tested release archive SHA256 is
+`ee8a095839fad26614b0ccd77cf6a7bcc2be461fe4a94d647cd6bc9a740aa0b3`;
+binary `442ce6e629d66e3984085920dd969f4998a0c26d0db5c0fd5cd170ea24e5d345`.
+Source and both evidence hashes are in `mtp-serving-pair.json`. Evidence and
+the sealed, independently file-verified candidate are retained under `.build`.
+All owned fixture PIDs, .51/.52 scratch and peer-restricted auto-expiring
+runtime firewall rules were independently checked absent afterward.
+No services, governors, clocks, current production launchers or production
+owners were changed.
+
+**Ready to request, not assume, an exclusive ≤45-minute ring lease.**
+`Invoke-MTPServingQualification.ps1 -Action Plan` describes the35-minute work
+budget, same-build token-ID hash/greedy gate, bracketed chat k<=1/2 and code
+k<=3 performance, sessions2 and streaming/stop/cancel checks. Independent
+watchdogs at38/39 restore current31508ee stack-1/mix-04 sessions2/wide1;
+finish with all-rank identity, API and real greedy checks by minute45.
+No small-kernel research mask or production promotion is selected.
+
 ## Linked orchestration update — 2026-10-16
 
 The branch is now rebased onto promoted main `7381f93`. Default-off native

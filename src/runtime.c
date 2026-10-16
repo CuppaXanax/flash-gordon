@@ -6264,9 +6264,15 @@ static fg_status runtime_generate_tokens(
                 mtp_index=0u;next=mtp_ready.tokens[0];logit=mtp_logits[0];
             }
         }else{
+#ifdef FG_RUNTIME_TEST_SERIAL_DECODE
+            status=FG_RUNTIME_TEST_SERIAL_DECODE(&runtime->coordinator,runtime->history,
+                runtime->history_count,(uint32_t)runtime->history_count-1u,
+                runtime->state_position,&next,&logit,err);
+#else
             status=coordinator_decode_token(&runtime->coordinator,runtime->history,
                 runtime->history_count,(uint32_t)runtime->history_count-1u,
                 runtime->state_position,&next,&logit,err);
+#endif
             if(status==FG_OK)runtime->state_position++;
             mtp_ready.count=0u;
         }

@@ -47,6 +47,7 @@ tests/test_mtp
 tests/test_mtp_wire
 tests/test_mtp_native
 tests/test_mtp_embedding
+/tests/test_mtp_ring
 tools/mtp-embedding
 tools/mtp-embedding.d
 tests/test_mtp_capture_io

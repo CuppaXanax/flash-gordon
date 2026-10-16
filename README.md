@@ -150,9 +150,14 @@ The API supports greedy and seeded stochastic sampling. Omitted sampler fields
 default to temperature 1.0, top-p 0.95 and top-k 20; `temperature: 0` selects
 the exact greedy path used by evaluation and interactive chat. `temperature`,
 `top_p`, `top_k`, `seed`, `presence_penalty`, `frequency_penalty` and
-`repetition_penalty` are validated and applied. Requests that select custom stop
-sequences, log probabilities, `min_p` other than 0, or `n` other than 1 receive a
-clear `400` response. The API accepts OpenAI function `tools`, `tool_choice`,
+`repetition_penalty` are validated and applied. `stop` accepts a string, up to
+four nonempty strings (each at most 256 UTF-8 bytes), or `null`. Stop text and
+any already-committed speculative suffix are suppressed across token and SSE
+boundaries; incomplete stop prefixes are flushed at normal completion. The
+first completed match wins (ties use its earliest start). A matched custom stop
+resets only that session's resident prefix so hidden burst suffixes cannot be
+reused on continuation. Log probabilities, `min_p` other than 0, or `n` other
+than 1 receive a clear `400` response. The API accepts OpenAI function `tools`, `tool_choice`,
 historical assistant `tool_calls`, and tool results linked by `tool_call_id`.
 Generated native Qwen tool tags are translated into OpenAI `tool_calls` for
 both JSON and SSE responses, with `finish_reason` set to `tool_calls`; native

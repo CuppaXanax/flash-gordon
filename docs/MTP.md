@@ -22,8 +22,9 @@ in section 7; experimental native requantization remains a separate quality gate
 Batched causal ring orchestration and native contracted-hidden head fanout are
 now linked behind the default-off `--experimental-mtp` gate. Startup requires
 explicit, validated native-overlay and production-embedding sidecar paths.
-Component tests are not an end-to-end serving qualification; the new path must
-pass the blade-pair gate before requesting a production-ring lease.
+Component tests are not trained-model end-to-end qualification. The two-host
+runtime fixture described below tests orchestration with numerical doubles;
+the trained eight-rank pack still requires a separately granted ring lease.
 
 ### Experimental serving contract
 
@@ -73,8 +74,72 @@ approximation. Existing real-text acceptance figures above do not qualify this
 new warmfill/window/orchestration path. No distributed draft latency, new serving
 TPS or sessions-2 memory capacity is claimed. Production-width raw/cooked
 sidecar rows match the actual target GPU embedding kernel bit-for-bit on .51.
-Pending gates include blade-pair full serving, cancellation/EOS/continuation
-coverage, current-kernel MTP-on/off greedy identity and eight-rank qualification.
+The generation-loop fixture covers bounded publication, cancellation, EOS,
+split custom stops and SSE, including two active coroutine sessions. The
+remaining trained-model gates are current-kernel MTP-on/off token identity,
+target/native co-residency, real draft acceptance/latency and ring throughput.
+
+### Two-host orchestration fixture and bounded serving lease
+
+`tests/test_mtp_ring.c` includes the production runtime and links the real
+fabric, wire codecs, native-manager state machine, head fanout and distributed
+transactions. Deterministic CPU numerical doubles replace model/GPU arithmetic:
+this is **not a two-blade execution of the trained eight-rank model**, nor a
+TPS/acceptance measurement. The final one-input flush uses a compile-time test
+seam into the causal verifier, not the production serial-output protocol; the
+normal build is unchanged by that seam.
+
+Eight logical ranks run as four processes on each of .51/.52. Two sessions
+have distinct token histories, separate native managers/policies and actual
+overlapping `fg_pipeline` jobs. Cases cover k=1..3, every rejection prefix,
+prefill next-token trailers/warmfill, authoritative repair, output limits1..8,
+EOS at distances0..4, draining cancellation, and continued generation. The
+real API SSE sink receives callbacks from committed bursts; its decoded event
+contents, stop suppression, final reason and `[DONE]` are checked independently.
+`tests/test_api.c` additionally checks malformed/overlapping/UTF-8 stops,
+partial prefixes at completion, JSON/SSE parity and discarded-prefix reset.
+
+Reproduce local orchestration with `make test-mtp-ring`; for the pair, use
+`tools/mtp-runtime-pair-test.sh` through `Invoke-MTPFleet.ps1`. Its optional
+`open`/`close` actions own only a source-IP-restricted, runtime firewall rule
+for the peer's fixture ports, automatically expiring after600seconds. No
+permanent firewall, service, governor or clock configuration is changed.
+Always close the owned rule and retain evidence before deleting scratch.
+
+The separate **serving** controller is
+`tools/Invoke-MTPServingQualification.ps1`; the older
+`Invoke-MTPQualification.ps1` remains a historical HC-capture/oracle workflow.
+`-Action Plan` never contacts production; `Run` requires an explicit exclusive
+lease, fresh ID, validated release archive and the pinned native overlay.
+
+Planned wall budget: **45minutes**, with work stopped at minute35, independent
+worker/coordinator restore watchdogs at38/39, and the remaining margin for
+API/identity checks and cleanup:
+
+1. Preflight all pinned production identities/hashes and API; stage an
+   immutable candidate, symlink the sealed mix-04 pack, and export its exact
+   Q8 embedding sidecar. Do not modify current launchers, weights or hardware.
+2. Restart the same candidate build in bracketed phases
+   `off/k<=1/off/k<=2/off/k<=3/off`, always sessions2 and the current explicit
+   wide1/roofline recipe; `FG_SMALL_KERNELS` remains unset/default0.
+3. Before timing each phase, compare eight fixed chat/code greedy completions
+   against the first off run. Existing `FG_RING_TRACE` emits one per-request
+   SHA256/count receipt over actual token IDs, so text equality cannot conceal
+   a different tokenization. Any mismatch aborts and restores production.
+4. Three repeats each of two chat and two code prompts,128 output tokens,
+   retain engine decode TPS and client wall TPS separately. Report per-prompt
+   candidate/bracketed-off ratios, actual adaptive-k/acceptance traces, and
+   three concurrent chat/code pairs per phase. Exercise SSE parity, custom
+   stops and disconnect/recovery with MTP enabled.
+5. Always restore **31508ee /20261016-abq-stack-adaptive**, sessions2/wide1,
+   using the retained hash-pinned current launcher. Check all eight argv/env/
+   binary/manifest/shader identities, health/models and real greedy output;
+   only then cancel watchdogs, archive evidence and remove owned scratch.
+
+This lease is short-context serving qualification, not promotion, a long-
+context capacity test or a qualified use of research kernel mask330. The
+latest independently qualified kernel costs and remaining gaps are in
+[MTP_SMALL_KERNELS.md](../results/hillclimb/MTP_SMALL_KERNELS.md).
 
 ## 1. Source facts, not the old feasibility assumptions
 
@@ -894,8 +959,9 @@ The global recurrent buffer is loaded/stored at round edges, but the compiler
 spills the local cache: physical state traffic still needs improvement.
 Recurrence arithmetic is sequential. Component and rollback
 identity do **not** qualify the newly linked native serving/ring path.
-`--experimental-mtp` remains default-off and requires explicit sidecars; no production
-lease is requested until actual serving passes a blade-pair test.
+`--experimental-mtp` remains default-off and requires explicit sidecars.
+The numerical-double two-host orchestration gate above now passes; trained-
+model serving still awaits the separately granted eight-rank lease.
 
 The restore/watchdog guard is pinned to the subsequently promoted
 stack-1/adaptive runtime `31508ee`, release `20261016-abq-stack-adaptive`,

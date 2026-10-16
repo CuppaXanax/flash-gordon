@@ -37,7 +37,7 @@ if($Action -eq 'Plan'){
         greedyCasesPerCategory=4; greedyPairedRuns=24; greedyTokens=256
         verifier='causal N=1 reference, not small-N serving qualification'
         workDeadlineMinutes=$WorkMinutes; watchdogWorkerMinute=38; watchdogCoordinatorMinute=39
-        wallBudgetMinutes=45; restore='adaptive 2d0f8a7 + sealed mix-04, sessions2 wide0'
+        wallBudgetMinutes=45; restore='stack-1 31508ee + sealed mix-04, sessions2 wide1'
         releaseSha256=$prepared.files['release.tar.gz']
     } | ConvertTo-Json -Depth 6
     return
@@ -113,7 +113,7 @@ function RestoreProduction {
 }
 if($Action -eq 'Restore'){
     $null=RestoreProduction
-    Write-Output 'Pinned 2d0f8a7 + mix-04 sessions2 restored and API/greedy checked.'
+    Write-Output 'Pinned stack-1 31508ee + mix-04 sessions2 wide1 restored and API/greedy checked.'
     return
 }
 $armed=$false;$mutated=$false;$complete=$false;$failure=$null;$before=$null;$created=$false

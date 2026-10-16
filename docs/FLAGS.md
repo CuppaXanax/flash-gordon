@@ -164,7 +164,7 @@ slice ranks (the foreign loader names the exact missing span at startup).
 | `FG_PREFIX_TRACE` | unset (off) | Prefix reuse diagnostics (counts, mismatch positions and reasons only). | profiling |
 | `FG_GENERATE_TRACE` | unset (off) | Generation loop breakdown (interrupt/tokenizer/callback/render/decode). | profiling |
 | `FG_DECODE_RING_TRACE` | unset (off) | Ring decode issue/stage/done traces. | profiling |
-| `FG_RING_TRACE` | unset (off) | Ring prefill issue/stage/done traces. | profiling |
+| `FG_RING_TRACE` | unset (off) | Ring prefill issue/stage/done traces; one API request-ID/count/SHA256 receipt over emitted big-endian u32 token IDs for same-build greedy qualification. | profiling |
 | `FG_PROFILE_TOKEN` | unset (off) | Selects a single token index; enables the detailed per-token captures below. | profiling |
 | `FG_NGRAM_VERIFY` | unset (off) | Verified n-gram row comparison for the `FG_PROFILE_TOKEN` token. | profiling |
 | `FG_QSA_WARM_TRACE` | unset (off) | QSA cache warming trace. | profiling |
