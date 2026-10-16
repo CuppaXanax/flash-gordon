@@ -12,6 +12,12 @@ pwsh -NoProfile -File tools\hillclimb.ps1 -ABConfig .build\abq\main-config.json 
 
 The included `ab-deploy.ps1`/`ab-instance.sh` operator accepts only the eight production owners, original/mix-04 manifests, and isolated `YYYYMMDD-abq*` releases. It verifies executable/manifest hashes, stops only owned numeric PIDs with exact executable and manifest arguments, waits after TERM, and refuses force/name kills. Original logs/PIDs remain outside the immutable original release. `.build\abq\live.json` records the last attempted deployment before launch so partial starts can be rolled back. The fleet runner receives an explicit target array. Do not run two operators concurrently.
 
+Starting rotates the preceding rank log/PID to `previous-rank-N.log`/`.pid`
+inside the operator directory. Download these immediately after a failed
+candidate restores: the next deployment rotates again. A runtime failure is
+unqualified, not an inconclusive confidence interval or permission to discard
+an unfavorable completed pair.
+
 ## Workload and accounting
 
 Each pair gets a fresh random salt; all arm requests within that pair use the same deterministic salts and seeds. `ABAB` runs A,B for every pair; `ABBA` reverses the second pair, yielding A,B,B,A,A,B for three pairs. Each arm is freshly deployed, including adjacent equal arms. Long cold and decode request hashes, and cached-TTFT body hashes, must match. Canonical greedy cases remain unsalted to retain their role as a fixed numerical reference. A changed one-token prefix response makes a paired continuation invalid rather than silently comparing different workloads.

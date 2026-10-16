@@ -67,6 +67,13 @@ start)
         fi
     done
     mkdir -p "$run"
+    if [[ -e $run/rank-$rank.log ]]; then
+        [[ -f $run/rank-$rank.log && ! -L $run/rank-$rank.log ]]
+        mv "$run/rank-$rank.log" "$run/previous-rank-$rank.log"
+        if [[ -f $run/rank-$rank.pid ]]; then
+            cp "$run/rank-$rank.pid" "$run/previous-rank-$rank.pid"
+        fi
+    fi
     cd "$release"
     args=(rank --manifest "$manifest" --rank "$rank")
     if ((rank == 0)); then
