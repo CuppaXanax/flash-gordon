@@ -136,8 +136,30 @@ cleanup:
     return result;
 }
 
+static int test_service_guards(void){
+    int result=0;fg_error error={0};
+    qsa_owner_runtime services[2]={0};
+    for(uint32_t slot=0;slot<2u;slot++){
+        services[slot].enabled=true;services[slot].state_slot=slot;
+        services[slot].layer_count=1u;services[slot].layers[0]=3u;
+        fg_qsa_owner_guard_init(&services[slot].guard,1u);
+    }
+    REQUIRE(worker_publish_qsa_pages(&services[1],NULL,1u,12u,4u,1u,&error)==FG_OK);
+    REQUIRE(services[1].guard.next_token[3u]==16u);
+    REQUIRE(services[0].guard.next_token[3u]==0u);
+    REQUIRE(worker_publish_qsa_pages(&services[0],NULL,1u,12u,4u,1u,&error)==FG_OK);
+    REQUIRE(services[0].guard.next_token[3u]==0u);
+    REQUIRE(worker_publish_qsa_pages(&services[0],NULL,1u,4u,4u,0u,&error)==FG_OK);
+    REQUIRE(services[0].guard.next_token[3u]==8u);
+    REQUIRE(services[1].guard.next_token[3u]==16u);
+cleanup:
+    if(!result)puts("QSA page-service publication is isolated by actual session slot: PASS");
+    return result;
+}
+
 int main(void){
     if(test_scheduler())return 1;
+    if(test_service_guards())return 1;
     int result=0;
     fg_error error={0};
     fg_manifest *manifest=malloc(sizeof(*manifest));

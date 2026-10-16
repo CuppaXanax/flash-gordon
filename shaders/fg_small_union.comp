@@ -1,0 +1,20 @@
+#version 460
+layout(local_size_x=64) in;
+layout(set=0,binding=0) readonly buffer Selected { uint selected[]; };
+layout(set=0,binding=1) writeonly buffer Tiles { uint tiles[]; };
+layout(push_constant) uniform Push { uint pairs; } pc;
+shared uint ids[40];
+void main(){
+    uint p=gl_LocalInvocationID.x;
+    if(p<pc.pairs)ids[p]=selected[p];
+    barrier();
+    if(p>=pc.pairs)return;
+    uint base=p*5u,prior=0u;
+    for(uint i=0u;i<p;i++)if(ids[i]==ids[p])prior++;
+    for(uint i=0u;i<5u;i++)tiles[base+i]=0xffffffffu;
+    if((prior&3u)!=0u)return;
+    tiles[base]=ids[p];
+    uint count=0u;
+    for(uint i=p;i<pc.pairs&&count<4u;i++)
+        if(ids[i]==ids[p])tiles[base+1u+count++]=i;
+}

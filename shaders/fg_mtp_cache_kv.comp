@@ -1,0 +1,29 @@
+#version 460
+layout(local_size_x=256)in;
+layout(set=0,binding=0)readonly buffer RawKey{float raw_k[];};
+layout(set=0,binding=1)readonly buffer RawValue{float raw_v[];};
+layout(set=0,binding=2)readonly buffer KeyNorm{float knorm[];};
+layout(set=0,binding=3)readonly buffer Position{uint position[];};
+layout(set=0,binding=4)writeonly buffer Keys{float keys[];};
+layout(set=0,binding=5)writeonly buffer Values{float vals[];};
+layout(push_constant)uniform Push{uint capacity;}pc;
+shared float values[256],squares[256];
+void main(){
+    uint lane=gl_LocalInvocationID.x,head=gl_WorkGroupID.x;
+    float value=raw_k[head*256u+lane];
+    squares[lane]=value*value;barrier();
+    for(uint stride=128u;stride>0u;stride>>=1u){
+        if(lane<stride)squares[lane]+=squares[lane+stride];
+        barrier();
+    }
+    values[lane]=value*inversesqrt(squares[0]/256.0+1e-6)*knorm[lane];barrier();
+    if(lane<32u){
+        uint axis=(lane%3u==1u)?1u:((lane%3u==2u&&lane<30u)?2u:0u);
+        float angle=float(position[axis])/pow(10000000.0,float(2u*lane)/64.0);
+        float c=cos(angle),s=sin(angle),a=values[lane],b=values[lane+32u];
+        values[lane]=a*c-b*s;values[lane+32u]=b*c+a*s;
+    }
+    barrier();
+    uint offset=(position[0]%pc.capacity)*512u+head*256u+lane;
+    keys[offset]=values[lane];vals[offset]=raw_v[head*256u+lane];
+}

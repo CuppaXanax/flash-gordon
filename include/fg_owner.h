@@ -258,6 +258,19 @@ fg_status fg_owner_decode_block(fg_owner_executor *executor,uint32_t first_layer
 typedef fg_status (*fg_owner_expert_inline_fn)(void *context,uint32_t layer,
     const fg_vk_tensor *activation_q8k,const fg_vk_tensor *router_logits,
     fg_vk_tensor **expert_output,fg_error *err);
+/* Record GPU routing, shared/routed experts and their combine in an active
+ * batch; no host routing or expert readback. */
+fg_status fg_owner_moe_record(fg_owner_executor *executor,uint32_t layer,
+    const fg_vk_tensor *hidden,fg_owner_expert_inline_fn expert,void *context,
+    fg_vk_tensor **output,fg_error *err);
+typedef fg_status (*fg_owner_expert_small_fn)(void *context,uint32_t layer,
+    const fg_vk_tensor *activation_q8k,const fg_vk_tensor *router_logits,
+    uint32_t tokens,fg_vk_tensor **expert_output,fg_error *err);
+/* Mutates one sequence's state. Checkpoint/rollback is the caller's job. */
+fg_status fg_owner_decode_small_n(fg_owner_executor *executor,uint32_t first_layer,
+    uint32_t last_layer,uint32_t first_token,const uint32_t *positions,
+    uint32_t tokens,const fg_vk_tensor *input,const fg_vk_tensor *ngram,
+    fg_owner_expert_small_fn expert,void *context,fg_vk_tensor **output,fg_error *err);
 fg_status fg_owner_decode_block_chained(fg_owner_executor *executor,uint32_t first_layer,
                                         uint32_t last_layer,uint32_t token_index,
                                         const uint32_t position[3],const fg_vk_tensor *hyper_input,
@@ -274,6 +287,16 @@ fg_status fg_owner_prefill_layer(fg_owner_executor *executor,uint32_t layer,
                                  fg_owner_qsa_prefill_dispatch_fn qsa_dispatch,
                                  void *qsa_context,
                                  fg_vk_tensor **output,fg_error *err);
+/* Causal verification of 1..4 consecutive inputs in one owner block.  The
+ * caller must checkpoint before this mutating operation and commit or restore
+ * the accepted prefix afterwards.  This is not a multi-session depth-B batch. */
+fg_status fg_owner_verify_block(fg_owner_executor *executor,uint32_t first_layer,
+                                uint32_t last_layer,uint32_t first_token,
+                                const uint32_t *positions,uint16_t token_count,
+                                const fg_vk_tensor *hyper_input,
+                                const fg_vk_tensor *ngram_embeddings,
+                                fg_owner_prefill_dispatch_fn dispatch,void *context,
+                                fg_vk_tensor **output,fg_error *err);
 fg_vk_tensor *fg_owner_prefill_input_slot(fg_owner_executor *executor,uint32_t slot);
 fg_status fg_owner_prefill_layer_begin(fg_owner_executor *executor,uint32_t slot,uint32_t layer,
                                        uint32_t first_token,const uint32_t *positions,

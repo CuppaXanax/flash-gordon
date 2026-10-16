@@ -1,0 +1,42 @@
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x=64)in;
+layout(set=0,binding=0)readonly buffer Query{vec4 q[];};
+layout(set=0,binding=2)readonly buffer CurrentKey{vec4 key[];};
+layout(set=0,binding=3)readonly buffer CurrentValue{vec4 value[];};
+layout(set=0,binding=4)buffer Keys{vec4 keys[];};
+layout(set=0,binding=5)buffer Values{vec4 vals[];};
+layout(set=0,binding=6)writeonly buffer Partials{float partials[];};
+layout(set=0,binding=7)readonly buffer Position{uint position[];};
+layout(push_constant)uniform Push{uint capacity;uint splits;uint window;}pc;
+void main(){
+    uint lane=gl_LocalInvocationID.x,head=gl_WorkGroupID.x,split=gl_WorkGroupID.y;
+    uint cell=position[0],kv=head/12u,base=(head*pc.splits+split)*258u;
+    if((pc.window==0u&&cell>=pc.capacity)||(pc.window!=0u&&position[3]>cell)){
+        for(uint i=0u;i<4u;i++)partials[base+lane*4u+i]=uintBitsToFloat(0x7fc00000u);
+        if(lane==0u){partials[base+256u]=0.0;partials[base+257u]=0.0;}
+        return;
+    }
+    uint first=pc.window!=0u?max(position[3],cell+1u>pc.window?cell+1u-pc.window:0u):0u;
+    uint count=cell+1u-first,active_splits=min(pc.splits,(count+63u)/64u);
+    uint begin=split<active_splits?first+count*split/active_splits:0u;
+    uint end=split<active_splits?first+count*(split+1u)/active_splits:0u;
+    vec4 query=q[head*64u+lane],acc=vec4(0);
+    float maximum=-3.402823466e38,denominator=0;
+    for(uint t=begin;t<end;t++){
+        uint cached=t%pc.capacity;
+        vec4 k=t==cell?key[kv*64u+lane]:keys[cached*128u+kv*64u+lane];
+        vec4 v=t==cell?value[kv*64u+lane]:vals[cached*128u+kv*64u+lane];
+        float score=subgroupAdd(dot(query,k))*0.0625;
+        float next=max(maximum,score),old_weight=exp(maximum-next),weight=exp(score-next);
+        acc=acc*old_weight+v*weight;
+        denominator=denominator*old_weight+weight;maximum=next;
+    }
+    for(uint i=0u;i<4u;i++)partials[base+lane*4u+i]=acc[i];
+    if(lane==0u){partials[base+256u]=maximum;partials[base+257u]=denominator;}
+    if(split==0u&&head<2u){
+        uint cached=cell%pc.capacity;
+        keys[cached*128u+head*64u+lane]=key[head*64u+lane];
+        vals[cached*128u+head*64u+lane]=value[head*64u+lane];
+    }
+}

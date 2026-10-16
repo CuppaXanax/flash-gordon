@@ -18,6 +18,10 @@ uint projection;
 #define W(i) wb[i]
 #define W4(i) wb4[i]
 #endif
+#ifdef FG_DENSE_ARGMAX
+layout(set=0,binding=3)readonly buffer TokenIds{uint token_ids[];};
+layout(set=0,binding=4)writeonly buffer BestIds{uint best_ids[];};
+#endif
 layout(push_constant)uniform Push{uint out_dim;uint n_tok;uint blocks;uint tile_bytes;float scale;}pc;
 shared vec4 subgroup_sum0[64],subgroup_sum1[64];
 
@@ -27,7 +31,12 @@ void main(){
     for(projection=0u;projection<2u;projection++){
 #endif
     uint local_id=gl_LocalInvocationID.x;
-    uint cohort=local_id>>3u,cohort_lane=local_id&7u,first_row=gl_WorkGroupID.x*8u,token=gl_WorkGroupID.y;
+    uint cohort=local_id>>3u,cohort_lane=local_id&7u;
+#ifdef FG_DENSE_STREAMS4
+    uint first_row=(gl_WorkGroupID.x>>2u)*8u,token=gl_WorkGroupID.x&3u;
+#else
+    uint first_row=gl_WorkGroupID.x*8u,token=gl_WorkGroupID.y;
+#endif
     if(first_row>=pc.out_dim||token>=pc.n_tok)return;
     uint tile_base=(first_row>>4u)*pc.tile_bytes,tile_row=first_row&15u;
     uint quant_offset=(16u*pc.blocks*2u+63u)&~63u;
@@ -64,8 +73,21 @@ void main(){
             y[first_row+row]=(gate0[row]/(1.0+exp(-gate0[row])))*total0[row];
             y[first_row+4u+row]=(gate1[row]/(1.0+exp(-gate1[row])))*total1[row];
         }
+#elif defined(FG_DENSE_ARGMAX)
+        float best=uintBitsToFloat(0xff800000u);uint best_id=0xffffffffu;bool invalid=false;
+        for(uint row=0u;row<8u;row++){
+            if(first_row+row>=pc.out_dim)break;
+            float score=(row<4u?total0[row&3u]:total1[row&3u])*pc.scale;
+            uint id=token_ids[first_row+row];invalid=invalid||isnan(score)||isinf(score);
+            if(score>best||(score==best&&id<best_id)){best=score;best_id=id;}
+        }
+        y[gl_WorkGroupID.x]=invalid?uintBitsToFloat(0x7f800000u):best;
+        best_ids[gl_WorkGroupID.x]=invalid?token_ids[first_row]:best_id;
 #else
-        for(uint row=0u;row<4u;row++){y[token*pc.out_dim+first_row+row]=total0[row]*pc.scale;y[token*pc.out_dim+first_row+4u+row]=total1[row]*pc.scale;}
+        for(uint row=0u;row<4u;row++){
+            y[token*pc.out_dim+first_row+row]=total0[row]*pc.scale;
+            y[token*pc.out_dim+first_row+4u+row]=total1[row]*pc.scale;
+        }
 #endif
     }
 #ifdef FG_SHARED_SWIGLU

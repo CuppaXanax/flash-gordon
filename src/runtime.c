@@ -1,4 +1,7 @@
 #include "fg_runtime.h"
+#include "fg_mtp.h"
+#include "fg_mtp_capture.h"
+#include "fg_quant.h"
 #include "fg_chat.h"
 #include "fg_decode_batch.h"
 #include "fg_ledger.h"
@@ -709,9 +712,12 @@ static fg_status handle_prefill_layer_work(fg_fabric *fabric,fg_owner_executor *
         }
     }
     if(status==FG_OK)status=worker_publish_qsa_pages(context->qsa_owner,owner,self,
-        work.first_token,work.token_count,0u,err);
+        work.first_token,work.token_count,fg_owner_active_session(owner),err);
     if(status==FG_OK)status=fg_vk_tensor_read(current,0,context->hyper_out,
         (uint64_t)work.token_count*FG_HYPER_WIDTH*4u,err);
+    if(status==FG_OK&&last+1u==FG_LAYER_COUNT)
+        status=fg_mtp_capture_hyper(session_id,work.first_token,work.token_count,
+                                    context->hyper_out,err);
     if(status==FG_OK)numerics_trace_host(last+1u<FG_LAYER_COUNT?"SEND_NEXT":"SEND_RESULT",
         self,last,work.first_token,work.token_count,context->hyper_out);
     if(status==FG_OK&&last+1u<FG_LAYER_COUNT){
@@ -877,10 +883,13 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
         (uint64_t)FG_HYPER_WIDTH*4u,err);
     if(status==FG_OK)status=validate_block_hidden(self,work->token_index,last,
         context->hyper_out,err);
+    if(status==FG_OK&&last+1u==FG_LAYER_COUNT)
+        status=fg_mtp_capture_hyper(session_id,work->token_index,1u,
+                                    context->hyper_out,err);
     struct timespec t_read={0};if(trace)clock_gettime(CLOCK_MONOTONIC,&t_read);
     numerics_trace_host("FB_OUT",self,last,work->token_index,1u,context->hyper_out);
     if(status==FG_OK)status=worker_publish_qsa_pages(context->qsa_owner,owner,self,
-        work->token_index,1u,0u,err);
+        work->token_index,1u,fg_owner_active_session(owner),err);
     struct timespec t_publish={0};if(trace)clock_gettime(CLOCK_MONOTONIC,&t_publish);
     if(status==FG_OK&&last+1u<FG_LAYER_COUNT){
         fg_layer_work next={.layer=(uint8_t)(last+1u),.source_rank=(uint8_t)self,
@@ -1485,6 +1494,7 @@ static fg_status prefill_layer_buffers_create(prefill_layer_buffers *buffers,fg_
 
 typedef struct qsa_owner_runtime {
     fg_qsa_owner_guard guard;
+    uint32_t state_slot;
     fg_qsa_state *state;
     fg_qsa_page *pages;
     uint8_t *receive_wire,*result_wire,*read_records;
@@ -1721,7 +1731,8 @@ static fg_status qsa_owner_open_session(qsa_owner_runtime *runtime,
         pthread_mutex_lock(&runtime->writer_mutex);runtime->writer_status=FG_OK;
         memset(&runtime->writer_error,0,sizeof(runtime->writer_error));
         pthread_mutex_unlock(&runtime->writer_mutex);
-        runtime->guard=next;snprintf(runtime->state_path,sizeof(runtime->state_path),"%s",path);
+        runtime->guard=next;runtime->state_slot=state_slot;
+        snprintf(runtime->state_path,sizeof(runtime->state_path),"%s",path);
     }
     return status;
 }
@@ -1787,10 +1798,9 @@ static fg_status worker_publish_qsa_pages(void *opaque,fg_owner_executor *owner,
     (void)owner;(void)self;(void)err;
     qsa_owner_runtime *runtime=opaque;
     if(!runtime||!runtime->enabled)return FG_OK;
-    /* The page-service state file is the slot-0 namespace.  Batch slots never
-     * advance it: depth-B requires the ring, where block owners write their own
-     * per-session state files and the page transport is dormant. */
-    if(state_slot!=0u)return FG_OK;
+    /* Normal two-session serving selects a page-service namespace per frame.
+     * Legacy depth-B slots must not advance another slot's service guard. */
+    if(state_slot!=runtime->state_slot)return FG_OK;
     uint32_t frontier=first_token+token_count;
     for(uint32_t slot=0;slot<runtime->layer_count;slot++){
         uint32_t layer=runtime->layers[slot];
@@ -1910,9 +1920,21 @@ static fg_status depthb_owner_restore(depthb_owner_runtime *depthb,uint32_t slot
     }
     fg_status status=FG_OK;
     if(depthb->checkpoint_valid[slot]){
-        status=fg_owner_session_rollback(depthb->owner,&depthb->checkpoint[slot],err);
+        if(depthb->qsa&&depthb->qsa->enabled&&depthb->qsa->state_slot==slot)
+            status=qsa_owner_writer_drain(depthb->qsa,err);
+        if(status==FG_OK)
+            status=fg_owner_session_rollback(depthb->owner,&depthb->checkpoint[slot],err);
         fg_owner_session_snapshot_release(&depthb->checkpoint[slot]);
         depthb->checkpoint_valid[slot]=false;
+        if(status==FG_OK&&depthb->qsa&&depthb->qsa->enabled&&
+           depthb->qsa->state_slot==slot){
+            uint32_t frontier[FG_LAYER_COUNT];
+            status=fg_owner_qsa_frontier(depthb->owner,slot,frontier);
+            if(status==FG_OK)for(uint32_t i=0;i<depthb->qsa->layer_count;i++){
+                uint32_t layer=depthb->qsa->layers[i];
+                depthb->qsa->guard.next_token[layer]=frontier[layer];
+            }
+        }
     }
     fg_status active=fg_owner_set_active_session(depthb->owner,0u,err);
     return status==FG_OK?active:status;
@@ -5732,8 +5754,8 @@ fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
             FG_MTP_CAPABILITY_UNSUPPORTED;
         if(requested_mtp){
             fg_error_set(err,FG_ERR_UNAVAILABLE,
-                         "sealed MTP weights require the MTP head kernels described in "
-                         "MTP_FEASIBILITY_2026-09-13.md; unset --experimental-mtp");
+                         "MTP native-head serving integration and an exact batched ring "
+                         "verifier are not linked; see docs/MTP.md; unset --experimental-mtp");
             status=FG_ERR_UNAVAILABLE;
         }
     }
@@ -7529,6 +7551,8 @@ uint32_t fg_runtime_context_tokens(const fg_runtime *runtime){return runtime?(ui
 uint32_t fg_runtime_context_limit(const fg_runtime *runtime){return runtime?runtime->context_limit:0u;}
 const char *fg_runtime_ledger(const fg_runtime *runtime){return runtime?runtime->coordinator.ledger:NULL;}
 const char *fg_runtime_model_name(const fg_runtime *runtime){return runtime?fg_runtime_model_name_resolve(&runtime->options):NULL;}
+#include "runtime_mtp_qualify.inc"
+
 fg_mtp_capability fg_runtime_mtp_capability(const fg_runtime *runtime){
     return runtime?runtime->mtp_capability:FG_MTP_CAPABILITY_UNSUPPORTED;
 }

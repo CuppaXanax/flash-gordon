@@ -1,5 +1,11 @@
 # MTP / speculative decoding feasibility - 2026-09-13
 
+> Historical, not a description of current runtime capability. See
+> [docs/MTP.md](docs/MTP.md) for the range-audited 31-tensor HC-aware head,
+> current fail-closed gate, measured causal-batch cost, and tested rollback
+> primitives. In particular, the current source does not read the echo-harness
+> flag or implement several runtime/sampler hooks claimed below.
+
 Worktree: `D:\workspace\fg-work-mtp` (detached at `929bb62`). Scope of this
 change: option plumbing, capability reporting, draft/verify scaffolding, acceptance
 measurement. No shader/kernel/owner/expert changes.

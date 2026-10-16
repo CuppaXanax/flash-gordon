@@ -1,0 +1,273 @@
+{
+  "base": "2d0f8a7",
+  "branch": "cuppaxanax/mtp-serving",
+  "status": "offline foundations; serving still unlinked and fail-closed",
+  "host": "192.168.42.51",
+  "production_access": false,
+  "hardware_changes": false,
+  "native_overlay_sha256": "536bab54b0a1bdea23b65871c4cdc38deee5803771501a0c770a0510bcd3283b",
+  "evidence_sha256": "695286de7facf5b51f210c9a627f58ed29895ed84f6fbdb30016c2938b460943",
+  "tests": {
+    "release_werror": true,
+    "flags": true,
+    "adaptive_mtp": true,
+    "multisession_qsa_not_skipped": true,
+    "multisession_fabric_not_skipped": true,
+    "api": true,
+    "session": true,
+    "nonzero_session_publication": true
+  },
+  "native_sessions": [
+    {
+      "kind": "native_sessions",
+      "slots": 2,
+      "interleaved_rows": 18,
+      "rollback_cycles": 8,
+      "bit_exact": true,
+      "parent_closed_first": true,
+      "warm_prefix_bit_exact": true,
+      "window": 0,
+      "warm_kv_mean_us": 268.314934,
+      "private_session_bytes": 5200432
+    },
+    {
+      "kind": "native_sessions",
+      "slots": 2,
+      "interleaved_rows": 18,
+      "rollback_cycles": 8,
+      "bit_exact": true,
+      "parent_closed_first": true,
+      "warm_prefix_bit_exact": true,
+      "window": 4,
+      "warm_kv_mean_us": 295.685401,
+      "private_session_bytes": 5167664
+    }
+  ],
+  "head_oracles": [
+    {
+      "kind": "borrowed_model_test",
+      "retained_tensor": true,
+      "context_alive": true,
+      "wrong_owner_rejected": true
+    },
+    {
+      "kind": "dense_draft_attention_test",
+      "rows": 16,
+      "max_abs": 5.5267942e-08,
+      "future_mask_exact": true
+    },
+    {
+      "kind": "fused_draft_vocab_test",
+      "negative_tail_and_global_ties": true,
+      "nonfinite_propagation": true,
+      "private_slot_exclusion": true
+    },
+    {
+      "kind": "fused_draft_vocab_scalar_oracle",
+      "rows": 65553,
+      "width": 64,
+      "max_scaled": 3.57627869e-07,
+      "reduction_stages": 2
+    },
+    {
+      "kind": "fused_draft_vocab_scalar_oracle",
+      "rows": 113,
+      "width": 2560,
+      "max_scaled": 2.5244528e-06,
+      "reduction_stages": 1
+    },
+    {
+      "kind": "native_split_attention",
+      "max_context": 8192,
+      "max_scaled": 2.56113708e-09
+    },
+    {
+      "kind": "window_draft_attention",
+      "window": 8,
+      "capacity": 12,
+      "first_absolute_cell": 100,
+      "cells": 36,
+      "rejected_suffix": 3,
+      "max_abs": 5.04078684e-08
+    },
+    {
+      "kind": "native_hc_norm",
+      "n1_bit_exact": true
+    },
+    {
+      "kind": "native_fc_four_streams",
+      "n1_bit_exact": true
+    }
+  ],
+  "block_oracles": [
+    {
+      "kind": "small_n_sessions",
+      "slots": 2,
+      "shapes": 3,
+      "bit_exact": true,
+      "other_slot_replay_retained": true,
+      "n1_transition_isolated": true
+    },
+    {
+      "kind": "small_error_cleanup_test",
+      "clean": true
+    },
+    {
+      "kind": "small_block_test",
+      "n": 2,
+      "max_abs_output": 0,
+      "max_abs_state": 0,
+      "state_bit_exact": true,
+      "output_bit_exact": true,
+      "tolerance_ok": true
+    },
+    {
+      "kind": "small_block_test",
+      "n": 3,
+      "max_abs_output": 0,
+      "max_abs_state": 0,
+      "state_bit_exact": true,
+      "output_bit_exact": true,
+      "tolerance_ok": true
+    },
+    {
+      "kind": "small_block_test",
+      "n": 4,
+      "max_abs_output": 0,
+      "max_abs_state": 0,
+      "state_bit_exact": true,
+      "output_bit_exact": true,
+      "tolerance_ok": true
+    },
+    {
+      "kind": "small_causal_test",
+      "prefix_bit_exact": true
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 1,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 2,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 3,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 4,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true
+    }
+  ],
+  "replay_faithful_ab_a": {
+    "phases": {
+      "A": [
+        {
+          "n": 1,
+          "mean_us": 2665.1109739583335,
+          "p50_us": 2661.7,
+          "ratio": 1.0
+        },
+        {
+          "n": 2,
+          "mean_us": 4011.3021354166667,
+          "p50_us": 3989.7349999999997,
+          "ratio": 1.505116362737764
+        },
+        {
+          "n": 3,
+          "mean_us": 5789.1120634920635,
+          "p50_us": 5695.89,
+          "ratio": 2.1721842430050233
+        },
+        {
+          "n": 4,
+          "mean_us": 6968.238875,
+          "p50_us": 6862.304,
+          "ratio": 2.6146149046283362
+        }
+      ],
+      "B": [
+        {
+          "n": 1,
+          "mean_us": 2656.718354166667,
+          "p50_us": 2654.2115000000003,
+          "ratio": 1.0
+        },
+        {
+          "n": 2,
+          "mean_us": 4065.7999375,
+          "p50_us": 4040.4645,
+          "ratio": 1.5303842543653146
+        },
+        {
+          "n": 3,
+          "mean_us": 5614.233396825397,
+          "p50_us": 5582.238,
+          "ratio": 2.1132211429263132
+        },
+        {
+          "n": 4,
+          "mean_us": 6341.206979166666,
+          "p50_us": 6317.800499999999,
+          "ratio": 2.3868570671864515
+        }
+      ],
+      "A2": [
+        {
+          "n": 1,
+          "mean_us": 2678.5456979166665,
+          "p50_us": 2672.6949999999997,
+          "ratio": 1.0
+        },
+        {
+          "n": 2,
+          "mean_us": 4050.98753125,
+          "p50_us": 4026.2255,
+          "ratio": 1.5123832064544571
+        },
+        {
+          "n": 3,
+          "mean_us": 5871.281126984127,
+          "p50_us": 5765.5,
+          "ratio": 2.1919660103431213
+        },
+        {
+          "n": 4,
+          "mean_us": 7074.621395833334,
+          "p50_us": 7024.494000000001,
+          "ratio": 2.641217359605203
+        }
+      ]
+    },
+    "all_output_and_state_hashes_equal": true,
+    "candidate_vs_bracketed_baseline": [
+      0.99434470337499,
+      1.0085968392601787,
+      0.9629578188514107,
+      0.9031218508008931
+    ]
+  },
+  "targets_met": {
+    "n2_at_most_1_2": false,
+    "n3_at_most_1_4": false,
+    "n4_at_most_1_6": false,
+    "distributed_draft_at_most_1_5_ms": false
+  },
+  "remaining": [
+    "native serving RPC and production head fanout",
+    "causal small-N ring work/publication and history cursors",
+    "adaptive policy connection to live per-slot cycles",
+    "long-context bounded-window acceptance gate",
+    "linked-path full-ring greedy gate under new lease after stack-1"
+  ]
+}

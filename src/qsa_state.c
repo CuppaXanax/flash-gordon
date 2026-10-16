@@ -181,6 +181,31 @@ fg_status fg_qsa_state_write_blocks(fg_qsa_state *state,uint32_t layer_slot,
 
 uint32_t fg_qsa_state_layer_tokens(const fg_qsa_state *state,uint32_t layer_slot){return state&&layer_slot<state->layer_count?state->layer_tokens[layer_slot]:0;}
 void fg_qsa_state_set_layer_tokens(fg_qsa_state *state,uint32_t layer_slot,uint32_t tokens){if(state&&layer_slot<state->layer_count)state->layer_tokens[layer_slot]=tokens;}
+fg_status fg_qsa_state_truncate(fg_qsa_state *state,uint32_t layer_slot,
+    uint32_t tokens,fg_error *err){
+    if(!state||layer_slot>=state->layer_count||tokens>state->layer_tokens[layer_slot]){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA state truncation");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_qsa_state_prefetch_cancel(state);
+    uint32_t old=state->layer_tokens[layer_slot],tail=tokens%FG_Q38_QSA_COMPRESS_RATIO;
+    uint8_t records[FG_QSA_PAGE_RECORD_BYTES];fg_status status=FG_OK;
+    if(tail){
+        uint32_t block=tokens/FG_Q38_QSA_COMPRESS_RATIO,committed=0u;
+        status=fg_qsa_state_read_block(state,layer_slot,block,records,&committed,err);
+        if(status==FG_OK&&committed<tail){
+            fg_error_set(err,FG_ERR_MISMATCH,"QSA truncation lost its prefix page");
+            status=FG_ERR_MISMATCH;
+        }
+    }
+    if(status!=FG_OK)return status;
+    state->layer_tokens[layer_slot]=tokens;
+    if(tail)status=fg_qsa_state_write_block(state,layer_slot,
+        tokens/FG_Q38_QSA_COMPRESS_RATIO,records,tail,err);
+    else status=write_file_header(state,err);
+    if(status!=FG_OK)state->layer_tokens[layer_slot]=old;
+    return status;
+}
 fg_status fg_qsa_state_reset(fg_qsa_state *state,fg_error *err){if(!state){fg_error_set(err,FG_ERR_ARGUMENT,"QSA state reset is null");return FG_ERR_ARGUMENT;}fg_qsa_state_prefetch_cancel(state);memset(state->layer_tokens,0,sizeof(state->layer_tokens));return write_file_header(state,err);}
 
 static void prefetch_complete(fg_qsa_state *state,uint64_t tag,int32_t result){

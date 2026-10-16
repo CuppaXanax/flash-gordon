@@ -1,0 +1,122 @@
+{
+  "host": "192.168.42.51",
+  "unit_mtp": true,
+  "unit_sampler": true,
+  "unit_decode_batch": true,
+  "flags": true,
+  "build_werror": true,
+  "rollback": [
+    {
+      "kind": "rollback",
+      "kept_inputs": 1,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true,
+      "initial_frontier": 7
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 2,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true,
+      "initial_frontier": 7
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 3,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true,
+      "initial_frontier": 7
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 4,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true,
+      "initial_frontier": 7
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 1,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true,
+      "initial_frontier": 8
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 2,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true,
+      "initial_frontier": 8
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 3,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true,
+      "initial_frontier": 8
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 4,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true,
+      "initial_frontier": 8
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 1,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true,
+      "initial_frontier": 9
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 2,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true,
+      "initial_frontier": 9
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 3,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true,
+      "initial_frontier": 9
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 4,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true,
+      "initial_frontier": 9
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 1,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true,
+      "initial_frontier": 10
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 2,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true,
+      "initial_frontier": 10
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 3,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true,
+      "initial_frontier": 10
+    },
+    {
+      "kind": "rollback",
+      "kept_inputs": 4,
+      "gdn_and_output_bit_exact": true,
+      "changed_mrope_suffix": true,
+      "initial_frontier": 10
+    }
+  ]
+}

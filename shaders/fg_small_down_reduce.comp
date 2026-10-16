@@ -1,0 +1,22 @@
+#version 460
+layout(local_size_x=128) in;
+layout(set=0,binding=0) readonly buffer Parts{float parts[];};
+layout(set=0,binding=1) readonly buffer Gates{float gates[];};
+layout(set=0,binding=2) writeonly buffer Output{float output_value[];};
+layout(push_constant) uniform Push{uint rows;}pc;
+shared float partial[128];
+void main(){
+    uint lid=gl_LocalInvocationID.x,i=gl_GlobalInvocationID.x,row=i/4u,part=i&3u;
+    uint token=gl_WorkGroupID.y;
+    float accumulator=0.0;
+    // Preserve N=1's per-part routing-order FMA chain before the four-way sum.
+    for(uint slot=0u;slot<10u;slot++){
+        uint pair=token*10u+slot;
+        accumulator=fma(gates[pair],parts[(pair*pc.rows+row)*4u+part],accumulator);
+    }
+    partial[lid]=accumulator;
+    barrier();
+    if(part==0u&&row<pc.rows)
+        output_value[token*pc.rows+row]=(partial[lid]+partial[lid+1u])+
+            (partial[lid+2u]+partial[lid+3u]);
+}

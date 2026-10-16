@@ -1,0 +1,610 @@
+{
+  "host": "192.168.42.51",
+  "synthetic": true,
+  "expert_slabs_distinct": true,
+  "runs": [
+    {
+      "seed": 1,
+      "n": 1,
+      "mean_us": 2685.2440520833334,
+      "p50_us": 2678.523,
+      "ratio": 1.0,
+      "config": {
+        "kind": "config",
+        "weights": "synthetic-q4-compact",
+        "first_layer": 6,
+        "last_layer": 11,
+        "resident_bytes": 9739403264,
+        "warmup": 256,
+        "iterations": 64,
+        "windows": 3,
+        "seed": 1,
+        "batch": 1,
+        "small_n": true,
+        "intrusive": false,
+        "device": "AMD BC-250 (RADV GFX1013)"
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "19d9f8cb8433a96c",
+        "gdn_state_hash": "d66600f7b4c8f24a"
+      },
+      "final_layer_expert_union": {
+        "kind": "expert_union",
+        "layer": 11,
+        "selected_pairs": 10,
+        "unique_experts": 10
+      },
+      "compared_tokens": 192,
+      "bit_equal_tokens": 192,
+      "max_abs_hidden_difference": 0.0
+    },
+    {
+      "seed": 1,
+      "n": 2,
+      "mean_us": 4046.872135416667,
+      "p50_us": 4020.6265000000003,
+      "ratio": 1.5070779627188526,
+      "config": {
+        "kind": "config",
+        "weights": "synthetic-q4-compact",
+        "first_layer": 6,
+        "last_layer": 11,
+        "resident_bytes": 9739403264,
+        "warmup": 128,
+        "iterations": 32,
+        "windows": 3,
+        "seed": 1,
+        "batch": 2,
+        "small_n": true,
+        "intrusive": false,
+        "device": "AMD BC-250 (RADV GFX1013)"
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "19d9f8cb8433a96c",
+        "gdn_state_hash": "d66600f7b4c8f24a"
+      },
+      "final_layer_expert_union": {
+        "kind": "expert_union",
+        "layer": 11,
+        "selected_pairs": 20,
+        "unique_experts": 11
+      },
+      "compared_tokens": 192,
+      "bit_equal_tokens": 192,
+      "max_abs_hidden_difference": 0.0
+    },
+    {
+      "seed": 1,
+      "n": 3,
+      "mean_us": 6090.548492063492,
+      "p50_us": 5957.652,
+      "ratio": 2.2681545416097912,
+      "config": {
+        "kind": "config",
+        "weights": "synthetic-q4-compact",
+        "first_layer": 6,
+        "last_layer": 11,
+        "resident_bytes": 9739403264,
+        "warmup": 85,
+        "iterations": 21,
+        "windows": 3,
+        "seed": 1,
+        "batch": 3,
+        "small_n": true,
+        "intrusive": false,
+        "device": "AMD BC-250 (RADV GFX1013)"
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "9c4f5888be2e1fac",
+        "gdn_state_hash": "591f21dadd4f32e3"
+      },
+      "final_layer_expert_union": {
+        "kind": "expert_union",
+        "layer": 11,
+        "selected_pairs": 30,
+        "unique_experts": 10
+      },
+      "compared_tokens": 188,
+      "bit_equal_tokens": 188,
+      "max_abs_hidden_difference": 0.0
+    },
+    {
+      "seed": 1,
+      "n": 4,
+      "mean_us": 6573.225083333334,
+      "p50_us": 6497.1955,
+      "ratio": 2.4479060211430426,
+      "config": {
+        "kind": "config",
+        "weights": "synthetic-q4-compact",
+        "first_layer": 6,
+        "last_layer": 11,
+        "resident_bytes": 9739403264,
+        "warmup": 64,
+        "iterations": 16,
+        "windows": 3,
+        "seed": 1,
+        "batch": 4,
+        "small_n": true,
+        "intrusive": false,
+        "device": "AMD BC-250 (RADV GFX1013)"
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "19d9f8cb8433a96c",
+        "gdn_state_hash": "d66600f7b4c8f24a"
+      },
+      "final_layer_expert_union": {
+        "kind": "expert_union",
+        "layer": 11,
+        "selected_pairs": 40,
+        "unique_experts": 12
+      },
+      "compared_tokens": 192,
+      "bit_equal_tokens": 192,
+      "max_abs_hidden_difference": 0.0
+    },
+    {
+      "seed": 2,
+      "n": 1,
+      "mean_us": 2682.9383854166667,
+      "p50_us": 2675.8785,
+      "ratio": 1.0,
+      "config": {
+        "kind": "config",
+        "weights": "synthetic-q4-compact",
+        "first_layer": 6,
+        "last_layer": 11,
+        "resident_bytes": 9739403264,
+        "warmup": 256,
+        "iterations": 64,
+        "windows": 3,
+        "seed": 2,
+        "batch": 1,
+        "small_n": true,
+        "intrusive": false,
+        "device": "AMD BC-250 (RADV GFX1013)"
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "362a6c8b5a043c8f",
+        "gdn_state_hash": "ac968d24449949b5"
+      },
+      "final_layer_expert_union": {
+        "kind": "expert_union",
+        "layer": 11,
+        "selected_pairs": 10,
+        "unique_experts": 10
+      },
+      "compared_tokens": 192,
+      "bit_equal_tokens": 192,
+      "max_abs_hidden_difference": 0.0
+    },
+    {
+      "seed": 2,
+      "n": 2,
+      "mean_us": 4108.89590625,
+      "p50_us": 4116.7919999999995,
+      "ratio": 1.531490968478532,
+      "config": {
+        "kind": "config",
+        "weights": "synthetic-q4-compact",
+        "first_layer": 6,
+        "last_layer": 11,
+        "resident_bytes": 9739403264,
+        "warmup": 128,
+        "iterations": 32,
+        "windows": 3,
+        "seed": 2,
+        "batch": 2,
+        "small_n": true,
+        "intrusive": false,
+        "device": "AMD BC-250 (RADV GFX1013)"
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "362a6c8b5a043c8f",
+        "gdn_state_hash": "ac968d24449949b5"
+      },
+      "final_layer_expert_union": {
+        "kind": "expert_union",
+        "layer": 11,
+        "selected_pairs": 20,
+        "unique_experts": 10
+      },
+      "compared_tokens": 192,
+      "bit_equal_tokens": 192,
+      "max_abs_hidden_difference": 0.0
+    },
+    {
+      "seed": 2,
+      "n": 3,
+      "mean_us": 5715.012126984127,
+      "p50_us": 5682.678,
+      "ratio": 2.1301317085955263,
+      "config": {
+        "kind": "config",
+        "weights": "synthetic-q4-compact",
+        "first_layer": 6,
+        "last_layer": 11,
+        "resident_bytes": 9739403264,
+        "warmup": 85,
+        "iterations": 21,
+        "windows": 3,
+        "seed": 2,
+        "batch": 3,
+        "small_n": true,
+        "intrusive": false,
+        "device": "AMD BC-250 (RADV GFX1013)"
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "2702b1848258ee12",
+        "gdn_state_hash": "16d978eb342f5619"
+      },
+      "final_layer_expert_union": {
+        "kind": "expert_union",
+        "layer": 11,
+        "selected_pairs": 30,
+        "unique_experts": 11
+      },
+      "compared_tokens": 188,
+      "bit_equal_tokens": 188,
+      "max_abs_hidden_difference": 0.0
+    },
+    {
+      "seed": 2,
+      "n": 4,
+      "mean_us": 6876.126020833333,
+      "p50_us": 6907.6685,
+      "ratio": 2.562908659479131,
+      "config": {
+        "kind": "config",
+        "weights": "synthetic-q4-compact",
+        "first_layer": 6,
+        "last_layer": 11,
+        "resident_bytes": 9739403264,
+        "warmup": 64,
+        "iterations": 16,
+        "windows": 3,
+        "seed": 2,
+        "batch": 4,
+        "small_n": true,
+        "intrusive": false,
+        "device": "AMD BC-250 (RADV GFX1013)"
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "362a6c8b5a043c8f",
+        "gdn_state_hash": "ac968d24449949b5"
+      },
+      "final_layer_expert_union": {
+        "kind": "expert_union",
+        "layer": 11,
+        "selected_pairs": 40,
+        "unique_experts": 11
+      },
+      "compared_tokens": 192,
+      "bit_equal_tokens": 192,
+      "max_abs_hidden_difference": 0.0
+    }
+  ],
+  "validation": {
+    "dense_byte_exact_cases": 90,
+    "union_scheduler_cases": 12,
+    "block_output_byte_exact_cases": 3,
+    "block_state_byte_exact_cases": 3,
+    "causal_prefix_cases": 1,
+    "injected_error_cleanup_cases": 1,
+    "page_boundary_prefix_rollback_cases": 16
+  },
+  "mean_cost_ratios": [
+    1.0,
+    1.5192844655986923,
+    2.1991431251026587,
+    2.505407340311087
+  ],
+  "mean_block_us": [
+    2684.09121875,
+    4077.884020833333,
+    5902.780309523809,
+    6724.675552083334
+  ],
+  "aligned_nonbaseline_byte_exact_rows": 1144,
+  "isolated_dense_costs": [
+    {
+      "kind": "dense_cost",
+      "type": 12,
+      "in": 2560,
+      "rows": 6144,
+      "n": 1,
+      "us": 48.056,
+      "ratio": 1.0
+    },
+    {
+      "kind": "dense_cost",
+      "type": 12,
+      "in": 2560,
+      "rows": 6144,
+      "n": 2,
+      "us": 72.659,
+      "ratio": 1.5119
+    },
+    {
+      "kind": "dense_cost",
+      "type": 12,
+      "in": 2560,
+      "rows": 6144,
+      "n": 3,
+      "us": 87.439,
+      "ratio": 1.8195
+    },
+    {
+      "kind": "dense_cost",
+      "type": 12,
+      "in": 2560,
+      "rows": 6144,
+      "n": 4,
+      "us": 98.113,
+      "ratio": 2.0416
+    },
+    {
+      "kind": "dense_cost",
+      "type": 13,
+      "in": 2560,
+      "rows": 6144,
+      "n": 1,
+      "us": 45.464,
+      "ratio": 1.0
+    },
+    {
+      "kind": "dense_cost",
+      "type": 13,
+      "in": 2560,
+      "rows": 6144,
+      "n": 2,
+      "us": 59.524,
+      "ratio": 1.3093
+    },
+    {
+      "kind": "dense_cost",
+      "type": 13,
+      "in": 2560,
+      "rows": 6144,
+      "n": 3,
+      "us": 85.082,
+      "ratio": 1.8714
+    },
+    {
+      "kind": "dense_cost",
+      "type": 13,
+      "in": 2560,
+      "rows": 6144,
+      "n": 4,
+      "us": 92.106,
+      "ratio": 2.0259
+    },
+    {
+      "kind": "dense_cost",
+      "type": 20,
+      "in": 2560,
+      "rows": 6144,
+      "n": 1,
+      "us": 30.465,
+      "ratio": 1.0
+    },
+    {
+      "kind": "dense_cost",
+      "type": 20,
+      "in": 2560,
+      "rows": 6144,
+      "n": 2,
+      "us": 47.291,
+      "ratio": 1.5523
+    },
+    {
+      "kind": "dense_cost",
+      "type": 20,
+      "in": 2560,
+      "rows": 6144,
+      "n": 3,
+      "us": 74.2,
+      "ratio": 2.4356
+    },
+    {
+      "kind": "dense_cost",
+      "type": 20,
+      "in": 2560,
+      "rows": 6144,
+      "n": 4,
+      "us": 91.694,
+      "ratio": 3.0098
+    },
+    {
+      "kind": "dense_cost",
+      "type": 8,
+      "in": 2560,
+      "rows": 6144,
+      "n": 1,
+      "us": 59.902,
+      "ratio": 1.0
+    },
+    {
+      "kind": "dense_cost",
+      "type": 8,
+      "in": 2560,
+      "rows": 6144,
+      "n": 2,
+      "us": 71.446,
+      "ratio": 1.1927
+    },
+    {
+      "kind": "dense_cost",
+      "type": 8,
+      "in": 2560,
+      "rows": 6144,
+      "n": 3,
+      "us": 92.282,
+      "ratio": 1.5405
+    },
+    {
+      "kind": "dense_cost",
+      "type": 8,
+      "in": 2560,
+      "rows": 6144,
+      "n": 4,
+      "us": 107.633,
+      "ratio": 1.7968
+    },
+    {
+      "kind": "dense_cost",
+      "type": 0,
+      "in": 2560,
+      "rows": 6144,
+      "n": 1,
+      "us": 199.569,
+      "ratio": 1.0
+    },
+    {
+      "kind": "dense_cost",
+      "type": 0,
+      "in": 2560,
+      "rows": 6144,
+      "n": 2,
+      "us": 268.794,
+      "ratio": 1.3469
+    },
+    {
+      "kind": "dense_cost",
+      "type": 0,
+      "in": 2560,
+      "rows": 6144,
+      "n": 3,
+      "us": 384.155,
+      "ratio": 1.9249
+    },
+    {
+      "kind": "dense_cost",
+      "type": 0,
+      "in": 2560,
+      "rows": 6144,
+      "n": 4,
+      "us": 421.816,
+      "ratio": 2.1136
+    },
+    {
+      "kind": "dense_cost",
+      "type": 30,
+      "in": 2560,
+      "rows": 6144,
+      "n": 1,
+      "us": 107.653,
+      "ratio": 1.0
+    },
+    {
+      "kind": "dense_cost",
+      "type": 30,
+      "in": 2560,
+      "rows": 6144,
+      "n": 2,
+      "us": 114.127,
+      "ratio": 1.0601
+    },
+    {
+      "kind": "dense_cost",
+      "type": 30,
+      "in": 2560,
+      "rows": 6144,
+      "n": 3,
+      "us": 137.731,
+      "ratio": 1.2794
+    },
+    {
+      "kind": "dense_cost",
+      "type": 30,
+      "in": 2560,
+      "rows": 6144,
+      "n": 4,
+      "us": 240.493,
+      "ratio": 2.234
+    },
+    {
+      "kind": "dense_cost",
+      "type": 31,
+      "in": 2560,
+      "rows": 6144,
+      "n": 1,
+      "us": 98.525,
+      "ratio": 1.0
+    },
+    {
+      "kind": "dense_cost",
+      "type": 31,
+      "in": 2560,
+      "rows": 6144,
+      "n": 2,
+      "us": 145.465,
+      "ratio": 1.4764
+    },
+    {
+      "kind": "dense_cost",
+      "type": 31,
+      "in": 2560,
+      "rows": 6144,
+      "n": 3,
+      "us": 263.416,
+      "ratio": 2.6736
+    },
+    {
+      "kind": "dense_cost",
+      "type": 31,
+      "in": 2560,
+      "rows": 6144,
+      "n": 4,
+      "us": 248.469,
+      "ratio": 2.5219
+    }
+  ],
+  "acceptance": {
+    "fg_measured": false,
+    "reference": "Strata 9259cad docs/DETAILS.md:743",
+    "estimated_committed_tokens_per_pass": [
+      2.4,
+      3.2
+    ],
+    "draft_cap": 3
+  },
+  "whole_ring_measured": false,
+  "target_met": {
+    "n2": false,
+    "n4": false
+  },
+  "tested_source_tree": "f846e405872eaee31eb34ab744ccfc0736d634f4",
+  "tested_source_archive_sha256": "e9babf7b1deacd329f1142092185f109fa4c1d84863299c95e1d2484327793bd",
+  "branch": "cuppaxanax/mtp",
+  "runtime_mtp_head_linked": false,
+  "runtime_causal_ring_linked": false,
+  "efficient_retained_prefix_commit": false,
+  "projection": {
+    "formula": "baseline_TPS * E / (whole_ring_verify_ratio + draft_cost/F + commit_cost/F)",
+    "warning": "One-blade synthetic ratios are not whole-ring measurements or MTP limits.",
+    "serial_baseline_tps": 27,
+    "estimated_committed_per_pass": [
+      2.4,
+      3.2
+    ],
+    "diagnostic_proxy_tps_before_draft_commit": [
+      25.8640576952864,
+      34.48541026038187
+    ],
+    "target_r1_8_with_40_to_45_serial_tps_before_draft_commit": [
+      53.33333333333333,
+      80.0
+    ]
+  },
+  "evidence_archive_sha256": "759f30e504954e17ebd16463d2560f0cbfe58c80a270004c6ebb6ea0083d4862",
+  "core_source_files_verified_against_tested_archive": 266
+}

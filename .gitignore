@@ -43,11 +43,18 @@ tests/bench_bc250_qsa_curve
 tests/test_fg_ledger
 tests/test_qsa_model_load
 tests/test_sampler
+tests/test_mtp
+tests/test_mtp_capture_io
+tools/mtp-acceptance
+tools/mtp-acceptance.d
+tools/bench-decode-fusion
+tools/bench-decode-fusion.d
 tests/test_tower
 tests/test_video
 
 # Python test bytecode
 tools/__pycache__/
+tests/__pycache__/
 
 # Compiled SPIR-V shaders
 vulkan/*.spv

@@ -24,6 +24,7 @@ struct fg_model {
     const fg_manifest *manifest;
     uint64_t weight_bytes;
     uint32_t rank;
+    bool borrowed_vk;
 };
 
 static uint64_t rank_high_water(const fg_manifest *manifest,uint32_t rank){
@@ -57,6 +58,25 @@ static fg_vk_tensor_format tensor_format(fg_tensor_layout layout){if(layout==FG_
 static fg_status cook_expert_tensor(const fg_tensor_record *record,void *data,fg_tensor_layout layout,fg_error *err){uint64_t experts=record->shape[2];if(!experts||record->bytes%experts){fg_error_set(err,FG_ERR_FORMAT,"expert tensor %.96s has invalid local shape",record->name);return FG_ERR_FORMAT;}uint64_t matrix_bytes=record->bytes/experts;if(matrix_bytes>SIZE_MAX){fg_error_set(err,FG_ERR_LIMIT,"expert tensor %.96s matrix is too large",record->name);return FG_ERR_LIMIT;}uint8_t *temporary=malloc((size_t)matrix_bytes);if(!temporary){fg_error_set(err,FG_ERR_OOM,"allocate expert cooking buffer");return FG_ERR_OOM;}for(uint64_t expert=0;expert<experts;expert++){uint8_t *matrix=(uint8_t *)data+expert*matrix_bytes;bool converted=layout==FG_TENSOR_LAYOUT_K_QUANT_EXPERT_COOKED?fg_cook_k_quant_rows(matrix,temporary,matrix_bytes,(uint32_t)record->shape[0],(uint32_t)record->shape[1],record->ggml_type):layout==FG_TENSOR_LAYOUT_Q5_1_EXPERT_COOKED?fg_cook_q5_1_rows(matrix,temporary,matrix_bytes,(uint32_t)record->shape[0],(uint32_t)record->shape[1]):layout==FG_TENSOR_LAYOUT_Q8_0_EXPERT_COOKED?fg_cook_q8_0_rows(matrix,temporary,matrix_bytes,(uint32_t)record->shape[0],(uint32_t)record->shape[1]):false;if(!converted){free(temporary);fg_error_set(err,FG_ERR_FORMAT,"cannot cook expert tensor %.96s",record->name);return FG_ERR_FORMAT;}memcpy(matrix,temporary,(size_t)matrix_bytes);}free(temporary);return FG_OK;}
 static fg_status cook_runtime_tensor(const fg_tensor_record *record,void *data,fg_tensor_layout layout,fg_error *err){if(layout!=FG_TENSOR_LAYOUT_Q8_0_COOKED)return cook_expert_tensor(record,data,layout,err);if(record->bytes>SIZE_MAX){fg_error_set(err,FG_ERR_LIMIT,"cooked tensor %.96s is too large",record->name);return FG_ERR_LIMIT;}uint8_t *temporary=malloc((size_t)record->bytes);if(!temporary){fg_error_set(err,FG_ERR_OOM,"allocate Q8 cooking buffer");return FG_ERR_OOM;}bool converted=fg_cook_q8_0_rows(data,temporary,record->bytes,(uint32_t)record->shape[0],(uint32_t)record->shape[1]);if(converted)memcpy(data,temporary,(size_t)record->bytes);free(temporary);if(!converted){fg_error_set(err,FG_ERR_FORMAT,"cannot cook Q8 tensor %.96s",record->name);return FG_ERR_FORMAT;}return FG_OK;}
 static fg_status cook_rank_experts(const fg_manifest *manifest,uint32_t rank,void *arena,uint64_t arena_bytes,fg_error *err){uint32_t tensors=0;uint64_t bytes=0;for(uint32_t i=0;i<manifest->tensor_count;i++){const fg_tensor_record *record=&manifest->tensors[i];fg_tensor_layout layout=runtime_layout(record);if(record->rank!=rank||layout==(fg_tensor_layout)record->layout)continue;if(record->offset>arena_bytes||record->bytes>arena_bytes-record->offset){fg_error_set(err,FG_ERR_FORMAT,"tensor %.96s lies outside rank arena",record->name);return FG_ERR_FORMAT;}fg_status status=cook_runtime_tensor(record,(uint8_t *)arena+record->offset,layout,err);if(status!=FG_OK)return status;tensors++;bytes+=record->bytes;}fprintf(stderr,"[rank %u] cooked %u runtime tensors (%.3f GiB) in the verified Vulkan arena\n",rank,tensors,(double)bytes/(1ull<<30));return FG_OK;}
+
+static fg_status build_tensor_index(fg_model *model,fg_error *err){
+    uint32_t capacity=1u;
+    while(capacity<model->manifest->tensor_count*2u)capacity<<=1u;
+    model->tensor_lookup=calloc(capacity,sizeof(*model->tensor_lookup));
+    if(!model->tensor_lookup){fg_error_set(err,FG_ERR_OOM,"allocate model tensor lookup");return FG_ERR_OOM;}
+    model->tensor_lookup_capacity=capacity;
+    for(uint32_t i=0;i<model->manifest->tensor_count;i++)if(model->tensor[i]){
+        const char *name=model->manifest->tensors[i].name;
+        uint32_t slot=(uint32_t)tensor_name_hash(name)&(capacity-1u);
+        while(model->tensor_lookup[slot]){
+            uint32_t existing=model->tensor_lookup[slot]-1u;
+            if(strcmp(model->manifest->tensors[existing].name,name)==0)break;
+            slot=(slot+1u)&(capacity-1u);
+        }
+        if(!model->tensor_lookup[slot])model->tensor_lookup[slot]=i+1u;
+    }
+    return FG_OK;
+}
 
 static fg_status build_tensor_lookup(fg_model *model,fg_error *err){
     for(uint32_t i=0;i<model->manifest->tensor_count;i++){
@@ -149,9 +169,7 @@ static fg_status build_tensor_lookup(fg_model *model,fg_error *err){
                 fg_vk_tensor_set_format(model->tensor[i],format);
         }
     }
-    uint32_t capacity=1u;while(capacity<model->manifest->tensor_count*2u)capacity<<=1u;model->tensor_lookup=calloc(capacity,sizeof(*model->tensor_lookup));if(!model->tensor_lookup){fg_error_set(err,FG_ERR_OOM,"allocate model tensor lookup");return FG_ERR_OOM;}model->tensor_lookup_capacity=capacity;
-    for(uint32_t i=0;i<model->manifest->tensor_count;i++)if(model->tensor[i]){const char *name=model->manifest->tensors[i].name;uint32_t slot=(uint32_t)tensor_name_hash(name)&(capacity-1u);while(model->tensor_lookup[slot]){uint32_t existing=model->tensor_lookup[slot]-1u;if(strcmp(model->manifest->tensors[existing].name,name)==0)break;slot=(slot+1u)&(capacity-1u);}if(!model->tensor_lookup[slot])model->tensor_lookup[slot]=i+1u;}
-    return FG_OK;
+    return build_tensor_index(model,err);
 }
 
 static uint32_t find_tensor(const fg_model *model,const char *name){if(!model||!name||!model->tensor_lookup_capacity)return UINT32_MAX;uint32_t slot=(uint32_t)tensor_name_hash(name)&(model->tensor_lookup_capacity-1u);for(uint32_t probes=0;probes<model->tensor_lookup_capacity;probes++){uint32_t entry=model->tensor_lookup[slot];if(!entry)return UINT32_MAX;uint32_t index=entry-1u;if(strcmp(model->manifest->tensors[index].name,name)==0)return index;slot=(slot+1u)&(model->tensor_lookup_capacity-1u);}return UINT32_MAX;}
@@ -193,7 +211,39 @@ fg_status fg_model_open(fg_model **out,const fg_manifest *manifest,const char *p
     if(status!=FG_OK){fg_model_close(model);return status;}*out=model;return FG_OK;
 }
 
-void fg_model_close(fg_model *model){if(!model)return;if(model->tensor){for(uint32_t i=0;i<model->manifest->tensor_count;i++)fg_vk_tensor_destroy(model->tensor[i]);}free(model->tensor_lookup);free(model->tensor);fg_vk_tensor_destroy(model->expert_arena);fg_vk_tensor_destroy(model->arena);fg_vk_close(model->vk);free(model);}
+void fg_model_close(fg_model *model){if(!model)return;if(model->tensor){for(uint32_t i=0;i<model->manifest->tensor_count;i++)fg_vk_tensor_destroy(model->tensor[i]);}free(model->tensor_lookup);free(model->tensor);fg_vk_tensor_destroy(model->expert_arena);fg_vk_tensor_destroy(model->arena);if(!model->borrowed_vk)fg_vk_close(model->vk);free(model);}
+
+fg_status fg_model_bind_view(fg_model **out,fg_vk_context *vk,
+    const fg_manifest *manifest,uint32_t rank,fg_vk_tensor *const *tensors,fg_error *err){
+    if(!out||!vk||!manifest||!tensors||rank>=manifest->rank_count||
+       manifest->rank_count>FG_RANK_COUNT||manifest->tensor_count>FG_MAX_TENSORS){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid borrowed model view");
+        return FG_ERR_ARGUMENT;
+    }
+    *out=NULL;
+    fg_model *m=calloc(1,sizeof(*m));
+    if(!m){fg_error_set(err,FG_ERR_OOM,"allocate borrowed model");return FG_ERR_OOM;}
+    m->vk=vk;m->borrowed_vk=true;m->manifest=manifest;m->rank=rank;
+    m->tensor=calloc(manifest->tensor_count?manifest->tensor_count:1u,sizeof(*m->tensor));
+    fg_status status=m->tensor?FG_OK:FG_ERR_OOM;
+    if(status!=FG_OK)fg_error_set(err,status,"allocate borrowed tensor index");
+    for(uint32_t i=0;status==FG_OK&&i<manifest->tensor_count;i++)if(tensors[i]){
+        const fg_tensor_record *r=&manifest->tensors[i];
+        if(!r->bytes||r->bytes>fg_vk_tensor_bytes(tensors[i])||
+           m->weight_bytes>manifest->persistent_cap_bytes||
+           r->bytes>manifest->persistent_cap_bytes-m->weight_bytes){
+            fg_error_set(err,FG_ERR_LIMIT,"borrowed tensor exceeds span/cap");status=FG_ERR_LIMIT;break;
+        }
+        status=fg_vk_tensor_view(tensors[i],0,r->bytes,&m->tensor[i],err);
+        if(status==FG_OK){
+            fg_vk_tensor_set_format(m->tensor[i],fg_vk_tensor_get_format(tensors[i]));
+            m->weight_bytes+=r->bytes;
+        }
+    }
+    if(status==FG_OK)status=build_tensor_index(m,err);
+    if(status!=FG_OK){fg_model_close(m);return status;}
+    *out=m;return FG_OK;
+}
 
 /* Expert-parallel model loading: loads ALL shared weights from ALL rank files,
    plus this rank's expert weights, into a single combined arena.  Every rank

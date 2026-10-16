@@ -1,0 +1,18 @@
+#version 460
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x=256,local_size_y=1,local_size_z=1)in;
+layout(set=0,binding=0)readonly buffer Input{float x[];};
+layout(set=0,binding=1)readonly buffer Weight{float w[];};
+layout(set=0,binding=2)writeonly buffer Output{float y[];};
+layout(push_constant)uniform Push{float eps;}pc;
+shared float sums[256];
+void main(){
+    uint tid=gl_LocalInvocationID.x;
+    float values[40],ss=0.0;
+    [[unroll]]for(uint i=0u;i<40u;i++)values[i]=x[tid+i*256u];
+    [[unroll]]for(uint i=0u;i<40u;i++)ss=fma(values[i],values[i],ss);
+    sums[tid]=ss;barrier();
+    for(uint stride=128u;stride>0u;stride>>=1u){if(tid<stride)sums[tid]+=sums[tid+stride];barrier();}
+    float scale=inversesqrt(sums[0]/10240.0+pc.eps);
+    [[unroll]]for(uint i=0u;i<40u;i++)y[tid+i*256u]=values[i]*scale*w[tid+i*256u];
+}

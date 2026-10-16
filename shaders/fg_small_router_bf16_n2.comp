@@ -1,0 +1,5 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define SMALL_N 2
+#define BF16_ROUTER
+#include "fg_small_plain.glsl"

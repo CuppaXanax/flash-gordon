@@ -116,6 +116,11 @@ float dot4f(uint weight_word, vec4 activation) {
 
 void main() {
     uint local_id = gl_LocalInvocationID.x;
+#ifdef SMALL_N
+    uint token=gl_WorkGroupID.y,output_base=token*pc.out_dim;
+#else
+    uint token=0u,output_base=0u;
+#endif
     if (pc.down_type == 8u && pc.tile_bytes != 0u) {
         /* Cooked Q8_0 down tiles: four lanes own one output row and each lane
            reads one aligned eight-value word pair of every 32-value block into
@@ -132,11 +137,17 @@ void main() {
         if (live8) {
             for (uint slot = 0u; slot < pc.slots; slot++) {
                 uint tile_base = slot * TILE_WORDS;
+#ifdef SMALL_N
+                tile_base=token*pc.slots+slot;
+                uint expert=tiles[tile_base];
+                uint pair=tile_base;
+#else
                 uint expert = tiles[tile_base];
-                if (expert == INVALID) continue;
                 uint pair = tiles[tile_base + 1u];
+#endif
+                if (expert == INVALID) continue;
                 if (pair == INVALID) continue;
-                float gate = gates[slot];
+                float gate = gates[token*pc.slots+slot];
                 uint row_base = expert * pc.expert_stride + row_tile8 * pc.tile_bytes;
                 uint input_base = pair * (pc.in_dim >> 2u);
                 uint scale_word = (row_base + tile_row8 * 2u) >> 2u;
@@ -164,7 +175,7 @@ void main() {
         barrier();
         if (live8 && lane4 == 0u) {
             uint offset = (local_id >> 2u) * 8u;
-            y[row8] = ((partial[offset] + partial[offset + 4u]) +
+            y[output_base+row8] = ((partial[offset] + partial[offset + 4u]) +
                        (partial[offset + 2u] + partial[offset + 6u])) +
                       ((partial[offset + 1u] + partial[offset + 5u]) +
                        (partial[offset + 3u] + partial[offset + 7u]));
@@ -188,13 +199,19 @@ void main() {
 #endif
     for (uint slot = first_slot; slot < end_slot; slot+=FG_DOWN_SLOT_PARTS) {
         uint tile_base = slot * TILE_WORDS;
+#ifdef SMALL_N
+        tile_base=token*pc.slots+slot;
+        uint expert=tiles[tile_base];
+        uint pair=tile_base;
+#else
         uint expert = tiles[tile_base];
-        if (expert == INVALID) continue;
         uint pair = tiles[tile_base + 1u];
+#endif
+        if (expert == INVALID) continue;
         if (pair == INVALID) continue;
         if (!row_live) continue;
 
-        float gate = gates[slot];
+        float gate = gates[token*pc.slots+slot];
         float slot_acc = 0.0;
         float slot_acc_pair = 0.0;
         if (pc.down_type == Q5_1) {
@@ -281,7 +298,7 @@ void main() {
     accumulator+=subgroupShuffleXor(accumulator,2u);
     accumulator_pair+=subgroupShuffleXor(accumulator_pair,2u);
     if(row_live&&part==0u){
-        uint offset=0u;
+        uint offset=output_base;
 #ifdef FG_DOWN_SPLIT
         offset=gl_WorkGroupID.y*pc.out_dim;
 #endif
@@ -302,15 +319,15 @@ void main() {
             total+=(partial[base]+partial[base+1u])+(partial[base+2u]+partial[base+3u]);
             total_pair+=(partial[base+4u]+partial[base+5u])+(partial[base+6u]+partial[base+7u]);
         }
-        y[row]=total;
-        if(row+1u<pc.out_dim)y[row+1u]=total_pair;
+        y[output_base+row]=total;
+        if(row+1u<pc.out_dim)y[output_base+row+1u]=total_pair;
 #else
-        y[row] = (partial[offset] + partial[offset + 1u]) +
+        y[output_base+row] = (partial[offset] + partial[offset + 1u]) +
             (partial[offset + 2u] + partial[offset + 3u]);
         uint pair_row = row + 1u;
         if (pair_row < pc.out_dim) {
             uint pair_offset = offset + PARTS;
-            y[pair_row] = (partial[pair_offset] + partial[pair_offset + 1u]) +
+            y[output_base+pair_row] = (partial[pair_offset] + partial[pair_offset + 1u]) +
                 (partial[pair_offset + 2u] + partial[pair_offset + 3u]);
         }
 #endif

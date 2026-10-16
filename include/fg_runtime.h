@@ -199,5 +199,9 @@ fg_status fg_depthb_selftest_main(const char *manifest_path,uint32_t depth,
 fg_status fg_serve_main(const char *manifest_path, fg_error *err);
 fg_status fg_bench_main(const char *manifest_path, fg_error *err);
 fg_status fg_eval_main(const char *manifest_path,const char *prompt,uint32_t generate,fg_error *err);
+/* Offline-prepared lease qualification; uses the causal N=1 ring oracle,
+ * not the as-yet-unlinked small-N serving verifier. */
+fg_status fg_mtp_qualify_main(const char *manifest,const char *cases,
+                             const char *directory,uint32_t budget_seconds,fg_error *err);
 
 #endif

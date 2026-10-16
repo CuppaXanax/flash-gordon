@@ -18,6 +18,14 @@ fg_status fg_expert_decode_finish(fg_expert_executor *executor,fg_expert_result 
 /* Chained decode: record router top-10 and the fused expert pair into the
  * caller's active Vulkan batch; no host routing round trip or fence. */
 fg_status fg_expert_decode_chain_ready(fg_expert_executor *executor,uint32_t layer,fg_error *err);
+fg_status fg_expert_decode_small_n(fg_expert_executor *executor,uint32_t layer,
+    const fg_vk_tensor *activation,const fg_vk_tensor *router_logits,
+    uint32_t tokens,fg_vk_tensor **reduced,fg_error *err);
+/* Diagnostic readback after draining the block; never part of timed decode. */
+fg_status fg_expert_selected_readback(fg_expert_executor *executor,
+    uint32_t tokens,uint32_t *selected,fg_error *err);
+fg_status fg_expert_mid_readback(fg_expert_executor *executor,uint32_t pairs,
+    float *values,fg_error *err);
 fg_status fg_expert_decode_chain(fg_expert_executor *executor,uint32_t layer,
                                  const fg_vk_tensor *activation,const fg_vk_tensor *router_logits,
                                  fg_vk_tensor **reduced,fg_error *err);

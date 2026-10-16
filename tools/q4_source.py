@@ -12,7 +12,7 @@ import urllib.request
 
 REPO = "huihui-ai/Huihui-Qwen3.8-Flash-Next-abliterated-GGUF"
 REV = "06a318de4011598a142ee54bcfec47c6921c958e"
-SIZES = {0: (1, 4), 1: (1, 2), 8: (32, 34), 12: (256, 144),
+SIZES = {0: (1, 4), 1: (1, 2), 7: (32, 24), 8: (32, 34), 12: (256, 144),
          13: (256, 176), 14: (256, 210), 20: (32, 18), 30: (1, 2)}
 
 

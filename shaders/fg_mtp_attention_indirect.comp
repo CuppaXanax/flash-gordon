@@ -1,0 +1,32 @@
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x=64)in;
+layout(set=0,binding=0)readonly buffer Query{vec4 q[];};
+layout(set=0,binding=1)readonly buffer Gate{vec4 gate[];};
+layout(set=0,binding=2)readonly buffer CurrentKey{vec4 key[];};
+layout(set=0,binding=3)readonly buffer CurrentValue{vec4 value[];};
+layout(set=0,binding=4)buffer Keys{vec4 keys[];};
+layout(set=0,binding=5)buffer Values{vec4 vals[];};
+layout(set=0,binding=6)writeonly buffer Output{vec4 outv[];};
+layout(set=0,binding=7)readonly buffer Position{uint position[];};
+layout(push_constant)uniform Push{uint capacity;}pc;
+void main(){
+    uint lane=gl_LocalInvocationID.x,head=gl_WorkGroupID.x,kv=head/12u,cell=position[0];
+    if(cell>=pc.capacity){outv[head*64u+lane]=vec4(uintBitsToFloat(0x7fc00000u));return;}
+    vec4 query=q[head*64u+lane],acc=vec4(0);
+    float maximum=-3.402823466e38,denominator=0;
+    for(uint t=0;t<=cell;t++){
+        vec4 k=t==cell?key[kv*64u+lane]:keys[t*128u+kv*64u+lane];
+        vec4 v=t==cell?value[kv*64u+lane]:vals[t*128u+kv*64u+lane];
+        float score=subgroupAdd(dot(query,k))*0.0625;
+        float next=max(maximum,score),old_weight=exp(maximum-next),weight=exp(score-next);
+        acc=acc*old_weight+v*weight;
+        denominator=denominator*old_weight+weight;
+        maximum=next;
+    }
+    outv[head*64u+lane]=(acc/denominator)/(vec4(1)+exp(-gate[head*64u+lane]));
+    if(head<2u){
+        keys[cell*128u+head*64u+lane]=key[head*64u+lane];
+        vals[cell*128u+head*64u+lane]=value[head*64u+lane];
+    }
+}
