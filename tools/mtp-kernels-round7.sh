@@ -35,12 +35,17 @@ make -s -B -j8 tools/bench-decode-fusion tests/test_fg_vk > ../round7/build.txt 
 sha256sum tools/bench-decode-fusion tests/test_fg_vk > ../round7/binary-sha256.txt
 FG_SMALL_KERNELS=2097482 DS4_REMOTE_TEST_FILTER=small_dense_vector_layout \
     ./tests/test_fg_vk > ../round7/vector-residency.txt 2>&1
+FG_SMALL_KERNELS=8388608 DS4_REMOTE_TEST_FILTER=small_qsa_select \
+    ./tests/test_fg_vk > ../round7/wave-topk-cpu.txt 2>&1
 for wide in 0 1; do
     FG_EXPERT_Q8_WIDE=$wide FG_SMALL_KERNELS=4194634 DS4_REMOTE_TEST_FILTER=expert_small_component \
         ./tests/test_fg_vk > "../round7/expert-cpu-wide$wide.txt" 2>&1
     FG_EXPERT_Q8_WIDE=$wide FG_SMALL_KERNELS=4194634 DS4_REMOTE_TEST_FILTER=small_q8_down_native \
         ./tests/test_fg_vk > "../round7/exact-q8-wide$wide.txt" 2>&1
 done
+FG_SMALL_KERNELS=8393034 ./tools/bench-decode-fusion --q4 --small-n --no-clocks \
+    --batch 4 --warmup 1024 --iterations 1 --windows 1 --profile --small-test \
+    --allow-reassociation > ../round7/long-wave.jsonl 2> ../round7/long-wave.stderr
 for flags in 2097482 2105674 2621770 2130250; do
     FG_SMALL_KERNELS=$flags ./tools/bench-decode-fusion --q4 --small-n --no-clocks \
         --batch 2 --warmup 1 --iterations 1 --windows 1 --small-test \

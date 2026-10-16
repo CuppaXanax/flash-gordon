@@ -1069,7 +1069,7 @@ fg_status fg_vk_tensor_write_ordered(fg_vk_tensor *t,uint64_t offset,
     fg_vk_context *c=t->context;
     if(!c->batch_depth&&!c->group_count&&!c->group_published)
         return fg_vk_tensor_write(t,offset,data,bytes,err);
-    if(!data||!tensor_range(t,offset,bytes)||!c->batch_depth||
+    if(!data||!tensor_range(t,offset,bytes)||t->small_vector||!c->batch_depth||
        (((t->offset+offset)|bytes)&3u)!=0u||bytes>65536u){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid ordered Vulkan write");
         return FG_ERR_ARGUMENT;
@@ -2597,12 +2597,14 @@ fg_status fg_vk_qsa_select_merge(fg_vk_context *c,fg_vk_tensor *scores_0,fg_vk_t
     fg_vk_tensor *scores[2]={scores_0,scores_1},*ids[2]={ids_0,ids_1};
     uint32_t side=0u,stride=input_stride;
     while(count>FG_VK_QSA_SELECTED_BLOCKS){
-        bool adaptive=query_count<=4u&&small_kernel_enabled(c,1048576u);
+        bool wave=fg_vk_subgroup_size(c)==64u&&small_kernel_enabled(c,8388608u);
+        bool adaptive=query_count<=4u&&(wave||small_kernel_enabled(c,1048576u));
         uint32_t tile=adaptive?(count<=1024u?1024u:2048u):4096u;
         fg_vk_kernel *kernel=&c->qsa_resident_merge;
         if(adaptive){
             kernel=&c->small_qsa_select[tile==2048u];
-            if(!kernel->file)*kernel=(fg_vk_kernel){.file="fg_small_qsa_select.spv",
+            if(!kernel->file)*kernel=(fg_vk_kernel){
+                .file=wave?"fg_small_qsa_select_wave.spv":"fg_small_qsa_select.spv",
                 .bindings=4u,.push_bytes=16u,.specialization_count=1u,
                 .specialization_values={tile}};
         }

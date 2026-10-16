@@ -108,6 +108,11 @@ union in one WG64/two-row dispatch, with per-token gates in registers.
 Unlike the default exact-Q8 compatibility path, this changes the expert
 summation order and is tolerance-qualified research only. It does not
 change `fg_vk_small_n_q8_down` or default/mask-330 native-order behavior.
+Bit `8388608` tests wave64 QSA top-512 sorting: distances below 64 exchange
+keys with subgroup shuffles, distances 64/128 use LDS, and distances of at
+least 256 compare private per-lane slots. It implies adaptive 1024/2048
+selection tiles on native wave64; other subgroup sizes retain bit `1048576`
+when explicitly requested or the original merge otherwise.
 The production-shape `expert_small_component` CPU oracle is enabled only when
 `FG_SMALL_KERNELS` is explicitly present (including `0`); it allocates full
 512-expert-addressable GPU slabs, so run it as a targeted test on an idle device.

@@ -1,0 +1,79 @@
+#version 460
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x=256)in;
+layout(constant_id=0)const uint SORT_SIZE=2048u;
+layout(set=0,binding=0)readonly buffer InputScores{float input_scores[];};
+layout(set=0,binding=1)readonly buffer InputIds{uint input_ids[];};
+layout(set=0,binding=2)writeonly buffer OutputScores{float output_scores[];};
+layout(set=0,binding=3)writeonly buffer OutputIds{uint output_ids[];};
+layout(push_constant)uniform Push{
+    uint count,input_stride,output_stride,query_tokens;
+}pc;
+shared float shared_values[SORT_SIZE];
+shared uint shared_ids[SORT_SIZE];
+bool better(float a,uint ai,float b,uint bi){
+    if(ai==0xffffffffu)return false;
+    if(bi==0xffffffffu)return true;
+    bool af=isnan(a)||isinf(a),bf=isnan(b)||isinf(b);
+    if(af!=bf)return !af;
+    return a>b||(a==b&&ai<bi);
+}
+#define PRIVATE_SWAP(D) \
+    [[unroll]]for(uint t=0u;t<SORT_SIZE/256u;t++){ \
+        uint other=t^D; \
+        if(other>t&&other<SORT_SIZE/256u){ \
+            bool descending=((lane+t*256u)&width)==0u; \
+            bool swap=descending?!better(values[t],ids[t],values[other],ids[other]): \
+                better(values[t],ids[t],values[other],ids[other]); \
+            if(swap){ \
+                float value=values[t];values[t]=values[other];values[other]=value; \
+                uint id=ids[t];ids[t]=ids[other];ids[other]=id; \
+            } \
+        } \
+    }
+void main(){
+    uint lane=gl_LocalInvocationID.x,group=gl_WorkGroupID.x,q=gl_WorkGroupID.y;
+    float values[SORT_SIZE/256u];
+    uint ids[SORT_SIZE/256u];
+    [[unroll]]for(uint t=0u;t<SORT_SIZE/256u;t++){
+        uint source=group*SORT_SIZE+t*256u+lane;
+        values[t]=source<pc.count?input_scores[q*pc.input_stride+source]:-1.0/0.0;
+        ids[t]=source<pc.count?input_ids[q*pc.input_stride+source]:0xffffffffu;
+    }
+    for(uint width=2u;width<=SORT_SIZE;width<<=1u)
+        for(uint stride=width>>1u;stride>0u;stride>>=1u){
+            if(stride>=256u){
+                if(stride==256u){PRIVATE_SWAP(1u)}
+                else if(stride==512u){PRIVATE_SWAP(2u)}
+                else{PRIVATE_SWAP(4u)}
+            }else{
+                if(stride>=64u){
+                    [[unroll]]for(uint t=0u;t<SORT_SIZE/256u;t++){
+                        shared_values[t*256u+lane]=values[t];
+                        shared_ids[t*256u+lane]=ids[t];
+                    }
+                    barrier();
+                }
+                [[unroll]]for(uint t=0u;t<SORT_SIZE/256u;t++){
+                    uint index=t*256u+lane;
+                    float peer;uint peer_id;
+                    if(stride<64u){
+                        peer=subgroupShuffleXor(values[t],stride);
+                        peer_id=subgroupShuffleXor(ids[t],stride);
+                    }else{
+                        peer=shared_values[index^stride];
+                        peer_id=shared_ids[index^stride];
+                    }
+                    bool descending=(index&width)==0u,low=(index&stride)==0u;
+                    bool mine=better(values[t],ids[t],peer,peer_id);
+                    if((descending==low)?!mine:mine){values[t]=peer;ids[t]=peer_id;}
+                }
+                if(stride>=64u)barrier();
+            }
+        }
+    for(uint t=0u;t<2u;t++){
+        uint at=q*pc.output_stride+group*512u+t*256u+lane;
+        output_scores[at]=values[t];output_ids[at]=ids[t];
+    }
+}
