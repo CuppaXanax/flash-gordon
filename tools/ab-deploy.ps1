@@ -3,9 +3,17 @@ param(
     [Parameter(Mandatory)][hashtable]$Deployment,
     [string]$Arm = '',
     [switch]$SnapshotOnly,
+    [switch]$StopOnly,
+    [switch]$CaptureOnly,
+    [string]$CaptureDirectory = '',
     [string]$FleetScript = (Join-Path $PSScriptRoot 'ab-fleet.ps1')
 )
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot\ab-stack-common.ps1"
+Assert-ABDeployment $Deployment
+if ($CaptureOnly -and $CaptureDirectory -notmatch '^/home/xander/hc-abq-stack-[a-z0-9-]+/logits$') {
+    throw 'Quality capture must use an isolated hc-abq-stack directory.'
+}
 $root = Split-Path $PSScriptRoot -Parent
 $operator = Join-Path $root '.build\abq'
 $null = New-Item -ItemType Directory -Force $operator
@@ -20,6 +28,7 @@ $original = @{
 $live = if (Test-Path $statePath) { Get-Content $statePath -Raw | ConvertFrom-Json -AsHashtable } else { $original }
 function Invoke-ABFleet {
     param([string]$Action, [hashtable]$Config, [int[]]$Ranks)
+    Assert-ABDeployment $Config
     $source = Get-Content -Raw (Join-Path $PSScriptRoot 'ab-instance.sh')
     foreach ($key in @('release','manifest','sessions','wide')) {
         if (-not $Config.ContainsKey($key)) { throw "Missing deployment $key" }
@@ -29,9 +38,21 @@ function Invoke-ABFleet {
         Replace('manifest=${3:?manifest}', "manifest='$($Config.manifest)'").
         Replace('sessions=${4:-1}', "sessions='$($Config.sessions)'").
         Replace('wide=${5:-0}', "wide='$($Config.wide)'")
+    $extras = Get-ABStackFlags $Config
+    $assignments = @($extras.Keys | Where-Object { $_ -ne 'FG_EXPERT_Q8_WIDE' } |
+        ForEach-Object { "$_='$($extras[$_])'" }) -join ' '
+    $source = $source.Replace('# AB_STACK_FLAGS', "flags+=($assignments)")
+    if ($CaptureOnly) {
+        $source = $source.Replace('# AB_QUALITY_CAPTURE',
+            "if ((rank == 4)); then flags+=(FG_EVAL_LOGITS_DIR='$CaptureDirectory'); fi")
+    }
     if ($Action -eq 'start') {
         $check = "printf '%s  %s\n' '$($Config.binary_sha256)' '$($Config.release)/flash-gordon' | sha256sum -c -`n" +
             "printf '%s  %s\n' '$($Config.manifest_sha256)' '$($Config.manifest)' | sha256sum -c -`n"
+        if ($Config.ContainsKey('shader_tree_sha256')) {
+            $treeCommand = Get-ABShaderTreeCommand $Config
+            $check += "shader_hash=`$($treeCommand)`ntest `"`$shader_hash`" = '$($Config.shader_tree_sha256)'`n"
+        }
         $source = $source.Replace('case "$action" in', $check + 'case "$action" in')
     }
     $script = Join-Path $operator "operator-$PID.sh"
@@ -51,10 +72,12 @@ if ($SnapshotOnly) {
     return
 }
 Invoke-ABFleet stop $live @(0..7)
+if ($StopOnly) { return }
 try {
     # Persist attempted identity before starting so rollback can stop partial launches.
     $Deployment | ConvertTo-Json | Set-Content $statePath
     Invoke-ABFleet start $Deployment @(1..7)
+    if ($CaptureOnly) { return }
     Invoke-ABFleet start $Deployment @(0)
     $ready = $false
     for ($i = 0; $i -lt 180; $i++) {

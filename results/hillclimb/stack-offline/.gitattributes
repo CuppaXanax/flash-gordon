@@ -1,0 +1,2 @@
+# Preserve exact generated evidence, including compiler diagnostic spacing.
+* -text -whitespace

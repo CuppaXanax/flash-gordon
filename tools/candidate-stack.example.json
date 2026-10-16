@@ -1,0 +1,69 @@
+{
+  "rounds": 6,
+  "corpus": "tools\\corpora\\stack-480.json",
+  "A": {
+    "release": "/home/xander/flash-gordon-live/20261015-abq-main",
+    "binary_sha256": "1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789",
+    "manifest": "/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm",
+    "manifest_sha256": "0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252",
+    "sessions": 1,
+    "wide": 0,
+    "capture_program": "/home/xander/flash-gordon-live/20261016-abq-quality-main/q4-eval-batch",
+    "capture_sha256": "84a477b0706e05db9fa831b3f72ac89ee0c78ee78535988d8765502d0795aa71"
+  },
+  "candidates": [
+    {
+      "name": "stack-all",
+      "B": {
+        "release": "/home/xander/flash-gordon-live/20261016-abq-stack-1",
+        "binary_sha256": "55a5b3e4b9e2af33e9700e81c7b4fd46b47b662b53400deb99bfe8b8b5a08256",
+        "shader_tree_sha256": "5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633",
+        "manifest": "/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm",
+        "manifest_sha256": "0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252",
+        "sessions": 1,
+        "wide": 1,
+        "capture_program": "/home/xander/flash-gordon-live/20261016-abq-stack-1/q4-eval-batch",
+        "capture_sha256": "9298bc6b4b1aa42744daac02bba64531ede66bd8ab2e6b5dac83dc0673e82794",
+        "flags": {
+          "FG_ROOFLINE": 2047,
+          "FG_ROOF_DENSE": 19,
+          "FG_ROOF_QSA": 3,
+          "FG_ROOF_EXPERT": 33024,
+          "FG_ROOF_HC": 96,
+          "FG_ROOF_RECURRENT": 3,
+          "FG_ROOF_GDN": 1,
+          "FG_NGRAM_LOCAL_CACHE": 1,
+          "FG_EXPERT_Q8_WIDE": 1,
+          "FG_DECODE_SUBMIT_GROUP": 0
+        }
+      }
+    },
+    {
+      "name": "stack-all-group2",
+      "hash_control": "stack-all",
+      "B": {
+        "release": "/home/xander/flash-gordon-live/20261016-abq-stack-1",
+        "binary_sha256": "55a5b3e4b9e2af33e9700e81c7b4fd46b47b662b53400deb99bfe8b8b5a08256",
+        "shader_tree_sha256": "5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633",
+        "manifest": "/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm",
+        "manifest_sha256": "0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252",
+        "sessions": 1,
+        "wide": 1,
+        "capture_program": "/home/xander/flash-gordon-live/20261016-abq-stack-1/q4-eval-batch",
+        "capture_sha256": "9298bc6b4b1aa42744daac02bba64531ede66bd8ab2e6b5dac83dc0673e82794",
+        "flags": {
+          "FG_ROOFLINE": 2047,
+          "FG_ROOF_DENSE": 19,
+          "FG_ROOF_QSA": 3,
+          "FG_ROOF_EXPERT": 33024,
+          "FG_ROOF_HC": 96,
+          "FG_ROOF_RECURRENT": 3,
+          "FG_ROOF_GDN": 1,
+          "FG_NGRAM_LOCAL_CACHE": 1,
+          "FG_EXPERT_Q8_WIDE": 1,
+          "FG_DECODE_SUBMIT_GROUP": 2
+        }
+      }
+    }
+  ]
+}

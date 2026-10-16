@@ -84,7 +84,15 @@ start)
     fi
     flags=(FG_SHADER_DIR="$release/vulkan" FG_EXPERT_Q8_WIDE="$wide")
     if ((rank == 0)); then flags+=(FG_RING_TRACE=1); fi
-    nohup env "${flags[@]}" "$release/flash-gordon" "${args[@]}" >"$run/rank-$rank.log" 2>&1 </dev/null &
+    # AB_STACK_FLAGS
+    # AB_QUALITY_CAPTURE
+    nohup env -u FG_ROOFLINE -u FG_ROOF_DENSE -u FG_ROOF_QSA -u FG_ROOF_EXPERT \
+        -u FG_ROOF_HC -u FG_ROOF_RECURRENT -u FG_ROOF_GDN \
+        -u FG_NGRAM_LOCAL_CACHE -u FG_EVAL_LOGITS -u FG_EVAL_LOGITS_DIR \
+        -u FG_DECODE_PROFILE -u FG_FRAME_TRACE -u FG_DECODE_RING_TRACE \
+        -u FG_FABRIC_PROFILE -u FG_GENERATE_TRACE -u FG_OUTPUT_SPLIT_TRACE \
+        -u FG_DECODE_FUSION -u FG_DECODE_SUBMIT_GROUP -u FG_RING_TRACE -u FG_DENSE_SOA -u FG_DENSE_K_COOKED -u LD_PRELOAD \
+        "${flags[@]}" "$release/flash-gordon" "${args[@]}" >"$run/rank-$rank.log" 2>&1 </dev/null &
     pid=$!
     echo "$pid" >"$run/rank-$rank.pid"
     sleep 2

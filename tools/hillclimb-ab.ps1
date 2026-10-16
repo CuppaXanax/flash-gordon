@@ -1,3 +1,5 @@
+. "$PSScriptRoot\ab-stack-common.ps1"
+
 function Get-ABHash {
     param([string]$Text)
     [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
@@ -20,47 +22,50 @@ function Get-ABQuantile {
     return [double]$sorted[$index]
 }
 
+function Get-ABPrimaryMetrics {
+    @('decode-short.engine_tps','decode-32768.engine_tps',
+      'prefill-4096.engine_tps','prefill-32768.engine_tps',
+      'chat.ttft_ms','concurrent.normalized_aggregate_tps')
+}
+
 function Get-ABSummary {
-    param([object[]]$Pairs, [int]$Replicates = 20000)
-    $rng = [Random]::new(1729)
+    param([object[]]$Pairs, [int]$Replicates = 20000,
+          [string[]]$PrimaryMetrics = (Get-ABPrimaryMetrics))
+    if ($Pairs.Count -lt 5) { throw 'Policy v2 requires at least five complete pairs.' }
+    if ($Replicates -lt 100) { throw 'Insufficient bootstrap replicates.' }
     $rows = @()
-    $names = @($Pairs[0].A.metrics.Keys)
+    $names = @($Pairs[0].A.metrics.Keys | Sort-Object)
     foreach ($name in $names) {
+        $rng = [Random]::new(1729)
+        $higher = [bool]$Pairs[0].A.metrics[$name].higher_is_better
+        foreach ($pair in $Pairs) {
+            foreach ($arm in @('A','B')) {
+                if (-not $pair[$arm].metrics.Contains($name) -or
+                    [bool]$pair[$arm].metrics[$name].higher_is_better -ne $higher -or
+                    (@($pair[$arm].metrics.Keys | Sort-Object) -join ',') -ne ($names -join ',')) {
+                    throw "Paired metric set/direction changed: $name"
+                }
+            }
+        }
         $a = [double[]]@($Pairs | ForEach-Object { $_.A.metrics[$name].value })
         $b = [double[]]@($Pairs | ForEach-Object { $_.B.metrics[$name].value })
         if (@($a + $b | Where-Object { -not [double]::IsFinite($_) -or $_ -le 0 }).Count) {
             throw "Missing, zero or invalid metric: $name"
         }
-        $logs = [double[]]@(for ($i = 0; $i -lt $a.Count; $i++) { [Math]::Log($b[$i] / $a[$i]) })
-        $meanLog = ($logs | Measure-Object -Average).Average
-        $sumSquares = 0.0
-        foreach ($value in $logs) { $sumSquares += ($value - $meanLog) * ($value - $meanLog) }
-        $standardError = [Math]::Sqrt($sumSquares / ($logs.Count - 1) / $logs.Count)
+        $ratios = [double[]]@(for ($i = 0; $i -lt $a.Count; $i++) {
+            if ($higher) { $b[$i] / $a[$i] } else { $a[$i] / $b[$i] }
+        })
         $samples = [double[]]::new($Replicates)
         for ($j = 0; $j -lt $Replicates; $j++) {
-            $draw = [double[]]@(for ($i = 0; $i -lt $a.Count; $i++) { $logs[$rng.Next($a.Count)] })
-            $samples[$j] = [Math]::Exp((Get-ABMedian $draw))
+            $draw = [double[]]@(for ($i = 0; $i -lt $a.Count; $i++) { $ratios[$rng.Next($a.Count)] })
+            $samples[$j] = Get-ABMedian $draw
         }
         $low = Get-ABQuantile $samples 0.025
         $high = Get-ABQuantile $samples 0.975
-        $bootstrapCI = @($low, $high)
-        # df=2 is conservative for every admitted n>=3 under the normal log-ratio model.
-        $u = 0.95
-        $critical = $u * [Math]::Sqrt(2 / (1 - $u * $u))
-        $low = [Math]::Min($low, [Math]::Exp($meanLog - $critical * $standardError))
-        $high = [Math]::Max($high, [Math]::Exp($meanLog + $critical * $standardError))
-        $higher = $Pairs[0].A.metrics[$name].higher_is_better
-        # Noninferiority requires excluding the regression margin, not a nonsignificant test.
-        $pass = if ($higher) { $low -ge 0.97 } else { $high -le 1.03 }
-        $familySize = [Math]::Max(19, $names.Count) * 4
-        $winLow = Get-ABQuantile $samples (0.025 / $familySize)
-        $winHigh = Get-ABQuantile $samples (1 - 0.025 / $familySize)
-        $winU = 1 - 0.05 / $familySize
-        $winCritical = $winU * [Math]::Sqrt(2 / (1 - $winU * $winU))
-        $winLow = [Math]::Min($winLow, [Math]::Exp($meanLog - $winCritical * $standardError))
-        $winHigh = [Math]::Max($winHigh, [Math]::Exp($meanLog + $winCritical * $standardError))
-        $win = if ($higher) { $winLow -gt 1 } else { $winHigh -lt 1 }
-        $regression = if ($higher) { $high -lt 0.97 } else { $low -gt 1.03 }
+        $median = Get-ABMedian $ratios
+        $regression = $high -lt 0.97
+        $pass = $median -ge 0.97 -and -not $regression
+        $win = $pass -and $median -ge 1.03
         $rows += [ordered]@{
             metric = $name; higher_is_better = $higher; pairs = $a.Count
             A_median = Get-ABMedian $a; B_median = Get-ABMedian $b
@@ -68,17 +73,49 @@ function Get-ABSummary {
             B_min = ($b | Measure-Object -Minimum).Minimum; B_max = ($b | Measure-Object -Maximum).Maximum
             A_iqr = (Get-ABQuantile $a 0.75) - (Get-ABQuantile $a 0.25)
             B_iqr = (Get-ABQuantile $b 0.75) - (Get-ABQuantile $b 0.25)
-            B_over_A = [Math]::Exp((Get-ABMedian $logs))
-            bootstrap_ci95 = $bootstrapCI
-            ci95 = @($low, $high); noninferior = $pass; win = ($pass -and $win)
-            win_family_ci = @($winLow, $winHigh)
-            win_family_comparisons = $familySize
-            status = if ($pass) { if ($win) { 'win' } else { 'noninferior' } } elseif ($regression) { 'regression' } else { 'inconclusive' }
+            B_over_A = Get-ABMedian ([double[]]@(for ($i=0;$i-lt$a.Count;$i++){$b[$i]/$a[$i]}))
+            benefit_ratio = $median; ratio_direction = if ($higher) { 'B/A' } else { 'A/B' }
+            primary = $name -in $PrimaryMetrics
+            bootstrap_ci95 = @($low, $high); ci95 = @($low, $high)
+            passes_primary_guard = $pass; noninferior = $low -ge 0.97
+            win = $win; significant_regression = $regression
+            status = if ($pass) {
+                if ($win) { 'median-win' } elseif ($low -ge 0.97) { 'ci-noninferior' } else { 'accepted-uncertain' }
+            } elseif ($regression) { 'regression' } else { 'median-below-margin' }
         }
     }
     return $rows
 }
 
+function Get-ABDecision {
+    param([object[]]$Metrics, [bool]$QualityPassed,
+          [string[]]$PrimaryMetrics = (Get-ABPrimaryMetrics))
+    $present = @($Metrics | ForEach-Object { $_.metric })
+    $missing = @($PrimaryMetrics | Where-Object { $_ -notin $present })
+    $primary = @($Metrics | Where-Object { $_.metric -in $PrimaryMetrics })
+    $pass = -not $missing.Count -and $primary.Count -eq $PrimaryMetrics.Count -and
+        @($primary | Where-Object { $_.pairs -lt 5 -or -not $_.passes_primary_guard }).Count -eq 0
+    $win = @($primary | Where-Object win).Count -gt 0
+    return @{ primary_metrics = $PrimaryMetrics; missing_primary_metrics = $missing
+        all_primary_metrics_pass = $pass; primary_improvement = $win
+        eligible = $QualityPassed -and $pass -and $win }
+}
+
+function Test-ABCanonicalHashes {
+    param([object[]]$Reference, [object[]]$Actual)
+    if (-not $Reference.Count -or $Reference.Count -ne $Actual.Count) { return $false }
+    $expected = @{}; $seen = @{}
+    foreach ($row in $Reference) {
+        if ($expected.ContainsKey($row.name)) { return $false }
+        $expected[$row.name] = $row.sha256
+    }
+    foreach ($row in $Actual) {
+        if ($seen.ContainsKey($row.name) -or -not $expected.ContainsKey($row.name) -or
+            $expected[$row.name] -ne $row.sha256) { return $false }
+        $seen[$row.name] = $true
+    }
+    return $true
+}
 function New-ABPrompt {
     param([int]$Tokens, [string]$Salt, [string]$Purpose)
     $nonce = (Get-ABHash $Salt).Substring(0,32)
@@ -149,7 +186,7 @@ function Invoke-ABNonStreamPair {
 }
 
 function Invoke-ABBattery {
-    param([string]$Salt, [int[]]$Contexts = @(4096,32768,131072), [int]$DecodeTokens = 128, [switch]$LongOnly)
+    param([string]$Salt, [int[]]$Contexts = @(4096,32768), [int]$DecodeTokens = 128, [switch]$LongOnly)
     $battery = [ordered]@{ metrics = [ordered]@{}; prefill = @(); decode = @(); hashes = @(); requests = @() }
     $purpose = 'Write a long numbered list of distinct practical software tasks. Continue until the token limit.'
     foreach ($context in $Contexts) {
@@ -159,11 +196,11 @@ function Invoke-ABBattery {
         $reused = Get-HeaderNumber $cold.Headers 'X-Flash-Gordon-Reused-Tokens'
         if ($null -eq $reused -or $reused -ne 0) { throw "Cold $context reused tokens: $reused" }
         $engine = Get-HeaderNumber $cold.Headers 'X-Flash-Gordon-Prefill-TPS'
-        $battery.prefill += @{ target = $context; prompt_tokens = $cold.PromptTokens; request_sha256 = $bodyHash; headers = $cold.Headers; wall_seconds = $cold.WallSeconds }
+        $battery.prefill += @{ target = $context; prompt_tokens = $cold.PromptTokens; request_sha256 = $bodyHash; headers = $cold.Headers; wall_seconds = $cold.WallSeconds; generated_text = $cold.Content }
         Add-ABMetric $battery "prefill-$context.engine_tps" $engine
         Add-ABMetric $battery "prefill-$context.client_wall_tps" ($cold.PromptTokens / $cold.WallSeconds)
         $follow = @($messages) + @(
-            @{ role = 'assistant'; content = $cold.Content },
+            @{ role = 'assistant'; content = 'Ready' },
             @{ role = 'user'; content = "/no_think $purpose" }
         )
         $decode = Invoke-NonStream $follow $DecodeTokens
@@ -195,11 +232,12 @@ function Invoke-ABBattery {
     $prefix = New-ABPrompt 3900 "$Salt/prefix" 'Output exactly Ready.'
     $prefixPrime = Invoke-NonStream $prefix 1
     $cached = @($prefix) + @(
-        @{ role = 'assistant'; content = $prefixPrime.Content },
+        @{ role = 'assistant'; content = 'Ready' },
         @{ role = 'user'; content = '/no_think State the next action briefly.' }
     )
     $ttft = Invoke-Ttft 'cached' $cached 32
     $battery.requests += Get-ABHash (New-BodyJson $cached 32 $true)
+    $battery.prefix_prime_text = $prefixPrime.Content
     Add-ABMetric $battery 'cached-prefix.ttft_ms' $ttft.ttft_ms $false
     $concurrentChat = New-ABPrompt 64 "$Salt/concurrent-chat" $purpose
     $concurrentAgent = New-ABPrompt 64 "$Salt/concurrent-agent" $purpose
@@ -217,21 +255,37 @@ function Invoke-PairedQualification {
         if (-not $config.ContainsKey($field)) { throw "A/B configuration missing $field" }
     }
     if ($WriteReference) { throw 'A/B never overwrites historical references.' }
-    if ($config.change_kind -notin @('exact','weight-format')) { throw 'Unknown change_kind.' }
+    if ($config.change_kind -notin @('exact','weight-format','numeric')) { throw 'Unknown change_kind.' }
     if ($config.ContainsKey('required_exact_control')) {
         $control = Get-Content -Raw -LiteralPath $config.required_exact_control | ConvertFrom-Json -AsHashtable
         if (-not $control.complete -or -not $control.hash_identity) {
             throw 'The required exact-math binary control did not pass greedy identity.'
         }
     }
-    if ($config.change_kind -eq 'weight-format') {
+    $qualityEvidenceHash = ''
+    if ($config.change_kind -in @('weight-format','numeric')) {
+        $qualityEvidenceHash = (Get-FileHash -LiteralPath $config.quality_file -Algorithm SHA256).Hash.ToLowerInvariant()
         $receipt = Get-Content -Raw -LiteralPath $config.quality_file | ConvertFrom-Json -AsHashtable
         $quality = Get-Content -Raw -LiteralPath $receipt.quality_path | ConvertFrom-Json -AsHashtable
         $qualityHash = (Get-FileHash -LiteralPath $receipt.quality_path -Algorithm SHA256).Hash.ToLowerInvariant()
+        foreach ($field in @('mean_kld','p99_kld','top1_agreement')) {
+            if (-not $quality.ContainsKey($field) -or -not [double]::IsFinite([double]$quality[$field]) -or
+                [double]$quality[$field] -lt 0) { throw "Invalid KL evidence field: $field" }
+        }
         if ($receipt.manifest_sha256 -ne $config.B.manifest_sha256 -or $qualityHash -ne $receipt.quality_sha256 -or
-            -not $quality.passed -or $quality.samples -lt 400 -or $quality.full_vocab -ne 248320 -or
+            $quality.passed -isnot [bool] -or -not $quality.passed -or
+            $quality.corpus_sha256 -notmatch '^[a-f0-9]{64}$' -or
+            $quality.samples -lt 400 -or $quality.full_vocab -ne 248320 -or $quality.top1_agreement -gt 1 -or
             $quality.mean_kld -gt 0.01 -or $quality.p99_kld -gt 0.05 -or $quality.top1_agreement -lt 0.97) {
             throw 'Weight-format candidate lacks passing manifest-bound KL evidence.'
+        }
+        if ($config.change_kind -eq 'numeric' -and
+            ($config.A['shader_tree_sha256'] -notmatch '^[a-f0-9]{64}$' -or
+             $config.B['shader_tree_sha256'] -notmatch '^[a-f0-9]{64}$' -or
+             $receipt.A_identity -ne (Get-ABDeploymentIdentity $config.A) -or
+             $receipt.B_identity -ne (Get-ABDeploymentIdentity $config.B) -or
+             $receipt.corpus_sha256 -ne $quality.corpus_sha256)) {
+            throw 'Numeric stack quality receipt does not bind both binaries, packs, flags and corpus.'
         }
     }
     $referenceRun = $null
@@ -242,23 +296,40 @@ function Invoke-PairedQualification {
             throw 'Exact hash reference must be a complete, quality-approved same-pack run.'
         }
     }
+    $candidateFlags = if ($config.B.ContainsKey('flags')) { Get-ABStackFlags $config.B } else { @{} }
+    if ($candidateFlags['FG_DECODE_SUBMIT_GROUP'] -in @('1','2')) {
+        if (-not $referenceRun -or @($referenceRun.pairs).Count -lt 5 -or
+            $referenceRun.policy -ne 'primary-median-v2' -or
+            (Get-ABKernelIdentity $referenceRun.config.B) -ne (Get-ABKernelIdentity $config.B)) {
+            throw 'Submission grouping requires a completed identical-binary/shader/pack/other-flags greedy control.'
+        }
+        foreach ($pair in $referenceRun.pairs) {
+            if (-not (Test-ABCanonicalHashes $referenceRun.pairs[0].B.hashes $pair.B.hashes)) {
+                throw 'Submission-group greedy control is not deterministic across its paired rounds.'
+            }
+        }
+    }
     $destination = if ($ABOutput) { $ABOutput } else { Join-Path $runRoot ("ab-" + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
     if (-not $ABResume -and (Test-Path -LiteralPath $destination) -and @(Get-ChildItem -LiteralPath $destination -Force).Count) {
         throw 'A/B output directory must be fresh.'
     }
     $null = New-Item -ItemType Directory -Path $destination -Force
-    $method = 'Paired round percentile bootstrap, median log B/A, 20000 fixed-seed resamples; expand CI with conservative df=2 Student-t log-ratio interval. Marginal 95% intersection-union noninferiority. Bonferroni win CI across metrics and four predeclared candidates. Guard assumes independent normal log ratios; bootstrap alone is exploratory at small n.'
+    $method = 'Policy v2: >=5 pairs (default 6); 20000 fixed-seed paired-round percentile bootstrap draws of median benefit ratio (TPS B/A, latency A/B), marginal 95% CI; no t guard or multiplicity adjustment. Each primary median >=.97 and CI not wholly below .97; at least one primary median >=1.03; quality required. Operational risk policy, not proof of statistical noninferiority.'
     $result = [ordered]@{
-        schema = 1; started = [DateTimeOffset]::Now.ToString('o'); config = $config
+        schema = 2; policy = 'primary-median-v2'; started = [DateTimeOffset]::Now.ToString('o'); config = $config
+        config_sha256 = Get-ABHash ($config | ConvertTo-Json -Depth 35 -Compress)
+        quality_receipt_sha256 = $qualityEvidenceHash
         method = $method
         rounds = $ABRounds; order = $ABOrder; pairs = @(); metrics = @(); complete = $false; eligible = $false
-        warning = 'Three paired rounds are low power. Inconclusive is not noninferior. Repeated tokens are not independent replicates.'
+        warning = 'A CI crossing .97 may pass the operational median guard; uncertainty remains visible. This is not a formal noninferiority claim. Secondary metrics never select/veto; no repeat-until-pass.'
     }
     $path = Join-Path $destination 'ab-result.json'
     $firstRound = 0
     if ($ABResume) {
         $previous = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json -AsHashtable
-        if ($previous.complete -or $previous.rounds -ne $ABRounds -or $previous.order -ne $ABOrder -or
+        if ($previous.schema -ne 2 -or $previous.config_sha256 -ne $result.config_sha256 -or
+            $previous.quality_receipt_sha256 -ne $qualityEvidenceHash -or
+            $previous.complete -or $previous.rounds -ne $ABRounds -or $previous.order -ne $ABOrder -or
             $previous.config.change_kind -ne $config.change_kind) { throw 'Cannot change or repeat a completed A/B design.' }
         foreach ($arm in @('A','B')) {
             foreach ($field in @('binary_sha256','manifest_sha256','release','manifest','sessions','wide')) {
@@ -281,7 +352,7 @@ function Invoke-PairedQualification {
             prior_error = $previous['error']; prior_restore_error = $previous['restore_error']
         })
         $previous.Remove('error'); $previous.Remove('restore_error'); $previous.Remove('finished')
-        $previous.method = $method; $previous.config = $config; $previous.restored_original = $false
+        $previous.method = $method; $previous.config = $config; $previous.restored_baseline = $false
         $result = $previous
         foreach ($partial in @(Get-ChildItem -LiteralPath $destination -Filter "round-$firstRound-*.json")) {
             Move-Item -LiteralPath $partial.FullName -Destination ($partial.FullName + '.interrupted-' + (Get-Date -Format 'HHmmss'))
@@ -297,7 +368,7 @@ function Invoke-PairedQualification {
                 & $config.deploy_script -Deployment $config[$arm] -Arm $arm
                 if (-not $?) { throw "Deployment $arm failed." }
                 $records.metadata.model = Get-Model
-                $contexts = if ($config.ContainsKey('contexts')) { [int[]]$config.contexts } else { @(4096,32768,131072) }
+                $contexts = if ($config.ContainsKey('contexts')) { [int[]]$config.contexts } else { @(4096,32768) }
                 $pair[$arm] = Invoke-ABBattery $salt $contexts -LongOnly:($config.ContainsKey('long_only') -and $config.long_only)
                 $pair[$arm] | ConvertTo-Json -Depth 45 | Set-Content (Join-Path $destination "round-$round-$arm.json")
                 if ($config.ContainsKey('snapshot_script')) {
@@ -321,19 +392,20 @@ function Invoke-PairedQualification {
         $result.metrics = @(Get-ABSummary $result.pairs)
         $hashPass = @($result.pairs | ForEach-Object { $_.hash_match } | Where-Object { -not $_.match }).Count -eq 0
         $result.hash_identity = $hashPass
-        $result.quality_pass = $config.change_kind -eq 'weight-format' -or $hashPass
+        $result.quality_pass = $config.change_kind -in @('weight-format','numeric') -or $hashPass
         if ($config.ContainsKey('exact_hash_reference')) {
-            $referenceHashes = @{}
-            foreach ($hash in $referenceRun.pairs[0].B.hashes) { $referenceHashes[$hash.name] = $hash.sha256 }
-            $samePackPass = @($result.pairs | ForEach-Object { $_.B.hashes } |
-                Where-Object { $referenceHashes[$_.name] -ne $_.sha256 }).Count -eq 0
+            $samePackPass = @($result.pairs | Where-Object {
+                -not (Test-ABCanonicalHashes $referenceRun.pairs[0].B.hashes $_.B.hashes)
+            }).Count -eq 0
             $result.same_pack_exact_hash_identity = $samePackPass
+            if ($candidateFlags['FG_DECODE_SUBMIT_GROUP'] -in @('1','2')) {
+                $result.same_kernel_hash_identity = $samePackPass
+            }
             $result.quality_pass = $result.quality_pass -and $samePackPass
         }
         $result.complete = $true
-        $result.all_protected_metrics_noninferior = @($result.metrics | Where-Object { -not $_.noninferior }).Count -eq 0
-        $result.corrected_win = @($result.metrics | Where-Object win).Count -gt 0
-        $result.eligible = $result.quality_pass -and $result.all_protected_metrics_noninferior -and $result.corrected_win
+        $decision = Get-ABDecision $result.metrics $result.quality_pass
+        foreach ($key in $decision.Keys) { $result[$key] = $decision[$key] }
         if (($config.ContainsKey('requires_long_qualification') -and $config.requires_long_qualification) -or
             ($config.ContainsKey('long_only') -and $config.long_only)) {
             $result.partial_qualification = $true
@@ -346,8 +418,8 @@ function Invoke-PairedQualification {
     } finally {
         try {
             & $config.restore_script
-            if (-not $?) { throw 'Original deployment restore failed.' }
-            $result.restored_original = $true
+            if (-not $?) { throw 'Baseline deployment restore failed.' }
+            $result.restored_baseline = $true
         } catch {
             $result.restore_error = $_.Exception.Message
             $result.eligible = $false

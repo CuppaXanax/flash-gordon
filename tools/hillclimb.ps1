@@ -17,7 +17,7 @@ param(
     [switch]$Quick,
     [switch]$WriteReference,
     [string]$ABConfig = '',
-    [ValidateRange(3,30)][int]$ABRounds = 3,
+    [ValidateRange(5,30)][int]$ABRounds = 6,
     [ValidateSet('ABAB','ABBA')][string]$ABOrder = 'ABBA',
     [string]$ABOutput = '',
     [switch]$ABResume,

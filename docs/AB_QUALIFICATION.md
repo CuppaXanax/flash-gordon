@@ -3,12 +3,12 @@
 The historical `results\hillclimb\BASELINE.json` and greedy reference are retained as historical evidence, not performance acceptance thresholds. Run-to-run changes in the original binary are larger than the former 3% single-sample margin.
 
 ```powershell
-pwsh -NoProfile -File tools\hillclimb.ps1 -ABConfig .build\abq\main-config.json -ABRounds 3 -ABOrder ABBA -ABOutput results\hillclimb\ab-main
+pwsh -NoProfile -File tools\hillclimb.ps1 -ABConfig .build\abq\main-config.json -ABRounds 6 -ABOrder ABBA -ABOutput results\hillclimb\ab-main
 ```
 
-`ABConfig` is a JSON object with `A`, `B`, `deploy_script`, `restore_script`, `change_kind` (`exact` or `weight-format`), and optional `contexts` (default 4096,32768,131072). Deployment hooks receive `-Deployment <hashtable> -Arm A|B`; they must block until the same model is healthy. The restore hook runs even after benchmark or deployment failure. There is no automatic promotion. Never use `-WriteReference` in A/B mode.
+`ABConfig` is a JSON object with `A`, `B`, `deploy_script`, `restore_script`, `change_kind` (`exact`, `weight-format`, or `numeric`), and optional `contexts` (default 4096,32768). Five complete pairs are the minimum; six is the default. Deployment hooks receive `-Deployment <hashtable> -Arm A|B`; they must block until the same model is healthy. The restore hook runs even after benchmark or deployment failure. There is no automatic promotion. Never use `-WriteReference` in A/B mode.
 
-`-ABResume` can continue an **incomplete** output directory after an operational failure. It retains every complete paired round, repeats only an uncommitted interrupted pair with a new salt, and rejects changes to arm identities/flags, context set, order or total rounds. Partial arm files are retained with an interrupted suffix. It refuses completed runs: resuming is not permission to add favorable observations or repeat until pass. An unsupported optional sensor read is recorded as unavailable, not a serving/deployment failure.
+`-ABResume` can continue an **incomplete** policy-v2 output directory after an operational failure. It retains every complete paired round, repeats only an uncommitted interrupted pair with a new salt, and rejects changes to the configuration digest, quality receipt digest, order or total rounds. It rejects old schemas. Partial arm files are retained with an interrupted suffix. It refuses completed runs: resuming is not permission to add favorable observations or repeat until pass. An unsupported optional sensor read is recorded as unavailable, not a serving/deployment failure.
 
 The included `ab-deploy.ps1`/`ab-instance.sh` operator accepts only the eight production owners, original/mix-04 manifests, and isolated `YYYYMMDD-abq*` releases. It verifies executable/manifest hashes, stops only owned numeric PIDs with exact executable and manifest arguments, waits after TERM, and refuses force/name kills. Original logs/PIDs remain outside the immutable original release. `.build\abq\live.json` records the last attempted deployment before launch so partial starts can be rolled back. The fleet runner receives an explicit target array. Do not run two operators concurrently.
 
@@ -26,11 +26,11 @@ an unfavorable completed pair.
 
 ## Workload and accounting
 
-Each pair gets a fresh random salt; all arm requests within that pair use the same deterministic salts and seeds. `ABAB` runs A,B for every pair; `ABBA` reverses the second pair, yielding A,B,B,A,A,B for three pairs. Each arm is freshly deployed, including adjacent equal arms. Long cold and decode request hashes, and cached-TTFT body hashes, must match. Canonical greedy cases remain unsalted to retain their role as a fixed numerical reference. A changed one-token prefix response makes a paired continuation invalid rather than silently comparing different workloads.
+Each pair gets a fresh random salt; all arm requests within that pair use the same deterministic salts and seeds. `ABAB` runs A,B for every pair; `ABBA` reverses odd-numbered pairs, yielding A,B,B,A,A,B,B,A,A,B,B,A for six pairs. Each arm is freshly deployed, including adjacent equal arms. Long cold and decode request hashes, and cached-TTFT body hashes, must match. Canonical greedy cases remain unsalted. Cached continuations use the fixed assistant text `Ready`, not either model's generated prefix response; numeric changes cannot silently change the paired input. Actual prime responses remain in diagnostics, and long decode must retain all but eight tokens of its cold prompt.
 
-One cold **non-streaming** request per context collects actual prompt usage, engine prefill TPS and client prompt-tokens/full-response-wall TPS. The latter includes HTTP/rendering and one generated token; it is not SSE TTFT or pure engine prefill. Actual reused tokens must be zero. This avoids the old two-cold-prefill-per-context cost; the full battery aims for about 50-60 minutes per three-pair experiment, including deployments, not a hard timeout.
+One cold **non-streaming** request per context collects actual prompt usage, engine prefill TPS and client prompt-tokens/full-response-wall TPS. The latter includes HTTP/rendering and one generated token; it is not SSE TTFT or pure engine prefill. Actual reused tokens must be zero. Default contexts are 4K/32K; expensive 128K is optional and secondary, not duplicated by default. Reserve sufficient lease time for six pairs, quality captures, cleanup and rollback; no elapsed-time guarantee has been measured for the revised battery.
 
-Long decode immediately continues each exact cold prefix. It must retain the prefix and emit at least 32 actual tokens. Engine decode TPS and actual completion tokens divided by (HTTP wall minus engine prefill seconds) are reported separately; the client interval includes HTTP overhead, not SSE-event counts. Short decode uses the same accounting. Chat and cached-prefix TTFT use first visible SSE content, not the role-only event. A cached prefix includes the exact assistant text from its immediately preceding prime.
+Long decode immediately continues the cold prompt with the canonical assistant stub. It must retain the prefix and emit at least 32 actual tokens. Engine decode TPS and actual completion tokens divided by (HTTP wall minus engine prefill seconds) are reported separately; the client interval includes HTTP overhead, not SSE-event counts. Short decode uses the same accounting. Chat and cached-prefix TTFT use first visible SSE content, not the role-only event.
 
 The original API has no `ignore_eos`. Both concurrent non-stream HTTP requests are submitted before waiting, and each response contributes its own actual usage and completion timestamp. Raw per-stream/aggregate tokens/s are retained. Equal-length normalization retains observed queue/non-decode time and scales each engine decode interval to the minimum actual completion count; report this approximation explicitly. It is not a measurement of fixed-token execution, and does not correct content-dependent cost or the other stream's EOS-dependent queue delay. A/B sustained concurrency requires at least 32 actual completions per stream. Never count SSE events as tokens.
 
@@ -39,26 +39,64 @@ concurrency rows. `q4_qualify.py` retains schema-1 historical replay, but refuse
 the new actual-token and paired schemas with a structured failure: historical
 visible-event baselines must never be compared to token throughput.
 
-## Inference and acceptance
+## Policy v2: primary metrics and acceptance
 
-The unit of resampling is a complete paired round, not a token, layer, SSE event, or request within the round. Report arm medians, min/max and IQR, the median paired B/A ratio, and a fixed-seed 20,000-replicate percentile bootstrap 95% interval on paired log ratios. Higher-is-better metrics require the entire interval >=0.97; latency requires the entire B/A interval <=1.03. An interval crossing the margin is **inconclusive**, not a pass. Requiring every protected metric to pass is an intersection-union noninferiority test; a fast short context cannot hide a slow long context.
+The six predeclared primary operating points are:
 
-A win requires the interval to show improvement. To avoid selecting a spurious win among metrics/candidates, the win interval uses a Bonferroni tail adjustment across all protected metrics and the four predeclared candidates. The ordinary 95% intervals remain visible. Three rounds are a minimum, not evidence of reliable asymptotic coverage: a small-n bootstrap is exploratory and can be unstable, especially if samples are identical or correlated.
+| Goal | Metric | Benefit ratio |
+|---|---|---|
+| Short decode | `decode-short.engine_tps` | B/A |
+| 32K decode | `decode-32768.engine_tps` | B/A |
+| 4K prefill | `prefill-4096.engine_tps` | B/A |
+| 32K prefill | `prefill-32768.engine_tps` | B/A |
+| Chat TTFT | `chat.ttft_ms` | A/B |
+| Concurrent aggregate | `concurrent.normalized_aggregate_tps` | B/A |
 
-The win family reserves at least 19 metrics per candidate even for a smaller
-battery. A time-bounded hierarchical two-session qualification first runs three
-pairs at 4K plus short decode, chat/cached TTFT and concurrency. If any protected
-screen metric is not noninferior, the configuration cannot promote and the
-unmeasured long-context performance is not claimed. If the screen passes, a
-separate fixed three-pair `long_only` battery at 32K/128K must also pass before
-promotion. Long-only runs retain canonical greedy hashes but do not repeat the
-screen's metrics. This is a predeclared rejection screen, not selective
-resampling of a favorable metric. A separate one-cold near-262K-plus-chat probe
-records capacity and loaded TTFT without doubling its long prefill for an
-isolated throughput control.
+Everything else is secondary/descriptive, including client TPS, 4K decode,
+128K, cached-prefix TTFT and individual concurrent streams. Secondary wins
+cannot select a candidate and secondary regressions cannot veto one.
+Missing any primary means ineligible. Legacy `long_only` and
+`requires_long_qualification` runs remain explicitly partial/ineligible.
 
-The acceptance interval is expanded to contain a Student-t interval for the mean paired log ratio, using the conservative **two-degree-of-freedom** critical value for every admitted sample count >=3. The same guard uses the Bonferroni tail for win selection. At n=3 this is the ordinary paired-t interval; at larger n it is wider than the corresponding t interval. This avoids declaring a tightly clustered bootstrap support to be the full uncertainty of three observations. The guard's finite-sample interpretation assumes independent normally distributed log ratios, for which the population mean and median log ratio coincide. It is not distribution-free evidence; correlations, outliers or nonnormal drift can violate the model. Both raw bootstrap intervals and expanded acceptance intervals are reported. Thermal drift/order effects and salt-dependent routing are not eliminated by pairing. Predeclare the number of rounds/metric subset; do not repeat until a desired result appears.
+Predeclare at least five pairs, normally six, and the complete candidate set.
+Resample complete paired rounds, never tokens/layers/SSE events. Report each
+arm's median/min/max/IQR and the arithmetic median of paired benefit ratios
+(mean of the two middle values for even samples), with a fixed-seed,
+20,000-replicate percentile bootstrap **marginal 95% CI**. All metrics use the
+same resampled round indices; adding secondaries cannot change primary CIs.
+Raw B/A remains available separately for latency.
 
-Exact-math changes require every paired canonical greedy text hash to match. Weight-format changes report hash differences, but use the existing `q4_quality.py` full-vocabulary gate: >=400 frozen frontiers, 248320 logits, mean KL <=.01, p99 KL <=.05, top-1 >=97%. A quality receipt binds `manifest_sha256`, `quality_path`, and `quality_sha256`; the raw record and its digest are checked before deployment. The receipt is a provenance assertion based on the prior capture, not a new quality measurement. Existing pack quality does not excuse an unqualified new arithmetic change: `required_exact_control` points to the completed original-pack binary control, which must have identical hashes. `exact_hash_reference` additionally requires B to match a completed quality-approved same-pack run (used for the wide expert flag and two-session scheduler).
+A configuration is **eligible** only when:
+1. Every primary median benefit is **>=0.97**, with no primary CI wholly below
+   0.97 (upper bound must be >=0.97).
+2. Quality passes.
+3. At least one primary median benefit is **>=1.03**.
 
-Promotion requires complete samples, quality/hash approval, noninferiority on every protected metric, and at least one corrected win. Incomplete, inconclusive or failed candidates leave the original serving. Preserve JSON and deployment identity receipts with the final summary.
+There is **no Bonferroni adjustment**, fixed-df t expansion, or CI-lower-bound
+requirement for the operational promotion decision. `noninferior` still
+describes a lower bound >=0.97, but is not the eligibility predicate.
+`accepted-uncertain` explicitly labels median-acceptable metrics whose CI
+crosses 0.97. A median win does not imply statistically established
+improvement. This is the user's risk policy, **not proof of noninferiority or
+family-wise error control**. Five/six pairs can still give unstable bootstrap
+coverage, especially with drift, dependence or identical samples. Do not
+repeat until pass or silently discard unfavorable completed pairs.
+
+Historical three-pair reports, including the original-vs-original control
+with 12/19 inconclusive metrics and its df=2/76-comparison guard, are unchanged.
+They cannot satisfy the new minimum or be retroactively relabeled passes.
+
+Exact-math changes require paired canonical greedy text hashes to match.
+Numeric/reassociation changes report those differences and require the
+full-vocabulary `q4_quality.py` gate: >=400 fixed frontiers, 248320 logits,
+mean KL <=.01, p99 KL <=.05, top-1 >=97%. The `numeric` quality receipt binds
+both releases, serving/helper hashes, manifests, sessions, sorted complete
+flag sets, corpus digest and raw quality-file digest. Old pack-only receipts
+do not qualify new flag combinations. `weight-format` remains for legacy
+manifest-bound receipts; optional exact control/reference constraints remain
+binding when configured.
+
+The harness reports eligibility only; it always invokes the configured
+restore hook and records `restored_baseline`. A may be the current mix-04
+deployment, not the historical original. Candidate-stack operation and
+lease-gated execution are documented in [CANDIDATE_STACK.md](CANDIDATE_STACK.md).
