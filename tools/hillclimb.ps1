@@ -592,6 +592,11 @@ function Invoke-ConcurrentGeneration {
         if (-not $MixedPrefill) { $null = Invoke-NonStream $agent.Messages 1 -User 'hillclimb-agent' }
         $load = Invoke-Concurrency $chatMessages $agentMessages $ConcurrentTokens `
             -ChatDelayMs $(if ($MixedPrefill) { $ChatDelayMilliseconds } else { 0 })
+        $trials += [pscustomobject]@{ repeat = $repeat; isolated = $baseline; load = $load }
+        $records.concurrency = [pscustomobject]@{
+            mode = if ($MixedPrefill) { 'chat-decode-during-agent-cold-prefill' } else { 'two-warm-prefix-generations' }
+            capacity_probe = [bool]$CapacityProbe; complete = $false; trials = $trials
+        }
         foreach ($index in 0,1) {
             $row = $load.streams[$index]
             if ($null -eq $row.completion_tokens) { throw 'ConcurrentGeneration requires SSE usage from this branch.' }
@@ -628,7 +633,6 @@ function Invoke-ConcurrentGeneration {
                 note = 'Fresh chat resets only chat affinity after the long request completes; agent affinity is not reassigned.'
             })
         }
-        $trials += [pscustomobject]@{ repeat = $repeat; isolated = $baseline; load = $load }
         Write-Host ("CONCURRENT repeat={0} mixed={1} aggregate_tps={2:F2} chat_ttft_ms={3:F1} chat_tps={4:F2} agent_tps={5:F2}" -f
             $repeat, [bool]$MixedPrefill, $load.aggregate_client_decode_tps, $load.streams[0].ttft_ms,
             $load.streams[0].client_decode_tps, $load.streams[1].client_decode_tps)
@@ -636,6 +640,7 @@ function Invoke-ConcurrentGeneration {
     return [pscustomobject]@{
         mode = if ($MixedPrefill) { 'chat-decode-during-agent-cold-prefill' } else { 'two-warm-prefix-generations' }
         capacity_probe = [bool]$CapacityProbe
+        complete = $true
         trials = $trials
         chat_ttft_p50_ms = Get-Percentile @($trials | ForEach-Object { $_.load.streams[0].ttft_ms }) 0.5
         chat_ttft_p95_ms = Get-Percentile @($trials | ForEach-Object { $_.load.streams[0].ttft_ms }) 0.95

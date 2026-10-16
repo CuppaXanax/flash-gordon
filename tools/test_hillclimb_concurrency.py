@@ -15,6 +15,7 @@ class Handler(BaseHTTPRequestHandler):
     active = 0
     peak = 0
     agent_sse = 0
+    short_loaded_chat = False
     lock = threading.Lock()
 
     def log_message(self, *args):
@@ -33,6 +34,10 @@ class Handler(BaseHTTPRequestHandler):
             with self.lock:
                 Handler.agent_sse += 1
         count = min(body["max_tokens"], 64)
+        with self.lock:
+            if (Handler.short_loaded_chat and Handler.active
+                    and body.get("stream") and body.get("user") == "hillclimb-chat"):
+                count = 1
         reused = 32 if len(body["messages"]) > 2 else 0
         usage = {"prompt_tokens": 96, "completion_tokens": count, "total_tokens": 96 + count}
         text = "task " * count
@@ -74,9 +79,10 @@ class Handler(BaseHTTPRequestHandler):
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell 7 is required")
 class ConcurrentHarness(unittest.TestCase):
-    def run_mode(self, mixed, capacity=False):
+    def run_mode(self, mixed, capacity=False, short=False):
         Handler.peak = 0
         Handler.agent_sse = 0
+        Handler.short_loaded_chat = short
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -100,6 +106,15 @@ class ConcurrentHarness(unittest.TestCase):
             match = re.search(r"HILLCLIMB result=(.*?) model=", result.stdout)
             if match:
                 artifact = pathlib.Path(match[1])
+            if short:
+                self.assertNotEqual(result.returncode, 0)
+                artifact = next(output.glob("*.json"))
+                data = json.loads(artifact.read_text(encoding="utf-8-sig"))
+                self.assertFalse(data["concurrency"]["complete"])
+                load = data["concurrency"]["trials"][0]["load"]
+                self.assertEqual([s["completion_tokens"] for s in load["streams"]], [1, 64])
+                self.assertIn("Insufficient sustained generation", str(data["errors"]))
+                return
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIsNotNone(artifact, result.stdout)
             data = json.loads(artifact.read_text(encoding="utf-8-sig"))
@@ -139,6 +154,9 @@ class ConcurrentHarness(unittest.TestCase):
 
     def test_single_cold_capacity_probe(self):
         self.run_mode(True, capacity=True)
+
+    def test_short_generation_retains_partial_trial(self):
+        self.run_mode(False, short=True)
 
 
 if __name__ == "__main__":

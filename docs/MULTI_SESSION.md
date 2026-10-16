@@ -253,6 +253,11 @@ least 32 completions per stream. Early EOS invalidates a short sample; do not
 claim the requested ceiling was generated. A synthetic fixture's ~2x is not
 model throughput evidence.
 
+Invalid sustained-generation trials are retained under `concurrency.trials`
+with `concurrency.complete=false` before the harness raises its error. Inspect
+their actual token counts and isolated/loaded hashes; do not erase early-EOS
+or failed-overlap observations by reporting only completed trials.
+
 Report JSON's isolated/loaded per-stream TPS, aggregate speedup, TTFT p50/p95,
 inter-event p95, prefix counts and same-prompt text hashes. Record commit/pack
 identity separately if the server lacks a Git SHA header. Promotion gates:
