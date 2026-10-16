@@ -2,7 +2,12 @@
 
 The offline-prepared acceptance lease and current-production restore procedure
 are documented in [MTP_CAPTURE.md](MTP_CAPTURE.md). This diagnostic gate uses
-replayed native proposals and the causal N=1 ring oracle, not MTP serving.: native head, causal verification and remaining execution gates
+replayed native proposals and the causal N=1 ring oracle, not MTP serving.
+
+**2026-10-16 real-text qualification:** 20 chat + 20 code cases, 259 tokens each,
+measured k=3 policy E **2.3899 / 3.2422**, and all **24 paired 256-token ring
+greedy checks passed**. This is the causal N=1 reference gate, not optimized
+small-N serving. See [measured acceptance and restoration evidence](../results/hillclimb/MTP_ACCEPTANCE.md).
 
 2026-10-15. Branch `cuppaxanax/mtp`, based on `origin/main a63a166`.
 

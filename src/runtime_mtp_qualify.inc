@@ -155,7 +155,7 @@ static fg_status mtpq_greedy(fg_runtime *r,const mtpq_case *c,const char *dir,
 
 fg_status fg_mtp_qualify_main(const char *manifest,const char *cases,
     const char *directory,uint32_t budget_seconds,fg_error *err){
-    mtpq_clock clock={dispatch_ts()+budget_seconds};
+    mtpq_clock clock={fg_mtp_capture_deadline_ms(dispatch_ts(),budget_seconds)};
     mtpq_case eligible[40]={0};uint32_t found=0u,counts[2]={0};
     FILE *list=fopen(cases,"r");
     if(!list)return mtpq_fail(err,"case list open");

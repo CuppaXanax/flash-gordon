@@ -4,6 +4,9 @@ This is a **diagnostic capture and correctness release**, not MTP serving
 integration or a small-N performance qualification. Do not use the production
 owners until the user grants the next exclusive lease. `Plan` is local-only.
 
+The 2026-10-16 lease completed: [measured acceptance, all 24 exact greedy gates,
+and sessions-2 production restoration](../results/hillclimb/MTP_ACCEPTANCE.md).
+
 ## Frozen workload and measurements
 
 `tools/mtp_capture.py corpus` authors 24 realistic chat and 24 code requests.
@@ -85,7 +88,7 @@ The frozen preparation receipt and raw build/GPU proof are
 and four local-only orchestration tests passed, including successful restore,
 restore after an injected native-stage failure, local-only planning and refusal
 without a confirmed lease. The release SHA256 is
-`ae739c6cfc75238818d61d9536d0a7b7380c3364916cac987068bacce76a02e2`.
+`3ba71170aef43886793a5f83186e0042c9b8ece4351ae9b85a2a562abb92ca5f`.
 These are preparation receipts, **not measured acceptance, full-ring greedy
 results or a measured 45-minute completion time**. Only .51 was accessed.
 
@@ -99,15 +102,23 @@ The target is **at most 45 minutes of ring occupation**, with:
 | Native real-HC draft replay on .51 | ~2–4 minutes, not timed on the ring yet |
 | 24 × 256-token paired gates | ~4–16 minutes depending on rejection/replay |
 | Deployment/loading/transfers | Reserve several minutes |
-| Restoration | Dedicated final ten-minute reserve |
+| Restoration | Dedicated final eight-minute reserve |
 
-The controller stops qualification work at minute 35. Independent remote
+The controller stops qualification work at minute 37 (configurable downward
+with `-WorkMinutes`). Independent remote
 watchdogs restore workers at minute 38 and coordinator at minute 39 if the
 client disappears. Coverage not completed before the deadline is **incomplete**,
 never reported as a pass. Completion time/acceptance cannot be measured before
 the lease; slower-than-budget service fails closed.
 
-Restore is **current production**: main `a63a166`, sealed mix-04, sessions 1,
+Retries must pass the original lease's Unix start time with
+`-LeaseStartedUnixSeconds`; rebuilding does not reset the occupation budget.
+The initial production attempt exposed a diagnostic units bug: `dispatch_ts()`
+is milliseconds, not seconds. The corrected deadline helper and its C regression
+test convert seconds explicitly. That attempt generated no qualifying tokens
+and restored the selected sessions-2 production before retrying.
+
+Restore is **current production**: adaptive scheduler `2d0f8a7`, sealed mix-04, sessions 2,
 wide 0, using the unchanged retained `launch-current.sh`. **Do not invoke
 `ab-rollback-original.ps1`**, which selects the older original pack instead.
 The controller verifies executable/manifest SHA256, exact argv, pinned FG

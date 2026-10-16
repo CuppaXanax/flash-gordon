@@ -2,9 +2,9 @@
 set -euo pipefail
 root=/home/xander/hc-mtp
 operator=/home/xander/flash-gordon-live/20261015-abq-operator
-prod=/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon
+prod=/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon
 pack=/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04
-binary_sha=1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789
+binary_sha=de6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58
 manifest_sha=0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252
 ip="$(hostname -I)"
 rank=-1
@@ -57,12 +57,12 @@ options={b'--manifest':b'/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/
 if rank==0:
     options.update({b'--model-name':b'Qwen3.8-Flash-Next-Uncensored',b'--host':b'0.0.0.0',
         b'--port':b'8080',b'--context-tokens':b'262144',b'--gpu-index-tokens':b'262144',
-        b'--qsa-hot-tokens':b'0',b'--qsa-page-cache-mib':b'700'})
+        b'--qsa-hot-tokens':b'0',b'--qsa-page-cache-mib':b'700',b'--sessions':b'2'})
 else:
     options[b'--rank']=str(rank).encode()
 assert args[1]==(b'api' if rank==0 else b'rank')
 assert len(args)==2+2*len(options) and dict(zip(args[2::2],args[3::2]))==options
-expected={b'FG_SHADER_DIR':b'/home/xander/flash-gordon-live/20261015-abq-main/vulkan',b'FG_EXPERT_Q8_WIDE':b'0'}
+expected={b'FG_SHADER_DIR':b'/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan',b'FG_EXPERT_Q8_WIDE':b'0'}
 if sys.argv[2]=='0': expected[b'FG_RING_TRACE']=b'1'
 assert {k:v for k,v in env.items() if k.startswith(b'FG_')}==expected
 assert not env.get(b'LD_PRELOAD')

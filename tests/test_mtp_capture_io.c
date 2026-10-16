@@ -9,6 +9,11 @@
 
 int main(int argc,char **argv){
     assert(argc==2);
+    double now_ms=1000000000.0;
+    double deadline=fg_mtp_capture_deadline_ms(now_ms,2100u);
+    assert(deadline-now_ms==2100000.0);
+    assert(now_ms+2099999.0<deadline);
+    assert(now_ms+2100000.0>=deadline);
     fg_error e={0};
     assert(fg_mtp_capture_configure(NULL,&e)==FG_OK);
     assert(fg_mtp_capture_hyper(0,0,0,NULL,&e)==FG_OK);

@@ -4,6 +4,8 @@ param(
     [ValidateSet('Plan','Run','Restore')][string]$Action='Plan',
     [switch]$LeaseConfirmed,
     [ValidatePattern('^[A-Za-z0-9_-]{4,80}$')][string]$LeaseId='',
+    [long]$LeaseStartedUnixSeconds=0,
+    [ValidateRange(1,37)][int]$WorkMinutes=37,
     [string]$Artifacts='',
     [string]$ProductionRunner='D:\looking-glass-labs\fg-wt\ab-harness\tools\ab-fleet.ps1',
     [string]$DraftRunner='',
@@ -34,8 +36,8 @@ if($Action -eq 'Plan'){
         chatCases=20; codeCases=20; generatedTokens=259; acceptanceAnchors=256; k=@(1,2,3)
         greedyCasesPerCategory=4; greedyPairedRuns=24; greedyTokens=256
         verifier='causal N=1 reference, not small-N serving qualification'
-        workDeadlineMinutes=35; watchdogWorkerMinute=38; watchdogCoordinatorMinute=39
-        wallBudgetMinutes=45; restore='main a63a166 + sealed mix-04, sessions1 wide0'
+        workDeadlineMinutes=$WorkMinutes; watchdogWorkerMinute=38; watchdogCoordinatorMinute=39
+        wallBudgetMinutes=45; restore='adaptive 2d0f8a7 + sealed mix-04, sessions2 wide0'
         releaseSha256=$prepared.files['release.tar.gz']
     } | ConvertTo-Json -Depth 6
     return
@@ -46,8 +48,8 @@ $workers=@(43..49 | ForEach-Object {"192.168.42.$_"})
 $run=Join-Path $Artifacts "runs\$LeaseId"
 if($Action -eq 'Run' -and (Test-Path $run)){throw 'Use a fresh LeaseId; previous lease evidence is immutable.'}
 $null=New-Item -ItemType Directory -Force $run
-$started=[DateTimeOffset]::UtcNow
-$script:workEnd=$started.AddMinutes(35)
+$started=if($LeaseStartedUnixSeconds){[DateTimeOffset]::FromUnixTimeSeconds($LeaseStartedUnixSeconds)}else{[DateTimeOffset]::UtcNow}
+$script:workEnd=$started.AddMinutes($WorkMinutes)
 $script:restoreMode=$Action -eq 'Restore'
 $script:sequence=0
 $root='/home/xander/hc-mtp'
@@ -56,7 +58,7 @@ function Remote {
           [string]$Upload='',[string]$Destination='',[string]$Download='',
           [string]$Local='',[int]$Timeout=120)
     $seconds=if($script:restoreMode){300}else{[int]($script:workEnd-[DateTimeOffset]::UtcNow).TotalSeconds}
-    if($seconds -le 0){throw '35-minute work deadline; restoring production.'}
+    if($seconds -le 0){throw 'Qualification work deadline; restoring production.'}
     $script:sequence++
     $tag='{0:D3}-{1}' -f $script:sequence,$Name
     $scriptFile=Join-Path $run "$tag.sh"
@@ -111,7 +113,7 @@ function RestoreProduction {
 }
 if($Action -eq 'Restore'){
     $null=RestoreProduction
-    Write-Output 'Pinned a63a166 + mix-04 restored and API/greedy checked.'
+    Write-Output 'Pinned 2d0f8a7 + mix-04 sessions2 restored and API/greedy checked.'
     return
 }
 $armed=$false;$mutated=$false;$complete=$false;$failure=$null;$before=$null;$created=$false
