@@ -21,6 +21,7 @@ DEP += tests/test_mtp_ring.d
 DEP += tests/mtp_ring_sse.d
 
 MTP_RING_WRAPS = fg_vk_tensor_create fg_vk_tensor_destroy fg_vk_tensor_write fg_vk_tensor_read \
+ fg_owner_mtp_prepare fg_owner_mtp_retain \
  fg_model_vk fg_model_rank fg_model_tensor fg_vk_embedding_q8_0_batch \
  fg_ngram_store_lookup_prefill fg_tokenizer_eos fg_tokenizer_token fg_tokenizer_decode_token \
  fg_output_slice_ways fg_output_hc_run \
@@ -132,6 +133,21 @@ tools/mtp-real-place: tools/mtp_real_place.c $(TEST_COMMON)
 
 tools/mtp-residency: tools/mtp_residency.c $(filter-out src/main.o,$(OBJ)) | shaders
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
+tools/mtp-native-replay: tools/mtp_native_replay.c $(filter-out src/main.o,$(OBJ)) | shaders
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
+tools/mtp-tokens: tools/mtp_tokens.c $(TEST_COMMON)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
+tools/mtp-offline: tools/mtp_offline.c $(filter-out src/main.o,$(OBJ)) | shaders
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
+-include tools/mtp-offline.d
+
+-include tools/mtp-tokens.d
+
+-include tools/mtp-native-replay.d
 
 -include tools/mtp-residency.d
 
@@ -329,6 +345,9 @@ test-gdn-fleet: tests/test_fg_vk
 	done
 
 clean:
+	rm -f tools/mtp-offline tools/mtp-offline.d
+	rm -f tools/mtp-native-replay tools/mtp-native-replay.d
+	rm -f tools/mtp-tokens tools/mtp-tokens.d
 	rm -f tools/mtp-residency tools/mtp-residency.d
 	rm -f tools/mtp-real-place tools/mtp-real-place.d
 	rm -f tools/mtp-real-cook tools/mtp-real-cook.d

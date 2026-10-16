@@ -2008,6 +2008,28 @@ static fg_status depthb_owner_restore(depthb_owner_runtime *depthb,uint32_t slot
     return status==FG_OK?active:status;
 }
 
+static fg_status depthb_owner_retain(depthb_owner_runtime *depthb,uint32_t slot,
+    uint32_t first,uint32_t verified,uint32_t keep,fg_error *err){
+    if(!depthb||!depthb->owner||slot>=FG_OWNER_SESSION_MAX||
+       !depthb->checkpoint_valid[slot]){
+        fg_error_set(err,FG_ERR_MISMATCH,"MTP retained prefix without prepared owner");
+        return FG_ERR_MISMATCH;
+    }
+    fg_status status=FG_OK;
+    if(depthb->qsa&&depthb->qsa->enabled&&depthb->qsa->state_slot==slot)
+        status=qsa_owner_writer_drain(depthb->qsa,err);
+    if(status==FG_OK)status=fg_owner_mtp_retain(depthb->owner,&depthb->checkpoint[slot],
+        first,verified,keep,err);
+    if(status==FG_OK&&depthb->qsa&&depthb->qsa->enabled&&depthb->qsa->state_slot==slot)
+        for(uint32_t i=0;i<depthb->qsa->layer_count;i++)
+            depthb->qsa->guard.next_token[depthb->qsa->layers[i]]=first+keep;
+    if(status==FG_OK&&depthb->wire_frontiers)
+        for(uint32_t l=0;l<FG_LAYER_COUNT;l++)
+            if(depthb->manifest->layer_owner[l]==depthb->self)
+                depthb->wire_frontiers[slot][l]=first+keep;
+    return status;
+}
+
 static fg_status handle_owner_session_transaction(fg_fabric *fabric,
     depthb_owner_runtime *depthb,uint64_t session_id,uint32_t peer,
     const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,fg_error *err){
@@ -2924,7 +2946,7 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_
                 &header,payload,bytes,&layer_work,&depthb,err);
         else if(type==FG_MSG_MTP_NATIVE_WORK)
             status=handle_mtp_native_work(fabric,owner,manifest,self,session_id,peer,
-                &header,payload,bytes,&layer_work,err);
+                &header,payload,bytes,&layer_work,&depthb,err);
         else if(type==FG_MSG_MTP_HEAD_WORK)
             status=handle_mtp_head_work(fabric,manifest,self,session_id,peer,
                 &header,payload,bytes,&layer_work,err);

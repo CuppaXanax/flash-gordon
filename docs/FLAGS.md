@@ -159,12 +159,12 @@ slice ranks (the foreign loader names the exact missing span at startup).
 | `FG_EVAL_LOGITS_DIR` | unset (off) | Write numbered greedy evaluation logits (`%04u.fgl`) in this directory. | profiling |
 | `FG_NUMERICS_TRACE` | unset (off) | Hyper-state digests per layer/phase. Forces static replay off. | profiling |
 | `FG_GDN_DIAG` | unset (off) | GDN state diagnostics. | profiling |
-| `FG_DECODE_MS` | unset (off) | Per-token decode timings. | profiling |
+| `FG_DECODE_MS` | unset (off) | Per-token decode timings; experimental MTP also emits per-owner verification, native draft/repair, and serial vocabulary-slice timings. Successful MTP rounds always emit a disjoint `MTP_STAGE` ledger for draft, checkpoint, verify, state-only target repair, native repair, commit and residual host time. | profiling |
 | `FG_TRACE_ROUTES` | unset (off) | Router/expert route traces. | profiling |
 | `FG_PREFIX_TRACE` | unset (off) | Prefix reuse diagnostics (counts, mismatch positions and reasons only). | profiling |
 | `FG_GENERATE_TRACE` | unset (off) | Generation loop breakdown (interrupt/tokenizer/callback/render/decode). | profiling |
 | `FG_DECODE_RING_TRACE` | unset (off) | Ring decode issue/stage/done traces. | profiling |
-| `FG_RING_TRACE` | unset (off) | Ring prefill issue/stage/done traces; one API request-ID/count/SHA256 receipt over emitted big-endian u32 token IDs for same-build greedy qualification. | profiling |
+| `FG_RING_TRACE` | unset (off) | Ring prefill issue/stage/done traces; one API request-ID/count/SHA256 receipt over emitted little-endian u32 token IDs for same-build greedy qualification. | profiling |
 | `FG_PROFILE_TOKEN` | unset (off) | Selects a single token index; enables the detailed per-token captures below. | profiling |
 | `FG_NGRAM_VERIFY` | unset (off) | Verified n-gram row comparison for the `FG_PROFILE_TOKEN` token. | profiling |
 | `FG_QSA_WARM_TRACE` | unset (off) | QSA cache warming trace. | profiling |

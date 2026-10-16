@@ -159,6 +159,23 @@ int main(void){
         fg_status status=fg_mtp_native_work_encode(wire,capacity,&bytes,&prepare,&err);
         CHECK((status==FG_OK)==(sessions==1u||sessions==2u));
     }
+    for(uint32_t n=2u;n<=4u;n++)for(uint32_t keep=1u;keep<n;keep++){
+        fg_mtp_native_work retain={.operation=FG_MTP_NATIVE_TARGET_KEEP,
+            .first_token=72u,.count=keep,.argument=n};
+        CHECK(fg_mtp_native_work_encode(wire,capacity,&bytes,&retain,&err)==FG_OK);
+        CHECK(bytes==FG_MTP_NATIVE_HEADER_BYTES);
+        CHECK(fg_mtp_native_work_decode(&decoded,NULL,0u,path,embedding_path,
+            wire,bytes,&err)==FG_OK);
+        CHECK(decoded.first_token==72u&&decoded.count==keep&&decoded.argument==n);
+        retain.count=n;
+        CHECK(fg_mtp_native_work_encode(wire,capacity,&bytes,&retain,&err)!=FG_OK);
+        retain.count=keep;retain.argument=5u;
+        CHECK(fg_mtp_native_work_encode(wire,capacity,&bytes,&retain,&err)!=FG_OK);
+        retain.argument=n;retain.first_token=0u;
+        CHECK(fg_mtp_native_work_encode(wire,capacity,&bytes,&retain,&err)!=FG_OK);
+        retain.first_token=UINT32_MAX;
+        CHECK(fg_mtp_native_work_encode(wire,capacity,&bytes,&retain,&err)!=FG_OK);
+    }
     for(uint32_t type=FG_MSG_MTP_VERIFY_WORK;type<=FG_MSG_MTP_TARGET_ACK;type++){
         fg_frame_header header;
         CHECK(fg_frame_encode_version(&header,6u,(fg_message_type)type,22u,1u,

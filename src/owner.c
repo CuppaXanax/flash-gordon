@@ -123,6 +123,16 @@ typedef struct fg_owner_decode_slot {
     fg_vk_counters counters_before;
 } fg_owner_decode_slot;
 
+typedef struct fg_owner_mtp_gdn {
+    fg_vk_tensor *qkv,*z,*alpha,*beta;
+} fg_owner_mtp_gdn;
+typedef struct fg_owner_mtp_journal {
+    fg_owner_mtp_gdn gdn[FG_LAYER_COUNT];
+    fg_vk_tensor *ple_gated,*ple_normalized;
+    uint32_t first,first_layer,last_layer,count;
+    bool enabled,valid;
+} fg_owner_mtp_journal;
+
 struct fg_owner_executor {
     fg_model *model;
     uint32_t max_tokens;
@@ -139,6 +149,7 @@ struct fg_owner_executor {
     /* Device-side checkpoint shadows, allocated lazily by the depth-B session
      * transaction so the snapshot is a GPU copy, not an uncached host read. */
     struct {fg_vk_tensor *conv_state,*recurrent_state;} gdn_shadow[FG_OWNER_SESSION_MAX][FG_LAYER_COUNT];
+    fg_owner_mtp_journal mtp_journal[FG_OWNER_SESSION_MAX];
     fg_vk_tensor *ples_shadow[FG_OWNER_SESSION_MAX];
     fg_vk_tensor *ples_state[FG_OWNER_SESSION_MAX];
     fg_vk_tensor *session_input[FG_OWNER_SESSION_MAX];
@@ -441,7 +452,12 @@ void fg_owner_executor_destroy(fg_owner_executor *e){
             fg_vk_tensor_destroy(e->gdn_state[session][layer].conv_state);
             fg_vk_tensor_destroy(e->gdn_shadow[session][layer].recurrent_state);
             fg_vk_tensor_destroy(e->gdn_shadow[session][layer].conv_state);
+            fg_owner_mtp_gdn *journal=&e->mtp_journal[session].gdn[layer];
+            fg_vk_tensor_destroy(journal->qkv);fg_vk_tensor_destroy(journal->z);
+            fg_vk_tensor_destroy(journal->alpha);fg_vk_tensor_destroy(journal->beta);
         }
+        fg_vk_tensor_destroy(e->mtp_journal[session].ple_gated);
+        fg_vk_tensor_destroy(e->mtp_journal[session].ple_normalized);
         fg_vk_tensor_destroy(e->ples_shadow[session]);
         fg_vk_tensor_destroy(e->ples_state[session]);
         fg_vk_tensor_destroy(e->session_input[session]);
@@ -1155,6 +1171,7 @@ fg_status fg_owner_session_device_snapshot(fg_owner_executor *executor,uint32_t 
     memset(snapshot,0,sizeof(*snapshot));
     snapshot->session=session;
     snapshot->device=true;
+    executor->mtp_journal[session].valid=false;
     fg_vk_context *vk=fg_model_vk(executor->model);
     fg_vk_tensor *dst[FG_LAYER_COUNT*2u+1u];const fg_vk_tensor *src[FG_LAYER_COUNT*2u+1u];
     uint32_t count=0;
@@ -1199,6 +1216,7 @@ fg_status fg_owner_session_rollback(fg_owner_executor *executor,
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner session rollback");
         return FG_ERR_ARGUMENT;
     }
+    executor->mtp_journal[snapshot->session].valid=false;
     if(snapshot->device){
         fg_vk_context *vk=fg_model_vk(executor->model);
         fg_vk_tensor *dst[FG_LAYER_COUNT*2u+1u];const fg_vk_tensor *src[FG_LAYER_COUNT*2u+1u];
@@ -1881,15 +1899,125 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
     return status;
 }
 
+fg_status fg_owner_mtp_prepare(fg_owner_executor *e,uint32_t sessions,fg_error *err){
+    if(!e||!sessions||sessions>e->session_count||e->max_tokens<4u){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid MTP journal provisioning");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_vk_context *vk=fg_model_vk(e->model);fg_status status=FG_OK;
+    for(uint32_t s=0;status==FG_OK&&s<sessions;s++){
+        fg_owner_mtp_journal *j=&e->mtp_journal[s];
+        if(j->enabled)continue;
+        for(uint32_t l=0;status==FG_OK&&l<FG_LAYER_COUNT;l++){
+            if(!e->gdn_state[s][l].conv_state)continue;
+            fg_vk_tensor **t[]={&j->gdn[l].qkv,&j->gdn[l].z,
+                &j->gdn[l].alpha,&j->gdn[l].beta};
+            const uint32_t width[]={10240u,6144u,48u,48u};
+            for(uint32_t i=0;status==FG_OK&&i<4u;i++)
+                if(!*t[i])status=fg_vk_tensor_create(vk,(uint64_t)width[i]*4u*4u,t[i],err);
+        }
+        if(status==FG_OK&&e->ples_state[s]&&!j->ple_gated)
+            status=fg_vk_tensor_create(vk,10240u*4u*4u,&j->ple_gated,err);
+        if(status==FG_OK&&e->ples_state[s]&&!j->ple_normalized)
+            status=fg_vk_tensor_create(vk,10240u*4u*4u,&j->ple_normalized,err);
+        uint32_t slots=FG_VK_OWNER_STATIC_SLOTS/FG_OWNER_SESSION_MAX;
+        for(uint32_t i=s*slots;status==FG_OK&&i<(s+1u)*slots;i++)
+            status=fg_vk_static_reset(vk,i,err);
+        if(status==FG_OK){j->enabled=true;j->valid=false;e->small[s].tokens=0u;}
+    }
+    return status;
+}
+
+fg_status fg_owner_mtp_retain(fg_owner_executor *e,
+    const fg_owner_session_checkpoint *snapshot,uint32_t first,uint32_t verified,
+    uint32_t keep,fg_error *err){
+    if(!e||!snapshot||!snapshot->valid||!snapshot->device||
+       snapshot->session>=e->session_count||!keep||keep>verified||verified<2u||verified>4u||
+       first>UINT32_MAX-verified){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid MTP retained-prefix transaction");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_owner_mtp_journal *j=&e->mtp_journal[snapshot->session];
+    if(!j->enabled||!j->valid||j->first!=first||j->count!=verified){
+        fg_error_set(err,FG_ERR_MISMATCH,"stale MTP projected-state journal");
+        return FG_ERR_MISMATCH;
+    }
+    uint32_t frontier[FG_LAYER_COUNT]={0};
+    if(snapshot->qsa_valid){
+        fg_status q=fg_owner_qsa_frontier(e,snapshot->session,frontier);
+        if(q!=FG_OK)return q;
+        for(uint32_t l=0;l<FG_LAYER_COUNT;l++)if(owns_layer(e,l)&&(l&3u)==3u){
+            if(snapshot->qsa_tokens[l]!=first||frontier[l]!=first+verified){
+                fg_error_set(err,FG_ERR_MISMATCH,"MTP retained QSA frontier mismatch");
+                return FG_ERR_MISMATCH;
+            }
+            frontier[l]=first+keep;
+        }
+    }
+    fg_vk_context *vk=fg_model_vk(e->model);
+    if(fg_vk_small_n_active(vk)||fg_vk_batch_active(vk)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"MTP retained prefix requires an idle recorder");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_vk_tensor *dst[FG_LAYER_COUNT*2u+1u];
+    const fg_vk_tensor *src[FG_LAYER_COUNT*2u+1u];uint32_t copies=0;
+    for(uint32_t l=j->first_layer;l<=j->last_layer;l++){
+        fg_vk_tensor *states[]={e->gdn_state[snapshot->session][l].conv_state,
+            e->gdn_state[snapshot->session][l].recurrent_state};
+        const fg_vk_tensor *shadows[]={e->gdn_shadow[snapshot->session][l].conv_state,
+            e->gdn_shadow[snapshot->session][l].recurrent_state};
+        for(uint32_t i=0;i<2u;i++)if(states[i]){
+            if(!shadows[i]){fg_error_set(err,FG_ERR_MISMATCH,"missing MTP state shadow");return FG_ERR_MISMATCH;}
+            dst[copies]=states[i];src[copies++]=shadows[i];
+        }
+    }
+    if(e->ples_state[snapshot->session]){
+        if(!e->ples_shadow[snapshot->session]){
+            fg_error_set(err,FG_ERR_MISMATCH,"missing MTP PLE shadow");return FG_ERR_MISMATCH;
+        }
+        dst[copies]=e->ples_state[snapshot->session];
+        src[copies++]=e->ples_shadow[snapshot->session];
+    }
+    fg_status status=fg_owner_set_active_session(e,snapshot->session,err);
+    if(status==FG_OK&&copies)status=fg_vk_copy_tensors(vk,dst,src,copies,err);
+    fg_vk_small_n_mode(vk,true);
+    if(status==FG_OK)status=fg_vk_begin(vk,err);
+    for(uint32_t l=j->first_layer;status==FG_OK&&l<=j->last_layer;l++){
+        if(l==1u&&j->ple_gated)
+            status=fg_vk_ple_conv_prefill(vk,e->ple_output,OWNER_PLE(e),j->ple_gated,
+                j->ple_normalized,weight(e,1u,"ple_conv1d.weight",err),keep,err);
+        fg_owner_mtp_gdn *g=&j->gdn[l];
+        if(status!=FG_OK||!g->qkv)continue;
+        status=fg_vk_gdn_conv_prefill(vk,e->gdn_conv_output,OWNER_GDN(e,l)->conv_state,
+            g->qkv,weight(e,l,"ssm_conv1d.weight",err),10240u,keep,err);
+        if(status==FG_OK)status=fg_vk_gdn_recurrent_prefill(vk,e->gdn_core,
+            OWNER_GDN(e,l)->recurrent_state,e->gdn_conv_output,g->z,g->alpha,g->beta,
+            weight(e,l,"ssm_a",err),weight(e,l,"ssm_dt.bias",err),
+            weight(e,l,"ssm_norm.weight",err),48u,16u,128u,keep,1e-6f,err);
+    }
+    status=finish_batch(vk,status,err);
+    fg_vk_small_n_mode(vk,false);
+    if(status==FG_OK&&snapshot->qsa_valid)
+        status=fg_owner_qsa_rollback(e,snapshot->session,frontier,err);
+    if(status==FG_OK)j->valid=false;
+    return status;
+}
+
 static fg_status small_record_layer(fg_owner_executor *e,uint32_t layer,
     uint32_t first,const uint32_t *positions,uint32_t n,const fg_vk_tensor *ngram,
     fg_owner_expert_small_fn expert,void *context,fg_vk_tensor **current,fg_error *err){
     fg_vk_context *vk=fg_model_vk(e->model);
     fg_status status=ensure_decode_batch(vk,err);
     const fg_vk_tensor *input=*current;
+    fg_owner_mtp_journal *journal=&e->mtp_journal[e->active_session];
     if(status==FG_OK&&layer==1u){
         fg_vk_tensor *ple=NULL;
+        fg_vk_tensor *old_gated=e->ple_gated,*old_norm=e->ple_gated_norm;
+        if(journal->enabled){
+            e->ple_gated=journal->ple_gated;e->ple_gated_norm=journal->ple_normalized;
+        }
         status=fg_owner_ple_prefill(e,input,ngram,n,&ple,err);
+        e->ple_gated=old_gated;e->ple_gated_norm=old_norm;
         input=ple;
     }
     fg_vk_tensor *mixed=NULL,*injection=NULL,*block=NULL,*after=NULL;
@@ -1899,7 +2027,15 @@ static fg_status small_record_layer(fg_owner_executor *e,uint32_t layer,
     if(status==FG_OK){
         if((layer&3u)==3u)
             status=fg_qsa_session_small_n(OWNER_QSA(e),layer,first,positions,n,mixed,&block,err);
-        else status=fg_owner_gdn_prefill(e,layer,n,mixed,&block,err);
+        else{
+            fg_vk_tensor *qkv=e->gdn_qkv,*z=e->gdn_z,*alpha=e->gdn_alpha,*beta=e->gdn_beta;
+            if(journal->enabled){
+                fg_owner_mtp_gdn *g=&journal->gdn[layer];
+                e->gdn_qkv=g->qkv;e->gdn_z=g->z;e->gdn_alpha=g->alpha;e->gdn_beta=g->beta;
+            }
+            status=fg_owner_gdn_prefill(e,layer,n,mixed,&block,err);
+            e->gdn_qkv=qkv;e->gdn_z=z;e->gdn_alpha=alpha;e->gdn_beta=beta;
+        }
     }
     if(status==FG_OK)status=gr_write_batch_into(e,residual,block,injection,n,
         e->hyper_output,e->hyper_output_b,&after,err);
@@ -1942,6 +2078,8 @@ fg_status fg_owner_decode_small_n(fg_owner_executor *e,uint32_t first_layer,
     }
     fg_status status=FG_OK;
     uint32_t session=e->active_session;
+    fg_owner_mtp_journal *journal=&e->mtp_journal[session];
+    journal->valid=false;
     uint32_t slots_per_session=FG_VK_OWNER_STATIC_SLOTS/FG_OWNER_SESSION_MAX;
     uint32_t slot_base=session*slots_per_session,slot_limit=slot_base+slots_per_session;
     if(e->small[session].tokens!=n||e->small[session].first!=first_layer||
@@ -1999,7 +2137,13 @@ fg_status fg_owner_decode_small_n(fg_owner_executor *e,uint32_t first_layer,
         e->small[session].tokens=0u;
     }
     fg_vk_small_n_mode(vk,false);
-    if(status==FG_OK)*output=current;
+    if(status==FG_OK){
+        *output=current;
+        if(journal->enabled){
+            journal->first=first_token;journal->count=n;journal->first_layer=first_layer;
+            journal->last_layer=last_layer;journal->valid=true;
+        }
+    }
     return status;
 }
 

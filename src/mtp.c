@@ -67,7 +67,7 @@ fg_status fg_mtp_policy_observe(fg_mtp_policy *policy,uint32_t drafted,
 fg_status fg_mtp_cycle_greedy(const fg_mtp_ops *ops,uint32_t pending,
     const uint32_t *drafts,uint32_t draft_count,uint32_t output_limit,
     uint32_t eos_token,fg_mtp_result *result,fg_error *err){
-    if(!ops||!ops->checkpoint||!ops->verify||!ops->restore||!ops->replay||
+    if(!ops||!ops->checkpoint||!ops->verify||!ops->restore||(!ops->replay&&!ops->retain)||
        !ops->commit||!drafts||!draft_count||draft_count>FG_MTP_MAX_DRAFT||
        !output_limit||!result){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid MTP verification cycle");
@@ -94,8 +94,11 @@ fg_status fg_mtp_cycle_greedy(const fg_mtp_ops *ops,uint32_t pending,
          * emitted input at inputs[0] balances that one-token lag. */
         next.consumed=next.count;
         if(next.consumed<draft_count+1u){
-            status=ops->restore(ops->context,err);
-            if(status==FG_OK)status=ops->replay(ops->context,inputs,next.consumed,err);
+            if(ops->retain)status=ops->retain(ops->context,next.consumed,err);
+            else{
+                status=ops->restore(ops->context,err);
+                if(status==FG_OK)status=ops->replay(ops->context,inputs,next.consumed,err);
+            }
         }
         if(status==FG_OK)status=ops->commit(ops->context,err);
     }

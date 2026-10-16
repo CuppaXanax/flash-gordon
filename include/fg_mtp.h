@@ -69,6 +69,9 @@ typedef struct fg_mtp_ops {
                         fg_error *err);
     fg_status (*commit)(void *context,fg_error *err);
     void *context;
+    /* Optional projected-state commit; count includes the pending input.
+     * When present this replaces restore+replay, not the final commit hook. */
+    fg_status (*retain)(void *context,uint32_t count,fg_error *err);
 } fg_mtp_ops;
 
 fg_status fg_mtp_cycle_greedy(const fg_mtp_ops *ops,uint32_t pending,

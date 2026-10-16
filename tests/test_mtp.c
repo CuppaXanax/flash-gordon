@@ -13,6 +13,8 @@ static int failures;
 typedef struct synthetic {
     uint32_t gdn,ple,kv,tokens;
     struct {uint32_t gdn,ple,kv,tokens;} saved;
+    struct {uint32_t gdn,ple,kv,tokens;} prefix[FG_MTP_MAX_VERIFY];
+    uint32_t retains,replays;
     uint32_t fail;
 } synthetic;
 
@@ -37,11 +39,16 @@ static fg_status restore(void *opaque,fg_error *err){
 static fg_status verify(void *opaque,const uint32_t *inputs,uint32_t count,
                         uint32_t *targets,fg_error *err){
     synthetic *s=opaque;(void)err;
-    for(uint32_t i=0;i<count;i++)targets[i]=decode(s,inputs[i]);
+    for(uint32_t i=0;i<count;i++){
+        targets[i]=decode(s,inputs[i]);
+        s->prefix[i].gdn=s->gdn;s->prefix[i].ple=s->ple;
+        s->prefix[i].kv=s->kv;s->prefix[i].tokens=s->tokens;
+    }
     return s->fail==1u?FG_ERR_IO:FG_OK;
 }
 static fg_status replay(void *opaque,const uint32_t *inputs,uint32_t count,fg_error *err){
     synthetic *s=opaque;(void)err;
+    s->replays++;
     for(uint32_t i=0;i<count;i++)(void)decode(s,inputs[i]);
     return s->fail==2u?FG_ERR_IO:FG_OK;
 }
@@ -49,9 +56,17 @@ static fg_status commit(void *opaque,fg_error *err){
     synthetic *s=opaque;(void)err;
     return s->fail==3u?FG_ERR_IO:FG_OK;
 }
+static fg_status retain(void *opaque,uint32_t count,fg_error *err){
+    synthetic *s=opaque;(void)err;s->retains++;
+    CHECK(count&&count<=FG_MTP_MAX_VERIFY);
+    s->gdn=s->prefix[count-1u].gdn;s->ple=s->prefix[count-1u].ple;
+    s->kv=s->prefix[count-1u].kv;s->tokens=s->prefix[count-1u].tokens;
+    return s->fail==4u?FG_ERR_IO:FG_OK;
+}
 
 static void cycles(void){
     fg_error err={0};
+    for(uint32_t state_only=0;state_only<2u;state_only++)
     for(uint32_t k=1u;k<=FG_MTP_MAX_DRAFT;k++)
     for(uint32_t rejection=0;rejection<=k;rejection++)
     for(uint32_t limit=1u;limit<=k+1u;limit++){
@@ -59,7 +74,8 @@ static void cycles(void){
         uint32_t pending=5u,drafts[FG_MTP_MAX_DRAFT],t=pending;
         for(uint32_t i=0;i<k;i++){t=decode(&oracle,t);drafts[i]=t;}
         if(rejection<k)drafts[rejection]=(drafts[rejection]+1u)%23u;
-        fg_mtp_ops ops={checkpoint,verify,restore,replay,commit,&trial};
+        fg_mtp_ops ops={checkpoint,verify,restore,replay,commit,&trial,NULL};
+        if(state_only){ops.retain=retain;ops.replay=NULL;}
         fg_mtp_result result={0};
         CHECK(fg_mtp_cycle_greedy(&ops,pending,drafts,k,limit,UINT32_MAX,&result,&err)==FG_OK);
         CHECK(result.count<=limit&&result.count>=1u);
@@ -70,19 +86,26 @@ static void cycles(void){
         CHECK(trial.gdn==base.gdn&&trial.ple==base.ple&&trial.kv==base.kv&&trial.tokens==base.tokens);
         CHECK(result.consumed==result.count);
         CHECK(result.accepted==(rejection<limit?rejection:limit));
+        if(state_only)CHECK(trial.replays==0u&&
+            trial.retains==(result.consumed<k+1u?1u:0u));
     }
     for(uint32_t fail=1u;fail<=3u;fail++){
         synthetic trial={.gdn=7u,.ple=3u,.fail=fail};
         uint32_t drafts[]={24u,25u,26u};fg_mtp_result result={0};
-        fg_mtp_ops ops={checkpoint,verify,restore,replay,commit,&trial};
+        fg_mtp_ops ops={checkpoint,verify,restore,replay,commit,&trial,NULL};
         CHECK(fg_mtp_cycle_greedy(&ops,5u,drafts,3u,4u,UINT32_MAX,&result,&err)==FG_ERR_IO);
         CHECK(trial.gdn==7u&&trial.ple==3u&&trial.tokens==0u&&result.count==0u);
     }
     synthetic trial={.gdn=7u,.ple=3u},oracle=trial;
     uint32_t eos=decode(&oracle,5u),drafts[]={eos,1u,2u};
-    fg_mtp_ops ops={checkpoint,verify,restore,replay,commit,&trial};fg_mtp_result result={0};
+    fg_mtp_ops ops={checkpoint,verify,restore,replay,commit,&trial,NULL};fg_mtp_result result={0};
     CHECK(fg_mtp_cycle_greedy(&ops,5u,drafts,3u,4u,eos,&result,&err)==FG_OK);
     CHECK(result.count==1u&&result.tokens[0]==eos&&trial.tokens==1u);
+    trial=(synthetic){.gdn=7u,.ple=3u,.fail=4u};
+    ops=(fg_mtp_ops){checkpoint,verify,restore,replay,commit,&trial,retain};
+    drafts[0]=24u;
+    CHECK(fg_mtp_cycle_greedy(&ops,5u,drafts,3u,4u,UINT32_MAX,&result,&err)==FG_ERR_IO);
+    CHECK(trial.gdn==7u&&trial.ple==3u&&trial.tokens==0u&&result.count==0u);
 }
 
 static void sampling(void){

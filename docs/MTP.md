@@ -7,8 +7,8 @@ only6/8,6/8,5/8,6/8 respectively; every failed case was chat. All four code
 cases passed each arm, but that is not full-model qualification. MTP-off
 same-session comparisons passed8/8 throughout. No speedup is demonstrated:
 best repeat-matched code TPS is30.10 versus30.17 off; chat loses at every k.
-Mismatch cause remains unproven; component tolerance does not certify greedy
-identity. All eight owners were restored, verified and cleaned; the exclusive
+Offline target replay reproduces all nine low-margin top-two swaps; component
+tolerance does not certify greedy identity. All eight owners were restored, verified and cleaned; the exclusive
 lease was explicitly released at15:56:43Z, within the original45-minute grant.
 See [current lease report](../results/hillclimb/MTP_SERVING.md) and
 [raw receipts](../results/hillclimb/mtp-single-session-perf.json).
@@ -74,7 +74,179 @@ files match the prior authentic-pack qualification; its real-tensor proof is
 inherited explicitly, not rerun or presented as new real-model greedy evidence.
 The frozen source excludes subsequent eager-admission and residency-probe work.
 
+### Offline diagnosis and saved-activation prefix commit
+
+The apparent acceptance drop was an accounting mismatch, not evidence of bad
+native conditioning. Comparable fixed-k3 **tokens per verification round** are
+2.275 chat and3.38667 code, versus offline2.3899/3.2422 on different prompts.
+The previously quoted1.26/2.51 counts extra target repair passes and adaptive
+widths. These quantities must not be compared as acceptance measurements.
+The repeat-matched fixed-k3 code round is120.516ms, not90ms; the latter divides
+by physical target passes. At the measured3.38667 tokens/round and29.73051 off
+TPS, break-even is113.912ms/round. No new performance sweep or production lease
+has been used for this diagnosis.
+Its254 emitted tokens came from75 verification rounds plus25 full target
+repairs. Thus90.387ms per physical pass is120.516ms/round multiplied by75/100;
+neither quantity is an isolated N4-kernel measurement. The synthetic block's
+N4/N1 ratio2.41 excludes draft/head rendezvous, transport and target/native
+repair, so it cannot be compared directly with90/33.
+
+Existing code traces also separate rounds by observed outcome:
+
+| Fixed-k3 code outcome | Rounds | Mean complete round, ms |
+|---|---:|---:|
+| All3 drafts accepted, keep4 | 50 | 101.589 |
+| Reject first draft, keep1 | 6 | 140.457 |
+| Accept1, keep2 | 7 | 161.600 |
+| Accept2, keep3 | 10 | 171.013 |
+| Final allowance clips to k2/keep2 | 2 | 137.582 |
+
+All25 repair rounds average158.370ms versus101.589ms for the50 repair-free
+rounds. These are measured outcome-group totals, not isolated target-repair
+savings: routes, retained lengths, native warming and graph recording differ.
+The serial full-ring repair is therefore a real cost, but the logs cannot
+recover separate historical draft/transport/repair/host milliseconds.
+
+The already-required authentic replay records wall time inside each owner
+decode call. Summing the eight owners' medians gives the following diagnostic
+service estimates on .51:
+
+| N | Sum of owner-call medians, ms | Ratio to N1 |
+|---|---:|---:|
+| 1 | 20.3802 | 1.0000 |
+| 2 | 31.0165 | 1.5219 |
+| 3 | 40.5614 | 1.9902 |
+| 4 | 47.4931 | 2.3304 |
+
+These use mixed failure-prefix cohorts, not matched routing/work or a new
+performance sweep. They exclude ring transport, distributed head/native
+drafting and transaction RPCs; call wall time is not pure GPU event time.
+They confirm that target small-N service remains expensive without inventing
+a historical121ms component ledger.
+
+`tools/mtp_diagnose.py` verifies original emitted-token SHA/count receipts,
+joins rounds to their actual requests and reconstructs the frozen schedules.
+Token hashes contain **little-endian** u32 IDs. Two public responses had stripped
+trailing whitespace; reconstructing it matches the original receipts without
+changing or guessing an unverified token sequence. The nine first differences
+are zero-based generated-token indices:
+
+| Arm/case | Index | Off token | On token | Off top2 margin | On top2 margin |
+|---|---:|---:|---:|---:|---:|
+| D3/chat-2 | 80 | 11394 | 90650 | 0.05844307 | 0.06398010 |
+| D3/chat-3 | 83 | 28285 | 34044 | 0.03657532 | 0.03935623 |
+| F1/chat-1 | 57 | 37099 | 42900 | 0.05163956 | 0.02357483 |
+| F1/chat-3 | 72 | 15495 | 76186 | 0.07532501 | 0.02257919 |
+| F2/chat-1 | 12 | 5790 | 2426 | 0.03769684 | 0.00788879 |
+| F2/chat-2 | 80 | 11394 | 90650 | 0.05844307 | 0.08345413 |
+| F2/chat-3 | 86 | 14273 | 5902 | 0.00860786 | 0.09817505 |
+| F3/chat-2 | 80 | 11394 | 90650 | 0.05844307 | 0.06398010 |
+| F3/chat-3 | 86 | 14273 | 5902 | 0.00860786 | 0.04960251 |
+
+An independent native-wrapper/direct-reference replay on all40 authentic
+captured contexts checks43,080 contracted hidden vectors bit-exact, including
+private sessions and keep1/2/3/4 repairs. This checks native conditioning and
+KV repair, **not** whole-target logits or historical greedy identity.
+`tools/mtp_offline.c` replays the target rank-major with authenticated complete
+rank packs and frozen N/keep schedules, collecting logits and recurrent-state
+differences. Discarded speculative future tokens were not logged; the offline
+tool substitutes teacher-forced future tokens and requires all earlier greedy
+predictions and both historical first choices to reproduce before claiming
+historical margins. All nine pairs reproduce, with1272 earlier greedy
+predictions matching. In every pair the winners exchange first and second
+place. Full-vocabulary logit differences reach0.1393–0.4825: this is accumulated
+batch-dependent numerical drift, not a claim that whole-model errors are only
+1e-4. Selected-prefix KL(off||on) is0.001014–0.004841; these failure-conditioned
+samples are **not** an unbiased model-quality gate. All QSA logical frontiers
+agree. Trained rollback/reconstruction and future-column perturbation checks
+provide separate state/causality evidence; matching logits alone does not prove
+every possible state transition correct.
+Across all eight owners and nine failed prefixes,72 trained checks reconstruct
+the complete journal state bit-exact, repeat checkpoint rollback with identical
+HC/recurrent state, and leave the first output row bit-exact when later input
+columns are changed. All16 complete regenerated off/on streams have the same
+SHA256 as the original replay. No rollback/frontier/position failure was found
+in these cases; the reproduced failure is batch-dependent numerical trajectory
+drift crossing the low-margin top2 decision. These checks use256 logical
+tokens, not a262K full-context or whole-ring serving qualification.
+
+The rejected-prefix successor no longer runs the transformer, experts or
+vocabulary head a second time. Each private session eagerly journals the
+verified GDN qkv/z/alpha/beta projections and PLE gated/normalized inputs.
+`fg_owner_mtp_retain` restores the pre-verification recurrent shadows, applies
+only the saved convolution/recurrence inputs through `n_keep`, and truncates QSA
+to that frontier. Original verified hidden vectors are retained. A typed
+`TARGET_KEEP` control broadcasts the retained prefix to every target owner;
+serving deliberately has no full-target replay callback. Legacy/reference
+transaction users can still supply restore/replay. Native `FINISH` repair
+remains necessary and is not replaced by target state commit.
+`n_keep` counts target inputs, including the already-published pending input,
+not just accepted drafts. The guarded target frontier is `first+n_keep`;
+native cache frontier is `first+n_keep-1`. The newly emitted bonus remains
+pending until the next pass.
+
+Retained GDN updates must use the **same small-N recurrence kernel family**
+as verification, even for keep1. Selecting legacy prefill recurrence instead
+introduced a5.7e-6 reconstruction difference during development; the corrected
+same-family full-journal reconstruction is bit-exact in all24 GPU cases.
+The synthetic two-session PLE+five-GDN+QSA block tests first positions0/127,
+N2..4 and every rejected prefix, with duplicate/stale rejection, exact original
+rollback, unchanged hidden vectors and session isolation. Prefix/continuation
+component errors versus independent N1 references are bounded by0.00011635
+maximum state error and6.20e-6 maximum continuation error. These are component
+gates, **not** an exemption from same-binary whole-model greedy identity.
+Run `tools/bench-decode-fusion --q4 --state-commit-test` for this correctness-only
+fixture; it exits before timing sweeps or optional clock controls.
+
+Historical logs recorded round totals, not component milliseconds. Source
+inspection identifies serial native draft/coordinator/head rendezvous, serial
+per-token vocabulary dispatch on each shard, rejected-prefix target replay,
+native KV warming, and alternating verification/repair shapes invalidating
+static command replay. Do not fabricate a numerical historical breakdown.
+New successful-round `MTP_STAGE` records separate draft, preparation,
+verification, target repair, native repair, commit and residual host time;
+`target_replay` must be zero in serving. Optional `FG_DECODE_MS` records expose
+owner input/compute/read/forward and native/vocabulary stages. Offline
+`block_ledger` records measure input/compute/read on one blade; they are not
+historical ring timings or a new TPS claim. A local native draft chain and
+draft/early-verification overlap are not implemented.
+
+Final [diagnosis/provenance](../results/hillclimb/mtp-diagnosis.json) and
+[weight-free evidence](../results/hillclimb/mtp-state-commit-evidence.tar.gz)
+retain raw selected logits,72 trained oracles, binary/shader identities,
+source and experiment scripts. The archive is19,407,395 bytes, SHA256
+`652eea89a06a66a3b35f293749917574d2694f53cfb6e5738e14440a2f3f3af4`.
+Its source bundle SHA256 is
+`007046094abc005e1061e7bb31ec6efd111e9fea7327a915b8adbc55ef3cd1e5`;
+all523 C/header/include/Python/shader/Makefile inputs match the final worktree.
+All320 SPIRV files match the original native-oracle build. Eight final TCP
+runs validate891 successful stage ledgers and7128 owner ledgers, with
+`target_replay=0` and disjoint sums. These are numerical-double correctness
+timers, not hardware performance measurements. Use `stdbuf -eL` when combining
+forked test stderr; unbuffered shared-log fragments can interleave and are
+retained separately, not treated as complete timer records.
+
+Build the offline helpers with
+`make tools/mtp-tokens tools/mtp-offline tools/mtp-native-replay`.
+`mtp-tokens` supplies authenticated token/vocabulary input, `mtp-offline`
+provides `prepare`, `stage`, `oracle`, `head` and plan validation, and
+`mtp-native-replay` checks native wrapper/reference conditioning.
+`tools/mtp_ngram_source.py` authenticates the full ngram source used during
+preparation. Their argument usage and the archived experiment scripts define
+the replay; reconstructed rank-pack identities are listed in the JSON.
+No trained weights are redistributed in the archive. The shared local source
+packs remain intact. The .51 owned root was removed and absence checked twice
+at18:33:58Z, with no owned processes/test listeners or governor changes;
+production was untouched.
+
 ### Rank7 two-session memory budget
+
+**State-only commit successor:** the historical figures below predate the new
+projected-activation journal. Add263,680 bytes/GDN layer/session and327,680
+bytes/session on the PLE owner. Thus rank7 dual adds2,109,440 bytes (complete
+projection14,756,598,352, still rejected); relocated rank6 dual adds2,636,800
+bytes (projection13,536,171,088; cap margin959,343,536). These are accounting
+projections, not a new authentic full-context dual-session admission.
 
 **Real-rank load on .52: one session admitted; two sessions rejected before
 readiness under the unchanged cap.** All152 trained tensor spans are reconstructed

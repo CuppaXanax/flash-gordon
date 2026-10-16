@@ -1,5 +1,69 @@
 # MTP serving foundation on the promoted multisession base
 
+## Offline diagnosis and state-only commit — 2026-10-16
+
+**Default off; no promotion or new production lease.** All new numerical work
+uses .51 and authenticated trained-span-exact reconstructions of the sealed
+mix04 pack. Their new whole-file hashes authenticate those reconstructions,
+not the byte layout/padding of original production FGWs.
+
+All nine historical first-divergence choices reproduce, with1272 preceding
+greedy predictions matching. Every mismatch exchanges the same two highest
+logits. Off margins are0.008607864–0.07532501; on margins0.007888794–0.09817505.
+The per-case IDs, indices and both margins are in [MTP design](../../docs/MTP.md).
+Python independently checks all248320 raw logits per vector and derives
+KL(off||on)0.001014–0.004841. These are selected failure prefixes, **not** an
+unbiased KL/top1 quality gate. Component1e-4 tolerance cannot waive greedy
+identity. Native wrapper/reference conditioning is bit-exact over43,080
+contracted steps on40 retained contexts, including private slots/keep1..4.
+All72 trained owner/failure-prefix oracles pass full-journal reconstruction
+and repeated-rollback HC/state equality bit-exact. Changing later columns
+leaves the first output row unchanged; all16 regenerated stream SHAs match.
+No rollback/frontier/position defect was found in these reproduced cases;
+the observed failure is accumulated batch-path numerical drift.
+
+The reported acceptance collapse used inconsistent denominators: fixed-k3
+ring tokens/verification are2.275 chat /3.38667 code, versus offline
+2.3899/3.2422 on different cohorts. Adaptive1.26/2.51 includes target repair
+passes. Fixed-k3 code has254 emitted tokens,75 rounds and25 extra target
+repairs:120.516ms/round versus90.387ms/physical target pass. Break-even at the
+measured yield/off TPS is113.912ms/round. Neither90/33 nor the synthetic block
+N4/N1 ratio2.41 is a breakdown of full-round costs.
+Repair-free code rounds average101.589ms (50); repair rounds158.370ms (25).
+They are different outcome cohorts, not isolated component timings. The
+authentic one-blade replay's summed owner-call medians for N1/2/3/4 are
+20.380/31.016/40.561/47.493ms (N4/N1=2.330). This excludes ring/head/native
+RPCs and is diagnostic, not a new matched performance sweep or TPS result.
+
+The successor keeps verified HC, journals projected GDN/PLE inputs and
+reconstructs only retained recurrent state, then truncates QSA. Typed
+`TARGET_KEEP` applies this on every owner. Serving has no target replay
+callback; native KV repair remains. The24 two-slot GPU block cases pass
+full-journal bit-exact reconstruction, exact original rollback, unchanged HC,
+stale rejection and static replay retention, with3,292,160 eagerly asserted
+journal bytes and no repeat growth. C17-Werror, transaction/wire/native and
+all eight two-session numerical-double TCP cases pass.
+
+Historical component timings were not recorded. Serial draft/coordinator/head
+rendezvous, serial per-token vocabulary calls, full rejected-prefix replay and
+verification/repair shape switching are visible in source. New `MTP_STAGE`
+separates draft, preparation, verification, target repair, native repair,
+commit and residual host; optional owner/native/vocabulary timers expose the
+sub-stages. Do not invent historical per-component milliseconds from TPS.
+The local draft chain, draft/early-verification overlap, trained whole-model
+greedy alignment and authentic full-context dual-session fit remain unqualified.
+Receipts: [diagnosis](mtp-diagnosis.json) and
+[weight-free evidence](mtp-state-commit-evidence.tar.gz),19,407,395 bytes,
+SHA256 `652eea89a06a66a3b35f293749917574d2694f53cfb6e5738e14440a2f3f3af4`.
+Final checked source bundle007046094abc005e;523 source inputs match, all320
+SPIRV files match the original native-oracle build. The eight final TCP runs
+check891 disjoint successful-round and7128 owner timer ledgers, all with zero
+serving target replay. These timers validate accounting on numerical doubles,
+not hardware performance. Eight Python tests and token partial-header rejection
+also pass. Logical256-token trained checks do not qualify262K admission.
+.51 released18:33:58Z: owned root absent twice, no owned process or test
+listener, governor unchanged. Shared local retained packs are preserved.
+
 ## Frozen single-session lease — 2026-10-16: FAILED_GREEDY
 
 Frozen311be40 / releasec9d0a7ad, sessions1/mask330, stock recipe. Exclusive
@@ -16,7 +80,8 @@ scratch removal passed; explicit release15:56:43Z. No promotion.
 | k3 | 6/8 | 29.21/29.73 | 17.19/28.12 | 2.28/3.39 |
 
 All four code cases passed each arm; failures are chat. All same-session off
-arms passed8/8. Cause is unproven. There is no demonstrated speedup and no60TPS
+arms passed8/8. Offline followup above reproduces the low-margin swaps;
+the failed greedy gate is unchanged. There is no demonstrated speedup and no60TPS
 projection. Each off number matches request/repeat before/after; TPS includes
 repair. Tokens/round counts speculative verification rounds only; including
 repair passes reduces yields to1.18–1.31 chat and1.75–2.54 code.

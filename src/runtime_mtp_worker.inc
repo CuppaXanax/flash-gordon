@@ -139,9 +139,13 @@ static fg_status mtp_slice_partial(fg_output_slice *slice,
     *partial=(fg_mtp_head_partial){.kind=work->kind,.source_rank=(uint8_t)self,
         .destination_rank=0u,.first_token=work->first_token,.count=work->count};
     fg_status status=FG_OK;
+    double start=dispatch_ts();
     for(uint32_t i=0;status==FG_OK&&i<work->count;i++)
         status=fg_output_slice_run_hidden(slice,work->hidden+(uint64_t)i*FG_HIDDEN_SIZE,
             &partial->values[i],&partial->ids[i],err);
+    if(decode_ms_enabled())fprintf(stderr,
+        "MTP_VOCAB_STAGE rank=%u first=%u kind=%u n=%u serial_calls=%u compute_ms=%.3f status=%u\n",
+        self,work->first_token,work->kind,work->count,work->count,dispatch_ts()-start,status);
     return status;
 }
 
@@ -213,6 +217,7 @@ static fg_status mtp_target_memory_prepare(fg_owner_executor *owner,
     fg_expert_executor *expert,uint32_t sessions,fg_vk_context *vk,uint64_t cap,
     fg_error *err){
     fg_status status=fg_expert_prepare_small_n_scratch(expert,err);
+    if(status==FG_OK)status=fg_owner_mtp_prepare(owner,sessions,err);
     for(uint32_t slot=0;status==FG_OK&&slot<sessions;slot++){
         fg_owner_session_checkpoint checkpoint={0};
         status=fg_owner_session_device_snapshot(owner,slot,&checkpoint,err);
@@ -231,14 +236,16 @@ static fg_status mtp_target_memory_prepare(fg_owner_executor *owner,
 static fg_status handle_mtp_native_work(fg_fabric *fabric,fg_owner_executor *owner,
     const fg_manifest *manifest,
     uint32_t self,uint64_t session,uint32_t peer,const fg_frame_header *header,
-    const uint8_t *payload,uint32_t bytes,layer_work_context *context,fg_error *err){
-    fg_mtp_native_work work;char overlay[FG_MTP_OVERLAY_PATH_MAX+1u];
+    const uint8_t *payload,uint32_t bytes,layer_work_context *context,
+    depthb_owner_runtime *depthb,fg_error *err){
+    fg_mtp_native_work work={0};char overlay[FG_MTP_OVERLAY_PATH_MAX+1u];
     char embedding_file[FG_MTP_OVERLAY_PATH_MAX+1u];
     fg_status status=fg_mtp_native_work_decode(&work,context->mtp_tokens,
         FG_PREFILL_MAX_TOKENS,overlay,embedding_file,payload,bytes,err);
     uint64_t request=fg_frame_request_id(header);
     bool config=status==FG_OK&&work.operation==FG_MTP_NATIVE_CONFIG;
     bool prepare=status==FG_OK&&work.operation==FG_MTP_NATIVE_PREPARE;
+    bool retain=status==FG_OK&&work.operation==FG_MTP_NATIVE_TARGET_KEEP;
     if(status==FG_OK&&config&&(!context->vk||context->tokens<FG_MTP_MAX_VERIFY)){
         fg_error_set(err,FG_ERR_UNAVAILABLE,"MTP requires a decode owner with N=4 input storage");
         status=FG_ERR_UNAVAILABLE;
@@ -253,7 +260,7 @@ static fg_status handle_mtp_native_work(fg_fabric *fabric,fg_owner_executor *own
         }
     }
     if(status==FG_OK&&(peer!=0u||(!config&&(!session||request!=session))||
-       (!config&&!prepare&&self!=fg_mtp_native_owner(context->mtp_native)))){
+       (!config&&!prepare&&!retain&&self!=fg_mtp_native_owner(context->mtp_native)))){
         fg_error_set(err,FG_ERR_MISMATCH,"stale or misrouted native MTP work");
         status=FG_ERR_MISMATCH;
     }
@@ -265,7 +272,16 @@ static fg_status handle_mtp_native_work(fg_fabric *fabric,fg_owner_executor *own
         }else status=mtp_target_memory_prepare(owner,context->dispatch.expert,
             work.argument,context->vk,manifest->residency_cap_bytes,err);
     }
-    if(status==FG_OK&&prepare&&self!=fg_mtp_native_owner(context->mtp_native))
+    double run_start=dispatch_ts();
+    if(status==FG_OK&&retain){
+        if(!fg_mtp_native_enabled(context->mtp_native)){
+            fg_error_set(err,FG_ERR_MISMATCH,"MTP retained prefix before configuration");
+            status=FG_ERR_MISMATCH;
+        }else status=depthb_owner_retain(depthb,fg_frame_session_slot(header),
+            work.first_token,work.argument,work.count,err);
+        ack=(fg_mtp_native_ack){.operation=work.operation,.first_token=work.first_token,
+            .count=work.count,.frontier=work.first_token+work.count};
+    }else if(status==FG_OK&&prepare&&self!=fg_mtp_native_owner(context->mtp_native))
         ack=(fg_mtp_native_ack){.operation=work.operation};
     else if(status==FG_OK)status=fg_mtp_native_run(context->mtp_native,
         fg_frame_session_slot(header),&work,hidden,&ack,err);
@@ -275,13 +291,22 @@ static fg_status handle_mtp_native_work(fg_fabric *fabric,fg_owner_executor *own
         ack=(fg_mtp_native_ack){.operation=work.operation,.status=status};
         status=FG_OK;
     }
-    if(status==FG_OK&&work.operation==FG_MTP_NATIVE_DRAFT)
-        return mtp_head_fanout(fabric,manifest,self,request,FG_MTP_HEAD_DRAFT,
+    double run_end=dispatch_ts();
+    if(status==FG_OK&&work.operation==FG_MTP_NATIVE_DRAFT){
+        status=mtp_head_fanout(fabric,manifest,self,request,FG_MTP_HEAD_DRAFT,
             work.first_token,1u,hidden,context,err);
+        if(decode_ms_enabled())fprintf(stderr,
+            "MTP_NATIVE_STAGE rank=%u first=%u op=%u run_ms=%.3f fanout_ms=%.3f\n",
+            self,work.first_token,work.operation,run_end-run_start,dispatch_ts()-run_end);
+        return status;
+    }
     uint8_t wire[FG_MTP_NATIVE_ACK_BYTES];
     if(status==FG_OK)status=fg_mtp_native_ack_encode(wire,&ack,err);
     if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_CONTROL,
         FG_MSG_MTP_NATIVE_ACK,request,fg_frame_sequence(header),0u,wire,sizeof(wire),err);
+    if(decode_ms_enabled()&&(retain||work.operation==FG_MTP_NATIVE_FINISH))
+        fprintf(stderr,"MTP_NATIVE_STAGE rank=%u first=%u op=%u run_ms=%.3f ack_ms=%.3f status=%u\n",
+            self,work.first_token,work.operation,run_end-run_start,dispatch_ts()-run_end,status);
     return status;
 }
 
@@ -289,6 +314,7 @@ static fg_status handle_mtp_verify_work(fg_fabric *fabric,fg_owner_executor *own
     const fg_manifest *manifest,uint32_t self,uint64_t session,uint32_t peer,
     const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,
     layer_work_context *context,depthb_owner_runtime *depthb,fg_error *err){
+    double t_start=dispatch_ts();
     uint32_t slot=fg_frame_session_slot(header);
     uint32_t flags=ntohl(header->flags_be)&0x00ffffffu;
     if(!owner||!fg_mtp_native_enabled(context->mtp_native)||
@@ -339,6 +365,7 @@ static fg_status handle_mtp_verify_work(fg_fabric *fabric,fg_owner_executor *own
             (uint64_t)work.token_count*FG_NGRAM_EMBED_VALUES*4u,err);
     }
     fg_vk_tensor *output=NULL;
+    double t_input=dispatch_ts();
     if(status==FG_OK&&work.token_count==1u)
         status=fg_owner_decode_block_chained(owner,work.layer,last,work.first_token,
             work.positions,input,has_ngram?context->ngram_tensor:NULL,chained_decode_expert,
@@ -347,11 +374,13 @@ static fg_status handle_mtp_verify_work(fg_fabric *fabric,fg_owner_executor *own
         status=fg_owner_decode_small_n(owner,work.layer,last,work.first_token,
             work.positions,work.token_count,input,has_ngram?context->ngram_tensor:NULL,
             mtp_small_expert,context->decode_dispatch.expert,&output,err);
+    double t_compute=dispatch_ts();
     if(status==FG_OK)status=fg_vk_tensor_read(output,0u,context->hyper_out,
         (uint64_t)work.token_count*FG_HYPER_WIDTH*4u,err);
     for(uint32_t i=0;status==FG_OK&&i<work.token_count;i++)
         status=validate_block_hidden(self,work.first_token+i,last,
             context->hyper_out+(uint64_t)i*FG_HYPER_WIDTH,err);
+    double t_read=dispatch_ts();
     if(status==FG_OK&&last+1u<FG_LAYER_COUNT){
         fg_prefill_layer_work next={.layer=(uint8_t)(last+1u),.source_rank=(uint8_t)self,
             .destination_rank=manifest->layer_owner[last+1u],.first_token=work.first_token,
@@ -387,6 +416,15 @@ static fg_status handle_mtp_verify_work(fg_fabric *fabric,fg_owner_executor *own
         if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,
             FG_MSG_MTP_VERIFY_RESULT,request,
             work.first_token*FG_LAYER_COUNT+FG_LAYER_COUNT-1u,flags,wire,sizeof(wire),err);
+    }
+    if(decode_ms_enabled()){
+        double end=dispatch_ts();
+        fprintf(stderr,
+            "MTP_VERIFY_RANK rank=%u first=%u n=%u replay=%u input_ms=%.3f compute_ms=%.3f "
+            "read_ms=%.3f forward_or_head_ms=%.3f total_ms=%.3f status=%d\n",
+            self,work.first_token,work.token_count,(flags&FG_MTP_VERIFY_REPLAY)!=0u,
+            t_input-t_start,t_compute-t_input,t_read-t_compute,end-t_read,
+            end-t_start,(int)status);
     }
     return status;
 }

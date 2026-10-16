@@ -21,7 +21,7 @@ static fg_status malformed(fg_error *err,const char *what){
     fg_error_set(err,FG_ERR_FORMAT,"invalid MTP %s",what);return FG_ERR_FORMAT;
 }
 static bool operation_valid(fg_mtp_native_operation op){
-    return op>=FG_MTP_NATIVE_CONFIG&&op<=FG_MTP_NATIVE_PREPARE;
+    return op>=FG_MTP_NATIVE_CONFIG&&op<=FG_MTP_NATIVE_TARGET_KEEP;
 }
 static bool target_shape(const fg_mtp_target_work *w){
     return w&&w->source_rank<FG_RANK_COUNT&&w->destination_rank<FG_RANK_COUNT&&
@@ -185,6 +185,12 @@ static fg_status native_shape(const fg_mtp_native_work *w,uint32_t *rows,
             if(w->first_token||w->count||w->limit||
                !w->argument||w->argument>2u)
                 return malformed(err,"session admission");
+            break;
+        case FG_MTP_NATIVE_TARGET_KEEP:
+            if(!w->first_token||w->argument<2u||w->argument>FG_MTP_MAX_VERIFY||
+               !w->count||w->count>=w->argument||w->limit||
+               w->first_token>FG_NATIVE_CONTEXT-w->argument)
+                return malformed(err,"target retained prefix");
             break;
         default:return malformed(err,"native operation");
     }

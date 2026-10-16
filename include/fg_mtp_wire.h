@@ -29,7 +29,8 @@ typedef enum fg_mtp_native_operation {
     FG_MTP_NATIVE_DRAFT = 3,
     FG_MTP_NATIVE_FINISH = 4,
     FG_MTP_NATIVE_ADVANCE = 5,
-    FG_MTP_NATIVE_PREPARE = 6
+    FG_MTP_NATIVE_PREPARE = 6,
+    FG_MTP_NATIVE_TARGET_KEEP = 7
 } fg_mtp_native_operation;
 
 /* FINISH has count-1 token IDs; CONFIG has overlay and target-embedding paths.

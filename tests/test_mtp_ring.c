@@ -17,6 +17,7 @@ struct fg_model {uint32_t rank;};
 struct fg_owner_executor {
     uint32_t slot,rank,pending_layer,pending_first,pending_count;
     uint32_t frontier[2][FG_LAYER_COUNT];
+    uint32_t verified_first[2],verified_count[2],verified_lo[2],verified_hi[2];
     fg_vk_tensor *input,*output;
     fg_expert_result results[FG_GROUP_SIZE];
 };
@@ -99,7 +100,7 @@ fg_status __wrap_fg_owner_qsa_frontier(const fg_owner_executor *o,uint32_t s,
     uint32_t tokens[FG_LAYER_COUNT]){memcpy(tokens,o->frontier[s],FG_LAYER_COUNT*4u);return FG_OK;}
 fg_status __wrap_fg_owner_session_device_snapshot(fg_owner_executor *o,uint32_t s,
     fg_owner_session_checkpoint *c,fg_error *e){
-    (void)e;memset(c,0,sizeof(*c));c->valid=true;c->session=s;
+    (void)e;memset(c,0,sizeof(*c));c->valid=true;c->device=true;c->session=s;
     memcpy(c->qsa_tokens,o->frontier[s],sizeof(c->qsa_tokens));return FG_OK;
 }
 fg_status __wrap_fg_owner_session_rollback(fg_owner_executor *o,
@@ -108,6 +109,21 @@ fg_status __wrap_fg_owner_session_rollback(fg_owner_executor *o,
     memcpy(o->frontier[c->session],c->qsa_tokens,sizeof(c->qsa_tokens));return FG_OK;
 }
 void __wrap_fg_owner_session_snapshot_release(fg_owner_session_checkpoint *c){c->valid=false;}
+fg_status __wrap_fg_owner_mtp_prepare(fg_owner_executor *o,uint32_t sessions,fg_error *e){
+    (void)o;(void)e;VERIFY(sessions&&sessions<=2u);return FG_OK;
+}
+fg_status __wrap_fg_owner_mtp_retain(fg_owner_executor *o,
+    const fg_owner_session_checkpoint *c,uint32_t first,uint32_t verified,
+    uint32_t keep,fg_error *e){
+    (void)e;uint32_t slot=c->session;
+    VERIFY(c->valid&&c->device&&slot<2u&&keep&&keep<verified);
+    VERIFY(o->verified_first[slot]==first&&o->verified_count[slot]==verified);
+    for(uint32_t l=o->verified_lo[slot];l<=o->verified_hi[slot];l++){
+        VERIFY(o->frontier[slot][l]==first+verified&&c->qsa_tokens[l]==first);
+        o->frontier[slot][l]=first+keep;
+    }
+    o->slot=slot;return FG_OK;
+}
 fg_status __wrap_fg_expert_decode_chain_ready(fg_expert_executor *x,uint32_t l,fg_error *e){
     (void)x;(void)l;(void)e;return FG_OK;
 }
@@ -125,7 +141,10 @@ static fg_status toy_block(fg_owner_executor *o,uint32_t first,uint32_t last,
 fg_status __wrap_fg_owner_decode_small_n(fg_owner_executor *o,uint32_t first,
     uint32_t last,uint32_t token,const uint32_t *p,uint32_t n,const fg_vk_tensor *in,
     const fg_vk_tensor *ng,fg_owner_expert_small_fn fn,void *ctx,fg_vk_tensor **out,fg_error *e){
-    (void)p;(void)ng;(void)fn;(void)ctx;return toy_block(o,first,last,token,n,in,out,e);
+    (void)p;(void)ng;(void)fn;(void)ctx;
+    o->verified_first[o->slot]=token;o->verified_count[o->slot]=n;
+    o->verified_lo[o->slot]=first;o->verified_hi[o->slot]=last;
+    return toy_block(o,first,last,token,n,in,out,e);
 }
 fg_status __wrap_fg_owner_decode_block_chained(fg_owner_executor *o,uint32_t first,
     uint32_t last,uint32_t token,const uint32_t p[3],const fg_vk_tensor *in,
@@ -496,7 +515,7 @@ static int run_rank(fg_manifest *m,uint32_t rank,uint32_t native_owner){
             fg_status status=FG_ERR_FORMAT;
             if(type==FG_MSG_MTP_NATIVE_WORK)
                 status=handle_mtp_native_work(f,&owner,m,rank,nonce[slot],peer,&header,
-                    context.result_wire,bytes,&context,&e);
+                    context.result_wire,bytes,&context,&depthb,&e);
             else if(type==FG_MSG_MTP_PREFILL_WORK)
                 status=handle_prefill_layer_work(f,&owner,m,rank,nonce[slot],peer,
                     &header,context.result_wire,bytes,&context,&e);

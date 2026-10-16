@@ -108,6 +108,15 @@ fg_status fg_owner_session_rollback(fg_owner_executor *executor,
                                     const fg_owner_session_checkpoint *snapshot,
                                     fg_error *err);
 void fg_owner_session_snapshot_release(fg_owner_session_checkpoint *snapshot);
+/* Eagerly provision a four-input journal per private session before readiness.
+ * Retain 1..verified inputs from the current journal and its device checkpoint;
+ * keep==verified is useful for checking exact full-state reconstruction.
+ * QSA is truncated, GDN/PLE use saved projections with the verification kernel
+ * family, and transformer/expert weights and target HC are not recomputed. */
+fg_status fg_owner_mtp_prepare(fg_owner_executor *executor,uint32_t sessions,fg_error *err);
+fg_status fg_owner_mtp_retain(fg_owner_executor *executor,
+    const fg_owner_session_checkpoint *snapshot,uint32_t first,uint32_t verified,
+    uint32_t keep,fg_error *err);
 bool fg_owner_owns_layer(const fg_owner_executor *executor,uint32_t layer);
 fg_vk_tensor *fg_owner_prefill_input(fg_owner_executor *executor);
 uint64_t fg_owner_qsa_host_bytes(const fg_owner_executor *executor);

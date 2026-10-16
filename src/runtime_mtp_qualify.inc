@@ -132,7 +132,7 @@ static fg_status mtpq_greedy(fg_runtime *r,const mtpq_case *c,const char *dir,
         uint32_t draft[3];memcpy(draft,proposals+(emitted-1u)*3u,k*4u);
         /* Independent of acceptance statistics: force real rejected-state work. */
         if(cycles==0u)draft[0]=(c->token[emitted]+1u)%FG_Q38_VOCAB_SIZE;
-        fg_mtp_ops ops={mtpq_checkpoint,mtpq_forward,mtpq_restore,mtpq_replay,mtpq_commit,&v};
+        fg_mtp_ops ops={mtpq_checkpoint,mtpq_forward,mtpq_restore,mtpq_replay,mtpq_commit,&v,NULL};
         fg_mtp_result result;
         s=fg_mtp_cycle_greedy(&ops,pending,draft,k,256u-emitted,UINT32_MAX,&result,err);
         if(s!=FG_OK)break;

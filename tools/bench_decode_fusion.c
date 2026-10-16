@@ -541,8 +541,147 @@ static void test_small_sessions(fg_owner_executor *owner,fg_expert_executor *exp
         "\"bit_exact\":true,\"other_slot_replay_retained\":true,\"n1_transition_isolated\":true}\n");
 }
 
+static bool state_close(const fg_owner_session_checkpoint *a,
+    const fg_owner_session_checkpoint *b,float *maximum){
+    if(a->gdn_count!=b->gdn_count||a->ple_values!=b->ple_values||
+       memcmp(a->qsa_tokens,b->qsa_tokens,sizeof(a->qsa_tokens)))return false;
+    bool ok=!a->ple_values||close_values(a->ple_data,b->ple_data,a->ple_values,maximum);
+    for(uint32_t i=0;i<a->gdn_count;i++){
+        if(a->gdn[i].values!=b->gdn[i].values)return false;
+        ok=close_values(a->gdn[i].data,b->gdn[i].data,a->gdn[i].values,maximum)&&ok;
+    }
+    return ok;
+}
+
+static fg_vk_tensor *commit_fixture_run(fg_owner_executor *owner,fg_expert_executor *expert,
+    uint32_t first,uint32_t count,const float *hidden,const fg_vk_tensor *ngram,fg_error *error){
+    uint32_t positions[12];
+    for(uint32_t t=0;t<count;t++)for(uint32_t axis=0;axis<3u;axis++)
+        positions[t*3u+axis]=first+t;
+    fg_vk_tensor *input=count==1u?fg_owner_session_input(owner,fg_owner_active_session(owner)):
+        fg_owner_prefill_input(owner),*output=NULL;
+    check(fg_vk_tensor_write(input,0,hidden,count*FG_HYPER_WIDTH*4u,error),error);
+    if(count==1u)check(fg_owner_decode_block_chained(owner,0u,5u,first,positions,input,
+        ngram,inline_expert,expert,&output,error),error);
+    else check(fg_owner_decode_small_n(owner,0u,5u,first,positions,count,input,
+        ngram,small_expert,expert,&output,error),error);
+    return output;
+}
+
+static void test_state_commit(fg_owner_executor *owner,fg_expert_executor *expert,
+    fg_vk_context *vk,fg_error *error){
+    float hidden[2][4u*FG_HYPER_WIDTH],ng[4u*FG_HIDDEN_SIZE];
+    float gold[2][FG_HYPER_WIDTH],actual[4u*FG_HYPER_WIDTH],saved[4u*FG_HYPER_WIDTH];
+    for(uint32_t s=0;s<2u;s++)for(uint32_t i=0;i<4u*FG_HYPER_WIDTH;i++)
+        hidden[s][i]=sinf(i*.017f+s*.31f)*.13f;
+    for(uint32_t i=0;i<4u*FG_HIDDEN_SIZE;i++)ng[i]=sinf(i*.031f)*.1f;
+    fg_vk_tensor *ngram=NULL;
+    check(fg_vk_tensor_create(vk,sizeof(ng),&ngram,error),error);
+    check(fg_vk_tensor_write(ngram,0,ng,sizeof(ng),error),error);
+    fg_vk_memory_stats before,after,again;
+    fg_vk_get_memory_stats(vk,&before);
+    check(fg_owner_mtp_prepare(owner,2u,error),error);
+    fg_vk_get_memory_stats(vk,&after);
+    check(fg_owner_mtp_prepare(owner,2u,error),error);
+    fg_vk_get_memory_stats(vk,&again);
+    bool eager=after.requested_live_bytes-before.requested_live_bytes==3292160u&&
+        again.requested_live_bytes==after.requested_live_bytes;
+    printf("{\"kind\":\"state_journal_memory\",\"sessions\":2,\"bytes\":%llu,"
+        "\"repeat_prepare_no_growth\":%s}\n",
+        (unsigned long long)(after.requested_live_bytes-before.requested_live_bytes),eager?"true":"false");
+    if(!eager)exit(1);
+    for(uint32_t warm=0u;warm<2u;warm++){
+        uint32_t first=warm?127u:0u;
+        fg_owner_session_checkpoint initial[2]={{0},{0}};
+        for(uint32_t s=0;s<2u;s++){
+            check(fg_owner_set_active_session(owner,s,error),error);
+            for(uint32_t p=0;p<first;){
+                uint32_t n=first-p<4u?first-p:4u;
+                (void)commit_fixture_run(owner,expert,p,n,hidden[s],ngram,error);p+=n;
+            }
+            check(fg_owner_session_snapshot(owner,s,&initial[s],error),error);
+        }
+        for(uint32_t n=2u;n<=4u;n++)for(uint32_t keep=1u;keep<n;keep++){
+            fg_owner_session_checkpoint expected[2]={{0},{0}},continued[2]={{0},{0}};
+            fg_owner_session_checkpoint device[2]={{0},{0}},full[2]={{0},{0}};
+            bool journal_exact[2]={false,false};
+            fg_vk_tensor *last_output=NULL;
+            for(uint32_t s=0;s<2u;s++){
+                check(fg_owner_session_rollback(owner,&initial[s],error),error);
+                check(fg_owner_set_active_session(owner,s,error),error);
+                (void)commit_fixture_run(owner,expert,first,keep,hidden[s],ngram,error);
+                check(fg_owner_session_snapshot(owner,s,&expected[s],error),error);
+                fg_vk_tensor *out=commit_fixture_run(owner,expert,first+keep,1u,
+                    hidden[s]+3u*FG_HYPER_WIDTH,ngram,error);
+                check(fg_vk_tensor_read(out,0,gold[s],sizeof(gold[s]),error),error);
+                check(fg_owner_session_snapshot(owner,s,&continued[s],error),error);
+                check(fg_owner_session_rollback(owner,&initial[s],error),error);
+                check(fg_owner_session_device_snapshot(owner,s,&device[s],error),error);
+                last_output=commit_fixture_run(owner,expert,first,n,hidden[s],ngram,error);
+                check(fg_owner_session_snapshot(owner,s,&full[s],error),error);
+                check(fg_owner_mtp_retain(owner,&device[s],first,n,n,error),error);
+                fg_owner_session_checkpoint rebuilt={0};
+                check(fg_owner_session_snapshot(owner,s,&rebuilt,error),error);
+                journal_exact[s]=same_state(&full[s],&rebuilt);
+                fg_owner_session_snapshot_release(&rebuilt);
+                check(fg_owner_session_rollback(owner,&device[s],error),error);
+                last_output=commit_fixture_run(owner,expert,first,n,hidden[s],ngram,error);
+            }
+            for(uint32_t s=0;s<2u;s++){
+                check(fg_vk_tensor_read(last_output,0,saved,n*FG_HYPER_WIDTH*4u,error),error);
+                uint32_t replay_slot=s*(FG_VK_OWNER_STATIC_SLOTS/FG_OWNER_SESSION_MAX);
+                bool cached=fg_vk_static_recorded(vk,replay_slot);
+                check(fg_owner_mtp_retain(owner,&device[s],first,n,keep,error),error);
+                cached=cached&&fg_vk_static_recorded(vk,replay_slot);
+                check(fg_vk_tensor_read(last_output,0,actual,n*FG_HYPER_WIDTH*4u,error),error);
+                bool untouched=!memcmp(saved,actual,n*FG_HYPER_WIDTH*4u);
+                fg_owner_session_checkpoint result={0},other={0};
+                check(fg_owner_session_snapshot(owner,s,&result,error),error);
+                float max_state=0.f,max_output=0.f;
+                bool ok=state_close(&expected[s],&result,&max_state);
+                fg_owner_session_snapshot_release(&result);
+                if(s==0u){
+                    check(fg_owner_session_snapshot(owner,1u,&other,error),error);
+                    ok=ok&&same_state(&full[1],&other);
+                    fg_owner_session_snapshot_release(&other);
+                }
+                bool stale=fg_owner_mtp_retain(owner,&device[s],first,n,keep,error)==FG_ERR_MISMATCH;
+                memset(error,0,sizeof(*error));
+                fg_vk_tensor *out=commit_fixture_run(owner,expert,first+keep,1u,
+                    hidden[s]+3u*FG_HYPER_WIDTH,ngram,error);
+                check(fg_vk_tensor_read(out,0,actual,FG_HYPER_WIDTH*4u,error),error);
+                ok=close_values(gold[s],actual,FG_HYPER_WIDTH,&max_output)&&ok;
+                check(fg_owner_session_snapshot(owner,s,&result,error),error);
+                ok=state_close(&continued[s],&result,&max_state)&&ok;
+                fg_owner_session_snapshot_release(&result);
+                check(fg_owner_session_rollback(owner,&device[s],error),error);
+                check(fg_owner_session_snapshot(owner,s,&result,error),error);
+                bool restored=same_state(&initial[s],&result);
+                fg_owner_session_snapshot_release(&result);
+                printf("{\"kind\":\"state_commit_test\",\"first\":%u,\"n\":%u,"
+                    "\"keep\":%u,\"slot\":%u,\"max_abs_state\":%.9g,"
+                    "\"max_abs_continuation\":%.9g,\"hc_untouched\":%s,"
+                    "\"stale_rejected\":%s,\"rollback_exact\":%s,"
+                    "\"journal_full_state_exact\":%s,\"static_replay_retained\":%s,\"tolerance_ok\":%s}\n",
+                    first,n,keep,s,max_state,max_output,untouched?"true":"false",
+                    stale?"true":"false",restored?"true":"false",
+                    journal_exact[s]?"true":"false",cached?"true":"false",ok?"true":"false");
+                if(!ok||!untouched||!stale||!restored||!journal_exact[s]||!cached)exit(1);
+            }
+            for(uint32_t s=0;s<2u;s++){
+                fg_owner_session_snapshot_release(&expected[s]);
+                fg_owner_session_snapshot_release(&continued[s]);
+                fg_owner_session_snapshot_release(&device[s]);
+                fg_owner_session_snapshot_release(&full[s]);
+            }
+        }
+        for(uint32_t s=0;s<2u;s++)fg_owner_session_snapshot_release(&initial[s]);
+    }
+    fg_vk_tensor_destroy(ngram);
+}
+
 int main(int argc,char **argv){
-    bool q4=false,intrusive=false,clocks=true,rollback_test=false,small_n=false,small_test=false,dense_bench=false,dense_only=false,session_test=false,mixed_experts=false;
+    bool q4=false,intrusive=false,clocks=true,rollback_test=false,small_n=false,small_test=false,dense_bench=false,dense_only=false,session_test=false,mixed_experts=false,state_test=false;
     uint32_t warmup=256u,iterations=64u,windows=9u,batch=1u;
     uint32_t small_wg=0u,small_rows=0u;
     const char *dump=NULL,*routing_trace=NULL;
@@ -557,6 +696,7 @@ int main(int argc,char **argv){
         else if(strcmp(argv[i],"--rollback-test")==0)rollback_test=true;
         else if(strcmp(argv[i],"--small-n")==0)small_n=true;
         else if(strcmp(argv[i],"--session-test")==0)session_test=true;
+        else if(strcmp(argv[i],"--state-commit-test")==0)state_test=true;
         else if(strcmp(argv[i],"--small-test")==0)small_test=true;
         else if(strcmp(argv[i],"--dense-bench")==0)dense_bench=true;
         else if(strcmp(argv[i],"--dense-only")==0){dense_only=true;dense_bench=true;}
@@ -587,7 +727,7 @@ int main(int argc,char **argv){
     if(!batch||batch>FG_MTP_MAX_VERIFY||!warmup||!iterations||!windows||
        (uint64_t)batch*(warmup+(uint64_t)iterations*windows)>8192u)return 1;
     if(batch>1u)clocks=false;
-    if(bench_ledger_only&&(dense_bench||small_test||session_test||rollback_test||intrusive||
+    if(bench_ledger_only&&(dense_bench||small_test||session_test||state_test||rollback_test||intrusive||
         routing_trace||dump))return 1;
     fg_error error={0};fg_manifest *manifest=malloc(sizeof(*manifest));
     fg_model *model=calloc(1,sizeof(*model));
@@ -618,8 +758,9 @@ int main(int argc,char **argv){
         fg_model_close(model);free(manifest);
         return 0;
     }
+    uint32_t block_first=state_test?0u:6u,block_last=block_first+5u;
     for(uint32_t l=0;l<FG_LAYER_COUNT;l++){
-        manifest->layer_owner[l]=(l>=6u&&l<=11u)?1u:2u;
+        manifest->layer_owner[l]=(l>=block_first&&l<=block_last)?1u:2u;
         for(uint32_t g=0;g<FG_GROUP_SIZE;g++)
             manifest->layer_groups[l][g]=manifest->layer_owner[l];
         for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)manifest->expert_rank[l][e]=manifest->layer_owner[l];
@@ -649,7 +790,7 @@ int main(int argc,char **argv){
         {"indexer.k_norm.weight",128,1,0},{"indexer.k_proj.weight",2560,128,30},
         {"indexer.q_norm.weight",128,1,0},{"indexer.q_proj.weight",2560,512,30}
     };
-    for(uint32_t l=6;l<=11;l++){
+    for(uint32_t l=block_first;l<=block_last;l++){
         for(size_t j=0;j<sizeof(common)/sizeof(*common);j++){
             bench_spec weight=common[j];
             if(mixed_experts&&(l==8u||l==10u)){
@@ -662,29 +803,46 @@ int main(int argc,char **argv){
         size_t count=(l&3u)==3u?sizeof(qsa)/sizeof(*qsa):sizeof(gdn)/sizeof(*gdn);
         for(size_t j=0;j<count;j++)add_weight(model,manifest,l,spec[j],q4,&error);
     }
+    if(state_test){
+        const bench_spec ple[]={
+            {"ple_conv1d.weight",4,10240,0},{"ple_key.weight",2560,10240,8},
+            {"ple_norm_conv.weight",10240,1,0},{"ple_norm_key.weight",10240,1,0},
+            {"ple_norm_query.weight",10240,1,0},{"ple_value.weight",2560,2560,8}
+        };
+        for(size_t j=0;j<sizeof(ple)/sizeof(*ple);j++)
+            add_weight(model,manifest,1u,ple[j],q4,&error);
+    }
     if(bench_ledger_only){
         fg_model_close(model);free(manifest);
         return 0;
     }
     check(build_tensor_lookup(model,&error),&error);
     fg_owner_executor *owner=NULL;fg_expert_executor *expert=NULL;
-    check(fg_owner_executor_create_worker_slots(&owner,model,session_test?2u:1u,&error),&error);
+    check(fg_owner_executor_create_worker_slots(&owner,model,(session_test||state_test)?2u:1u,&error),&error);
     check(fg_expert_executor_create(&expert,model,&error),&error);
     if(routing_trace)check(fg_expert_route_trace_enable(expert,&error),&error);
     bench_prefill prefill={.expert=expert};
-    const uint8_t layers[]={7u,11u};fg_qsa_state *state=NULL;
+    const uint8_t layers[]={state_test?3u:7u,11u};
+    size_t qsa_layers=state_test?1u:2u;fg_qsa_state *state=NULL;
     const char *state_path=".build/mtp-qsa.fgqs";
     unlink(state_path);
-    check(fg_qsa_state_open(&state,state_path,layers,2u,8192u,true,&error),&error);
+    check(fg_qsa_state_open(&state,state_path,layers,qsa_layers,8192u,true,&error),&error);
     fg_qsa_state_close(state);
     check(fg_owner_qsa_open_state(owner,state_path,8192u,0u,4096u,128u,&error),&error);
     const char *second_state_path=".build/mtp-qsa-s1.fgqs";
-    if(session_test){
+    if(session_test||state_test){
         unlink(second_state_path);
-        check(fg_qsa_state_open(&state,second_state_path,layers,2u,8192u,true,&error),&error);
+        check(fg_qsa_state_open(&state,second_state_path,layers,qsa_layers,8192u,true,&error),&error);
         fg_qsa_state_close(state);state=NULL;
         check(fg_owner_qsa_open_state_slot(owner,1u,second_state_path,8192u,0u,4096u,128u,&error),&error);
-        test_small_sessions(owner,expert,model->vk,&error);
+        if(session_test&&!state_test)test_small_sessions(owner,expert,model->vk,&error);
+    }
+    if(state_test){
+        test_state_commit(owner,expert,model->vk,&error);
+        fg_expert_executor_destroy(expert);fg_owner_executor_destroy(owner);
+        fg_model_close(model);free(manifest);
+        unlink(state_path);unlink(second_state_path);
+        return 0;
     }
     fg_vk_tensor *input=batch==1u?fg_owner_session_input(owner,0u):
         fg_owner_prefill_input(owner),*output=NULL;
