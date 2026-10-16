@@ -1,0 +1,45 @@
+test_canonical_hash_comparison (test_hillclimb_ab.PairedHarness.test_canonical_hash_comparison) ... ok
+test_failed_deploy_restores_original (test_hillclimb_ab.PairedHarness.test_failed_deploy_restores_original) ... ok
+test_long_only_is_partial_qualification (test_hillclimb_ab.PairedHarness.test_long_only_is_partial_qualification) ... ok
+test_median_minimum_and_secondary_invariance (test_hillclimb_ab.PairedHarness.test_median_minimum_and_secondary_invariance) ... ok
+test_order_bodies_and_restore (test_hillclimb_ab.PairedHarness.test_order_bodies_and_restore) ... ok
+test_paired_statistics (test_hillclimb_ab.PairedHarness.test_paired_statistics) ... ok
+test_primary_policy_boundaries (test_hillclimb_ab.PairedHarness.test_primary_policy_boundaries) ... ok
+test_resume_keeps_complete_pairs (test_hillclimb_ab.PairedHarness.test_resume_keeps_complete_pairs) ... ok
+test_archive_rejects_links_paths_and_duplicates (test_candidate_stack.CandidateStack.test_archive_rejects_links_paths_and_duplicates) ... ok
+test_capture_failure_restores_baseline (test_candidate_stack.CandidateStack.test_capture_failure_restores_baseline) ... ok
+test_execution_requires_lease (test_candidate_stack.CandidateStack.test_execution_requires_lease) ... ok
+test_expired_lease_rejected (test_candidate_stack.CandidateStack.test_expired_lease_rejected) ... ok
+test_flag_injection_rejected (test_candidate_stack.CandidateStack.test_flag_injection_rejected) ... ok
+test_host_group_carries_exact_hash_reference (test_candidate_stack.CandidateStack.test_host_group_carries_exact_hash_reference) ... ok
+test_host_group_requires_same_kernel_control (test_candidate_stack.CandidateStack.test_host_group_requires_same_kernel_control) ... ok
+test_numeric_receipt_binds_flags_corpus_and_report (test_candidate_stack.CandidateStack.test_numeric_receipt_binds_flags_corpus_and_report) ... ok
+test_one_quality_and_performance_per_combination (test_candidate_stack.CandidateStack.test_one_quality_and_performance_per_combination) ... ok
+test_plan_is_offline (test_candidate_stack.CandidateStack.test_plan_is_offline) ... ok
+test_shell_path_injection_rejected (test_candidate_stack.CandidateStack.test_shell_path_injection_rejected) ... ok
+test_bf16_to_f32 (test_q4_tools.Q4ToolsTest.test_bf16_to_f32) ... ok
+test_exact_mixed_plan (test_q4_tools.Q4ToolsTest.test_exact_mixed_plan) ... ok
+test_full_vocabulary_framing (test_q4_tools.Q4ToolsTest.test_full_vocabulary_framing) ... ok
+test_header_and_native_name (test_q4_tools.Q4ToolsTest.test_header_and_native_name) ... ok
+test_kld_and_shift (test_q4_tools.Q4ToolsTest.test_kld_and_shift) ... ok
+test_lossless_router_plan (test_q4_tools.Q4ToolsTest.test_lossless_router_plan) ... ok
+test_native_quantizer (test_q4_tools.Q4ToolsTest.test_native_quantizer) ... skipped 'requires built ggml library'
+test_quantization_plan (test_q4_tools.Q4ToolsTest.test_quantization_plan) ... ok
+test_selected_exclusions (test_q4_tools.Q4ToolsTest.test_selected_exclusions) ... ok
+test_source_comparison (test_q4_tools.Q4ToolsTest.test_source_comparison) ... ok
+test_all_metrics_and_boundary (test_q4_qualify.Gates.test_all_metrics_and_boundary) ... ok
+test_capture_corpus_binding_and_subsets (test_q4_qualify.Gates.test_capture_corpus_binding_and_subsets) ... ok
+test_framed_corpus_exact_and_exclusive (test_q4_qualify.Gates.test_framed_corpus_exact_and_exclusive) ... ok
+test_frozen_teacher_prefixes_and_utf8 (test_q4_qualify.Gates.test_frozen_teacher_prefixes_and_utf8) ... ok
+test_invalid_measurements_fail_closed (test_q4_qualify.Gates.test_invalid_measurements_fail_closed) ... ok
+test_missing_quality_and_greedy (test_q4_qualify.Gates.test_missing_quality_and_greedy) ... ok
+test_new_performance_schemas_refuse_historical_gates (test_q4_qualify.Gates.test_new_performance_schemas_refuse_historical_gates) ... ok
+test_profile_coverage_and_route_geometry (test_q4_qualify.Gates.test_profile_coverage_and_route_geometry) ... ok
+test_forbidden_owner_rejected_before_execution (test_ab_fleet.FleetTransport.test_forbidden_owner_rejected_before_execution) ... ok
+test_preserves_runner_arguments_and_credential_location (test_ab_fleet.FleetTransport.test_preserves_runner_arguments_and_credential_location) ... ok
+test_upstream_layout_change_fails_closed (test_ab_fleet.FleetTransport.test_upstream_layout_change_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 40 tests in 71.516s
+
+OK (skipped=1)

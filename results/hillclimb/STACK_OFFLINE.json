@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "phase": "offline-preparation",
+  "fleet_access": false,
+  "production_api_requests": false,
+  "staged": false,
+  "promoted": false,
+  "integration": {
+    "branch": "cuppaxanax/stack-1",
+    "main": "a63a166",
+    "roofline": "e073c5d",
+    "latency": "8c4f9be",
+    "host_overhead": "198583f",
+    "q8_addressing_fix": "48c6bff",
+    "merge_head": "ddd0146",
+    "experimental_flags_default_off": true,
+    "mtp_implementation_merged": false,
+    "multi_session_merged": false
+  },
+  "policy": {
+    "id": "primary-median-v2",
+    "minimum_pairs": 5,
+    "default_pairs": 6,
+    "bootstrap_replicates": 20000,
+    "confidence": 0.95,
+    "bonferroni": false,
+    "t_guard": false,
+    "all_primary_medians_at_least": 0.97,
+    "all_primary_ci_upper_bounds_at_least": 0.97,
+    "one_primary_median_at_least": 1.03,
+    "quality_required": true,
+    "secondary_selects_or_vetoes": false,
+    "formal_noninferiority_claim": false,
+    "primary_metrics": [
+      "decode-short.engine_tps",
+      "decode-32768.engine_tps",
+      "prefill-4096.engine_tps",
+      "prefill-32768.engine_tps",
+      "chat.ttft_ms",
+      "concurrent.normalized_aggregate_tps"
+    ]
+  },
+  "artifacts": {
+    "stack_server_sha256": "55a5b3e4b9e2af33e9700e81c7b4fd46b47b662b53400deb99bfe8b8b5a08256",
+    "stack_capture_sha256": "9298bc6b4b1aa42744daac02bba64531ede66bd8ab2e6b5dac83dc0673e82794",
+    "stack_shader_tree_sha256": "5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633",
+    "stack_bundle_sha256": "5ad89cf77adb6567266df532dd831373b93891187dc5012a1a6eb4e08614bc96",
+    "main_capture_sha256": "84a477b0706e05db9fa831b3f72ac89ee0c78ee78535988d8765502d0795aa71",
+    "main_capture_bundle_sha256": "dbc53df33cb95ff544b79e65bca76af26488502c9eb9f989a7f87f306073704b",
+    "frozen_corpus_file_sha256": "8087c73149ea3029e910eddd7e54b2b54d32d83876d467c7be6f95d14aa7a9f1",
+    "frozen_frontiers": 480,
+    "source": "aligned480 Q4 qualification corpus",
+    "uploaded": false
+  },
+  "validation": {
+    "native_build": "passed",
+    "all_shaders": "built",
+    "cpu_tests_passed": 3,
+    "local_vulkan_selectors_passed": 4,
+    "qsa_orchestration_suite": "passed",
+    "python_cases": 40,
+    "python_passed": 39,
+    "python_skipped": 1,
+    "skip_reason": "native quantizer requires built ggml library",
+    "ledger_tests_passed": 18,
+    "powershell_parse": "passed",
+    "offline_example_plan": "passed",
+    "target_radv_oracles": "pending",
+    "broader_pre_host_software_vulkan_attempt": {
+      "dense": "three first-shape parity passes then heap-corruption abort; unresolved",
+      "hc_up_mix": "unsupported capability profile rejected",
+      "counted_as_pass": false
+    }
+  },
+  "future_execution": {
+    "candidate_combinations": ["stack-all", "stack-all-group2"],
+    "group2_requires_unchanged_same_kernel_greedy_hashes": true,
+    "quality_executed": false,
+    "performance_executed": false,
+    "scheduler_started": false,
+    "requires": ["multi-session release", "MTP release", "new exclusive .42-.49 lease"],
+    "restore": "configured A: current main a63a166 plus mix-04"
+  }
+}
