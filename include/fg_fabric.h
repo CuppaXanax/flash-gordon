@@ -7,6 +7,15 @@
 
 typedef enum fg_fabric_class { FG_FABRIC_CONTROL=0, FG_FABRIC_BULK=1 } fg_fabric_class;
 typedef struct fg_fabric fg_fabric;
+typedef fg_status (*fg_fabric_receiver)(void *,uint32_t,fg_fabric_class,int32_t,
+    uint32_t *,fg_frame_header *,void *,uint32_t,uint32_t *,fg_error *);
+void fg_fabric_set_receiver(fg_fabric *,fg_fabric_receiver,void *);
+void fg_fabric_set_slot(fg_fabric *,uint32_t);
+uint32_t fg_fabric_slot(const fg_fabric *);
+bool fg_fabric_multiplexed(const fg_fabric *);
+uint32_t fg_frame_session_slot(const fg_frame_header *);
+fg_status fg_fabric_poll_slot(fg_fabric *,uint32_t,uint32_t,fg_fabric_class,
+    uint32_t *,fg_frame_header *,void *,uint32_t,uint32_t *,fg_error *);
 typedef struct fg_fabric_recv_timing {
     uint64_t poll_start_ns,ready_ns,header_end_ns,payload_end_ns,validate_end_ns;
     /* Monotonic counterparts used only by FG_FABRIC_PROFILE instrumentation. */

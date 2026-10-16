@@ -1,5 +1,6 @@
 #include "fg_api.h"
 #include "fg_chat.h"
+#include "fg_pipeline.h"
 #include "fg_runtime.h"
 #include "fg_sha256.h"
 #include "fg_video.h"
@@ -205,11 +206,13 @@ typedef struct api_generation {
     size_t reasoning_emitted;
     size_t streamed_tool_calls;
     fg_runtime *runtime;
+    const fg_generation_stats *stats;
 } api_generation;
 
 typedef struct api_engine_request {
     api_connection *connection;
     http_request http;
+    char session_key[65];
 } api_engine_request;
 
 /* Bounded FIFO transport queue (M2 admission policy).  A chat request is
@@ -225,6 +228,7 @@ typedef struct api_engine_queue {
     size_t count;
     size_t outstanding;
     bool stopping;
+    bool multiplexed;
 } api_engine_queue;
 
 typedef enum api_engine_admission {
@@ -2891,7 +2895,19 @@ static fg_status send_stream_end(api_generation *generation,
             &event, ",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":", err);
     if (status == FG_OK)
         status = buffer_append_json_string(&event, reason, strlen(reason), err);
-    if (status == FG_OK) status = buffer_append(&event, "}]}\n\ndata: [DONE]\n\n", err);
+    if(status==FG_OK)status=buffer_append(&event,"}]",err);
+    if(status==FG_OK&&generation->stats){
+        const fg_generation_stats *stats=generation->stats;
+        char usage[256];
+        snprintf(usage,sizeof(usage),
+            ",\"usage\":{\"prompt_tokens\":%u,\"completion_tokens\":%u,\"total_tokens\":%u},"
+            "\"flash_gordon\":{\"reused_tokens\":%u,\"prefilled_tokens\":%u}",
+            stats->prompt_tokens,stats->generated_tokens,
+            stats->prompt_tokens+stats->generated_tokens,
+            stats->reused_tokens,stats->prefilled_tokens);
+        status=buffer_append(&event,usage,err);
+    }
+    if (status == FG_OK) status = buffer_append(&event, "}\n\ndata: [DONE]\n\n", err);
     if (status == FG_OK)
         status = api_sink_write(&generation->sink, event.data, event.length, err);
     free(event.data);
@@ -3257,14 +3273,37 @@ static void api_engine_queue_destroy(api_engine_queue *queue) {
     pthread_cond_destroy(&queue->cond);
 }
 
-/* M2 admission: a chat request is accepted while generations are running; the
- * engine runs admitted requests FIFO.  The bound is `outstanding` (running +
- * queued, not yet completed), not the physical ring occupancy, so the
- * documented capacity is the number of requests a burst can hold. */
+static uint32_t api_session_select(const char *key,const char *const keys[2],
+                                    const bool active[2]){
+    for(uint32_t slot=0;slot<2u;slot++)
+        if(key&&keys[slot]&&!strcmp(key,keys[slot]))return slot;
+    for(uint32_t slot=0;slot<2u;slot++)
+        if(!active[slot]&&!keys[slot])return slot;
+    for(uint32_t slot=0;slot<2u;slot++)
+        if(!active[slot])return slot;
+    return 2u;
+}
+
+/* The bound counts running plus queued requests, not physical ring occupancy. */
 static api_engine_admission api_engine_queue_try_push(api_engine_queue *queue,
                                                       api_connection *connection,
                                                       http_request *http) {
     api_engine_admission admission = API_ENGINE_ADMIT_FULL;
+    char session_key[65]={0};
+    if(queue->multiplexed){
+        fg_error ignored={0};
+        json_parser parser={.cursor=http->body,.end=http->body+http->body_length,.err=&ignored};
+        json_value *root=json_parse_value(&parser);
+        json_value *user=json_object_get(root,"user");
+        if(user&&user->type==JSON_STRING){
+            fg_sha256 hash;uint8_t digest[32];
+            fg_sha256_init(&hash);
+            fg_sha256_update(&hash,user->as.string,strlen(user->as.string));
+            fg_sha256_final(&hash,digest);
+            for(uint32_t i=0;i<32u;i++)snprintf(session_key+2u*i,3u,"%02x",digest[i]);
+        }
+        json_free(root);
+    }
     pthread_mutex_lock(&queue->mutex);
     if (queue->stopping) {
         admission = API_ENGINE_ADMIT_STOPPING;
@@ -3273,6 +3312,7 @@ static api_engine_admission api_engine_queue_try_push(api_engine_queue *queue,
         size_t slot = (queue->head + queue->count) % FG_API_ENGINE_QUEUE_CAPACITY;
         queue->entries[slot].connection = connection;
         queue->entries[slot].http = *http;
+        memcpy(queue->entries[slot].session_key,session_key,sizeof(session_key));
         queue->count++;
         queue->outstanding++;
         admission = API_ENGINE_ADMIT_QUEUED;
@@ -3980,6 +4020,7 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
         (stats.generated_tokens >= request.max_tokens ? "length" : "stop");
     bool response_committed=false;
     if (status == FG_OK) {
+        generation.stats=&stats;
         if (request.stream)
             status = send_stream_end(&generation, &generated, finish_reason, err);
         else
@@ -4091,6 +4132,100 @@ static fg_status configure_client_socket(int fd, fg_error *err) {
     return FG_OK;
 }
 
+#ifndef FG_API_TEST_BUILD
+typedef struct api_pipeline_job {
+    fg_runtime *runtime;
+    api_public_session public_session;
+    api_engine_request request;
+    api_engine_queue *queue;
+    fg_status status;
+    fg_error error;
+    char *key;
+    bool reassigned;
+} api_pipeline_job;
+
+static void api_pipeline_generate(void *argument){
+    api_pipeline_job *job=argument;
+    api_connection *connection=job->request.connection;
+    if(job->reassigned){
+        api_public_session_free(&job->public_session);
+        job->status=fg_runtime_reset(job->runtime,&job->error);
+    }
+    if(job->status==FG_OK&&!atomic_load(&connection->client_gone)){
+        api_sink sink={.fd=connection->fd,.connection=connection};
+        job->status=handle_chat_completions(&sink,job->runtime,&job->public_session,
+            &job->request.http,&job->error);
+    }
+    api_connection_complete_response(connection,!connection->keep_alive);
+    free(job->request.http.body);job->request.http.body=NULL;
+    api_engine_queue_complete(job->queue);
+}
+
+static fg_status api_pipeline_engine(fg_runtime *runtime,api_engine_queue *queue,
+                                      fg_error *err){
+    api_pipeline_job jobs[FG_PIPELINE_SESSIONS]={{.runtime=runtime,.queue=queue}};
+    fg_status status=fg_runtime_enable_pipeline(runtime,&jobs[1].runtime,err);
+    if(status!=FG_OK)return status;
+    jobs[1].queue=queue;
+    fg_pipeline pipeline;
+    status=fg_pipeline_init(&pipeline,fg_runtime_fabric(runtime),err);
+    if(status!=FG_OK){fg_runtime_close(jobs[1].runtime);return status;}
+    fprintf(stderr,"FG_MULTI_SESSION sessions=2 prefill_quantum=32 in_flight_per_session=1\n");
+    while(status==FG_OK){
+        bool active=false,progress=false;
+        for(uint32_t slot=0;slot<FG_PIPELINE_SESSIONS;slot++){
+            if(!pipeline.slots[slot].active)continue;
+            active=true;
+            status=fg_runtime_activate(jobs[slot].runtime,err);
+            if(status!=FG_OK)break;
+            progress|=fg_pipeline_turn(&pipeline,slot);
+            if(!pipeline.slots[slot].active&&jobs[slot].status!=FG_OK){
+                status=jobs[slot].status;*err=jobs[slot].error;break;
+            }
+        }
+        if(status!=FG_OK||(!active&&api_stop_requested))break;
+        if(!api_stop_requested){
+            pthread_mutex_lock(&queue->mutex);
+            for(size_t i=0;i<queue->count;i++){
+                size_t entry=(queue->head+i)%FG_API_ENGINE_QUEUE_CAPACITY;
+                api_engine_request *request=&queue->entries[entry];
+                const char *key=request->session_key[0]?request->session_key:NULL;
+                const char *keys[2]={jobs[0].key,jobs[1].key};
+                bool busy[2]={pipeline.slots[0].active,pipeline.slots[1].active};
+                uint32_t selected=api_session_select(key,keys,busy);
+                if(selected<FG_PIPELINE_SESSIONS&&!pipeline.slots[selected].active){
+                    api_pipeline_job *job=&jobs[selected];
+                    job->reassigned=(job->key&&(!key||strcmp(key,job->key)))||
+                        (!job->key&&key&&job->public_session.valid);
+                    if(job->reassigned){free(job->key);job->key=NULL;}
+                    if(key&&!job->key)job->key=strdup(key);
+                    if(key&&!job->key){
+                        fg_error_set(err,FG_ERR_OOM,"allocate API session key");
+                        status=FG_ERR_OOM;break;
+                    }
+                    job->request=*request;job->status=FG_OK;
+                    memset(&job->error,0,sizeof(job->error));
+                    for(size_t j=i+1u;j<queue->count;j++)
+                        queue->entries[(queue->head+j-1u)%FG_API_ENGINE_QUEUE_CAPACITY]=
+                            queue->entries[(queue->head+j)%FG_API_ENGINE_QUEUE_CAPACITY];
+                    queue->count--;
+                    status=fg_pipeline_start(&pipeline,selected,api_pipeline_generate,job,err);
+                    progress=true;break;
+                }
+            }
+            pthread_mutex_unlock(&queue->mutex);
+        }
+        if(!progress){struct timespec pause={.tv_nsec=200000};nanosleep(&pause,NULL);}
+    }
+    fg_pipeline_destroy(&pipeline);
+    for(uint32_t slot=0;slot<FG_PIPELINE_SESSIONS;slot++){
+        api_public_session_free(&jobs[slot].public_session);free(jobs[slot].key);
+    }
+    fg_runtime_close(jobs[1].runtime);
+    return status;
+}
+#endif
+
 fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
                                    uint16_t port,
                                    const fg_runtime_options *runtime_options,
@@ -4123,11 +4258,11 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
     fprintf(stderr, "Flash Gordon API serving %s on http://%s:%u\n",
             fg_runtime_model_name(runtime), host, port);
 
-    /* The front-end thread owns the listener and every client connection; this
-     * thread is the engine: it consumes complete chat requests one at a time
-     * and never touches the listener. */
+    /* The front-end owns client I/O; the engine runs either FIFO generation
+     * or two cooperative sessions and never touches the listener. */
     api_engine_queue queue;
     api_engine_queue_init(&queue);
+    queue.multiplexed=runtime_options&&runtime_options->sessions==2u;
     api_frontend frontend;
     status = api_frontend_start(&frontend, listener, runtime, &queue, err);
     if (status != FG_OK) {
@@ -4141,6 +4276,12 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
     }
 
     api_public_session public_session = {0};
+#ifndef FG_API_TEST_BUILD
+    if(queue.multiplexed){
+        status=api_pipeline_engine(runtime,&queue,err);
+        goto engine_done;
+    }
+#endif
     while (!api_stop_requested) {
         api_engine_request engine_request;
         if (!api_engine_queue_pop_wait(&queue, &engine_request, 200)) continue;
@@ -4167,6 +4308,9 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
         if (status != FG_OK) break;
     }
 
+#ifndef FG_API_TEST_BUILD
+    engine_done:
+#endif
     api_engine_queue_stop(&queue);
     api_frontend_stop(&frontend);
     close(listener);

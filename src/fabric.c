@@ -16,7 +16,15 @@
 #include <unistd.h>
 
 typedef struct fabric_channel{int fd;uint32_t fixed_slot;pthread_mutex_t send_mutex;bool mutex_ready;}fabric_channel;
-struct fg_fabric{uint32_t rank;uint16_t protocol_version;fg_uring *ring;fabric_channel peer[FG_RANK_COUNT][2];};
+struct fg_fabric{uint32_t rank;uint16_t protocol_version;fg_uring *ring;fabric_channel peer[FG_RANK_COUNT][2];uint32_t slot;bool multiplexed;fg_fabric_receiver receiver;void *receiver_context;};
+
+void fg_fabric_set_receiver(fg_fabric *f,fg_fabric_receiver receiver,void *context){
+    if(f){f->receiver=receiver;f->receiver_context=context;}
+}
+void fg_fabric_set_slot(fg_fabric *f,uint32_t slot){if(f){f->slot=slot;if(slot)f->multiplexed=true;}}
+uint32_t fg_fabric_slot(const fg_fabric *f){return f?f->slot:0u;}
+bool fg_fabric_multiplexed(const fg_fabric *f){return f&&f->multiplexed;}
+uint32_t fg_frame_session_slot(const fg_frame_header *h){return ntohl(h->flags_be)>>24u;}
 typedef struct fabric_hello{uint32_t magic_be;uint16_t version_be;uint8_t rank;uint8_t channel;uint8_t manifest_sha256[32];}fabric_hello;
 
 static uint16_t swap16(uint16_t x){return (uint16_t)((x>>8)|(x<<8));}
@@ -161,6 +169,7 @@ static fg_status fabric_send(fg_fabric *f,uint32_t peer,fg_fabric_class cls,
     if(!f||peer>=FG_RANK_COUNT||peer==f->rank||cls>FG_FABRIC_BULK){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid fabric destination");return FG_ERR_ARGUMENT;
     }
+    flags|=f->slot<<24u;
     fg_frame_header h;fg_status rc=fg_frame_encode_version(&h,f->protocol_version,type,req,
                                                            seq,flags,payload,bytes,err);
     if(rc!=FG_OK)return rc;
@@ -207,6 +216,8 @@ fg_status fg_fabric_recv_timed(fg_fabric *f,uint32_t peer,fg_fabric_class cls,
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid fabric receive");
         return FG_ERR_ARGUMENT;
     }
+    if(f->receiver)return f->receiver(f->receiver_context,peer,cls,-1,NULL,h,
+        payload,cap,bytes,err);
     bool profile=fabric_profile_enabled();
     uint64_t profile_start=profile?monotonic_ns():0u;
     fg_status rc=fg_uring_recv_all(f->ring,f->peer[peer][cls].fixed_slot,h,sizeof(*h),err);
@@ -239,9 +250,46 @@ fg_status fg_fabric_recv_timed(fg_fabric *f,uint32_t peer,fg_fabric_class cls,
 fg_status fg_fabric_recv(fg_fabric *f,uint32_t peer,fg_fabric_class cls,fg_frame_header *h,void *payload,uint32_t cap,uint32_t *bytes,fg_error *err){return fg_fabric_recv_timed(f,peer,cls,h,payload,cap,bytes,NULL,err);}
 static fg_status recv_any_poll(fg_fabric *f,fg_fabric_class cls,int32_t timeout_ms,uint32_t *peer,fg_frame_header *header,void *payload,uint32_t capacity,uint32_t *bytes,fg_fabric_recv_timing *timing,fg_error *err){if(!f||cls>FG_FABRIC_BULK||!peer||!header){fg_error_set(err,FG_ERR_ARGUMENT,"invalid fabric receive-any arguments");return FG_ERR_ARGUMENT;}struct pollfd descriptors[FG_RANK_COUNT-1u];uint32_t ranks[FG_RANK_COUNT-1u],count=0;for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)if(rank!=f->rank){descriptors[count]=(struct pollfd){.fd=f->peer[rank][cls].fd,.events=POLLIN};ranks[count++]=rank;}if(timing){memset(timing,0,sizeof(*timing));timing->poll_start_ns=fabric_ns();if(fabric_profile_enabled())timing->profile_poll_start_ns=monotonic_ns();}for(;;){int ready=poll(descriptors,count,timeout_ms);if(ready<0&&errno==EINTR)continue;if(ready<0){fg_error_set(err,FG_ERR_IO,"poll fabric: %s",strerror(errno));return FG_ERR_IO;}if(ready==0){fg_error_set(err,FG_ERR_LIMIT,"fabric receive-any timed out after %d ms",timeout_ms);return FG_ERR_LIMIT;}uint32_t ready_mask=0;for(uint32_t i=0;i<count;i++)if(descriptors[i].revents&(POLLIN|POLLERR|POLLHUP))ready_mask|=1u<<ranks[i];if(timing){timing->ready_ns=fabric_ns();if(fabric_profile_enabled())timing->profile_ready_ns=monotonic_ns();timing->ready_mask=ready_mask;}for(uint32_t i=0;i<count;i++)if(ready_mask&(1u<<ranks[i])){*peer=ranks[i];return fg_fabric_recv_timed(f,*peer,cls,header,payload,capacity,bytes,timing,err);}}
 }
-fg_status fg_fabric_recv_any_timed(fg_fabric *f,fg_fabric_class cls,uint32_t *peer,fg_frame_header *header,void *payload,uint32_t capacity,uint32_t *bytes,fg_fabric_recv_timing *timing,fg_error *err){return recv_any_poll(f,cls,-1,peer,header,payload,capacity,bytes,timing,err);}
-fg_status fg_fabric_recv_any(fg_fabric *f,fg_fabric_class cls,uint32_t *peer,fg_frame_header *header,void *payload,uint32_t capacity,uint32_t *bytes,fg_error *err){return recv_any_poll(f,cls,-1,peer,header,payload,capacity,bytes,NULL,err);}
-fg_status fg_fabric_recv_any_timeout(fg_fabric *f,fg_fabric_class cls,int32_t timeout_ms,uint32_t *peer,fg_frame_header *header,void *payload,uint32_t capacity,uint32_t *bytes,fg_error *err){return recv_any_poll(f,cls,timeout_ms,peer,header,payload,capacity,bytes,NULL,err);}
+fg_status fg_fabric_recv_any_timed(fg_fabric *f,fg_fabric_class cls,uint32_t *peer,fg_frame_header *header,void *payload,uint32_t capacity,uint32_t *bytes,fg_fabric_recv_timing *timing,fg_error *err){if(f&&f->receiver)return f->receiver(f->receiver_context,UINT32_MAX,cls,-1,peer,header,payload,capacity,bytes,err);return recv_any_poll(f,cls,-1,peer,header,payload,capacity,bytes,timing,err);}
+fg_status fg_fabric_recv_any(fg_fabric *f,fg_fabric_class cls,uint32_t *peer,fg_frame_header *header,void *payload,uint32_t capacity,uint32_t *bytes,fg_error *err){return fg_fabric_recv_any_timed(f,cls,peer,header,payload,capacity,bytes,NULL,err);}
+fg_status fg_fabric_recv_any_timeout(fg_fabric *f,fg_fabric_class cls,int32_t timeout_ms,uint32_t *peer,fg_frame_header *header,void *payload,uint32_t capacity,uint32_t *bytes,fg_error *err){if(f&&f->receiver)return f->receiver(f->receiver_context,UINT32_MAX,cls,timeout_ms,peer,header,payload,capacity,bytes,err);return recv_any_poll(f,cls,timeout_ms,peer,header,payload,capacity,bytes,NULL,err);}
+
+fg_status fg_fabric_poll_slot(fg_fabric *f,uint32_t slot,uint32_t wanted,
+    fg_fabric_class cls,uint32_t *peer,fg_frame_header *header,void *payload,
+    uint32_t capacity,uint32_t *bytes,fg_error *err){
+    if(!f||slot>=FG_DECODE_BATCH_MAX_SLOTS||cls>FG_FABRIC_BULK||!peer||!header||
+       (wanted!=UINT32_MAX&&(wanted>=FG_RANK_COUNT||wanted==f->rank))){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid pipeline receive");
+        return FG_ERR_ARGUMENT;
+    }
+    for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){
+        if(rank==f->rank||(wanted!=UINT32_MAX&&rank!=wanted))continue;
+        fg_frame_header peek;
+        ssize_t n=recv(f->peer[rank][cls].fd,&peek,sizeof(peek),MSG_PEEK|MSG_DONTWAIT);
+        if(n<0&&(errno==EAGAIN||errno==EWOULDBLOCK||errno==EINTR))continue;
+        if(n==0||n<0){
+            fg_error_set(err,FG_ERR_IO,"pipeline peer %u disconnected",rank);
+            return FG_ERR_IO;
+        }
+        if(n!=(ssize_t)sizeof(peek))continue;
+        uint32_t received_slot=fg_frame_session_slot(&peek);
+        if(received_slot>=FG_DECODE_BATCH_MAX_SLOTS){
+            fg_error_set(err,FG_ERR_MISMATCH,"invalid pipeline frame session slot");
+            return FG_ERR_MISMATCH;
+        }
+        if(received_slot!=slot)continue;
+        uint32_t size=ntohl(peek.bytes_be);
+        if(size>capacity||(size&&!payload)){
+            fg_error_set(err,FG_ERR_FORMAT,"pipeline payload %u exceeds buffer %u",size,capacity);
+            return FG_ERR_FORMAT;
+        }
+        fg_fabric_receiver receiver=f->receiver;f->receiver=NULL;
+        fg_status status=fg_fabric_recv(f,rank,cls,header,payload,capacity,bytes,err);
+        f->receiver=receiver;*peer=rank;
+        return status;
+    }
+    return FG_ERR_LIMIT;
+}
 fg_status fg_fabric_wait_ready_timeout(fg_fabric *f,uint32_t class_mask,int32_t timeout_ms,uint32_t *peer,fg_fabric_class *ready_class,fg_error *err){if(!f||!(class_mask&3u)||(class_mask&~3u)||!peer||!ready_class){fg_error_set(err,FG_ERR_ARGUMENT,"invalid fabric readiness wait");return FG_ERR_ARGUMENT;}struct pollfd descriptors[(FG_RANK_COUNT-1u)*2u];uint32_t ranks[(FG_RANK_COUNT-1u)*2u];fg_fabric_class classes[(FG_RANK_COUNT-1u)*2u];uint32_t count=0;for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)if(rank!=f->rank)for(uint32_t cls=0;cls<2u;cls++)if(class_mask&(1u<<cls)){descriptors[count]=(struct pollfd){.fd=f->peer[rank][cls].fd,.events=POLLIN};ranks[count]=rank;classes[count]=(fg_fabric_class)cls;count++;}for(;;){int ready=poll(descriptors,count,timeout_ms);if(ready<0&&errno==EINTR)continue;if(ready<0){fg_error_set(err,FG_ERR_IO,"poll fabric readiness: %s",strerror(errno));return FG_ERR_IO;}if(ready==0){fg_error_set(err,FG_ERR_LIMIT,"fabric readiness wait timed out after %d ms",timeout_ms);return FG_ERR_LIMIT;}for(uint32_t i=0;i<count;i++)if(descriptors[i].revents&(POLLIN|POLLERR|POLLHUP)){*peer=ranks[i];*ready_class=classes[i];return FG_OK;}}}
 fg_status fg_fabric_wait_ready(fg_fabric *f,uint32_t class_mask,uint32_t *peer,fg_fabric_class *ready_class,fg_error *err){return fg_fabric_wait_ready_timeout(f,class_mask,-1,peer,ready_class,err);}
 fg_status fg_fabric_prep_header_recv(fg_fabric *f,uint32_t peer,fg_fabric_class cls,fg_frame_header *header,uint64_t tag,fg_error *err){

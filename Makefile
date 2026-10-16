@@ -6,10 +6,11 @@ GLSLC ?= sh ./glslc
 FG_SHADER_SRC := $(wildcard shaders/*.comp)
 FG_SHADER_OUT := $(patsubst shaders/%.comp,vulkan/%.spv,$(FG_SHADER_SRC))
 
-SRC := src/main.c vendor/stb_image_impl.c src/util.c src/tower.c src/tower_vk.c src/video.c src/manifest.c src/session.c src/topology.c src/sha256.c src/gguf.c src/q38_schema.c src/q38_math.c src/quant.c src/vk.c src/model.c src/expert.c src/owner.c src/output.c src/tokenizer.c src/pack.c src/uring.c src/loader.c src/ngram.c src/qsa_state.c src/qsa_locality.c src/qsa_cache.c src/qsa.c src/qsa_owner.c src/qsa_replica.c src/protocol.c src/fabric.c src/prefix.c src/runtime_options.c src/sampler.c src/ledger.c src/decode_batch.c src/runtime.c src/chat.c src/api.c
+SRC := src/main.c vendor/stb_image_impl.c src/util.c src/tower.c src/tower_vk.c src/video.c src/manifest.c src/session.c src/topology.c src/sha256.c src/gguf.c src/q38_schema.c src/q38_math.c src/quant.c src/vk.c src/model.c src/expert.c src/owner.c src/output.c src/tokenizer.c src/pack.c src/uring.c src/loader.c src/ngram.c src/qsa_state.c src/qsa_locality.c src/qsa_cache.c src/qsa.c src/qsa_owner.c src/qsa_replica.c src/protocol.c src/fabric.c src/pipeline.c src/prefix.c src/runtime_options.c src/sampler.c src/ledger.c src/decode_batch.c src/runtime.c src/chat.c src/api.c
 OBJ := $(SRC:.c=.o)
 DEP := tests/test_prefill_collective.d tests/test_owner_reduce.d $(OBJ:.o=.d) tests/test_expert_prefill.d tests/test_prefill_dispatch.d tests/test_qsa_prefill.d tests/test_core.d tests/test_session.d tests/test_prefix.d tests/test_chat.d tests/test_chat_runtime.d tests/test_api.d tests/test_ngram_deployment.d tests/test_fg_vk.d tests/test_hc_down_split.d tests/test_model_load.d tests/test_qsa_model_load.d tests/test_tokenizer.d tests/test_fabric.d tests/test_tower.d tests/test_decode_batch.d
 TEST_COMMON := src/util.o src/manifest.o src/session.o src/topology.o src/sha256.o src/gguf.o src/q38_schema.o src/q38_math.o src/quant.o src/vk.o src/tokenizer.o src/pack.o src/uring.o src/loader.o src/ngram.o src/qsa_state.o src/qsa_locality.o src/qsa_cache.o src/qsa_owner.o src/qsa_replica.o src/protocol.o src/runtime_options.o src/sampler.o src/ledger.o
+DEP += tests/test_multi_session.d
 
 .PHONY: all clean test test-sampler test-ngram-deployment test-vulkan test-qsa-fleet test-gdn-fleet test-fg-profile-analysis test-tower test-decode-batch shaders
 all: flash-gordon shaders
@@ -60,11 +61,12 @@ test-sampler: tests/test_sampler
 	./tests/test_sampler
 
 test: tests/test_q4_repack
-test: tests/test_prefill_collective tests/test_core tests/test_session tests/test_prefix tests/test_chat tests/test_chat_runtime tests/test_api tests/test_ngram_deployment tests/test_prefill_dispatch tests/test_decode_batch tests/test_video
+test: tests/test_multi_session tests/test_prefill_collective tests/test_core tests/test_session tests/test_prefix tests/test_chat tests/test_chat_runtime tests/test_api tests/test_ngram_deployment tests/test_prefill_dispatch tests/test_decode_batch tests/test_video
 	@bash tools/check-flags.sh
 	./tests/test_core
 	./tests/test_q4_repack
 	./tests/test_session
+	./tests/test_multi_session || test $$? -eq 77
 	./tests/test_prefix
 	./tests/test_chat
 	./tests/test_chat_runtime
@@ -130,6 +132,16 @@ tests/test_qsa_prefill: tests/test_qsa_prefill.o $(TEST_COMMON) | shaders
 tests/test_prefill_collective: tests/test_prefill_collective.o $(filter-out src/main.o src/runtime.o,$(OBJ))
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
+tests/test_multi_session: tests/test_multi_session.o $(filter-out src/main.o src/runtime.o,$(OBJ))
+	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
+
+.PHONY: test-multi-session
+test-multi-session: tests/test_multi_session tests/test_fabric tests/test_api tests/test_session
+	./tests/test_multi_session || test $$? -eq 77
+	./tests/test_fabric --pipeline-only || test $$? -eq 77
+	./tests/test_api
+	./tests/test_session
+
 tests/test_prefill_dispatch: tests/test_prefill_dispatch.o $(filter-out src/main.o src/runtime.o,$(OBJ))
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
@@ -139,7 +151,7 @@ tests/test_qsa_model_load: tests/test_qsa_model_load.o src/model.o src/expert.o 
 tests/test_tokenizer: tests/test_tokenizer.o src/tokenizer.o src/prefix.o src/quant.o src/q38_math.o src/uring.o src/sha256.o src/manifest.o src/runtime_options.o src/topology.o src/q38_schema.o src/gguf.o src/util.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
-tests/test_fabric: tests/test_fabric.o src/fabric.o src/quant.o src/q38_math.o src/uring.o src/protocol.o src/sampler.o src/manifest.o src/runtime_options.o src/sha256.o src/topology.o src/q38_schema.o src/gguf.o src/util.o
+tests/test_fabric: tests/test_fabric.o src/fabric.o src/pipeline.o src/quant.o src/q38_math.o src/uring.o src/protocol.o src/sampler.o src/manifest.o src/runtime_options.o src/sha256.o src/topology.o src/q38_schema.o src/gguf.o src/util.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
 tests/test_ngram_deployment: tests/test_ngram_deployment.o $(TEST_COMMON)
@@ -178,6 +190,7 @@ test-gdn-fleet: tests/test_fg_vk
 
 clean:
 	rm -f tests/test_q4_repack tests/test_q4_repack.d tools/q4-repack tools/q4-repack.d tools/q4-extract-pack tools/q4-extract-pack.d tools/q4-compare-packs tools/q4-compare-packs.d tools/q4-eval-batch tools/q4-eval-batch.d
+	rm -f tests/test_multi_session
 	rm -f tests/test_prefill_collective flash-gordon $(OBJ) $(DEP) vendor/*.o vendor/*.d tests/*.o tests/test_core tests/test_session tests/test_prefix tests/test_chat tests/test_chat_runtime tests/test_api tests/test_sampler tests/test_ngram_deployment tests/test_expert_prefill tests/test_qsa_prefill tests/test_owner_reduce tests/test_prefill_dispatch tests/test_decode_batch tests/test_expert_prefill.d tests/test_prefill_dispatch.d tests/test_decode_batch.d tests/test_fg_vk tests/test_hc_down_split tests/test_model_load tests/test_qsa_model_load tests/test_tokenizer tests/test_fabric tests/test_video vulkan/*.spv
 
 -include $(DEP) tests/test_expert_prefill.d tests/test_prefill_dispatch.d tests/test_decode_batch.d tests/test_q4_repack.d tools/q4-repack.d tools/q4-extract-pack.d tools/q4-compare-packs.d tools/q4-eval-batch.d

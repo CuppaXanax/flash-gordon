@@ -45,6 +45,10 @@ owner-state frontier) is the default. Disable it per run with
 `--no-prefix-cont` on `flash-gordon chat` or `flash-gordon api`; the
 session-level cold reset (`fg_runtime_reset`) is unchanged.
 
+`flash-gordon api --sessions 2` enables two independent ring sessions with
+32-token prefill quanta; omitted/`--sessions 1` retains FIFO execution. This is
+a CLI capacity option, not an environment variant. See [MULTI_SESSION.md](MULTI_SESSION.md).
+
 ## Output split (4-way head handoff)
 
 The 4-way head split is unconditional: ranks 4/0/1/2 each reduce one

@@ -1,4 +1,5 @@
 #include "fg_fabric.h"
+#include "fg_pipeline.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -17,6 +18,7 @@
     fg_layer_work_decode(work,fg_fabric_protocol_version(fabric),payload,bytes,error)
 
 static int protocol_failures;
+static bool pipeline_only;
 #define PROTOCOL_CHECK(expression) do { \
     if(!(expression)){ \
         fprintf(stderr,"FAIL %s:%d: %s\n",__FILE__,__LINE__,#expression); \
@@ -896,6 +898,140 @@ static fg_status output_split4_timeout_roundtrip(fg_fabric *fabric,uint32_t rank
     return release;
 }
 
-static int child_main(const fg_manifest *manifest,uint32_t rank){fg_error error={0};fg_fabric *fabric=NULL;fg_status status=fg_fabric_open(&fabric,manifest,rank,&error);if(status==FG_ERR_UNAVAILABLE)return 77;if(status!=FG_OK){fprintf(stderr,"rank %u fabric open: %s\n",rank,error.message);return 1;}uint64_t request=UINT64_C(0x1122334455667788);for(uint32_t peer=0;status==FG_OK&&peer<FG_RANK_COUNT;peer++)if(peer!=rank)status=fg_fabric_send(fabric,peer,FG_FABRIC_CONTROL,FG_MSG_READY,request,rank,0,NULL,0,&error);bool seen[FG_RANK_COUNT]={0};for(uint32_t received=0;status==FG_OK&&received<FG_RANK_COUNT-1u;received++){uint32_t peer=0,bytes=0;fg_frame_header header;status=fg_fabric_recv_any(fabric,FG_FABRIC_CONTROL,&peer,&header,NULL,0,&bytes,&error);if(status==FG_OK&&(peer==rank||seen[peer]||bytes||fg_frame_type(&header)!=FG_MSG_READY||fg_frame_request_id(&header)!=request||fg_frame_sequence(&header)!=peer)){fprintf(stderr,"rank %u invalid READY from %u\n",rank,peer);status=FG_ERR_MISMATCH;}seen[peer]=true;}if(status==FG_OK)status=protocol_version_roundtrip(fabric,rank,request,&error);if(status==FG_OK)status=prefill_bulk_roundtrip(fabric,rank,request,&error);if(status==FG_OK)status=delayed_bulk_ngram_control_roundtrip(fabric,rank,request,&error);if(status==FG_OK)status=prefill_layer_chain_roundtrip(fabric,rank,request,&error);if(status==FG_OK)status=decode_layer_chain_roundtrip(fabric,rank,request,&error);if(status==FG_OK)status=output_handoff_roundtrip(fabric,rank,request,&error);if(status==FG_OK)status=output_split4_roundtrip(fabric,rank,request,&error);if(status==FG_OK)status=output_split4_timeout_roundtrip(fabric,rank,request,&error);fg_fabric_close(fabric);if(status!=FG_OK){fprintf(stderr,"rank %u fabric exchange: %s\n",rank,error.message);return 1;}return 0;}
+typedef struct pipeline_probe {
+    fg_fabric *fabric;
+    uint32_t slot;
+    uint64_t state;
+    bool *issued;
+    fg_status status;
+    fg_error error;
+} pipeline_probe;
 
-int main(void){protocol_output_handoff_selfcheck();if(protocol_failures)return 1;fg_manifest manifest;fg_manifest_init(&manifest);manifest.protocol_version=FG_PROTOCOL_VERSION;uint32_t base=24000u+(uint32_t)(getpid()%5000u)*2u;for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)snprintf(manifest.ranks[rank].endpoint,sizeof(manifest.ranks[rank].endpoint),"127.0.0.1:%u",base+rank*2u);for(uint32_t i=0;i<32u;i++)manifest.manifest_sha256[i]=(uint8_t)(i*7u+3u);pid_t children[FG_RANK_COUNT];for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){children[rank]=fork();if(children[rank]<0){perror("fork");return 1;}if(children[rank]==0)_exit(child_main(&manifest,rank));}uint32_t passed=0,skipped=0;for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){int status;if(waitpid(children[rank],&status,0)<0){perror("waitpid");return 1;}if(WIFEXITED(status)&&WEXITSTATUS(status)==0)passed++;else if(WIFEXITED(status)&&WEXITSTATUS(status)==77)skipped++;else{fprintf(stderr,"fabric rank %u exited abnormally\n",rank);return 1;}}if(skipped==FG_RANK_COUNT){fprintf(stderr,"SKIP eight-process fabric: io_uring unavailable\n");return 77;}if(passed!=FG_RANK_COUNT||skipped){fprintf(stderr,"inconsistent fabric qualification: %u pass %u skip\n",passed,skipped);return 1;}puts("Flash Gordon protocol 6 and eight-process dual-channel mesh: PASS");return 0;}
+static uint64_t probe_advance(uint64_t value,uint32_t rank){
+    return value*UINT64_C(6364136223846793005)+rank+1u;
+}
+
+static void pipeline_probe_job(void *argument){
+    pipeline_probe *probe=argument;
+    for(uint32_t token=0;token<16u;token++){
+        uint64_t request=100u+probe->slot+(token>=8u?10u:0u);
+        uint32_t position=token+probe->slot*1000u;
+        uint64_t value=probe->state;
+        probe->status=fg_fabric_send(probe->fabric,1u,FG_FABRIC_BULK,
+            FG_MSG_CONTROL,request,position,0u,&value,sizeof(value),&probe->error);
+        if(probe->status!=FG_OK)return;
+        probe->issued[probe->slot]=true;
+        fg_frame_header header;uint32_t peer=0,bytes=0;
+        if(probe->slot)
+            probe->status=fg_fabric_recv_any_timeout(probe->fabric,FG_FABRIC_BULK,
+                5000,&peer,&header,&value,sizeof(value),&bytes,&probe->error);
+        else{
+            peer=FG_RANK_COUNT-1u;
+            probe->status=fg_fabric_recv(probe->fabric,peer,FG_FABRIC_BULK,
+                &header,&value,sizeof(value),&bytes,&probe->error);
+        }
+        if(probe->status!=FG_OK)return;
+        uint64_t expected=probe->state;
+        for(uint32_t rank=1;rank<FG_RANK_COUNT;rank++)expected=probe_advance(expected,rank);
+        if(!probe->issued[0]||!probe->issued[1]||peer!=FG_RANK_COUNT-1u||
+           fg_frame_request_id(&header)!=request||fg_frame_sequence(&header)!=position||
+           fg_frame_session_slot(&header)!=probe->slot||bytes!=sizeof(value)||value!=expected){
+            fg_error_set(&probe->error,FG_ERR_MISMATCH,"pipeline state or route mismatch");
+            probe->status=FG_ERR_MISMATCH;return;
+        }
+        probe->state=value;
+    }
+}
+
+static void pipeline_timeout_job(void *argument){
+    pipeline_probe *probe=argument;
+    fg_frame_header header;uint32_t peer=0,bytes=0;
+    probe->status=fg_fabric_recv_any_timeout(probe->fabric,FG_FABRIC_CONTROL,
+        10,&peer,&header,NULL,0u,&bytes,&probe->error);
+}
+
+static fg_status pipeline_roundtrip(fg_fabric *fabric,uint32_t rank,fg_error *err){
+    if(rank){
+        for(uint32_t message=0;message<32u;message++){
+            fg_frame_header header;uint64_t value;uint32_t bytes=0;
+            fg_status status=fg_fabric_recv(fabric,rank-1u,FG_FABRIC_BULK,
+                &header,&value,sizeof(value),&bytes,err);
+            if(status!=FG_OK)return status;
+            uint32_t slot=fg_frame_session_slot(&header);
+            if(slot>=2u||bytes!=sizeof(value))return FG_ERR_MISMATCH;
+            fg_fabric_set_slot(fabric,slot);
+            value=probe_advance(value,rank);
+            status=fg_fabric_send(fabric,(rank+1u)%FG_RANK_COUNT,FG_FABRIC_BULK,
+                FG_MSG_CONTROL,fg_frame_request_id(&header),fg_frame_sequence(&header),
+                0u,&value,sizeof(value),err);
+            if(status!=FG_OK)return status;
+        }
+        fg_frame_header done;uint32_t bytes=0;
+        return fg_fabric_recv(fabric,0u,FG_FABRIC_CONTROL,&done,NULL,0u,&bytes,err);
+    }
+    fg_pipeline pipeline;
+    fg_status status=fg_pipeline_init(&pipeline,fabric,err);
+    if(status!=FG_OK)return status;
+    bool issued[2]={false,false};
+    pipeline_probe probes[2]={
+        {.fabric=fabric,.slot=0u,.state=17u,.issued=issued},
+        {.fabric=fabric,.slot=1u,.state=91u,.issued=issued}};
+    status=fg_pipeline_start(&pipeline,0u,pipeline_timeout_job,&probes[0],err);
+    while(status==FG_OK&&pipeline.slots[0].active){
+        if(!fg_pipeline_turn(&pipeline,0u))usleep(100u);
+    }
+    if(status==FG_OK&&probes[0].status!=FG_ERR_LIMIT){
+        fg_error_set(err,FG_ERR_MISMATCH,"pipeline receive failed to time out");
+        status=FG_ERR_MISMATCH;
+    }
+    probes[0].status=FG_OK;memset(&probes[0].error,0,sizeof(probes[0].error));
+    for(uint32_t slot=0;status==FG_OK&&slot<2u;slot++)
+        status=fg_pipeline_start(&pipeline,slot,pipeline_probe_job,&probes[slot],err);
+    while(status==FG_OK&&(pipeline.slots[0].active||pipeline.slots[1].active)){
+        bool progress=false;
+        for(uint32_t slot=0;slot<2u;slot++)progress|=fg_pipeline_turn(&pipeline,slot);
+        if(!progress)usleep(100u);
+        for(uint32_t slot=0;slot<2u;slot++)
+            if(probes[slot].status!=FG_OK){status=probes[slot].status;*err=probes[slot].error;}
+    }
+    fg_pipeline_destroy(&pipeline);
+    for(uint32_t peer=1u;status==FG_OK&&peer<FG_RANK_COUNT;peer++)
+        status=fg_fabric_send(fabric,peer,FG_FABRIC_CONTROL,FG_MSG_CONTROL,
+            999u,0u,0u,NULL,0u,err);
+    return status;
+}
+
+static int child_main(const fg_manifest *manifest,uint32_t rank){
+    alarm(30u);
+    fg_error error={0};fg_fabric *fabric=NULL;
+    fg_status status=fg_fabric_open(&fabric,manifest,rank,&error);
+    if(status==FG_ERR_UNAVAILABLE)return 77;
+    if(status!=FG_OK){fprintf(stderr,"rank %u fabric open: %s\n",rank,error.message);return 1;}
+    uint64_t request=UINT64_C(0x1122334455667788);
+    for(uint32_t peer=0;status==FG_OK&&peer<FG_RANK_COUNT;peer++)
+        if(peer!=rank)status=fg_fabric_send(fabric,peer,FG_FABRIC_CONTROL,FG_MSG_READY,request,rank,0,NULL,0,&error);
+    bool seen[FG_RANK_COUNT]={0};
+    for(uint32_t received=0;status==FG_OK&&received<FG_RANK_COUNT-1u;received++){
+        uint32_t peer=0,bytes=0;fg_frame_header header;
+        status=fg_fabric_recv_any(fabric,FG_FABRIC_CONTROL,&peer,&header,NULL,0,&bytes,&error);
+        if(status==FG_OK&&(peer==rank||seen[peer]||bytes||fg_frame_type(&header)!=FG_MSG_READY||
+           fg_frame_request_id(&header)!=request||fg_frame_sequence(&header)!=peer))status=FG_ERR_MISMATCH;
+        seen[peer]=true;
+    }
+    if(status==FG_OK&&pipeline_only)status=pipeline_roundtrip(fabric,rank,&error);
+    if(!pipeline_only){
+        if(status==FG_OK)status=protocol_version_roundtrip(fabric,rank,request,&error);
+        if(status==FG_OK)status=prefill_bulk_roundtrip(fabric,rank,request,&error);
+        if(status==FG_OK)status=delayed_bulk_ngram_control_roundtrip(fabric,rank,request,&error);
+        if(status==FG_OK)status=prefill_layer_chain_roundtrip(fabric,rank,request,&error);
+        if(status==FG_OK)status=decode_layer_chain_roundtrip(fabric,rank,request,&error);
+        if(status==FG_OK)status=output_handoff_roundtrip(fabric,rank,request,&error);
+        if(status==FG_OK)status=output_split4_roundtrip(fabric,rank,request,&error);
+        if(status==FG_OK)status=output_split4_timeout_roundtrip(fabric,rank,request,&error);
+    }
+    fg_fabric_close(fabric);
+    if(status!=FG_OK){fprintf(stderr,"rank %u fabric exchange: %s\n",rank,error.message);return 1;}
+    return 0;
+}
+
+int main(int argc,char **argv){pipeline_only=argc==2&&!strcmp(argv[1],"--pipeline-only");if(!pipeline_only)protocol_output_handoff_selfcheck();if(protocol_failures)return 1;fg_manifest manifest;fg_manifest_init(&manifest);manifest.protocol_version=FG_PROTOCOL_VERSION;uint32_t base=24000u+(uint32_t)(getpid()%5000u)*2u;for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)snprintf(manifest.ranks[rank].endpoint,sizeof(manifest.ranks[rank].endpoint),"127.0.0.1:%u",base+rank*2u);for(uint32_t i=0;i<32u;i++)manifest.manifest_sha256[i]=(uint8_t)(i*7u+3u);pid_t children[FG_RANK_COUNT];for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){children[rank]=fork();if(children[rank]<0){perror("fork");return 1;}if(children[rank]==0)_exit(child_main(&manifest,rank));}uint32_t passed=0,skipped=0;for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++){int status;if(waitpid(children[rank],&status,0)<0){perror("waitpid");return 1;}if(WIFEXITED(status)&&WEXITSTATUS(status)==0)passed++;else if(WIFEXITED(status)&&WEXITSTATUS(status)==77)skipped++;else{fprintf(stderr,"fabric rank %u exited abnormally\n",rank);return 1;}}if(skipped==FG_RANK_COUNT){fprintf(stderr,"SKIP eight-process fabric: io_uring unavailable\n");return 77;}if(passed!=FG_RANK_COUNT||skipped){fprintf(stderr,"inconsistent fabric qualification: %u pass %u skip\n",passed,skipped);return 1;}puts(pipeline_only?"Independent two-session eight-rank pipeline: PASS":"Flash Gordon protocol 6 and eight-process dual-channel mesh: PASS");return 0;}
