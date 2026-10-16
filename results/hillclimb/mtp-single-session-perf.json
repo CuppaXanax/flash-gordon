@@ -1,0 +1,607 @@
+{
+  "scope": "diagnostic, not promotion; single-session mask330",
+  "offline_analysis_reproduction": "PASS: archived analysis/perf-metrics.py reproduced analysis/final-metrics.json byte-exact from archived diagnostic receipts",
+  "tokens_per_pass_definition": "emitted tokens per speculative verification round",
+  "repair_pass_definition": "one additional target replay when consumed < drafted+1",
+  "phases": {
+    "A0": {
+      "categories": {
+        "chat": {
+          "requests": 6,
+          "decode_tps_median": 31.185317479585308,
+          "decode_tps_weighted": 30.84779970793222,
+          "wall_tps_median": 23.94164059333915,
+          "completion_tokens": 549,
+          "rounds": 0,
+          "emitted": 0,
+          "repair_passes": 0,
+          "actual_k_counts": {},
+          "tokens_per_pass": null,
+          "tokens_per_verify_or_repair_pass": null,
+          "accepted_fraction": null,
+          "round_trace_requests_matched": 6,
+          "round_only_emitted_tps": null
+        },
+        "code": {
+          "requests": 6,
+          "decode_tps_median": 31.55208152761725,
+          "decode_tps_weighted": 31.242194197020037,
+          "wall_tps_median": 26.24718576462793,
+          "completion_tokens": 768,
+          "rounds": 0,
+          "emitted": 0,
+          "repair_passes": 0,
+          "actual_k_counts": {},
+          "tokens_per_pass": null,
+          "tokens_per_verify_or_repair_pass": null,
+          "accepted_fraction": null,
+          "round_trace_requests_matched": 6,
+          "round_only_emitted_tps": null
+        }
+      },
+      "greedy": null
+    },
+    "D3": {
+      "categories": {
+        "chat": {
+          "requests": 6,
+          "decode_tps_median": 16.107892567936837,
+          "decode_tps_weighted": 15.16707916285929,
+          "wall_tps_median": 13.686849233188774,
+          "completion_tokens": 549,
+          "rounds": 248,
+          "emitted": 546,
+          "repair_passes": 184,
+          "actual_k_counts": {
+            "3": 240,
+            "1": 5,
+            "2": 3
+          },
+          "tokens_per_pass": 2.2016129032258065,
+          "tokens_per_verify_or_repair_pass": 1.2638888888888888,
+          "accepted_fraction": 0.4158686730506156,
+          "round_trace_requests_matched": 6,
+          "round_only_emitted_tps": 15.134899353750885
+        },
+        "code": {
+          "requests": 6,
+          "decode_tps_median": 26.87546363517529,
+          "decode_tps_weighted": 26.4542995714225,
+          "wall_tps_median": 22.652114150162717,
+          "completion_tokens": 768,
+          "rounds": 227,
+          "emitted": 762,
+          "repair_passes": 77,
+          "actual_k_counts": {
+            "3": 217,
+            "2": 8,
+            "1": 2
+          },
+          "tokens_per_pass": 3.356828193832599,
+          "tokens_per_verify_or_repair_pass": 2.5065789473684212,
+          "accepted_fraction": 0.8086696562032885,
+          "round_trace_requests_matched": 6,
+          "round_only_emitted_tps": 26.459794134467842
+        }
+      },
+      "greedy": {
+        "diagnostic_only": true,
+        "qualified": false,
+        "passed": 6,
+        "failed_cases": [
+          "chat-2",
+          "chat-3"
+        ]
+      }
+    },
+    "A1": {
+      "categories": {
+        "chat": {
+          "requests": 6,
+          "decode_tps_median": 31.408368358789666,
+          "decode_tps_weighted": 30.81634947276068,
+          "wall_tps_median": 23.820133657156326,
+          "completion_tokens": 549,
+          "rounds": 0,
+          "emitted": 0,
+          "repair_passes": 0,
+          "actual_k_counts": {},
+          "tokens_per_pass": null,
+          "tokens_per_verify_or_repair_pass": null,
+          "accepted_fraction": null,
+          "round_trace_requests_matched": 6,
+          "round_only_emitted_tps": null
+        },
+        "code": {
+          "requests": 6,
+          "decode_tps_median": 31.657134785953858,
+          "decode_tps_weighted": 31.22729063141098,
+          "wall_tps_median": 26.460135047842932,
+          "completion_tokens": 768,
+          "rounds": 0,
+          "emitted": 0,
+          "repair_passes": 0,
+          "actual_k_counts": {},
+          "tokens_per_pass": null,
+          "tokens_per_verify_or_repair_pass": null,
+          "accepted_fraction": null,
+          "round_trace_requests_matched": 6,
+          "round_only_emitted_tps": null
+        }
+      },
+      "greedy": null
+    },
+    "F1": {
+      "categories": {
+        "chat": {
+          "requests": 6,
+          "decode_tps_median": 22.77123095586621,
+          "decode_tps_weighted": 22.54720875428753,
+          "wall_tps_median": 18.583837374025997,
+          "completion_tokens": 549,
+          "rounds": 336,
+          "emitted": 546,
+          "repair_passes": 126,
+          "actual_k_counts": {
+            "1": 336
+          },
+          "tokens_per_pass": 1.625,
+          "tokens_per_verify_or_repair_pass": 1.1818181818181819,
+          "accepted_fraction": 0.6339285714285714,
+          "round_trace_requests_matched": 6,
+          "round_only_emitted_tps": 22.537513505481133
+        },
+        "code": {
+          "requests": 6,
+          "decode_tps_median": 30.933363022999046,
+          "decode_tps_weighted": 31.013324587147213,
+          "wall_tps_median": 25.933937655144675,
+          "completion_tokens": 768,
+          "rounds": 399,
+          "emitted": 762,
+          "repair_passes": 36,
+          "actual_k_counts": {
+            "1": 399
+          },
+          "tokens_per_pass": 1.9097744360902256,
+          "tokens_per_verify_or_repair_pass": 1.7517241379310344,
+          "accepted_fraction": 0.9097744360902256,
+          "round_trace_requests_matched": 6,
+          "round_only_emitted_tps": 31.059426016100765
+        }
+      },
+      "greedy": {
+        "diagnostic_only": true,
+        "qualified": false,
+        "passed": 6,
+        "failed_cases": [
+          "chat-1",
+          "chat-3"
+        ]
+      }
+    },
+    "A2": {
+      "categories": {
+        "chat": {
+          "requests": 2,
+          "decode_tps_median": 29.33705917197406,
+          "decode_tps_weighted": 29.315268411431376,
+          "wall_tps_median": 22.849873596320265,
+          "completion_tokens": 183,
+          "rounds": 0,
+          "emitted": 0,
+          "repair_passes": 0,
+          "actual_k_counts": {},
+          "tokens_per_pass": null,
+          "tokens_per_verify_or_repair_pass": null,
+          "accepted_fraction": null,
+          "round_trace_requests_matched": 2,
+          "round_only_emitted_tps": null
+        },
+        "code": {
+          "requests": 2,
+          "decode_tps_median": 30.19922507899546,
+          "decode_tps_weighted": 30.188595792327526,
+          "wall_tps_median": 25.38019026725685,
+          "completion_tokens": 256,
+          "rounds": 0,
+          "emitted": 0,
+          "repair_passes": 0,
+          "actual_k_counts": {},
+          "tokens_per_pass": null,
+          "tokens_per_verify_or_repair_pass": null,
+          "accepted_fraction": null,
+          "round_trace_requests_matched": 2,
+          "round_only_emitted_tps": null
+        }
+      },
+      "greedy": null
+    },
+    "F2": {
+      "categories": {
+        "chat": {
+          "requests": 2,
+          "decode_tps_median": 18.96373627973825,
+          "decode_tps_weighted": 18.575266276543577,
+          "wall_tps_median": 15.819979959707098,
+          "completion_tokens": 183,
+          "rounds": 89,
+          "emitted": 182,
+          "repair_passes": 50,
+          "actual_k_counts": {
+            "2": 88,
+            "1": 1
+          },
+          "tokens_per_pass": 2.044943820224719,
+          "tokens_per_verify_or_repair_pass": 1.3093525179856116,
+          "accepted_fraction": 0.5310734463276836,
+          "round_trace_requests_matched": 2,
+          "round_only_emitted_tps": 18.5476667391928
+        },
+        "code": {
+          "requests": 2,
+          "decode_tps_median": 27.652974722845983,
+          "decode_tps_weighted": 27.65182868182212,
+          "wall_tps_median": 23.394227055508896,
+          "completion_tokens": 256,
+          "rounds": 94,
+          "emitted": 254,
+          "repair_passes": 21,
+          "actual_k_counts": {
+            "2": 93,
+            "1": 1
+          },
+          "tokens_per_pass": 2.702127659574468,
+          "tokens_per_verify_or_repair_pass": 2.208695652173913,
+          "accepted_fraction": 0.8663101604278075,
+          "round_trace_requests_matched": 2,
+          "round_only_emitted_tps": 27.660863439297312
+        }
+      },
+      "greedy": {
+        "diagnostic_only": true,
+        "qualified": false,
+        "passed": 5,
+        "failed_cases": [
+          "chat-1",
+          "chat-2",
+          "chat-3"
+        ]
+      }
+    },
+    "A3": {
+      "categories": {
+        "chat": {
+          "requests": 2,
+          "decode_tps_median": 28.904485824941727,
+          "decode_tps_weighted": 28.979043953377577,
+          "wall_tps_median": 22.451414255758984,
+          "completion_tokens": 183,
+          "rounds": 0,
+          "emitted": 0,
+          "repair_passes": 0,
+          "actual_k_counts": {},
+          "tokens_per_pass": null,
+          "tokens_per_verify_or_repair_pass": null,
+          "accepted_fraction": null,
+          "round_trace_requests_matched": 2,
+          "round_only_emitted_tps": null
+        },
+        "code": {
+          "requests": 2,
+          "decode_tps_median": 29.358838498288456,
+          "decode_tps_weighted": 29.357564045297735,
+          "wall_tps_median": 24.671701312089763,
+          "completion_tokens": 256,
+          "rounds": 0,
+          "emitted": 0,
+          "repair_passes": 0,
+          "actual_k_counts": {},
+          "tokens_per_pass": null,
+          "tokens_per_verify_or_repair_pass": null,
+          "accepted_fraction": null,
+          "round_trace_requests_matched": 2,
+          "round_only_emitted_tps": null
+        }
+      },
+      "greedy": null
+    },
+    "F3": {
+      "categories": {
+        "chat": {
+          "requests": 2,
+          "decode_tps_median": 17.191993731919656,
+          "decode_tps_weighted": 16.37816680521959,
+          "wall_tps_median": 14.569550195628501,
+          "completion_tokens": 183,
+          "rounds": 80,
+          "emitted": 182,
+          "repair_passes": 60,
+          "actual_k_counts": {
+            "3": 80
+          },
+          "tokens_per_pass": 2.275,
+          "tokens_per_verify_or_repair_pass": 1.3,
+          "accepted_fraction": 0.43333333333333335,
+          "round_trace_requests_matched": 2,
+          "round_only_emitted_tps": 16.346358866525513
+        },
+        "code": {
+          "requests": 2,
+          "decode_tps_median": 28.11885981710423,
+          "decode_tps_weighted": 28.091473263189258,
+          "wall_tps_median": 23.820542417568003,
+          "completion_tokens": 256,
+          "rounds": 75,
+          "emitted": 254,
+          "repair_passes": 25,
+          "actual_k_counts": {
+            "3": 73,
+            "2": 2
+          },
+          "tokens_per_pass": 3.3866666666666667,
+          "tokens_per_verify_or_repair_pass": 2.54,
+          "accepted_fraction": 0.8116591928251121,
+          "round_trace_requests_matched": 2,
+          "round_only_emitted_tps": 28.10149196795191
+        }
+      },
+      "greedy": {
+        "diagnostic_only": true,
+        "qualified": false,
+        "passed": 6,
+        "failed_cases": [
+          "chat-2",
+          "chat-3"
+        ]
+      }
+    },
+    "A4": {
+      "categories": {
+        "chat": {
+          "requests": 2,
+          "decode_tps_median": 29.5171500328929,
+          "decode_tps_weighted": 29.708710814634557,
+          "wall_tps_median": 22.93905687697709,
+          "completion_tokens": 183,
+          "rounds": 0,
+          "emitted": 0,
+          "repair_passes": 0,
+          "actual_k_counts": {},
+          "tokens_per_pass": null,
+          "tokens_per_verify_or_repair_pass": null,
+          "accepted_fraction": null,
+          "round_trace_requests_matched": 2,
+          "round_only_emitted_tps": null
+        },
+        "code": {
+          "requests": 2,
+          "decode_tps_median": 30.102190777854112,
+          "decode_tps_weighted": 30.101588243962617,
+          "wall_tps_median": 25.32640705909934,
+          "completion_tokens": 256,
+          "rounds": 0,
+          "emitted": 0,
+          "repair_passes": 0,
+          "actual_k_counts": {},
+          "tokens_per_pass": null,
+          "tokens_per_verify_or_repair_pass": null,
+          "accepted_fraction": null,
+          "round_trace_requests_matched": 2,
+          "round_only_emitted_tps": null
+        }
+      },
+      "greedy": null
+    }
+  },
+  "comparisons": {
+    "D3": {
+      "chat": {
+        "baseline_phases": [
+          "A0",
+          "A1"
+        ],
+        "off_decode_tps": 31.29684291918749,
+        "mtp_decode_tps": 16.107892567936837,
+        "matched_requests": 6,
+        "unmatched_candidate_requests": 0,
+        "rounds": 248,
+        "emitted": 546,
+        "repair_passes": 184,
+        "accepted_fraction": 0.4158686730506156,
+        "tokens_per_pass": 2.2016129032258065,
+        "tokens_per_verify_or_repair_pass": 1.2638888888888888,
+        "ratio": 0.5146810689349564,
+        "paired_ratio_median": 0.5210977099135743
+      },
+      "code": {
+        "baseline_phases": [
+          "A0",
+          "A1"
+        ],
+        "off_decode_tps": 31.604608156785552,
+        "mtp_decode_tps": 26.87546363517529,
+        "matched_requests": 6,
+        "unmatched_candidate_requests": 0,
+        "rounds": 227,
+        "emitted": 762,
+        "repair_passes": 77,
+        "accepted_fraction": 0.8086696562032885,
+        "tokens_per_pass": 3.356828193832599,
+        "tokens_per_verify_or_repair_pass": 2.5065789473684212,
+        "ratio": 0.8503653486811256,
+        "paired_ratio_median": 0.8532588221649349
+      }
+    },
+    "F1": {
+      "chat": {
+        "baseline_phases": [
+          "A1",
+          "A2"
+        ],
+        "off_decode_tps": 29.324327203210437,
+        "mtp_decode_tps": 22.353126307587388,
+        "matched_requests": 2,
+        "unmatched_candidate_requests": 4,
+        "rounds": 112,
+        "emitted": 182,
+        "repair_passes": 42,
+        "accepted_fraction": 0.6339285714285714,
+        "tokens_per_pass": 1.625,
+        "tokens_per_verify_or_repair_pass": 1.1818181818181819,
+        "ratio": 0.7622724351929943,
+        "paired_ratio_median": 0.7622231939205812
+      },
+      "code": {
+        "baseline_phases": [
+          "A1",
+          "A2"
+        ],
+        "off_decode_tps": 30.171644564127803,
+        "mtp_decode_tps": 30.101748250497856,
+        "matched_requests": 2,
+        "unmatched_candidate_requests": 4,
+        "rounds": 133,
+        "emitted": 254,
+        "repair_passes": 12,
+        "accepted_fraction": 0.9097744360902256,
+        "tokens_per_pass": 1.9097744360902256,
+        "tokens_per_verify_or_repair_pass": 1.7517241379310344,
+        "ratio": 0.9976833774015404,
+        "paired_ratio_median": 0.9976497602263965
+      }
+    },
+    "F2": {
+      "chat": {
+        "baseline_phases": [
+          "A2",
+          "A3"
+        ],
+        "off_decode_tps": 29.120772498457892,
+        "mtp_decode_tps": 18.96373627973825,
+        "matched_requests": 2,
+        "unmatched_candidate_requests": 0,
+        "rounds": 89,
+        "emitted": 182,
+        "repair_passes": 50,
+        "accepted_fraction": 0.5310734463276836,
+        "tokens_per_pass": 2.044943820224719,
+        "tokens_per_verify_or_repair_pass": 1.3093525179856116,
+        "ratio": 0.6512099320422384,
+        "paired_ratio_median": 0.651284168173132
+      },
+      "code": {
+        "baseline_phases": [
+          "A2",
+          "A3"
+        ],
+        "off_decode_tps": 29.77903178864196,
+        "mtp_decode_tps": 27.652974722845983,
+        "matched_requests": 2,
+        "unmatched_candidate_requests": 0,
+        "rounds": 94,
+        "emitted": 254,
+        "repair_passes": 21,
+        "accepted_fraction": 0.8663101604278075,
+        "tokens_per_pass": 2.702127659574468,
+        "tokens_per_verify_or_repair_pass": 2.208695652173913,
+        "ratio": 0.9286055678073832,
+        "paired_ratio_median": 0.9286805044930682
+      }
+    },
+    "F3": {
+      "chat": {
+        "baseline_phases": [
+          "A3",
+          "A4"
+        ],
+        "off_decode_tps": 29.210817928917315,
+        "mtp_decode_tps": 17.191993731919656,
+        "matched_requests": 2,
+        "unmatched_candidate_requests": 0,
+        "rounds": 80,
+        "emitted": 182,
+        "repair_passes": 60,
+        "accepted_fraction": 0.43333333333333335,
+        "tokens_per_pass": 2.275,
+        "tokens_per_verify_or_repair_pass": 1.3,
+        "ratio": 0.5885488647991743,
+        "paired_ratio_median": 0.5893152193510947
+      },
+      "code": {
+        "baseline_phases": [
+          "A3",
+          "A4"
+        ],
+        "off_decode_tps": 29.730514638071284,
+        "mtp_decode_tps": 28.11885981710423,
+        "matched_requests": 2,
+        "unmatched_candidate_requests": 0,
+        "rounds": 75,
+        "emitted": 254,
+        "repair_passes": 25,
+        "accepted_fraction": 0.8116591928251121,
+        "tokens_per_pass": 3.3866666666666667,
+        "tokens_per_verify_or_repair_pass": 2.54,
+        "ratio": 0.945791223576626,
+        "paired_ratio_median": 0.945657144061246
+      }
+    }
+  },
+  "candidate": {
+    "commit": "311be40f739cb4cf6cba6a7fdc167109dbdc9c65",
+    "release_sha256": "c9d0a7ad3170a088306b0e097c0a8a5088f53c14a861fd1b78b7be939a39a1c4",
+    "sessions": 1,
+    "small_kernels": 330,
+    "promoted": false,
+    "quality": "FAILED_GREEDY; model KL/top1 not qualified"
+  },
+  "lease": {
+    "started": "2026-10-16T15:22:47.332Z",
+    "released": "2026-10-16T15:56:43Z",
+    "hard_end": "2026-10-16T16:07:47.332Z",
+    "work_deadline": "2026-10-16T15:57:47.332Z",
+    "outcomes": [
+      {
+        "lease": "mtp-s1-20261016-152247",
+        "scratchRemoved": true,
+        "complete": false,
+        "elapsedSeconds": 445.8079421,
+        "productionVerified": true,
+        "failure": "HTTP client failed; see D:\\looking-glass-labs\\fg-wt\\mtp\\.build\\mtp-serving-perf-lease\\runs\\mtp-s1-20261016-152247\\client-f652028ae6c14789b14f8252ceb3e6bb.stderr",
+        "finalizationErrors": []
+      },
+      {
+        "diagnosticOnly": true,
+        "complete": true,
+        "finalizationErrors": [],
+        "scratchRemoved": true,
+        "elapsedSeconds": 2019.1431475,
+        "productionVerified": true,
+        "failure": "",
+        "lease": "mtp-s1-20261016-152247-diag"
+      }
+    ]
+  },
+  "sampling": "128-token maximum. Three repeats through F1; A2 onward one explicit diagnostic repeat. Comparisons use only matching case/repeat in both off brackets. Adaptive six requests/category; fixed two/category; four unmatched F1 requests/category retained only in full phase metrics.",
+  "excluded_weight_payloads": [
+    {
+      "run": "strict",
+      "path": "embedding.fgme",
+      "bytes": 675430528,
+      "sha256": "c388ca0b32734bef3d5dbf94704b3c1d7955f74b36e89a855f0ff6532bcdae19"
+    },
+    {
+      "run": "diagnostic",
+      "path": "embedding.fgme",
+      "bytes": 675430528,
+      "sha256": "c388ca0b32734bef3d5dbf94704b3c1d7955f74b36e89a855f0ff6532bcdae19"
+    }
+  ],
+  "evidence": {
+    "path": "mtp-single-session-perf-evidence.tar.gz",
+    "bytes": 1469440,
+    "sha256": "f9a96fae2060e51ae3458c5a64c0a4c15ec0c4e2fcbbd910683ce13c3b3fc1b3",
+    "reproduce": "Extract archive; python analysis/perf-metrics.py diagnostic output.json"
+  }
+}

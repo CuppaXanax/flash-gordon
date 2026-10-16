@@ -1,0 +1,62 @@
+{
+  "status": "DEFAULT_OFF; actual whole-target rank6 fit and model qualification pending",
+  "source_parent": "7d1fe65b4962c208443517a962195d6de628b6d5",
+  "source_archive_sha256": "87185d031bbb09d5ff114740f83049b163dc8457817ba5460cfb4834fa9ec54f",
+  "current_source_files_sha_matched": 378,
+  "binary_sha256": {
+    "flash-gordon": "57c6f5c687ca4c5471390856e61b004063787306f1192ff7d7d44b0da22be43c",
+    "tools/mtp-residency": "9003e09c379b4de213eef4e72a156fb5d7134ea71a0cd650e705524c6d3a8fea"
+  },
+  "cli": "--experimental-mtp --mtp-native-rank 6",
+  "default": "unchanged final-target-owner placement, CONFIG owner byte zero",
+  "routing": "unique contiguous remote predecessor; coordinator/vocabulary owners forbidden",
+  "wire": "typed lossless F32 HC, slot/session/frontier/count identity, one in-flight downstream credit",
+  "native": {
+    "kind": "isolated_native_allocation_not_full_rank_fit",
+    "native_owner": 6,
+    "exact_default_equivalence_steps": 8,
+    "weights": 2772584448,
+    "first_total": 2811290160,
+    "both_total": 2849995872,
+    "private_second": 38705712,
+    "warm_pair_total": 2849995872,
+    "kv_each": 33570816
+  },
+  "serving_wrapper_input_bytes_for_two_sessions": 102400,
+  "native_serving_two_total": 2850098272,
+  "native_exact_inputs": "synthetic HC/embeddings; actual pinned trained Q8 core; same GPU, independent reference Vulkan namespace",
+  "overlay_sha256": "536bab54b0a1bdea23b65871c4cdc38deee5803771501a0c770a0510bcd3283b",
+  "target_manifest_sha256": "0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252",
+  "gates": {
+    "C17_Werror": "PASS",
+    "native_wire_embedding_rollback_policy": "PASS",
+    "session_and_API": "PASS",
+    "real_network_numerical_double_rings": 8,
+    "ring_matrix": "default7/relocated6 x rejection0/1/2/3, each includes two private sessions and fixed/adaptive k1/2/3",
+    "large_frame_credit": "four relocated runs; four512-row duplex frames/run across two sessions, two endpoint PASS receipts/run",
+    "largest_HC_wire_bytes": 20973584,
+    "frozen_SPIRV_byte_matches": 320,
+    "strict_diagnostic_client_unit_tests": 6,
+    "client_log_contains_only_synthetic_fixture_performance": true,
+    "flags": "code55 test35 doc84 PASS",
+    "model_KL_top1": "NOT RUN",
+    "relocated_real_model_greedy": "NOT RUN",
+    "full_rank6_target_native_fit": "NOT RUN: authentic complete rank6 target file unavailable"
+  },
+  "projected_rank6_two_requested_bytes": 13533534288,
+  "residency_cap_bytes": 14495514624,
+  "projection_is_not_fit_proof": true,
+  "whole_rank_probe": "mtp-residency MANIFEST OVERLAY EMBEDDING 2 --native-rank 6",
+  "governor_config_sha256": "a5e83975e4fbea57d6110cbf4aa81fd58367d044c2bc602815ff0ca21ede6757",
+  "idle_blade": "192.168.42.51 only; owned root removed, absence twice, no owned executable, governor active/unchanged",
+  "cleanup": "mtp-native-placement-cleanup.json",
+  "frozen_production_perf_report": "mtp-single-session-perf.json",
+  "no_research_variants_or_BF16_included": true,
+  "promoted": false,
+  "evidence": {
+    "path": "mtp-native-placement-evidence.tar.gz",
+    "bytes": 1437882,
+    "sha256": "266092bdac36c27396a177eaeac42e6e940750d050744d6c2905aa3c2901582d",
+    "nested_remote_sha256": "25b8d4d3ca1916052eb8b329d47dc37cfa261f311a904a71328dd973b9210bad"
+  }
+}

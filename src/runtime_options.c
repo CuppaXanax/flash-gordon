@@ -1,6 +1,8 @@
 #include "fg_runtime.h"
 #include "fg_q38_schema.h"
 #include "fg_topology.h"
+#include "fg_mtp.h"
+#include "fg_protocol.h"
 
 #include <string.h>
 
@@ -312,6 +314,7 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
     resolved->mtp_window_tokens=input.mtp_window_tokens;
     resolved->mtp_max_draft=input.mtp_max_draft;
     resolved->mtp_fixed_draft=input.mtp_fixed_draft;
+    resolved->mtp_native_rank_plus_one=input.mtp_native_rank_plus_one;
     resolved->specified=mask;
     if(resolved->prefill_microbatch!=manifest->prefill_microbatch||
        resolved->prefill_window!=manifest->prefill_window){
@@ -327,6 +330,16 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
         return FG_ERR_UNAVAILABLE;
     }
     if(resolved->experimental_flags&FG_RUNTIME_EXPERIMENTAL_MTP){
+        uint32_t native_owner=0u;
+        fg_status placement=fg_mtp_native_owner_resolve(manifest,
+            resolved->mtp_native_rank_plus_one,&native_owner,err);
+        if(placement!=FG_OK)return placement;
+        uint32_t way=0u;
+        if(native_owner!=manifest->layer_owner[FG_LAYER_COUNT-1u]&&
+           fg_output_split_way_for_rank(FG_OUTPUT_SPLIT_WAYS_MAX,native_owner,&way)){
+            fg_error_set(err,FG_ERR_ARGUMENT,"relocated MTP owner cannot own a vocabulary shard");
+            return FG_ERR_ARGUMENT;
+        }
         if(!resolved->mtp_window_tokens)resolved->mtp_window_tokens=
             resolved->logical_context_tokens<8192u?resolved->logical_context_tokens:8192u;
         if(!resolved->mtp_max_draft)resolved->mtp_max_draft=FG_MTP_MAX_DRAFT_TOKENS;
@@ -347,7 +360,7 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
             return FG_ERR_ARGUMENT;
         }
     }else if(input.mtp_overlay||input.mtp_embedding||input.mtp_window_tokens||
-             input.mtp_max_draft||input.mtp_fixed_draft){
+             input.mtp_max_draft||input.mtp_fixed_draft||input.mtp_native_rank_plus_one){
         fg_error_set(err,FG_ERR_ARGUMENT,"MTP options require --experimental-mtp");
         return FG_ERR_ARGUMENT;
     }

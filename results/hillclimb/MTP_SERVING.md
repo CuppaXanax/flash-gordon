@@ -1,6 +1,35 @@
 # MTP serving foundation on the promoted multisession base
 
-## Next lease: isolated single-session performance
+## Frozen single-session lease — 2026-10-16: FAILED_GREEDY
+
+Frozen311be40 / releasec9d0a7ad, sessions1/mask330, stock recipe. Exclusive
+grant15:22:47.332Z; first strict attempt stopped/restored at adaptive6/8.
+Diagnostic retry retained the original lease/deadlines and immutable binary.
+Final all-eight pinned restore, API sanity, watchdog cancellation and owned
+scratch removal passed; explicit release15:56:43Z. No promotion.
+
+| Width | Greedy | Off TPS chat/code | MTP TPS chat/code | Tokens/round chat/code |
+|---|---:|---:|---:|---:|
+| Adaptive cap3 | 6/8 | 31.30/31.60 | 16.11/26.88 | 2.20/3.36 |
+| k1 | 6/8 | 29.32/30.17 | 22.35/30.10 | 1.63/1.91 |
+| k2 | 5/8 | 29.12/29.78 | 18.96/27.65 | 2.04/2.70 |
+| k3 | 6/8 | 29.21/29.73 | 17.19/28.12 | 2.28/3.39 |
+
+All four code cases passed each arm; failures are chat. All same-session off
+arms passed8/8. Cause is unproven. There is no demonstrated speedup and no60TPS
+projection. Each off number matches request/repeat before/after; TPS includes
+repair. Tokens/round counts speculative verification rounds only; including
+repair passes reduces yields to1.18–1.31 chat and1.75–2.54 code.
+
+Adaptive has six matched requests/category; fixed arms two each. Later suites
+were explicitly reduced from three repeats to one without changing the128-token
+maximum. F1 had already loaded the original three-repeat policy; its extra four
+requests/category have no A2 repeat match and are excluded from this table, but
+retained in raw/full-arm metrics. Results are diagnostic, not qualification.
+Adaptive/fixed3 SSE/stop/cancel completed. Complete measurements and restoration
+receipts: `mtp-single-session-perf.json` and `mtp-single-session-perf-evidence.tar.gz`.
+
+## Historical preparation: isolated single-session performance
 
 Prepared release `c9d0a7ad3170a088306b0e097c0a8a5088f53c14a861fd1b78b7be939a39a1c4`
 uses sessions1/mask330. Nine bracketed arms compare adaptive cap3 and true
@@ -13,7 +42,7 @@ adaptive3/fixed3. No concurrent-session result is claimed.
 Q8 wide0/1 and independent expert component gates pass. All320 shader binaries
 are byte-identical to the actual-pack-qualified corrected release. Source and
 artifact identities explicitly bind inherited real-format proof to this
-performance-only build; no real-ring performance has been measured yet.
+performance-only build; no real-ring performance had been measured at preparation.
 The eager dual-session admission/residency work is deliberately excluded.
 The controller still requires a fresh exclusive lease, restores sessions2/wide1,
 and never promotes. See `results/hillclimb/mtp-single-session-ready.json`.

@@ -1,22 +1,23 @@
 # MTP: native head, causal verification and remaining execution gates
 
-**2026-10-16 serving gate: BLOCKED on native-session residency; not promoted.**
-The corrected candidate's first K1/mask0 chat produced the exact target55-token
-hash, but the second request hit rank7's
-`native MTP session KV/scratch exceed residency cap` guard. Its last startup
-ledger already exceeded the sealed13.5GiB residency policy; this is not a
-Q8 format error or a reported physical Vulkan OOM. Both MTP-off masks passed
-eight greedy cases. No complete MTP-on greedy/performance, mask330 MTP,
-two-session or streaming gate is qualified. All eight owners were restored,
-verified and cleaned; the ring was released at14:12:25Z, under10min.
+**2026-10-16 serving gate: FAILED_GREEDY; not promoted.**
+The frozen sessions1/mask330 sweep completed adaptive and fixed k1/2/3
+measurements without the dual-session residency blocker. Greedy identity passed
+only6/8,6/8,5/8,6/8 respectively; every failed case was chat. All four code
+cases passed each arm, but that is not full-model qualification. MTP-off
+same-session comparisons passed8/8 throughout. No speedup is demonstrated:
+best repeat-matched code TPS is30.10 versus30.17 off; chat loses at every k.
+Mismatch cause remains unproven; component tolerance does not certify greedy
+identity. All eight owners were restored, verified and cleaned; the exclusive
+lease was explicitly released at15:56:43Z, within the original45-minute grant.
 See [current lease report](../results/hillclimb/MTP_SERVING.md) and
-[raw receipts](../results/hillclimb/mtp-serving-q8-lease.json).
+[raw receipts](../results/hillclimb/mtp-single-session-perf.json).
 The two-session successor must fit both private target/native sessions,
 including deferred allocations, before readiness. Do not bypass the residency
 cap. A separate single-session performance candidate answers the speed question
 without treating dual-session residency as a prerequisite.
 
-### Single-session performance gate (prepared, no new ring access)
+### Single-session performance gate (measured, diagnostic only)
 
 The frozen performance-only release is
 `c9d0a7ad3170a088306b0e097c0a8a5088f53c14a861fd1b78b7be939a39a1c4`.
@@ -34,6 +35,37 @@ D3/F3 additionally exercise SSE/stop/cancel. This does **not** qualify concurren
 two-session serving. Restoration remains the pinned sessions2/wide1 service.
 The unchanged 35-minute work limit and 38/39-minute watchdogs leave restoration
 inside the 45-minute exclusive lease. No promotion is authorized.
+
+| Arm | Same-session off TPS, chat/code | MTP TPS, chat/code | Tokens/verification round, chat/code | Greedy identity |
+|---|---:|---:|---:|---:|
+| Adaptive cap3 | 31.30 / 31.60 | 16.11 / 26.88 | 2.20 / 3.36 | 6/8 |
+| Fixed k1 | 29.32 / 30.17 | 22.35 / 30.10 | 1.63 / 1.91 | 6/8 |
+| Fixed k2 | 29.12 / 29.78 | 18.96 / 27.65 | 2.04 / 2.70 | 5/8 |
+| Fixed k3 | 29.21 / 29.73 | 17.19 / 28.12 | 2.28 / 3.39 | 6/8 |
+
+TPS is median request decode throughput, including repair. Off TPS is the
+median of per-request before/after averages matched by case and repeat.
+Tokens/round uses only those requests' `MTP_ROUND` records, joined to the
+following actual request token-hash record; greedy/health/SSE are excluded.
+It is not tokens per physical target pass: counting verification **and repair**
+gives chat/code yields1.26/2.51 (adaptive),1.18/1.75 (k1),1.31/2.21 (k2),
+1.30/2.54 (k3). Measured accepted/drafted fractions are41.6%/80.9%,
+63.4%/91.0%,53.1%/86.6%,43.3%/81.2% respectively, not a distribution-exact
+sampling or quality claim.
+
+The first strict attempt stopped at adaptive6/8 and restored production.
+An explicitly diagnostic retry used the **same original lease/deadlines and
+unchanged frozen binary**, recording failures before continuing timings.
+To preserve restoration time, later arms used one repeat instead of three,
+with the128-token maximum unchanged. F1 had already started its three-repeat
+suite, so only its repeat0 has a matching reduced A2 bracket. The table uses
+six requests/category for adaptive and two/category for each fixed arm.
+All full-arm observations, unmatched F1 samples, wall TPS, repair counts,
+request IDs and the explicit diagnostic budget are retained in
+[`mtp-single-session-perf.json`](../results/hillclimb/mtp-single-session-perf.json)
+and its authenticated evidence archive. Small diagnostic samples are not
+performance qualification. Adaptive/fixed3 SSE, custom stop and cancellation
+checks completed, but do not override the failed greedy gate.
 
 On .51, C17-Werror, four numerical-double eight-rank runtime runs (adaptive and
 fixed1/2/3), session/publication tests, synthetic native-Q8 wide0/1 and independent
@@ -94,7 +126,7 @@ reported and no fully warm two-session physical fit is certified.
 
 The independent fit implementation adds typed `PREPARE` admission on **all**
 target owners: eagerly create expert small-N scratch and each requested session's
-GDN/PLE rollback shadows, check target live residency, and on the final owner
+GDN/PLE rollback shadows, check target live residency, and on the selected native owner
 materialize all requested private native contexts and check their total. API
 startup does this before opening its listener or announcing readiness. A bounded
 memory denial is acknowledged without poisoning transport; the coordinator
@@ -114,19 +146,69 @@ OVERLAY` measures isolated native allocation and explicitly is **not** a rank fi
 `mtp_rank_source.py` and `mtp-real-place` provide bounded public-range download
 and per-tensor authenticated lossless cooking into owned staging files.
 
-**Proposed relocation if rank7 cannot admit both sessions:** rank6 (.48) has a
+**Default-off relocation:** `--experimental-mtp --mtp-native-rank 6` selects
+rank6 on the current contiguous block map. Omitting the placement flag retains
+the original final-owner behavior and unchanged CONFIG bytes. Rank6 (.48) has a
 measured target-only two-session footprint of10,648,701,936 bytes from the
 released B0/K1 logs. Its five GDN layers require33,095,680 bytes of two-session
 rollback shadows at the measured per-layer geometry; add1,638,400 bytes of small-N
 scratch and2,850,098,272 bytes for both native contexts. This projects13,533,534,288
 bytes, leaving961,980,336 bytes below policy. Rank7 would retain11,904,390,640 bytes
 of target-only residency including eager verification storage. This is a
-placement estimate, **not implemented or load-qualified**. It requires a distinct native
-owner in the wire/runtime, forwarding final target hyperstates from rank7 to
-rank6 with session/frontier identity, and routing draft/repair RPCs to rank6.
+placement estimate, **not full-rank load-qualified**. The implementation carries
+the selected owner in CONFIG and forwards authoritative final target hyperstates
+from rank7 to rank6, preserving every F32 bit, with typed session/slot/sequence/
+frontier/count acknowledgements. Draft, warmfill, repair and eager private-session
+admission run on the selected owner. Both sessions are provisioned before API
+readiness under the existing total-residency cap.
 Keep target verification/QSA/GDN ownership and the existing four vocabulary
-head shards unchanged. Merely changing an overlay path cannot relocate the core;
-the current implementation deliberately requires the final target owner.
+head shards unchanged. The ordinary native loader still rejects a wrong final
+owner; a separate explicit placed-loader API validates the chosen predecessor.
+Coordinator and vocabulary-shard relocation destinations are rejected.
+Both selected blocks must be contiguous and unique. All ranks must use the
+updated binary, and the overlay plus embedding sidecar must exist at CONFIG's
+paths on the selected owner; the frozen `311be40` lease controller is not a
+relocation qualification release.
+
+One target frame may be in flight from the relocated predecessor to the final
+block: after forwarding prefill/decode/verify (including repair), the predecessor
+receives and applies the matching final HC before taking another target frame.
+This prevents opposing blocking multi-MiB sends under pipelined prefill or two
+sessions. The credit receiver reads only the final peer, services that peer's
+QSA/GDN side requests in their own session namespace, then restores the original
+slot. Unexpected/stale observations fail closed. Existing host wire/HC staging
+is reused; there are no new lazy GPU allocations or arithmetic/shader changes.
+The extra HC hop/ACK is real overhead and has no measured ring TPS claim.
+
+`tools/mtp-residency --native-only MANIFEST OVERLAY --native-rank 6` checks the
+authentic sealed runtime option and allocates two native contexts, then compares
+eight trained-native-core replay steps (two private slots) bit-exactly with the
+default owner. Synthetic HC/embedding inputs are **not** a real-text acceptance
+gate or a full rank6 fit. Authentic rank6 target+native eager admission, full
+model KL/top1, greedy identity, two-session serving and ring performance remain
+required before any placement promotion.
+
+On .51 the two trained native contexts request 2,849,995,872 bytes before **and
+after** eight replay steps: no deferred native GPU allocation appears. Shared
+weights are 2,772,584,448 bytes and each private context is 38,705,712 bytes.
+The serving wrapper's two input/embedding pairs add 102,400 bytes separately.
+Both private slots' HC and contracted outputs are bit-exact to the default
+owner on the same GPU in an independent Vulkan replay namespace.
+Eight real-network numerical-double ring runs cover both placements and all
+four rejection positions, adaptive/fixed widths, continuation, repair,
+coexistence, publication/SSE and cancellation. Four relocated runs additionally
+stress 512-row (~20MiB) duplex HC credits across both sessions.
+All 378 source files and all 320 frozen shader binaries were independently
+matched; flags and six strict/diagnostic client tests pass. See
+[`mtp-native-placement.json`](../results/hillclimb/mtp-native-placement.json).
+The .51 owned root was removed and absence verified twice, with no owned
+executables and the stock governor/config unchanged.
+
+For a future **authentic rank6 staging pack**, without joining the ring, use
+`tools/mtp-residency MANIFEST OVERLAY EMBEDDING 2 --native-rank 6`.
+This owner-aware full probe provisions target QSA, rollback and small-N
+storage plus both native contexts; the original unplaced probe API is retained.
+No complete rank6 trained target file was available for that gate in this run.
 
 **Real-format component gate: PASS.** The corrected `3c84f62` engine passed .51 with the exact
 891,289,600-byte real-pack Q8 down slab:36 byte-exact native-N1 comparisons,

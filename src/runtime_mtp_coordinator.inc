@@ -1,7 +1,7 @@
 struct fg_mtp_serving {
     fg_mtp_native *native;
     uint8_t *native_wire,*receive_wire;
-    uint32_t receive_capacity,rpc_sequence,warm_start,prefix_end;
+    uint32_t receive_capacity,rpc_sequence,warm_start,prefix_end,native_owner;
     int32_t *history;
     size_t history_capacity;
 };
@@ -54,7 +54,7 @@ static fg_status coordinator_mtp_send_native(fg_coordinator *c,uint32_t peer,
 }
 static fg_status coordinator_mtp_rpc(fg_coordinator *c,const fg_mtp_native_work *work,
     uint32_t expected_frontier,fg_error *err){
-    uint32_t peer=c->manifest->layer_owner[FG_LAYER_COUNT-1u],sequence=0u;
+    uint32_t peer=c->mtp->native_owner,sequence=0u;
     fg_status status=coordinator_mtp_send_native(c,peer,work,&sequence,err);
     fg_mtp_native_ack ack;
     if(status==FG_OK)status=coordinator_mtp_ack(c,peer,c->session_id,sequence,work,&ack,err);
@@ -113,6 +113,15 @@ static fg_status coordinator_mtp_create(fg_coordinator *c,bool configure,fg_erro
     fg_mtp_serving *m=calloc(1,sizeof(*m));
     if(!m){fg_error_set(err,FG_ERR_OOM,"allocate MTP serving stream");return FG_ERR_OOM;}
     c->mtp=m;
+    fg_status placement=fg_mtp_native_owner_resolve(c->manifest,
+        c->options.mtp_native_rank_plus_one,&m->native_owner,err);
+    if(placement!=FG_OK)return placement;
+    uint32_t way=0u;
+    if(m->native_owner!=c->manifest->layer_owner[FG_LAYER_COUNT-1u]&&
+       fg_output_split_way_for_rank(FG_OUTPUT_SPLIT_WAYS_MAX,m->native_owner,&way)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"relocated MTP owner cannot also own a vocabulary shard");
+        return FG_ERR_ARGUMENT;
+    }
     m->receive_capacity=FG_PREFILL_LAYER_HEADER_BYTES+FG_MTP_MAX_VERIFY*3u*4u+
         FG_MTP_MAX_VERIFY*(FG_HYPER_WIDTH+FG_NGRAM_EMBED_VALUES)*4u;
     m->native_wire=malloc(FG_MTP_NATIVE_WORK_MAX_BYTES);
@@ -124,6 +133,7 @@ static fg_status coordinator_mtp_create(fg_coordinator *c,bool configure,fg_erro
     fg_vk_context *vk=fg_model_vk(c->model);
     if(status==FG_OK)status=fg_mtp_native_create(&m->native,vk,c->manifest,0u,err);
     fg_mtp_native_work work={.operation=FG_MTP_NATIVE_CONFIG,
+        .owner_rank_plus_one=c->options.mtp_native_rank_plus_one,
         .overlay=c->options.mtp_overlay,.count=(uint32_t)strlen(c->options.mtp_overlay),
         .embedding_file=c->options.mtp_embedding,
         .argument=c->options.logical_context_tokens,.limit=c->options.mtp_window_tokens};
@@ -263,7 +273,8 @@ static fg_status coordinator_mtp_collect(fg_coordinator *c,fg_mtp_head_kind kind
             status=fg_mtp_head_work_decode(&work,hidden,FG_MTP_MAX_VERIFY*FG_HIDDEN_SIZE,
                 m->receive_wire,bytes,err);
             if(status==FG_OK&&(work.source_rank!=peer||
-               peer!=c->manifest->layer_owner[FG_LAYER_COUNT-1u]||
+               peer!=(kind==FG_MTP_HEAD_DRAFT?m->native_owner:
+                       c->manifest->layer_owner[FG_LAYER_COUNT-1u])||
                work.destination_rank!=0u||work.kind!=kind||work.first_token!=first||
                work.count!=count||
                fg_frame_sequence(&header)!=first*FG_LAYER_COUNT+FG_LAYER_COUNT-1u)){
@@ -400,7 +411,7 @@ static fg_status runtime_mtp_round(fg_runtime *runtime,uint32_t pending,uint32_t
             .count=1u,.argument=j,.tokens=&input};
         uint32_t sequence=0u;
         if(status==FG_OK)status=coordinator_mtp_send_native(c,
-            c->manifest->layer_owner[FG_LAYER_COUNT-1u],&work,&sequence,err);
+            c->mtp->native_owner,&work,&sequence,err);
         if(status==FG_OK)status=coordinator_mtp_collect(c,FG_MTP_HEAD_DRAFT,
             first+j,1u,false,false,&drafts[j],NULL,err);
         if(status==FG_OK)input=drafts[j];

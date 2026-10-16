@@ -18,8 +18,8 @@ typedef fg_status (*fg_mtp_head_trace_fn)(void *context,const char *stage,
     const fg_vk_tensor *values,uint32_t count,fg_error *err);
 void fg_mtp_head_set_trace(fg_mtp_head *head,fg_mtp_head_trace_fn trace,void *context);
 
-/* Independent dense draft KV; no target model state is modified. Only the
- * manifest owner of the last target layer may construct a native head. */
+/* Independent dense draft KV; no target model state is modified. Default
+ * constructors require the manifest owner of the last target layer. */
 fg_status fg_mtp_head_open(fg_mtp_head **out,fg_vk_context *vk,
     const fg_manifest *target,uint32_t rank,const char *overlay,
     uint32_t context_tokens,fg_error *err);
@@ -28,6 +28,10 @@ fg_status fg_mtp_head_open(fg_mtp_head **out,fg_vk_context *vk,
  * absolute. This approximation needs a separate real-text acceptance gate. */
 fg_status fg_mtp_head_open_windowed(fg_mtp_head **out,fg_vk_context *vk,
     const fg_manifest *target,uint32_t rank,const char *overlay,
+    uint32_t context_tokens,uint32_t window_tokens,fg_error *err);
+/* Explicit placement also permits the final block's contiguous predecessor. */
+fg_status fg_mtp_head_open_owner_windowed(fg_mtp_head **out,fg_vk_context *vk,
+    const fg_manifest *target,uint32_t rank,uint32_t native_owner,const char *overlay,
     uint32_t context_tokens,uint32_t window_tokens,fg_error *err);
 /* Share only immutable weights. KV, replay descriptors and all scratch remain
  * private to state_slot; either instance may be closed first. */

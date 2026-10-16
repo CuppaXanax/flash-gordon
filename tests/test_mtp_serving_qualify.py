@@ -49,6 +49,16 @@ class ServingClientTest(unittest.TestCase):
         paths["trace"].write_text(trace.replace("a" * 64, "b" * 64, 1), encoding="utf-8")
         with self.assertRaises(AssertionError):
             CLIENT.verify(args)
+        args.diagnostic = True
+        args.report_output = str(self.root / "greedy-report.json")
+        CLIENT.verify(args)
+        report = json.loads(pathlib.Path(args.report_output).read_text())
+        self.assertEqual(report["passed"], 7)
+        self.assertFalse(report["qualified"])
+        self.assertEqual(report["failed_cases"], ["0"])
+        args.report_output = None
+        with self.assertRaises(AssertionError):
+            CLIENT.verify(args)
 
     def test_bracketed_pairing(self):
         phases = ["A0", "K1", "A1", "K2", "A2", "K3", "A3"]
@@ -108,6 +118,31 @@ class ServingClientTest(unittest.TestCase):
         for comparison in summary["comparisons"]:
             self.assertEqual(set(comparison["bracketed_tps_ratios"]), {"chat", "code"})
             self.assertTrue(all(r["paired_median"] == 2 for r in comparison["bracketed_tps_ratios"].values()))
+
+    def test_diagnostic_budget_is_explicit_and_bounded(self):
+        args = types.SimpleNamespace(suite="perf", single_session=True, base="unused",
+                                     phase="F1", diagnostic=False,
+                                     output=str(self.root / "perf.json"))
+        budget_path = self.root / "diagnostic-budget.json"
+        budget = {"diagnostic_only": True, "perf_repeats": 1}
+        budget_path.write_text(json.dumps(budget))
+        with self.assertRaises(AssertionError):
+            CLIENT.run_suite(args)
+        args.diagnostic = True
+        with mock.patch.object(CLIENT, "request", return_value={"decode_tps": 30}) as call:
+            CLIENT.run_suite(args)
+        self.assertEqual(call.call_count, 4)
+        result = json.loads(pathlib.Path(args.output).read_text())
+        self.assertEqual(result["diagnostic_budget"], budget)
+        for repeat in (0, 4, True):
+            budget["perf_repeats"] = repeat
+            budget_path.write_text(json.dumps(budget))
+            with self.assertRaises(AssertionError):
+                CLIENT.run_suite(args)
+        budget = {"diagnostic_only": False, "perf_repeats": 1}
+        budget_path.write_text(json.dumps(budget))
+        with self.assertRaises(AssertionError):
+            CLIENT.run_suite(args)
 
 
 if __name__ == "__main__":

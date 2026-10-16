@@ -19,7 +19,7 @@ typedef struct native_session {
 struct fg_mtp_native {
     fg_vk_context *vk;
     const fg_manifest *manifest;
-    uint32_t rank,context_tokens,window_tokens;
+    uint32_t rank,native_owner,context_tokens,window_tokens;
     bool enabled,final_owner;
     char overlay[FG_MTP_OVERLAY_PATH_MAX+1u];
     char embedding_file[FG_MTP_OVERLAY_PATH_MAX+1u];
@@ -37,8 +37,11 @@ static fg_status ensure_session(fg_mtp_native *n,uint32_t slot,fg_error *err){
     fg_status status=FG_OK;
     if(!s->head){
         if(slot)status=fg_mtp_head_fork(&s->head,n->session[0].head,slot,err);
-        else status=fg_mtp_head_open_windowed(&s->head,n->vk,n->manifest,n->rank,
-            n->overlay,n->context_tokens,n->window_tokens,err);
+        else if(n->native_owner==n->manifest->layer_owner[FG_LAYER_COUNT-1u])
+            status=fg_mtp_head_open_windowed(&s->head,n->vk,n->manifest,n->rank,
+                n->overlay,n->context_tokens,n->window_tokens,err);
+        else status=fg_mtp_head_open_owner_windowed(&s->head,n->vk,n->manifest,n->rank,
+            n->native_owner,n->overlay,n->context_tokens,n->window_tokens,err);
     }
     if(status==FG_OK&&!s->input)
         status=fg_vk_tensor_create(n->vk,FG_HYPER_WIDTH*4u,&s->input,err);
@@ -53,6 +56,7 @@ fg_status fg_mtp_native_create(fg_mtp_native **out,fg_vk_context *vk,
     *out=calloc(1,sizeof(**out));
     if(!*out){fg_error_set(err,FG_ERR_OOM,"allocate native MTP state");return FG_ERR_OOM;}
     (*out)->vk=vk;(*out)->manifest=manifest;(*out)->rank=rank;
+    (*out)->native_owner=manifest->layer_owner[FG_LAYER_COUNT-1u];
     (*out)->final_owner=manifest->layer_owner[FG_LAYER_COUNT-1u]==rank;
     return FG_OK;
 }
@@ -66,6 +70,7 @@ void fg_mtp_native_close(fg_mtp_native *n){
     fg_mtp_embedding_close(n->embedding);free(n);
 }
 bool fg_mtp_native_enabled(const fg_mtp_native *n){return n&&n->enabled;}
+uint32_t fg_mtp_native_owner(const fg_mtp_native *n){return n?n->native_owner:UINT32_MAX;}
 fg_status fg_mtp_native_reset(fg_mtp_native *n,uint32_t slot,fg_error *err){
     if(!n||slot>=2u)return mismatch(err,"reset slot");
     native_session *s=&n->session[slot];
@@ -131,15 +136,21 @@ static fg_status warm(fg_mtp_native *n,native_session *s,uint32_t cell,
     return status;
 }
 static fg_status configure(fg_mtp_native *n,const fg_mtp_native_work *w,fg_error *err){
+    uint32_t selected=0u;
+    fg_status placement=fg_mtp_native_owner_resolve(n->manifest,w->owner_rank_plus_one,
+                                                  &selected,err);
+    if(placement!=FG_OK)return placement;
     if(n->enabled){
         if(strcmp(n->overlay,w->overlay)||strcmp(n->embedding_file,w->embedding_file)||
            n->context_tokens!=w->argument||
-           n->window_tokens!=w->limit)return mismatch(err,"configuration changed");
+           n->window_tokens!=w->limit||n->native_owner!=selected)
+            return mismatch(err,"configuration changed");
         return FG_OK;
     }
     snprintf(n->overlay,sizeof(n->overlay),"%s",w->overlay);
     snprintf(n->embedding_file,sizeof(n->embedding_file),"%s",w->embedding_file);
     n->context_tokens=w->argument;n->window_tokens=w->limit;
+    n->native_owner=selected;n->final_owner=selected==n->rank;
     fg_status status=FG_OK;
     if(n->final_owner)status=fg_mtp_embedding_open(&n->embedding,n->manifest,n->embedding_file,err);
     if(status==FG_OK&&n->final_owner)status=ensure_session(n,0u,err);

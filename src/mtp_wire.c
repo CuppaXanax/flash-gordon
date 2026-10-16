@@ -23,6 +23,67 @@ static fg_status malformed(fg_error *err,const char *what){
 static bool operation_valid(fg_mtp_native_operation op){
     return op>=FG_MTP_NATIVE_CONFIG&&op<=FG_MTP_NATIVE_PREPARE;
 }
+static bool target_shape(const fg_mtp_target_work *w){
+    return w&&w->source_rank<FG_RANK_COUNT&&w->destination_rank<FG_RANK_COUNT&&
+        w->source_rank!=w->destination_rank&&
+        w->kind>=FG_MTP_TARGET_PREFILL&&w->kind<=FG_MTP_TARGET_VERIFY&&
+        w->count&&w->count<=FG_PREFILL_MAX_TOKENS&&
+        (w->kind!=FG_MTP_TARGET_DECODE||w->count==1u)&&
+        (w->kind!=FG_MTP_TARGET_VERIFY||w->count<=FG_MTP_MAX_VERIFY)&&
+        w->first_token<=FG_NATIVE_CONTEXT-w->count;
+}
+fg_status fg_mtp_target_encode(uint8_t *out,uint32_t capacity,uint32_t *bytes,
+    const fg_mtp_target_work *w,bool ack,fg_error *err){
+    if(!out||!bytes||!target_shape(w)||
+       (!ack&&(!w->hyper||(w->kind==FG_MTP_TARGET_PREFILL&&!w->next_tokens))))
+        return malformed(err,"target observation");
+    uint32_t values=ack?0u:w->count*FG_HYPER_WIDTH;
+    uint32_t tokens=!ack&&w->kind==FG_MTP_TARGET_PREFILL?w->count:0u;
+    uint32_t required=FG_MTP_TARGET_HEADER_BYTES+(values+tokens)*4u;
+    if(required>capacity)return malformed(err,"target observation capacity");
+    memset(out,0,FG_MTP_TARGET_HEADER_BYTES);
+    out[0]=FG_MTP_WIRE_VERSION;out[1]=(uint8_t)w->kind;
+    out[2]=w->source_rank;out[3]=w->destination_rank;out[12]=ack?1u:0u;
+    put32(out+4u,w->first_token);put32(out+8u,w->count);
+    for(uint32_t i=0;i<values;i++){
+        if(!isfinite(w->hyper[i]))return malformed(err,"target non-finite HC");
+        put_float(out+FG_MTP_TARGET_HEADER_BYTES+i*4u,w->hyper[i]);
+    }
+    for(uint32_t i=0;i<tokens;i++){
+        uint32_t token=w->next_tokens[i];
+        if(token>=FG_Q38_VOCAB_SIZE&&!(token==UINT32_MAX&&i+1u==tokens))
+            return malformed(err,"target next-token ID");
+        put32(out+FG_MTP_TARGET_HEADER_BYTES+(values+i)*4u,token);
+    }
+    *bytes=required;return FG_OK;
+}
+fg_status fg_mtp_target_decode(fg_mtp_target_work *w,float *hyper,
+    uint64_t hyper_values,uint32_t *tokens,uint32_t token_capacity,
+    const uint8_t *p,uint32_t bytes,bool ack,fg_error *err){
+    if(!w||!p||bytes<FG_MTP_TARGET_HEADER_BYTES||p[0]!=FG_MTP_WIRE_VERSION||
+       p[12]!=(ack?1u:0u)||p[13]||p[14]||p[15])
+        return malformed(err,"target observation header");
+    *w=(fg_mtp_target_work){.kind=(fg_mtp_target_kind)p[1],.source_rank=p[2],
+        .destination_rank=p[3],.first_token=get32(p+4u),.count=get32(p+8u),
+        .hyper=hyper,.next_tokens=tokens};
+    if(!target_shape(w))return malformed(err,"target observation range");
+    uint32_t values=ack?0u:w->count*FG_HYPER_WIDTH;
+    uint32_t ids=!ack&&w->kind==FG_MTP_TARGET_PREFILL?w->count:0u;
+    if(bytes!=FG_MTP_TARGET_HEADER_BYTES+(values+ids)*4u||
+       (values&&(!hyper||values>hyper_values))||
+       (ids&&(!tokens||ids>token_capacity)))
+        return malformed(err,"target observation length");
+    for(uint32_t i=0;i<values;i++){
+        hyper[i]=get_float(p+FG_MTP_TARGET_HEADER_BYTES+i*4u);
+        if(!isfinite(hyper[i]))return malformed(err,"target non-finite HC");
+    }
+    for(uint32_t i=0;i<ids;i++){
+        tokens[i]=get32(p+FG_MTP_TARGET_HEADER_BYTES+(values+i)*4u);
+        if(tokens[i]>=FG_Q38_VOCAB_SIZE&&!(tokens[i]==UINT32_MAX&&i+1u==ids))
+            return malformed(err,"target next-token ID");
+    }
+    return FG_OK;
+}
 fg_status fg_mtp_prefill_tokens_encode(uint8_t *wire,uint32_t capacity,
     uint32_t *bytes,const uint32_t *next_tokens,uint32_t count,fg_error *err){
     if(!wire||!bytes||!next_tokens||!count||count>FG_PREFILL_MAX_TOKENS||
@@ -84,7 +145,9 @@ fg_status fg_mtp_verify_result_decode(fg_mtp_verify_result *r,const uint8_t *p,
 static fg_status native_shape(const fg_mtp_native_work *w,uint32_t *rows,
                                uint32_t *path_bytes,uint32_t *embedding_path,fg_error *err){
     *rows=0u;*path_bytes=0u;*embedding_path=0u;
-    if(!w||!operation_valid(w->operation))return malformed(err,"native operation");
+    if(!w||!operation_valid(w->operation)||w->owner_rank_plus_one>FG_RANK_COUNT||
+       (w->operation!=FG_MTP_NATIVE_CONFIG&&w->owner_rank_plus_one))
+        return malformed(err,"native operation");
     switch(w->operation){
         case FG_MTP_NATIVE_CONFIG:
             if(w->first_token||!w->overlay||!w->overlay[0]||
@@ -139,6 +202,7 @@ fg_status fg_mtp_native_work_encode(uint8_t *out,uint32_t capacity,uint32_t *byt
     if(required>capacity)return malformed(err,"native output capacity");
     memset(out,0,FG_MTP_NATIVE_HEADER_BYTES);
     out[0]=FG_MTP_WIRE_VERSION;out[1]=(uint8_t)w->operation;
+    out[2]=(uint8_t)w->owner_rank_plus_one;
     put32(out+4u,w->first_token);put32(out+8u,w->count);
     put32(out+12u,w->argument);put32(out+16u,w->limit);
     put32(out+20u,embedding_path);
@@ -156,9 +220,10 @@ fg_status fg_mtp_native_work_decode(fg_mtp_native_work *w,uint32_t *tokens,
     char embedding_file[FG_MTP_OVERLAY_PATH_MAX+1u],
     const uint8_t *p,uint32_t bytes,fg_error *err){
     if(!w||!p||bytes<FG_MTP_NATIVE_HEADER_BYTES||
-       p[0]!=FG_MTP_WIRE_VERSION||p[2]||p[3])
+       p[0]!=FG_MTP_WIRE_VERSION||p[3])
         return malformed(err,"native header");
     *w=(fg_mtp_native_work){.operation=(fg_mtp_native_operation)p[1],
+        .owner_rank_plus_one=p[2],
         .first_token=get32(p+4u),.count=get32(p+8u),.argument=get32(p+12u),
         .limit=get32(p+16u),.tokens=tokens};
     uint32_t second=get32(p+20u);

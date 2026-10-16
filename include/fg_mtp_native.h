@@ -10,6 +10,7 @@ fg_status fg_mtp_native_create(fg_mtp_native **out,fg_vk_context *vk,
     const fg_manifest *manifest,uint32_t rank,fg_error *err);
 void fg_mtp_native_close(fg_mtp_native *native);
 bool fg_mtp_native_enabled(const fg_mtp_native *native);
+uint32_t fg_mtp_native_owner(const fg_mtp_native *native);
 fg_status fg_mtp_native_reset(fg_mtp_native *native,uint32_t slot,fg_error *err);
 /* Warm only the trailing native window before returning the target frame.
  * next_tokens[c] supplies the next real input for authoritative HC[c]. */

@@ -7,6 +7,7 @@ param(
     [long]$LeaseStartedUnixSeconds=0,
     [ValidateRange(1,35)][int]$WorkMinutes=35,
     [ValidateSet('DualSession','SingleSessionPerf')][string]$Profile='DualSession',
+    [switch]$DiagnosticGreedy,
     [string]$Artifacts='',
     [string]$NativeOverlay='',
     [string]$ProductionRunner='D:\looking-glass-labs\fg-wt\ab-harness\tools\ab-fleet.ps1',
@@ -139,6 +140,7 @@ function Client {
     $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
     $start.ArgumentList.Add((Join-Path $PSScriptRoot 'mtp_serving_qualify.py'))
     foreach($argument in $Arguments){$start.ArgumentList.Add($argument)}
+    if($DiagnosticGreedy -and $Arguments[0] -eq 'run'){$start.ArgumentList.Add('--diagnostic')}
     $process=[Diagnostics.Process]::Start($start)
     $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
     if(-not $process.WaitForExit([Math]::Max(1,$seconds)*1000)){
@@ -210,8 +212,12 @@ try {
         Client @('run','--phase',$name,'--suite','greedy','--base',$ApiBaseUrl,'--output',$greedyFile)
         $trace=Join-Path $run "$name-rank-0.log"
         $null=Remote "token-receipts-$name" ':' @('192.168.42.42') -Download "$root/serving-$name-rank-0.log" -Local $trace
-        Client @('verify','--candidate',$greedyFile,'--baseline',(Join-Path $run 'A0-greedy.json'),
+        $verification=@('verify','--candidate',$greedyFile,'--baseline',(Join-Path $run 'A0-greedy.json'),
             '--trace',$trace,'--baseline-trace',(Join-Path $run 'A0-rank-0.log'))
+        if($DiagnosticGreedy -and $cap){
+            $verification+=@('--diagnostic','--report-output',(Join-Path $run "$name-greedy-report.json"))
+        }
+        Client $verification
         $single=if($candidateSessions -eq 1){@('--single-session')}else{@()}
         Client (@('run','--phase',$name,'--suite','perf','--base',$ApiBaseUrl,
             '--output',(Join-Path $run "$name-perf.json"))+$single)
@@ -266,6 +272,7 @@ finally {
         }
     }
     @{lease=$LeaseId;complete=$complete;failure=[string]$failure;
+        diagnosticOnly=$DiagnosticGreedy.IsPresent;
         productionVerified=$productionVerified;scratchRemoved=$scratchRemoved;
         finalizationErrors=$finalizationErrors;
         elapsedSeconds=([DateTimeOffset]::UtcNow-$started).TotalSeconds} |
@@ -273,4 +280,4 @@ finally {
 }
 if($failure){throw $failure}
 if(-not $complete){throw 'Serving qualification incomplete; no performance or exactness claim.'}
-Write-Output "MTP serving gates complete; pinned production restored. Evidence: $run"
+Write-Output "MTP serving sweep complete (diagnosticOnly=$DiagnosticGreedy); pinned production restored. Evidence: $run"

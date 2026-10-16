@@ -1,0 +1,6 @@
+{
+  "IP": "192.168.42.51",
+  "ExitCode": 0,
+  "Stdout": "no owned executables\na5e83975e4fbea57d6110cbf4aa81fd58367d044c2bc602815ff0ca21ede6757  /etc/cyan-skillfish-governor-smu/config.toml\nhc-mtp absent check1\nhc-mtp absent check2",
+  "Stderr": ""
+}

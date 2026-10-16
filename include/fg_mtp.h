@@ -2,9 +2,35 @@
 #define FLASH_GORDON_MTP_H
 
 #include "fg_sampler.h"
+#include "fg_manifest.h"
 
 #define FG_MTP_MAX_DRAFT 3u
 #define FG_MTP_MAX_VERIFY (FG_MTP_MAX_DRAFT+1u)
+
+/* Zero preserves the final owner. Relocation is only to its immediate,
+ * non-coordinator predecessor, which can grant one downstream frame credit. */
+static inline fg_status fg_mtp_native_owner_resolve(const fg_manifest *m,
+    uint32_t plus_one,uint32_t *owner,fg_error *err){
+    if(!m||!owner||plus_one>m->rank_count||!m->rank_count||
+       m->rank_count>FG_RANK_COUNT)goto invalid;
+    uint32_t final=m->layer_owner[FG_LAYER_COUNT-1u];
+    uint32_t selected=plus_one?plus_one-1u:final;
+    if(final>=m->rank_count||selected>=m->rank_count)goto invalid;
+    if(selected!=final){
+        if(!selected)goto invalid;
+        uint32_t first=FG_LAYER_COUNT-1u;
+        while(first&&m->layer_owner[first-1u]==final)first--;
+        if(!first||m->layer_owner[first-1u]!=selected)goto invalid;
+        for(uint32_t l=0;l<first;l++)if(m->layer_owner[l]==final)goto invalid;
+        uint32_t predecessor=first;
+        while(predecessor&&m->layer_owner[predecessor-1u]==selected)predecessor--;
+        for(uint32_t l=0;l<predecessor;l++)if(m->layer_owner[l]==selected)goto invalid;
+    }
+    *owner=selected;return FG_OK;
+invalid:
+    fg_error_set(err,FG_ERR_ARGUMENT,"MTP native owner must be the final block or its remote predecessor");
+    return FG_ERR_ARGUMENT;
+}
 
 typedef struct fg_mtp_policy {
     double acceptance[FG_MTP_MAX_DRAFT];

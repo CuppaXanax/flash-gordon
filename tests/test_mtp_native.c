@@ -54,6 +54,12 @@ fg_status fg_mtp_head_open_windowed(fg_mtp_head **out,fg_vk_context *vk,
     (void)vk;(void)m;(void)rank;(void)path;(void)context;(void)window;
     opens++;return mock_head(out,0u,err);
 }
+fg_status fg_mtp_head_open_owner_windowed(fg_mtp_head **out,fg_vk_context *vk,
+    const fg_manifest *m,uint32_t rank,uint32_t selected,const char *path,
+    uint32_t context,uint32_t window,fg_error *err){
+    CHECK(rank==selected);
+    return fg_mtp_head_open_windowed(out,vk,m,rank,path,context,window,err);
+}
 fg_status fg_mtp_head_fork(fg_mtp_head **out,fg_mtp_head *source,uint32_t slot,fg_error *err){
     CHECK(source!=NULL);forks++;return mock_head(out,slot,err);
 }
@@ -102,21 +108,38 @@ static fg_status run(fg_mtp_native *n,uint32_t slot,fg_mtp_native_operation op,
         .argument=argument,.limit=limit,.tokens=embedding};
     return fg_mtp_native_run(n,slot,&w,hidden,ack,err);
 }
-int main(void){
+int main(int argc,char **argv){
+    uint32_t selected=argc==2?(uint32_t)strtoul(argv[1],NULL,10):7u;
+    CHECK(selected==6u||selected==7u);
     fg_error err={0};fg_manifest *m=calloc(1,sizeof(*m));CHECK(m);
     if(!m)return 1;
+    m->rank_count=FG_RANK_COUNT;
+    m->layer_owner[FG_LAYER_COUNT-2u]=6u;
     m->layer_owner[FG_LAYER_COUNT-1u]=7u;
+    uint32_t resolved_owner=0u;
+    CHECK(fg_mtp_native_owner_resolve(m,7u,&resolved_owner,&err)==FG_OK&&resolved_owner==6u);
+    m->layer_owner[0]=6u;
+    CHECK(fg_mtp_native_owner_resolve(m,7u,&resolved_owner,&err)==FG_ERR_ARGUMENT);
+    m->layer_owner[0]=7u;
+    CHECK(fg_mtp_native_owner_resolve(m,7u,&resolved_owner,&err)==FG_ERR_ARGUMENT);
+    CHECK(fg_mtp_native_owner_resolve(m,0u,&resolved_owner,&err)==FG_OK&&resolved_owner==7u);
+    m->layer_owner[0]=0u;
     fg_mtp_native *n=NULL,*other=NULL;fg_vk_context *vk=(fg_vk_context *)(uintptr_t)1u;
-    CHECK(fg_mtp_native_create(&n,vk,m,7u,&err)==FG_OK);
+    CHECK(fg_mtp_native_create(&n,vk,m,selected,&err)==FG_OK);
     CHECK(fg_mtp_native_create(&other,vk,m,1u,&err)==FG_OK);
     CHECK(!fg_mtp_native_enabled(n)&&opens==0u);
     float hc[6u*FG_HYPER_WIDTH],hidden[FG_HIDDEN_SIZE];
     uint32_t embed[6],next_tokens[6]={1u,2u,3u,4u,5u,UINT32_MAX};
     fg_mtp_native_ack ack;
     fg_mtp_native_work cfg={.operation=FG_MTP_NATIVE_CONFIG,.overlay="native.gguf",
+        .owner_rank_plus_one=selected==7u?0u:selected+1u,
         .embedding_file="embedding.fgme",.count=11u,.argument=8192u,.limit=3u};
     CHECK(fg_mtp_native_run(other,0u,&cfg,hidden,&ack,&err)==FG_OK&&opens==0u);
     CHECK(fg_mtp_native_run(n,0u,&cfg,hidden,&ack,&err)==FG_OK&&opens==1u);
+    CHECK(fg_mtp_native_owner(n)==selected&&fg_mtp_native_owner(other)==selected);
+    cfg.owner_rank_plus_one=selected==6u?8u:7u;
+    CHECK(fg_mtp_native_run(n,0u,&cfg,hidden,&ack,&err)!=FG_OK);
+    cfg.owner_rank_plus_one=selected==7u?0u:selected+1u;
     CHECK(run(n,0u,FG_MTP_NATIVE_PREPARE,0u,0u,1u,0u,NULL,NULL,&ack,&err)==FG_OK);
     CHECK(admission_checks==1u&&forks==0u);
     CHECK(run(n,0u,FG_MTP_NATIVE_PREPARE,0u,0u,2u,0u,NULL,NULL,&ack,&err)==FG_OK);

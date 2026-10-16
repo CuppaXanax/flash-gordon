@@ -480,6 +480,17 @@ static void test_runtime_option_contract(void){
         CHECK(fg_runtime_options_resolve(&resolved,mtp,&requested,&error)==FG_OK);
         CHECK((resolved.experimental_flags&FG_RUNTIME_EXPERIMENTAL_MTP)!=0);
         CHECK(resolved.mtp_window_tokens==8192u&&resolved.mtp_max_draft==3u&&resolved.sessions==2u);
+        CHECK(resolved.mtp_native_rank_plus_one==0u);
+        requested.mtp_native_rank_plus_one=8u;
+        CHECK(fg_runtime_options_resolve(&resolved,mtp,&requested,&error)==FG_OK&&
+              resolved.mtp_native_rank_plus_one==8u);
+        requested.mtp_native_rank_plus_one=6u;
+        CHECK(fg_runtime_options_resolve(&resolved,mtp,&requested,&error)==FG_ERR_ARGUMENT);
+        requested.mtp_native_rank_plus_one=1u;
+        CHECK(fg_runtime_options_resolve(&resolved,mtp,&requested,&error)==FG_ERR_ARGUMENT);
+        requested.mtp_native_rank_plus_one=FG_RANK_COUNT+1u;
+        CHECK(fg_runtime_options_resolve(&resolved,mtp,&requested,&error)==FG_ERR_ARGUMENT);
+        requested.mtp_native_rank_plus_one=0u;
         requested.mtp_fixed_draft=3u;
         CHECK(fg_runtime_options_resolve(&resolved,mtp,&requested,&error)==FG_OK);
         CHECK(resolved.mtp_fixed_draft==3u);

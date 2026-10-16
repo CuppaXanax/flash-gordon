@@ -30,7 +30,7 @@ MTP_RING_WRAPS = fg_vk_tensor_create fg_vk_tensor_destroy fg_vk_tensor_write fg_
  fg_owner_session_rollback fg_owner_session_snapshot_release fg_expert_decode_chain_ready \
  fg_owner_decode_small_n fg_owner_decode_block_chained fg_owner_prefill_layer_begin \
  fg_owner_prefill_layer_finish fg_mtp_embedding_open fg_mtp_embedding_close \
- fg_mtp_embedding_row fg_mtp_head_open_windowed fg_mtp_head_fork fg_mtp_head_close \
+ fg_mtp_embedding_row fg_mtp_head_open_windowed fg_mtp_head_open_owner_windowed fg_mtp_head_fork fg_mtp_head_close \
  fg_mtp_head_check_residency \
  fg_expert_prepare_small_n_scratch fg_vk_get_memory_stats \
  fg_mtp_head_frontier fg_mtp_head_reset fg_mtp_head_truncate fg_mtp_head_warm_replay \
@@ -49,7 +49,7 @@ tests/test_mtp_ring: tests/test_mtp_ring.c tests/mtp_ring_sse.o $(filter-out src
 
 .PHONY: test-mtp-ring
 test-mtp-ring: tests/test_mtp_ring
-	@for reject in 0 1 2 3; do ./tests/test_mtp_ring 127.0.0.1 127.0.0.1 $$((29600+reject*20)) $$reject 2 || exit; done
+	@for native in 7 6; do for reject in 0 1 2 3; do ./tests/test_mtp_ring 127.0.0.1 127.0.0.1 $$((29600+reject*20+(7-native)*100)) $$reject 2 $$native || exit; done; done
 
 tests/test_core: tests/test_core.o $(TEST_COMMON)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
@@ -109,6 +109,7 @@ test-mtp: tests/test_mtp tests/test_mtp_wire tests/test_mtp_native tests/test_mt
 	./tests/test_mtp
 	./tests/test_mtp_wire
 	./tests/test_mtp_native
+	./tests/test_mtp_native 6
 	mkdir -p .build
 	./tests/test_mtp_embedding .build/mtp-embedding-test
 

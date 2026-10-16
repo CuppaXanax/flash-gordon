@@ -33,10 +33,12 @@ typedef enum fg_mtp_native_operation {
 } fg_mtp_native_operation;
 
 /* FINISH has count-1 token IDs; CONFIG has overlay and target-embedding paths.
- * The final owner reads exact production Q8 rows locally, without another
+ * The selected native owner reads exact production Q8 rows locally, without another
  * embedding tensor on the GPU or a coordinator activation round trip. */
 typedef struct fg_mtp_native_work {
     fg_mtp_native_operation operation;
+    /* CONFIG only: zero keeps the final owner; all other operations require zero. */
+    uint32_t owner_rank_plus_one;
     uint32_t first_token,count,argument,limit;
     const uint32_t *tokens;
     const char *overlay,*embedding_file;
@@ -67,6 +69,23 @@ typedef struct fg_mtp_head_partial {
     float values[FG_MTP_MAX_VERIFY];
     uint32_t ids[FG_MTP_MAX_VERIFY];
 } fg_mtp_head_partial;
+
+#define FG_MTP_TARGET_HEADER_BYTES 16u
+typedef enum fg_mtp_target_kind {
+    FG_MTP_TARGET_PREFILL=1,FG_MTP_TARGET_DECODE=2,FG_MTP_TARGET_VERIFY=3
+} fg_mtp_target_kind;
+typedef struct fg_mtp_target_work {
+    fg_mtp_target_kind kind;
+    uint8_t source_rank,destination_rank;
+    uint32_t first_token,count;
+    const float *hyper;
+    const uint32_t *next_tokens;
+} fg_mtp_target_work;
+fg_status fg_mtp_target_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+    const fg_mtp_target_work *work,bool acknowledgement,fg_error *err);
+fg_status fg_mtp_target_decode(fg_mtp_target_work *work,float *hyper,
+    uint64_t hyper_values,uint32_t *next_tokens,uint32_t token_capacity,
+    const uint8_t *payload,uint32_t bytes,bool acknowledgement,fg_error *err);
 
 fg_status fg_mtp_native_work_encode(uint8_t *output,uint32_t capacity,
     uint32_t *bytes,const fg_mtp_native_work *work,fg_error *err);

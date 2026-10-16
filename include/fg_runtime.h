@@ -77,6 +77,7 @@ typedef struct fg_runtime_options {
     uint32_t mtp_window_tokens;
     uint32_t mtp_max_draft;
     uint32_t mtp_fixed_draft;
+    uint32_t mtp_native_rank_plus_one;
 } fg_runtime_options;
 
 typedef struct fg_runtime_profile_definition {
@@ -196,6 +197,9 @@ fg_mtp_capability fg_runtime_mtp_capability(const fg_runtime *runtime);
 fg_status fg_rank_main(const char *manifest_path, uint32_t rank, fg_error *err);
 fg_status fg_runtime_probe_mtp_residency(const char *manifest_path,
     const char *overlay,const char *embedding,uint32_t sessions,fg_error *err);
+fg_status fg_runtime_probe_mtp_residency_owner(const char *manifest_path,
+    const char *overlay,const char *embedding,uint32_t sessions,
+    uint32_t native_rank_plus_one,fg_error *err);
 /* Test-only depth-B parity gate: two canned conversations run at depth 1 and
  * interleaved through the B=2 ring, with exact token/logit/state comparison and
  * an injected abort-retry.  Not part of the serving path. */

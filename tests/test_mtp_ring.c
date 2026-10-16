@@ -156,6 +156,12 @@ fg_status __wrap_fg_mtp_head_open_windowed(fg_mtp_head **h,fg_vk_context *v,
     require(fg_vk_tensor_create(v,FG_HYPER_WIDTH*4u,&(*h)->next,e),e);
     return fg_vk_tensor_create(v,FG_HIDDEN_SIZE*4u,&(*h)->hidden,e);
 }
+fg_status __wrap_fg_mtp_head_open_owner_windowed(fg_mtp_head **h,fg_vk_context *v,
+    const fg_manifest *m,uint32_t rank,uint32_t selected,const char *p,
+    uint32_t ctx,uint32_t win,fg_error *e){
+    VERIFY(m&&rank==selected&&selected==6u);
+    return __wrap_fg_mtp_head_open_windowed(h,v,m,rank,p,ctx,win,e);
+}
 fg_status __wrap_fg_mtp_head_fork(fg_mtp_head **out,fg_mtp_head *h,uint32_t s,fg_error *e){
     (void)h;(void)s;return __wrap_fg_mtp_head_open_windowed(out,NULL,NULL,0,NULL,0,0,e);
 }
@@ -312,7 +318,46 @@ static void coexist_cases(fg_runtime runtime[2],fg_owner_executor *owner,
     puts("Real coroutine coexistence: two active sessions, private policy/native state, causal commit and SSE PASS");
 }
 
-static int run_rank(fg_manifest *m,uint32_t rank){
+static void large_credit(fg_fabric *fabric,fg_owner_executor *owner,
+    const fg_manifest *m,uint32_t rank,layer_work_context *base,fg_error *err){
+    layer_work_context context=*base;
+    context.tokens=FG_PREFILL_MAX_TOKENS;
+    context.work_capacity=FG_MTP_TARGET_HEADER_BYTES+
+        context.tokens*(FG_HYPER_WIDTH+1u)*4u;
+    context.work_wire=calloc(1,context.work_capacity);
+    context.hyper_in=calloc((size_t)context.tokens*FG_HYPER_WIDTH,4u);
+    context.hyper_out=calloc((size_t)context.tokens*FG_HYPER_WIDTH,4u);
+    VERIFY(context.work_wire&&context.hyper_in&&context.hyper_out);
+    for(uint32_t turn=0u;turn<4u;turn++){
+        uint32_t slot=turn%2u,first=turn<2u?0u:context.tokens;
+        uint64_t session=context.session_ids[slot];
+        fg_fabric_set_slot(fabric,slot);
+        require(fg_owner_set_active_session(owner,slot,err),err);
+        if(rank==6u){
+            require(fg_fabric_send(fabric,7u,FG_FABRIC_BULK,FG_MSG_PREFILL_LAYER_WORK,
+                session,turn,0u,context.work_wire,context.work_capacity,err),err);
+            require(mtp_target_credit(fabric,owner,m,rank,session,first,context.tokens,
+                FG_MTP_TARGET_PREFILL,&context,err),err);
+        }else{
+            fg_frame_header header;uint32_t bytes=0u;
+            require(fg_fabric_recv(fabric,6u,FG_FABRIC_BULK,&header,context.work_wire,
+                context.work_capacity,&bytes,err),err);
+            VERIFY(bytes==context.work_capacity&&fg_frame_request_id(&header)==session&&
+                   fg_frame_sequence(&header)==turn&&fg_frame_session_slot(&header)==slot);
+            for(uint32_t i=0;i<context.tokens;i++){
+                context.hyper_out[(uint64_t)i*FG_HYPER_WIDTH]=(float)(first+i+slot);
+                context.mtp_tokens[i]=first+i+1u;
+            }
+            if(turn>=2u)context.mtp_tokens[context.tokens-1u]=UINT32_MAX;
+            require(mtp_target_observe(fabric,m,rank,session,first,context.tokens,
+                FG_MTP_TARGET_PREFILL,&context,err),err);
+        }
+    }
+    free(context.hyper_out);free(context.hyper_in);free(context.work_wire);
+    puts("MTP large-frame two-session target credit: PASS");
+}
+
+static int run_rank(fg_manifest *m,uint32_t rank,uint32_t native_owner){
     fg_error e={0};fg_fabric *f=NULL;
     require(fg_fabric_open(&f,m,rank,&e),&e);
     fg_model model={.rank=rank};fg_owner_executor owner={.rank=rank};
@@ -331,6 +376,7 @@ static int run_rank(fg_manifest *m,uint32_t rank){
     depthb_owner_runtime depthb={.owner=&owner,.manifest=m,.self=rank,
         .logical_context=8192u,.wire_frontiers=wire_frontiers};
     uint64_t nonce[2]={71u,72u};
+    context.session_ids=nonce;
     fg_runtime runtimes[2]={0};
     fg_runtime *runtime=&runtimes[0];
     fg_coordinator *c=&runtime->coordinator;
@@ -341,6 +387,7 @@ static int run_rank(fg_manifest *m,uint32_t rank){
         c->options=(fg_runtime_options){.experimental_flags=FG_RUNTIME_EXPERIMENTAL_MTP,
             .logical_context_tokens=8192u,.gpu_index_tokens=8192u,.qsa_hot_tokens=8192u,
             .mtp_overlay="fixture.gguf",.mtp_embedding="fixture.fgme",
+            .mtp_native_rank_plus_one=native_owner==7u?0u:native_owner+1u,
             .mtp_window_tokens=64u,.mtp_max_draft=3u};
         memset(c->identity.identity_sha256,1,32u);
         atomic_init(&c->transport_state,FG_TRANSPORT_READY);
@@ -417,6 +464,15 @@ static int run_rank(fg_manifest *m,uint32_t rank){
             generation_cases(runtime,&e);
         }
         coexist_cases(runtimes,&owner,f,&e);
+        if(native_owner==6u){
+            int32_t prefix[2u*FG_PREFILL_MAX_TOKENS];
+            for(uint32_t i=0;i<2u*FG_PREFILL_MAX_TOKENS;i++)prefix[i]=(int32_t)i+1;
+            for(uint32_t slot=0;slot<2u;slot++){
+                c=&runtimes[slot].coordinator;fg_fabric_set_slot(f,slot);
+                require(coordinator_mtp_prefix(c,prefix,0u,
+                    2u*FG_PREFILL_MAX_TOKENS,true,&e),&e);
+            }
+        }
         for(uint32_t slot=0;slot<2u;slot++){
             free(runtimes[slot].history);free(runtimes[slot].rendered_history);
         }
@@ -429,7 +485,12 @@ static int run_rank(fg_manifest *m,uint32_t rank){
             require(fg_fabric_wait_ready(f,3u,&peer,&cls,&e),&e);
             require(fg_fabric_recv(f,peer,cls,&header,context.result_wire,
                 context.result_capacity,&bytes,&e),&e);
-            fg_message_type type=fg_frame_type(&header);if(type==FG_MSG_ERROR)break;
+            fg_message_type type=fg_frame_type(&header);
+            if(type==FG_MSG_ERROR){
+                if(native_owner==6u&&(rank==6u||rank==7u))
+                    large_credit(f,&owner,m,rank,&context,&e);
+                break;
+            }
             uint32_t slot=fg_frame_session_slot(&header);VERIFY(slot<2u);
             fg_fabric_set_slot(f,slot);require(fg_owner_set_active_session(&owner,slot,&e),&e);
             fg_status status=FG_ERR_FORMAT;
@@ -462,10 +523,12 @@ static void stop_children(int signal){
     for(sig_atomic_t i=0;i<child_count;i++)if(children[i]>0)kill(children[i],SIGTERM);
 }
 int main(int argc,char **argv){
-    if(argc!=6){fprintf(stderr,"usage: test_mtp_ring HOST0 HOST1 BASEPORT REJECT(0..3) PARITY(0..1|2=local)\n");return 2;}
+    if(argc!=6&&argc!=7){fprintf(stderr,"usage: test_mtp_ring HOST0 HOST1 BASEPORT REJECT(0..3) PARITY(0..1|2=local) [NATIVE_OWNER]\n");return 2;}
     uint32_t base=(uint32_t)strtoul(argv[3],NULL,10);
     rejection=(uint32_t)strtoul(argv[4],NULL,10);
     uint32_t parity=(uint32_t)strtoul(argv[5],NULL,10);
+    uint32_t native_owner=argc==7?(uint32_t)strtoul(argv[6],NULL,10):7u;
+    VERIFY(native_owner==7u||native_owner==6u);
     VERIFY(base>1024u&&base<65000u&&rejection<=3u&&parity<=2u);
     fg_manifest *m=malloc(sizeof(*m));VERIFY(m);fg_manifest_init(m);
     m->prefill_microbatch=4u;m->protocol_version=6u;
@@ -482,7 +545,7 @@ int main(int argc,char **argv){
     for(uint32_t r=0;r<FG_RANK_COUNT;r++)if(parity==2u||r%2u==parity){
         pid_t p=fork();
         if(p<0){perror("fork");stop_children(SIGTERM);break;}
-        if(!p)return run_rank(m,r);
+        if(!p)return run_rank(m,r,native_owner);
         children[child_count++]=p;
     }
     struct sigaction action={.sa_handler=stop_children};

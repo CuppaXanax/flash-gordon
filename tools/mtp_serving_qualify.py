@@ -79,12 +79,20 @@ def request(base, prompt, user, limit=128, stream=False, stop=None):
 
 def run_suite(args):
     rows = []
+    budget_path = pathlib.Path(args.output).parent / "diagnostic-budget.json"
+    budget = json.loads(budget_path.read_text()) if budget_path.exists() else None
+    repeats = 3
+    if budget is not None:
+        assert getattr(args, "diagnostic", False), "budget override requires explicit diagnostic mode"
+        assert budget.get("diagnostic_only") is True
+        repeats = budget["perf_repeats"]
+        assert type(repeats) is int and 1 <= repeats <= 3
     if args.suite == "greedy":
         for name, category, prompt in CASES:
             rows.append({"case": name, "category": category,
                          **request(args.base, prompt, f"greedy-{name}", 96)})
     elif args.suite == "perf":
-        for repeat in range(3):
+        for repeat in range(repeats):
             for name, category, prompt in CASES:
                 if not name.endswith(("-0", "-1")):
                     continue
@@ -136,7 +144,8 @@ def run_suite(args):
         rows.extend([{"case": "stream-parity", "result": streamed},
                      {"case": "post-cancel-coexist", "requests": pair}])
     output = pathlib.Path(args.output)
-    output.write_text(json.dumps({"phase": args.phase, "suite": args.suite, "rows": rows},
+    output.write_text(json.dumps({"phase": args.phase, "suite": args.suite, "rows": rows,
+                                 "diagnostic_budget": budget},
                                  indent=2) + "\n", encoding="utf-8")
     print(f"{args.phase} {args.suite}: {len(rows)} cases PASS")
 
@@ -152,12 +161,22 @@ def verify(args):
     baseline = json.loads(pathlib.Path(args.baseline).read_text(encoding="utf-8"))
     current_hashes, baseline_hashes = token_receipts(args.trace), token_receipts(args.baseline_trace)
     assert len(candidate["rows"]) == len(baseline["rows"]) == 8
+    failures = []
     for current, expected in zip(candidate["rows"], baseline["rows"]):
         assert current["case"] == expected["case"]
-        assert current["semantic"] == expected["semantic"], current["case"]
-        assert current_hashes[current["id"]] == baseline_hashes[expected["id"]], current["case"]
+        if (current["semantic"] != expected["semantic"] or
+                current_hashes[current["id"]] != baseline_hashes[expected["id"]]):
+            failures.append(current["case"])
         assert current_hashes[current["id"]][0] == current["tokens"], "hash count differs"
-    print("Same-build target token-ID SHA256/count and public completion identity: 8/8 PASS")
+    if getattr(args, "diagnostic", False):
+        assert args.report_output, "diagnostic comparison requires a persistent report"
+        pathlib.Path(args.report_output).write_text(json.dumps({
+            "diagnostic_only": True, "qualified": not failures,
+            "passed": 8-len(failures), "failed_cases": failures}, indent=2) + "\n")
+        print(f"DIAGNOSTIC greedy identity: {8-len(failures)}/8; not a qualification")
+    else:
+        assert not failures, failures
+        print("Same-build target token-ID SHA256/count and public completion identity: 8/8 PASS")
 
 
 def summarize(args):
@@ -237,9 +256,12 @@ def main():
     run.add_argument("--suite", choices=("greedy", "perf", "stream"), required=True)
     run.add_argument("--output", required=True)
     run.add_argument("--single-session", action="store_true")
+    run.add_argument("--diagnostic", action="store_true")
     check = commands.add_parser("verify")
     for name in ("candidate", "baseline", "trace", "baseline-trace"):
         check.add_argument("--" + name, required=True)
+    check.add_argument("--diagnostic", action="store_true")
+    check.add_argument("--report-output")
     summary = commands.add_parser("summarize")
     summary.add_argument("--directory", required=True)
     args = parser.parse_args()

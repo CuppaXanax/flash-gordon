@@ -358,15 +358,18 @@ static fg_status allocate_scratch(fg_mtp_head *h,fg_error *err){
 }
 
 static fg_status head_open(fg_mtp_head **out,fg_vk_context *vk,
-    const fg_manifest *target,uint32_t rank,const char *overlay,
+    const fg_manifest *target,uint32_t rank,uint32_t native_owner,const char *overlay,
     uint32_t context_tokens,uint32_t window,fg_error *err){
     if(!out||!vk||!target||!overlay||!context_tokens||context_tokens>FG_MAX_CONTEXT||
        !target->rank_count||target->rank_count>FG_RANK_COUNT||rank>=target->rank_count||
-       target->layer_count!=FG_LAYER_COUNT||target->layer_owner[MTP_LAYER]!=rank||
+       target->layer_count!=FG_LAYER_COUNT||rank!=native_owner||
        window>context_tokens){
-        fg_error_set(err,FG_ERR_ARGUMENT,"native MTP must run on the final target-layer owner");
+        fg_error_set(err,FG_ERR_ARGUMENT,"native MTP must run on its selected owner");
         return FG_ERR_ARGUMENT;
     }
+    uint32_t resolved=0u;
+    fg_status placement=fg_mtp_native_owner_resolve(target,native_owner+1u,&resolved,err);
+    if(placement!=FG_OK)return placement;
     *out=NULL;
     fg_gguf g={0};const char *paths[]={overlay};
     fg_status status=fg_gguf_open(paths,1u,&g,err);
@@ -445,7 +448,8 @@ static fg_status head_open(fg_mtp_head **out,fg_vk_context *vk,
 fg_status fg_mtp_head_open(fg_mtp_head **out,fg_vk_context *vk,
     const fg_manifest *target,uint32_t rank,const char *overlay,
     uint32_t context_tokens,fg_error *err){
-    return head_open(out,vk,target,rank,overlay,context_tokens,0u,err);
+    return head_open(out,vk,target,rank,target?target->layer_owner[MTP_LAYER]:UINT32_MAX,
+                     overlay,context_tokens,0u,err);
 }
 fg_status fg_mtp_head_open_windowed(fg_mtp_head **out,fg_vk_context *vk,
     const fg_manifest *target,uint32_t rank,const char *overlay,
@@ -454,7 +458,18 @@ fg_status fg_mtp_head_open_windowed(fg_mtp_head **out,fg_vk_context *vk,
         if(out)*out=NULL;
         fg_error_set(err,FG_ERR_ARGUMENT,"native MTP window must be nonzero");return FG_ERR_ARGUMENT;
     }
-    return head_open(out,vk,target,rank,overlay,context_tokens,window_tokens,err);
+    return head_open(out,vk,target,rank,target?target->layer_owner[MTP_LAYER]:UINT32_MAX,
+                     overlay,context_tokens,window_tokens,err);
+}
+
+fg_status fg_mtp_head_open_owner_windowed(fg_mtp_head **out,fg_vk_context *vk,
+    const fg_manifest *target,uint32_t rank,uint32_t native_owner,const char *overlay,
+    uint32_t context_tokens,uint32_t window_tokens,fg_error *err){
+    if(!window_tokens){
+        if(out)*out=NULL;
+        fg_error_set(err,FG_ERR_ARGUMENT,"native MTP window must be nonzero");return FG_ERR_ARGUMENT;
+    }
+    return head_open(out,vk,target,rank,native_owner,overlay,context_tokens,window_tokens,err);
 }
 
 fg_status fg_mtp_head_fork(fg_mtp_head **out,fg_mtp_head *source,

@@ -560,6 +560,8 @@ typedef struct layer_work_context {
     fg_layer_work decode_work;
     fg_layer_result decode_result;
     void *qsa_owner;
+    void *qsa_slots;
+    const uint64_t *session_ids;
     fg_output_hc *output_hc;
     fg_output_slice *output_slice;
     fg_mtp_native *mtp_native;
@@ -573,6 +575,13 @@ typedef struct layer_work_context {
     float *batch_hyper;
     float *batch_ngram;
 } layer_work_context;
+
+static fg_status mtp_target_observe(fg_fabric *fabric,const fg_manifest *manifest,
+    uint32_t self,uint64_t session,uint32_t first,uint32_t count,
+    fg_mtp_target_kind kind,layer_work_context *context,fg_error *err);
+static fg_status mtp_target_credit(fg_fabric *fabric,fg_owner_executor *owner,
+    const fg_manifest *manifest,uint32_t self,uint64_t session,uint32_t first,
+    uint32_t count,fg_mtp_target_kind kind,layer_work_context *context,fg_error *err);
 
 static void layer_work_context_destroy(layer_work_context *context){
     if(!context)return;
@@ -747,9 +756,8 @@ static fg_status handle_prefill_layer_work(fg_fabric *fabric,fg_owner_executor *
         status=fg_mtp_capture_hyper(session_id,work.first_token,work.token_count,
                                     context->hyper_out,err);
     if(status==FG_OK&&mtp&&last+1u==FG_LAYER_COUNT)
-        status=fg_mtp_native_observe_prefill(context->mtp_native,
-            fg_owner_active_session(owner),work.first_token,work.token_count,
-            context->hyper_out,context->mtp_tokens,err);
+        status=mtp_target_observe(fabric,manifest,self,session_id,work.first_token,
+            work.token_count,FG_MTP_TARGET_PREFILL,context,err);
     if(status==FG_OK)numerics_trace_host(last+1u<FG_LAYER_COUNT?"SEND_NEXT":"SEND_RESULT",
         self,last,work.first_token,work.token_count,context->hyper_out);
     if(status==FG_OK&&last+1u<FG_LAYER_COUNT){
@@ -766,6 +774,8 @@ static fg_status handle_prefill_layer_work(fg_fabric *fabric,fg_owner_executor *
         if(status==FG_OK)status=fg_fabric_send(fabric,next_rank,FG_FABRIC_BULK,
             mtp?FG_MSG_MTP_PREFILL_WORK:FG_MSG_PREFILL_LAYER_WORK,request,
             next_layer+work.first_token*FG_LAYER_COUNT,0,context->work_wire,wire_bytes,err);
+        if(status==FG_OK&&mtp)status=mtp_target_credit(fabric,owner,manifest,self,
+            session_id,work.first_token,work.token_count,FG_MTP_TARGET_PREFILL,context,err);
     }else if(status==FG_OK){
         fg_prefill_layer_result result={.layer=(uint8_t)last,.source_rank=(uint8_t)self,
             .destination_rank=0u,.first_token=work.first_token,.token_count=work.token_count,
@@ -923,8 +933,8 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
         status=fg_mtp_capture_hyper(session_id,work->token_index,1u,
                                     context->hyper_out,err);
     if(status==FG_OK&&last+1u==FG_LAYER_COUNT)
-        status=fg_mtp_native_observe_decode(context->mtp_native,
-            fg_owner_active_session(owner),work->token_index,context->hyper_out,err);
+        status=mtp_target_observe(fabric,manifest,self,session_id,work->token_index,
+            1u,FG_MTP_TARGET_DECODE,context,err);
     struct timespec t_read={0};if(trace)clock_gettime(CLOCK_MONOTONIC,&t_read);
     numerics_trace_host("FB_OUT",self,last,work->token_index,1u,context->hyper_out);
     if(status==FG_OK)status=worker_publish_qsa_pages(context->qsa_owner,owner,self,
@@ -943,6 +953,8 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
         if(status==FG_OK)status=fg_fabric_send(fabric,next.destination_rank,FG_FABRIC_BULK,
             FG_MSG_DECODE_LAYER_WORK,request,
             work->token_index*FG_LAYER_COUNT+next.layer,0,context->work_wire,wire_bytes,err);
+        if(status==FG_OK)status=mtp_target_credit(fabric,owner,manifest,self,
+            session_id,work->token_index,1u,FG_MTP_TARGET_DECODE,context,err);
     }else if(status==FG_OK){
         uint32_t output_owner=fg_output_owner_rank(manifest);
         bool direct=decode_direct_output_eligible(manifest)&&output_owner!=self;
@@ -2808,6 +2820,7 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_
         status=layer_work_context_create(&layer_work,model,owner,manifest,expert,&prefill,err);
     if(status==FG_OK)status=fg_mtp_native_create(&mtp_native,fg_model_vk(model),manifest,self,err);
     layer_work.mtp_native=mtp_native;layer_work.output_slice=output_slice;
+    layer_work.qsa_slots=qsa;layer_work.session_ids=sessions;
     layer_work.output_hc=output_hc;layer_work.output_split_ways=output_split_ways;
     if(status==FG_OK&&output)status=fg_vk_tensor_create(fg_model_vk(model),FG_HYPER_WIDTH*4u,&hyper,err);
     if(status==FG_OK)status=token_profile_prepare(fg_model_vk(model),err);
@@ -2845,6 +2858,7 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_
             type==FG_MSG_DECODE_LAYER_WORK||type==FG_MSG_DECODE_BATCH_WORK||
             type==FG_MSG_MTP_VERIFY_WORK||type==FG_MSG_MTP_NATIVE_WORK||
             type==FG_MSG_MTP_HEAD_WORK||type==FG_MSG_MTP_PREFILL_WORK||
+            type==FG_MSG_MTP_TARGET_WORK||
             type==FG_MSG_OUTPUT_HIDDEN||type==FG_MSG_OUTPUT_SLICE_HIDDEN;
         if(bulk_message!=(cls==FG_FABRIC_BULK)){
             fg_error_set(err,FG_ERR_MISMATCH,"rank %u received message %u on wrong channel",self,type);
@@ -3071,8 +3085,8 @@ static void residency_stage(fg_model *model,fg_owner_executor *owner,const char 
     fflush(stdout);
 }
 
-fg_status fg_runtime_probe_mtp_residency(const char *path,const char *overlay,
-    const char *embedding,uint32_t sessions,fg_error *err){
+fg_status fg_runtime_probe_mtp_residency_owner(const char *path,const char *overlay,
+    const char *embedding,uint32_t sessions,uint32_t native_rank_plus_one,fg_error *err){
     if(!path||!overlay||!embedding||!sessions||sessions>FG_OWNER_SESSION_MAX){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid MTP residency probe");
         return FG_ERR_ARGUMENT;
@@ -3085,16 +3099,20 @@ fg_status fg_runtime_probe_mtp_residency(const char *path,const char *overlay,
     fg_ngram_resident *ngram=NULL;fg_mtp_native *native=NULL;
     prefill_worker_buffers prefill={0};layer_work_context work={0};
     qsa_owner_runtime qsa[FG_OWNER_SESSION_MAX]={0};
-    uint32_t rank=status==FG_OK?manifest->layer_owner[FG_LAYER_COUNT-1u]:0u;
-    if(status==FG_OK&&rank!=7u){
-        fg_error_set(err,FG_ERR_UNAVAILABLE,"rank7 final-owner probe only");status=FG_ERR_UNAVAILABLE;
-    }
+    uint32_t rank=0u;
+    fg_runtime_options requested={.experimental_flags=FG_RUNTIME_EXPERIMENTAL_MTP,
+        .mtp_overlay=overlay,.mtp_embedding=embedding,
+        .mtp_native_rank_plus_one=native_rank_plus_one},resolved;
+    if(status==FG_OK)status=fg_runtime_options_resolve(&resolved,manifest,&requested,err);
+    if(status==FG_OK)status=fg_mtp_native_owner_resolve(manifest,
+        native_rank_plus_one,&rank,err);
     if(status==FG_OK)status=fg_model_open(&model,manifest,directory,rank,err);
     if(status==FG_OK)residency_stage(model,NULL,"real_weights");
     if(status==FG_OK)status=fg_expert_executor_create(&expert,model,err);
     if(status==FG_OK)status=fg_owner_executor_create_worker_slots(
         &owner,model,FG_OWNER_SESSION_MAX,err);
-    if(status==FG_OK)status=fg_output_hc_create(&hc,model,directory,true,err);
+    if(status==FG_OK&&rank==manifest->layer_owner[FG_LAYER_COUNT-1u])
+        status=fg_output_hc_create(&hc,model,directory,true,err);
     if(status==FG_OK)residency_stage(model,owner,"owner_expert_hc");
     uint64_t row_begin=0u,row_count=0u;char ngram_path[1200];
     if(status==FG_OK)status=fg_q38_ngram_rank_range(rank,&row_begin,&row_count,err);
@@ -3130,6 +3148,7 @@ fg_status fg_runtime_probe_mtp_residency(const char *path,const char *overlay,
         if(status==FG_OK)residency_stage(model,owner,slot?"target_session1":"target_session0");
         if(status==FG_OK&&!slot){
             fg_mtp_native_work config={.operation=FG_MTP_NATIVE_CONFIG,
+                .owner_rank_plus_one=native_rank_plus_one,
                 .overlay=overlay,.count=(uint32_t)strlen(overlay),
                 .embedding_file=embedding,.argument=logical,
                 .limit=logical<8192u?logical:8192u};
@@ -3168,6 +3187,11 @@ fg_status fg_runtime_probe_mtp_residency(const char *path,const char *overlay,
     fg_ngram_resident_close(ngram);fg_output_hc_destroy(hc);
     fg_owner_executor_destroy(owner);fg_expert_executor_destroy(expert);
     fg_model_close(model);free(manifest);return status;
+}
+
+fg_status fg_runtime_probe_mtp_residency(const char *path,const char *overlay,
+    const char *embedding,uint32_t sessions,fg_error *err){
+    return fg_runtime_probe_mtp_residency_owner(path,overlay,embedding,sessions,0u,err);
 }
 
 typedef struct qsa_page_transport {

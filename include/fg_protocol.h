@@ -174,7 +174,9 @@ typedef enum fg_message_type {
     FG_MSG_MTP_NATIVE_ACK = 56,
     FG_MSG_MTP_HEAD_WORK = 57,
     FG_MSG_MTP_HEAD_PARTIAL = 58,
-    FG_MSG_MTP_PREFILL_WORK = 59
+    FG_MSG_MTP_PREFILL_WORK = 59,
+    FG_MSG_MTP_TARGET_WORK = 60,
+    FG_MSG_MTP_TARGET_ACK = 61
 } fg_message_type;
 
 typedef struct fg_gdn_state_fetch {
