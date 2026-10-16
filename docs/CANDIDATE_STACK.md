@@ -1,18 +1,24 @@
 # Candidate stacks: offline preparation, leased execution
 
-**No fleet execution was performed for this preparation.** Run only after
+The initial preparation was offline. Run only after
 both multi-session and MTP leases have ended and a new exclusive .42–.49 lease
 has been granted. Planning is the default; nothing is scheduled automatically.
-Production remains main `a63a166` plus the sealed mix-04 pack, sessions 1.
+The leased execution baseline is adaptive `2d0f8a7` plus the sealed mix-04 pack,
+sessions 2. The older sessions-1 example is illustrative, not its deployment.
 
 ## Prepared integration
 
-`cuppaxanax/stack-1` contains main `a63a166`, roofline `e073c5d`, latency
+As originally prepared, `cuppaxanax/stack-1` contained main `a63a166`, roofline `e073c5d`, latency
 `8c4f9be`, host-overhead `198583f`, and the three MTP Q8 activation-address
-fixes from `a6344e6` adapted to roofline's shared gate/up GLSL. It does not
+fixes from `a6344e6` adapted to roofline's shared gate/up GLSL. That preparation did not
 merge the MTP implementation or multi-session branch. Experimental flags
 default off. The always-active Q8 correctness fix means flag-zero stack-1
 must not be assumed numerically identical to the old main shaders.
+
+The integration was subsequently merged with adaptive `2d0f8a7` in `31508ee`,
+retaining per-session static bindings and separate static descriptor-pool limits.
+It includes multi-session scheduling but not MTP serving. New experimental
+flags remain default off.
 
 The example declares two complete flag combinations, not nine separate flag
 experiments: `stack-all`, then identical kernels with submission group 2.
@@ -31,12 +37,20 @@ values fail before transport.
 ### Submission grouping: exact greedy control is mandatory
 
 Grouping changes submission/fence behavior, **not kernels**. A candidate
-selecting group 1/2 must name an earlier `hash_control` candidate with the
+selecting group 1/2 must supply either an earlier `hash_control` candidate or
+a `greedy_control` deployment with the
 same binary, shader tree, pack, helper, sessions and all other flags.
 The example uses `stack-all` as the group-2 control. The completed control
 must be quality-approved, have at least five policy-v2 pairs, and have stable
 canonical B hashes across its rounds. Every grouped B hash must match that
 control; missing/duplicate/changed cases fail. Passing KL never waives this.
+
+The cheaper `greedy_control` alternative deploys the otherwise identical
+group-zero configuration twice, capturing all five canonical hashes after
+each fresh deployment. Both captures must agree; every grouped B round must
+match them. This control is not a performance experiment and supplies no
+grouping speedup claim. The combined candidate still needs its own full
+KL/top-1 gate and all predeclared paired rounds.
 
 This control is intentionally same-kernel, not old-main-vs-roofline:
 legitimate roofline/Q8-fix numeric changes may differ from old main.
@@ -92,6 +106,17 @@ digests are checked before capture and must agree. The discovered A digest
 is attached to the teacher identity; B's supplied digest is enforced.
 Every later A/B deployment rechecks the tree. This is important because the
 Q8 fix changes shaders without necessarily changing the serving ELF.
+
+Matched A/B sessions may be 1 or 2. The affinity-aware battery uses stable
+OpenAI `user=hillclimb-stream-0` for each cold/continuation sequence and
+distinct users 0/1 for concurrency. Its `paired-affinity-v3` identity prevents
+resuming older traffic as though it used the same cache-routing workload.
+Quality frontiers use fresh single-logical-session helper runtimes; they
+qualify arithmetic, not concurrent scheduler isolation.
+
+An optional `teacher_directory` reuses an existing teacher only when its
+captured deployment identity exactly matches A, including the discovered
+shader digest. Each candidate still needs a fresh capture and quality receipt.
 
 Receipts bind both deployment identities, complete flags, helpers, shader
 trees, manifest, corpus and raw full-vocabulary KL report. Capture uses a

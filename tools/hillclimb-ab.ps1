@@ -139,7 +139,7 @@ function Invoke-ABNonStreamPair {
     try {
         foreach ($messages in @(@{ messages = $ChatMessages }, @{ messages = $AgentMessages })) {
             $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Post, "$BaseUrl/chat/completions")
-            $request.Content = [Net.Http.StringContent]::new((New-BodyJson $messages.messages $Limit $false),
+            $request.Content = [Net.Http.StringContent]::new((New-BodyJson $messages.messages $Limit $false -User "hillclimb-stream-$($requests.Count)"),
                 [Text.Encoding]::UTF8, 'application/json')
             $requests += @{ request = $request; task = $client.SendAsync($request); response = $null; wall = $null }
         }
@@ -289,6 +289,17 @@ function Invoke-PairedQualification {
         }
     }
     $referenceRun = $null
+    $greedyControl = $null
+    $greedyControlHash = ''
+    if ($config.ContainsKey('same_kernel_greedy_control')) {
+        $greedyControlHash = (Get-FileHash $config.same_kernel_greedy_control -Algorithm SHA256).Hash.ToLowerInvariant()
+        $greedyControl = Get-Content $config.same_kernel_greedy_control -Raw | ConvertFrom-Json -AsHashtable
+        if ($greedyControl.schema -ne 'same-kernel-greedy-v1' -or -not $greedyControl.complete -or
+            -not $greedyControl.repeat_identity -or $greedyControl.hashes.Count -ne 5 -or
+            (Get-ABKernelIdentity $greedyControl.deployment) -ne (Get-ABKernelIdentity $config.B)) {
+            throw 'Invalid same-kernel greedy-only control.'
+        }
+    }
     if ($config.ContainsKey('exact_hash_reference')) {
         $referenceRun = Get-Content -Raw -LiteralPath $config.exact_hash_reference | ConvertFrom-Json -AsHashtable
         if (-not $referenceRun.complete -or -not $referenceRun.quality_pass -or
@@ -297,7 +308,7 @@ function Invoke-PairedQualification {
         }
     }
     $candidateFlags = if ($config.B.ContainsKey('flags')) { Get-ABStackFlags $config.B } else { @{} }
-    if ($candidateFlags['FG_DECODE_SUBMIT_GROUP'] -in @('1','2')) {
+    if ($candidateFlags['FG_DECODE_SUBMIT_GROUP'] -in @('1','2') -and -not $greedyControl) {
         if (-not $referenceRun -or @($referenceRun.pairs).Count -lt 5 -or
             $referenceRun.policy -ne 'primary-median-v2' -or
             (Get-ABKernelIdentity $referenceRun.config.B) -ne (Get-ABKernelIdentity $config.B)) {
@@ -318,6 +329,8 @@ function Invoke-PairedQualification {
     $result = [ordered]@{
         schema = 2; policy = 'primary-median-v2'; started = [DateTimeOffset]::Now.ToString('o'); config = $config
         config_sha256 = Get-ABHash ($config | ConvertTo-Json -Depth 35 -Compress)
+        battery = 'paired-affinity-v3'
+        greedy_control_sha256 = $greedyControlHash
         quality_receipt_sha256 = $qualityEvidenceHash
         method = $method
         rounds = $ABRounds; order = $ABOrder; pairs = @(); metrics = @(); complete = $false; eligible = $false
@@ -328,6 +341,7 @@ function Invoke-PairedQualification {
     if ($ABResume) {
         $previous = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json -AsHashtable
         if ($previous.schema -ne 2 -or $previous.config_sha256 -ne $result.config_sha256 -or
+            $previous.battery -ne $result.battery -or $previous.greedy_control_sha256 -ne $greedyControlHash -or
             $previous.quality_receipt_sha256 -ne $qualityEvidenceHash -or
             $previous.complete -or $previous.rounds -ne $ABRounds -or $previous.order -ne $ABOrder -or
             $previous.config.change_kind -ne $config.change_kind) { throw 'Cannot change or repeat a completed A/B design.' }
@@ -402,6 +416,13 @@ function Invoke-PairedQualification {
                 $result.same_kernel_hash_identity = $samePackPass
             }
             $result.quality_pass = $result.quality_pass -and $samePackPass
+        }
+        if ($greedyControl) {
+            $same = @($result.pairs | Where-Object {
+                -not (Test-ABCanonicalHashes $greedyControl.hashes $_.B.hashes)
+            }).Count -eq 0
+            $result.same_kernel_hash_identity = $same
+            $result.quality_pass = $result.quality_pass -and $same
         }
         $result.complete = $true
         $decision = Get-ABDecision $result.metrics $result.quality_pass

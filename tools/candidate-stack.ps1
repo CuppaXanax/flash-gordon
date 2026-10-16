@@ -12,6 +12,7 @@ param(
 )
 $ErrorActionPreference='Stop'
 . "$PSScriptRoot\ab-stack-common.ps1"
+. "$PSScriptRoot\hillclimb-ab.ps1"
 $config=Get-Content $ConfigPath -Raw|ConvertFrom-Json -AsHashtable
 $Output=$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Output)
 if(Test-Path $Output){throw 'Candidate stack output must be fresh.'}
@@ -29,8 +30,15 @@ foreach($candidate in $config.candidates){
     Assert-ABDeployment $candidate.B -Capture
     $groupFlags=Get-ABStackFlags $candidate.B
     if($groupFlags['FG_DECODE_SUBMIT_GROUP']-in@('1','2')){
-        if(-not $candidate.ContainsKey('hash_control')-or-not $names.ContainsKey($candidate.hash_control)){
+        if((-not $candidate.ContainsKey('hash_control')-or-not $names.ContainsKey($candidate.hash_control))-and
+            -not $candidate.ContainsKey('greedy_control')){
             throw 'Submission grouping requires an earlier same-kernel hash_control candidate.'
+        }
+        if($candidate.ContainsKey('greedy_control')){
+            Assert-ABDeployment $candidate.greedy_control -Capture
+            if((Get-ABKernelIdentity $candidate.B)-ne(Get-ABKernelIdentity $candidate.greedy_control)){
+                throw 'Greedy-only control must have identical kernels and other flags.'
+            }
         }
     }
     if($candidate.ContainsKey('hash_control')){
@@ -41,7 +49,7 @@ foreach($candidate in $config.candidates){
     }
     $names[$candidate.name]=$candidate
     foreach($arm in @($config.A,$candidate.B)){
-        if($arm.sessions-ne1){throw 'Candidate flag stacks use sessions 1.'}
+        if($arm.sessions-ne$config.A.sessions){throw 'Candidate and baseline sessions must match.'}
         if($arm.binary_sha256-notmatch'^[a-f0-9]{64}$'-or$arm.manifest_sha256-notmatch'^[a-f0-9]{64}$'-or
            $arm.capture_sha256-notmatch'^[a-f0-9]{64}$'){
             throw 'Pin serving binary, manifest and source-matched quality helper hashes before planning.'
@@ -72,10 +80,16 @@ $common=(Join-Path $PSScriptRoot 'ab-stack-common.ps1').Replace("'","''")
 $leaseQuoted=(Resolve-Path $LeaseFile).Path.Replace("'","''")
 [IO.File]::WriteAllText($leasedDeploy,"param([hashtable]`$Deployment,[string]`$Arm)`n. '$common'`nAssert-ABStackLease '$leaseQuoted'`n& '$deploy' -Deployment `$Deployment -Arm `$Arm`n")
 try{
-    $teacher=Join-Path $Output 'teacher'
-    & $CaptureScript -Deployment $config.A -Corpus $corpus -OutputDir $teacher -LeaseFile $LeaseFile
-    if(-not $?){throw 'Teacher capture failed.'}
+    $teacher=if($config.ContainsKey('teacher_directory')){(Resolve-Path $config.teacher_directory).Path}else{Join-Path $Output 'teacher'}
+    if(-not $config.ContainsKey('teacher_directory')){
+        & $CaptureScript -Deployment $config.A -Corpus $corpus -OutputDir $teacher -LeaseFile $LeaseFile
+        if(-not $?){throw 'Teacher capture failed.'}
+    }
     $config.A.shader_tree_sha256=(Get-Content (Join-Path $teacher 'capture-identity.json') -Raw|ConvertFrom-Json).shader_tree_sha256
+    $teacherIdentity=Get-Content (Join-Path $teacher 'capture-identity.json') -Raw|ConvertFrom-Json
+    if($config.ContainsKey('teacher_directory')-and$teacherIdentity.identity-ne(Get-ABDeploymentIdentity $config.A)){
+        throw 'Reused teacher does not match pinned baseline.'
+    }
     $config.A|ConvertTo-Json -Depth 20|Set-Content $baseline
     foreach($candidate in $config.candidates){
         Assert-ABStackLease $LeaseFile
@@ -112,6 +126,23 @@ try{
             $abDesign=@{A=$config.A;B=$candidate.B;change_kind='numeric';quality_file=$receipt
               deploy_script=$leasedDeploy;restore_script=$restore
               contexts=@(4096,32768)}
+            if($candidate.ContainsKey('greedy_control')){
+                $candidate.greedy_control.shader_tree_sha256=$candidate.B.shader_tree_sha256
+                $greedyRuns=@()
+                for($repeat=0;$repeat-lt2;$repeat++){
+                    & $leasedDeploy -Deployment $candidate.greedy_control -Arm greedy-control
+                    $greedyPath=Join-Path $dir "greedy-control-$repeat.json"
+                    & $PerformanceScript -GreedyOutput $greedyPath
+                    $greedyRuns+=@(Get-Content $greedyPath -Raw|ConvertFrom-Json -AsHashtable)
+                }
+                $same=Test-ABCanonicalHashes $greedyRuns[0].cases $greedyRuns[1].cases
+                $greedyReceipt=Join-Path $dir 'same-kernel-greedy.json'
+                @{schema='same-kernel-greedy-v1';complete=$true;repeat_identity=$same
+                  deployment=$candidate.greedy_control;hashes=$greedyRuns[0].cases}|
+                    ConvertTo-Json -Depth 25|Set-Content $greedyReceipt
+                if(-not $same){throw 'Same-kernel greedy control is not deterministic.'}
+                $abDesign.same_kernel_greedy_control=$greedyReceipt
+            }
             if($candidate.ContainsKey('hash_control')){
                 $abDesign.exact_hash_reference=$controlPath
             }
@@ -121,8 +152,8 @@ try{
             $perf=Get-Content (Join-Path $dir 'perf\ab-result.json') -Raw|ConvertFrom-Json
             if(-not $perf.complete){throw 'Incomplete stack performance experiment.'}
             $row.perf_run=$true;$row.eligible=[bool]$perf.eligible
-            if($candidate.ContainsKey('hash_control')){
-                $row.hash_control=$candidate.hash_control
+            if($candidate.ContainsKey('hash_control')-or$candidate.ContainsKey('greedy_control')){
+                $row.hash_control=$candidate['hash_control']
                 $row.same_kernel_hash_identity=[bool]$perf.same_kernel_hash_identity
                 $row.eligible=$row.eligible-and$row.same_kernel_hash_identity
             }

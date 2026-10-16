@@ -10,6 +10,7 @@ import unittest
 import uuid
 
 from ab_stack_archive import extract
+from stack_collect_evidence import collect
 
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell 7 required")
@@ -44,7 +45,9 @@ class CandidateStack(unittest.TestCase):
             f"Add-Content '{self.events}' ('capture:'+$Deployment.label)\n"
             "if($Deployment.label-eq'explode'){throw 'mock capture failure'}\n"
             "$null=New-Item -ItemType Directory $OutputDir\n"
-            "@{shader_tree_sha256=('f'*64)}|ConvertTo-Json|Set-Content (Join-Path $OutputDir 'capture-identity.json')\n")
+            f". '{self.root / 'tools' / 'ab-stack-common.ps1'}'\n"
+            "@{shader_tree_sha256=('f'*64);identity=(Get-ABDeploymentIdentity $Deployment)}"
+            "|ConvertTo-Json|Set-Content (Join-Path $OutputDir 'capture-identity.json')\n")
         self.deploy = self.work / "deploy.ps1"
         self.deploy.write_text(
             "param($Deployment,$Arm)\n"
@@ -62,7 +65,9 @@ class CandidateStack(unittest.TestCase):
             "raise SystemExit(1 if name=='reject' else 0)\n")
         self.perf = self.work / "perf.ps1"
         self.perf.write_text(
-            "param($ABConfig,$ABRounds,$ABOrder,$ABOutput)\n"
+            "param($ABConfig,$ABRounds,$ABOrder,$ABOutput,$GreedyOutput)\n"
+            "if($GreedyOutput){@{cases=@(0..4|ForEach-Object{@{name=[string]$_;sha256=('a'*64)}})}"
+            "|ConvertTo-Json -Depth 10|Set-Content $GreedyOutput;return}\n"
             "$c=Get-Content $ABConfig -Raw|ConvertFrom-Json -AsHashtable\n"
             "if($ABRounds-ne6-or$ABOrder-ne'ABBA'){throw 'incorrect design'}\n"
             f"Add-Content '{self.events}' ('perf:'+(Split-Path (Split-Path $ABOutput) -Leaf))\n"
@@ -92,6 +97,92 @@ class CandidateStack(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.events.exists())
         self.assertFalse(json.loads((self.work / "result" / "stack-result.json").read_text())["executed"])
+
+    def test_compact_evidence_omits_logit_payloads(self):
+        source = self.work / "receipt-root"
+        source.mkdir()
+        (source / "quality.json").write_text('{"passed":true}\n')
+        for name in ("0.fgl", "0.f32", "logits.tar.gz"):
+            (source / name).write_bytes(b"raw full-vocabulary logits")
+        output = self.work / "compact-evidence"
+        index = collect(source, output)
+        self.assertEqual(len(index["metadata"]), 1)
+        self.assertEqual(len(index["raw_retained_locally_only"]), 3)
+        self.assertEqual((output / "quality.json").read_bytes(),
+                         (source / "quality.json").read_bytes())
+        self.assertFalse((output / "0.fgl").exists())
+        self.assertFalse((output / "0.f32").exists())
+        self.assertFalse((output / "logits.tar.gz").exists())
+        with self.assertRaises(ValueError):
+            collect(source, output)
+
+    def test_teacher_reuse_binds_identity(self):
+        first = self.run_stack(execute=True)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        shutil.move(self.work / "result", self.work / "previous")
+        self.events.unlink()
+        self.config["teacher_directory"] = str(self.work / "previous" / "teacher")
+        reused = self.run_stack(execute=True)
+        self.assertEqual(reused.returncode, 0, reused.stderr)
+        self.assertNotIn("capture:teacher", self.events.read_text())
+        self.assertIn("perf:combined", self.events.read_text())
+
+    def test_pinning_rejects_ineligible_before_transport(self):
+        report = self.work / "ineligible.json"
+        report.write_text(json.dumps(dict(complete=False, eligible=False,
+                                          quality_pass=False, metrics=[])))
+        output = self.work / "pin-output"
+        result = subprocess.run([
+            "pwsh", "-NoProfile", "-File", str(self.root / "tools" / "stack-pin-selected.ps1"),
+            "-PerformanceResult", str(report), "-LeaseFile", str(self.lease),
+            "-Output", str(output),
+        ], capture_output=True, text=True, timeout=20)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Only a complete", result.stderr)
+        self.assertFalse(output.exists())
+        self.assertFalse(self.events.exists())
+
+    def test_pin_plan_is_offline_and_renders_lf(self):
+        config = self.work / "pin-config.json"
+        config.write_text(json.dumps(self.config))
+        quality = self.work / "quality-receipt.json"
+        quality.write_text("{}")
+        report = self.work / "eligible.json"
+        script = f". '{self.root / 'tools' / 'hillclimb-ab.ps1'}';" + r"""
+$c=Get-Content $args[0] -Raw|ConvertFrom-Json -AsHashtable
+$pairs=@(0..4|ForEach-Object{
+    $a=@{};$b=@{}
+    foreach($n in (Get-ABPrimaryMetrics)){
+        $higher=$n-ne'chat.ttft_ms'
+        $a[$n]=@{value=100;higher_is_better=$higher}
+        $b[$n]=@{value=$(if($higher){104}else{100/1.04});higher_is_better=$higher}
+    }
+    @{A=@{metrics=$a};B=@{metrics=$b}}
+})
+@{complete=$true;eligible=$true;quality_pass=$true;same_kernel_hash_identity=$true
+  metrics=@(Get-ABSummary $pairs -Replicates 100)
+  quality_receipt_sha256=(Get-FileHash $args[1] -Algorithm SHA256).Hash.ToLowerInvariant()
+  config=@{A=$c.A;B=$c.candidates[0].B;quality_file=$args[1]}}|
+  ConvertTo-Json -Depth 30|Set-Content $args[2]
+"""
+        generator = self.work / "generate.ps1"
+        generator.write_text(script)
+        generated = subprocess.run([
+            "pwsh", "-NoProfile", "-File", str(generator), str(config), str(quality), str(report),
+        ], capture_output=True, text=True, timeout=20)
+        self.assertEqual(generated.returncode, 0, generated.stderr)
+        output = self.work / "pin-plan"
+        planned = subprocess.run([
+            "pwsh", "-NoProfile", "-File", str(self.root / "tools" / "stack-pin-selected.ps1"),
+            "-PerformanceResult", str(report), "-LeaseFile", str(self.lease),
+            "-Output", str(output), "-PlanOnly",
+        ], capture_output=True, text=True, timeout=20)
+        self.assertEqual(planned.returncode, 0, planned.stderr)
+        shells = list(output.glob("*.sh"))
+        self.assertEqual(len(shells), 2)
+        for shell in shells:
+            self.assertNotIn(b"\r", shell.read_bytes())
+        self.assertFalse(self.events.exists())
 
     def test_execution_requires_lease(self):
         result = self.run_stack(execute=True, lease=False)
@@ -136,6 +227,21 @@ class CandidateStack(unittest.TestCase):
                          self.work / "result" / "combined" / "perf" / "ab-result.json")
         rows = json.loads((self.work / "result" / "stack-result.json").read_text())["results"]
         self.assertTrue(rows[1]["same_kernel_hash_identity"])
+
+    def test_sessions_two_and_greedy_only_control(self):
+        self.config["A"]["sessions"] = 2
+        candidate = self.config["candidates"][0]
+        candidate["B"]["sessions"] = 2
+        candidate["greedy_control"] = json.loads(json.dumps(candidate["B"]))
+        candidate["B"]["flags"]["FG_DECODE_SUBMIT_GROUP"] = 2
+        self.config["candidates"] = [candidate]
+        result = self.run_stack(execute=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        ab = json.loads((self.work / "result" / "combined" / "ab-config.json").read_text())
+        self.assertIn("same_kernel_greedy_control", ab)
+        self.assertNotIn("exact_hash_reference", ab)
+        control = json.loads(Path(ab["same_kernel_greedy_control"]).read_text())
+        self.assertTrue(control["repeat_identity"])
 
     def test_one_quality_and_performance_per_combination(self):
         result = self.run_stack(execute=True)

@@ -244,6 +244,9 @@ $few=@($good|ForEach-Object{$copy=@{};foreach($k in $_.Keys){$copy[$k]=$_[$k]};$
             half = len(Handler.bodies) // 12
             self.assertGreater(half, 0)
             self.assertEqual(sorted(Handler.bodies[:half]), sorted(Handler.bodies[half:2 * half]))
+            users = {json.loads(body)["user"] for body in Handler.bodies}
+            self.assertEqual(users, {"hillclimb-stream-0"} if long_only else
+                             {"hillclimb-stream-0", "hillclimb-stream-1"})
         finally:
             server.shutdown()
             server.server_close()
@@ -252,6 +255,35 @@ $few=@($good|ForEach-Object{$copy=@{};foreach($k in $_.Keys){$copy[$k]=$_[$k]};$
 
     def test_order_bodies_and_restore(self):
         self.run_mode()
+
+    def test_greedy_only_capture(self):
+        root = Path(__file__).resolve().parents[1]
+        output = root / ".build" / ("greedy-fixture-" + uuid.uuid4().hex)
+        output.mkdir(parents=True)
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        Handler.bodies = []
+        try:
+            destination = output / "greedy.json"
+            result = subprocess.run([
+                "pwsh", "-NoProfile", "-File", str(root / "tools" / "hillclimb.ps1"),
+                "-BaseUrl", f"http://127.0.0.1:{server.server_port}/v1",
+                "-GreedyOutput", str(destination),
+            ], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            capture = json.loads(destination.read_text(encoding="utf-8-sig"))
+            self.assertEqual(capture["schema"], "greedy-capture-v1")
+            self.assertEqual(len(capture["cases"]), 5)
+            self.assertTrue(all(case["sha256"] for case in capture["cases"]))
+            self.assertEqual(len(Handler.bodies), 5)
+            self.assertTrue(all(json.loads(body)["user"] == "hillclimb-stream-0"
+                                for body in Handler.bodies))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+            shutil.rmtree(output)
 
     def test_failed_deploy_restores_original(self):
         self.run_mode(fail=True)

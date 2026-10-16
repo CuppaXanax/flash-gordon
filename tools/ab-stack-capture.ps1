@@ -60,7 +60,10 @@ try{
     foreach($key in $flags.Keys){$envArgs+="$key='$($flags[$key])'"}
     $command=@"
 set -euo pipefail
-printf '%s  %s\n' '$($Deployment.capture_sha256)' '$($Deployment.capture_program)' | sha256sum -c -
+    ulimit -c 0
+    cd '$remote'
+    export TMPDIR='$remote' XDG_CACHE_HOME='$remote/cache'
+    printf '%s  %s\n' '$($Deployment.capture_sha256)' '$($Deployment.capture_program)' | sha256sum -c -
 printf '%s  %s\n' '$($Deployment.binary_sha256)' '$($Deployment.release)/flash-gordon' | sha256sum -c -
 printf '%s  %s\n' '$($Deployment.manifest_sha256)' '$($Deployment.manifest)' | sha256sum -c -
 env $($unset -join ' ') $($envArgs -join ' ') '$($Deployment.capture_program)' --manifest '$($Deployment.manifest)' --prompts '$remote/prompts.fgev' >'$remote/coordinator.log' 2>&1 &

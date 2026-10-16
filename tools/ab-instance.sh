@@ -75,6 +75,7 @@ start)
         fi
     fi
     cd "$release"
+    ulimit -c 0
     args=(rank --manifest "$manifest" --rank "$rank")
     if ((rank == 0)); then
         args=(api --manifest "$manifest" --model-name Qwen3.8-Flash-Next-Uncensored

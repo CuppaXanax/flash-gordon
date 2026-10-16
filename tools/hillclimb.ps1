@@ -18,6 +18,7 @@ param(
     [switch]$WriteReference,
     [string]$ABConfig = '',
     [ValidateRange(5,30)][int]$ABRounds = 6,
+    [string]$GreedyOutput = '',
     [ValidateSet('ABAB','ABBA')][string]$ABOrder = 'ABBA',
     [string]$ABOutput = '',
     [switch]$ABResume,
@@ -125,7 +126,8 @@ function New-Prompt {
 }
 
 function New-BodyJson {
-    param([object[]]$Messages, [int]$MaxTokens, [bool]$Stream, [int]$Seed = 1729)
+    param([object[]]$Messages, [int]$MaxTokens, [bool]$Stream, [int]$Seed = 1729,
+          [string]$User = 'hillclimb-stream-0')
     $body = [ordered]@{
         model = $records.metadata.model
         messages = $Messages
@@ -135,6 +137,7 @@ function New-BodyJson {
         seed = $Seed
         max_tokens = $MaxTokens
         stream = $Stream
+        user = $User
     }
     return ($body | ConvertTo-Json -Depth 30 -Compress)
 }
@@ -425,7 +428,7 @@ function Invoke-Correctness {
         }
         $reference | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $referencePath -Encoding utf8
         $records.metadata.reference_file = 'results/hillclimb/reference.json'
-    } elseif (-not $ABConfig -and -not (Test-Path -LiteralPath $referencePath)) {
+    } elseif (-not $ABConfig -and -not $GreedyOutput -and -not (Test-Path -LiteralPath $referencePath)) {
         throw "Reference file is missing. Run once with -WriteReference against the intended production model."
     }
     return @($current)
@@ -437,6 +440,14 @@ function Invoke-Concurrency {
 }
 
 . (Join-Path $PSScriptRoot 'hillclimb-ab.ps1')
+if ($GreedyOutput) {
+    try {
+        $records.metadata.model = Get-Model
+        @{schema='greedy-capture-v1';cases=@(Invoke-Correctness)} |
+            ConvertTo-Json -Depth 15 | Set-Content $GreedyOutput
+    } finally { $client.Dispose() }
+    return
+}
 if ($ABConfig) {
     try {
         Invoke-PairedQualification
