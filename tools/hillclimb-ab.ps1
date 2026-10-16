@@ -123,6 +123,7 @@ function Invoke-ABNonStreamPair {
             $tokens = [int]$payload.usage.completion_tokens
             if ($tokens -lt $MinimumTokens -or -not $decode -or $decode -le 0) { throw 'Concurrent sample lacks sustained actual-token accounting.' }
             $rows += [ordered]@{
+                name = if ($rows.Count -eq 0) { 'chat-style' } else { 'agent-style' }
                 completion_tokens = $tokens; wall_seconds = $item.wall; decode_seconds = $decode
                 raw_end_to_end_tps = $tokens / $item.wall; engine_tps = $tokens / $decode
             }
@@ -133,6 +134,7 @@ function Invoke-ABNonStreamPair {
             $row.normalized_end_to_end_tps = $length / $row.normalized_wall_seconds
         }
         return [ordered]@{
+            schema = 2; token_count_source = 'actual usage on these exact non-stream responses'
             streams = $rows; common_tokens = $length
             raw_aggregate_tps = ($rows.completion_tokens | Measure-Object -Sum).Sum / ($rows.wall_seconds | Measure-Object -Maximum).Maximum
             normalized_aggregate_tps = 2 * $length / ($rows.normalized_wall_seconds | Measure-Object -Maximum).Maximum

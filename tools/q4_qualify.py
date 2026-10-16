@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply every comparable BASELINE harness metric and the independent quality gate."""
+"""Replay historical schema-1 gates; use hillclimb -ABConfig for new qualification."""
 import argparse
 import json
 import math
@@ -7,6 +7,15 @@ from pathlib import Path
 
 
 def evaluate(baseline, run, quality):
+    if (run.get("schema", 1) != 1 or "pairs" in run
+            or (run.get("concurrency") or {}).get("schema", 1) != 1):
+        return dict(
+            passed=False, quality_passed=quality.get("passed") is True,
+            greedy_correctness_passed=False, performance_passed=False,
+            threshold_percent=None, metrics=[],
+            failed_metrics=["incompatible-historical-performance-schema"],
+            diagnostic="Historical single-baseline gates cannot compare actual-token or paired schemas. Use hillclimb.ps1 -ABConfig.",
+        )
     metrics = []
 
     def check(name, before, after, higher):

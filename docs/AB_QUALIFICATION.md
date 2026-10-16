@@ -22,6 +22,11 @@ Long decode immediately continues each exact cold prefix. It must retain the pre
 
 The original API has no `ignore_eos`. Both concurrent non-stream HTTP requests are submitted before waiting, and each response contributes its own actual usage and completion timestamp. Raw per-stream/aggregate tokens/s are retained. Equal-length normalization retains observed queue/non-decode time and scales each engine decode interval to the minimum actual completion count; report this approximation explicitly. It is not a measurement of fixed-token execution, and does not correct content-dependent cost or the other stream's EOS-dependent queue delay. A/B sustained concurrency requires at least 32 actual completions per stream. Never count SSE events as tokens.
 
+The legacy full/quick harness now emits schema 2 and labeled actual-token
+concurrency rows. `q4_qualify.py` retains schema-1 historical replay, but refuses
+the new actual-token and paired schemas with a structured failure: historical
+visible-event baselines must never be compared to token throughput.
+
 ## Inference and acceptance
 
 The unit of resampling is a complete paired round, not a token, layer, SSE event, or request within the round. Report arm medians, min/max and IQR, the median paired B/A ratio, and a fixed-seed 20,000-replicate percentile bootstrap 95% interval on paired log ratios. Higher-is-better metrics require the entire interval >=0.97; latency requires the entire B/A interval <=1.03. An interval crossing the margin is **inconclusive**, not a pass. Requiring every protected metric to pass is an intersection-union noninferiority test; a fast short context cannot hide a slow long context.

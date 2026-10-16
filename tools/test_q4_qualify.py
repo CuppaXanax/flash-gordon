@@ -101,6 +101,15 @@ class Gates(unittest.TestCase):
         r["prefill"][0]["client_prefill_tps"] = 96.99
         self.assertFalse(evaluate(b, r, {"passed": True})["passed"])
 
+    def test_new_performance_schemas_refuse_historical_gates(self):
+        b, r = self.fixture()
+        for changed in ({**r, "schema": 2}, {**r, "pairs": []},
+                        {**r, "concurrency": {"schema": 2, "streams": []}}):
+            result = evaluate(b, changed, {"passed": True})
+            self.assertFalse(result["passed"])
+            self.assertIsNone(result["threshold_percent"])
+            self.assertIn("ABConfig", result["diagnostic"])
+
     def test_missing_quality_and_greedy(self):
         b, r = self.fixture()
         self.assertFalse(evaluate(b, r, {"passed": False})["passed"])
