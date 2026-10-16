@@ -160,12 +160,18 @@ def verify(args):
 def summarize(args):
     directory = pathlib.Path(args.directory)
     phases = ["A0", "K1", "A1", "K2", "A2", "K3", "A3"]
+    expanded = (directory / "B0-perf.json").exists()
+    if expanded:
+        phases = ["A0", "B0", "K1", "S1", "A1", "K2", "S2", "A2", "K3", "S3", "A3"]
     data = {phase: json.loads((directory / f"{phase}-perf.json").read_text(encoding="utf-8"))
             for phase in phases}
     comparisons = []
-    for index in (1, 3, 5):
+    arms = [(1, 0, 2), (3, 2, 4), (5, 4, 6)]
+    if expanded:
+        arms = [(2, 0, 4), (3, 0, 4), (5, 4, 7), (6, 4, 7), (8, 7, 10), (9, 7, 10)]
+    for index, left, right in arms:
         phase = phases[index]
-        before, candidate, after = (data[phases[i]]["rows"] for i in (index - 1, index, index + 1))
+        before, candidate, after = (data[phases[i]]["rows"] for i in (left, index, right))
         grouped = {}
         for a, b, c in zip(before, candidate, after):
             assert (a["case"], a["repeat"]) == (b["case"], b["repeat"]) == (c["case"], c["repeat"])

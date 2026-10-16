@@ -1,5 +1,66 @@
 # MTP serving foundation on the promoted multisession base
 
+## Granted trained-pack ring lease — 2026-10-16: BLOCKED
+
+Candidate `419e303` contains `822be55`. The exclusive .42–.49 lease started
+at13:13:24.678Z; all owners were restored, verified and cleaned, and the ring
+released at13:24:39.938Z (**11m15s**, below the45-minute hard cap).
+**No promotion, acceptance claim, MTP speedup or projected serving TPS.**
+
+Completed MTP-off phases A0/mask0 and B0/mask330:
+
+| Arm | Chat median decode TPS | Code median decode TPS | Sessions2 median aggregate wall TPS |
+|---|---:|---:|---:|
+| off, mask0 | 30.31 | 30.60 | 36.81 |
+| off, mask330 | 30.19 | 30.25 | 36.55 |
+
+Each decode category comprises six requests (two prompts, three repeats);
+coexistence comprises three concurrent chat/code pairs. These two phases
+are **unbracketed baselines**, not evidence of a mask improvement. All eight
+greedy completions, actual-token-ID SHA256/counts and finish reasons matched
+across masks. Mask330's small-N arithmetic is not exercised by this off gate.
+
+The first K1 (MTP enabled, max-draft1, mask0) request returned HTTP500.
+Rank1's primary diagnostic was:
+`small-N expert path requires owned cooked K/Q5_1 tensors`.
+Other owners then reported closed sockets; the coordinator marked the
+transport non-reusable. No MTP completion, round or timing was produced.
+Consequently k1/k2/k3, both MTP-on greedy gates, MTP sessions2 and trained-pack
+SSE/stop/cancellation checks remain **unqualified**, not failed numerical
+equivalence or zero acceptance.
+
+The retained sealed manifest explains the format gap: rank1 owns all512
+experts in layers0..5; layer2 has cooked Q5_K gate/up (type13, layout2),
+but a cooked Q8_0 down projection (type8, layout5,640x2560x512,
+891,289,600bytes). Layer4 also has a cooked Q8_0 down tensor. The kernel
+requires down type7/cooked-Q5_1. Layer2 is the first unsupported layer
+in owner order, **inferred from the manifest**, not a runtime layer trace.
+Ownership is valid; the combined diagnostic does not isolate the failing
+predicate. Supporting or safely falling back for real Q8 down projections
+is required before another serving lease.
+
+Restoration used the retained current launcher, runtime31508ee /
+20261016-abq-stack-adaptive, mix-04, sessions2/wide1. All eight binary,
+manifest, shader, argv and complete FG environment checks passed; health,
+models and a real greedy response matched pre-lease. Candidate PIDs were
+gone, watchdogs canceled/exited, and `/home/xander/hc-mtp` absent on every
+owner. No hardware/governor/current-launcher changes.
+
+A historical `capture/cases.tsv` assumption initially prevented evidence
+archiving and automatic scratch removal **after successful restoration**.
+The serving archive now treats that file as optional; all eight archives
+were recovered, downloaded and SHA256-verified before explicit cleanup.
+The controller now continues across evidence/download failures and always
+attempts cleanup after verified restoration, preserving separate errors.
+Six local finalization failure-injection cases and three Python client
+tests pass. Owned candidate core dumps are disabled. No model binary changed.
+
+Machine-readable raw phase metrics, token receipts, primary diagnostics,
+restoration/release receipts and all eight evidence hashes:
+`mtp-serving-lease.json`. Full owner archives remain in the local sealed
+lease evidence directory. The earlier numerical-double pair gates below
+remain valid but do not supersede this real-pack blocker.
+
 ## Two-host publication gate — 2026-10-16
 
 Integrated kernel base `822be55` plus serving/API tests passed on **.51/.52**.

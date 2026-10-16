@@ -1,0 +1,2476 @@
+{
+  "schema": 1,
+  "lease": "serving-20261016-131324",
+  "status": "blocked-real-pack-small-n-q8-down",
+  "started_utc": "2026-10-16T13:13:24.678Z",
+  "hard_deadline_utc": "2026-10-16T13:58:24.678Z",
+  "candidate_commit": "419e303740e61c41f245390da7f4fa26ebe4d73a",
+  "kernel_base_included": "822be55e5d2af5186bda85a3cec87f50192ec7c0",
+  "candidate_release_sha256": "ee8a095839fad26614b0ccd77cf6a7bcc2be461fe4a94d647cd6bc9a740aa0b3",
+  "candidate_binary_sha256": "442ce6e629d66e3984085920dd969f4998a0c26d0db5c0fd5cd170ea24e5d345",
+  "no_promotion": true,
+  "mtp_on_qualified": false,
+  "mtp_acceptance": null,
+  "mtp_performance": null,
+  "projected_tps": null,
+  "instrumentation": "Unchanged stock governor/clocks; existing FG_RING_TRACE; decode TPS distinct from wall TPS. Completed arms unbracketed.",
+  "phases": {
+    "A0": {
+      "mtp": false,
+      "small_kernel_mask": 0,
+      "summary": {
+        "chat": {
+          "requests": 6,
+          "median_decode_tps": 30.31071025511436,
+          "aggregate_decode_tps": 29.62769406554819,
+          "median_wall_tps": 23.328788328989027
+        },
+        "code": {
+          "requests": 6,
+          "median_decode_tps": 30.600769241526564,
+          "aggregate_decode_tps": 30.475174127923978,
+          "median_wall_tps": 25.72468320617972
+        },
+        "coexist": {
+          "pairs": 3,
+          "median_aggregate_wall_tps": 36.80877643519091
+        }
+      },
+      "greedy": {
+        "phase": "A0",
+        "suite": "greedy",
+        "rows": [
+          {
+            "case": "chat-0",
+            "category": "chat",
+            "id": "chatcmpl-fg-1792156585-1",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Leaves appear green because they contain a pigment called chlorophyll, which is essential for photosynthesis. This pigment absorbs red and blue wavelengths of light but reflects green wavelengths back to our eyes. Consequently, our eyes perceive the reflected green light, making the leaves look green."
+              },
+              "finish_reason": "stop",
+              "completion_tokens": 55
+            },
+            "tokens": 55,
+            "decode_seconds": 4.130145485,
+            "decode_tps": 13.316722183213844,
+            "wall_seconds": 6.625517700013006,
+            "wall_tps": 8.301238105498086,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "584",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "22",
+              "X-Flash-Gordon-Prefilled-Tokens": "22",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "cold-start",
+              "X-Flash-Gordon-Completion-Tokens": "55",
+              "X-Flash-Gordon-Context-Tokens": "77",
+              "X-Flash-Gordon-Prefill-Seconds": "2.437321594",
+              "X-Flash-Gordon-Prefill-TPS": "9.026302",
+              "X-Flash-Gordon-Decode-Seconds": "4.130145485",
+              "X-Flash-Gordon-Decode-TPS": "13.316722",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "chat-1",
+            "category": "chat",
+            "id": "chatcmpl-fg-1792156591-2",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Kyoto is a city that rewards slowness. To ensure a truly quiet experience, this itinerary avoids the most crowded tourist traps (like the main entrance of Fushimi Inari or the heart of Gion during peak hours) and focuses on early mornings, hidden gardens, and contemplative spaces.\n\nHere is a curated two-day plan for a serene Kyoto visit, featuring one vegetarian meal per day.\n\n### **Day 1: The Northern Zen & Bamboo Silence**"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 96
+            },
+            "tokens": 96,
+            "decode_seconds": 3.457440783,
+            "decode_tps": 27.76620223606589,
+            "wall_seconds": 4.272206299996469,
+            "wall_tps": 22.470824969309028,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "717",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "26",
+              "X-Flash-Gordon-Prefilled-Tokens": "26",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "cold-start",
+              "X-Flash-Gordon-Completion-Tokens": "96",
+              "X-Flash-Gordon-Context-Tokens": "122",
+              "X-Flash-Gordon-Prefill-Seconds": "0.811394757",
+              "X-Flash-Gordon-Prefill-TPS": "32.043589",
+              "X-Flash-Gordon-Decode-Seconds": "3.457440783",
+              "X-Flash-Gordon-Decode-TPS": "27.766202",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "chat-2",
+            "category": "chat",
+            "id": "chatcmpl-fg-1792156596-3",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Here is an explanation of TCP retransmission and the distinction between latency and bandwidth, structured for clarity.\n\n---\n\n### Part 1: TCP Retransmission\n\n**TCP (Transmission Control Protocol)** is a connection-oriented protocol that guarantees reliable data delivery. Since the underlying IP network is \"best-effort\" (packets can be lost, corrupted, or delayed), TCP must detect losses and recover them. This process is called **retransmission**.\n\n#### How It"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 96
+            },
+            "tokens": 96,
+            "decode_seconds": 3.419807991,
+            "decode_tps": 28.07175147044681,
+            "wall_seconds": 4.203335099999094,
+            "wall_tps": 22.83900705418911,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "758",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "25",
+              "X-Flash-Gordon-Prefilled-Tokens": "25",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "96",
+              "X-Flash-Gordon-Context-Tokens": "121",
+              "X-Flash-Gordon-Prefill-Seconds": "0.765123827",
+              "X-Flash-Gordon-Prefill-TPS": "32.674450",
+              "X-Flash-Gordon-Decode-Seconds": "3.419807991",
+              "X-Flash-Gordon-Decode-TPS": "28.071751",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "chat-3",
+            "category": "chat",
+            "id": "chatcmpl-fg-1792156600-4",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Here is a numbered checklist to help you move house without losing important documents:\n\n1. **Create a Master Inventory List**  \n   Before packing, make a detailed list of all critical documents (e.g., birth certificates, passports, deeds, insurance policies, tax returns, medical records). Note where each is currently stored.\n\n2. **Gather and Sort Documents**  \n   Collect all documents from drawers, folders, and boxes. Sort them into categories:  \n   -"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 96
+            },
+            "tokens": 96,
+            "decode_seconds": 3.330895765,
+            "decode_tps": 28.821076002659,
+            "wall_seconds": 4.0661623000050895,
+            "wall_tps": 23.60948553378694,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "748",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "23",
+              "X-Flash-Gordon-Prefilled-Tokens": "23",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "96",
+              "X-Flash-Gordon-Context-Tokens": "119",
+              "X-Flash-Gordon-Prefill-Seconds": "0.716874472",
+              "X-Flash-Gordon-Prefill-TPS": "32.083720",
+              "X-Flash-Gordon-Decode-Seconds": "3.330895765",
+              "X-Flash-Gordon-Decode-TPS": "28.821076",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-0",
+            "category": "code",
+            "id": "chatcmpl-fg-1792156604-5",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```c\n#include <stdint.h>\n#include <stdbool.h>\n#include <assert.h>\n#include <stdio.h>\n\n/**\n * Binary search for a target value in a sorted array of uint32_t values.\n *\n * @param arr   Pointer to the sorted array of uint32_t values.\n * @param size  Number of elements in the array.\n * @param target The value to search for.\n * @return"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 96
+            },
+            "tokens": 96,
+            "decode_seconds": 3.504626791,
+            "decode_tps": 27.392360363885604,
+            "wall_seconds": 4.357670600002166,
+            "wall_tps": 22.03011856838199,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "629",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "31",
+              "X-Flash-Gordon-Prefilled-Tokens": "31",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "96",
+              "X-Flash-Gordon-Context-Tokens": "127",
+              "X-Flash-Gordon-Prefill-Seconds": "0.834892710",
+              "X-Flash-Gordon-Prefill-TPS": "37.130519",
+              "X-Flash-Gordon-Decode-Seconds": "3.504626791",
+              "X-Flash-Gordon-Decode-TPS": "27.392360",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-1",
+            "category": "code",
+            "id": "chatcmpl-fg-1792156608-6",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```python\nfrom collections import OrderedDict\n\n\nclass LRUCache:\n    \"\"\"\n    A bounded LRU (Least Recently Used) cache using OrderedDict.\n    \n    When the cache reaches its capacity, the least recently used item is evicted.\n    Accessing an item (get or put) marks it as most recently used.\n    \"\"\"\n    \n    def __init__(self, capacity: int):\n        if capacity <= 0:\n            raise ValueError"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 96
+            },
+            "tokens": 96,
+            "decode_seconds": 3.371109485,
+            "decode_tps": 28.47727148203257,
+            "wall_seconds": 4.156076600018423,
+            "wall_tps": 23.09870804584652,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "702",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "26",
+              "X-Flash-Gordon-Prefilled-Tokens": "26",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "96",
+              "X-Flash-Gordon-Context-Tokens": "122",
+              "X-Flash-Gordon-Prefill-Seconds": "0.757725952",
+              "X-Flash-Gordon-Prefill-TPS": "34.313197",
+              "X-Flash-Gordon-Decode-Seconds": "3.371109485",
+              "X-Flash-Gordon-Decode-TPS": "28.477271",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-2",
+            "category": "code",
+            "id": "chatcmpl-fg-1792156612-7",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```typescript\n/**\n * Options for the retry helper.\n */\nexport interface RetryOptions {\n  /** Maximum number of retry attempts (not including the initial attempt). */\n  maxRetries?: number;\n  /** Base delay in milliseconds before the first retry. */\n  baseDelayMs?: number;\n  /** Maximum delay in milliseconds between retries. */\n  maxDelayMs?: number;\n  /** Multiplier for exponential backoff. */"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 96
+            },
+            "tokens": 96,
+            "decode_seconds": 3.342099758,
+            "decode_tps": 28.724456764105962,
+            "wall_seconds": 4.094336500013014,
+            "wall_tps": 23.447022490626956,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "692",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "25",
+              "X-Flash-Gordon-Prefilled-Tokens": "25",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "96",
+              "X-Flash-Gordon-Context-Tokens": "121",
+              "X-Flash-Gordon-Prefill-Seconds": "0.733689148",
+              "X-Flash-Gordon-Prefill-TPS": "34.074376",
+              "X-Flash-Gordon-Decode-Seconds": "3.342099758",
+              "X-Flash-Gordon-Decode-TPS": "28.724457",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-3",
+            "category": "code",
+            "id": "chatcmpl-fg-1792156616-8",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```c\n#include <stdint.h>\n#include <stddef.h>\n#include <stdbool.h>\n\n/**\n * Decode one UTF-8 scalar from the input buffer.\n *\n * @param input      Pointer to the input byte sequence.\n * @param input_len  Length of the input buffer in bytes.\n * @param scalar     Pointer to store the decoded Unicode scalar value.\n * @param consumed   Pointer to store the number of bytes consumed."
+              },
+              "finish_reason": "length",
+              "completion_tokens": 96
+            },
+            "tokens": 96,
+            "decode_seconds": 3.43453334,
+            "decode_tps": 27.9513955744567,
+            "wall_seconds": 4.265988600003766,
+            "wall_tps": 22.503576310521613,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "674",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "31",
+              "X-Flash-Gordon-Prefilled-Tokens": "31",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "96",
+              "X-Flash-Gordon-Context-Tokens": "127",
+              "X-Flash-Gordon-Prefill-Seconds": "0.812403837",
+              "X-Flash-Gordon-Prefill-TPS": "38.158362",
+              "X-Flash-Gordon-Decode-Seconds": "3.434533340",
+              "X-Flash-Gordon-Decode-TPS": "27.951396",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          }
+        ]
+      },
+      "greedy_token_receipts": {
+        "chatcmpl-fg-1792156585-1": {
+          "count": 55,
+          "sha256": "0995aa1aa72470655d2badba09736683f8447af26f9e7a8c02b1feaf5a2b8839"
+        },
+        "chatcmpl-fg-1792156591-2": {
+          "count": 96,
+          "sha256": "bdca19cb4e230a0e7d81be162eeb7072b4565170cd6914847818659efef0d271"
+        },
+        "chatcmpl-fg-1792156596-3": {
+          "count": 96,
+          "sha256": "82087e9824116fcc65ac23e78060eef0d7f26679591394f4b284393085baea0d"
+        },
+        "chatcmpl-fg-1792156600-4": {
+          "count": 96,
+          "sha256": "974c5dbba68f3db41eb906c7845523873c2c7eaa290466152d79ebc20ed93046"
+        },
+        "chatcmpl-fg-1792156604-5": {
+          "count": 96,
+          "sha256": "0f11c2c6ce836b0183d123ee276be436d36392aa0f36049e0bd416b0430e9480"
+        },
+        "chatcmpl-fg-1792156608-6": {
+          "count": 96,
+          "sha256": "2e1ab82c3a0e0dbdfa086a7e42d605c625d8c1e8583f7c77fad996a11360d261"
+        },
+        "chatcmpl-fg-1792156612-7": {
+          "count": 96,
+          "sha256": "2feeb50bc3a3d1511036d3df7dc948f9a76e72da9db2a66f094b9b1400553f7e"
+        },
+        "chatcmpl-fg-1792156616-8": {
+          "count": 96,
+          "sha256": "a559c87dcf60daec269a922d632bdb30bfb536269539405a7f47015f66a18936"
+        }
+      },
+      "perf": {
+        "phase": "A0",
+        "suite": "perf",
+        "rows": [
+          {
+            "case": "chat-0",
+            "category": "chat",
+            "repeat": 0,
+            "id": "chatcmpl-fg-1792156622-9",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Leaves appear green because they contain a pigment called chlorophyll, which is essential for photosynthesis. This pigment absorbs red and blue wavelengths of light but reflects green wavelengths back to our eyes. Consequently, our eyes perceive the reflected green light, making the leaves look green."
+              },
+              "finish_reason": "stop",
+              "completion_tokens": 55
+            },
+            "tokens": 55,
+            "decode_seconds": 2.138291604,
+            "decode_tps": 25.721468436350836,
+            "wall_seconds": 2.90205689999857,
+            "wall_tps": 18.952074992060666,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "584",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "22",
+              "X-Flash-Gordon-Prefilled-Tokens": "22",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "55",
+              "X-Flash-Gordon-Context-Tokens": "77",
+              "X-Flash-Gordon-Prefill-Seconds": "0.714787870",
+              "X-Flash-Gordon-Prefill-TPS": "30.778362",
+              "X-Flash-Gordon-Decode-Seconds": "2.138291604",
+              "X-Flash-Gordon-Decode-TPS": "25.721468",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "chat-1",
+            "category": "chat",
+            "repeat": 0,
+            "id": "chatcmpl-fg-1792156624-10",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Kyoto is a city that rewards slowness. To ensure a truly quiet experience, this itinerary avoids the most crowded tourist traps (like the main entrance of Fushimi Inari or the heart of Gion during peak hours) and focuses on early mornings, hidden gardens, and contemplative spaces.\n\nHere is a curated two-day plan for a serene Kyoto visit, featuring one vegetarian meal per day.\n\n### **Day 1: The Northern Zen & Bamboo Silence**\n\n**Theme:** Ancient temples, moss gardens, and mountain air.\n\n#### **Morning: Early Arrival at Kinkaku-ji (The Golden Pavilion)**"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.441775217,
+            "decode_tps": 28.817306988004656,
+            "wall_seconds": 5.248063999984879,
+            "wall_tps": 24.389946464137786,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "853",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "26",
+              "X-Flash-Gordon-Prefilled-Tokens": "26",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "154",
+              "X-Flash-Gordon-Prefill-Seconds": "0.778495683",
+              "X-Flash-Gordon-Prefill-TPS": "33.397745",
+              "X-Flash-Gordon-Decode-Seconds": "4.441775217",
+              "X-Flash-Gordon-Decode-TPS": "28.817307",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-0",
+            "category": "code",
+            "repeat": 0,
+            "id": "chatcmpl-fg-1792156630-11",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```c\n#include <stdint.h>\n#include <stdbool.h>\n#include <assert.h>\n#include <stdio.h>\n\n/**\n * Binary search for a target value in a sorted array of uint32_t values.\n *\n * @param arr   Pointer to the sorted array of uint32_t values.\n * @param size  Number of elements in the array.\n * @param target The value to search for.\n * @return      Index of the target if found, otherwise SIZE_MAX (or -1 equivalent).\n *              Returns SIZE_MAX if not found.\n */\nsize_t binary"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.337075432,
+            "decode_tps": 29.51297527720749,
+            "wall_seconds": 5.192038999986835,
+            "wall_tps": 24.65312760561401,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "773",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "31",
+              "X-Flash-Gordon-Prefilled-Tokens": "31",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "159",
+              "X-Flash-Gordon-Prefill-Seconds": "0.826329865",
+              "X-Flash-Gordon-Prefill-TPS": "37.515285",
+              "X-Flash-Gordon-Decode-Seconds": "4.337075432",
+              "X-Flash-Gordon-Decode-TPS": "29.512975",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-1",
+            "category": "code",
+            "repeat": 0,
+            "id": "chatcmpl-fg-1792156635-12",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```python\nfrom collections import OrderedDict\n\n\nclass LRUCache:\n    \"\"\"\n    A bounded LRU (Least Recently Used) cache using OrderedDict.\n    \n    When the cache reaches its capacity, the least recently used item is evicted.\n    Accessing an item (get or put) marks it as most recently used.\n    \"\"\"\n    \n    def __init__(self, capacity: int):\n        if capacity <= 0:\n            raise ValueError(\"Capacity must be a positive integer\")\n        self.capacity = capacity\n        self.cache = OrderedDict()\n    \n    def get(self, key):"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.295639852,
+            "decode_tps": 29.797656323633532,
+            "wall_seconds": 5.06963809998706,
+            "wall_tps": 25.248350567731197,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "846",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "26",
+              "X-Flash-Gordon-Prefilled-Tokens": "26",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "154",
+              "X-Flash-Gordon-Prefill-Seconds": "0.745199926",
+              "X-Flash-Gordon-Prefill-TPS": "34.889966",
+              "X-Flash-Gordon-Decode-Seconds": "4.295639852",
+              "X-Flash-Gordon-Decode-TPS": "29.797656",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "chat-0",
+            "category": "chat",
+            "repeat": 1,
+            "id": "chatcmpl-fg-1792156640-13",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Leaves appear green because they contain a pigment called chlorophyll, which is essential for photosynthesis. This pigment absorbs red and blue wavelengths of light but reflects green wavelengths back to our eyes. Consequently, our eyes perceive the reflected green light, making the leaves look green."
+              },
+              "finish_reason": "stop",
+              "completion_tokens": 55
+            },
+            "tokens": 55,
+            "decode_seconds": 1.814035066,
+            "decode_tps": 30.319149299178985,
+            "wall_seconds": 2.518121799977962,
+            "wall_tps": 21.84167580793008,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "585",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "22",
+              "X-Flash-Gordon-Prefilled-Tokens": "22",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "55",
+              "X-Flash-Gordon-Context-Tokens": "77",
+              "X-Flash-Gordon-Prefill-Seconds": "0.676465454",
+              "X-Flash-Gordon-Prefill-TPS": "32.521986",
+              "X-Flash-Gordon-Decode-Seconds": "1.814035066",
+              "X-Flash-Gordon-Decode-TPS": "30.319149",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "chat-1",
+            "category": "chat",
+            "repeat": 1,
+            "id": "chatcmpl-fg-1792156643-14",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Kyoto is a city that rewards slowness. To ensure a truly quiet experience, this itinerary avoids the most crowded tourist traps (like the main entrance of Fushimi Inari or the heart of Gion during peak hours) and focuses on early mornings, hidden gardens, and contemplative spaces.\n\nHere is a curated two-day plan for a serene Kyoto visit, featuring one vegetarian meal per day.\n\n### **Day 1: The Northern Zen & Bamboo Silence**\n\n**Theme:** Ancient temples, moss gardens, and mountain air.\n\n#### **Morning: Early Arrival at Kinkaku-ji (The Golden Pavilion)**"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.224105814,
+            "decode_tps": 30.302271211049735,
+            "wall_seconds": 4.990103799995268,
+            "wall_tps": 25.650769028115484,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "853",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "26",
+              "X-Flash-Gordon-Prefilled-Tokens": "26",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "154",
+              "X-Flash-Gordon-Prefill-Seconds": "0.736223729",
+              "X-Flash-Gordon-Prefill-TPS": "35.315352",
+              "X-Flash-Gordon-Decode-Seconds": "4.224105814",
+              "X-Flash-Gordon-Decode-TPS": "30.302271",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-0",
+            "category": "code",
+            "repeat": 1,
+            "id": "chatcmpl-fg-1792156648-15",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```c\n#include <stdint.h>\n#include <stdbool.h>\n#include <assert.h>\n#include <stdio.h>\n\n/**\n * Binary search for a target value in a sorted array of uint32_t values.\n *\n * @param arr   Pointer to the sorted array of uint32_t values.\n * @param size  Number of elements in the array.\n * @param target The value to search for.\n * @return      Index of the target if found, otherwise SIZE_MAX (or -1 equivalent).\n *              Returns SIZE_MAX if not found.\n */\nsize_t binary"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.187956879,
+            "decode_tps": 30.563829499257842,
+            "wall_seconds": 5.016381499997806,
+            "wall_tps": 25.5164006166708,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "773",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "31",
+              "X-Flash-Gordon-Prefilled-Tokens": "31",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "159",
+              "X-Flash-Gordon-Prefill-Seconds": "0.809786170",
+              "X-Flash-Gordon-Prefill-TPS": "38.281711",
+              "X-Flash-Gordon-Decode-Seconds": "4.187956879",
+              "X-Flash-Gordon-Decode-TPS": "30.563829",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-1",
+            "category": "code",
+            "repeat": 1,
+            "id": "chatcmpl-fg-1792156653-16",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```python\nfrom collections import OrderedDict\n\n\nclass LRUCache:\n    \"\"\"\n    A bounded LRU (Least Recently Used) cache using OrderedDict.\n    \n    When the cache reaches its capacity, the least recently used item is evicted.\n    Accessing an item (get or put) marks it as most recently used.\n    \"\"\"\n    \n    def __init__(self, capacity: int):\n        if capacity <= 0:\n            raise ValueError(\"Capacity must be a positive integer\")\n        self.capacity = capacity\n        self.cache = OrderedDict()\n    \n    def get(self, key):"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.177858079,
+            "decode_tps": 30.63770898379528,
+            "wall_seconds": 4.93580259999726,
+            "wall_tps": 25.93296579568864,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "846",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "26",
+              "X-Flash-Gordon-Prefilled-Tokens": "26",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "154",
+              "X-Flash-Gordon-Prefill-Seconds": "0.729242336",
+              "X-Flash-Gordon-Prefill-TPS": "35.653443",
+              "X-Flash-Gordon-Decode-Seconds": "4.177858079",
+              "X-Flash-Gordon-Decode-TPS": "30.637709",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "chat-0",
+            "category": "chat",
+            "repeat": 2,
+            "id": "chatcmpl-fg-1792156657-17",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Leaves appear green because they contain a pigment called chlorophyll, which is essential for photosynthesis. This pigment absorbs red and blue wavelengths of light but reflects green wavelengths back to our eyes. Consequently, our eyes perceive the reflected green light, making the leaves look green."
+              },
+              "finish_reason": "stop",
+              "completion_tokens": 55
+            },
+            "tokens": 55,
+            "decode_seconds": 1.786750583,
+            "decode_tps": 30.78213631118765,
+            "wall_seconds": 2.469952999992529,
+            "wall_tps": 22.267630193840272,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "585",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "22",
+              "X-Flash-Gordon-Prefilled-Tokens": "22",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "55",
+              "X-Flash-Gordon-Context-Tokens": "77",
+              "X-Flash-Gordon-Prefill-Seconds": "0.664915677",
+              "X-Flash-Gordon-Prefill-TPS": "33.086902",
+              "X-Flash-Gordon-Decode-Seconds": "1.786750583",
+              "X-Flash-Gordon-Decode-TPS": "30.782136",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "chat-1",
+            "category": "chat",
+            "repeat": 2,
+            "id": "chatcmpl-fg-1792156660-18",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Kyoto is a city that rewards slowness. To ensure a truly quiet experience, this itinerary avoids the most crowded tourist traps (like the main entrance of Fushimi Inari or the heart of Gion during peak hours) and focuses on early mornings, hidden gardens, and contemplative spaces.\n\nHere is a curated two-day plan for a serene Kyoto visit, featuring one vegetarian meal per day.\n\n### **Day 1: The Northern Zen & Bamboo Silence**\n\n**Theme:** Ancient temples, moss gardens, and mountain air.\n\n#### **Morning: Early Arrival at Kinkaku-ji (The Golden Pavilion)**"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.125002191,
+            "decode_tps": 31.030286548519314,
+            "wall_seconds": 4.867819699982647,
+            "wall_tps": 26.295139896092763,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "853",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "26",
+              "X-Flash-Gordon-Prefilled-Tokens": "26",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "154",
+              "X-Flash-Gordon-Prefill-Seconds": "0.724161693",
+              "X-Flash-Gordon-Prefill-TPS": "35.903584",
+              "X-Flash-Gordon-Decode-Seconds": "4.125002191",
+              "X-Flash-Gordon-Decode-TPS": "31.030287",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-0",
+            "category": "code",
+            "repeat": 2,
+            "id": "chatcmpl-fg-1792156665-19",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```c\n#include <stdint.h>\n#include <stdbool.h>\n#include <assert.h>\n#include <stdio.h>\n\n/**\n * Binary search for a target value in a sorted array of uint32_t values.\n *\n * @param arr   Pointer to the sorted array of uint32_t values.\n * @param size  Number of elements in the array.\n * @param target The value to search for.\n * @return      Index of the target if found, otherwise SIZE_MAX (or -1 equivalent).\n *              Returns SIZE_MAX if not found.\n */\nsize_t binary"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.119374848,
+            "decode_tps": 31.07267600620161,
+            "wall_seconds": 4.931937200017273,
+            "wall_tps": 25.953290727130852,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "773",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "31",
+              "X-Flash-Gordon-Prefilled-Tokens": "31",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "159",
+              "X-Flash-Gordon-Prefill-Seconds": "0.790931584",
+              "X-Flash-Gordon-Prefill-TPS": "39.194288",
+              "X-Flash-Gordon-Decode-Seconds": "4.119374848",
+              "X-Flash-Gordon-Decode-TPS": "31.072676",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-1",
+            "category": "code",
+            "repeat": 2,
+            "id": "chatcmpl-fg-1792156670-20",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```python\nfrom collections import OrderedDict\n\n\nclass LRUCache:\n    \"\"\"\n    A bounded LRU (Least Recently Used) cache using OrderedDict.\n    \n    When the cache reaches its capacity, the least recently used item is evicted.\n    Accessing an item (get or put) marks it as most recently used.\n    \"\"\"\n    \n    def __init__(self, capacity: int):\n        if capacity <= 0:\n            raise ValueError(\"Capacity must be a positive integer\")\n        self.capacity = capacity\n        self.cache = OrderedDict()\n    \n    def get(self, key):"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.082935331,
+            "decode_tps": 31.349994458190455,
+            "wall_seconds": 4.81836099998327,
+            "wall_tps": 26.565049816824526,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "846",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "26",
+              "X-Flash-Gordon-Prefilled-Tokens": "26",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "154",
+              "X-Flash-Gordon-Prefill-Seconds": "0.711751381",
+              "X-Flash-Gordon-Prefill-TPS": "36.529609",
+              "X-Flash-Gordon-Decode-Seconds": "4.082935331",
+              "X-Flash-Gordon-Decode-TPS": "31.349994",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "coexist",
+            "repeat": 0,
+            "requests": [
+              {
+                "id": "chatcmpl-fg-1792156675-21",
+                "semantic": {
+                  "message": {
+                    "role": "assistant",
+                    "content": "Leaves appear green because they contain a pigment called chlorophyll, which is essential for photosynthesis. This pigment absorbs red and blue wavelengths of light but reflects green wavelengths back to our eyes. Consequently, our eyes perceive the reflected green light, making the leaves look green."
+                  },
+                  "finish_reason": "stop",
+                  "completion_tokens": 55
+                },
+                "tokens": 55,
+                "decode_seconds": 1.936716149,
+                "decode_tps": 28.398585940639048,
+                "wall_seconds": 2.600651100015966,
+                "wall_tps": 21.14855006873561,
+                "headers": {
+                  "Content-Type": "application/json",
+                  "Content-Length": "585",
+                  "Connection": "close",
+                  "Cache-Control": "no-store",
+                  "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+                  "X-Flash-Gordon-Prompt-Tokens": "22",
+                  "X-Flash-Gordon-Prefilled-Tokens": "22",
+                  "X-Flash-Gordon-Reused-Tokens": "0",
+                  "X-Flash-Gordon-Prefix-Cache": "miss",
+                  "X-Flash-Gordon-Exact-Frontier": "false",
+                  "X-Flash-Gordon-Reset-Reason": "explicit",
+                  "X-Flash-Gordon-Completion-Tokens": "55",
+                  "X-Flash-Gordon-Context-Tokens": "77",
+                  "X-Flash-Gordon-Prefill-Seconds": "0.645305681",
+                  "X-Flash-Gordon-Prefill-TPS": "34.092370",
+                  "X-Flash-Gordon-Decode-Seconds": "1.936716149",
+                  "X-Flash-Gordon-Decode-TPS": "28.398586",
+                  "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+                }
+              },
+              {
+                "id": "chatcmpl-fg-1792156675-22",
+                "semantic": {
+                  "message": {
+                    "role": "assistant",
+                    "content": "```c\n#include <stdint.h>\n#include <stdbool.h>\n#include <assert.h>\n#include <stdio.h>\n\n/**\n * Binary search for a target value in a sorted array of uint32_t values.\n *\n * @param arr   Pointer to the sorted array of uint32_t values.\n * @param size  Number of elements in the array.\n * @param target The value to search for.\n * @return      Index of the target if found, otherwise SIZE_MAX (or -1 equivalent).\n *              Returns SIZE_MAX if not found.\n */\nsize_t binary"
+                  },
+                  "finish_reason": "length",
+                  "completion_tokens": 128
+                },
+                "tokens": 128,
+                "decode_seconds": 4.108049605,
+                "decode_tps": 31.15833845925529,
+                "wall_seconds": 4.9655710000079125,
+                "wall_tps": 25.777498700511188,
+                "headers": {
+                  "Content-Type": "application/json",
+                  "Content-Length": "773",
+                  "Connection": "close",
+                  "Cache-Control": "no-store",
+                  "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+                  "X-Flash-Gordon-Prompt-Tokens": "31",
+                  "X-Flash-Gordon-Prefilled-Tokens": "31",
+                  "X-Flash-Gordon-Reused-Tokens": "0",
+                  "X-Flash-Gordon-Prefix-Cache": "miss",
+                  "X-Flash-Gordon-Exact-Frontier": "false",
+                  "X-Flash-Gordon-Reset-Reason": "explicit",
+                  "X-Flash-Gordon-Completion-Tokens": "128",
+                  "X-Flash-Gordon-Context-Tokens": "159",
+                  "X-Flash-Gordon-Prefill-Seconds": "0.825219350",
+                  "X-Flash-Gordon-Prefill-TPS": "37.565770",
+                  "X-Flash-Gordon-Decode-Seconds": "4.108049605",
+                  "X-Flash-Gordon-Decode-TPS": "31.158338",
+                  "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+                }
+              }
+            ],
+            "aggregate_wall_tps": 36.80877643519091
+          },
+          {
+            "case": "coexist",
+            "repeat": 1,
+            "requests": [
+              {
+                "id": "chatcmpl-fg-1792156680-23",
+                "semantic": {
+                  "message": {
+                    "role": "assistant",
+                    "content": "Leaves appear green because they contain a pigment called chlorophyll, which is essential for photosynthesis. This pigment absorbs red and blue wavelengths of light but reflects green wavelengths back to our eyes. Consequently, our eyes perceive the reflected green light, making the leaves look green."
+                  },
+                  "finish_reason": "stop",
+                  "completion_tokens": 55
+                },
+                "tokens": 55,
+                "decode_seconds": 1.957316055,
+                "decode_tps": 28.09970309061814,
+                "wall_seconds": 2.6243100999854505,
+                "wall_tps": 20.957889084946526,
+                "headers": {
+                  "Content-Type": "application/json",
+                  "Content-Length": "585",
+                  "Connection": "close",
+                  "Cache-Control": "no-store",
+                  "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+                  "X-Flash-Gordon-Prompt-Tokens": "22",
+                  "X-Flash-Gordon-Prefilled-Tokens": "22",
+                  "X-Flash-Gordon-Reused-Tokens": "0",
+                  "X-Flash-Gordon-Prefix-Cache": "miss",
+                  "X-Flash-Gordon-Exact-Frontier": "false",
+                  "X-Flash-Gordon-Reset-Reason": "public-history-mismatch",
+                  "X-Flash-Gordon-Completion-Tokens": "55",
+                  "X-Flash-Gordon-Context-Tokens": "77",
+                  "X-Flash-Gordon-Prefill-Seconds": "0.648146555",
+                  "X-Flash-Gordon-Prefill-TPS": "33.942941",
+                  "X-Flash-Gordon-Decode-Seconds": "1.957316055",
+                  "X-Flash-Gordon-Decode-TPS": "28.099703",
+                  "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+                }
+              },
+              {
+                "id": "chatcmpl-fg-1792156680-24",
+                "semantic": {
+                  "message": {
+                    "role": "assistant",
+                    "content": "```c\n#include <stdint.h>\n#include <stdbool.h>\n#include <assert.h>\n#include <stdio.h>\n\n/**\n * Binary search for a target value in a sorted array of uint32_t values.\n *\n * @param arr   Pointer to the sorted array of uint32_t values.\n * @param size  Number of elements in the array.\n * @param target The value to search for.\n * @return      Index of the target if found, otherwise SIZE_MAX (or -1 equivalent).\n *              Returns SIZE_MAX if not found.\n */\nsize_t binary"
+                  },
+                  "finish_reason": "length",
+                  "completion_tokens": 128
+                },
+                "tokens": 128,
+                "decode_seconds": 4.148551999,
+                "decode_tps": 30.854138993763154,
+                "wall_seconds": 5.014282000018284,
+                "wall_tps": 25.527084435923882,
+                "headers": {
+                  "Content-Type": "application/json",
+                  "Content-Length": "773",
+                  "Connection": "close",
+                  "Cache-Control": "no-store",
+                  "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+                  "X-Flash-Gordon-Prompt-Tokens": "31",
+                  "X-Flash-Gordon-Prefilled-Tokens": "31",
+                  "X-Flash-Gordon-Reused-Tokens": "0",
+                  "X-Flash-Gordon-Prefix-Cache": "miss",
+                  "X-Flash-Gordon-Exact-Frontier": "false",
+                  "X-Flash-Gordon-Reset-Reason": "public-history-mismatch",
+                  "X-Flash-Gordon-Completion-Tokens": "128",
+                  "X-Flash-Gordon-Context-Tokens": "159",
+                  "X-Flash-Gordon-Prefill-Seconds": "0.833450413",
+                  "X-Flash-Gordon-Prefill-TPS": "37.194774",
+                  "X-Flash-Gordon-Decode-Seconds": "4.148551999",
+                  "X-Flash-Gordon-Decode-TPS": "30.854139",
+                  "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+                }
+              }
+            ],
+            "aggregate_wall_tps": 36.48908049321342
+          },
+          {
+            "case": "coexist",
+            "repeat": 2,
+            "requests": [
+              {
+                "id": "chatcmpl-fg-1792156685-26",
+                "semantic": {
+                  "message": {
+                    "role": "assistant",
+                    "content": "Leaves appear green because they contain a pigment called chlorophyll, which is essential for photosynthesis. This pigment absorbs red and blue wavelengths of light but reflects green wavelengths back to our eyes. Consequently, our eyes perceive the reflected green light, making the leaves look green."
+                  },
+                  "finish_reason": "stop",
+                  "completion_tokens": 55
+                },
+                "tokens": 55,
+                "decode_seconds": 1.744599399,
+                "decode_tps": 31.525862058376187,
+                "wall_seconds": 2.652414600015618,
+                "wall_tps": 20.735823124965513,
+                "headers": {
+                  "Content-Type": "application/json",
+                  "Content-Length": "585",
+                  "Connection": "close",
+                  "Cache-Control": "no-store",
+                  "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+                  "X-Flash-Gordon-Prompt-Tokens": "22",
+                  "X-Flash-Gordon-Prefilled-Tokens": "22",
+                  "X-Flash-Gordon-Reused-Tokens": "0",
+                  "X-Flash-Gordon-Prefix-Cache": "miss",
+                  "X-Flash-Gordon-Exact-Frontier": "false",
+                  "X-Flash-Gordon-Reset-Reason": "public-history-mismatch",
+                  "X-Flash-Gordon-Completion-Tokens": "55",
+                  "X-Flash-Gordon-Context-Tokens": "77",
+                  "X-Flash-Gordon-Prefill-Seconds": "0.860767040",
+                  "X-Flash-Gordon-Prefill-TPS": "25.558599",
+                  "X-Flash-Gordon-Decode-Seconds": "1.744599399",
+                  "X-Flash-Gordon-Decode-TPS": "31.525862",
+                  "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+                }
+              },
+              {
+                "id": "chatcmpl-fg-1792156685-25",
+                "semantic": {
+                  "message": {
+                    "role": "assistant",
+                    "content": "```c\n#include <stdint.h>\n#include <stdbool.h>\n#include <assert.h>\n#include <stdio.h>\n\n/**\n * Binary search for a target value in a sorted array of uint32_t values.\n *\n * @param arr   Pointer to the sorted array of uint32_t values.\n * @param size  Number of elements in the array.\n * @param target The value to search for.\n * @return      Index of the target if found, otherwise SIZE_MAX (or -1 equivalent).\n *              Returns SIZE_MAX if not found.\n */\nsize_t binary"
+                  },
+                  "finish_reason": "length",
+                  "completion_tokens": 128
+                },
+                "tokens": 128,
+                "decode_seconds": 4.133883207,
+                "decode_tps": 30.963622722396856,
+                "wall_seconds": 4.948870100022759,
+                "wall_tps": 25.864489754825318,
+                "headers": {
+                  "Content-Type": "application/json",
+                  "Content-Length": "773",
+                  "Connection": "close",
+                  "Cache-Control": "no-store",
+                  "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+                  "X-Flash-Gordon-Prompt-Tokens": "31",
+                  "X-Flash-Gordon-Prefilled-Tokens": "31",
+                  "X-Flash-Gordon-Reused-Tokens": "0",
+                  "X-Flash-Gordon-Prefix-Cache": "miss",
+                  "X-Flash-Gordon-Exact-Frontier": "false",
+                  "X-Flash-Gordon-Reset-Reason": "public-history-mismatch",
+                  "X-Flash-Gordon-Completion-Tokens": "128",
+                  "X-Flash-Gordon-Context-Tokens": "159",
+                  "X-Flash-Gordon-Prefill-Seconds": "0.786213603",
+                  "X-Flash-Gordon-Prefill-TPS": "39.429488",
+                  "X-Flash-Gordon-Decode-Seconds": "4.133883207",
+                  "X-Flash-Gordon-Decode-TPS": "30.963623",
+                  "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+                }
+              }
+            ],
+            "aggregate_wall_tps": 36.971397653809404
+          }
+        ]
+      }
+    },
+    "B0": {
+      "mtp": false,
+      "small_kernel_mask": 330,
+      "summary": {
+        "chat": {
+          "requests": 6,
+          "median_decode_tps": 30.187899914133183,
+          "aggregate_decode_tps": 30.112903008237673,
+          "median_wall_tps": 23.486017778381907
+        },
+        "code": {
+          "requests": 6,
+          "median_decode_tps": 30.25017907738697,
+          "aggregate_decode_tps": 30.109170959984482,
+          "median_wall_tps": 25.53149937512534
+        },
+        "coexist": {
+          "pairs": 3,
+          "median_aggregate_wall_tps": 36.551744387053226
+        }
+      },
+      "greedy": {
+        "phase": "B0",
+        "suite": "greedy",
+        "rows": [
+          {
+            "case": "chat-0",
+            "category": "chat",
+            "id": "chatcmpl-fg-1792156757-1",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Leaves appear green because they contain a pigment called chlorophyll, which is essential for photosynthesis. This pigment absorbs red and blue wavelengths of light but reflects green wavelengths back to our eyes. Consequently, our eyes perceive the reflected green light, making the leaves look green."
+              },
+              "finish_reason": "stop",
+              "completion_tokens": 55
+            },
+            "tokens": 55,
+            "decode_seconds": 2.000386669,
+            "decode_tps": 27.4946843289526,
+            "wall_seconds": 2.935434900020482,
+            "wall_tps": 18.73657630752303,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "584",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "22",
+              "X-Flash-Gordon-Prefilled-Tokens": "22",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "cold-start",
+              "X-Flash-Gordon-Completion-Tokens": "55",
+              "X-Flash-Gordon-Context-Tokens": "77",
+              "X-Flash-Gordon-Prefill-Seconds": "0.866406066",
+              "X-Flash-Gordon-Prefill-TPS": "25.392251",
+              "X-Flash-Gordon-Decode-Seconds": "2.000386669",
+              "X-Flash-Gordon-Decode-TPS": "27.494684",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "chat-1",
+            "category": "chat",
+            "id": "chatcmpl-fg-1792156760-2",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Kyoto is a city that rewards slowness. To ensure a truly quiet experience, this itinerary avoids the most crowded tourist traps (like the main entrance of Fushimi Inari or the heart of Gion during peak hours) and focuses on early mornings, hidden gardens, and contemplative spaces.\n\nHere is a curated two-day plan for a serene Kyoto visit, featuring one vegetarian meal per day.\n\n### **Day 1: The Northern Zen & Bamboo Silence**"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 96
+            },
+            "tokens": 96,
+            "decode_seconds": 3.371584098,
+            "decode_tps": 28.473262777857602,
+            "wall_seconds": 4.171044500020798,
+            "wall_tps": 23.015817740501525,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "717",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "26",
+              "X-Flash-Gordon-Prefilled-Tokens": "26",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "cold-start",
+              "X-Flash-Gordon-Completion-Tokens": "96",
+              "X-Flash-Gordon-Context-Tokens": "122",
+              "X-Flash-Gordon-Prefill-Seconds": "0.787048947",
+              "X-Flash-Gordon-Prefill-TPS": "33.034794",
+              "X-Flash-Gordon-Decode-Seconds": "3.371584098",
+              "X-Flash-Gordon-Decode-TPS": "28.473263",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "chat-2",
+            "category": "chat",
+            "id": "chatcmpl-fg-1792156764-3",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Here is an explanation of TCP retransmission and the distinction between latency and bandwidth, structured for clarity.\n\n---\n\n### Part 1: TCP Retransmission\n\n**TCP (Transmission Control Protocol)** is a connection-oriented protocol that guarantees reliable data delivery. Since the underlying IP network is \"best-effort\" (packets can be lost, corrupted, or delayed), TCP must detect losses and recover them. This process is called **retransmission**.\n\n#### How It"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 96
+            },
+            "tokens": 96,
+            "decode_seconds": 3.364918746,
+            "decode_tps": 28.52966364020488,
+            "wall_seconds": 4.144949600013206,
+            "wall_tps": 23.160715874493178,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "758",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "25",
+              "X-Flash-Gordon-Prefilled-Tokens": "25",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "96",
+              "X-Flash-Gordon-Context-Tokens": "121",
+              "X-Flash-Gordon-Prefill-Seconds": "0.751204319",
+              "X-Flash-Gordon-Prefill-TPS": "33.279894",
+              "X-Flash-Gordon-Decode-Seconds": "3.364918746",
+              "X-Flash-Gordon-Decode-TPS": "28.529664",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "chat-3",
+            "category": "chat",
+            "id": "chatcmpl-fg-1792156768-4",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Here is a numbered checklist to help you move house without losing important documents:\n\n1. **Create a Master Inventory List**  \n   Before packing, make a detailed list of all critical documents (e.g., birth certificates, passports, deeds, insurance policies, tax returns, medical records). Note where each is currently stored.\n\n2. **Gather and Sort Documents**  \n   Collect all documents from drawers, folders, and boxes. Sort them into categories:  \n   -"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 96
+            },
+            "tokens": 96,
+            "decode_seconds": 3.263751729,
+            "decode_tps": 29.4140020354471,
+            "wall_seconds": 3.9858074999938253,
+            "wall_tps": 24.085458216471498,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "748",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "23",
+              "X-Flash-Gordon-Prefilled-Tokens": "23",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "96",
+              "X-Flash-Gordon-Context-Tokens": "119",
+              "X-Flash-Gordon-Prefill-Seconds": "0.704062376",
+              "X-Flash-Gordon-Prefill-TPS": "32.667560",
+              "X-Flash-Gordon-Decode-Seconds": "3.263751729",
+              "X-Flash-Gordon-Decode-TPS": "29.414002",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-0",
+            "category": "code",
+            "id": "chatcmpl-fg-1792156772-5",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```c\n#include <stdint.h>\n#include <stdbool.h>\n#include <assert.h>\n#include <stdio.h>\n\n/**\n * Binary search for a target value in a sorted array of uint32_t values.\n *\n * @param arr   Pointer to the sorted array of uint32_t values.\n * @param size  Number of elements in the array.\n * @param target The value to search for.\n * @return"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 96
+            },
+            "tokens": 96,
+            "decode_seconds": 3.400208939,
+            "decode_tps": 28.233559090705043,
+            "wall_seconds": 4.251107499992941,
+            "wall_tps": 22.5823505992637,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "629",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "31",
+              "X-Flash-Gordon-Prefilled-Tokens": "31",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "96",
+              "X-Flash-Gordon-Context-Tokens": "127",
+              "X-Flash-Gordon-Prefill-Seconds": "0.818451878",
+              "X-Flash-Gordon-Prefill-TPS": "37.876387",
+              "X-Flash-Gordon-Decode-Seconds": "3.400208939",
+              "X-Flash-Gordon-Decode-TPS": "28.233559",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-1",
+            "category": "code",
+            "id": "chatcmpl-fg-1792156776-6",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```python\nfrom collections import OrderedDict\n\n\nclass LRUCache:\n    \"\"\"\n    A bounded LRU (Least Recently Used) cache using OrderedDict.\n    \n    When the cache reaches its capacity, the least recently used item is evicted.\n    Accessing an item (get or put) marks it as most recently used.\n    \"\"\"\n    \n    def __init__(self, capacity: int):\n        if capacity <= 0:\n            raise ValueError"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 96
+            },
+            "tokens": 96,
+            "decode_seconds": 3.246093213,
+            "decode_tps": 29.574012112633685,
+            "wall_seconds": 4.0023277000000235,
+            "wall_tps": 23.986041922554076,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "702",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "26",
+              "X-Flash-Gordon-Prefilled-Tokens": "26",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "96",
+              "X-Flash-Gordon-Context-Tokens": "122",
+              "X-Flash-Gordon-Prefill-Seconds": "0.727849103",
+              "X-Flash-Gordon-Prefill-TPS": "35.721690",
+              "X-Flash-Gordon-Decode-Seconds": "3.246093213",
+              "X-Flash-Gordon-Decode-TPS": "29.574012",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-2",
+            "category": "code",
+            "id": "chatcmpl-fg-1792156780-7",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```typescript\n/**\n * Options for the retry helper.\n */\nexport interface RetryOptions {\n  /** Maximum number of retry attempts (not including the initial attempt). */\n  maxRetries?: number;\n  /** Base delay in milliseconds before the first retry. */\n  baseDelayMs?: number;\n  /** Maximum delay in milliseconds between retries. */\n  maxDelayMs?: number;\n  /** Multiplier for exponential backoff. */"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 96
+            },
+            "tokens": 96,
+            "decode_seconds": 3.273125525,
+            "decode_tps": 29.3297642472786,
+            "wall_seconds": 3.997805899998639,
+            "wall_tps": 24.013171825083525,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "692",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "25",
+              "X-Flash-Gordon-Prefilled-Tokens": "25",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "96",
+              "X-Flash-Gordon-Context-Tokens": "121",
+              "X-Flash-Gordon-Prefill-Seconds": "0.706396607",
+              "X-Flash-Gordon-Prefill-TPS": "35.390883",
+              "X-Flash-Gordon-Decode-Seconds": "3.273125525",
+              "X-Flash-Gordon-Decode-TPS": "29.329764",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-3",
+            "category": "code",
+            "id": "chatcmpl-fg-1792156784-8",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```c\n#include <stdint.h>\n#include <stddef.h>\n#include <stdbool.h>\n\n/**\n * Decode one UTF-8 scalar from the input buffer.\n *\n * @param input      Pointer to the input byte sequence.\n * @param input_len  Length of the input buffer in bytes.\n * @param scalar     Pointer to store the decoded Unicode scalar value.\n * @param consumed   Pointer to store the number of bytes consumed."
+              },
+              "finish_reason": "length",
+              "completion_tokens": 96
+            },
+            "tokens": 96,
+            "decode_seconds": 3.393583057,
+            "decode_tps": 28.288684375052856,
+            "wall_seconds": 4.224557800014736,
+            "wall_tps": 22.724271875192507,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "674",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "31",
+              "X-Flash-Gordon-Prefilled-Tokens": "31",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "96",
+              "X-Flash-Gordon-Context-Tokens": "127",
+              "X-Flash-Gordon-Prefill-Seconds": "0.801304825",
+              "X-Flash-Gordon-Prefill-TPS": "38.686900",
+              "X-Flash-Gordon-Decode-Seconds": "3.393583057",
+              "X-Flash-Gordon-Decode-TPS": "28.288684",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          }
+        ]
+      },
+      "greedy_token_receipts": {
+        "chatcmpl-fg-1792156757-1": {
+          "count": 55,
+          "sha256": "0995aa1aa72470655d2badba09736683f8447af26f9e7a8c02b1feaf5a2b8839"
+        },
+        "chatcmpl-fg-1792156760-2": {
+          "count": 96,
+          "sha256": "bdca19cb4e230a0e7d81be162eeb7072b4565170cd6914847818659efef0d271"
+        },
+        "chatcmpl-fg-1792156764-3": {
+          "count": 96,
+          "sha256": "82087e9824116fcc65ac23e78060eef0d7f26679591394f4b284393085baea0d"
+        },
+        "chatcmpl-fg-1792156768-4": {
+          "count": 96,
+          "sha256": "974c5dbba68f3db41eb906c7845523873c2c7eaa290466152d79ebc20ed93046"
+        },
+        "chatcmpl-fg-1792156772-5": {
+          "count": 96,
+          "sha256": "0f11c2c6ce836b0183d123ee276be436d36392aa0f36049e0bd416b0430e9480"
+        },
+        "chatcmpl-fg-1792156776-6": {
+          "count": 96,
+          "sha256": "2e1ab82c3a0e0dbdfa086a7e42d605c625d8c1e8583f7c77fad996a11360d261"
+        },
+        "chatcmpl-fg-1792156780-7": {
+          "count": 96,
+          "sha256": "2feeb50bc3a3d1511036d3df7dc948f9a76e72da9db2a66f094b9b1400553f7e"
+        },
+        "chatcmpl-fg-1792156784-8": {
+          "count": 96,
+          "sha256": "a559c87dcf60daec269a922d632bdb30bfb536269539405a7f47015f66a18936"
+        }
+      },
+      "perf": {
+        "phase": "B0",
+        "suite": "perf",
+        "rows": [
+          {
+            "case": "chat-0",
+            "category": "chat",
+            "repeat": 0,
+            "id": "chatcmpl-fg-1792156789-9",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Leaves appear green because they contain a pigment called chlorophyll, which is essential for photosynthesis. This pigment absorbs red and blue wavelengths of light but reflects green wavelengths back to our eyes. Consequently, our eyes perceive the reflected green light, making the leaves look green."
+              },
+              "finish_reason": "stop",
+              "completion_tokens": 55
+            },
+            "tokens": 55,
+            "decode_seconds": 1.844434637,
+            "decode_tps": 29.819435666995663,
+            "wall_seconds": 2.606418500014115,
+            "wall_tps": 21.101753229461096,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "584",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "22",
+              "X-Flash-Gordon-Prefilled-Tokens": "22",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "55",
+              "X-Flash-Gordon-Context-Tokens": "77",
+              "X-Flash-Gordon-Prefill-Seconds": "0.703220351",
+              "X-Flash-Gordon-Prefill-TPS": "31.284646",
+              "X-Flash-Gordon-Decode-Seconds": "1.844434637",
+              "X-Flash-Gordon-Decode-TPS": "29.819436",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "chat-1",
+            "category": "chat",
+            "repeat": 0,
+            "id": "chatcmpl-fg-1792156792-10",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Kyoto is a city that rewards slowness. To ensure a truly quiet experience, this itinerary avoids the most crowded tourist traps (like the main entrance of Fushimi Inari or the heart of Gion during peak hours) and focuses on early mornings, hidden gardens, and contemplative spaces.\n\nHere is a curated two-day plan for a serene Kyoto visit, featuring one vegetarian meal per day.\n\n### **Day 1: The Northern Zen & Bamboo Silence**\n\n**Theme:** Ancient temples, moss gardens, and mountain air.\n\n#### **Morning: Early Arrival at Kinkaku-ji (The Golden Pavilion)**"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.375093796,
+            "decode_tps": 29.25651562419669,
+            "wall_seconds": 5.148358700011158,
+            "wall_tps": 24.862292520473094,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "853",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "26",
+              "X-Flash-Gordon-Prefilled-Tokens": "26",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "154",
+              "X-Flash-Gordon-Prefill-Seconds": "0.754942452",
+              "X-Flash-Gordon-Prefill-TPS": "34.439711",
+              "X-Flash-Gordon-Decode-Seconds": "4.375093796",
+              "X-Flash-Gordon-Decode-TPS": "29.256516",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-0",
+            "category": "code",
+            "repeat": 0,
+            "id": "chatcmpl-fg-1792156797-11",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```c\n#include <stdint.h>\n#include <stdbool.h>\n#include <assert.h>\n#include <stdio.h>\n\n/**\n * Binary search for a target value in a sorted array of uint32_t values.\n *\n * @param arr   Pointer to the sorted array of uint32_t values.\n * @param size  Number of elements in the array.\n * @param target The value to search for.\n * @return      Index of the target if found, otherwise SIZE_MAX (or -1 equivalent).\n *              Returns SIZE_MAX if not found.\n */\nsize_t binary"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.38711195,
+            "decode_tps": 29.176369661594798,
+            "wall_seconds": 5.238898200012045,
+            "wall_tps": 24.432618293614812,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "773",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "31",
+              "X-Flash-Gordon-Prefilled-Tokens": "31",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "159",
+              "X-Flash-Gordon-Prefill-Seconds": "0.823624455",
+              "X-Flash-Gordon-Prefill-TPS": "37.638513",
+              "X-Flash-Gordon-Decode-Seconds": "4.387111950",
+              "X-Flash-Gordon-Decode-TPS": "29.176370",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-1",
+            "category": "code",
+            "repeat": 0,
+            "id": "chatcmpl-fg-1792156802-12",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```python\nfrom collections import OrderedDict\n\n\nclass LRUCache:\n    \"\"\"\n    A bounded LRU (Least Recently Used) cache using OrderedDict.\n    \n    When the cache reaches its capacity, the least recently used item is evicted.\n    Accessing an item (get or put) marks it as most recently used.\n    \"\"\"\n    \n    def __init__(self, capacity: int):\n        if capacity <= 0:\n            raise ValueError(\"Capacity must be a positive integer\")\n        self.capacity = capacity\n        self.cache = OrderedDict()\n    \n    def get(self, key):"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.39832182,
+            "decode_tps": 29.102008729320314,
+            "wall_seconds": 5.178651199996239,
+            "wall_tps": 24.71686063739782,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "846",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "26",
+              "X-Flash-Gordon-Prefilled-Tokens": "26",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "154",
+              "X-Flash-Gordon-Prefill-Seconds": "0.752342292",
+              "X-Flash-Gordon-Prefill-TPS": "34.558738",
+              "X-Flash-Gordon-Decode-Seconds": "4.398321820",
+              "X-Flash-Gordon-Decode-TPS": "29.102009",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "chat-0",
+            "category": "chat",
+            "repeat": 1,
+            "id": "chatcmpl-fg-1792156808-13",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Leaves appear green because they contain a pigment called chlorophyll, which is essential for photosynthesis. This pigment absorbs red and blue wavelengths of light but reflects green wavelengths back to our eyes. Consequently, our eyes perceive the reflected green light, making the leaves look green."
+              },
+              "finish_reason": "stop",
+              "completion_tokens": 55
+            },
+            "tokens": 55,
+            "decode_seconds": 1.831608939,
+            "decode_tps": 30.02824392745552,
+            "wall_seconds": 2.542910899996059,
+            "wall_tps": 21.62875624155185,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "585",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "22",
+              "X-Flash-Gordon-Prefilled-Tokens": "22",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "55",
+              "X-Flash-Gordon-Context-Tokens": "77",
+              "X-Flash-Gordon-Prefill-Seconds": "0.693052998",
+              "X-Flash-Gordon-Prefill-TPS": "31.743604",
+              "X-Flash-Gordon-Decode-Seconds": "1.831608939",
+              "X-Flash-Gordon-Decode-TPS": "30.028244",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "chat-1",
+            "category": "chat",
+            "repeat": 1,
+            "id": "chatcmpl-fg-1792156810-14",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Kyoto is a city that rewards slowness. To ensure a truly quiet experience, this itinerary avoids the most crowded tourist traps (like the main entrance of Fushimi Inari or the heart of Gion during peak hours) and focuses on early mornings, hidden gardens, and contemplative spaces.\n\nHere is a curated two-day plan for a serene Kyoto visit, featuring one vegetarian meal per day.\n\n### **Day 1: The Northern Zen & Bamboo Silence**\n\n**Theme:** Ancient temples, moss gardens, and mountain air.\n\n#### **Morning: Early Arrival at Kinkaku-ji (The Golden Pavilion)**"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.217802594,
+            "decode_tps": 30.347555900810846,
+            "wall_seconds": 4.975498299987521,
+            "wall_tps": 25.726066472642756,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "853",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "26",
+              "X-Flash-Gordon-Prefilled-Tokens": "26",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "154",
+              "X-Flash-Gordon-Prefill-Seconds": "0.739776551",
+              "X-Flash-Gordon-Prefill-TPS": "35.145748",
+              "X-Flash-Gordon-Decode-Seconds": "4.217802594",
+              "X-Flash-Gordon-Decode-TPS": "30.347556",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-0",
+            "category": "code",
+            "repeat": 1,
+            "id": "chatcmpl-fg-1792156815-15",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```c\n#include <stdint.h>\n#include <stdbool.h>\n#include <assert.h>\n#include <stdio.h>\n\n/**\n * Binary search for a target value in a sorted array of uint32_t values.\n *\n * @param arr   Pointer to the sorted array of uint32_t values.\n * @param size  Number of elements in the array.\n * @param target The value to search for.\n * @return      Index of the target if found, otherwise SIZE_MAX (or -1 equivalent).\n *              Returns SIZE_MAX if not found.\n */\nsize_t binary"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.180779452,
+            "decode_tps": 30.616300493623836,
+            "wall_seconds": 5.004509300022619,
+            "wall_tps": 25.57693318692034,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "773",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "31",
+              "X-Flash-Gordon-Prefilled-Tokens": "31",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "159",
+              "X-Flash-Gordon-Prefill-Seconds": "0.805185337",
+              "X-Flash-Gordon-Prefill-TPS": "38.500453",
+              "X-Flash-Gordon-Decode-Seconds": "4.180779452",
+              "X-Flash-Gordon-Decode-TPS": "30.616300",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-1",
+            "category": "code",
+            "repeat": 1,
+            "id": "chatcmpl-fg-1792156820-16",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```python\nfrom collections import OrderedDict\n\n\nclass LRUCache:\n    \"\"\"\n    A bounded LRU (Least Recently Used) cache using OrderedDict.\n    \n    When the cache reaches its capacity, the least recently used item is evicted.\n    Accessing an item (get or put) marks it as most recently used.\n    \"\"\"\n    \n    def __init__(self, capacity: int):\n        if capacity <= 0:\n            raise ValueError(\"Capacity must be a positive integer\")\n        self.capacity = capacity\n        self.cache = OrderedDict()\n    \n    def get(self, key):"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.180509458,
+            "decode_tps": 30.618277816607677,
+            "wall_seconds": 4.932973699993454,
+            "wall_tps": 25.947837508270084,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "846",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "26",
+              "X-Flash-Gordon-Prefilled-Tokens": "26",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "154",
+              "X-Flash-Gordon-Prefill-Seconds": "0.724981054",
+              "X-Flash-Gordon-Prefill-TPS": "35.863006",
+              "X-Flash-Gordon-Decode-Seconds": "4.180509458",
+              "X-Flash-Gordon-Decode-TPS": "30.618278",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "chat-0",
+            "category": "chat",
+            "repeat": 2,
+            "id": "chatcmpl-fg-1792156825-17",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Leaves appear green because they contain a pigment called chlorophyll, which is essential for photosynthesis. This pigment absorbs red and blue wavelengths of light but reflects green wavelengths back to our eyes. Consequently, our eyes perceive the reflected green light, making the leaves look green."
+              },
+              "finish_reason": "stop",
+              "completion_tokens": 55
+            },
+            "tokens": 55,
+            "decode_seconds": 1.79270479,
+            "decode_tps": 30.679897943486836,
+            "wall_seconds": 2.487591099983547,
+            "wall_tps": 22.10974303629072,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "585",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "22",
+              "X-Flash-Gordon-Prefilled-Tokens": "22",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "55",
+              "X-Flash-Gordon-Context-Tokens": "77",
+              "X-Flash-Gordon-Prefill-Seconds": "0.666701571",
+              "X-Flash-Gordon-Prefill-TPS": "32.998272",
+              "X-Flash-Gordon-Decode-Seconds": "1.792704790",
+              "X-Flash-Gordon-Decode-TPS": "30.679898",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "chat-1",
+            "category": "chat",
+            "repeat": 2,
+            "id": "chatcmpl-fg-1792156827-18",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "Kyoto is a city that rewards slowness. To ensure a truly quiet experience, this itinerary avoids the most crowded tourist traps (like the main entrance of Fushimi Inari or the heart of Gion during peak hours) and focuses on early mornings, hidden gardens, and contemplative spaces.\n\nHere is a curated two-day plan for a serene Kyoto visit, featuring one vegetarian meal per day.\n\n### **Day 1: The Northern Zen & Bamboo Silence**\n\n**Theme:** Ancient temples, moss gardens, and mountain air.\n\n#### **Morning: Early Arrival at Kinkaku-ji (The Golden Pavilion)**"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.169742628,
+            "decode_tps": 30.6973382818581,
+            "wall_seconds": 4.916317199997138,
+            "wall_tps": 26.03574887317574,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "853",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "26",
+              "X-Flash-Gordon-Prefilled-Tokens": "26",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "154",
+              "X-Flash-Gordon-Prefill-Seconds": "0.728582944",
+              "X-Flash-Gordon-Prefill-TPS": "35.685710",
+              "X-Flash-Gordon-Decode-Seconds": "4.169742628",
+              "X-Flash-Gordon-Decode-TPS": "30.697338",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-0",
+            "category": "code",
+            "repeat": 2,
+            "id": "chatcmpl-fg-1792156832-19",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```c\n#include <stdint.h>\n#include <stdbool.h>\n#include <assert.h>\n#include <stdio.h>\n\n/**\n * Binary search for a target value in a sorted array of uint32_t values.\n *\n * @param arr   Pointer to the sorted array of uint32_t values.\n * @param size  Number of elements in the array.\n * @param target The value to search for.\n * @return      Index of the target if found, otherwise SIZE_MAX (or -1 equivalent).\n *              Returns SIZE_MAX if not found.\n */\nsize_t binary"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.077235662,
+            "decode_tps": 31.39381939409712,
+            "wall_seconds": 4.900528400001349,
+            "wall_tps": 26.11963232372345,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "773",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "31",
+              "X-Flash-Gordon-Prefilled-Tokens": "31",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "159",
+              "X-Flash-Gordon-Prefill-Seconds": "0.792984109",
+              "X-Flash-Gordon-Prefill-TPS": "39.092839",
+              "X-Flash-Gordon-Decode-Seconds": "4.077235662",
+              "X-Flash-Gordon-Decode-TPS": "31.393819",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "code-1",
+            "category": "code",
+            "repeat": 2,
+            "id": "chatcmpl-fg-1792156837-20",
+            "semantic": {
+              "message": {
+                "role": "assistant",
+                "content": "```python\nfrom collections import OrderedDict\n\n\nclass LRUCache:\n    \"\"\"\n    A bounded LRU (Least Recently Used) cache using OrderedDict.\n    \n    When the cache reaches its capacity, the least recently used item is evicted.\n    Accessing an item (get or put) marks it as most recently used.\n    \"\"\"\n    \n    def __init__(self, capacity: int):\n        if capacity <= 0:\n            raise ValueError(\"Capacity must be a positive integer\")\n        self.capacity = capacity\n        self.cache = OrderedDict()\n    \n    def get(self, key):"
+              },
+              "finish_reason": "length",
+              "completion_tokens": 128
+            },
+            "tokens": 128,
+            "decode_seconds": 4.283220219,
+            "decode_tps": 29.884057661150106,
+            "wall_seconds": 5.02235230000224,
+            "wall_tps": 25.48606556333034,
+            "headers": {
+              "Content-Type": "application/json",
+              "Content-Length": "846",
+              "Connection": "close",
+              "Cache-Control": "no-store",
+              "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+              "X-Flash-Gordon-Prompt-Tokens": "26",
+              "X-Flash-Gordon-Prefilled-Tokens": "26",
+              "X-Flash-Gordon-Reused-Tokens": "0",
+              "X-Flash-Gordon-Prefix-Cache": "miss",
+              "X-Flash-Gordon-Exact-Frontier": "false",
+              "X-Flash-Gordon-Reset-Reason": "explicit",
+              "X-Flash-Gordon-Completion-Tokens": "128",
+              "X-Flash-Gordon-Context-Tokens": "154",
+              "X-Flash-Gordon-Prefill-Seconds": "0.711001834",
+              "X-Flash-Gordon-Prefill-TPS": "36.568119",
+              "X-Flash-Gordon-Decode-Seconds": "4.283220219",
+              "X-Flash-Gordon-Decode-TPS": "29.884058",
+              "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+            }
+          },
+          {
+            "case": "coexist",
+            "repeat": 0,
+            "requests": [
+              {
+                "id": "chatcmpl-fg-1792156842-22",
+                "semantic": {
+                  "message": {
+                    "role": "assistant",
+                    "content": "Leaves appear green because they contain a pigment called chlorophyll, which is essential for photosynthesis. This pigment absorbs red and blue wavelengths of light but reflects green wavelengths back to our eyes. Consequently, our eyes perceive the reflected green light, making the leaves look green."
+                  },
+                  "finish_reason": "stop",
+                  "completion_tokens": 55
+                },
+                "tokens": 55,
+                "decode_seconds": 1.816867963,
+                "decode_tps": 30.27187507296038,
+                "wall_seconds": 2.694840899988776,
+                "wall_tps": 20.40936813755093,
+                "headers": {
+                  "Content-Type": "application/json",
+                  "Content-Length": "585",
+                  "Connection": "close",
+                  "Cache-Control": "no-store",
+                  "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+                  "X-Flash-Gordon-Prompt-Tokens": "22",
+                  "X-Flash-Gordon-Prefilled-Tokens": "22",
+                  "X-Flash-Gordon-Reused-Tokens": "0",
+                  "X-Flash-Gordon-Prefix-Cache": "miss",
+                  "X-Flash-Gordon-Exact-Frontier": "false",
+                  "X-Flash-Gordon-Reset-Reason": "explicit",
+                  "X-Flash-Gordon-Completion-Tokens": "55",
+                  "X-Flash-Gordon-Context-Tokens": "77",
+                  "X-Flash-Gordon-Prefill-Seconds": "0.843153408",
+                  "X-Flash-Gordon-Prefill-TPS": "26.092523",
+                  "X-Flash-Gordon-Decode-Seconds": "1.816867963",
+                  "X-Flash-Gordon-Decode-TPS": "30.271875",
+                  "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+                }
+              },
+              {
+                "id": "chatcmpl-fg-1792156842-21",
+                "semantic": {
+                  "message": {
+                    "role": "assistant",
+                    "content": "```c\n#include <stdint.h>\n#include <stdbool.h>\n#include <assert.h>\n#include <stdio.h>\n\n/**\n * Binary search for a target value in a sorted array of uint32_t values.\n *\n * @param arr   Pointer to the sorted array of uint32_t values.\n * @param size  Number of elements in the array.\n * @param target The value to search for.\n * @return      Index of the target if found, otherwise SIZE_MAX (or -1 equivalent).\n *              Returns SIZE_MAX if not found.\n */\nsize_t binary"
+                  },
+                  "finish_reason": "length",
+                  "completion_tokens": 128
+                },
+                "tokens": 128,
+                "decode_seconds": 4.199236179,
+                "decode_tps": 30.48173394964456,
+                "wall_seconds": 4.999522199999774,
+                "wall_tps": 25.60244656979537,
+                "headers": {
+                  "Content-Type": "application/json",
+                  "Content-Length": "773",
+                  "Connection": "close",
+                  "Cache-Control": "no-store",
+                  "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+                  "X-Flash-Gordon-Prompt-Tokens": "31",
+                  "X-Flash-Gordon-Prefilled-Tokens": "31",
+                  "X-Flash-Gordon-Reused-Tokens": "0",
+                  "X-Flash-Gordon-Prefix-Cache": "miss",
+                  "X-Flash-Gordon-Exact-Frontier": "false",
+                  "X-Flash-Gordon-Reset-Reason": "explicit",
+                  "X-Flash-Gordon-Completion-Tokens": "128",
+                  "X-Flash-Gordon-Context-Tokens": "159",
+                  "X-Flash-Gordon-Prefill-Seconds": "0.781903174",
+                  "X-Flash-Gordon-Prefill-TPS": "39.646853",
+                  "X-Flash-Gordon-Decode-Seconds": "4.199236179",
+                  "X-Flash-Gordon-Decode-TPS": "30.481734",
+                  "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+                }
+              }
+            ],
+            "aggregate_wall_tps": 36.551744387053226
+          },
+          {
+            "case": "coexist",
+            "repeat": 1,
+            "requests": [
+              {
+                "id": "chatcmpl-fg-1792156847-24",
+                "semantic": {
+                  "message": {
+                    "role": "assistant",
+                    "content": "Leaves appear green because they contain a pigment called chlorophyll, which is essential for photosynthesis. This pigment absorbs red and blue wavelengths of light but reflects green wavelengths back to our eyes. Consequently, our eyes perceive the reflected green light, making the leaves look green."
+                  },
+                  "finish_reason": "stop",
+                  "completion_tokens": 55
+                },
+                "tokens": 55,
+                "decode_seconds": 1.807488265,
+                "decode_tps": 30.428966574784376,
+                "wall_seconds": 2.6960730000282638,
+                "wall_tps": 20.400041096596205,
+                "headers": {
+                  "Content-Type": "application/json",
+                  "Content-Length": "585",
+                  "Connection": "close",
+                  "Cache-Control": "no-store",
+                  "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+                  "X-Flash-Gordon-Prompt-Tokens": "22",
+                  "X-Flash-Gordon-Prefilled-Tokens": "22",
+                  "X-Flash-Gordon-Reused-Tokens": "0",
+                  "X-Flash-Gordon-Prefix-Cache": "miss",
+                  "X-Flash-Gordon-Exact-Frontier": "false",
+                  "X-Flash-Gordon-Reset-Reason": "public-history-mismatch",
+                  "X-Flash-Gordon-Completion-Tokens": "55",
+                  "X-Flash-Gordon-Context-Tokens": "77",
+                  "X-Flash-Gordon-Prefill-Seconds": "0.842455863",
+                  "X-Flash-Gordon-Prefill-TPS": "26.114128",
+                  "X-Flash-Gordon-Decode-Seconds": "1.807488265",
+                  "X-Flash-Gordon-Decode-TPS": "30.428967",
+                  "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+                }
+              },
+              {
+                "id": "chatcmpl-fg-1792156847-23",
+                "semantic": {
+                  "message": {
+                    "role": "assistant",
+                    "content": "```c\n#include <stdint.h>\n#include <stdbool.h>\n#include <assert.h>\n#include <stdio.h>\n\n/**\n * Binary search for a target value in a sorted array of uint32_t values.\n *\n * @param arr   Pointer to the sorted array of uint32_t values.\n * @param size  Number of elements in the array.\n * @param target The value to search for.\n * @return      Index of the target if found, otherwise SIZE_MAX (or -1 equivalent).\n *              Returns SIZE_MAX if not found.\n */\nsize_t binary"
+                  },
+                  "finish_reason": "length",
+                  "completion_tokens": 128
+                },
+                "tokens": 128,
+                "decode_seconds": 4.194096285,
+                "decode_tps": 30.519089525385088,
+                "wall_seconds": 5.003542999998899,
+                "wall_tps": 25.581872685021025,
+                "headers": {
+                  "Content-Type": "application/json",
+                  "Content-Length": "773",
+                  "Connection": "close",
+                  "Cache-Control": "no-store",
+                  "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+                  "X-Flash-Gordon-Prompt-Tokens": "31",
+                  "X-Flash-Gordon-Prefilled-Tokens": "31",
+                  "X-Flash-Gordon-Reused-Tokens": "0",
+                  "X-Flash-Gordon-Prefix-Cache": "miss",
+                  "X-Flash-Gordon-Exact-Frontier": "false",
+                  "X-Flash-Gordon-Reset-Reason": "public-history-mismatch",
+                  "X-Flash-Gordon-Completion-Tokens": "128",
+                  "X-Flash-Gordon-Context-Tokens": "159",
+                  "X-Flash-Gordon-Prefill-Seconds": "0.780598953",
+                  "X-Flash-Gordon-Prefill-TPS": "39.713095",
+                  "X-Flash-Gordon-Decode-Seconds": "4.194096285",
+                  "X-Flash-Gordon-Decode-TPS": "30.519090",
+                  "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+                }
+              }
+            ],
+            "aggregate_wall_tps": 36.56733659236848
+          },
+          {
+            "case": "coexist",
+            "repeat": 2,
+            "requests": [
+              {
+                "id": "chatcmpl-fg-1792156852-25",
+                "semantic": {
+                  "message": {
+                    "role": "assistant",
+                    "content": "Leaves appear green because they contain a pigment called chlorophyll, which is essential for photosynthesis. This pigment absorbs red and blue wavelengths of light but reflects green wavelengths back to our eyes. Consequently, our eyes perceive the reflected green light, making the leaves look green."
+                  },
+                  "finish_reason": "stop",
+                  "completion_tokens": 55
+                },
+                "tokens": 55,
+                "decode_seconds": 1.987776385,
+                "decode_tps": 27.669108263402574,
+                "wall_seconds": 2.6551474000152666,
+                "wall_tps": 20.714480860717472,
+                "headers": {
+                  "Content-Type": "application/json",
+                  "Content-Length": "585",
+                  "Connection": "close",
+                  "Cache-Control": "no-store",
+                  "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+                  "X-Flash-Gordon-Prompt-Tokens": "22",
+                  "X-Flash-Gordon-Prefilled-Tokens": "22",
+                  "X-Flash-Gordon-Reused-Tokens": "0",
+                  "X-Flash-Gordon-Prefix-Cache": "miss",
+                  "X-Flash-Gordon-Exact-Frontier": "false",
+                  "X-Flash-Gordon-Reset-Reason": "public-history-mismatch",
+                  "X-Flash-Gordon-Completion-Tokens": "55",
+                  "X-Flash-Gordon-Context-Tokens": "77",
+                  "X-Flash-Gordon-Prefill-Seconds": "0.648975225",
+                  "X-Flash-Gordon-Prefill-TPS": "33.899599",
+                  "X-Flash-Gordon-Decode-Seconds": "1.987776385",
+                  "X-Flash-Gordon-Decode-TPS": "27.669108",
+                  "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+                }
+              },
+              {
+                "id": "chatcmpl-fg-1792156852-26",
+                "semantic": {
+                  "message": {
+                    "role": "assistant",
+                    "content": "```c\n#include <stdint.h>\n#include <stdbool.h>\n#include <assert.h>\n#include <stdio.h>\n\n/**\n * Binary search for a target value in a sorted array of uint32_t values.\n *\n * @param arr   Pointer to the sorted array of uint32_t values.\n * @param size  Number of elements in the array.\n * @param target The value to search for.\n * @return      Index of the target if found, otherwise SIZE_MAX (or -1 equivalent).\n *              Returns SIZE_MAX if not found.\n */\nsize_t binary"
+                  },
+                  "finish_reason": "length",
+                  "completion_tokens": 128
+                },
+                "tokens": 128,
+                "decode_seconds": 4.15435862,
+                "decode_tps": 30.81101361441926,
+                "wall_seconds": 5.031612999999197,
+                "wall_tps": 25.439158377248095,
+                "headers": {
+                  "Content-Type": "application/json",
+                  "Content-Length": "773",
+                  "Connection": "close",
+                  "Cache-Control": "no-store",
+                  "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+                  "X-Flash-Gordon-Prompt-Tokens": "31",
+                  "X-Flash-Gordon-Prefilled-Tokens": "31",
+                  "X-Flash-Gordon-Reused-Tokens": "0",
+                  "X-Flash-Gordon-Prefix-Cache": "miss",
+                  "X-Flash-Gordon-Exact-Frontier": "false",
+                  "X-Flash-Gordon-Reset-Reason": "public-history-mismatch",
+                  "X-Flash-Gordon-Completion-Tokens": "128",
+                  "X-Flash-Gordon-Context-Tokens": "159",
+                  "X-Flash-Gordon-Prefill-Seconds": "0.846666439",
+                  "X-Flash-Gordon-Prefill-TPS": "36.614183",
+                  "X-Flash-Gordon-Decode-Seconds": "4.154358620",
+                  "X-Flash-Gordon-Decode-TPS": "30.811014",
+                  "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+                }
+              }
+            ],
+            "aggregate_wall_tps": 36.363829292646365
+          }
+        ]
+      }
+    }
+  },
+  "greedy_off_masks_exact": true,
+  "failure": {
+    "phase": "K1",
+    "max_draft": 1,
+    "small_kernel_mask": 0,
+    "http_status": 500,
+    "owner": 1,
+    "owner_ip": "192.168.42.43",
+    "primary_error": "small-N expert path requires owned cooked K/Q5_1 tensors",
+    "inferred_first_unsupported_layer": 2,
+    "layer_not_in_runtime_trace": true,
+    "gate_up_types": [
+      13,
+      13
+    ],
+    "gate_up_layout": 2,
+    "down_type": 8,
+    "down_layout": 5,
+    "down_shape": [
+      640,
+      2560,
+      512
+    ],
+    "down_bytes": 891289600,
+    "owned_experts": 512,
+    "required_down_type": 7,
+    "required_down_layout": 3,
+    "other_owners": "peer sockets closed; coordinator transport non-reusable",
+    "completed_mtp_rounds": 0,
+    "unqualified": [
+      "MTP-on greedy mask0",
+      "MTP-on greedy mask330",
+      "chat k1/k2 performance",
+      "code k3 performance",
+      "MTP sessions2",
+      "MTP SSE/stop/cancellation"
+    ],
+    "original_outcome": {
+      "complete": false,
+      "lease": "serving-20261016-131324",
+      "elapsedSeconds": 599.6518474,
+      "failure": "HTTP client failed; see D:\\looking-glass-labs\\fg-wt\\mtp\\.build\\mtp-serving-lease\\runs\\serving-20261016-131324\\client-5268c9b6e3a548ca8661715825674310.stderr"
+    },
+    "owner_diagnostic_tails": {
+      "0": "RING_STAGE chunk=0 layer=6 in_flight=1 t=145.678\nRING_OWN_BLOCK chunk=0 layers=6..11 ms=136.2\nRING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.4 t=908.847\nflash-gordon: distributed transport is not reusable; reopen the runtime",
+      "1": "[rank 1] QSA Vulkan index canary: eager_segments=1 of=2 max_segment=17825792 requested=17825792 allocated=17825792 touched=17825792 bytes\n[rank 1] QSA decode session: 262144 logical, 65536 cache pages, 1 layers, 20.0 MiB eager index, 309.0 MiB record cache\n[rank 1] Vulkan memory: live_requested=11573474032 live_allocated=11573474048 peak_requested=11573474032 peak_allocated=11573474048 live_allocations=107\nflash-gordon: small-N expert path requires owned cooked K/Q5_1 tensors",
+      "2": "[rank 2] QSA Vulkan index canary: eager_segments=1 of=2 max_segment=17825792 requested=17825792 allocated=17825792 touched=17825792 bytes\n[rank 2] QSA decode session: 262144 logical, 65536 cache pages, 1 layers, 20.0 MiB eager index, 309.0 MiB record cache\n[rank 2] Vulkan memory: live_requested=10818192112 live_allocated=10818192128 peak_requested=10818192112 peak_allocated=10818192128 live_allocations=104\nflash-gordon: peer closed fabric socket",
+      "3": "[rank 3] QSA Vulkan index canary: eager_segments=2 of=4 max_segment=17825792 requested=35651584 allocated=35651584 touched=35651584 bytes\n[rank 3] QSA decode session: 262144 logical, 131072 cache pages, 2 layers, 37.0 MiB eager index, 618.0 MiB record cache\n[rank 3] Vulkan memory: live_requested=11346025456 live_allocated=11346025472 peak_requested=11346025456 peak_allocated=11346025472 live_allocations=89\nflash-gordon: peer closed fabric socket",
+      "4": "[rank 4] QSA Vulkan index canary: eager_segments=1 of=2 max_segment=17825792 requested=17825792 allocated=17825792 touched=17825792 bytes\n[rank 4] QSA decode session: 262144 logical, 65536 cache pages, 1 layers, 20.0 MiB eager index, 309.0 MiB record cache\n[rank 4] Vulkan memory: live_requested=11335202032 live_allocated=11335202048 peak_requested=11335202032 peak_allocated=11335202048 live_allocations=116\nflash-gordon: peer closed fabric socket",
+      "5": "[rank 5] QSA Vulkan index canary: eager_segments=2 of=4 max_segment=17825792 requested=35651584 allocated=35651584 touched=35651584 bytes\n[rank 5] QSA decode session: 262144 logical, 131072 cache pages, 2 layers, 37.0 MiB eager index, 618.0 MiB record cache\n[rank 5] Vulkan memory: live_requested=11608169456 live_allocated=11608169472 peak_requested=11608169456 peak_allocated=11608169472 live_allocations=89\nflash-gordon: peer closed fabric socket",
+      "6": "[rank 6] QSA Vulkan index canary: eager_segments=1 of=2 max_segment=17825792 requested=17825792 allocated=17825792 touched=17825792 bytes\n[rank 6] QSA decode session: 262144 logical, 65536 cache pages, 1 layers, 20.0 MiB eager index, 309.0 MiB record cache\n[rank 6] Vulkan memory: live_requested=10648701936 live_allocated=10648701952 peak_requested=10648701936 peak_allocated=10648701952 live_allocations=91\nflash-gordon: peer closed fabric socket",
+      "7": "[rank 7] QSA Vulkan index canary: eager_segments=2 of=4 max_segment=17825792 requested=35651584 allocated=35651584 touched=35651584 bytes\n[rank 7] QSA decode session: 262144 logical, 131072 cache pages, 2 layers, 37.0 MiB eager index, 618.0 MiB record cache\n[rank 7] Vulkan memory: live_requested=14687617056 live_allocated=14687617072 peak_requested=14687617056 peak_allocated=14687617072 live_allocations=170\nflash-gordon: peer closed fabric socket"
+    }
+  },
+  "restoration": {
+    "runtime": "31508ee",
+    "release": "20261016-abq-stack-adaptive",
+    "pack": "fg-ring-pack-abliterated-q4-ablate-mix-04",
+    "sessions": 2,
+    "wide": 1,
+    "before_api": {
+      "id": "chatcmpl-fg-1792156465-9",
+      "object": "chat.completion",
+      "created": 1792156465,
+      "model": "Qwen3.8-Flash-Next-Uncensored",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "OK"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 16,
+        "completion_tokens": 1,
+        "total_tokens": 17
+      }
+    },
+    "restored_api": {
+      "greedy": {
+        "id": "chatcmpl-fg-1792157001-1",
+        "object": "chat.completion",
+        "created": 1792157001,
+        "model": "Qwen3.8-Flash-Next-Uncensored",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "OK"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 16,
+          "completion_tokens": 1,
+          "total_tokens": 17
+        }
+      },
+      "api": {
+        "models": {
+          "object": "list",
+          "data": [
+            {
+              "id": "Qwen3.8-Flash-Next-Uncensored",
+              "object": "model",
+              "created": 0,
+              "owned_by": "flash-gordon",
+              "capabilities": {
+                "native_context": 262144,
+                "experimental_context": 0,
+                "tools": true,
+                "mtp": false,
+                "image": false,
+                "video": false,
+                "video_frames": false
+              }
+            }
+          ]
+        },
+        "health": {
+          "status": "ok",
+          "busy": false
+        }
+      }
+    },
+    "all_owner_identity_and_cleanup_receipts": [
+      {
+        "IP": "192.168.42.42",
+        "ExitCode": 0,
+        "Stdout": "/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\n/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\n02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\n0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252  /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\nPID=228365 EXE=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon CMD=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon api --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --model-name Qwen3.8-Flash-Next-Uncensored --host 0.0.0.0 --port 8080 --context-tokens 262144 --gpu-index-tokens 262144 --qsa-hot-tokens 0 --qsa-page-cache-mib 700 --sessions 2 \nMemAvailable:    2406092 kB\nSwapTotal:       8388604 kB\nSwapFree:        8360764 kB\nSENSOR /sys/class/drm/card0/device/pp_dpm_sclk\n0: 1000Mhz *\n1: 1500Mhz \n2: 2000Mhz \nSENSOR /sys/class/drm/card0/device/pp_dpm_mclk\n0: 450Mhz *\nSENSOR /sys/class/drm/card0/device/gpu_busy_percent\nSENSOR unavailable\nSENSOR /sys/class/drm/card0/device/hwmon/hwmon1/temp1_input\n49000\nFilesystem                  1B-blocks         Used    Available Use% Mounted on\n/dev/mapper/fedora-root 1021363355648 906728108032 114635247616  89% /\nhc-mtp removed\nLEASE_RELEASED_PRODUCTION_VERIFIED_SCRATCH_ABSENT",
+        "Stderr": "cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported\n"
+      },
+      {
+        "IP": "192.168.42.43",
+        "ExitCode": 0,
+        "Stdout": "/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\n/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\n02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\n0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252  /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\nPID=153441 EXE=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon CMD=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 1 \nMemAvailable:    3620328 kB\nSwapTotal:       8388604 kB\nSwapFree:        8376176 kB\nSENSOR /sys/class/drm/card0/device/pp_dpm_sclk\n0: 1000Mhz *\n1: 1500Mhz \n2: 2000Mhz \nSENSOR /sys/class/drm/card0/device/pp_dpm_mclk\n0: 450Mhz *\nSENSOR /sys/class/drm/card0/device/gpu_busy_percent\nSENSOR unavailable\nSENSOR /sys/class/drm/card0/device/hwmon/hwmon1/temp1_input\n49000\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 211760164864 41454161920  84% /\nhc-mtp removed\nLEASE_RELEASED_PRODUCTION_VERIFIED_SCRATCH_ABSENT",
+        "Stderr": "cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported\n"
+      },
+      {
+        "IP": "192.168.42.44",
+        "ExitCode": 0,
+        "Stdout": "/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\n/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\n02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\n0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252  /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\nPID=149379 EXE=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon CMD=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 2 \nMemAvailable:    4346288 kB\nSwapTotal:       8388604 kB\nSwapFree:        8387596 kB\nSENSOR /sys/class/drm/card0/device/pp_dpm_sclk\n0: 1000Mhz *\n1: 1500Mhz \n2: 2000Mhz \nSENSOR /sys/class/drm/card0/device/pp_dpm_mclk\n0: 450Mhz *\nSENSOR /sys/class/drm/card0/device/gpu_busy_percent\nSENSOR unavailable\nSENSOR /sys/class/drm/card0/device/hwmon/hwmon1/temp1_input\n47000\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 201082781696 52131545088  80% /\nhc-mtp removed\nLEASE_RELEASED_PRODUCTION_VERIFIED_SCRATCH_ABSENT",
+        "Stderr": "cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported\n"
+      },
+      {
+        "IP": "192.168.42.45",
+        "ExitCode": 0,
+        "Stdout": "/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\n/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\n02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\n0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252  /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\nPID=148815 EXE=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon CMD=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 3 \nMemAvailable:    3686684 kB\nSwapTotal:       8388604 kB\nSwapFree:        8388248 kB\nSENSOR /sys/class/drm/card0/device/pp_dpm_sclk\n0: 1000Mhz *\n1: 1500Mhz \n2: 2000Mhz \nSENSOR /sys/class/drm/card0/device/pp_dpm_mclk\n0: 450Mhz *\nSENSOR /sys/class/drm/card0/device/gpu_busy_percent\nSENSOR unavailable\nSENSOR /sys/class/drm/card0/device/hwmon/hwmon1/temp1_input\n49000\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 241588367360 11625959424  96% /\nhc-mtp removed\nLEASE_RELEASED_PRODUCTION_VERIFIED_SCRATCH_ABSENT",
+        "Stderr": "cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported\n"
+      },
+      {
+        "IP": "192.168.42.46",
+        "ExitCode": 0,
+        "Stdout": "/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\n/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\n02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\n0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252  /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\nPID=152092 EXE=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon CMD=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 4 \nMemAvailable:    3941936 kB\nSwapTotal:       8388604 kB\nSwapFree:        8385236 kB\nSENSOR /sys/class/drm/card0/device/pp_dpm_sclk\n0: 1000Mhz *\n1: 1500Mhz \n2: 2000Mhz \nSENSOR /sys/class/drm/card0/device/pp_dpm_mclk\n0: 450Mhz *\nSENSOR /sys/class/drm/card0/device/gpu_busy_percent\nSENSOR unavailable\nSENSOR /sys/class/drm/card0/device/hwmon/hwmon1/temp1_input\n50000\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 189513592832 63700733952  75% /\nhc-mtp removed\nLEASE_RELEASED_PRODUCTION_VERIFIED_SCRATCH_ABSENT",
+        "Stderr": "cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported\n"
+      },
+      {
+        "IP": "192.168.42.47",
+        "ExitCode": 0,
+        "Stdout": "/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\n/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\n02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\n0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252  /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\nPID=148834 EXE=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon CMD=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 5 \nMemAvailable:    3447684 kB\nSwapTotal:       8388604 kB\nSwapFree:        8388268 kB\nSENSOR /sys/class/drm/card0/device/pp_dpm_sclk\n0: 1000Mhz *\n1: 1500Mhz \n2: 2000Mhz \nSENSOR /sys/class/drm/card0/device/pp_dpm_mclk\n0: 450Mhz *\nSENSOR /sys/class/drm/card0/device/gpu_busy_percent\nSENSOR unavailable\nSENSOR /sys/class/drm/card0/device/hwmon/hwmon1/temp1_input\n52000\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 208288968704 44925358080  83% /\nhc-mtp removed\nLEASE_RELEASED_PRODUCTION_VERIFIED_SCRATCH_ABSENT",
+        "Stderr": "cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported\n"
+      },
+      {
+        "IP": "192.168.42.48",
+        "ExitCode": 0,
+        "Stdout": "/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\n/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\n02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\n0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252  /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\nPID=149208 EXE=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon CMD=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 6 \nMemAvailable:    4641552 kB\nSwapTotal:       8388604 kB\nSwapFree:        8385996 kB\nSENSOR /sys/class/drm/card0/device/pp_dpm_sclk\n0: 1000Mhz *\n1: 1500Mhz \n2: 2000Mhz \nSENSOR /sys/class/drm/card0/device/pp_dpm_mclk\n0: 450Mhz *\nSENSOR /sys/class/drm/card0/device/gpu_busy_percent\nSENSOR unavailable\nSENSOR /sys/class/drm/card0/device/hwmon/hwmon1/temp1_input\n54000\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 206146154496 47068172288  82% /\nhc-mtp removed\nLEASE_RELEASED_PRODUCTION_VERIFIED_SCRATCH_ABSENT",
+        "Stderr": "cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported\n"
+      },
+      {
+        "IP": "192.168.42.49",
+        "ExitCode": 0,
+        "Stdout": "/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\n/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\n02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\n0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252  /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\nPID=150966 EXE=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon CMD=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 7 \nMemAvailable:    3170016 kB\nSwapTotal:       8388604 kB\nSwapFree:        8361936 kB\nSENSOR /sys/class/drm/card0/device/pp_dpm_sclk\n0: 1000Mhz *\n1: 1500Mhz \n2: 2000Mhz \nSENSOR /sys/class/drm/card0/device/pp_dpm_mclk\n0: 450Mhz *\nSENSOR /sys/class/drm/card0/device/gpu_busy_percent\nSENSOR unavailable\nSENSOR /sys/class/drm/card0/device/hwmon/hwmon1/temp1_input\n50000\nFilesystem                 1B-blocks         Used  Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 249305948160 3908378624  99% /\nhc-mtp removed\nLEASE_RELEASED_PRODUCTION_VERIFIED_SCRATCH_ABSENT",
+        "Stderr": "cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported\n"
+      }
+    ],
+    "watchdog_cancel_receipts": [
+      {
+        "IP": "192.168.42.42",
+        "ExitCode": 0,
+        "Stdout": "",
+        "Stderr": ""
+      },
+      {
+        "IP": "192.168.42.43",
+        "ExitCode": 0,
+        "Stdout": "",
+        "Stderr": ""
+      },
+      {
+        "IP": "192.168.42.44",
+        "ExitCode": 0,
+        "Stdout": "",
+        "Stderr": ""
+      },
+      {
+        "IP": "192.168.42.45",
+        "ExitCode": 0,
+        "Stdout": "",
+        "Stderr": ""
+      },
+      {
+        "IP": "192.168.42.46",
+        "ExitCode": 0,
+        "Stdout": "",
+        "Stderr": ""
+      },
+      {
+        "IP": "192.168.42.47",
+        "ExitCode": 0,
+        "Stdout": "",
+        "Stderr": ""
+      },
+      {
+        "IP": "192.168.42.48",
+        "ExitCode": 0,
+        "Stdout": "",
+        "Stderr": ""
+      },
+      {
+        "IP": "192.168.42.49",
+        "ExitCode": 0,
+        "Stdout": "",
+        "Stderr": ""
+      }
+    ],
+    "release_receipt": {
+      "health": {
+        "status": "ok",
+        "busy": false
+      },
+      "noPromotion": true,
+      "owners": 8,
+      "evidenceHashesVerified": true,
+      "releasedUtc": "2026-10-16T13:24:39.9383898+00:00"
+    },
+    "initial_evidence_error": {
+      "IP": "192.168.42.42",
+      "ExitCode": 2,
+      "Stdout": "",
+      "Stderr": "tar: capture/cases.tsv: Cannot stat: No such file or directory\ntar: Exiting with failure status due to previous errors\n"
+    },
+    "manual_evidence_recovery": true
+  },
+  "evidence": [
+    {
+      "owner_ip": "192.168.42.42",
+      "archive": "evidence-192.168.42.42.tar.gz",
+      "sha256": "125ec05e79e622ae70802bfdd233b70d1459aedd042c4b9798cf1e58514d6517"
+    },
+    {
+      "owner_ip": "192.168.42.43",
+      "archive": "evidence-192.168.42.43.tar.gz",
+      "sha256": "88fce43bcabf5090ff91a25857800ea27141a08f77e6c864415d3f8bb1a7b574"
+    },
+    {
+      "owner_ip": "192.168.42.44",
+      "archive": "evidence-192.168.42.44.tar.gz",
+      "sha256": "e58d8bfabb9cf346da5ce471eccd34619bb9fbdace68833e26420b8cfedb9fa5"
+    },
+    {
+      "owner_ip": "192.168.42.45",
+      "archive": "evidence-192.168.42.45.tar.gz",
+      "sha256": "be58ebd869f27c39a083bad7935f168b4b8f3a1acd39c776567306ff74c38dd2"
+    },
+    {
+      "owner_ip": "192.168.42.46",
+      "archive": "evidence-192.168.42.46.tar.gz",
+      "sha256": "6527cb3015340ad268356b0bca4c8602f2b606037fddf1c3b6329b1fd9ca80f7"
+    },
+    {
+      "owner_ip": "192.168.42.47",
+      "archive": "evidence-192.168.42.47.tar.gz",
+      "sha256": "54d4b14756bebd96259611e77b4ba17738ae8a50161b5109d389f5800f5bd7d5"
+    },
+    {
+      "owner_ip": "192.168.42.48",
+      "archive": "evidence-192.168.42.48.tar.gz",
+      "sha256": "b423dbdffd08ef2c98066475a8ba97caf356debf2a7ea7ebbf66523b455ec910"
+    },
+    {
+      "owner_ip": "192.168.42.49",
+      "archive": "evidence-192.168.42.49.tar.gz",
+      "sha256": "e54943ec90c6ba929a0fa9440b32b9d3163c9519154cef930b37c7bde76db301"
+    }
+  ],
+  "validation_after_lease": {
+    "python_client_tests": 3,
+    "powershell_finalization_cases": [
+      "success",
+      "evidence-failure",
+      "download-failure",
+      "restore-failure",
+      "greedy-sanity-mismatch",
+      "cleanup-failure"
+    ],
+    "actual_serving_evidence_without_cases_tsv": "archive/download/hash verified all8 before cleanup",
+    "no_candidate_binary_changes": true
+  }
+}

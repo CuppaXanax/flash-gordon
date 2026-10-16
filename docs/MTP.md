@@ -1,5 +1,13 @@
 # MTP: native head, causal verification and remaining execution gates
 
+**2026-10-16 trained-pack serving gate: blocked, not promoted.** The first
+MTP k1/mask0 request failed closed because the small-N expert kernel rejects
+the real pack's cooked Q8_0 down projections. MTP-off masks0/330 matched all
+eight greedy token-ID hashes; this does not qualify either MTP-on path.
+Production was restored and verified on all eight owners, and the ring was
+released after11m15s. Actual baseline numbers and evidence are in
+[MTP_SERVING.md](../results/hillclimb/MTP_SERVING.md).
+
 The offline-prepared acceptance lease and current-production restore procedure
 are documented in [MTP_CAPTURE.md](MTP_CAPTURE.md). This diagnostic gate uses
 replayed native proposals and the causal N=1 ring oracle, not MTP serving.
@@ -120,8 +128,9 @@ API/identity checks and cleanup:
    immutable candidate, symlink the sealed mix-04 pack, and export its exact
    Q8 embedding sidecar. Do not modify current launchers, weights or hardware.
 2. Restart the same candidate build in bracketed phases
-   `off/k<=1/off/k<=2/off/k<=3/off`, always sessions2 and the current explicit
-   wide1/roofline recipe; `FG_SMALL_KERNELS` remains unset/default0.
+   `A0/B0/K1/S1/A1/K2/S2/A2/K3/S3/A3`, always sessions2 and the current explicit
+   wide1/roofline recipe. A phases are MTP-off/mask0, B0 is off/mask330,
+   K1..3 cap drafts at1..3 with mask0, and S1..3 use the same caps with330.
 3. Before timing each phase, compare eight fixed chat/code greedy completions
    against the first off run. Existing `FG_RING_TRACE` emits one per-request
    SHA256/count receipt over actual token IDs, so text equality cannot conceal
@@ -135,6 +144,10 @@ API/identity checks and cleanup:
    using the retained hash-pinned current launcher. Check all eight argv/env/
    binary/manifest/shader identities, health/models and real greedy output;
    only then cancel watchdogs, archive evidence and remove owned scratch.
+   Missing historical capture cases are optional when archiving serving logs;
+   an evidence/download failure must not skip other owners or scratch cleanup
+   after successful production verification. Finalization failures are recorded
+   separately from the original request failure.
 
 This lease is short-context serving qualification, not promotion, a long-
 context capacity test or a qualified use of research kernel mask330. The

@@ -16,17 +16,20 @@ $ErrorActionPreference='Stop'
 $repo=Split-Path $PSScriptRoot -Parent
 if(-not $Artifacts){$Artifacts=Join-Path $repo '.build\mtp-serving-lease'}
 if(-not $NativeOverlay){$NativeOverlay=Join-Path $repo '.build\mtp-lease\native-q8.gguf'}
-$phases=@(@('A0',0),@('K1',1),@('A1',0),@('K2',2),@('A2',0),@('K3',3),@('A3',0))
+$phases=@(@('A0',0,0),@('B0',0,330),
+    @('K1',1,0),@('S1',1,330),@('A1',0,0),
+    @('K2',2,0),@('S2',2,330),@('A2',0,0),
+    @('K3',3,0),@('S3',3,330),@('A3',0,0))
 if($Action -eq 'Plan'){
     [ordered]@{
-        productionAccess=$false; ring='192.168.42.42-.49'; phases=$phases
+        productionAccess=$false; ring='192.168.42.42-.49'; phases=$phases; smallKernelMasks=@(0,330)
         greedy='eight prompts, same binary/pack/kernels, exact token-ID SHA256/count and completion identity'
         perf='three repeats of two chat/two code prompts, 128 output tokens, bracketed paired ratios'
-        coexist='three two-session chat/code overlaps per phase; SSE/stop/cancel on K3'
+        coexist='three two-session chat/code overlaps per phase; SSE/stop/cancel on K3/S3'
         workDeadlineMinutes=$WorkMinutes; watchdogWorkerMinute=38; watchdogCoordinatorMinute=39
         wallBudgetMinutes=45
         restore='31508ee / 20261016-abq-stack-adaptive + sealed mix-04, sessions2 wide1; exact pinned launcher/env'
-        exclusions='no clocks/governors/weights/launch-current changes; no promotion or long-context claim'
+        exclusions='no clocks/governors/weights/launch-current changes; both masks require greedy identity; no promotion or long-context claim'
     } | ConvertTo-Json -Depth 8
     return
 }
@@ -147,6 +150,7 @@ if($Action -eq 'Restore'){
     return
 }
 $created=$false;$armed=$false;$mutated=$false;$complete=$false;$failure=$null;$before=$null
+$productionVerified=$false;$scratchRemoved=$false;$finalizationErrors=@()
 try {
     $created=$true
     $null=Remote 'create-owned-scratch' "test ! -e '$root'; mkdir -p '$root'; printf '%s\n' '$LeaseId' > '$root/lease.id'" $all
@@ -173,11 +177,11 @@ try {
     $null=Guard 'arm-worker-watchdogs' "arm $($started.AddMinutes(38).ToUnixTimeSeconds())" $workers
     $null=Guard 'arm-coordinator-watchdog' "arm $($started.AddMinutes(39).ToUnixTimeSeconds())" @('192.168.42.42')
     foreach($phase in $phases){
-        $name=[string]$phase[0];$cap=[int]$phase[1]
+        $name=[string]$phase[0];$cap=[int]$phase[1];$small=[int]$phase[2]
         if(-not $mutated){$mutated=$true;$null=Guard 'stop-production' 'stop-prod' $all}
         else {$null=Guard "stop-before-$name" 'stop-candidate' $all}
-        $null=Guard "start-workers-$name" "start-serving $name $cap" $workers
-        $null=Guard "start-coordinator-$name" "start-serving $name $cap" @('192.168.42.42')
+        $null=Guard "start-workers-$name" "start-serving $name $cap $small" $workers
+        $null=Guard "start-coordinator-$name" "start-serving $name $cap $small" @('192.168.42.42')
         $null=WaitApi
         $greedyFile=Join-Path $run "$name-greedy.json"
         Client @('run','--phase',$name,'--suite','greedy','--base',$ApiBaseUrl,'--output',$greedyFile)
@@ -187,7 +191,7 @@ try {
             '--trace',$trace,'--baseline-trace',(Join-Path $run 'A0-rank-0.log'))
         Client @('run','--phase',$name,'--suite','perf','--base',$ApiBaseUrl,
             '--output',(Join-Path $run "$name-perf.json"))
-        if($name -eq 'K3'){
+        if($name -in @('K3','S3')){
             Client @('run','--phase',$name,'--suite','stream','--base',$ApiBaseUrl,
                 '--output',(Join-Path $run "$name-stream.json"))
         }
@@ -201,22 +205,45 @@ finally {
     if($mutated -or $armed){
         try {
             $restored=RestoreProduction
+            $productionVerified=$true
             if($before.choices[0].message.content -ne $restored.choices[0].message.content){
                 throw 'Restored production greedy sanity differs from pre-lease.'
             }
+        } catch {
+            $finalizationErrors+=$_.Exception.Message
+            if(-not $failure){$failure=$_}
+        }
+        if($productionVerified){
             foreach($ip in $all){
-                $null=Guard "evidence-$ip" 'evidence' @($ip)
-                $null=Remote "download-evidence-$ip" ':' @($ip) -Download "$root/final-evidence.tar.gz" `
-                    -Local (Join-Path $run "evidence-$ip.tar.gz")
+                try {
+                    $null=Guard "evidence-$ip" 'evidence' @($ip)
+                    $null=Remote "download-evidence-$ip" ':' @($ip) -Download "$root/final-evidence.tar.gz" `
+                        -Local (Join-Path $run "evidence-$ip.tar.gz")
+                } catch {
+                    $finalizationErrors+=$_.Exception.Message
+                    if(-not $failure){$failure=$_}
+                }
             }
-            $null=Guard 'remove-owned-scratch' 'cleanup' $all
-        } catch {if(-not $failure){$failure=$_}}
+            try {
+                $null=Guard 'remove-owned-scratch' 'cleanup' $all
+                $scratchRemoved=$true
+            } catch {
+                $finalizationErrors+=$_.Exception.Message
+                if(-not $failure){$failure=$_}
+            }
+        }
     } elseif($created){
         try {
             $null=Remote 'cleanup-unstarted' "if test -f '$root/lease.id' && test `"`$(cat '$root/lease.id')`" = '$LeaseId'; then test ! -e '$root/candidate.pid'; test ! -e '$root/watchdog.pid'; cd /home/xander; rm -rf '$root'; fi" $all
-        } catch {if(-not $failure){$failure=$_}}
+            $scratchRemoved=$true
+        } catch {
+            $finalizationErrors+=$_.Exception.Message
+            if(-not $failure){$failure=$_}
+        }
     }
     @{lease=$LeaseId;complete=$complete;failure=[string]$failure;
+        productionVerified=$productionVerified;scratchRemoved=$scratchRemoved;
+        finalizationErrors=$finalizationErrors;
         elapsedSeconds=([DateTimeOffset]::UtcNow-$started).TotalSeconds} |
         ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $run 'outcome.json')
 }

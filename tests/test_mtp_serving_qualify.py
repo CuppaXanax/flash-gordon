@@ -71,6 +71,15 @@ class ServingClientTest(unittest.TestCase):
         self.assertEqual(rounds["conditional_successes"], [2, 1, 1])
         self.assertEqual(rounds["emitted_per_pass"], 3)
         self.assertEqual(rounds["mean_round_ms"], 15)
+        shutil.copyfile(self.root / "A0-perf.json", self.root / "B0-perf.json")
+        for k in (1, 2, 3):
+            shutil.copyfile(self.root / f"K{k}-perf.json", self.root / f"S{k}-perf.json")
+        CLIENT.summarize(types.SimpleNamespace(directory=str(self.root)))
+        expanded = json.loads((self.root / "serving-summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(expanded["comparisons"]), 6)
+        for comparison in expanded["comparisons"]:
+            for result in comparison["bracketed_tps_ratios"].values():
+                self.assertEqual(result["paired_median"], 2)
 
 
 if __name__ == "__main__":

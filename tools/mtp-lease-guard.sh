@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+ulimit -c 0
 root=/home/xander/hc-mtp
 operator=/home/xander/flash-gordon-live/20261015-abq-operator
 prod=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon
@@ -160,7 +161,9 @@ start)
     ;;
 start-serving)
     phase="${2:?phase name}"; cap="${3:?maximum draft (0=off)}"
+    small="${4:-0}"
     [[ "$phase" =~ ^[A-Za-z0-9_-]{1,32}$ && "$cap" =~ ^[0-3]$ ]]
+    [[ "$small" == 0 || "$small" == 330 ]]
     [[ ! -e "$root/candidate.pid" && ! -e "$root/watchdog.cancel" ]]
     [[ "$(( $(date +%s)+30 ))" -lt "$(cat "$root/lease.deadline")" ]]
     command=(rank --manifest "$root/pack/manifest.fgm" --rank "$rank")
@@ -184,6 +187,7 @@ start-serving)
             FG_ROOFLINE=2047 FG_ROOF_DENSE=19 FG_ROOF_QSA=3 FG_ROOF_EXPERT=33024 \
             FG_ROOF_HC=96 FG_ROOF_RECURRENT=3 FG_ROOF_GDN=1 \
             FG_NGRAM_LOCAL_CACHE=1 FG_DECODE_SUBMIT_GROUP=2 "${trace[@]}" \
+            FG_SMALL_KERNELS="$small" \
             "$root/release/flash-gordon" "${command[@]}"
     ) >"$root/serving-$phase-rank-$rank.log" 2>&1 </dev/null &
     echo "$!" > "$root/candidate.pid"
@@ -240,9 +244,10 @@ evidence)
     : > capture-hashes.sha256
     if [[ "${#hashfiles[@]}" -gt 0 ]]; then sha256sum "${hashfiles[@]}" > capture-hashes.sha256; fi
     files=(capture/*.json capture/*.jsonl capture/*.u32 capture/routes-*.coverage
-        capture/cases.tsv capture/qualification.*
+        capture/qualification.*
         rank-*.log serving-*.log serving-*.json watchdog*.log lease.sh
         capture-hashes.sha256 pack/manifest.fgm release/release.sha256)
+    if [[ -f capture/cases.tsv ]]; then files+=(capture/cases.tsv); fi
     tar -czf final-evidence.tar.gz "${files[@]}"
     sha256sum final-evidence.tar.gz
     ;;
