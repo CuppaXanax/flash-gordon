@@ -1,8 +1,8 @@
 #include "fg_small_fma.glsl"
 #ifdef FG_SMALL_META_PREFETCH
-uvec4 prefetched_dm0,prefetched_dm1,prefetched_codes;
+uvec4 prefetched_dm0,prefetched_dm1,prefetched_codes,prefetched_quant;
 void reuse_prefetch(uint base,uint groups,uint group){
-    if(SMALL_PREFETCH!=0u){
+    if((SMALL_PREFETCH&1u)!=0u){
         uint offset=(base+(group/8u)*8u)/4u;
         prefetched_dm0=W4(offset);prefetched_dm1=W4(offset+1u);
         prefetched_codes=W4((base+groups+group*4u)/4u);
@@ -17,7 +17,7 @@ vec2 reuse_scale(uint base,uint groups,uint row,uint group){
     }
     if(COMPACT!=0u){
 #ifdef FG_SMALL_META_PREFETCH
-        if(SMALL_PREFETCH!=0u){
+        if((SMALL_PREFETCH&1u)!=0u){
             uint packed=row<4u?prefetched_dm0[row]:prefetched_dm1[row-4u];
             vec2 dm=unpackHalf2x16(packed);
             uint codes=prefetched_codes[row>>1u]>>((row&1u)*16u);
@@ -42,7 +42,12 @@ void reuse_weight(uint base,uint groups,uint row,uint group,uint lane,out vec4 l
         hi=vec4(bitfieldExtract(a,20,5),bitfieldExtract(a,25,5),
             ((a>>30u)|(b<<2u))&31u,(b>>3u)&31u);
     }else{
-        uint p=W(off+(row*groups+group)*4u+lane);
+        uint p;
+#ifdef FG_SMALL_META_PREFETCH
+        if((SMALL_PREFETCH&2u)!=0u)p=prefetched_quant[row&3u];
+        else
+#endif
+        p=W(off+(row*groups+group)*4u+lane);
         lo=quants(p&0x0f0f0f0fu);hi=quants((p>>4u)&0x0f0f0f0fu);
     }
     vec2 scale=reuse_scale(base,groups,row,group);

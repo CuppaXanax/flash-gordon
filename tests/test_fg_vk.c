@@ -1348,6 +1348,49 @@ static int test_qsa_prefill_prepare(void){
     fg_vk_tensor_destroy(bi);fg_vk_tensor_destroy(bk);fg_vk_tensor_destroy(bg);fg_vk_tensor_destroy(bq);fg_vk_tensor_destroy(pos);fg_vk_tensor_destroy(in);fg_vk_tensor_destroy(kn);fg_vk_tensor_destroy(qn);fg_vk_tensor_destroy(ri);fg_vk_tensor_destroy(rk);fg_vk_tensor_destroy(rq);free(batch_iq);free(batch_k);free(batch_gate);free(batch_q);free(raw_iq);free(raw_k);free(raw_qg);return ok;
 }
 
+static int test_small_dense_vector_layout(void){
+    const char *flags=getenv("FG_SMALL_KERNELS");
+    if(!flags||((uint32_t)strtoul(flags,NULL,0)&2097408u)!=2097408u)return 1;
+    uint64_t bytes=fg_dense_compact_bytes(1024u,1024u,12u),extra=UINT64_MAX;
+    uint32_t *raw=malloc((size_t)bytes);
+    fg_vk_memory_stats initial={0},before={0},after={0};
+    fg_vk_get_memory_stats(context,&initial);
+    fg_vk_tensor *w=tensor(NULL,bytes),*view=NULL;
+    int ok=raw&&w;
+    for(uint64_t i=0;ok&&i<bytes/4u;i++)raw[i]=(uint32_t)i^0x12345678u;
+    if(ok){
+        fg_vk_tensor_set_format(w,FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K);
+        ok=fg_vk_tensor_write(w,0,raw,bytes,&error)==FG_OK;
+    }
+    fg_error expected={0};
+    fg_vk_get_memory_stats(context,&before);
+    if(ok)ok=fg_vk_small_dense_prepare(w,1024u,1024u,12u,bytes-1u,&extra,
+        &expected)==FG_ERR_LIMIT&&extra==0u;
+    fg_vk_get_memory_stats(context,&after);
+    ok=ok&&after.requested_live_bytes==before.requested_live_bytes&&
+        after.allocated_live_bytes==before.allocated_live_bytes;
+    if(ok)ok=fg_vk_small_dense_prepare(w,1024u,1024u,12u,bytes,&extra,
+        &error)==FG_OK&&extra==bytes&&
+        !memcmp(raw,fg_vk_tensor_const_map(w),(size_t)bytes);
+    fg_vk_get_memory_stats(context,&after);
+    ok=ok&&after.requested_live_bytes==before.requested_live_bytes+bytes;
+    if(ok)ok=fg_vk_small_dense_prepare(w,1024u,1024u,12u,0u,&extra,
+        &error)==FG_OK&&extra==0u&&
+        fg_vk_tensor_write(w,0,raw,4u,&expected)==FG_ERR_ARGUMENT&&
+        fg_vk_tensor_view(w,0,bytes,&view,&error)==FG_OK&&
+        fg_vk_begin(context,&error)==FG_OK&&
+        fg_vk_small_dense_prepare(view,1024u,1024u,12u,bytes,&extra,
+            &expected)==FG_ERR_ARGUMENT;
+    if(fg_vk_batch_active(context)){fg_error ignored={0};fg_vk_abort(context,&ignored);}
+    fg_vk_tensor_destroy(view);fg_vk_tensor_destroy(w);free(raw);
+    fg_vk_get_memory_stats(context,&after);
+    ok=ok&&after.requested_live_bytes==initial.requested_live_bytes&&
+        after.allocated_live_bytes==initial.allocated_live_bytes;
+    fprintf(stderr,"SMALL_VECTOR_RESIDENCY bytes=%llu pass=%d\n",
+        (unsigned long long)bytes,ok);
+    return ok;
+}
+
 static int test_small_qsa_select(void){
     enum{STRIDE=6144,QUERIES=4};
     const uint32_t counts[]={513u,1024u,1025u,2048u,2051u,4096u,5000u};
@@ -2573,8 +2616,17 @@ static int run_expert_small_component(uint32_t gt,uint32_t ut,uint32_t dt){
                     fg_vk_tensor_write(native_tiles,0,schedule,sizeof(schedule),&error)==FG_OK&&
                     fg_vk_moe_decode_down_reduce(context,native,d,native_tiles,mid_view,
                         gate_view,ROWS,MID,ds,10u,8u,&error)==FG_OK&&
-                    fg_vk_tensor_read(native,0,native_output,sizeof(native_output),&error)==FG_OK&&
-                    !memcmp(native_output,reduced+token*ROWS,sizeof(native_output));
+                    fg_vk_tensor_read(native,0,native_output,sizeof(native_output),&error)==FG_OK;
+                const char *flags=getenv("FG_SMALL_KERNELS");
+                bool union_q8=flags&&((uint32_t)strtoul(flags,NULL,0)&4194304u)!=0u;
+                if(passed&&union_q8){
+                    for(uint32_t row=0;row<ROWS;row++){
+                       float actual=reduced[token*ROWS+row],ref=native_output[row];
+                       if(!isfinite(actual)||!isfinite(ref)||
+                          fabsf(actual-ref)>1e-4f*fmaxf(1.0f,fabsf(ref)))passed=0;
+                    }
+                }else if(passed)passed=!memcmp(native_output,reduced+token*ROWS,
+                    sizeof(native_output));
                 fg_vk_tensor_destroy(gate_view);fg_vk_tensor_destroy(mid_view);
             }
             fprintf(stderr,"SMALL_DOWN_CPU gt=%u ut=%u dt=%u pattern=%u n=%u max_rel=%.9g pass=%d\n",
@@ -5301,4 +5353,5 @@ ok=run_test("qsa_attention_single",test_qsa_attention_single)&&ok;
 ok=run_test("qsa_attention",test_qsa_attention)&&ok;
 ok=run_test("qsa_attention_union",test_qsa_attention_union)&&ok;
 ok=run_test("small_qsa_select",test_small_qsa_select)&&ok;
+ok=run_test("small_dense_vector_layout",test_small_dense_vector_layout)&&ok;
 fg_vk_close(context);if(!selected_test_count){fprintf(stderr,"no Vulkan test matched DS4_REMOTE_TEST_FILTER\n");return 2;}if(!ok){fprintf(stderr,"native Vulkan oracle failed: %s\n",error.message);return 1;}puts("Flash Gordon native Vulkan production-dimension oracles: PASS");return 0;}

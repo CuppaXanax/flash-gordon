@@ -1,0 +1,53 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x=64) in;
+layout(set=0,binding=0)readonly buffer Weights{uint w[];};
+layout(set=0,binding=1)readonly buffer Tiles{uint tiles[];};
+layout(set=0,binding=2)readonly buffer Input{vec4 x[];};
+layout(set=0,binding=3)readonly buffer Gates{float gates[];};
+layout(set=0,binding=4)writeonly buffer Output{float y[];};
+layout(push_constant)uniform Push{
+    uint rows,in_dim,blocks,tile_bytes,stride,tokens;
+}pc;
+void main(){
+    uint lid=gl_LocalInvocationID.x,lane=lid&7u,parity=(lid>>3u)&3u;
+    uint row=gl_WorkGroupID.x*2u+(lid>>5u);
+    uint quant_offset=(pc.blocks*32u+63u)&~63u;
+    float total[4];
+    [[unroll]]for(uint t=0u;t<4u;t++)total[t]=0.0;
+    for(uint slot=0u;slot<pc.tokens*10u;slot++){
+        uint base=slot*5u,expert=tiles[base];
+        if(expert==0xffffffffu)continue;
+        uint pairs[4];float acc[4];
+        [[unroll]]for(uint p=0u;p<4u;p++){pairs[p]=tiles[base+1u+p];acc[p]=0.0;}
+        uint row_base=expert*pc.stride+(row>>4u)*pc.tile_bytes;
+        uint scale_word=((row_base+(row&15u)*2u)>>2u)+parity*8u;
+        uint quant_word=(row_base+quant_offset+(row&15u)*pc.blocks*32u)/4u+
+            lane+parity*8u;
+        for(uint block=parity;block<pc.blocks;block+=4u){
+            vec2 scales=unpackHalf2x16(w[scale_word]);
+            float delta=(row&1u)!=0u?scales.y:scales.x;
+            vec4 weight=vec4(unpack8(int(w[quant_word])));
+            [[unroll]]for(uint p=0u;p<4u;p++)if(pairs[p]!=0xffffffffu){
+                uint input_base=pairs[p]*(pc.in_dim/4u)+block*8u+lane;
+                acc[p]=fma(delta,dot(weight,x[input_base]),acc[p]);
+            }
+            scale_word+=32u;quant_word+=32u;
+        }
+        [[unroll]]for(uint p=0u;p<4u;p++)if(pairs[p]!=0xffffffffu){
+            uint token=pairs[p]/10u;
+            total[token]=fma(gates[pairs[p]],acc[p],total[token]);
+        }
+    }
+    for(uint t=0u;t<pc.tokens;t++){
+        float sum=total[t];
+        sum+=subgroupShuffleXor(sum,4u);
+        sum+=subgroupShuffleXor(sum,2u);
+        sum+=subgroupShuffleXor(sum,1u);
+        sum+=subgroupShuffleXor(sum,8u);
+        sum+=subgroupShuffleXor(sum,16u);
+        if(lane==0u&&parity==0u)y[t*pc.rows+row]=sum;
+    }
+}

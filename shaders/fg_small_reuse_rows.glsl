@@ -32,7 +32,8 @@ void main(){
     uint split=SMALL_SPLITS==1u?0u:gl_WorkGroupID.y;
     uint row=gl_WorkGroupID.x*(WG/32u*FG_SMALL_REUSE_ROWS)+(lid/32u)*FG_SMALL_REUSE_ROWS;
     if(row>=pc.output_width)return;
-    uint groups=pc.input_width/32u,tile_row=row&7u;
+    uint groups=pc.input_width/32u;
+    uint tile_row=(SMALL_PREFETCH&2u)!=0u?0u:row&7u;
     uint base=(row/8u)*groups*(TYPE==13u?(COMPACT!=0u?45u:56u):
         TYPE==20u?36u:(COMPACT!=0u?37u:48u));
     vec4 a0=vec4(0.0),a1=vec4(0.0);
@@ -60,9 +61,13 @@ void main(){
 #if SMALL_N >= 4
         ROW_INPUT(3u,x3,y3)
 #endif
+        if((SMALL_PREFETCH&2u)!=0u)
+            prefetched_quant=W4((base+groups*5u+group*32u+lane*8u)/4u);
         REUSE_ROW(0u,x,a0,a1,a2,a3) REUSE_ROW(1u,y,a0,a1,a2,a3)
         REUSE_ROW(2u,z,a0,a1,a2,a3) REUSE_ROW(3u,w,a0,a1,a2,a3)
 #if FG_SMALL_REUSE_ROWS == 8
+        if((SMALL_PREFETCH&2u)!=0u)
+            prefetched_quant=W4((base+groups*5u+group*32u+lane*8u+4u)/4u);
         REUSE_ROW(4u,x,b0,b1,b2,b3) REUSE_ROW(5u,y,b0,b1,b2,b3)
         REUSE_ROW(6u,z,b0,b1,b2,b3) REUSE_ROW(7u,w,b0,b1,b2,b3)
 #endif

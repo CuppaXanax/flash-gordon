@@ -95,6 +95,19 @@ the same descending score/ascending-ID order and is useful with `4096` or
 `131072`; the short resident-prefix path does not need top-512 selection.
 These are default-off research variants,
 not serving or model-quality qualifications.
+Bit `2097152` (requires `256`) additionally prepares lossless vector-layout shadows for large
+compact Q4 matrices: quant words for four output rows are contiguous, allowing
+two `uvec4` loads per eight-row cohort instead of eight scalar weight loads.
+Only R8 small-N dispatches use the shadow; N1 and unsupported layouts keep
+canonical tensors. Shadows are created before recording, owned by immutable
+weight tensors, included in model persistent-cap accounting and freed with
+those tensors. This costs one additional copy of each eligible matrix; it
+is not a memory-neutral persisted pack layout or a serving qualification.
+Bit `4194304` reuses cooked Q8-down weights across the deduplicated expert
+union in one WG64/two-row dispatch, with per-token gates in registers.
+Unlike the default exact-Q8 compatibility path, this changes the expert
+summation order and is tolerance-qualified research only. It does not
+change `fg_vk_small_n_q8_down` or default/mask-330 native-order behavior.
 The production-shape `expert_small_component` CPU oracle is enabled only when
 `FG_SMALL_KERNELS` is explicitly present (including `0`); it allocates full
 512-expert-addressable GPU slabs, so run it as a targeted test on an idle device.

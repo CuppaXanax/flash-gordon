@@ -66,6 +66,17 @@ static fg_status build_tensor_index(fg_model *model,fg_error *err){
     if(!model->tensor_lookup){fg_error_set(err,FG_ERR_OOM,"allocate model tensor lookup");return FG_ERR_OOM;}
     model->tensor_lookup_capacity=capacity;
     for(uint32_t i=0;i<model->manifest->tensor_count;i++)if(model->tensor[i]){
+        const fg_tensor_record *record=&model->manifest->tensors[i];
+        if(record->kind==FG_TENSOR_COMMON&&record->dims==2u&&
+           record->shape[0]<=UINT32_MAX&&record->shape[1]<=UINT32_MAX){
+            uint64_t extra=0u,cap=model->manifest->persistent_cap_bytes;
+            fg_status status=fg_vk_small_dense_prepare(model->tensor[i],
+                (uint32_t)record->shape[0],(uint32_t)record->shape[1],
+                record->ggml_type,model->weight_bytes<cap?cap-model->weight_bytes:0u,
+                &extra,err);
+            if(status!=FG_OK)return status;
+            model->weight_bytes+=extra;
+        }
         const char *name=model->manifest->tensors[i].name;
         uint32_t slot=(uint32_t)tensor_name_hash(name)&(capacity-1u);
         while(model->tensor_lookup[slot]){

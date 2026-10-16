@@ -23,7 +23,7 @@ typedef struct fg_vk_allocation {
     uint32_t references;
 } fg_vk_allocation;
 
-struct fg_vk_tensor {fg_vk_context *context;fg_vk_allocation *allocation;uint64_t offset,bytes;fg_vk_tensor_format format;bool is_view;};
+struct fg_vk_tensor {fg_vk_context *context;fg_vk_allocation *allocation;uint64_t offset,bytes;fg_vk_tensor_format format;bool is_view;struct fg_vk_tensor *small_vector;uint32_t small_vector_input,small_vector_rows;};
 typedef struct fg_vk_kernel {const char *file;uint32_t bindings,push_bytes;VkDescriptorSetLayout set_layout;VkPipelineLayout layout;VkPipeline pipeline;uint32_t specialization_count,specialization_values[4];} fg_vk_kernel;
 typedef struct fg_vk_profile_dispatch {const char *scope,*name;uint32_t begin_query,end_query;} fg_vk_profile_dispatch;
 
@@ -85,7 +85,7 @@ struct fg_vk_context {
     bool small_n;
     uint32_t small_workgroup,small_rows;
     fg_vk_kernel small_dense[300],small_gate_up[8],small_down,small_down_q8,small_down_reduce,small_shared,small_union,small_gdn;
-    fg_vk_kernel small_plain[9],small_qsa_union[3],small_qsa_select[2];
+    fg_vk_kernel small_plain[9],small_qsa_union[3],small_qsa_select[2],small_down_q8_union;
     /* Decomposition benchmark kernels */
     fg_vk_kernel bench_stream,bench_dequant,bench_dot_nored;
     fg_vk_kernel dense_cooked_split,dense_cooked_split_reduce,dense_cooked_split_reduce_silu;
@@ -104,6 +104,7 @@ struct fg_vk_context {
     fg_vk_tensor *roof_partials,*roof_gdn,*roof_expert_partials;
     fg_vk_tensor *small_dense_partials;
     fg_vk_kernel small_dense_split[144];
+    fg_vk_kernel small_dense_vector[36];
 };
 
 static bool roof_enabled(const fg_vk_context *c,uint32_t bit){
@@ -140,6 +141,9 @@ fg_status fg_vk_small_n_tune(fg_vk_context *c,uint32_t workgroup,uint32_t rows,f
         fg_error_set(err,FG_ERR_ARGUMENT,"small-N geometry requires fresh pipelines");return FG_ERR_ARGUMENT;
     }
     for(uint32_t i=0;i<144u;i++)if(c->small_dense_split[i].pipeline){
+        fg_error_set(err,FG_ERR_ARGUMENT,"small-N geometry requires fresh pipelines");return FG_ERR_ARGUMENT;
+    }
+    for(uint32_t i=0;i<36u;i++)if(c->small_dense_vector[i].pipeline){
         fg_error_set(err,FG_ERR_ARGUMENT,"small-N geometry requires fresh pipelines");return FG_ERR_ARGUMENT;
     }
     c->small_workgroup=workgroup;c->small_rows=rows;return FG_OK;
@@ -494,7 +498,9 @@ void fg_vk_close(fg_vk_context *c){
     if(c->device)vkDeviceWaitIdle(c->device);
     for(uint32_t i=0;i<3u;i++)destroy_kernel(c,&c->small_qsa_union[i]);
     for(uint32_t i=0;i<2u;i++)destroy_kernel(c,&c->small_qsa_select[i]);
+    destroy_kernel(c,&c->small_down_q8_union);
     for(uint32_t i=0;i<144u;i++)destroy_kernel(c,&c->small_dense_split[i]);
+    for(uint32_t i=0;i<36u;i++)destroy_kernel(c,&c->small_dense_vector[i]);
     fg_vk_tensor_destroy(c->small_dense_partials);
     fg_vk_tensor_destroy(c->roof_partials);
     fg_vk_tensor_destroy(c->roof_gdn);
@@ -546,12 +552,12 @@ fg_status fg_vk_tensor_create_cached(fg_vk_context *c,uint64_t bytes,fg_vk_tenso
 
 fg_status fg_vk_tensor_view(fg_vk_tensor *base,uint64_t offset,uint64_t bytes,fg_vk_tensor **out,fg_error *err){if(!out||!tensor_range(base,offset,bytes)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan tensor view");return FG_ERR_ARGUMENT;}fg_vk_tensor *view=calloc(1,sizeof(*view));if(!view){fg_error_set(err,FG_ERR_OOM,"allocate Vulkan tensor view");return FG_ERR_OOM;}base->allocation->references++;view->context=base->context;view->allocation=base->allocation;view->offset=base->offset+offset;view->bytes=bytes;view->format=base->format;view->is_view=true;*out=view;return FG_OK;}
 fg_status fg_vk_tensor_view_rebind(fg_vk_tensor *view,fg_vk_tensor *base,uint64_t offset,uint64_t bytes,fg_error *err){
-    if(!view||!view->is_view||!tensor_range(base,offset,bytes)||view->context!=base->context||view->allocation!=base->allocation){
+    if(!view||!view->is_view||view->small_vector||!tensor_range(base,offset,bytes)||view->context!=base->context||view->allocation!=base->allocation){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan tensor view rebind");return FG_ERR_ARGUMENT;
     }
     view->offset=base->offset+offset;view->bytes=bytes;view->format=base->format;return FG_OK;
 }
-void fg_vk_tensor_destroy(fg_vk_tensor *t){if(!t)return;fg_vk_allocation *a=t->allocation;if(--a->references==0){t->context->memory_stats.requested_live_bytes-=a->bytes;t->context->memory_stats.allocated_live_bytes-=a->allocated_bytes;t->context->memory_stats.live_allocations--;vkUnmapMemory(t->context->device,a->memory);vkFreeMemory(t->context->device,a->memory,NULL);vkDestroyBuffer(t->context->device,a->buffer,NULL);free(a);}free(t);}
+void fg_vk_tensor_destroy(fg_vk_tensor *t){if(!t)return;fg_vk_tensor_destroy(t->small_vector);fg_vk_allocation *a=t->allocation;if(--a->references==0){t->context->memory_stats.requested_live_bytes-=a->bytes;t->context->memory_stats.allocated_live_bytes-=a->allocated_bytes;t->context->memory_stats.live_allocations--;vkUnmapMemory(t->context->device,a->memory);vkFreeMemory(t->context->device,a->memory,NULL);vkDestroyBuffer(t->context->device,a->buffer,NULL);free(a);}free(t);}
 uint64_t fg_vk_tensor_bytes(const fg_vk_tensor *t){return t?t->bytes:0;}uint64_t fg_vk_tensor_allocation_bytes(const fg_vk_tensor *t){return t?t->allocation->allocated_bytes:0;}void *fg_vk_tensor_map(fg_vk_tensor *t){return t?(uint8_t *)t->allocation->mapped+t->offset:NULL;}const void *fg_vk_tensor_const_map(const fg_vk_tensor *t){return t?(const uint8_t *)t->allocation->mapped+t->offset:NULL;}void fg_vk_tensor_set_format(fg_vk_tensor *t,fg_vk_tensor_format format){if(t)t->format=format;}fg_vk_tensor_format fg_vk_tensor_get_format(const fg_vk_tensor *t){return t?t->format:FG_VK_TENSOR_FORMAT_DEFAULT;}
 fg_status fg_vk_tensor_residency_canary(fg_vk_tensor *t,uint64_t *touched_bytes,fg_error *err){
     if(touched_bytes)*touched_bytes=0;
@@ -571,7 +577,47 @@ fg_status fg_vk_tensor_residency_canary(fg_vk_tensor *t,uint64_t *touched_bytes,
     for(uint64_t i=0;i<count;i++)mapped[i*stride]=saved[i];
     free(saved);if(status==FG_OK&&touched_bytes)*touched_bytes=t->bytes;return status;
 }
-fg_status fg_vk_tensor_write(fg_vk_tensor *t,uint64_t offset,const void *data,uint64_t bytes,fg_error *err){if(!data||!tensor_range(t,offset,bytes)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan tensor write");return FG_ERR_ARGUMENT;}memcpy((uint8_t *)t->allocation->mapped+t->offset+offset,data,(size_t)bytes);return FG_OK;}
+fg_status fg_vk_tensor_write(fg_vk_tensor *t,uint64_t offset,const void *data,uint64_t bytes,fg_error *err){if(!data||!tensor_range(t,offset,bytes)||t->small_vector){fg_error_set(err,FG_ERR_ARGUMENT,"invalid or immutable Vulkan tensor write");return FG_ERR_ARGUMENT;}memcpy((uint8_t *)t->allocation->mapped+t->offset+offset,data,(size_t)bytes);return FG_OK;}
+fg_status fg_vk_small_dense_prepare(fg_vk_tensor *w,uint32_t in,uint32_t rows,
+    uint32_t type,uint64_t allowance,uint64_t *extra_bytes,fg_error *err){
+    if(!w||!extra_bytes){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid small-N dense preparation");return FG_ERR_ARGUMENT;
+    }
+    *extra_bytes=0u;
+    if(!small_kernel_enabled(w->context,2097152u)||!small_kernel_enabled(w->context,256u)||
+       type!=12u||in<1024u||
+       rows<1024u||w->format!=FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K)return FG_OK;
+    uint64_t bytes=fg_dense_compact_bytes(in,rows,type);
+    if(!bytes||!tensor_range(w,0,bytes)){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid compact Q4 vector shadow");return FG_ERR_FORMAT;
+    }
+    if(w->small_vector){
+        if(w->small_vector_input==in&&w->small_vector_rows==rows)return FG_OK;
+        fg_error_set(err,FG_ERR_ARGUMENT,"small-N vector shadow shape changed");return FG_ERR_ARGUMENT;
+    }
+    if(w->context->batch_depth||w->context->group_count||w->context->group_published){
+        fg_error_set(err,FG_ERR_ARGUMENT,"prepare vector weights before recording");return FG_ERR_ARGUMENT;
+    }
+    if(bytes>allowance){
+        fg_error_set(err,FG_ERR_LIMIT,"small-N vector weights exceed residency cap");return FG_ERR_LIMIT;
+    }
+    fg_vk_tensor *shadow=NULL;
+    fg_status status=fg_vk_tensor_create(w->context,bytes,&shadow,err);
+    if(status!=FG_OK)return status;
+    const uint32_t *src=(const uint32_t *)((const uint8_t *)w->allocation->mapped+w->offset);
+    uint32_t *dst=fg_vk_tensor_map(shadow);
+    memcpy(dst,src,(size_t)bytes);
+    uint32_t groups=in/32u;
+    for(uint32_t tile=0;tile<rows/8u;tile++){
+        uint64_t base=(uint64_t)tile*groups*37u+groups*5u;
+        for(uint32_t g=0;g<groups;g++)for(uint32_t lane=0;lane<4u;lane++)
+            for(uint32_t row=0;row<8u;row++)
+                dst[base+(uint64_t)g*32u+lane*8u+row]=
+                    src[base+((uint64_t)row*groups+g)*4u+lane];
+    }
+    w->small_vector=shadow;w->small_vector_input=in;w->small_vector_rows=rows;
+    *extra_bytes=bytes;return FG_OK;
+}
 /* Host-visible decode buffers are mapped write-combining, where ordinary
  * cache-line loads stall on every line (~100 MB/s measured for a 40 KiB
  * hyper state).  MOVNTDQA streams the lines instead and restores most of the
@@ -1512,16 +1558,20 @@ fg_status fg_vk_dense_quant(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tenso
             small_kernel_enabled(c,65536u)?4u:small_kernel_enabled(c,32768u)?2u:1u:1u;
         bool prefetch=reuse_rows==8u&&compact&&(in&127u)==0u&&
             small_kernel_enabled(c,524288u);
-        fg_vk_kernel *kernel=splits>1u?
+        bool vector=reuse_rows==8u&&type==12u&&compact&&w->small_vector&&
+            w->small_vector_input==in&&w->small_vector_rows==rows&&
+            small_kernel_enabled(c,2097152u);
+        fg_vk_kernel *kernel=vector?
+            &c->small_dense_vector[(splits==4u?24u:splits==2u?12u:0u)+i*4u+geometry]:splits>1u?
             &c->small_dense_split[(reuse_rows==8u?72u:0u)+(compact?0u:36u)+i*4u+geometry]:
             &c->small_dense[variant*75u+(compact?0u:36u)+i*4u+geometry];
         const char *file=reuse_rows==8u?reuse8_files[i]:reuse_rows==4u?reuse4_files[i]:reuse_files[i];
         if(!kernel->file)*kernel=(fg_vk_kernel){.file=reuse?file:wide?wide_files[i]:small_files[i],.bindings=3,
-            .push_bytes=24,.specialization_count=prefetch?4u:splits>1u?3u:2u,
-            .specialization_values={workgroup,compact?1u:0u,splits,prefetch}};
+            .push_bytes=24,.specialization_count=prefetch||vector?4u:splits>1u?3u:2u,
+            .specialization_values={workgroup,compact?1u:0u,splits,(prefetch?1u:0u)|(vector?2u:0u)}};
         struct{uint32_t in,rows,tokens,type,row_bytes;float scale;}
             p={in,rows,tokens,type,(uint32_t)row_bytes,scale};
-        const fg_vk_tensor *b[]={w,x,splits>1u?c->small_dense_partials:out};
+        const fg_vk_tensor *b[]={vector?w->small_vector:w,x,splits>1u?c->small_dense_partials:out};
         uint32_t small_rows=reuse?workgroup/32u*reuse_rows:wide?8u:4u;
         if(splits>1u){
             fg_status status=dispatch(c,kernel,b,&p,(rows+small_rows-1u)/small_rows,
@@ -2808,8 +2858,16 @@ fg_status fg_vk_small_n_experts(fg_vk_context *c,fg_vk_tensor *mid,fg_vk_tensor 
     const fg_vk_tensor *gb[]={gate,up,activation,tiles,mid};
     fg_status status=dispatch(c,gate_up,gb,&gp,80u,tokens*FG_TOP_K,1u,err);
     if(q8_down){
-        if(status==FG_OK)status=fg_vk_small_n_q8_down(c,reduced,down,selected,mid,
-            gates,ds,tokens,err);
+        if(small_kernel_enabled(c,4194304u)){
+            if(!c->small_down_q8_union.file)c->small_down_q8_union=(fg_vk_kernel){
+                .file="fg_small_down_q8_union.spv",.bindings=5u,.push_bytes=24u};
+            struct{uint32_t rows,in,blocks,tile,stride,tokens;}p={
+                FG_HIDDEN_SIZE,640u,20u,(uint32_t)fg_q8_0_cooked_tile_bytes(640u),ds,tokens};
+            const fg_vk_tensor *b[]={down,tiles,mid,gates,reduced};
+            if(status==FG_OK)status=dispatch(c,&c->small_down_q8_union,b,&p,
+                FG_HIDDEN_SIZE/2u,1u,1u,err);
+        }else if(status==FG_OK)status=fg_vk_small_n_q8_down(c,reduced,down,selected,mid,
+                gates,ds,tokens,err);
         return status;
     }
     if(union_down){

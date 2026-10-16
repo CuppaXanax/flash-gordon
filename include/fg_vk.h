@@ -76,6 +76,11 @@ void fg_vk_small_n_mode(fg_vk_context *context,bool enabled);
 fg_status fg_vk_small_n_tune(fg_vk_context *context,uint32_t workgroup,
     uint32_t rows,fg_error *err);
 bool fg_vk_small_n_active(const fg_vk_context *context);
+/* Prepare an optional lossless vector shadow of host-loaded immutable Q4
+ * weights before recording. Canonical weights remain the N1 reference. */
+fg_status fg_vk_small_dense_prepare(fg_vk_tensor *weights,uint32_t input_width,
+    uint32_t rows,uint32_t type,uint64_t allowance,uint64_t *extra_bytes,
+    fg_error *err);
 fg_status fg_vk_small_n_schedule(fg_vk_context *context,fg_vk_tensor *tiles,
     const fg_vk_tensor *selected,uint32_t tokens,fg_error *err);
 fg_status fg_vk_small_n_experts(fg_vk_context *context,fg_vk_tensor *mid,fg_vk_tensor *down_parts,

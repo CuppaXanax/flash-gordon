@@ -325,6 +325,14 @@ static void test_dense_small(fg_vk_context *vk,bool measure,fg_error *error){
             fg_vk_dense_saved_format(type,compact?FG_TENSOR_LAYOUT_DENSE_COMPACT:
                 FG_TENSOR_LAYOUT_DENSE_SOA));
         check(fg_vk_tensor_write(w,0,cooked,bytes,error),error);
+        uint64_t shadow_bytes=0u;
+        check(fg_vk_small_dense_prepare(w,in,rows,type,UINT64_MAX,&shadow_bytes,error),error);
+        fg_vk_tensor *canonical=NULL;
+        float *fallback=shadow_bytes?malloc(4u*rows*4u):NULL;
+        if(shadow_bytes){
+            if(!fallback)exit(1);
+            check(fg_vk_tensor_view(w,0,bytes,&canonical,error),error);
+        }
         float *inputs=malloc(4u*in*4u),*reference=malloc(4u*rows*4u),
             *actual=malloc(4u*rows*4u);
         if(!inputs||!reference||!actual)exit(1);
@@ -349,6 +357,17 @@ static void test_dense_small(fg_vk_context *vk,bool measure,fg_error *error){
                 "\"max_abs\":%.9g,\"bit_exact\":%s,\"tolerance_ok\":%s}\n",
                 type,in,rows,compact,n,maximum,bit_exact?"true":"false",ok?"true":"false");
             if(!ok)exit(1);
+            if(canonical){
+                fg_vk_small_n_mode(vk,true);
+                check(test_dense_dispatch(vk,y,canonical,x,in,rows,n,type,error),error);
+                fg_vk_small_n_mode(vk,false);
+                check(fg_vk_tensor_read(y,0,fallback,n*rows*4u,error),error);
+                ok=close_values(actual,fallback,n*rows,&maximum);
+                printf("{\"kind\":\"dense_vector_fallback\",\"in\":%u,\"rows\":%u,"
+                    "\"n\":%u,\"max_abs\":%.9g,\"pass\":%s}\n",
+                    in,rows,n,maximum,ok?"true":"false");
+                if(!ok)exit(1);
+            }
         }
         if(measure&&(geometry==2u||bench_dense_in)&&(compact||plain||type==8u)){
             double baseline=0.0;
@@ -378,7 +397,8 @@ static void test_dense_small(fg_vk_context *vk,bool measure,fg_error *error){
             check(fg_vk_static_reset(vk,3u,error),error);
         }
         fg_vk_tensor_destroy(serial);fg_vk_tensor_destroy(one);fg_vk_tensor_destroy(y);
-        fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);free(cooked);free(raw);
+        fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(canonical);
+        fg_vk_tensor_destroy(w);free(fallback);free(cooked);free(raw);
         free(inputs);free(reference);free(actual);
     }
 }
