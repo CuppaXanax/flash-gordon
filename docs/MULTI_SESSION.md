@@ -235,6 +235,10 @@ isolated-versus-loaded chat hash. The long agent's isolated TPS, retention,
 same-prompt hash comparison and aggregate speedup are explicitly null, not
 invented from another request. This is a memory/load probe, not an independent
 long-context throughput or greedy-parity qualification.
+After the long request completes, it also sends a fresh chat on the existing
+chat identity while leaving the agent identity assigned. The result records
+that real chat response separately, exercising chat allocation/generation with
+the completed near-limit agent still resident.
 
 `-ConcurrentGeneration` warms separate identities, measures each isolated,
 re-primes the identical prefixes, and submits **both** generation requests

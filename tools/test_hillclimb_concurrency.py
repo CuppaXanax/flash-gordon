@@ -112,6 +112,7 @@ class ConcurrentHarness(unittest.TestCase):
                 self.assertIsNone(load["streams"][1]["same_prompt_hash_match"])
                 self.assertIsNone(load["aggregate_speedup_over_mean_isolated"])
                 self.assertEqual(Handler.agent_sse, 1)
+                self.assertGreater(load["post_near_limit_chat"]["completion_tokens"], 0)
             else:
                 self.assertTrue(all(row["same_prompt_hash_match"] for row in load["streams"]))
                 self.assertEqual(Handler.agent_sse, 2)

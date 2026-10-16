@@ -617,6 +617,17 @@ function Invoke-ConcurrentGeneration {
         if (-not $MixedPrefill -and $load.overlapping_visible_decode_seconds -le 0) {
             throw 'The requests did not overlap in generation; this is not a pipeline throughput sample.'
         }
+        if ($CapacityProbe) {
+            $residentChat = New-Prompt 0 'Output exactly OK.'
+            $residentReply = Invoke-NonStream $residentChat.Messages 16 -User 'hillclimb-chat'
+            if ($residentReply.CompletionTokens -lt 1) { throw 'Chat failed with the near-limit agent resident.' }
+            $load | Add-Member post_near_limit_chat ([pscustomobject]@{
+                user = 'hillclimb-chat'; completion_tokens = $residentReply.CompletionTokens
+                prompt_tokens = $residentReply.PromptTokens; wall_seconds = $residentReply.WallSeconds
+                text = $residentReply.Content; headers = $residentReply.Headers
+                note = 'Fresh chat resets only chat affinity after the long request completes; agent affinity is not reassigned.'
+            })
+        }
         $trials += [pscustomobject]@{ repeat = $repeat; isolated = $baseline; load = $load }
         Write-Host ("CONCURRENT repeat={0} mixed={1} aggregate_tps={2:F2} chat_ttft_ms={3:F1} chat_tps={4:F2} agent_tps={5:F2}" -f
             $repeat, [bool]$MixedPrefill, $load.aggregate_client_decode_tps, $load.streams[0].ttft_ms,
