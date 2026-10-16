@@ -181,11 +181,14 @@ def analyze(directory):
                 result["pilots"][path.relative_to(directory).as_posix()] = {
                     "scope": "single intrusive/unpaired diagnostic, not wall qualification",
                     "config": next((r for r in rows if r["kind"] == "config"), None),
+                    "roofline": next((r for r in rows if r["kind"] == "roofline"), None),
                     "median_wall_us": median(path), "family_gpu_us": dict(times)}
             dense = [r for r in rows if r.get("kind") == "dense_small_test"]
             gates = [r for r in rows if r.get("kind", "").startswith("small_") or r.get("kind") == "rollback"]
             if dense or gates:
                 result["oracles"][path.relative_to(directory).as_posix()] = {
+                    "config": next((r for r in rows if r.get("kind") == "config"), None),
+                    "roofline": next((r for r in rows if r.get("kind") == "roofline"), None),
                     "dense_cases": len(dense),
                     "dense_max_abs": max((r["max_abs"] for r in dense), default=None),
                     "dense_tolerance_ok": all(r["tolerance_ok"] for r in dense),

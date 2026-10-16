@@ -1,3 +1,24 @@
+# Small-N follow-up (2026-10-16)
+
+The newer default-off expert-union, long-context QSA, dense K-split,
+wave-size and lossless vector-layout research is documented in
+[MTP_BANDWIDTH.md](MTP_BANDWIDTH.md), with machine-readable paired receipts
+in `mtp-bandwidth.json`. Its current targets are N2/N1 <= 1.2 and N4/N1 <= 1.6.
+Those experiments use unchanged **stock dynamic governors**, not the historical
+pinned operating point below; synthetic replay is not real-pack serving
+qualification. Native dual-session residency and model-quality gates remain
+separate admission requirements.
+
+Five-round final A/B: Q4 N2 vector+wave32 saves **5.25 +/- .19%** on .50
+and **4.44 +/- 3.99%** on .53; the mixed long-N4 vector/Q8/hybrid-QSA
+combination saves **15.53 +/- .36% / 8.52 +/- .37%**. Both ratio targets
+remain missed; measured large multi-column GEMVs remain below 85% of the
+historical roof. Default-off research only; full tables, all tested masks,
+per-shape BW, source snapshots and raw receipts are linked above.
+.50 live 40 CU is verified; .53 is stock/driver-reported24, **not an independently
+verified 24-CU restriction**. No hardware change was made. Both workspaces are
+removed, governors unchanged, and original .50 services restored/healthy.
+
 # Remaining-excess follow-up: experts, HC and GDN
 
 2026-10-15. Experimental selection: `FG_ROOFLINE=2047`,

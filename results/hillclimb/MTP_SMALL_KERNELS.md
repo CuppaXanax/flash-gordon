@@ -1,5 +1,10 @@
 # Small-N verification kernels
 
+Follow-up: [MTP_BANDWIDTH.md](MTP_BANDWIDTH.md) records the subsequent
+expert-union/QSA/bandwidth research and its newer N2 <= 1.2 / N4 <= 1.6
+stopping targets. The tables below retain their original qualification and
+historical thresholds; no newer research flag is implicitly promoted by them.
+
 ## Result and status
 
 **Useful improvement, target not reached.** The uniform research selection is

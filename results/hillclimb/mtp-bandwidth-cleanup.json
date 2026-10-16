@@ -1,0 +1,33 @@
+{
+  "hardware_configuration_changed": false,
+  "production_access": false,
+  "publication_base": "7d1fe65b4962c208443517a962195d6de628b6d5",
+  "research_spirv_unchanged_on_rebase": 329,
+  "cleanup": {
+    "50": {
+      "IP": "192.168.42.50",
+      "ExitCode": 0,
+      "Stdout": "governor_config_sha256=a5e83975e4fbea57d6110cbf4aa81fd58367d044c2bc602815ff0ca21ede6757\nactive\n+------------------------------------------------------------------------------+\n| BC-250 CU Dashboard / Live Dispatch                                          |\n+------------------------------------------------------------------------------+\n  UMR        : /usr/bin/umr\n  UMR inst   : 0 (auto)\n  ASIC       : cyan_skillfish.gfx1013\n  amdgpu     : bc250_cc_write_mode=not exposed, active_cu_number=24\n  CPU        : 12 threads present, 12 online; mask not probed (governor active)\n  Service    : enabled\n  Boot sync  : current table saved\n  Source     : SPI dispatch masks + amdgpu boot CU map\n  Legend     : D+ driver+routed, S+ SPI+routed, D! driver+off, -- off\n\n  +---------+------+------+------+------+------+------+------------+--------+\n  | Row     | WGP0 | WGP1 | WGP2 | WGP3 | WGP4 | SPI  | CC         | CUs    |\n  |         | 0-1  | 2-3  | 4-5  | 6-7  | 8-9  |      |            |        |\n  +---------+------+------+------+------+------+------+------------+--------+\n  | SE0.SH0 |  D+  |  D+  |  D+  |  S+  |  S+  | 0x1f | 0xffe00000 |  10/10 |\n  | SE0.SH1 |  D+  |  D+  |  D+  |  S+  |  S+  | 0x1f | 0xffe00000 |  10/10 |\n  | SE1.SH0 |  D+  |  D+  |  D+  |  S+  |  S+  | 0x1f | 0xffe00000 |  10/10 |\n  | SE1.SH1 |  D+  |  D+  |  D+  |  S+  |  S+  | 0x1f | 0xffe00000 |  10/10 |\n  +---------+------+------+------+------+------+------+------------+--------+\n\n  CUs active & routed  : 40/40\nactive\n{\"status\":\"ok\"}\nactive\n{\"status\":\"ok\"}\nworkspace_absent_1=true\nworkspace_absent_2=true",
+      "Stderr": ""
+    },
+    "53": {
+      "IP": "192.168.42.53",
+      "ExitCode": 0,
+      "Stdout": "governor_config_sha256=a5e83975e4fbea57d6110cbf4aa81fd58367d044c2bc602815ff0ca21ede6757\nactive\nworkspace_absent_1=true\nworkspace_absent_2=true",
+      "Stderr": ""
+    }
+  },
+  "source_export": {
+    "archive_sha256": "1b3aa70dc7347abdc9f5645b9da06e48987662c3cbf93c48ee68ae3c82c031a2",
+    "archive_bytes": 196475744,
+    "tensor_count": 50,
+    "required_rank7_records": 48,
+    "additional_HC": [
+      "output_hc_down.weight",
+      "output_hc_up.weight"
+    ],
+    "remote_export_staging_removed": true,
+    "retained_hc_q4_untouched": true
+  },
+  "CU_scope": ".50 live40 verified; .53 driver-reported24 only, no independent live-mask qualification or forced24 restriction"
+}
