@@ -47,6 +47,7 @@ typedef struct fg_vk_descriptor_cache {
 } fg_vk_descriptor_cache;
 
 struct fg_vk_context {
+    fg_vk_kernel mtp_attention;
     VkInstance instance;VkPhysicalDevice physical;VkDevice device;VkQueue queue;uint32_t queue_family;
     VkCommandPool command_pool;VkCommandBuffer command;VkFence fence;VkFence expert_fence;bool expert_fence_pending;VkDescriptorPool descriptor_pool;VkDescriptorPool static_descriptor_pool;VkDescriptorSetLayout descriptor_set_layout;VkPipelineCache pipeline_cache;
     VkCommandPool copy_pool;VkCommandBuffer copy_command;VkFence copy_fence;
@@ -157,6 +158,7 @@ static fg_status read_shader(const char *file,uint32_t **words,size_t *bytes,fg_
 }
 
 static void destroy_kernel(fg_vk_context *context,fg_vk_kernel *kernel){
+    if(kernel==&context->qsa_attention)destroy_kernel(context,&context->mtp_attention);
     if(kernel==&context->dense){
         for(uint32_t i=0;i<75u;i++)destroy_kernel(context,&context->small_dense[i]);
         for(uint32_t i=0;i<9u;i++)destroy_kernel(context,&context->small_plain[i]);
@@ -283,6 +285,7 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
     c->apply_penalties=(fg_vk_kernel){.file="fg_apply_penalties.spv",.bindings=2,.push_bytes=16};
     c->qsa_prepare=(fg_vk_kernel){.file="fg_qsa_prepare.spv",.bindings=8,.push_bytes=0};c->qsa_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_prepare_prefill.spv",.bindings=8,.push_bytes=4};c->qsa_index_prepare=(fg_vk_kernel){.file="fg_qsa_index_prepare.spv",.bindings=4,.push_bytes=0};c->qsa_index_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_index_prepare_prefill.spv",.bindings=4,.push_bytes=4};c->qsa_record_commit=(fg_vk_kernel){.file="fg_qsa_record_commit.spv",.bindings=6,.push_bytes=24};c->qsa_record_gather=(fg_vk_kernel){.file="fg_qsa_record_gather.spv",.bindings=3,.push_bytes=20};c->qsa_score=(fg_vk_kernel){.file="fg_qsa_index_score.spv",.bindings=6,.push_bytes=28};c->qsa_attention=(fg_vk_kernel){.file="fg_qsa_attention.spv",.bindings=4,.push_bytes=4};c->qsa_attention_split=(fg_vk_kernel){.file="fg_qsa_attention_split.spv",.bindings=3,.push_bytes=12};c->qsa_decode_attention_split=(fg_vk_kernel){.file="fg_qsa_decode_attention_split.spv",.bindings=3,.push_bytes=8};c->qsa_attention_merge=(fg_vk_kernel){.file="fg_qsa_attention_merge.spv",.bindings=3,.push_bytes=4};c->qsa_attention_split_batch=(fg_vk_kernel){.file="fg_qsa_attention_split_batch.spv",.bindings=4,.push_bytes=16};c->qsa_attention_merge_batch=(fg_vk_kernel){.file="fg_qsa_attention_merge_batch.spv",.bindings=3,.push_bytes=12};c->qsa_record_gather_batch=(fg_vk_kernel){.file="fg_qsa_record_gather_batch.spv",.bindings=3,.push_bytes=20};c->qsa_select_resolve=(fg_vk_kernel){.file="fg_qsa_select_resolve.spv",.bindings=4,.push_bytes=12};c->qsa_resident_commit=(fg_vk_kernel){.file="fg_qsa_resident_record_commit.spv",.bindings=8,.push_bytes=16};c->qsa_resident_select=(fg_vk_kernel){.file="fg_qsa_resident_select.spv",.bindings=7,.push_bytes=20};c->qsa_resident_merge=(fg_vk_kernel){.file="fg_qsa_resident_topk_merge.spv",.bindings=4,.push_bytes=16};c->qsa_resident_attention=(fg_vk_kernel){.file="fg_qsa_resident_attention.spv",.bindings=6,.push_bytes=20};
     c->topk_v2=(fg_vk_kernel){.file="fg_topk_reduce_v2.spv",.bindings=4,.push_bytes=8};
+    c->mtp_attention=(fg_vk_kernel){.file="fg_mtp_attention.spv",.bindings=7,.push_bytes=4};
     c->topk_select=(fg_vk_kernel){.file="fg_topk_select.spv",.bindings=4,.push_bytes=8};
     c->topk_select_fallback=(fg_vk_kernel){.file="fg_topk_select_fallback.spv",.bindings=4,.push_bytes=8};
     *out=c;return FG_OK;
@@ -952,6 +955,24 @@ fg_status fg_vk_embedding_q8_0(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_te
     struct{uint32_t token,width,rows,copies;}push={token,width,rows,copies};const fg_vk_tensor *bindings[]={weights,out};return dispatch(c,&c->embedding,bindings,&push,(width*copies+255u)/256u,1,1,err);
 }
 fg_status fg_vk_embedding_q8_0_batch(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *weights,const fg_vk_tensor *token_ids,uint32_t token_count,uint32_t width,uint32_t rows,uint32_t copies,fg_error *err){uint64_t row_bytes=(uint64_t)(width/32u)*34u,total=(uint64_t)token_count*width*copies;if(!c||!weights||weights->format!=FG_VK_TENSOR_FORMAT_DEFAULT||!token_count||!width||width%32u||!rows||!copies||!tensor_range(weights,0,row_bytes*rows)||!tensor_range(token_ids,0,(uint64_t)token_count*4u)||!tensor_range(out,0,total*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid batched Q8_0 embedding dispatch");return FG_ERR_ARGUMENT;}const uint32_t *ids=fg_vk_tensor_map((fg_vk_tensor *)token_ids);for(uint32_t i=0;i<token_count;i++)if(ids[i]>=rows){fg_error_set(err,FG_ERR_FORMAT,"embedding token %u is outside vocabulary",i);return FG_ERR_FORMAT;}struct{uint32_t token_count,width,rows,copies;}push={token_count,width,rows,copies};const fg_vk_tensor *bindings[]={weights,token_ids,out};return dispatch(c,&c->embedding_batch,bindings,&push,(uint32_t)((total+255u)/256u),1,1,err);}
+fg_status fg_vk_mtp_attention(fg_vk_context *c,fg_vk_tensor *out,
+    fg_vk_tensor *keys,fg_vk_tensor *values,const fg_vk_tensor *query,
+    const fg_vk_tensor *gate,const fg_vk_tensor *key,const fg_vk_tensor *value,
+    uint32_t cell,fg_error *err){
+    uint64_t cache_bytes=((uint64_t)cell+1u)*512u*4u;
+    if(!c||!tensor_range(out,0,6144u*4u)||!tensor_range(query,0,6144u*4u)||
+       !tensor_range(gate,0,6144u*4u)||!tensor_range(key,0,512u*4u)||
+       !tensor_range(value,0,512u*4u)||!tensor_range(keys,0,cache_bytes)||
+       !tensor_range(values,0,cache_bytes)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid dense MTP attention");return FG_ERR_ARGUMENT;
+    }
+    if(fg_vk_subgroup_size(c)!=64u){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"dense MTP attention requires wave64");return FG_ERR_UNAVAILABLE;
+    }
+    const fg_vk_tensor *bindings[]={query,gate,key,value,keys,values,out};
+    return dispatch(c,&c->mtp_attention,bindings,&cell,24u,1u,1u,err);
+}
+
 static fg_status small_plain_dispatch(fg_vk_context *c,fg_vk_tensor *out,
     const fg_vk_tensor *weights,const fg_vk_tensor *input,uint32_t in,
     uint32_t rows,uint32_t tokens,uint32_t kind,fg_error *err){

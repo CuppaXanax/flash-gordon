@@ -336,7 +336,7 @@ void main() {
                     float delta = (scale_byte & 2u) == 0u ? scale.x : scale.y;
                     uint quant_byte = gate_q8_base + q8_quant_offset +
                         (tile_row_q8 * q8_blocks + s_global) * 32u;
-                    uint act_word = act_base + 1u + s_global * 8u;
+                    uint act_word = act_base + 2u + lane * 8u;
                     float sub_acc = 0.0;
                     for (uint i = 0u; i < 8u; i++)
                         sub_acc += dot4f(gws[(quant_byte >> 2u) + i],
@@ -350,7 +350,7 @@ void main() {
                     float delta = (scale_byte & 2u) == 0u ? scale.x : scale.y;
                     uint quant_byte = up_q8_base + q8_quant_offset +
                         (tile_row_q8 * q8_blocks + s_global) * 32u;
-                    uint act_word = act_base + 1u + s_global * 8u;
+                    uint act_word = act_base + 2u + lane * 8u;
                     float sub_acc = 0.0;
                     for (uint i = 0u; i < 8u; i++)
                         sub_acc += dot4f(uws[(quant_byte >> 2u) + i],

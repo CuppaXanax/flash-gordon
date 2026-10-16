@@ -1,4 +1,4 @@
-# MTP: source audit, causal verification and remaining execution gates
+# MTP: native head, causal verification and remaining execution gates
 
 2026-10-15. Branch `cuppaxanax/mtp`, based on `origin/main a63a166`.
 
@@ -6,7 +6,9 @@
 exists. This branch implements a Q8-only overlay exporter, a transactional
 greedy cycle, residual rejection sampling, dedicated owner-local small-N
 verification kernels, durable QSA truncation and single-blade rollback tests. The actual
-hyperconnection MTP executor and batched ring orchestration remain unlinked.
+hyperconnection head now executes on Vulkan using the actual abliterated Q8
+weights, with a separate causal draft KV cache and an independent CPU oracle.
+Batched ring orchestration and serving head/fanout integration remain unlinked.
 The existing `--experimental-mtp` CLI gate stays off by default and fails closed;
 it must not advertise MTP capability or execute a fake echo proposer.
 
@@ -76,11 +78,13 @@ no format below Q4 is permitted. This branch exports only Q8_0/F32.
 
 The exporter preserves HF names, fused expert/indexer tensors and **raw norm
 gammas**. It is a source overlay, not an executable owner-layer alias. The
-future importer must split expert gate/up along the 1280 axis, split indexer
-query/key at row 512, cook supported matrices, and apply each Gemma `+1`
-exactly once. Do not silently feed raw zero-centred gammas into ordinary RMSNorm.
-Full-sized MTP weights were not downloaded or qualified on this branch; exporter
-round-trip tests use small synthetic BF16 tensors.
+native importer splits expert gate/up along the 1280 axis, cooks supported
+matrices, and applies each Gemma `+1` exactly once. Its dense draft attention
+intentionally skips the sparse indexer, as Strata does. Do not silently feed
+raw zero-centred gammas into ordinary RMSNorm. The complete native overlay and
+shared vocabulary head were range-exported directly on .51; native architecture
+validation is described in section 6. Real-context quantization quality and
+acceptance are not yet qualified.
 
 ## 2. Correct architecture
 
@@ -430,7 +434,137 @@ still misses its cost targets. At a future qualified 40–45 TPS serial
 baseline and r=1.8, the same published E gives 53.3–80 TPS before draft
 and commit. Neither scenario is a measured production speedup.
 
-## 6. What is tested and what remains
+## 6. Native head execution on .51
+
+`fg_mtp_head_open/step/truncate/close` now runs the full trained HC-aware head.
+Placement is derived from `manifest.layer_owner[FG_LAYER_COUNT-1]`; opening on
+another rank is rejected. Internal `blk.47` aliases are a private borrowed
+model, not an assignment of the physical owner to rank 7. `fg_model_bind_view`
+retains existing tensor spans without cooking them twice or closing the
+caller's Vulkan context.
+
+The importer consumes the pinned abliterated overlay: F32 Gemma norms,
+Q8 cooked projections and all 512 Q8 native experts, with F32 router/injection/
+shared-gate views. Resident cooked weights are **2,772,584,448 bytes**.
+It preflights the remaining target-rank residency budget, then allocates
+independent F32 draft KV (**4096 bytes per cell**). Production co-residency
+still needs a real target-pack qualification.
+
+A cell at position `c` consumes authoritative target HC[c] and the plain
+embedding of token[c+1], and proposes token[c+2]. For recursive proposals the
+previous draft HC replaces target HC, but rejected draft KV must subsequently
+be truncated and repaired using authoritative target rows. The new dense
+attention uses 24 query heads, 2 KV heads, dimension 256, causal prefix masking,
+Q/K norm and partial rotary, and sigmoid gating. It never reads future rows.
+This head modifies no target GDN, PLE or QSA state.
+
+Three warmed runs use actual weights, an actual BF16-source token-198
+embedding, changing **synthetic** final HC, and draft cells 16..47. Each runs
+16 warmups and 32 timed cells. Native core timing includes its existing
+CPU top-10/dispatch/reduction synchronization. A second timer includes the
+entire 248320-token Q8 vocabulary projection and CPU argmax on **one GPU**:
+
+| Run | Native core ms/draft | Single-GPU full-vocabulary ms |
+|---:|---:|---:|
+| 1 | 3.063 | 5.748 |
+| 2 | 2.983 | 5.698 |
+| 3 | 3.140 | 5.726 |
+
+These are draft execution costs, **not measured acceptance or a ring TPS
+result**. The monolithic vocabulary timer is not the existing production
+distributed head/fanout cost. It must not be charged as zero, nor confused with
+the timing of an already integrated distributed proposer. Mean core cost is
+3.062 ms, mean local full-head cost 5.724 ms (8.786 ms combined). No operating
+point was changed: sysfs listed 1000/1500/2000 MHz with idle 1000 MHz selected
+before/after; these observations are not a loaded fixed-2000-MHz measurement.
+
+Independent NumPy computation reads the original fused HF-order overlay,
+not FG's cooked aliases. It validates pre-FC branches, both HC reads/injections,
+attention, routing and Q8K activations, expert intermediate activations and
+reduction, final HC, contracted hidden and full-vocabulary logits. On the
+first cell the maximum scaled errors are **2.87e-6 HC**, **1.84e-5 contracted**;
+vocabulary KL(CPU-reference || GPU) is **3.10e-12**, with identical argmax.
+This is **synthetic architecture/import parity**, not BF16-vs-Q8 model
+quality and not the MTP-on/off target-greedy equivalence gate.
+
+The oracle exposed two tightly coupled defects:
+
+* Small-microbatch owner scratch sizing omitted fixed QSA selection storage
+  before the live GR/MoE tail. The constructor now sizes the actual tail as
+  well as the attention family, allowing native microbatch 4.
+* Both old Q8 expert gate/up paths used the wrong Q8K activation address:
+  a one-word instead of two-word header, and a global sub-block index on top
+  of a per-block base. The fused path now uses `block_base+2+lane*8`; the
+  generic path uses `2+lane*8` in its staged current block. Existing
+  GPU-vs-GPU tests shared the header error. The regression now spans two
+  256-value activation blocks and checks both paths against scalar CPU
+  dequantization/dot/SwiGLU, in addition to fused/legacy parity. Before the
+  fix, native expert-mid scaled error was 15.7 and final-HC error 1.65.
+
+No competing N=1 GEMV performance rewrite was made. The roofline report at
+`fg-wt/roofline/results/hillclimb/ROOFLINE.md` was read; the only existing
+arithmetic-kernel edits here are the Q8 expert correctness fix above.
+The previous Q4 six-layer small-N ratios remain **1 / 1.519 / 2.199 / 2.505**;
+this native-head work is not a new small-N performance measurement.
+
+For a clearly conditional engineering projection, take a **future qualified**
+40–45 TPS serial baseline, the **target** N=4 ratio 1.8, k=3 and published
+Strata E=2.4–3.2. Charging the measured 3.062-ms core and an **ideal**, unmeasured
+four-way division of the 5.724-ms local vocabulary cost gives **41–60 TPS before
+fanout/commit overhead**. Charging the measured monolithic vocabulary cost
+instead gives 34–48 TPS. Neither is the current ring's throughput: today's
+N=4 block ratio is 2.505, the ring ratio/fanout are unmeasured, and there is no FG
+acceptance sample. These scenarios identify integration/optimization work;
+they are not limits on MTP. Never combine N=2's ratio with k=3's expected yield.
+
+The dense-attention CPU oracle covers 16 causal rows (max absolute error
+5.53e-8), including hostile future KV. Native last-cell truncate/rebuild is
+byte-exact in all three runs. Borrowed tensor/context lifetime and wrong-owner
+tests pass. Optional per-head trace callbacks add diagnostic readbacks only
+when explicitly enabled by the benchmark's `--dump-first`; no new environment
+flag or default serving path is introduced.
+
+Reproduce after exporting the pinned overlay and a shared head/embedding:
+
+```
+make -j8 flash-gordon tools/bench-mtp-head tests/test_fg_vk
+./tools/bench-mtp-head --self-test
+DS4_REMOTE_TEST_FILTER=expert_decode_fused_q8_gates ./tests/test_fg_vk
+./tools/bench-mtp-head --overlay native-q8.gguf --head-q8 shared-head.q8 \
+  --embedding-f32 embedding.f32 --warmup 16 --iterations 32 \
+  --dump-first .build/native-first.bin
+OPENBLAS_NUM_THREADS=4 python tools/mtp_head_reference.py \
+  --overlay native-q8.gguf --head-q8 shared-head.q8 \
+  --dump .build/native-first.bin --output .build/native-reference.json
+```
+
+`tools/mtp-head-build.sh` and `mtp-head-measure.sh` provide the .51 recipe,
+including source/input/binary hashes, raw timings, CPU trace comparisons and
+clock observations. `mtp-head-export.sh` and `mtp-head-shared.sh` fetch only
+required pinned source ranges; the large downloads stay on the blade.
+See `results/hillclimb/MTP_NATIVE_HEAD.md` and the JSON/evidence archive.
+
+### What is needed to measure real acceptance
+
+No production final-HC capture is available; .42–.49 remain reserved for the
+A/B agent. A partial-layer output is **not** a trained-head final-HC substitute.
+Three available blades cannot turn partial-layer states into legitimate
+acceptance data. Supply either a production-ring lease or full-target captures
+covering **prompt warmfill plus greedy continuations** for chat and code:
+
+* pre-final-mixer 4x2560 F32 HC for every prompt/continuation position;
+* token IDs, actual next-token embedding vectors (or the matching embedding
+  pack), target greedy next-token labels and prompt/decode boundaries;
+* positions/session identity and exact pack, binary and kernel hashes.
+
+Cold draft KV on a decode-only suffix must be labeled cold, not normal
+acceptance. Once captures exist, warm the native KV with true prompt pairs,
+measure k=1..3 conditional prefix survival, stop on first mismatch, and
+truncate/repair from true target rows. Published Strata E=2.4–3.2 remains only
+the labeled external estimate. End-to-end greedy identity still requires the
+causal ring integration; the synthetic head oracle does not satisfy it.
+
+## 7. What is tested and what remains
 
 * Host synthetic autoregressive model: k=1..3, every rejection position,
   output caps, EOS and injected verify/replay/commit errors. Speculative output
@@ -489,9 +623,9 @@ was fixed immediately; no production deployment or service was changed.
 
 Remaining work before even an eight-rank correctness qualification:
 
-1. Implement/import the real HC-aware MTP layer, aliases/cooking, separate
-   draft KV warmfill and the MTP mixer/shared head handoff; verify its outputs
-   against the Qwen4Exp reference. Qualify Q8 quality, not only file layout.
+1. Integrate the now-executable native head with the final target owner,
+   actual next-token embedding, distributed shared head and prompt KV warmfill/
+   repair. Qualify real-context Q8 quality, not only synthetic import parity.
 2. Finish tuning and qualifying the dedicated small-N verifier, including
    every rank's service and output-head costs. Replace rejected-prefix
    whole-block replay with cached-projection recurrence/conv commit or

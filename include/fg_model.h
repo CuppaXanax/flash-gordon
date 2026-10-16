@@ -10,6 +10,10 @@ fg_status fg_model_open(fg_model **out,const fg_manifest *manifest,const char *p
 fg_status fg_model_open_replicated(fg_model **out,const fg_manifest *manifest,const char *pack_dir,uint32_t rank,fg_error *err);
 fg_status fg_model_open_coordinator(fg_model **out,const fg_manifest *manifest,const char *pack_dir,
                                     uint32_t rank,bool owned_layers_only,fg_error *err);
+/* Retain tensor views without cooking/mutating caller weights. The caller keeps
+ * the manifest and Vulkan context alive until this view is closed. */
+fg_status fg_model_bind_view(fg_model **out,fg_vk_context *vk,
+    const fg_manifest *manifest,uint32_t rank,fg_vk_tensor *const *tensors,fg_error *err);
 void fg_model_close(fg_model *model);
 fg_vk_context *fg_model_vk(fg_model *model);
 fg_vk_tensor *fg_model_tensor(fg_model *model,const char *name);

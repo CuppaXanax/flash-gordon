@@ -116,7 +116,7 @@ void main() {
                 float delta = (scale_byte & 2u) == 0u ? scale.x : scale.y;
                 uint quant_byte = expert_base + row_tile_q8 * pc.tile_bytes +
                     q8_quant_offset + (tile_row_q8 * q8_blocks + s_global) * 32u;
-                uint act_word = 1u + s_global * 8u;
+                uint act_word = 2u + lane * 8u;
                 float sub = 0.0;
                 for (uint i = 0u; i < 8u; i++)
                     sub += dot(vec4(unpack8(int(wb[(quant_byte >> 2u) + i]))),

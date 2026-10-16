@@ -14,9 +14,10 @@ same binary, and test/packer tooling. No environment variable may be required to
 reach the validated operating point.
 
 MTP uses the existing `--experimental-mtp` **CLI** flag, not an environment
-variable. It is default-off and still fails closed: head execution and exact
-batched ring verification are not linked. See [MTP.md](MTP.md) for the audited
-weights, research primitives and qualification gates. The source exporter and
+variable. It is default-off and still fails closed: native head execution is
+benchmarked, but serving integration and exact batched ring verification are
+not linked. See [MTP.md](MTP.md) for the audited weights and qualification
+gates. The source exporter and
 causal benchmark use command-line arguments; they introduce no new `FG_*` flags.
 
 Status values:

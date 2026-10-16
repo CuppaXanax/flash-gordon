@@ -190,6 +190,17 @@ fg_vk_tensor *fg_owner_session_input(fg_owner_executor *executor,uint32_t sessio
 }
 
 static fg_status scratch(fg_vk_context *vk,uint64_t values,fg_vk_tensor **out,fg_error *err){return fg_vk_tensor_create(vk,values*4u,out,err);}
+static uint64_t owner_family_bytes(const fg_manifest *manifest,uint32_t tokens){
+    uint64_t tail=fg_align_up_u64(fg_qsa_attention_scratch_bytes(tokens),FG_ALIGNMENT)+
+        fg_qsa_selection_scratch_bytes(manifest->native_context,tokens);
+    const uint64_t live[]={(uint64_t)tokens*FG_HIDDEN_SIZE*4u,
+        (uint64_t)tokens*FG_GROUP_SIZE*4u,(uint64_t)tokens*FG_HIDDEN_SIZE*4u,
+        (uint64_t)tokens*4u};
+    for(uint32_t i=0;i<sizeof(live)/sizeof(live[0]);i++)
+        tail=fg_align_up_u64(tail+live[i],FG_ALIGNMENT);
+    uint64_t family=fg_qsa_attention_family_scratch_bytes(tokens);
+    return tail>family?tail:family;
+}
 static fg_status family_view(fg_owner_executor *executor,uint64_t *offset,uint64_t bytes,
                              fg_vk_tensor **out,fg_error *err){
     fg_vk_tensor *arena=executor?executor->attention_family_scratch:NULL;
@@ -342,7 +353,7 @@ static fg_status owner_executor_create_impl(fg_owner_executor **out,fg_model *mo
     if(status==FG_OK)status=fg_vk_tensor_create(
         vk,tokens*FG_TOP_K*4u,&executor->prefill_gates,err);
     if(status==FG_OK)status=fg_vk_tensor_create(
-        vk,fg_qsa_attention_family_scratch_bytes(executor->max_tokens),
+        vk,owner_family_bytes(manifest,executor->max_tokens),
         &executor->attention_family_scratch,err);
 
     if(status==FG_OK)status=create_attention_family_views(executor,err);

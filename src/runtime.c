@@ -5492,8 +5492,8 @@ fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
             FG_MTP_CAPABILITY_UNSUPPORTED;
         if(requested_mtp){
             fg_error_set(err,FG_ERR_UNAVAILABLE,
-                         "MTP head execution and an exact batched ring verifier are not "
-                         "linked; see docs/MTP.md; unset --experimental-mtp");
+                         "MTP native-head serving integration and an exact batched ring "
+                         "verifier are not linked; see docs/MTP.md; unset --experimental-mtp");
             status=FG_ERR_UNAVAILABLE;
         }
     }

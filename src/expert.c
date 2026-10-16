@@ -422,6 +422,13 @@ fg_status fg_expert_selected_readback(fg_expert_executor *executor,
     return fg_vk_tensor_read(executor->selected,0,selected,
         (uint64_t)tokens*FG_TOP_K*sizeof(*selected),err);
 }
+fg_status fg_expert_mid_readback(fg_expert_executor *executor,uint32_t pairs,
+    float *values,fg_error *err){
+    if(!executor||!values||!pairs||pairs>executor->max_tokens*FG_TOP_K){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid expert intermediate readback");return FG_ERR_ARGUMENT;
+    }
+    return fg_vk_tensor_read(executor->mid,0,values,(uint64_t)pairs*640u*4u,err);
+}
 
 fg_status fg_expert_decode_chain(fg_expert_executor *executor,uint32_t layer,
     const fg_vk_tensor *activation,const fg_vk_tensor *router_logits,

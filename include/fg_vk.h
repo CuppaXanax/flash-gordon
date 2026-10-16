@@ -348,6 +348,10 @@ fg_status fg_vk_qsa_prepare(fg_vk_context *context,fg_vk_tensor *query,fg_vk_ten
                             const fg_vk_tensor *raw_key,const fg_vk_tensor *query_norm,
                             const fg_vk_tensor *key_norm,const fg_vk_tensor *position,
                             fg_error *err);
+fg_status fg_vk_mtp_attention(fg_vk_context *context,fg_vk_tensor *output,
+    fg_vk_tensor *keys,fg_vk_tensor *values,const fg_vk_tensor *query,
+    const fg_vk_tensor *gate,const fg_vk_tensor *key,const fg_vk_tensor *value,
+    uint32_t cell,fg_error *err);
 fg_status fg_vk_qsa_prepare_prefill(fg_vk_context *context,fg_vk_tensor *query,
                                     fg_vk_tensor *gate,fg_vk_tensor *key,
                                     const fg_vk_tensor *raw_query_gate,

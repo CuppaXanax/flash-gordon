@@ -13,8 +13,8 @@ param(
 $ErrorActionPreference = "Stop"
 if (-not $Targets.Count) { throw "An explicit nonempty MTP target set is required." }
 foreach ($target in $Targets) {
-    if ($target -notin @("192.168.42.51", "192.168.42.52")) {
-        throw "MTP experiments may use only .51 and .52."
+    if ($target -notin @("192.168.42.51", "192.168.42.52", "192.168.42.53")) {
+        throw "MTP experiments may use only .51, .52 and .53."
     }
     foreach ($remotePath in @($UploadDestination, $DownloadSource)) {
         if ($remotePath -and -not $remotePath.StartsWith("/home/xander/hc-mtp/")) {
