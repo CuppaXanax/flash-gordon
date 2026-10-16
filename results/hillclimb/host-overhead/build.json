@@ -1,0 +1,14 @@
+[
+  {
+    "IP": "192.168.42.50",
+    "ExitCode": 0,
+    "Stdout": "FGFLAGS code=41 test=28 doc=69 removed=18 status=PASS\ne1183e925811e530428aaf0f5acdcbb688ee89de32b88d1b9fe0fbea240426f2  flash-gordon",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.51",
+    "ExitCode": 0,
+    "Stdout": "FGFLAGS code=41 test=28 doc=69 removed=18 status=PASS\ne1183e925811e530428aaf0f5acdcbb688ee89de32b88d1b9fe0fbea240426f2  flash-gordon",
+    "Stderr": ""
+  }
+]

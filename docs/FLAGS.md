@@ -97,6 +97,7 @@ slice ranks (the foreign loader names the exact missing span at startup).
 | Flag | Default | Effect | Status |
 |---|---|---|---|
 | `FG_DECODE_STATIC` | `1` | Static recorded replay for chained ring blocks. `0` disables it; a Vulkan profile or numeric trace also disables it. | validated default |
+| `FG_DECODE_SUBMIT_GROUP` | unset (off) | `1`: one-submit static GDN/dynamic QSA block. `2`: publish the first GDN run asynchronously, then submit the remainder to retain CPU/GPU overlap. Existing kernels; mutable uploads are snapshotted; sparse/undersized QSA caches and unallocated index segments fall back. Experimental; fleet greedy/hash and performance gates remain required. | variant (opt-in) |
 | `FG_STATIC_RERECORD` | unset (off) | Re-record the replay run every N tokens (0/unset keeps the recorded run) to bisect the staleness horizon. | profiling |
 | `FG_STATIC_CHECK` | unset (off) | Per-token finite-output check of the replayed static run. | profiling |
 | `FG_SET_TRACE` | unset (off) | Trace the first dynamic descriptor-epoch crossing into the static set range. | profiling |

@@ -1,0 +1,622 @@
+{
+  "native": {
+    "192.168.42.50": {
+      "mean_ms_per_synthetic_block": {
+        "0": 3.1290288,
+        "1": 3.1690196,
+        "2": 3.1099731999999998
+      },
+      "one_submit_vs_baseline": {
+        "mean_speedup": 0.9873807673918648,
+        "paired_round_bootstrap_95pct": [
+          0.9864550347479449,
+          0.988956222810412
+        ],
+        "noninferior_lower_ge_0_97": true,
+        "win_lower_gt_1": false,
+        "scope": "synthetic warm replay only; not a production acceptance gate"
+      },
+      "early_publish_vs_baseline": {
+        "mean_speedup": 1.0061272816120472,
+        "paired_round_bootstrap_95pct": [
+          1.0052128141304673,
+          1.0077168155324334
+        ],
+        "noninferior_lower_ge_0_97": true,
+        "win_lower_gt_1": true,
+        "scope": "synthetic warm replay only; not a production acceptance gate"
+      },
+      "samples": [
+        {
+          "round": 0,
+          "grouped": 0,
+          "tokens": 128,
+          "wall_ms": 3.138709,
+          "submits_per_token": 7.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70118490862568,
+          "end_ns": 70118892633841
+        },
+        {
+          "round": 0,
+          "grouped": 1,
+          "tokens": 128,
+          "wall_ms": 3.168968,
+          "submits_per_token": 1.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70119300186179,
+          "end_ns": 70119705839089
+        },
+        {
+          "round": 0,
+          "grouped": 2,
+          "tokens": 128,
+          "wall_ms": 3.109936,
+          "submits_per_token": 2.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70120104014689,
+          "end_ns": 70120502113491
+        },
+        {
+          "round": 1,
+          "grouped": 1,
+          "tokens": 128,
+          "wall_ms": 3.168892,
+          "submits_per_token": 1.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70120907854336,
+          "end_ns": 70121313498026
+        },
+        {
+          "round": 1,
+          "grouped": 2,
+          "tokens": 128,
+          "wall_ms": 3.110552,
+          "submits_per_token": 2.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70121711572747,
+          "end_ns": 70122109750747
+        },
+        {
+          "round": 1,
+          "grouped": 0,
+          "tokens": 128,
+          "wall_ms": 3.126259,
+          "submits_per_token": 7.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70122509851212,
+          "end_ns": 70122910028022
+        },
+        {
+          "round": 2,
+          "grouped": 2,
+          "tokens": 128,
+          "wall_ms": 3.109472,
+          "submits_per_token": 2.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70123308244093,
+          "end_ns": 70123706283046
+        },
+        {
+          "round": 2,
+          "grouped": 0,
+          "tokens": 128,
+          "wall_ms": 3.126806,
+          "submits_per_token": 7.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70124106838717,
+          "end_ns": 70124507085662
+        },
+        {
+          "round": 2,
+          "grouped": 1,
+          "tokens": 128,
+          "wall_ms": 3.170483,
+          "submits_per_token": 1.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70124913134124,
+          "end_ns": 70125318982001
+        },
+        {
+          "round": 3,
+          "grouped": 0,
+          "tokens": 128,
+          "wall_ms": 3.127177,
+          "submits_per_token": 7.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70125719392245,
+          "end_ns": 70126119686723
+        },
+        {
+          "round": 3,
+          "grouped": 1,
+          "tokens": 128,
+          "wall_ms": 3.16875,
+          "submits_per_token": 1.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70126525463042,
+          "end_ns": 70126931088572
+        },
+        {
+          "round": 3,
+          "grouped": 2,
+          "tokens": 128,
+          "wall_ms": 3.110051,
+          "submits_per_token": 2.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70127329225715,
+          "end_ns": 70127727339169
+        },
+        {
+          "round": 4,
+          "grouped": 1,
+          "tokens": 128,
+          "wall_ms": 3.168005,
+          "submits_per_token": 1.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70128133011594,
+          "end_ns": 70128538542175
+        },
+        {
+          "round": 4,
+          "grouped": 2,
+          "tokens": 128,
+          "wall_ms": 3.109855,
+          "submits_per_token": 2.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70128936758598,
+          "end_ns": 70129334846111
+        },
+        {
+          "round": 4,
+          "grouped": 0,
+          "tokens": 128,
+          "wall_ms": 3.126193,
+          "submits_per_token": 7.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70129735059719,
+          "end_ns": 70130135228450
+        }
+      ]
+    },
+    "192.168.42.51": {
+      "mean_ms_per_synthetic_block": {
+        "0": 3.129455,
+        "1": 3.1705306,
+        "2": 3.1099244
+      },
+      "one_submit_vs_baseline": {
+        "mean_speedup": 0.9870447311024475,
+        "paired_round_bootstrap_95pct": [
+          0.9858220608392003,
+          0.9893548594802205
+        ],
+        "noninferior_lower_ge_0_97": true,
+        "win_lower_gt_1": false,
+        "scope": "synthetic warm replay only; not a production acceptance gate"
+      },
+      "early_publish_vs_baseline": {
+        "mean_speedup": 1.0062798032809543,
+        "paired_round_bootstrap_95pct": [
+          1.0050175723384414,
+          1.008426035342393
+        ],
+        "noninferior_lower_ge_0_97": true,
+        "win_lower_gt_1": true,
+        "scope": "synthetic warm replay only; not a production acceptance gate"
+      },
+      "samples": [
+        {
+          "round": 0,
+          "grouped": 0,
+          "tokens": 128,
+          "wall_ms": 3.143658,
+          "submits_per_token": 7.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70118467912843,
+          "end_ns": 70118870316993
+        },
+        {
+          "round": 0,
+          "grouped": 1,
+          "tokens": 128,
+          "wall_ms": 3.170126,
+          "submits_per_token": 1.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70119277926655,
+          "end_ns": 70119683728281
+        },
+        {
+          "round": 0,
+          "grouped": 2,
+          "tokens": 128,
+          "wall_ms": 3.110992,
+          "submits_per_token": 2.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70120081868526,
+          "end_ns": 70120480103781
+        },
+        {
+          "round": 1,
+          "grouped": 1,
+          "tokens": 128,
+          "wall_ms": 3.169738,
+          "submits_per_token": 1.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70120886211519,
+          "end_ns": 70121291963735
+        },
+        {
+          "round": 1,
+          "grouped": 2,
+          "tokens": 128,
+          "wall_ms": 3.10905,
+          "submits_per_token": 2.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70121690052175,
+          "end_ns": 70122088038194
+        },
+        {
+          "round": 1,
+          "grouped": 0,
+          "tokens": 128,
+          "wall_ms": 3.125574,
+          "submits_per_token": 7.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70122488186896,
+          "end_ns": 70122888275479
+        },
+        {
+          "round": 2,
+          "grouped": 2,
+          "tokens": 128,
+          "wall_ms": 3.111374,
+          "submits_per_token": 2.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70123286533642,
+          "end_ns": 70123684818231
+        },
+        {
+          "round": 2,
+          "grouped": 0,
+          "tokens": 128,
+          "wall_ms": 3.126159,
+          "submits_per_token": 7.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70124084900116,
+          "end_ns": 70124485064492
+        },
+        {
+          "round": 2,
+          "grouped": 1,
+          "tokens": 128,
+          "wall_ms": 3.171335,
+          "submits_per_token": 1.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70124891109018,
+          "end_ns": 70125297066634
+        },
+        {
+          "round": 3,
+          "grouped": 0,
+          "tokens": 128,
+          "wall_ms": 3.126471,
+          "submits_per_token": 7.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70125697298244,
+          "end_ns": 70126097502081
+        },
+        {
+          "round": 3,
+          "grouped": 1,
+          "tokens": 128,
+          "wall_ms": 3.171347,
+          "submits_per_token": 1.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70126503556583,
+          "end_ns": 70126909514884
+        },
+        {
+          "round": 3,
+          "grouped": 2,
+          "tokens": 128,
+          "wall_ms": 3.10886,
+          "submits_per_token": 2.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70127307693760,
+          "end_ns": 70127705654639
+        },
+        {
+          "round": 4,
+          "grouped": 1,
+          "tokens": 128,
+          "wall_ms": 3.170107,
+          "submits_per_token": 1.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70128111437697,
+          "end_ns": 70128517236479
+        },
+        {
+          "round": 4,
+          "grouped": 2,
+          "tokens": 128,
+          "wall_ms": 3.109346,
+          "submits_per_token": 2.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70128915326027,
+          "end_ns": 70129313349604
+        },
+        {
+          "round": 4,
+          "grouped": 0,
+          "tokens": 128,
+          "wall_ms": 3.125413,
+          "submits_per_token": 7.0,
+          "cooked_bytes_per_token": 1002700800,
+          "begin_ns": 70129713449949,
+          "end_ns": 70130113518058
+        }
+      ]
+    }
+  },
+  "cpu_hook_means": {
+    "0": {
+      "submit_ms": 0.357853821875,
+      "wait_ms": 2.54816436875,
+      "reset_ms": 0.0065642921875,
+      "recording_ms": 0.05540066875,
+      "wall_ms": 3.1595831140625,
+      "other_ms": 0.19159996249999978,
+      "host_outside_fence_ms": 0.6114187453124998,
+      "submit_calls": 7.0,
+      "wait_calls": 8.0,
+      "reset_calls": 6.0
+    },
+    "1": {
+      "submit_ms": 0.08855521718750001,
+      "wait_ms": 3.0557654125,
+      "reset_ms": 0.00503665,
+      "recording_ms": 0.0484508890625,
+      "wall_ms": 3.28557889375,
+      "other_ms": 0.08777072499999994,
+      "host_outside_fence_ms": 0.2298134812499999,
+      "submit_calls": 1.0,
+      "wait_calls": 1.0,
+      "reset_calls": 6.0
+    },
+    "2": {
+      "submit_ms": 0.1356786703125,
+      "wait_ms": 2.8282185546875,
+      "reset_ms": 0.005205303125,
+      "recording_ms": 0.0499779578125,
+      "wall_ms": 3.1238597109375,
+      "other_ms": 0.10477922499999978,
+      "host_outside_fence_ms": 0.29564115624999976,
+      "submit_calls": 2.0,
+      "wait_calls": 2.0,
+      "reset_calls": 6.0
+    }
+  },
+  "cpu_hook_samples": [
+    {
+      "submit_ms": 0.3590447109375,
+      "wait_ms": 2.5459657421875,
+      "reset_ms": 0.006389375,
+      "recording_ms": 0.0557440625,
+      "wall_ms": 3.159098578125,
+      "other_ms": 0.1919546875,
+      "host_outside_fence_ms": 0.6131328359374999,
+      "submit_calls": 7.0,
+      "wait_calls": 8.0,
+      "reset_calls": 6.0,
+      "mode": 0,
+      "round": 0
+    },
+    {
+      "submit_ms": 0.0889190546875,
+      "wait_ms": 3.055763609375,
+      "reset_ms": 0.0050781875,
+      "recording_ms": 0.04771675,
+      "wall_ms": 3.2856845,
+      "other_ms": 0.08820689843749996,
+      "host_outside_fence_ms": 0.22992089062499987,
+      "submit_calls": 1.0,
+      "wait_calls": 1.0,
+      "reset_calls": 6.0,
+      "mode": 1,
+      "round": 0
+    },
+    {
+      "submit_ms": 0.135449890625,
+      "wait_ms": 2.8285002578125,
+      "reset_ms": 0.0051204765625,
+      "recording_ms": 0.0496971171875,
+      "wall_ms": 3.1231429921875,
+      "other_ms": 0.10437524999999992,
+      "host_outside_fence_ms": 0.294642734375,
+      "submit_calls": 2.0,
+      "wait_calls": 2.0,
+      "reset_calls": 6.0,
+      "mode": 2,
+      "round": 0
+    },
+    {
+      "submit_ms": 0.0889585078125,
+      "wait_ms": 3.0554218046875,
+      "reset_ms": 0.005161703125,
+      "recording_ms": 0.0486019375,
+      "wall_ms": 3.2858113203125,
+      "other_ms": 0.08766736718749968,
+      "host_outside_fence_ms": 0.23038951562499976,
+      "submit_calls": 1.0,
+      "wait_calls": 1.0,
+      "reset_calls": 6.0,
+      "mode": 1,
+      "round": 1
+    },
+    {
+      "submit_ms": 0.1353878203125,
+      "wait_ms": 2.8288919921875,
+      "reset_ms": 0.00507359375,
+      "recording_ms": 0.050212296875,
+      "wall_ms": 3.12382721875,
+      "other_ms": 0.10426151562499975,
+      "host_outside_fence_ms": 0.2949352265624996,
+      "submit_calls": 2.0,
+      "wait_calls": 2.0,
+      "reset_calls": 6.0,
+      "mode": 2,
+      "round": 1
+    },
+    {
+      "submit_ms": 0.3504549453125,
+      "wait_ms": 2.560201234375,
+      "reset_ms": 0.006377546875,
+      "recording_ms": 0.0545377890625,
+      "wall_ms": 3.158788046875,
+      "other_ms": 0.18721653124999982,
+      "host_outside_fence_ms": 0.5985868124999998,
+      "submit_calls": 7.0,
+      "wait_calls": 8.0,
+      "reset_calls": 6.0,
+      "mode": 0,
+      "round": 1
+    },
+    {
+      "submit_ms": 0.1354133359375,
+      "wait_ms": 2.8280633828125,
+      "reset_ms": 0.0053613984375,
+      "recording_ms": 0.049448234375,
+      "wall_ms": 3.123295140625,
+      "other_ms": 0.10500878906249955,
+      "host_outside_fence_ms": 0.29523175781249966,
+      "submit_calls": 2.0,
+      "wait_calls": 2.0,
+      "reset_calls": 6.0,
+      "mode": 2,
+      "round": 2
+    },
+    {
+      "submit_ms": 0.3598901953125,
+      "wait_ms": 2.544472234375,
+      "reset_ms": 0.00659746875,
+      "recording_ms": 0.05579271875,
+      "wall_ms": 3.1601948359375,
+      "other_ms": 0.19344221874999956,
+      "host_outside_fence_ms": 0.6157226015624997,
+      "submit_calls": 7.0,
+      "wait_calls": 8.0,
+      "reset_calls": 6.0,
+      "mode": 0,
+      "round": 2
+    },
+    {
+      "submit_ms": 0.0881479609375,
+      "wait_ms": 3.055522453125,
+      "reset_ms": 0.0049602109375,
+      "recording_ms": 0.0490254609375,
+      "wall_ms": 3.2849010859375,
+      "other_ms": 0.0872449999999998,
+      "host_outside_fence_ms": 0.22937863281249982,
+      "submit_calls": 1.0,
+      "wait_calls": 1.0,
+      "reset_calls": 6.0,
+      "mode": 1,
+      "round": 2
+    },
+    {
+      "submit_ms": 0.3607243984375,
+      "wait_ms": 2.5445036875,
+      "reset_ms": 0.0068314609375,
+      "recording_ms": 0.0554103515625,
+      "wall_ms": 3.16066853125,
+      "other_ms": 0.1931986328124995,
+      "host_outside_fence_ms": 0.6161648437499996,
+      "submit_calls": 7.0,
+      "wait_calls": 8.0,
+      "reset_calls": 6.0,
+      "mode": 0,
+      "round": 3
+    },
+    {
+      "submit_ms": 0.087964578125,
+      "wait_ms": 3.05628871875,
+      "reset_ms": 0.0049591796875,
+      "recording_ms": 0.0487065078125,
+      "wall_ms": 3.2857918359375,
+      "other_ms": 0.08787285156250002,
+      "host_outside_fence_ms": 0.22950311718749994,
+      "submit_calls": 1.0,
+      "wait_calls": 1.0,
+      "reset_calls": 6.0,
+      "mode": 1,
+      "round": 3
+    },
+    {
+      "submit_ms": 0.1355753828125,
+      "wait_ms": 2.8280174609375,
+      "reset_ms": 0.0053233203125,
+      "recording_ms": 0.0505393984375,
+      "wall_ms": 3.12438934375,
+      "other_ms": 0.10493378124999975,
+      "host_outside_fence_ms": 0.2963718828124997,
+      "submit_calls": 2.0,
+      "wait_calls": 2.0,
+      "reset_calls": 6.0,
+      "mode": 2,
+      "round": 3
+    },
+    {
+      "submit_ms": 0.088785984375,
+      "wait_ms": 3.0558304765625,
+      "reset_ms": 0.00502396875,
+      "recording_ms": 0.0482037890625,
+      "wall_ms": 3.2857057265625,
+      "other_ms": 0.08786150781250024,
+      "host_outside_fence_ms": 0.2298752500000001,
+      "submit_calls": 1.0,
+      "wait_calls": 1.0,
+      "reset_calls": 6.0,
+      "mode": 1,
+      "round": 4
+    },
+    {
+      "submit_ms": 0.136566921875,
+      "wait_ms": 2.8276196796875,
+      "reset_ms": 0.0051477265625,
+      "recording_ms": 0.0499927421875,
+      "wall_ms": 3.124643859375,
+      "other_ms": 0.10531678906249997,
+      "host_outside_fence_ms": 0.29702417968749995,
+      "submit_calls": 2.0,
+      "wait_calls": 2.0,
+      "reset_calls": 6.0,
+      "mode": 2,
+      "round": 4
+    },
+    {
+      "submit_ms": 0.359154859375,
+      "wait_ms": 2.5456789453125,
+      "reset_ms": 0.006625609375,
+      "recording_ms": 0.055518421875,
+      "wall_ms": 3.159165578125,
+      "other_ms": 0.1921877421875,
+      "host_outside_fence_ms": 0.6134866328125002,
+      "submit_calls": 7.0,
+      "wait_calls": 8.0,
+      "reset_calls": 6.0,
+      "mode": 0,
+      "round": 4
+    }
+  ],
+  "binary_hashes": "e1183e925811e530428aaf0f5acdcbb688ee89de32b88d1b9fe0fbea240426f2  flash-gordon\n78cb7020c1f3a466cf836c01305d4dfb39b3ffa56a3161727f453c3597356c6b  tests/test_fg_vk\n144c95d2be05f398f5b200c186478c3441bad8fa41659562fd3293243ac18483  tests/test_qsa_prefill\n",
+  "kernel": "6.19.10-300.fc44.x86_64",
+  "trace_archive_sha256": "0389424a1270d0fd247041e1b0a33c37001662196375a9c575f457c4b3404c33",
+  "limitations": [
+    "No production access, pack, model-level greedy hashes or fleet TPS measurements.",
+    "Unchanged arithmetic kernels; synthetic outputs compared byte-for-byte.",
+    "CPU-only preload hook perturbs recording and scheduling; native timing is separate.",
+    "Fence-call blocking is not measured GPU busy time.",
+    "vkResetFences is unhooked and included in residual other_ms."
+  ]
+}

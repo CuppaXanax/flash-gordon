@@ -39,6 +39,7 @@ expected_code="$(printf '%s\n' \
     FG_DECODE_RING \
     FG_DECODE_RING_TRACE \
     FG_DECODE_STATIC \
+    FG_DECODE_SUBMIT_GROUP \
     FG_EVAL_LOGITS \
     FG_EVAL_LOGITS_DIR \
     FG_EXPERT_Q8_WIDE \

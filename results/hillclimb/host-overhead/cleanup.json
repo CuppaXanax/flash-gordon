@@ -1,0 +1,14 @@
+[
+  {
+    "IP": "192.168.42.50",
+    "ExitCode": 0,
+    "Stdout": "e1183e925811e530428aaf0f5acdcbb688ee89de32b88d1b9fe0fbea240426f2  flash-gordon\n78cb7020c1f3a466cf836c01305d4dfb39b3ffa56a3161727f453c3597356c6b  tests/test_fg_vk\n144c95d2be05f398f5b200c186478c3441bad8fa41659562fd3293243ac18483  tests/test_qsa_prefill\nOffline release retained; scratch removed; no service launched.",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.51",
+    "ExitCode": 0,
+    "Stdout": "e1183e925811e530428aaf0f5acdcbb688ee89de32b88d1b9fe0fbea240426f2  flash-gordon\n78cb7020c1f3a466cf836c01305d4dfb39b3ffa56a3161727f453c3597356c6b  tests/test_fg_vk\n144c95d2be05f398f5b200c186478c3441bad8fa41659562fd3293243ac18483  tests/test_qsa_prefill\nOffline release retained; scratch removed; no service launched.",
+    "Stderr": ""
+  }
+]

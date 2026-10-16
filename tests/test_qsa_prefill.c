@@ -213,6 +213,99 @@ static int select_resolve_parity(fg_qsa_session *s,uint32_t tokens){
     return 1;
 }
 
+static int select_resolve_grouped(fg_qsa_session *s){
+    fg_vk_context *vk=fg_model_vk(s->model);
+    uint32_t max_blocks=s->max_blocks,committed=s->committed[0];
+    fg_qsa_page_cache_destroy(s->cache);s->cache=NULL;
+    fg_vk_tensor_destroy(s->cache_records);s->cache_records=NULL;
+    s->max_blocks=s->cache_pages=1024u;
+    REQUIRE(ensure_page_cache(s,&error)==FG_OK);
+    qsa_cache_reset(s);
+    uint32_t reference[512],selected[512],count_ref=0,count=0;
+    bool fallback=false;
+    REQUIRE(fg_vk_begin(vk,&error)==FG_OK);
+    REQUIRE(select_blocks(s,0u,s->index_query_view,4095u,reference,
+        &count_ref,false,&error)==FG_OK);
+    for(uint32_t block=0;block<1024u;block++){
+        uint32_t slot=0;bool hit=false;
+        REQUIRE(qsa_cache_acquire(s,3u,block,&slot,&hit,&error)==FG_OK);
+    }
+    REQUIRE(s->cached_prefix[0]==1024u);
+    s->committed[0]=4094u;
+    REQUIRE(fg_qsa_session_submit_group_ready(s,0u,5u,4094u));
+    REQUIRE(!fg_qsa_session_submit_group_ready(s,0u,5u,4093u));
+    REQUIRE(!fg_qsa_session_submit_group_ready(s,6u,7u,4094u));
+    s->cache_pages--;
+    REQUIRE(!fg_qsa_session_submit_group_ready(s,0u,5u,4094u));
+    s->cache_pages++;
+    fg_vk_tensor *segment=s->index_keys[0][0];s->index_keys[0][0]=NULL;
+    REQUIRE(!fg_qsa_session_submit_group_ready(s,0u,5u,4094u));
+    s->index_keys[0][0]=segment;
+    uint8_t *records=fg_vk_tensor_map(s->cache_records);
+    for(uint64_t i=0;i<fg_vk_tensor_bytes(s->cache_records);i++)
+        records[i]=(uint8_t)(i*17u+(i/FG_QSA_PAGE_RECORD_BYTES)*31u);
+    fg_vk_counters before={0},after={0};fg_vk_get_counters(vk,&before);
+    REQUIRE(fg_vk_submit_group_begin(vk,&error)==FG_OK);
+    REQUIRE(fg_vk_begin(vk,&error)==FG_OK);
+    REQUIRE(select_blocks_resolve(s,0u,s->index_query_view,4095u,selected,
+        &count,&fallback,&error)==FG_OK);
+    REQUIRE(fg_vk_batch_active(vk)&&count==count_ref&&!fallback);
+    REQUIRE(fg_vk_qsa_record_gather(vk,s->selected_records,s->cache_records,
+        s->select_resolved,0u,s->cache_pages*FG_Q38_QSA_COMPRESS_RATIO,
+        count,1023u*FG_Q38_QSA_COMPRESS_RATIO,3u,&error)==FG_OK);
+    fg_vk_get_counters(vk,&after);
+    REQUIRE(after.submissions==before.submissions);
+    REQUIRE(fg_vk_submit_group_end(vk,&error)==FG_OK);
+    fg_vk_get_counters(vk,&after);
+    REQUIRE(after.submissions-before.submissions==1u);
+    uint32_t slots[512];
+    REQUIRE(fg_vk_tensor_read(s->select_resolved,0,slots,count*4u,&error)==FG_OK);
+    REQUIRE(!memcmp(slots,reference,count*4u));
+    const uint8_t *gathered=fg_vk_tensor_map(s->selected_records);
+    for(uint32_t i=0;i<count;i++)
+        REQUIRE(!memcmp(gathered+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,
+            records+(uint64_t)reference[i]*FG_QSA_PAGE_RECORD_BYTES,FG_QSA_PAGE_RECORD_BYTES));
+    REQUIRE(!memcmp(gathered+(uint64_t)count*FG_QSA_PAGE_RECORD_BYTES,
+        records+1023u*FG_QSA_PAGE_RECORD_BYTES,3u*FG_Q38_QSA_TOKEN_RECORD_BYTES));
+    fg_vk_tensor *first=NULL;
+    REQUIRE(make_tensor(s,4u*FG_QSA_PAGE_RECORD_BYTES,&first,&error)==FG_OK);
+    REQUIRE(fg_vk_submit_group_begin(vk,&error)==FG_OK);
+    for(uint32_t pass=0;pass<2u;pass++){
+        uint32_t ids[4]={1u+pass*8u,3u+pass*8u,5u+pass*8u,7u+pass*8u};
+        REQUIRE(fg_vk_begin(vk,&error)==FG_OK);
+        REQUIRE(fg_vk_tensor_write_ordered(s->ids[0],0,ids,sizeof(ids),&error)==FG_OK);
+        REQUIRE(fg_vk_qsa_record_gather(vk,pass?s->selected_records:first,
+            s->cache_records,s->ids[0],0u,s->cache_pages*4u,4u,0u,0u,&error)==FG_OK);
+        REQUIRE(fg_vk_flush(vk,&error)==FG_OK);
+    }
+    REQUIRE(fg_vk_submit_group_end(vk,&error)==FG_OK);
+    for(uint32_t pass=0;pass<2u;pass++){
+        gathered=fg_vk_tensor_map(pass?s->selected_records:first);
+        for(uint32_t i=0;i<4u;i++)
+            REQUIRE(!memcmp(gathered+(uint64_t)i*FG_QSA_PAGE_RECORD_BYTES,
+                records+(uint64_t)(1u+pass*8u+i*2u)*FG_QSA_PAGE_RECORD_BYTES,
+                FG_QSA_PAGE_RECORD_BYTES));
+    }
+    fg_vk_tensor_destroy(first);
+    qsa_slot_evict(s,3u,0u);
+    REQUIRE(s->cached_prefix[0]==0u);
+    REQUIRE(!fg_qsa_session_submit_group_ready(s,0u,5u,4094u));
+    REQUIRE(fg_vk_submit_group_begin(vk,&error)==FG_OK);
+    REQUIRE(fg_vk_begin(vk,&error)==FG_OK);
+    REQUIRE(select_blocks_resolve(s,0u,s->index_query_view,4095u,selected,
+        &count,&fallback,&error)==FG_OK);
+    REQUIRE(!fg_vk_batch_active(vk));
+    REQUIRE(fg_vk_submit_group_end(vk,&error)==FG_OK);
+    qsa_cache_reset(s);
+    REQUIRE(s->cached_prefix[0]==0u);
+    REQUIRE(!fg_qsa_session_submit_group_ready(s,0u,5u,4094u));
+    fg_qsa_page_cache_destroy(s->cache);s->cache=NULL;
+    fg_vk_tensor_destroy(s->cache_records);s->cache_records=NULL;
+    s->max_blocks=max_blocks;s->cache_pages=2u;s->committed[0]=committed;
+    REQUIRE(ensure_page_cache(s,&error)==FG_OK);
+    return 1;
+}
+
 typedef struct fetch_fixture {uint8_t pages[6][FG_QSA_PAGE_RECORD_BYTES];uint32_t calls,pages_read;bool fail;} fetch_fixture;
 static fg_status fetch_pages(void *opaque,uint32_t layer,const uint32_t *blocks,
     uint32_t count,uint8_t *records,fg_error *err){
@@ -317,7 +410,7 @@ static int causal_attention(fg_qsa_session *s){
  * the state file.  The old lifecycle only released them through publication,
  * so a long context left the cache with no evictable slot mid-prefill. */
 static int prefill_persist_lifecycle(fg_qsa_session *s){
-    char path[128];snprintf(path,sizeof(path),"/tmp/fg-qsa-persist-%ld.state",(long)getpid());
+    char path[128];snprintf(path,sizeof(path),"fg-qsa-persist-%ld.state",(long)getpid());
     unlink(path);
     fg_qsa_page_cache_destroy(s->cache);s->cache=NULL;
     fg_vk_tensor_destroy(s->cache_records);s->cache_records=NULL;
@@ -543,11 +636,13 @@ int main(void){
     if(ok)ok=lazy_index_segment(session)&&fill_index_rows(session);
     if(ok)ok=selection_window_boundary(session);
     if(ok)ok=selection_parity(session,131071u)&&selection_parity(session,2045u);
-    if(ok)ok=select_resolve_mirror(session)&&select_resolve_parity(session,8191u);
+    if(ok)ok=select_resolve_mirror(session)&&select_resolve_parity(session,8191u)&&
+        select_resolve_grouped(session);
     if(ok)ok=causal_attention(session)&&causal_attention_weighted(session)&&gather_eviction(session,false)&&gather_eviction(session,true);
     if(ok)ok=split_merge_selected(session,5u,8u)&&split_merge_selected(session,100u,1u)&&
         split_merge_selected(session,2051u,8u);
     if(ok)ok=prefill_persist_lifecycle(session);
+    fg_vk_submit_group_abort(model->vk);
     if(fg_vk_batch_active(model->vk))fg_vk_abort(model->vk,&error);
     fg_qsa_session_close(session);fg_vk_tensor_destroy(scratch);
     fg_vk_tensor_destroy(model->norm);fg_vk_close(model->vk);free(model);

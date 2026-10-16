@@ -3636,6 +3636,200 @@ static int test_static_batch_replay(void){
     fg_vk_tensor_destroy(zb);fg_vk_tensor_destroy(za);fg_vk_tensor_destroy(yb);fg_vk_tensor_destroy(ya);fg_vk_tensor_destroy(sb);fg_vk_tensor_destroy(si);return ok;
 }
 
+static int test_submit_group(void){
+    enum{N=64};float input[N],bias[N],upload[N],reference[N],got[N];
+    for(uint32_t i=0;i<N;i++){input[i]=(float)i*0.125f;bias[i]=0.25f;}
+    fg_vk_tensor *x=tensor(input,sizeof(input)),*c=tensor(bias,sizeof(bias)),
+        *b=tensor(NULL,sizeof(bias)),*a=tensor(NULL,sizeof(input)),
+        *y=tensor(NULL,sizeof(input)),*z=tensor(NULL,sizeof(input)),
+        *out=tensor(NULL,sizeof(input));
+    int ok=x&&c&&b&&a&&y&&z&&out;
+#define SG_CHECK(expr) do{if(!(expr)){fprintf(stderr,"submit group line %d: %s\n",__LINE__,#expr);ok=0;goto done;}}while(0)
+    SG_CHECK(ok);
+    SG_CHECK(fg_vk_static_drain(context,&error)==FG_OK);
+    SG_CHECK(fg_vk_static_reset(context,0u,&error)==FG_OK);
+    SG_CHECK(fg_vk_static_reset(context,1u,&error)==FG_OK);
+    SG_CHECK(fg_vk_static_begin(context,0u,&error)==FG_OK);
+    SG_CHECK(fg_vk_add_f32(context,a,x,c,N,&error)==FG_OK);
+    SG_CHECK(fg_vk_static_end(context,0u,&error)==FG_OK);
+    SG_CHECK(fg_vk_static_begin(context,1u,&error)==FG_OK);
+    SG_CHECK(fg_vk_add_f32(context,out,z,c,N,&error)==FG_OK);
+    SG_CHECK(fg_vk_static_end(context,1u,&error)==FG_OK);
+    for(uint32_t grouped=0;grouped<3u;grouped++){
+        fg_vk_counters before={0},after={0};fg_vk_get_counters(context,&before);
+        if(grouped){
+            SG_CHECK(fg_vk_submit_group_begin(context,&error)==FG_OK);
+            SG_CHECK(fg_vk_submit_group_begin(context,&error)!=FG_OK);
+            SG_CHECK(fg_vk_profile_begin(context,&error)!=FG_OK);
+        }
+        SG_CHECK(fg_vk_static_submit(context,0u,&error)==FG_OK);
+        if(grouped==2u)SG_CHECK(fg_vk_submit_group_publish(context,&error)==FG_OK);
+        if(grouped)SG_CHECK(fg_vk_tensor_write_ordered(b,0,bias,sizeof(bias),&error)!=FG_OK);
+        for(uint32_t step=0;step<2u;step++){
+            for(uint32_t i=0;i<N;i++)upload[i]=(float)(step+1u)*0.5f+(float)i*0.25f;
+            SG_CHECK(fg_vk_begin(context,&error)==FG_OK);
+            if(grouped&&step==0u){
+                SG_CHECK(fg_vk_begin(context,&error)==FG_OK);
+                SG_CHECK(fg_vk_end(context,&error)==FG_OK);
+                SG_CHECK(fg_vk_batch_active(context));
+            }
+            SG_CHECK(fg_vk_tensor_write_ordered(b,0,upload,sizeof(upload),&error)==FG_OK);
+            SG_CHECK(fg_vk_add_f32(context,step?z:y,step?y:a,b,N,&error)==FG_OK);
+            SG_CHECK((grouped?fg_vk_flush(context,&error):fg_vk_end(context,&error))==FG_OK);
+        }
+        SG_CHECK(fg_vk_static_submit(context,1u,&error)==FG_OK);
+        if(grouped){
+            fg_vk_get_counters(context,&after);
+            SG_CHECK(after.submissions-before.submissions==(grouped==2u?1u:0u));
+            SG_CHECK(fg_vk_static_reset(context,0u,&error)!=FG_OK);
+            SG_CHECK(fg_vk_submit_group_end(context,&error)==FG_OK);
+        }
+        SG_CHECK(fg_vk_static_drain(context,&error)==FG_OK);
+        fg_vk_get_counters(context,&after);
+        SG_CHECK(after.submissions-before.submissions==(grouped?grouped:4u));
+        SG_CHECK(fg_vk_tensor_read(out,0,got,sizeof(got),&error)==FG_OK);
+        if(!grouped)memcpy(reference,got,sizeof(got));
+        else SG_CHECK(!memcmp(reference,got,sizeof(got)));
+        for(uint32_t i=0;i<N;i++)
+            SG_CHECK(got[i]==input[i]+2.0f*bias[i]+1.5f+(float)i*0.5f);
+    }
+    /* Exceed the private command ring and verify that bounded spill drains
+     * preserve every snapshot and dependency, rather than reusing a live CB. */
+    fg_vk_counters before={0},after={0};fg_vk_get_counters(context,&before);
+    SG_CHECK(fg_vk_submit_group_begin(context,&error)==FG_OK);
+    SG_CHECK(fg_vk_static_submit(context,0u,&error)==FG_OK);
+    SG_CHECK(fg_vk_submit_group_publish(context,&error)==FG_OK);
+    const fg_vk_tensor *current=x;
+    for(uint32_t step=0;step<40u;step++){
+        for(uint32_t i=0;i<N;i++)upload[i]=(float)(step+1u)*0.25f;
+        SG_CHECK(fg_vk_begin(context,&error)==FG_OK);
+        SG_CHECK(fg_vk_tensor_write_ordered(b,0,upload,sizeof(upload),&error)==FG_OK);
+        fg_vk_tensor *target=(step&1u)?z:y;
+        SG_CHECK(fg_vk_add_f32(context,target,current,b,N,&error)==FG_OK);
+        current=target;
+        SG_CHECK(fg_vk_flush(context,&error)==FG_OK);
+    }
+    SG_CHECK(fg_vk_submit_group_end(context,&error)==FG_OK);
+    fg_vk_get_counters(context,&after);SG_CHECK(after.submissions-before.submissions==4u);
+    SG_CHECK(fg_vk_tensor_read(current,0,got,sizeof(got),&error)==FG_OK);
+    for(uint32_t i=0;i<N;i++)SG_CHECK(got[i]==input[i]+205.0f);
+    SG_CHECK(fg_vk_tensor_write(out,0,input,sizeof(input),&error)==FG_OK);
+    SG_CHECK(fg_vk_submit_group_begin(context,&error)==FG_OK);
+    SG_CHECK(fg_vk_static_submit(context,0u,&error)==FG_OK);
+    SG_CHECK(fg_vk_submit_group_publish(context,&error)==FG_OK);
+    SG_CHECK(fg_vk_static_submit(context,1u,&error)==FG_OK);
+    fg_vk_submit_group_abort(context);
+    SG_CHECK(!fg_vk_submit_group_active(context));
+    SG_CHECK(fg_vk_tensor_read(out,0,got,sizeof(got),&error)==FG_OK);
+    SG_CHECK(!memcmp(input,got,sizeof(got)));
+    SG_CHECK(fg_vk_submit_group_begin(context,&error)==FG_OK);
+    SG_CHECK(fg_vk_static_submit(context,0u,&error)==FG_OK);
+    SG_CHECK(fg_vk_submit_group_publish(context,&error)==FG_OK);
+    SG_CHECK(fg_vk_static_wait(context,0u,&error)==FG_OK);
+    SG_CHECK(fg_vk_submit_group_end(context,&error)==FG_OK);
+    SG_CHECK(fg_vk_tensor_read(a,0,got,sizeof(got),&error)==FG_OK);
+    for(uint32_t i=0;i<N;i++)SG_CHECK(got[i]==input[i]+bias[i]);
+    SG_CHECK(fg_vk_submit_group_begin(context,&error)==FG_OK);
+    SG_CHECK(fg_vk_begin(context,&error)==FG_OK);
+    SG_CHECK(fg_vk_tensor_write_ordered(b,0,upload,sizeof(upload),&error)==FG_OK);
+    SG_CHECK(fg_vk_end(context,&error)==FG_OK);
+    SG_CHECK(fg_vk_tensor_read(b,0,got,sizeof(got),&error)==FG_OK);
+    SG_CHECK(!memcmp(got,upload,sizeof(got)));
+    SG_CHECK(fg_vk_submit_group_end(context,&error)==FG_OK);
+    fg_vk_get_counters(context,&before);
+    SG_CHECK(fg_vk_submit_group_begin(context,&error)==FG_OK);
+    SG_CHECK(fg_vk_submit_group_end(context,&error)==FG_OK);
+    fg_vk_get_counters(context,&after);
+    SG_CHECK(before.submissions==after.submissions);
+done:
+    fg_vk_submit_group_abort(context);
+    if(fg_vk_batch_active(context))fg_vk_abort(context,&error);
+    fg_vk_static_drain(context,&error);
+    fg_vk_static_reset(context,0u,&error);fg_vk_static_reset(context,1u,&error);
+    fg_vk_tensor_destroy(out);fg_vk_tensor_destroy(z);fg_vk_tensor_destroy(y);
+    fg_vk_tensor_destroy(a);fg_vk_tensor_destroy(b);fg_vk_tensor_destroy(c);fg_vk_tensor_destroy(x);
+#undef SG_CHECK
+    return ok;
+}
+
+static int test_submit_group_benchmark(void){
+    const char *filter=getenv("DS4_REMOTE_TEST_FILTER");
+    if(!filter||strcmp(filter,"submit_group_benchmark")!=0)return 1;
+    enum{INPUT=2560,ROWS=12288,TOKENS=128,ROUNDS=5,WARMUP=128};
+    uint64_t source_bytes=(uint64_t)ROWS*(INPUT/32u)*FG_Q8_0_BLOCK_BYTES;
+    uint64_t cooked_bytes=fg_q8_0_cooked_matrix_bytes(INPUT,ROWS);
+    fg_vk_tensor *source=tensor(NULL,source_bytes),*weights=tensor(NULL,cooked_bytes),
+        *x=tensor(NULL,INPUT*4u),*y=tensor(NULL,ROWS*4u);
+    float reference[ROWS],got[ROWS];int ok=source&&weights&&x&&y;
+    if(!ok)goto done;
+    uint8_t *packed=fg_vk_tensor_map(source);memset(packed,1,(size_t)source_bytes);
+    for(uint64_t block=0;block<(uint64_t)ROWS*(INPUT/32u);block++){
+        uint16_t scale=fg_f32_to_f16(0.001f+(float)(block%7u)*0.0001f);
+        memcpy(packed+block*FG_Q8_0_BLOCK_BYTES,&scale,sizeof(scale));
+    }
+    ok=fg_cook_q8_0_rows(packed,fg_vk_tensor_map(weights),cooked_bytes,INPUT,ROWS);
+    fg_vk_tensor_set_format(weights,FG_VK_TENSOR_FORMAT_Q8_0_COOKED);
+    float *input=fg_vk_tensor_map(x);
+    for(uint32_t i=0;i<INPUT;i++)input[i]=sinf((float)i*0.013f);
+    for(uint32_t slot=0;ok&&slot<2u;slot++){
+        ok=fg_vk_static_reset(context,slot,&error)==FG_OK&&
+            fg_vk_static_begin(context,slot,&error)==FG_OK;
+        uint32_t dispatches=slot?15u:5u;
+        for(uint32_t d=0;ok&&d<dispatches;d++)
+            ok=fg_vk_dense_q8_0_f32(context,y,weights,x,INPUT,ROWS,1u,1.0f,&error)==FG_OK;
+        if(ok)ok=fg_vk_static_end(context,slot,&error)==FG_OK;
+    }
+    for(uint32_t round=0;ok&&round<ROUNDS;round++){
+      for(uint32_t i=0;i<INPUT;i++)input[i]=sinf((float)i*0.013f+(float)round*0.037f);
+      for(uint32_t order=0;ok&&order<3u;order++){
+        uint32_t grouped=(order+round)%3u;double wall=0.0;
+        uint64_t submissions=0;struct timespec sample_begin={0},sample_end={0};
+        for(uint32_t token=0;ok&&token<TOKENS+WARMUP;token++){
+            struct timespec begin,end;fg_vk_counters before={0},after={0};
+            fg_vk_get_counters(context,&before);clock_gettime(CLOCK_MONOTONIC,&begin);
+            if(token==WARMUP)sample_begin=begin;
+            if(grouped)ok=fg_vk_submit_group_begin(context,&error)==FG_OK;
+            for(uint32_t layer=0;ok&&layer<2u;layer++){
+                ok=fg_vk_static_submit(context,layer,&error)==FG_OK;
+                if(ok&&grouped==2u&&layer==0u)
+                    ok=fg_vk_submit_group_publish(context,&error)==FG_OK;
+                for(uint32_t part=0;ok&&part<3u;part++){
+                    ok=fg_vk_begin(context,&error)==FG_OK;
+                    uint32_t dispatches=part==1u?3u:1u;
+                    for(uint32_t d=0;ok&&d<dispatches;d++)
+                        ok=fg_vk_dense_q8_0_f32(context,y,weights,x,INPUT,ROWS,1u,1.0f,&error)==FG_OK;
+                    if(ok)ok=(layer==1u&&part==2u?fg_vk_end(context,&error):
+                        fg_vk_flush(context,&error))==FG_OK;
+                }
+            }
+            if(ok&&grouped)ok=fg_vk_submit_group_end(context,&error)==FG_OK;
+            if(ok)ok=fg_vk_static_drain(context,&error)==FG_OK;
+            clock_gettime(CLOCK_MONOTONIC,&end);fg_vk_get_counters(context,&after);
+            sample_end=end;
+            if(token>=WARMUP){wall+=elapsed_ms(begin,end);submissions+=after.submissions-before.submissions;}
+        }
+        if(ok)ok=fg_vk_tensor_read(y,0,got,sizeof(got),&error)==FG_OK;
+        if(ok&&order==0u)memcpy(reference,got,sizeof(got));
+        if(ok)ok=!memcmp(reference,got,sizeof(got));
+        if(ok)fprintf(stderr,"HOST_GROUP_BENCH round=%u grouped=%u tokens=%u "
+            "wall_ms=%.6f submits_per_token=%.3f cooked_bytes_per_token=%llu "
+            "begin_ns=%llu end_ns=%llu parity=PASS\n",
+            round,grouped,TOKENS,wall/(double)TOKENS,(double)submissions/TOKENS,
+            (unsigned long long)(cooked_bytes*30u),
+            (unsigned long long)sample_begin.tv_sec*1000000000ull+(unsigned long long)sample_begin.tv_nsec,
+            (unsigned long long)sample_end.tv_sec*1000000000ull+(unsigned long long)sample_end.tv_nsec);
+      }
+    }
+done:
+    fg_vk_submit_group_abort(context);
+    if(fg_vk_batch_active(context))fg_vk_abort(context,&error);
+    fg_vk_static_drain(context,&error);
+    fg_vk_static_reset(context,0u,&error);fg_vk_static_reset(context,1u,&error);
+    fg_vk_tensor_destroy(y);fg_vk_tensor_destroy(x);
+    fg_vk_tensor_destroy(weights);fg_vk_tensor_destroy(source);
+    return ok;
+}
+
 static const fg_vk_profile_kernel *find_profile_kernel(const fg_vk_profile *profile,const char *scope,const char *name){for(uint32_t i=0;i<profile->kernel_count;i++)if(strcmp(profile->kernels[i].scope,scope)==0&&strcmp(profile->kernels[i].name,name)==0)return &profile->kernels[i];return NULL;}
 static int test_gpu_profile(void){
     enum{VALUES=256};float left[VALUES],right[VALUES];for(uint32_t i=0;i<VALUES;i++){left[i]=sinf((float)i*0.031f);right[i]=cosf((float)i*0.017f);}fg_vk_tensor *l=tensor(left,sizeof(left)),*r=tensor(right,sizeof(right)),*sum=tensor(NULL,sizeof(left)),*out=tensor(NULL,sizeof(left));fg_vk_profile profile={0};fg_vk_counters before={0},after={0};fg_vk_get_counters(context,&before);int ok=l&&r&&sum&&out&&!fg_vk_batch_active(context)&&!fg_vk_profile_active(context)&&fg_vk_profile_begin(context,&error)==FG_OK&&fg_vk_profile_active(context)&&fg_vk_begin(context,&error)==FG_OK&&fg_vk_begin(context,&error)==FG_OK&&fg_vk_batch_active(context)&&fg_vk_profile_set_scope(context,"sum",&error)==FG_OK&&fg_vk_add_f32(context,sum,l,r,VALUES,&error)==FG_OK&&fg_vk_end(context,&error)==FG_OK&&fg_vk_batch_active(context)&&fg_vk_profile_set_scope(context,"activation",&error)==FG_OK&&fg_vk_silu_scaled(context,out,sum,VALUES,1.0f,&error)==FG_OK&&fg_vk_end(context,&error)==FG_OK&&!fg_vk_batch_active(context)&&fg_vk_profile_end(context,&profile,&error)==FG_OK&&!fg_vk_profile_active(context);fg_vk_get_counters(context,&after);const fg_vk_profile_kernel *add=ok?find_profile_kernel(&profile,"sum","fg_add_f32.spv"):NULL,*silu=ok?find_profile_kernel(&profile,"activation","fg_silu_scaled.spv"):NULL;ok=ok&&after.submissions-before.submissions==2u&&after.dispatches-before.dispatches==2u&&profile.submissions==1u&&profile.dispatches==2u&&profile.gpu_ms>0.0&&profile.kernel_ms>0.0&&profile.gpu_ms>=profile.kernel_ms&&add&&add->invocations==1u&&add->gpu_ms>0.0&&silu&&silu->invocations==1u&&silu->gpu_ms>0.0;fg_vk_tensor_destroy(out);fg_vk_tensor_destroy(sum);fg_vk_tensor_destroy(r);fg_vk_tensor_destroy(l);return ok;
@@ -3961,6 +4155,8 @@ ok=run_test("memory_telemetry_and_canary",test_memory_telemetry_and_canary)&&ok;
 ok=run_test("tensor_view_rebind",test_tensor_view_rebind)&&ok;
     ok=run_test("batch_submission_parity",test_batch_submission_parity)&&ok;
     ok=run_test("pipeline_flush_parity",test_pipeline_flush_parity)&&ok;
+    ok=run_test("submit_group",test_submit_group)&&ok;
+    ok=run_test("submit_group_benchmark",test_submit_group_benchmark)&&ok;
     ok=run_test("static_batch_replay",test_static_batch_replay)&&ok;
 ok=run_test("gpu_profile",test_gpu_profile)&&ok;
 ok=run_test("q8_dense",test_q8_dense)&&ok;

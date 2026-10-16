@@ -5,6 +5,8 @@
 #include "fg_protocol.h"
 
 typedef struct fg_qsa_session fg_qsa_session;
+bool fg_qsa_session_submit_group_ready(const fg_qsa_session *session,
+    uint32_t first_layer,uint32_t last_layer,uint32_t token);
 typedef fg_status (*fg_qsa_page_fetch_fn)(void *opaque,uint32_t layer,
                                           const uint32_t *blocks,uint32_t block_count,
                                           uint8_t *records,fg_error *err);

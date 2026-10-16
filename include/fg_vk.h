@@ -111,6 +111,16 @@ fg_status fg_vk_static_submit(fg_vk_context *context,uint32_t slot,fg_error *err
 fg_status fg_vk_static_wait(fg_vk_context *context,uint32_t slot,fg_error *err);
 fg_status fg_vk_static_drain(fg_vk_context *context,fg_error *err);
 bool fg_vk_static_recorded(const fg_vk_context *context,uint32_t slot);
+/* Opt-in submission scope: flush records ahead, end/readback still waits.
+ * Mapped inputs must remain immutable until end; use ordered writes for
+ * mutable per-dispatch inputs shared by several recorded command buffers.
+ * Publish optionally starts the queued prefix while recording the suffix;
+ * at most one prefix may be in flight, and end still drains all work. */
+fg_status fg_vk_submit_group_begin(fg_vk_context *context,fg_error *err);
+fg_status fg_vk_submit_group_publish(fg_vk_context *context,fg_error *err);
+fg_status fg_vk_submit_group_end(fg_vk_context *context,fg_error *err);
+void fg_vk_submit_group_abort(fg_vk_context *context);
+bool fg_vk_submit_group_active(const fg_vk_context *context);
 fg_status fg_vk_abort(fg_vk_context *context,fg_error *err);
 bool fg_vk_batch_active(const fg_vk_context *context);
 void fg_vk_next_dispatch_independent(fg_vk_context *context);
@@ -166,6 +176,8 @@ const void *fg_vk_tensor_const_map(const fg_vk_tensor *tensor);
 void fg_vk_tensor_set_format(fg_vk_tensor *tensor,fg_vk_tensor_format format);
 fg_vk_tensor_format fg_vk_tensor_get_format(const fg_vk_tensor *tensor);
 fg_status fg_vk_tensor_write(fg_vk_tensor *tensor,uint64_t offset,const void *data,uint64_t bytes,fg_error *err);
+fg_status fg_vk_tensor_write_ordered(fg_vk_tensor *tensor,uint64_t offset,
+    const void *data,uint64_t bytes,fg_error *err);
 fg_status fg_vk_tensor_read(const fg_vk_tensor *tensor,uint64_t offset,void *data,uint64_t bytes,fg_error *err);
 /* Device-side tensor copy: `count` equal-sized (dst[i],src[i]) pairs copied with
  * vkCmdCopyBuffer on the context queue.  Drains pending submissions first and
