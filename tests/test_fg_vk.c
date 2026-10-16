@@ -3755,6 +3755,20 @@ static int test_static_batch_replay(void){
     if(ok)ok=fg_vk_static_drain(context,&error)==FG_OK;
     if(ok)ok=fg_vk_tensor_read(zb,0,got,sizeof(got),&error)==FG_OK;
     for(uint32_t i=0;ok&&i<VALUES;i++)if(got[i]!=replacement[i]+(float)STEPS*bias[i])ok=0;
+    for(uint32_t slot=2u;ok&&slot<FG_VK_STATIC_SLOTS;slot++){
+        ok=fg_vk_static_begin(context,slot,&error)==FG_OK;
+        current=si;
+        for(uint32_t step=0;ok&&step<STEPS;step++){
+            fg_vk_tensor *target=(step&1u)?zb:za;
+            ok=fg_vk_add_f32(context,target,current,sb,VALUES,&error)==FG_OK;
+            current=target;
+        }
+        if(ok)ok=fg_vk_static_end(context,slot,&error)==FG_OK;
+        if(ok)ok=fg_vk_static_submit(context,slot,&error)==FG_OK&&fg_vk_static_wait(context,slot,&error)==FG_OK;
+        if(ok)ok=fg_vk_tensor_read(zb,0,got,sizeof(got),&error)==FG_OK;
+        for(uint32_t i=0;ok&&i<VALUES;i++)if(got[i]!=replacement[i]+(float)STEPS*bias[i])ok=0;
+    }
+    if(fg_vk_batch_active(context)){fg_error ignored={0};fg_vk_abort(context,&ignored);}
     fg_vk_tensor_destroy(zb);fg_vk_tensor_destroy(za);fg_vk_tensor_destroy(yb);fg_vk_tensor_destroy(ya);fg_vk_tensor_destroy(sb);fg_vk_tensor_destroy(si);return ok;
 }
 

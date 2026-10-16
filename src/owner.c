@@ -480,6 +480,21 @@ void fg_owner_executor_destroy(fg_owner_executor *e){
     fg_vk_tensor_destroy(e->hyper_output);
     free(e);
 }
+fg_status fg_owner_reset_session(fg_owner_executor *e,uint32_t session,fg_error *err){
+    if(!session_allocated(e,session)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid owner session reset");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_status status=fg_vk_static_drain(fg_model_vk(e->model),err);
+    if(status!=FG_OK)return status;
+    for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){
+        if(e->gdn_state[session][layer].conv_state)memset(fg_vk_tensor_map(e->gdn_state[session][layer].conv_state),0,(size_t)fg_vk_tensor_bytes(e->gdn_state[session][layer].conv_state));
+        if(e->gdn_state[session][layer].recurrent_state)memset(fg_vk_tensor_map(e->gdn_state[session][layer].recurrent_state),0,(size_t)fg_vk_tensor_bytes(e->gdn_state[session][layer].recurrent_state));
+    }
+    if(e->ples_state[session])memset(fg_vk_tensor_map(e->ples_state[session]),0,(size_t)fg_vk_tensor_bytes(e->ples_state[session]));
+    if(e->qsa[session])status=fg_qsa_session_reset(e->qsa[session],err);
+    return status;
+}
 fg_status fg_owner_reset_state(fg_owner_executor *e,fg_error *err){
     if(!e){fg_error_set(err,FG_ERR_ARGUMENT,"owner state reset is null");return FG_ERR_ARGUMENT;}
     for(uint32_t session=0;session<e->session_count;session++)for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){
@@ -1721,12 +1736,9 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
     fg_vk_context *vk=fg_model_vk(e->model);
     fg_vk_tensor *current=(fg_vk_tensor *)hyper_input;
     fg_status status=FG_OK;
-    /* Static replay records slot-0 transients and advances slot-0 state; a
-     * recorded run replayed against another session's state is silent
-     * corruption.  Session 0 keeps the validated replay; other sessions run
-     * dynamically and any recorded run bound to a different session fails
-     * closed instead of replaying. */
-    bool static_allowed=chained_static_allowed(vk)&&e->active_session==0u;
+    /* Each session records its own state bindings; shared transient scratch
+     * remains fully drained before another session executes. */
+    bool static_allowed=chained_static_allowed(vk);
     const char *group_flag=getenv("FG_DECODE_SUBMIT_GROUP");
     bool group=static_allowed&&group_flag&&
         (!strcmp(group_flag,"1")||!strcmp(group_flag,"2"))&&
@@ -1750,11 +1762,13 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
         while(run_last+1u<=last_layer&&((run_last+1u)&3u)!=3u)run_last++;
         uint32_t slot=0u;
         for(uint32_t l=first_layer;l<layer;l++)if((l&3u)==3u)slot++;
+        bool run_static=static_allowed&&slot<FG_VK_STATIC_SLOTS/FG_OWNER_SESSION_MAX;
+        slot+=e->active_session*(FG_VK_STATIC_SLOTS/FG_OWNER_SESSION_MAX);
         uint32_t rerecord=static_rerecord_period();
-        if(status==FG_OK&&static_allowed&&slot<FG_VK_STATIC_SLOTS&&rerecord&&
+        if(status==FG_OK&&run_static&&rerecord&&
            (token%rerecord)==0u)
             status=fg_vk_static_reset(vk,slot,err);
-        if(status==FG_OK&&static_allowed&&slot<FG_VK_STATIC_SLOTS&&fg_vk_static_recorded(vk,slot)){
+        if(status==FG_OK&&run_static&&fg_vk_static_recorded(vk,slot)){
             if(e->static_run_session_valid[slot]&&
                e->static_run_session[slot]!=e->active_session){
                 fg_error_set(err,FG_ERR_MISMATCH,
@@ -1778,7 +1792,7 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
             status=fg_vk_static_submit(vk,slot,err);
             if(status==FG_OK&&static_check_enabled())
                 status=static_run_check(e,vk,slot,token,err);
-        }else if(status==FG_OK&&static_allowed&&slot<FG_VK_STATIC_SLOTS){
+        }else if(status==FG_OK&&run_static){
             status=fg_vk_static_begin(vk,slot,err);
             for(uint32_t l=layer;status==FG_OK&&l<=run_last;l++)
                 status=owner_record_layer(e,l,token,position,hyper_input,

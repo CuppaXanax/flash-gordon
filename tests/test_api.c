@@ -1151,6 +1151,9 @@ static void test_streamed_tool_response(void) {
     CHECK(api_token(&generation, 3, tail, strlen(tail), &err) == FG_OK);
     fg_chat_generated generated = {0};
     CHECK(fg_chat_parse_generated(generation.content.data, true, &generated, &err) == FG_OK);
+    fg_generation_stats stats={.prompt_tokens=100u,.generated_tokens=3u,
+        .reused_tokens=80u,.prefilled_tokens=20u};
+    generation.stats=&stats;
     CHECK(send_stream_end(&generation, &generated, "tool_calls", &err) == FG_OK);
     shutdown(sockets[0], SHUT_WR);
     char *response = read_socket_response(sockets[1]);
@@ -1162,6 +1165,8 @@ static void test_streamed_tool_response(void) {
     CHECK(response && strstr(response, "\"id\":\"call_chatcmpl-stream_1\""));
     CHECK(response && strstr(response, "\"name\":\"clock\""));
     CHECK(response && strstr(response, "\"finish_reason\":\"tool_calls\""));
+    CHECK(response && strstr(response, "\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":3,\"total_tokens\":103}"));
+    CHECK(response && strstr(response, "\"flash_gordon\":{\"reused_tokens\":80,\"prefilled_tokens\":20}"));
     CHECK(response && strstr(response, "data: [DONE]"));
     CHECK(response && !strstr(response, "\"content\":\"hidden"));
     CHECK(response && !strstr(response, "<tool_call>"));
@@ -3590,7 +3595,37 @@ static void test_model_name_admission(void) {
     fg_runtime_close(&runtime);
 }
 
+static void test_session_affinity(void){
+    const char *keys[2]={"chat","agent"};
+    bool active[2]={true,false};
+    CHECK(api_session_select("chat",keys,active)==0u);
+    CHECK(api_session_select("agent",keys,active)==1u);
+    CHECK(api_session_select("third",keys,active)==1u);
+    active[1]=true;
+    CHECK(api_session_select("third",keys,active)==2u);
+    keys[1]=NULL;active[0]=false;active[1]=false;
+    CHECK(api_session_select("new",keys,active)==1u);
+    CHECK(api_session_select(NULL,keys,active)==1u);
+
+    api_engine_queue queue;api_engine_queue_init(&queue);queue.multiplexed=true;
+    api_connection connection={0};
+    const char *body="{\"user\":\"private-chat-id\"}";
+    http_request request={.body=strdup(body),.body_length=strlen(body)};
+    CHECK(api_engine_queue_try_push(&queue,&connection,&request)==API_ENGINE_ADMIT_QUEUED);
+    char hash[65];memcpy(hash,queue.entries[0].session_key,sizeof(hash));
+    CHECK(strlen(hash)==64u&&strcmp(hash,"private-chat-id"));
+    request.body=strdup(body);
+    CHECK(api_engine_queue_try_push(&queue,&connection,&request)==API_ENGINE_ADMIT_QUEUED);
+    CHECK(!strcmp(hash,queue.entries[1].session_key));
+    body="{\"user\":\"private-agent-id\"}";
+    request.body=strdup(body);request.body_length=strlen(body);
+    CHECK(api_engine_queue_try_push(&queue,&connection,&request)==API_ENGINE_ADMIT_QUEUED);
+    CHECK(strcmp(hash,queue.entries[2].session_key));
+    api_engine_queue_destroy(&queue);
+}
+
 int main(void) {
+    test_session_affinity();
     test_openai_tools_request();
     test_openai_structured_text_content();
     test_image_content_parts();

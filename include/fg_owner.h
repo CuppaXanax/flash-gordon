@@ -56,6 +56,7 @@ typedef fg_status (*fg_owner_prefill_collect_fn)(void *context,uint32_t layer,
  * what a depth-2 batch step advances.  Weights, arena and command
  * infrastructure stay singular. */
 #define FG_OWNER_SESSION_MAX 2u
+fg_status fg_owner_reset_session(fg_owner_executor *executor,uint32_t session,fg_error *err);
 
 fg_status fg_owner_executor_create(fg_owner_executor **out,fg_model *model,fg_error *err);
 /* Sealed single-owner worker: owns only this rank's layers (manifest

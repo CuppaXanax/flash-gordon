@@ -28,7 +28,7 @@ static void usage(FILE *file) {
             "  flash-gordon bench --manifest FILE\n"
             "  flash-gordon eval --manifest FILE --prompt TEXT [--generate N]\n"
             "  flash-gordon chat --manifest FILE [--max-tokens N] [RUNTIME OPTIONS]\n"
-            "  flash-gordon api --manifest FILE [--host HOST] [--port PORT] "
+            "  flash-gordon api --manifest FILE [--host HOST] [--port PORT] [--sessions 1|2] "
             "[RUNTIME OPTIONS]\n"
             "  flash-gordon upgrade-manifest --input FILE --output FILE [--profile NAME]\n"
             "\nRuntime options:\n"
@@ -350,6 +350,10 @@ static fg_status api_cmd(int argc, char **argv, fg_error *err) {
             const char *text = arg_value(&i, argc, argv, "--port", err);
             if (text && parse_u32(text, "--port", 1u, UINT16_MAX, &port, err) != FG_OK)
                 return err->code;
+        } else if (!strcmp(argv[i], "--sessions")) {
+            const char *text=arg_value(&i,argc,argv,"--sessions",err);
+            if(!text||parse_u32(text,"--sessions",1u,2u,&runtime_options.sessions,err)!=FG_OK)
+                return FG_ERR_ARGUMENT;
         } else {
             bool handled = false;
             fg_status status =

@@ -4,8 +4,9 @@
 Measure Flash Gordon prefill, TTFT, decode, concurrency, and greedy text stability.
 .DESCRIPTION
 Queries an OpenAI-compatible API without changing the serving process. Streaming
-responses do not expose usage or engine metrics, so results document the paired
-non-stream measurements used for prompt counts and engine rates.
+responses expose terminal usage on current builds. Concurrent tests use that
+generation's actual counts; the legacy single-stream suite documents paired
+non-stream measurements used for engine rates.
 .EXAMPLE
 pwsh -NoProfile -File tools/hillclimb.ps1 -Quick -WriteReference
 .EXAMPLE
@@ -16,6 +17,15 @@ param(
     [string]$BaseUrl = $(if ($env:FG_BASE_URL) { $env:FG_BASE_URL.TrimEnd('/') } else { "http://192.168.42.42:8080/v1" }),
     [switch]$Quick,
     [switch]$WriteReference,
+    [switch]$ConcurrentGeneration,
+    [switch]$MixedPrefill,
+    [switch]$CapacityProbe,
+    [int]$ChatContextTokens = 64,
+    [int]$AgentContextTokens = 32768,
+    [int]$ConcurrentTokens = 256,
+    [int]$ConcurrentRepeats = 3,
+    [int]$ChatDelayMilliseconds = 200,
+    [string]$ResultsDirectory = '',
     [int]$RequestTimeoutSeconds = 900
 )
 
@@ -24,7 +34,7 @@ $ErrorActionPreference = 'Stop'
 $BaseUrl = $BaseUrl.TrimEnd('/')
 $repo = Split-Path $PSScriptRoot -Parent
 $resultRoot = Join-Path $repo 'results\hillclimb'
-$runRoot = Join-Path $resultRoot 'runs'
+$runRoot = if ($ResultsDirectory) { $ResultsDirectory } else { Join-Path $resultRoot 'runs' }
 $referencePath = Join-Path $resultRoot 'reference.json'
 $null = New-Item -ItemType Directory -Path $runRoot -Force
 $invariant = [Globalization.CultureInfo]::InvariantCulture
@@ -120,7 +130,7 @@ function New-Prompt {
 }
 
 function New-BodyJson {
-    param([object[]]$Messages, [int]$MaxTokens, [bool]$Stream, [int]$Seed = 1729)
+    param([object[]]$Messages, [int]$MaxTokens, [bool]$Stream, [int]$Seed = 1729, [string]$User = '')
     $body = [ordered]@{
         model = $records.metadata.model
         messages = $Messages
@@ -131,13 +141,14 @@ function New-BodyJson {
         max_tokens = $MaxTokens
         stream = $Stream
     }
+    if ($User) { $body.user = $User }
     return ($body | ConvertTo-Json -Depth 30 -Compress)
 }
 
 function Start-Sse {
-    param([object[]]$Messages, [int]$MaxTokens, [int]$Seed = 1729)
+    param([object[]]$Messages, [int]$MaxTokens, [int]$Seed = 1729, [string]$User = '')
     $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Post, "$BaseUrl/chat/completions")
-    $request.Content = [Net.Http.StringContent]::new((New-BodyJson $Messages $MaxTokens $true $Seed),
+    $request.Content = [Net.Http.StringContent]::new((New-BodyJson $Messages $MaxTokens $true $Seed $User),
         [Text.Encoding]::UTF8, 'application/json')
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $response = $client.SendAsync($request, [Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
@@ -160,6 +171,11 @@ function Start-Sse {
         Text = [Text.StringBuilder]::new()
         Done = $false
         FirstTokenMs = $null
+        Usage = $null
+        Prefix = $null
+        FirstContentTimestamp = $null
+        LastContentTimestamp = $null
+        CompletedTimestamp = $null
     }
 }
 
@@ -169,6 +185,9 @@ function Consume-SseLine {
     $data = $Line.Substring(6)
     if ($data -eq '[DONE]') { $Session.Done = $true; return }
     try { $event = $data | ConvertFrom-Json } catch { return }
+    if ($event.PSObject.Properties['error']) { throw "SSE error: $($event.error.message)" }
+    if ($event.PSObject.Properties['usage']) { $Session.Usage = $event.usage }
+    if ($event.PSObject.Properties['flash_gordon']) { $Session.Prefix = $event.flash_gordon }
     if (-not $event.choices -or @($event.choices).Count -eq 0) { return }
     $delta = $event.choices[0].delta
     $part = ''
@@ -179,7 +198,11 @@ function Consume-SseLine {
     }
     if ($part.Length -gt 0) {
         $when = $Session.Watch.Elapsed.TotalMilliseconds
-        if ($null -eq $Session.FirstTokenMs) { $Session.FirstTokenMs = $when }
+        if ($null -eq $Session.FirstTokenMs) {
+            $Session.FirstTokenMs = $when
+            $Session.FirstContentTimestamp = [Diagnostics.Stopwatch]::GetTimestamp()
+        }
+        $Session.LastContentTimestamp = [Diagnostics.Stopwatch]::GetTimestamp()
         $Session.TimesMs.Add($when)
         [void]$Session.Text.Append($part)
     }
@@ -194,6 +217,7 @@ function Finish-Sse {
             Consume-SseLine $Session $line
         }
         $Session.Watch.Stop()
+        $Session.CompletedTimestamp = [Diagnostics.Stopwatch]::GetTimestamp()
         return $Session
     } finally {
         $Session.Reader.Dispose()
@@ -203,9 +227,9 @@ function Finish-Sse {
 }
 
 function Invoke-NonStream {
-    param([object[]]$Messages, [int]$MaxTokens, [int]$Seed = 1729)
+    param([object[]]$Messages, [int]$MaxTokens, [int]$Seed = 1729, [string]$User = '')
     $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Post, "$BaseUrl/chat/completions")
-    $request.Content = [Net.Http.StringContent]::new((New-BodyJson $Messages $MaxTokens $false $Seed),
+    $request.Content = [Net.Http.StringContent]::new((New-BodyJson $Messages $MaxTokens $false $Seed $User),
         [Text.Encoding]::UTF8, 'application/json')
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $response = $client.SendAsync($request).GetAwaiter().GetResult()
@@ -426,63 +450,201 @@ function Invoke-Correctness {
     return @($current)
 }
 
-function Invoke-Concurrency {
-    param([object[]]$ChatMessages, [object[]]$AgentMessages)
-    $started = [Diagnostics.Stopwatch]::StartNew()
-    $chat = Start-Sse $ChatMessages 32
-    $agent = Start-Sse $AgentMessages 32
-    $active = @($chat, $agent)
-    $lines = @{}
-    foreach ($session in $active) { $lines[[Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($session)] = $session.Reader.ReadLineAsync() }
-    while ($active.Count -gt 0) {
-        $tasks = @($active | ForEach-Object { $lines[[Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($_)] })
-        $index = [Threading.Tasks.Task]::WaitAny([Threading.Tasks.Task[]]$tasks)
-        $session = $active[$index]
-        $key = [Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($session)
-        $line = $lines[$key].GetAwaiter().GetResult()
-        if ($null -eq $line) {
-            $session.Done = $true
-        } else {
-            Consume-SseLine $session $line
-        }
-        if ($session.Done) {
-            $active = @($active | Where-Object { [Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($_) -ne $key })
-            $lines.Remove($key)
-        } else {
-            $lines[$key] = $session.Reader.ReadLineAsync()
-        }
-    }
-    $started.Stop()
-    $rows = @()
-    foreach ($session in @($chat, $agent)) {
-        $session.Watch.Stop()
-        $stats = Get-SseStats $session
-        $rows += [pscustomobject]@{
-            name = if ([object]::ReferenceEquals($session, $chat)) { 'chat-style' } else { 'agent-style' }
-            first_content_ms = $stats.first_content_ms
-            wall_seconds = $stats.wall_seconds
-            visible_delta_events = $stats.visible_delta_events
-            client_end_to_end_delta_events_per_second = if ($stats.wall_seconds -gt 0) {
-                $stats.visible_delta_events / $stats.wall_seconds
-            } else { 0 }
-            event_interval_tps_excluding_first = $stats.sse_inter_event_tps_excluding_first
-            output_count_note = 'SSE delta events are a client-visible proxy, not usage token counts.'
-            finish_received = $stats.finish_received
-            engine_capacity = $null
-            capacity_headers = @($session.Headers.Keys | Where-Object { $_ -match '(?i)capacity|concurr|slot' } | ForEach-Object { "$_=$($session.Headers[$_])" })
-        }
-        $session.Reader.Dispose()
-        $session.Response.Dispose()
-        $session.Request.Dispose()
-    }
-    $aggregateDuration = ($rows | Measure-Object -Property wall_seconds -Maximum).Maximum
-    $totalEvents = ($rows | Measure-Object -Property visible_delta_events -Sum).Sum
-    $records.metadata.concurrency_wall_seconds = $started.Elapsed.TotalSeconds
+function Get-GenerationStats {
+    param($Session, [string]$Name)
+    $sse = Get-SseStats $Session
+    $tokens = if ($null -ne $Session.Usage) { [int]$Session.Usage.completion_tokens } else { $null }
+    $decodeSeconds = if ($null -ne $Session.FirstTokenMs) {
+        $Session.Watch.Elapsed.TotalSeconds - $Session.FirstTokenMs / 1000.0
+    } else { 0.0 }
+    $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+        [Text.Encoding]::UTF8.GetBytes($sse.visible_text))).ToLowerInvariant()
     return [pscustomobject]@{
-        streams = $rows
-        aggregate_end_to_end_delta_events_per_second = if ($aggregateDuration -gt 0) { $totalEvents / $aggregateDuration } else { 0 }
-        capacity = $null
-        capacity_note = 'No capacity field/header is exposed by the current API.'
+        name = $Name
+        ttft_ms = $sse.first_content_ms
+        wall_seconds = $sse.wall_seconds
+        completion_tokens = $tokens
+        prompt_tokens = if ($Session.Usage) { [int]$Session.Usage.prompt_tokens } else { $null }
+        prefix = $Session.Prefix
+        first_content_clock_ticks = $Session.FirstContentTimestamp
+        last_content_clock_ticks = $Session.LastContentTimestamp
+        client_decode_tps = if ($null -ne $tokens -and $decodeSeconds -gt 0) { $tokens / $decodeSeconds } else { $null }
+        client_end_to_end_tps = if ($null -ne $tokens -and $sse.wall_seconds -gt 0) { $tokens / $sse.wall_seconds } else { $null }
+        visible_delta_events = $sse.visible_delta_events
+        inter_event_p95_ms = Get-Percentile @(
+            for ($i = 1; $i -lt $Session.TimesMs.Count; $i++) { $Session.TimesMs[$i] - $Session.TimesMs[$i - 1] }
+        ) 0.95
+        finish_received = $sse.finish_received
+        sha256 = $hash
+        visible_text = $sse.visible_text
+    }
+}
+
+function New-ConcurrentSse {
+    param([object[]]$Messages, [int]$MaxTokens, [string]$User)
+    $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Post, "$BaseUrl/chat/completions")
+    $request.Content = [Net.Http.StringContent]::new((New-BodyJson $Messages $MaxTokens $true 1729 $User),
+        [Text.Encoding]::UTF8, 'application/json')
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $task = $client.SendAsync($request, [Net.Http.HttpCompletionOption]::ResponseHeadersRead)
+    return [pscustomobject]@{
+        Request = $request; Response = $null; Reader = $null; Watch = $watch
+        Task = $task; AwaitingHeaders = $true; Headers = @{}
+        TimesMs = [Collections.Generic.List[double]]::new()
+        Text = [Text.StringBuilder]::new(); Done = $false; FirstTokenMs = $null
+        Usage = $null; Prefix = $null; FirstContentTimestamp = $null
+        LastContentTimestamp = $null; CompletedTimestamp = $null
+    }
+}
+
+function Invoke-Concurrency {
+    param([object[]]$ChatMessages, [object[]]$AgentMessages, [int]$MaxTokens = 32, [int]$ChatDelayMs = 0)
+    $sessions = @()
+    try {
+        $agent = New-ConcurrentSse $AgentMessages $MaxTokens 'hillclimb-agent'
+        $sessions += $agent
+        if ($ChatDelayMs -gt 0) { Start-Sleep -Milliseconds $ChatDelayMs }
+        $chat = New-ConcurrentSse $ChatMessages $MaxTokens 'hillclimb-chat'
+        $sessions += $chat
+        $active = @($sessions)
+        while ($active.Count -gt 0) {
+            $tasks = [Threading.Tasks.Task[]]@($active | ForEach-Object { $_.Task })
+            $index = [Threading.Tasks.Task]::WaitAny($tasks, $RequestTimeoutSeconds * 1000)
+            if ($index -lt 0) { throw 'Concurrent stream read timed out.' }
+            $session = $active[$index]
+            if ($session.AwaitingHeaders) {
+                $session.Response = $session.Task.GetAwaiter().GetResult()
+                if (-not $session.Response.IsSuccessStatusCode) {
+                    throw "Concurrent HTTP $([int]$session.Response.StatusCode): $($session.Response.Content.ReadAsStringAsync().GetAwaiter().GetResult())"
+                }
+                $session.Headers = Get-HeaderMap $session.Response
+                $stream = $session.Response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+                $session.Reader = [IO.StreamReader]::new($stream, [Text.Encoding]::UTF8)
+                $session.AwaitingHeaders = $false
+            } else {
+                $line = $session.Task.GetAwaiter().GetResult()
+                if ($null -eq $line) { throw 'Concurrent SSE closed without [DONE].' }
+                Consume-SseLine $session $line
+            }
+            if ($session.Done) {
+                $session.Watch.Stop()
+                $session.CompletedTimestamp = [Diagnostics.Stopwatch]::GetTimestamp()
+                $active = @($active | Where-Object { -not [object]::ReferenceEquals($_, $session) })
+            } else { $session.Task = $session.Reader.ReadLineAsync() }
+        }
+        $rows = @((Get-GenerationStats $chat 'chat-style'), (Get-GenerationStats $agent 'agent-style'))
+        $usageAvailable = $null -ne $chat.Usage -and $null -ne $agent.Usage
+        $first = [Math]::Min([double]$chat.FirstContentTimestamp, [double]$agent.FirstContentTimestamp)
+        $last = [Math]::Max([double]$chat.CompletedTimestamp, [double]$agent.CompletedTimestamp)
+        $overlap = ([Math]::Min([double]$chat.LastContentTimestamp, [double]$agent.LastContentTimestamp) -
+            [Math]::Max([double]$chat.FirstContentTimestamp, [double]$agent.FirstContentTimestamp)) /
+            [Diagnostics.Stopwatch]::Frequency
+        $aggregate = if ($usageAvailable -and $last -gt $first) {
+            ($chat.Usage.completion_tokens + $agent.Usage.completion_tokens) /
+                (($last - $first) / [Diagnostics.Stopwatch]::Frequency)
+        } else { $null }
+        return [pscustomobject]@{
+            streams = $rows
+            aggregate_client_decode_tps = $aggregate
+            overlapping_visible_decode_seconds = [Math]::Max(0.0, [double]$overlap)
+            chat_first_token_before_agent_first_token = $chat.FirstContentTimestamp -lt $agent.FirstContentTimestamp
+            token_count_source = if ($usageAvailable) { 'usage on these exact SSE streams' } else { 'unavailable; do not substitute delta events' }
+            denominator = 'sum actual completion tokens / (latest DONE - earliest first visible token), including gaps and fill/drain'
+        }
+    } finally {
+        foreach ($session in $sessions) {
+            if ($session.Reader) { $session.Reader.Dispose() }
+            if ($session.Response) { $session.Response.Dispose() }
+            $session.Request.Dispose()
+        }
+    }
+}
+
+function Invoke-ConcurrentGeneration {
+    if ($ConcurrentTokens -lt 2 -or $ConcurrentRepeats -lt 1 -or $ChatContextTokens -lt 0 -or
+        $AgentContextTokens -lt 0 -or $ChatDelayMilliseconds -lt 0) { throw 'Invalid concurrency parameters.' }
+    if ($CapacityProbe -and -not $MixedPrefill) { throw 'CapacityProbe requires MixedPrefill.' }
+    $trials = @()
+    $purpose = 'Print a long numbered list of distinct practical software tasks, one per line. Continue until the token limit.'
+    for ($repeat = 0; $repeat -lt $ConcurrentRepeats; $repeat++) {
+        $chat = New-Prompt $ChatContextTokens $purpose
+        $agent = New-Prompt $AgentContextTokens $purpose -Agent
+        $chatPrime = Invoke-NonStream $chat.Messages 1 -User 'hillclimb-chat'
+        $chatMessages = @($chat.Messages) + @(
+            @{ role = 'assistant'; content = $chatPrime.Content }
+            @{ role = 'user'; content = "/no_think $purpose" }
+        )
+        $agentMessages = $agent.Messages
+        if (-not $MixedPrefill) {
+            $agentPrime = Invoke-NonStream $agent.Messages 1 -User 'hillclimb-agent'
+            $agentMessages = @($agent.Messages) + @(
+                @{ role = 'assistant'; content = $agentPrime.Content }
+                @{ role = 'user'; content = "/no_think $purpose" }
+            )
+        }
+        $chatIsolated = Finish-Sse (Start-Sse $chatMessages $ConcurrentTokens -User 'hillclimb-chat')
+        $agentIsolated = if (-not $CapacityProbe) {
+            Finish-Sse (Start-Sse $agentMessages $ConcurrentTokens -User 'hillclimb-agent')
+        } else { $null }
+        $baseline = @((Get-GenerationStats $chatIsolated 'chat-style'),
+            $(if ($agentIsolated) { Get-GenerationStats $agentIsolated 'agent-style' } else { $null }))
+        $null = Invoke-NonStream $chat.Messages 1 -User 'hillclimb-chat'
+        if (-not $MixedPrefill) { $null = Invoke-NonStream $agent.Messages 1 -User 'hillclimb-agent' }
+        $load = Invoke-Concurrency $chatMessages $agentMessages $ConcurrentTokens `
+            -ChatDelayMs $(if ($MixedPrefill) { $ChatDelayMilliseconds } else { 0 })
+        $trials += [pscustomobject]@{ repeat = $repeat; isolated = $baseline; load = $load }
+        $records.concurrency = [pscustomobject]@{
+            mode = if ($MixedPrefill) { 'chat-decode-during-agent-cold-prefill' } else { 'two-warm-prefix-generations' }
+            capacity_probe = [bool]$CapacityProbe; complete = $false; trials = $trials
+        }
+        foreach ($index in 0,1) {
+            $row = $load.streams[$index]
+            if ($null -eq $row.completion_tokens) { throw 'ConcurrentGeneration requires SSE usage from this branch.' }
+            if ($row.completion_tokens -lt 32) { throw "Insufficient sustained generation: $($row.name) emitted $($row.completion_tokens) tokens." }
+            $row | Add-Member isolated_decode_tps $(if ($baseline[$index]) { $baseline[$index].client_decode_tps } else { $null })
+            $row | Add-Member decode_retention $(if ($baseline[$index]) { $row.client_decode_tps / $baseline[$index].client_decode_tps } else { $null })
+            $row | Add-Member isolated_ttft_ms $(if ($baseline[$index]) { $baseline[$index].ttft_ms } else { $null })
+            $row | Add-Member same_prompt_hash_match $(if ($baseline[$index]) { $row.sha256 -eq $baseline[$index].sha256 } else { $null })
+            $row | Add-Member requested_token_ceiling $ConcurrentTokens
+        }
+        $load | Add-Member aggregate_speedup_over_mean_isolated $(if (-not $CapacityProbe) {
+            $load.aggregate_client_decode_tps / (($baseline[0].client_decode_tps + $baseline[1].client_decode_tps) / 2.0)
+        } else { $null })
+        if ($null -eq $load.streams[0].prefix -or $load.streams[0].prefix.reused_tokens -le 0) {
+            throw 'Chat continuation did not reuse its primed session.'
+        }
+        if ($MixedPrefill -and $load.streams[1].prefix.reused_tokens -ne 0) {
+            throw 'Agent cold prefill unexpectedly reused a prefix.'
+        }
+        if (-not $MixedPrefill -and $load.streams[1].prefix.reused_tokens -le 0) {
+            throw 'Agent continuation did not reuse its primed session.'
+        }
+        if (-not $MixedPrefill -and $load.overlapping_visible_decode_seconds -le 0) {
+            throw 'The requests did not overlap in generation; this is not a pipeline throughput sample.'
+        }
+        if ($CapacityProbe) {
+            $residentChat = New-Prompt 0 'Output exactly OK.'
+            $residentReply = Invoke-NonStream $residentChat.Messages 16 -User 'hillclimb-chat'
+            if ($residentReply.CompletionTokens -lt 1) { throw 'Chat failed with the near-limit agent resident.' }
+            $load | Add-Member post_near_limit_chat ([pscustomobject]@{
+                user = 'hillclimb-chat'; completion_tokens = $residentReply.CompletionTokens
+                prompt_tokens = $residentReply.PromptTokens; wall_seconds = $residentReply.WallSeconds
+                text = $residentReply.Content; headers = $residentReply.Headers
+                note = 'Fresh chat resets only chat affinity after the long request completes; agent affinity is not reassigned.'
+            })
+        }
+        Write-Host ("CONCURRENT repeat={0} mixed={1} aggregate_tps={2:F2} chat_ttft_ms={3:F1} chat_tps={4:F2} agent_tps={5:F2}" -f
+            $repeat, [bool]$MixedPrefill, $load.aggregate_client_decode_tps, $load.streams[0].ttft_ms,
+            $load.streams[0].client_decode_tps, $load.streams[1].client_decode_tps)
+    }
+    return [pscustomobject]@{
+        mode = if ($MixedPrefill) { 'chat-decode-during-agent-cold-prefill' } else { 'two-warm-prefix-generations' }
+        capacity_probe = [bool]$CapacityProbe
+        complete = $true
+        trials = $trials
+        chat_ttft_p50_ms = Get-Percentile @($trials | ForEach-Object { $_.load.streams[0].ttft_ms }) 0.5
+        chat_ttft_p95_ms = Get-Percentile @($trials | ForEach-Object { $_.load.streams[0].ttft_ms }) 0.95
+        aggregate_tps_median = Get-Percentile @($trials | ForEach-Object { $_.load.aggregate_client_decode_tps }) 0.5
     }
 }
 
@@ -497,6 +659,13 @@ try {
     foreach ($name in @('X-Flash-Gordon-Git-SHA', 'X-Git-SHA', 'X-Flash-Gordon-Git-Commit')) {
         if ($headerProbe.Headers.Contains($name)) { $records.metadata.git_sha = $headerProbe.Headers[$name]; break }
     }
+    if ($ConcurrentGeneration) {
+        $records.concurrency = Invoke-ConcurrentGeneration
+        $records.metadata.correctness_pass = @($records.concurrency.trials | Where-Object {
+            -not $_.load.streams[0].same_prompt_hash_match -or
+                (-not $CapacityProbe -and -not $_.load.streams[1].same_prompt_hash_match)
+        }).Count -eq 0
+    } else {
     $records.metadata.capacity_headers = @($headerProbe.Headers.Keys | Where-Object { $_ -match '(?i)capacity|concurr|slot' } | ForEach-Object { "$_=$($headerProbe.Headers[$_])" })
 
     if ($Quick) {
@@ -569,6 +738,7 @@ try {
     $records.correctness = @(Invoke-Correctness)
     $failedCorrectness = @($records.correctness | Where-Object { $_.reference_match -eq $false })
     $records.metadata.correctness_pass = ($WriteReference -or $failedCorrectness.Count -eq 0)
+    }
     $records.metadata.elapsed_seconds = ([DateTimeOffset]::Now - $runStarted).TotalSeconds
     $stamp = $runStarted.ToLocalTime().ToString('yyyyMMdd-HHmmss')
     $runPath = Join-Path $runRoot "$stamp.json"
