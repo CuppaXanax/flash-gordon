@@ -1,0 +1,7 @@
+test_pin_plan_is_offline_and_renders_lf (test_candidate_stack.CandidateStack.test_pin_plan_is_offline_and_renders_lf) ... ok
+test_compact_evidence_omits_logit_payloads (test_candidate_stack.CandidateStack.test_compact_evidence_omits_logit_payloads) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 1.489s
+
+OK

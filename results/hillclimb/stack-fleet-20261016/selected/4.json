@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 0, \"pid\": 225942, \"argv\": [\"/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\", \"api\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--model-name\", \"Qwen3.8-Flash-Next-Uncensored\", \"--host\", \"0.0.0.0\", \"--port\", \"8080\", \"--context-tokens\", \"262144\", \"--gpu-index-tokens\", \"262144\", \"--qsa-hot-tokens\", \"0\", \"--qsa-page-cache-mib\", \"700\", \"--sessions\", \"2\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_RING_TRACE\": \"1\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_QSA\": \"3\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOFLINE\": \"2047\"}, \"binary_sha256\": \"02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"cf8f1a3d08e77cac94e91c44882e3187948f42a3c5b5c5846b92c4d287a7c79e\", \"persistent_identity_verified\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 1, \"pid\": 151322, \"argv\": [\"/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"1\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_QSA\": \"3\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOFLINE\": \"2047\"}, \"binary_sha256\": \"02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"cf8f1a3d08e77cac94e91c44882e3187948f42a3c5b5c5846b92c4d287a7c79e\", \"persistent_identity_verified\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 2, \"pid\": 147297, \"argv\": [\"/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"2\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_QSA\": \"3\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOFLINE\": \"2047\"}, \"binary_sha256\": \"02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"cf8f1a3d08e77cac94e91c44882e3187948f42a3c5b5c5846b92c4d287a7c79e\", \"persistent_identity_verified\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 3, \"pid\": 146735, \"argv\": [\"/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"3\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_QSA\": \"3\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOFLINE\": \"2047\"}, \"binary_sha256\": \"02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"cf8f1a3d08e77cac94e91c44882e3187948f42a3c5b5c5846b92c4d287a7c79e\", \"persistent_identity_verified\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 4, \"pid\": 149986, \"argv\": [\"/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"4\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_QSA\": \"3\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOFLINE\": \"2047\"}, \"binary_sha256\": \"02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"cf8f1a3d08e77cac94e91c44882e3187948f42a3c5b5c5846b92c4d287a7c79e\", \"persistent_identity_verified\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 5, \"pid\": 146769, \"argv\": [\"/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"5\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_QSA\": \"3\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOFLINE\": \"2047\"}, \"binary_sha256\": \"02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"cf8f1a3d08e77cac94e91c44882e3187948f42a3c5b5c5846b92c4d287a7c79e\", \"persistent_identity_verified\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 6, \"pid\": 147139, \"argv\": [\"/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"6\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_QSA\": \"3\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOFLINE\": \"2047\"}, \"binary_sha256\": \"02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"cf8f1a3d08e77cac94e91c44882e3187948f42a3c5b5c5846b92c4d287a7c79e\", \"persistent_identity_verified\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 7, \"pid\": 148648, \"argv\": [\"/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"7\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_QSA\": \"3\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOFLINE\": \"2047\"}, \"binary_sha256\": \"02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"cf8f1a3d08e77cac94e91c44882e3187948f42a3c5b5c5846b92c4d287a7c79e\", \"persistent_identity_verified\": true}",
+    "Stderr": ""
+  }
+]

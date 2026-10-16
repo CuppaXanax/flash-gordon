@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 0, \"pid\": 225444, \"argv\": [\"/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon\", \"api\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--model-name\", \"Qwen3.8-Flash-Next-Uncensored\", \"--host\", \"0.0.0.0\", \"--port\", \"8080\", \"--context-tokens\", \"262144\", \"--gpu-index-tokens\", \"262144\", \"--qsa-hot-tokens\", \"0\", \"--qsa-page-cache-mib\", \"700\", \"--sessions\", \"2\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"0\", \"FG_RING_TRACE\": \"1\"}, \"binary_sha256\": \"de6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58\", \"shader_tree_sha256\": \"cf403d9d6a68c7cf9b9304af2937365fd210a91b12c52039c1536eed2a1d22b6\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418\", \"persistent_identity_verified\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 1, \"pid\": 150804, \"argv\": [\"/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"1\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"0\"}, \"binary_sha256\": \"de6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58\", \"shader_tree_sha256\": \"cf403d9d6a68c7cf9b9304af2937365fd210a91b12c52039c1536eed2a1d22b6\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418\", \"persistent_identity_verified\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 2, \"pid\": 146749, \"argv\": [\"/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"2\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"0\"}, \"binary_sha256\": \"de6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58\", \"shader_tree_sha256\": \"cf403d9d6a68c7cf9b9304af2937365fd210a91b12c52039c1536eed2a1d22b6\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418\", \"persistent_identity_verified\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 3, \"pid\": 146218, \"argv\": [\"/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"3\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"0\"}, \"binary_sha256\": \"de6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58\", \"shader_tree_sha256\": \"cf403d9d6a68c7cf9b9304af2937365fd210a91b12c52039c1536eed2a1d22b6\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418\", \"persistent_identity_verified\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 4, \"pid\": 149446, \"argv\": [\"/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"4\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"0\"}, \"binary_sha256\": \"de6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58\", \"shader_tree_sha256\": \"cf403d9d6a68c7cf9b9304af2937365fd210a91b12c52039c1536eed2a1d22b6\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418\", \"persistent_identity_verified\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 5, \"pid\": 146231, \"argv\": [\"/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"5\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"0\"}, \"binary_sha256\": \"de6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58\", \"shader_tree_sha256\": \"cf403d9d6a68c7cf9b9304af2937365fd210a91b12c52039c1536eed2a1d22b6\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418\", \"persistent_identity_verified\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 6, \"pid\": 146610, \"argv\": [\"/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"6\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"0\"}, \"binary_sha256\": \"de6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58\", \"shader_tree_sha256\": \"cf403d9d6a68c7cf9b9304af2937365fd210a91b12c52039c1536eed2a1d22b6\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418\", \"persistent_identity_verified\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 7, \"pid\": 148130, \"argv\": [\"/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"7\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"0\"}, \"binary_sha256\": \"de6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58\", \"shader_tree_sha256\": \"cf403d9d6a68c7cf9b9304af2937365fd210a91b12c52039c1536eed2a1d22b6\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418\", \"persistent_identity_verified\": true}",
+    "Stderr": ""
+  }
+]

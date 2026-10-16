@@ -28,6 +28,11 @@ an unfavorable completed pair.
 
 Each pair gets a fresh random salt; all arm requests within that pair use the same deterministic salts and seeds. `ABAB` runs A,B for every pair; `ABBA` reverses odd-numbered pairs, yielding A,B,B,A,A,B,B,A,A,B,B,A for six pairs. Each arm is freshly deployed, including adjacent equal arms. Long cold and decode request hashes, and cached-TTFT body hashes, must match. Canonical greedy cases remain unsalted. Cached continuations use the fixed assistant text `Ready`, not either model's generated prefix response; numeric changes cannot silently change the paired input. Actual prime responses remain in diagnostics, and long decode must retain all but eight tokens of its cold prompt.
 
+The `paired-affinity-v3` battery supplies a stable OpenAI
+`user=hillclimb-stream-0`; concurrent requests use distinct users 0 and 1.
+This is required for retained-prefix routing with sessions 2. Resume also
+binds this battery identity and the same-kernel greedy receipt digest.
+
 One cold **non-streaming** request per context collects actual prompt usage, engine prefill TPS and client prompt-tokens/full-response-wall TPS. The latter includes HTTP/rendering and one generated token; it is not SSE TTFT or pure engine prefill. Actual reused tokens must be zero. Default contexts are 4K/32K; expensive 128K is optional and secondary, not duplicated by default. Reserve sufficient lease time for six pairs, quality captures, cleanup and rollback; no elapsed-time guarantee has been measured for the revised battery.
 
 Long decode immediately continues the cold prompt with the canonical assistant stub. It must retain the prefix and emit at least 32 actual tokens. Engine decode TPS and actual completion tokens divided by (HTTP wall minus engine prefill seconds) are reported separately; the client interval includes HTTP overhead, not SSE-event counts. Short decode uses the same accounting. Chat and cached-prefix TTFT use first visible SSE content, not the role-only event.

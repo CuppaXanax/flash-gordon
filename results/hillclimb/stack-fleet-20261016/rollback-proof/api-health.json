@@ -1,0 +1,44 @@
+{
+  "chat": {
+    "id": "chatcmpl-fg-1792148314-1",
+    "object": "chat.completion",
+    "created": 1792148314,
+    "model": "Qwen3.8-Flash-Next-Uncensored",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "OK"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 16,
+      "completion_tokens": 1,
+      "total_tokens": 17
+    }
+  },
+  "models": {
+    "object": "list",
+    "data": [
+      {
+        "id": "Qwen3.8-Flash-Next-Uncensored",
+        "object": "model",
+        "created": 0,
+        "owned_by": "flash-gordon",
+        "capabilities": {
+          "native_context": 262144,
+          "experimental_context": 0,
+          "tools": true,
+          "mtp": false,
+          "image": false,
+          "video": false,
+          "video_frames": false
+        }
+      }
+    ]
+  },
+  "verified": "2026-10-16T03:58:35.1116005-07:00"
+}

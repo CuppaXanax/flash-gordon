@@ -1,0 +1,86 @@
+{
+  "descriptive_restart_verification_not_gate_data": true,
+  "streams": [
+    {
+      "stream": 0,
+      "completion_tokens": 96,
+      "start_seconds": 0.033018299989635125,
+      "finish_seconds": 5.413639000005787,
+      "wall_seconds": 5.380620700016152,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "798",
+        "Connection": "close",
+        "Cache-Control": "no-store",
+        "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+        "X-Flash-Gordon-Prompt-Tokens": "63",
+        "X-Flash-Gordon-Prefilled-Tokens": "63",
+        "X-Flash-Gordon-Reused-Tokens": "0",
+        "X-Flash-Gordon-Prefix-Cache": "miss",
+        "X-Flash-Gordon-Exact-Frontier": "false",
+        "X-Flash-Gordon-Reset-Reason": "cold-start",
+        "X-Flash-Gordon-Completion-Tokens": "96",
+        "X-Flash-Gordon-Context-Tokens": "159",
+        "X-Flash-Gordon-Prefill-Seconds": "1.421155899",
+        "X-Flash-Gordon-Prefill-TPS": "44.330112",
+        "X-Flash-Gordon-Decode-Seconds": "3.951087781",
+        "X-Flash-Gordon-Decode-TPS": "24.297106",
+        "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+      },
+      "text_excerpt": "1. Implement a robust input validation layer that sanitizes user-provided strings to prevent SQL injection and cross-site scripting (XSS) vulnerabilities across"
+    },
+    {
+      "stream": 1,
+      "completion_tokens": 96,
+      "start_seconds": 0.03250639999168925,
+      "finish_seconds": 5.433992100006435,
+      "wall_seconds": 5.401485700014746,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "837",
+        "Connection": "close",
+        "Cache-Control": "no-store",
+        "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+        "X-Flash-Gordon-Prompt-Tokens": "63",
+        "X-Flash-Gordon-Prefilled-Tokens": "63",
+        "X-Flash-Gordon-Reused-Tokens": "0",
+        "X-Flash-Gordon-Prefix-Cache": "miss",
+        "X-Flash-Gordon-Exact-Frontier": "false",
+        "X-Flash-Gordon-Reset-Reason": "explicit",
+        "X-Flash-Gordon-Completion-Tokens": "96",
+        "X-Flash-Gordon-Context-Tokens": "159",
+        "X-Flash-Gordon-Prefill-Seconds": "1.370472649",
+        "X-Flash-Gordon-Prefill-TPS": "45.969542",
+        "X-Flash-Gordon-Decode-Seconds": "3.584868665",
+        "X-Flash-Gordon-Decode-TPS": "26.779224",
+        "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+      },
+      "text_excerpt": "1. Implement a robust input validation layer that sanitizes user data against SQL injection and XSS attacks before it reaches the database or frontend rendering"
+    }
+  ],
+  "health": {
+    "status": "ok",
+    "busy": false
+  },
+  "models": {
+    "object": "list",
+    "data": [
+      {
+        "id": "Qwen3.8-Flash-Next-Uncensored",
+        "object": "model",
+        "created": 0,
+        "owned_by": "flash-gordon",
+        "capabilities": {
+          "native_context": 262144,
+          "experimental_context": 0,
+          "tools": true,
+          "mtp": false,
+          "image": false,
+          "video": false,
+          "video_frames": false
+        }
+      }
+    ]
+  },
+  "actual_aggregate_tps": 35.33313933227335
+}

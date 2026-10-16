@@ -1,0 +1,11 @@
+{
+  "manifest_sha256": "0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252",
+  "wide": 0,
+  "sessions": 2,
+  "manifest": "/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm",
+  "binary_sha256": "de6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58",
+  "release": "/home/xander/flash-gordon-live/20261016-abq-multisess",
+  "capture_program": "/home/xander/flash-gordon-live/20261016-abq-quality-adaptive/q4-eval-batch",
+  "capture_sha256": "9774aa189e260f794675c3b614c4aca697ea5ee8bc06cb3f4f747ae520afdf0d",
+  "shader_tree_sha256": "cf403d9d6a68c7cf9b9304af2937365fd210a91b12c52039c1536eed2a1d22b6"
+}

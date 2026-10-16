@@ -1,0 +1,13 @@
+{
+  "stack_runtime_source_unchanged_after_build": true,
+  "harness_battery_source": "c636e28",
+  "stack_branch": "7381f93863cf94a9e807016476f6880d62007cc7",
+  "battery": "paired-affinity-v3",
+  "baseline_source": "2d0f8a7",
+  "full_model_quality": "480 teacher-forced single-logical-session frontiers over the real eight-rank ring",
+  "teacher_worktree_head": "c1f577077caf6bb0c4f2237b8c2054dd77ffe3bc",
+  "stack_build_source": "31508ee",
+  "primary_gate": "primary-median-v2",
+  "production_sessions": 2,
+  "teacher_runtime_source_matches_baseline": true
+}

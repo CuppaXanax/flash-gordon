@@ -157,12 +157,27 @@ performance deployment. Reserve time for quality, all predeclared pairs,
 cleanup and restoration. Restore is allowed even if the lease expires.
 Do not run concurrent operators.
 
-The batch always restores configured **A/current main+mix-04**, not the
+The batch always restores configured **A/current adaptive+mix-04**, not the
 historical original, even on capture/performance failure. Its output contains
 `restore-baseline.ps1`, a one-command restore hook. No automatic promotion
 occurs; eligible does not mean deployed. If a same-kernel control fails quality,
 dependent grouping candidates are reported blocked rather than silently
 waiving hashes. Preserve all raw captures, paired samples and receipts.
+
+For an eligible adaptive-stack result, `stack-pin-selected.ps1` separately
+pins the complete flags and hash-checked launcher, restarts the whole ring,
+checks all eight live executable/manifest/shader identities and exact argv/FG
+environment, and repeats the five canonical hashes. `-PlanOnly` renders
+LF-only pinned scripts without transport. Execution requires the current
+lease and a complete primary-gate/quality/exact-grouping winner. Failure
+restores A and its retained pre-stack launch pointers. Persistence matches
+the original `nohup` semantics, not an automatic host-boot service.
+`ab-rollback-pre-stack.ps1` is the one-command fallback to adaptive
+`2d0f8a7`/mix-04/sessions 2, not the older sessions-1 rollback.
+
+`stack_collect_evidence.py` copies compact receipts and framed prompts,
+hash-indexes full-vocabulary payloads retained locally, and refuses an existing
+destination. Raw logits and their large archives must not be pushed to GitHub.
 
 `CaptureScript`, `PerformanceScript`, `QualityScript` and `DeploymentScript`
 overrides exist for trusted local fixtures. Tests replace every mutator and

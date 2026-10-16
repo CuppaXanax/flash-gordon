@@ -1,0 +1,44 @@
+[
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\n/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nSTARTED rank=1 pid=151322",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\n/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nSTARTED rank=2 pid=147297",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\n/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nSTARTED rank=3 pid=146735",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\n/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nSTARTED rank=4 pid=149986",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\n/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nSTARTED rank=5 pid=146769",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\n/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nSTARTED rank=6 pid=147139",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\n/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nSTARTED rank=7 pid=148648",
+    "Stderr": ""
+  }
+]

@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "mode": "candidate-stack",
+  "executed": true,
+  "rounds": 5,
+  "not_before": [
+    "multi-session lease released",
+    "MTP lease released",
+    "new exclusive .42-.49 lease"
+  ],
+  "config": {
+    "corpus": "D:\\looking-glass-labs\\fg-wt\\ab-harness\\tools\\corpora\\stack-480.json",
+    "rounds": 5,
+    "A": {
+      "manifest_sha256": "0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252",
+      "wide": 0,
+      "sessions": 2,
+      "manifest": "/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm",
+      "binary_sha256": "de6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58",
+      "release": "/home/xander/flash-gordon-live/20261016-abq-multisess",
+      "capture_program": "/home/xander/flash-gordon-live/20261016-abq-quality-adaptive/q4-eval-batch",
+      "capture_sha256": "9774aa189e260f794675c3b614c4aca697ea5ee8bc06cb3f4f747ae520afdf0d",
+      "shader_tree_sha256": "cf403d9d6a68c7cf9b9304af2937365fd210a91b12c52039c1536eed2a1d22b6"
+    },
+    "candidates": [
+      {
+        "B": {
+          "release": "/home/xander/flash-gordon-live/20261016-abq-stack-adaptive",
+          "sessions": 2,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm",
+          "flags": {
+            "FG_NGRAM_LOCAL_CACHE": 1,
+            "FG_ROOF_DENSE": 19,
+            "FG_DECODE_SUBMIT_GROUP": 2,
+            "FG_ROOFLINE": 2047,
+            "FG_ROOF_HC": 96,
+            "FG_ROOF_GDN": 1,
+            "FG_ROOF_EXPERT": 33024,
+            "FG_ROOF_RECURRENT": 3,
+            "FG_EXPERT_Q8_WIDE": 1,
+            "FG_ROOF_QSA": 3
+          },
+          "binary_sha256": "02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0",
+          "shader_tree_sha256": "5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633",
+          "capture_sha256": "c5972ffd22bb261383986829773173fdd2e7a688c31bed1853e81af52af2eced",
+          "manifest_sha256": "0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252",
+          "capture_program": "/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/q4-eval-batch",
+          "wide": 1
+        },
+        "greedy_control": {
+          "release": "/home/xander/flash-gordon-live/20261016-abq-stack-adaptive",
+          "sessions": 2,
+          "manifest": "/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm",
+          "flags": {
+            "FG_NGRAM_LOCAL_CACHE": 1,
+            "FG_ROOF_DENSE": 19,
+            "FG_DECODE_SUBMIT_GROUP": 0,
+            "FG_ROOFLINE": 2047,
+            "FG_ROOF_HC": 96,
+            "FG_ROOF_GDN": 1,
+            "FG_ROOF_EXPERT": 33024,
+            "FG_ROOF_RECURRENT": 3,
+            "FG_EXPERT_Q8_WIDE": 1,
+            "FG_ROOF_QSA": 3
+          },
+          "binary_sha256": "02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0",
+          "shader_tree_sha256": "5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633",
+          "capture_sha256": "c5972ffd22bb261383986829773173fdd2e7a688c31bed1853e81af52af2eced",
+          "manifest_sha256": "0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252",
+          "capture_program": "/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/q4-eval-batch",
+          "wide": 1
+        },
+        "name": "full-wide"
+      }
+    ]
+  },
+  "corpus_file_sha256": "8087c73149ea3029e910eddd7e54b2b54d32d83876d467c7be6f95d14aa7a9f1",
+  "results": [
+    {
+      "name": "full-wide",
+      "quality_pass": true,
+      "eligible": true,
+      "perf_run": true,
+      "hash_control": null,
+      "same_kernel_hash_identity": true
+    }
+  ],
+  "complete": true,
+  "restored_baseline": true
+}

@@ -1,0 +1,8 @@
+{
+  "manifest_sha256": "0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252",
+  "corpus_sha256": "153b30d2cc11f7488615b4add737a82b06a3c419e751e5649cc1b021a74ad2ca",
+  "quality_path": "D:\\looking-glass-labs\\fg-wt\\ab-harness\\.build\\stack-live\\full\\full-wide\\quality.json",
+  "A_identity": "7f4c9be56eb840e5453caa0beb9d5fc156370d347685825164d9dc2ee248fca4",
+  "quality_sha256": "8f41b4c38a0809ee6f197babffebad141f1a33483ad95f419fe6063adbed7ded",
+  "B_identity": "3bac55ceb9c235b0380c89b25cd8c14bd153b5a249934a67c81e409c4ca0633e"
+}

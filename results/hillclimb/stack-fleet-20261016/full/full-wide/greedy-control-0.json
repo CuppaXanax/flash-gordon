@@ -1,0 +1,55 @@
+{
+  "cases": [
+    {
+      "name": "arithmetic",
+      "prompt": "What is 17 plus 25? Output 64 copies of the answer, 42, separated by spaces; no other text.",
+      "text": "42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 42 4",
+      "sha256": "26ff83171aca5bd145b8d5b73313aee6e274f33280be55fe4116a0381d6325fb",
+      "reference_match": false,
+      "actual_tokens": 64,
+      "requested_max_tokens": 64,
+      "finish_reason": "length"
+    },
+    {
+      "name": "capital",
+      "prompt": "What is the capital city of Japan? Output 64 copies of the answer, Tokyo, separated by spaces; no other text.",
+      "text": "Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo Tokyo",
+      "sha256": "72495f205353dde6fa5edcadf2c8c0e4b96964f51544e95fa0ba8d4dbaa38e5c",
+      "reference_match": false,
+      "actual_tokens": 57,
+      "requested_max_tokens": 64,
+      "finish_reason": "stop"
+    },
+    {
+      "name": "sequence",
+      "prompt": "Continue 2, 4, 6, 8. Output 32 repetitions of \"10, 12\", separated by spaces; no other text.",
+      "text": "10, 12 10, 12 10, 12 10, 12 10, 12 10, 12 10, 12 10, 12 10, 12 1",
+      "sha256": "10b8098a28f003813a0b30cbd7b2389f7340e94d218a28d172d3145af988231f",
+      "reference_match": false,
+      "actual_tokens": 64,
+      "requested_max_tokens": 64,
+      "finish_reason": "length"
+    },
+    {
+      "name": "spelling",
+      "prompt": "Spell \"accommodation\". Output 64 copies of the correct spelling separated by spaces; no other text.",
+      "text": "accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation accommodation",
+      "sha256": "9a1465880b87c19fb57fcddbc5625621d1fdcfa061bbe13ad5d49253fa075ab2",
+      "reference_match": false,
+      "actual_tokens": 57,
+      "requested_max_tokens": 64,
+      "finish_reason": "stop"
+    },
+    {
+      "name": "logic",
+      "prompt": "Which is heavier: one kilogram of steel or one kilogram of feathers? Output 64 copies of \"They weigh the same.\" separated by spaces; no other text.",
+      "text": "They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same. They weigh the same",
+      "sha256": "d496f28da6272c18d4a43595f3efc6c44b1d254d19bd1f25b17584afc098f752",
+      "reference_match": false,
+      "actual_tokens": 64,
+      "requested_max_tokens": 64,
+      "finish_reason": "length"
+    }
+  ],
+  "schema": "greedy-capture-v1"
+}

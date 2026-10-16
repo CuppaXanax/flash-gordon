@@ -1,0 +1,20 @@
+{
+  "restoration": "current adaptive 2d0f8a7 + unchanged mix04 sessions2 wide0",
+  "stop_rule": "No repeat-until-pass; failed operational incomplete pair may be retried only with all complete pairs retained and unchanged design",
+  "initial": "full roofline recipe, local ngram cache, submit grouping2, wide1",
+  "quality_failure": "Fresh KL of full recipe wide0 before any performance; never infer subset quality",
+  "deadline": "2026-10-16T05:11:30-07:00",
+  "promotion": "all six primary medians>=.97 and CI upper>=.97, quality/hash pass, one primary median>=1.03",
+  "primary_metrics": [
+    "decode-short.engine_tps",
+    "decode-32768.engine_tps",
+    "prefill-4096.engine_tps",
+    "prefill-32768.engine_tps",
+    "chat.ttft_ms",
+    "concurrent.normalized_aggregate_tps"
+  ],
+  "performance_failure": "At most one additional five-pair set, roofline disabled vs same current production A; fresh subset quality and exact grouping control mandatory",
+  "started": "2026-10-16T02:41:30-07:00",
+  "order": "ABBA",
+  "rounds": 5
+}

@@ -1,0 +1,54 @@
+{
+  "corpus_sha256": "153b30d2cc11f7488615b4add737a82b06a3c419e751e5649cc1b021a74ad2ca",
+  "samples": 480,
+  "full_vocab": 248320,
+  "mean_kld": 0.000246434840116538,
+  "p99_kld": 0.004250554284797628,
+  "top1_agreement": 0.9979166666666667,
+  "passed": true
+}
+AB_DEPLOY arm=greedy-control release=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive sessions=2 wide=1 healthy=true
+AB_DEPLOY arm=greedy-control release=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive sessions=2 wide=1 healthy=true
+AB round=0 arm=A deploying
+AB_DEPLOY arm=A release=/home/xander/flash-gordon-live/20261016-abq-multisess sessions=2 wide=0 healthy=true
+AB context=4096 prompt_tokens=4127 cold_wall_s=12.5857394 decode_tokens=128
+AB context=32768 prompt_tokens=32793 cold_wall_s=89.8621497 decode_tokens=128
+AB round=0 arm=B deploying
+AB_DEPLOY arm=B release=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive sessions=2 wide=1 healthy=true
+AB context=4096 prompt_tokens=4127 cold_wall_s=12.6489397 decode_tokens=128
+AB context=32768 prompt_tokens=32793 cold_wall_s=85.2315493 decode_tokens=128
+AB round=1 arm=B deploying
+AB_DEPLOY arm=B release=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive sessions=2 wide=1 healthy=true
+AB context=4096 prompt_tokens=4117 cold_wall_s=12.527702 decode_tokens=128
+AB context=32768 prompt_tokens=32799 cold_wall_s=83.6525716 decode_tokens=128
+AB round=1 arm=A deploying
+AB_DEPLOY arm=A release=/home/xander/flash-gordon-live/20261016-abq-multisess sessions=2 wide=0 healthy=true
+AB context=4096 prompt_tokens=4117 cold_wall_s=13.0633056 decode_tokens=128
+AB context=32768 prompt_tokens=32799 cold_wall_s=89.0206517 decode_tokens=128
+AB round=2 arm=A deploying
+AB_DEPLOY arm=A release=/home/xander/flash-gordon-live/20261016-abq-multisess sessions=2 wide=0 healthy=true
+AB context=4096 prompt_tokens=4127 cold_wall_s=12.7793857 decode_tokens=128
+AB context=32768 prompt_tokens=32803 cold_wall_s=85.7057575 decode_tokens=128
+AB round=2 arm=B deploying
+AB_DEPLOY arm=B release=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive sessions=2 wide=1 healthy=true
+AB context=4096 prompt_tokens=4127 cold_wall_s=12.7836602 decode_tokens=128
+AB context=32768 prompt_tokens=32803 cold_wall_s=80.3820475 decode_tokens=128
+AB round=3 arm=B deploying
+AB_DEPLOY arm=B release=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive sessions=2 wide=1 healthy=true
+AB context=4096 prompt_tokens=4123 cold_wall_s=12.5923746 decode_tokens=128
+AB context=32768 prompt_tokens=32799 cold_wall_s=85.9523611 decode_tokens=128
+AB round=3 arm=A deploying
+AB_DEPLOY arm=A release=/home/xander/flash-gordon-live/20261016-abq-multisess sessions=2 wide=0 healthy=true
+AB context=4096 prompt_tokens=4123 cold_wall_s=12.7568341 decode_tokens=128
+AB context=32768 prompt_tokens=32799 cold_wall_s=85.8871184 decode_tokens=128
+AB round=4 arm=A deploying
+AB_DEPLOY arm=A release=/home/xander/flash-gordon-live/20261016-abq-multisess sessions=2 wide=0 healthy=true
+AB context=4096 prompt_tokens=4123 cold_wall_s=13.1931483 decode_tokens=128
+AB context=32768 prompt_tokens=32799 cold_wall_s=89.0710123 decode_tokens=128
+AB round=4 arm=B deploying
+AB_DEPLOY arm=B release=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive sessions=2 wide=1 healthy=true
+AB context=4096 prompt_tokens=4123 cold_wall_s=12.5040148 decode_tokens=128
+AB context=32768 prompt_tokens=32799 cold_wall_s=85.7791986 decode_tokens=128
+AB result=D:\looking-glass-labs\fg-wt\ab-harness\.build\stack-live\full\full-wide\perf\ab-result.json eligible=True
+AB_DEPLOY arm=restore-baseline release=/home/xander/flash-gordon-live/20261016-abq-multisess sessions=2 wide=0 healthy=true
+AB_DEPLOY arm=restore-baseline release=/home/xander/flash-gordon-live/20261016-abq-multisess sessions=2 wide=0 healthy=true

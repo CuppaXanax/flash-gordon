@@ -1,0 +1,6 @@
+ab-instance.sh: PASS
+stack-hardware-oracles.sh: PASS
+stack-preflight.sh: PASS
+stack-stage-install.sh: PASS
+stack-stage-prepare.sh: PASS
+stack-verify-selected.sh: PASS

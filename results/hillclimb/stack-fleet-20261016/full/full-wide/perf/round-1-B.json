@@ -1,0 +1,233 @@
+{
+  "metrics": {
+    "prefill-4096.engine_tps": {
+      "value": 331.954014,
+      "higher_is_better": true
+    },
+    "prefill-4096.client_wall_tps": {
+      "value": 328.631699572675,
+      "higher_is_better": true
+    },
+    "decode-4096.engine_tps": {
+      "value": 31.826085,
+      "higher_is_better": true
+    },
+    "decode-4096.client_tps": {
+      "value": 31.810348388854113,
+      "higher_is_better": true
+    },
+    "prefill-32768.engine_tps": {
+      "value": 392.611461,
+      "higher_is_better": true
+    },
+    "prefill-32768.client_wall_tps": {
+      "value": 392.08597383992435,
+      "higher_is_better": true
+    },
+    "decode-32768.engine_tps": {
+      "value": 28.487479,
+      "higher_is_better": true
+    },
+    "decode-32768.client_tps": {
+      "value": 28.43668177377679,
+      "higher_is_better": true
+    },
+    "decode-short.engine_tps": {
+      "value": 30.733993,
+      "higher_is_better": true
+    },
+    "decode-short.client_tps": {
+      "value": 30.61339377391791,
+      "higher_is_better": true
+    },
+    "chat.ttft_ms": {
+      "value": 1601.466,
+      "higher_is_better": false
+    },
+    "cached-prefix.ttft_ms": {
+      "value": 569.4756,
+      "higher_is_better": false
+    },
+    "concurrent-chat.normalized_tps": {
+      "value": 21.572632069086083,
+      "higher_is_better": true
+    },
+    "concurrent-agent.normalized_tps": {
+      "value": 21.597746990526907,
+      "higher_is_better": true
+    },
+    "concurrent.normalized_aggregate_tps": {
+      "value": 43.145264138172166,
+      "higher_is_better": true
+    }
+  },
+  "prefill": [
+    {
+      "headers": {
+        "Connection": "keep-alive",
+        "Cache-Control": "no-store",
+        "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+        "X-Flash-Gordon-Prompt-Tokens": "4117",
+        "X-Flash-Gordon-Prefilled-Tokens": "4117",
+        "X-Flash-Gordon-Reused-Tokens": "0",
+        "X-Flash-Gordon-Prefix-Cache": "miss",
+        "X-Flash-Gordon-Exact-Frontier": "false",
+        "X-Flash-Gordon-Reset-Reason": "cold-start",
+        "X-Flash-Gordon-Completion-Tokens": "1",
+        "X-Flash-Gordon-Context-Tokens": "4118",
+        "X-Flash-Gordon-Prefill-Seconds": "12.402320274",
+        "X-Flash-Gordon-Prefill-TPS": "331.954014",
+        "X-Flash-Gordon-Decode-Seconds": "0.109060131",
+        "X-Flash-Gordon-Decode-TPS": "9.169254",
+        "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50",
+        "Content-Type": "application/json",
+        "Content-Length": "292"
+      },
+      "target": 4096,
+      "generated_text": "Ready",
+      "wall_seconds": 12.527702,
+      "request_sha256": "aed7b03da63daf137bcc941d55abc405d270da76ba0782ad41bfc62a3d4ec2d1",
+      "prompt_tokens": 4117
+    },
+    {
+      "headers": {
+        "Connection": "keep-alive",
+        "Cache-Control": "no-store",
+        "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+        "X-Flash-Gordon-Prompt-Tokens": "32799",
+        "X-Flash-Gordon-Prefilled-Tokens": "32799",
+        "X-Flash-Gordon-Reused-Tokens": "0",
+        "X-Flash-Gordon-Prefix-Cache": "miss",
+        "X-Flash-Gordon-Exact-Frontier": "false",
+        "X-Flash-Gordon-Reset-Reason": "public-history-mismatch",
+        "X-Flash-Gordon-Completion-Tokens": "1",
+        "X-Flash-Gordon-Context-Tokens": "32800",
+        "X-Flash-Gordon-Prefill-Seconds": "83.540607658",
+        "X-Flash-Gordon-Prefill-TPS": "392.611461",
+        "X-Flash-Gordon-Decode-Seconds": "0.033535695",
+        "X-Flash-Gordon-Decode-TPS": "29.818973",
+        "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50",
+        "Content-Type": "application/json",
+        "Content-Length": "294"
+      },
+      "target": 32768,
+      "generated_text": "Ready",
+      "wall_seconds": 83.6525716,
+      "request_sha256": "cf5482f8e5244e78fced95a2372ee9401b1e5594f9c65054560f45def11ca5bb",
+      "prompt_tokens": 32799
+    }
+  ],
+  "decode": [
+    {
+      "headers": {
+        "Connection": "keep-alive",
+        "Cache-Control": "no-store",
+        "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+        "X-Flash-Gordon-Prompt-Tokens": "4149",
+        "X-Flash-Gordon-Prefilled-Tokens": "31",
+        "X-Flash-Gordon-Reused-Tokens": "4118",
+        "X-Flash-Gordon-Prefix-Cache": "hit",
+        "X-Flash-Gordon-Exact-Frontier": "false",
+        "X-Flash-Gordon-Reset-Reason": "none",
+        "X-Flash-Gordon-Completion-Tokens": "128",
+        "X-Flash-Gordon-Context-Tokens": "4277",
+        "X-Flash-Gordon-Prefill-Seconds": "0.724309612",
+        "X-Flash-Gordon-Prefill-TPS": "42.799377",
+        "X-Flash-Gordon-Decode-Seconds": "4.021858179",
+        "X-Flash-Gordon-Decode-TPS": "31.826085",
+        "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50",
+        "Content-Type": "application/json",
+        "Content-Length": "829"
+      },
+      "tokens": 128,
+      "context": 4096,
+      "request_sha256": "6f5b68246f668ee1cbea82468a44fec19783f239dd6aeca93a09a1599cbc45d9"
+    },
+    {
+      "headers": {
+        "Connection": "keep-alive",
+        "Cache-Control": "no-store",
+        "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+        "X-Flash-Gordon-Prompt-Tokens": "32831",
+        "X-Flash-Gordon-Prefilled-Tokens": "31",
+        "X-Flash-Gordon-Reused-Tokens": "32800",
+        "X-Flash-Gordon-Prefix-Cache": "hit",
+        "X-Flash-Gordon-Exact-Frontier": "false",
+        "X-Flash-Gordon-Reset-Reason": "none",
+        "X-Flash-Gordon-Completion-Tokens": "128",
+        "X-Flash-Gordon-Context-Tokens": "32959",
+        "X-Flash-Gordon-Prefill-Seconds": "0.722774386",
+        "X-Flash-Gordon-Prefill-TPS": "42.890286",
+        "X-Flash-Gordon-Decode-Seconds": "4.493202147",
+        "X-Flash-Gordon-Decode-TPS": "28.487479",
+        "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50",
+        "Content-Type": "application/json",
+        "Content-Length": "864"
+      },
+      "tokens": 128,
+      "context": 32768,
+      "request_sha256": "128f39a973d0420cec2fb095c8c8da9c648e7d97b4c7c067138794ced45065a5"
+    }
+  ],
+  "hashes": [
+    {
+      "tokens": 64,
+      "sha256": "26ff83171aca5bd145b8d5b73313aee6e274f33280be55fe4116a0381d6325fb",
+      "name": "arithmetic"
+    },
+    {
+      "tokens": 57,
+      "sha256": "72495f205353dde6fa5edcadf2c8c0e4b96964f51544e95fa0ba8d4dbaa38e5c",
+      "name": "capital"
+    },
+    {
+      "tokens": 64,
+      "sha256": "10b8098a28f003813a0b30cbd7b2389f7340e94d218a28d172d3145af988231f",
+      "name": "sequence"
+    },
+    {
+      "tokens": 57,
+      "sha256": "9a1465880b87c19fb57fcddbc5625621d1fdcfa061bbe13ad5d49253fa075ab2",
+      "name": "spelling"
+    },
+    {
+      "tokens": 64,
+      "sha256": "d496f28da6272c18d4a43595f3efc6c44b1d254d19bd1f25b17584afc098f752",
+      "name": "logic"
+    }
+  ],
+  "requests": [
+    "88c6d7c6ac4a45c8308ff2a7ea958706c460d2ad1b4d0404bd98a75f6a78ef2c"
+  ],
+  "prefix_prime_text": "Ready",
+  "concurrency": {
+    "schema": 2,
+    "token_count_source": "actual usage on these exact non-stream responses",
+    "streams": [
+      {
+        "name": "chat-style",
+        "completion_tokens": 128,
+        "wall_seconds": 5.9334438,
+        "decode_seconds": 3.813734582,
+        "raw_end_to_end_tps": 21.572632069086083,
+        "engine_tps": 33.5629019922184,
+        "normalized_wall_seconds": 5.9334438,
+        "normalized_end_to_end_tps": 21.572632069086083
+      },
+      {
+        "name": "agent-style",
+        "completion_tokens": 128,
+        "wall_seconds": 5.9265441,
+        "decode_seconds": 4.015543316,
+        "raw_end_to_end_tps": 21.597746990526907,
+        "engine_tps": 31.876134791021144,
+        "normalized_wall_seconds": 5.9265441,
+        "normalized_end_to_end_tps": 21.597746990526907
+      }
+    ],
+    "common_tokens": 128.0,
+    "raw_aggregate_tps": 43.145264138172166,
+    "normalized_aggregate_tps": 43.145264138172166,
+    "normalization": "Retain observed non-decode/queue time; scale each engine decode interval to minimum actual completion count. Approximation, not fixed-token execution."
+  }
+}

@@ -21,14 +21,18 @@ Assert-ABDeployment $B
 Assert-ABStackLease $LeaseFile
 if((Get-FileHash $result.config.quality_file -Algorithm SHA256).Hash.ToLowerInvariant()-ne
     $result.quality_receipt_sha256){throw 'Quality receipt changed after qualification.'}
+if($result.config.ContainsKey('same_kernel_greedy_control')-and
+    (Get-FileHash $result.config.same_kernel_greedy_control -Algorithm SHA256).Hash.ToLowerInvariant()-ne
+    $result.greedy_control_sha256){throw 'Exact grouping receipt changed after qualification.'}
 if(Test-Path $Output){throw 'Pinned-selection output must be fresh.'}
 $Output=$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Output)
 $null=New-Item -ItemType Directory $Output
 $operator='/home/xander/flash-gordon-live/20261015-abq-operator'
 $tag=(Get-ABDeploymentIdentity $B).Substring(0,12)
 $step=0
+$restoring=$false
 function Fleet([string]$Text,[int[]]$Ranks=@(0..7)){
-    Assert-ABStackLease $LeaseFile
+    if(-not $script:restoring){Assert-ABStackLease $LeaseFile}
     $script=Join-Path $Output 'command.sh'
     [IO.File]::WriteAllText($script,$Text.Replace("`r",''))
     $r=@(& "$PSScriptRoot\ab-fleet.ps1" -ScriptPath $script `
@@ -101,6 +105,9 @@ sha256sum launch-current.sh current.json 'ab-instance-stack-$tag.sh'
     & "$PSScriptRoot\hillclimb.ps1" -GreedyOutput $greedy
     $actual=Get-Content $greedy -Raw|ConvertFrom-Json -AsHashtable
     $reference=Get-Content $result.config.same_kernel_greedy_control -Raw|ConvertFrom-Json -AsHashtable
+    if(-not @($actual.cases|Where-Object{-not [string]::IsNullOrWhiteSpace($_.text)}).Count){
+        throw 'Restart greedy chat has no visible content.'
+    }
     if(-not(Test-ABCanonicalHashes $reference.hashes $actual.cases)){throw 'Restart greedy hashes changed.'}
     $health=Invoke-RestMethod 'http://192.168.42.42:8080/health' -TimeoutSec 10
     $models=Invoke-RestMethod 'http://192.168.42.42:8080/v1/models' -TimeoutSec 10
@@ -111,6 +118,7 @@ sha256sum launch-current.sh current.json 'ab-instance-stack-$tag.sh'
     $pinned=$true
 }finally{
     if(-not $pinned){
+        $script:restoring=$true
         & "$PSScriptRoot\ab-deploy.ps1" -Deployment $A -Arm pin-failure-restore
         Fleet @"
 set -euo pipefail

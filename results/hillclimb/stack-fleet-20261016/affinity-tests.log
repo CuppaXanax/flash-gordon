@@ -1,0 +1,8 @@
+test_greedy_only_capture (test_hillclimb_ab.PairedHarness.test_greedy_only_capture) ... ok
+test_order_bodies_and_restore (test_hillclimb_ab.PairedHarness.test_order_bodies_and_restore) ... ok
+test_long_only_is_partial_qualification (test_hillclimb_ab.PairedHarness.test_long_only_is_partial_qualification) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 27.216s
+
+OK

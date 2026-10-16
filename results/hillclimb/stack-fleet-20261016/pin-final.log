@@ -1,0 +1,2 @@
+AB_DEPLOY arm=selected-stack release=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive sessions=2 wide=1 healthy=true
+{"streams": 2, "actual_tokens": [96, 96], "actual_aggregate_tps": 35.33313933227335, "health": {"status": "ok", "busy": false}}

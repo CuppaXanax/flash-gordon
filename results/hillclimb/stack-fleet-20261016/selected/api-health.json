@@ -1,0 +1,53 @@
+{
+  "tag": "3bac55ceb9c2",
+  "deployment": {
+    "release": "/home/xander/flash-gordon-live/20261016-abq-stack-adaptive",
+    "sessions": 2,
+    "manifest": "/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm",
+    "flags": {
+      "FG_NGRAM_LOCAL_CACHE": 1,
+      "FG_ROOF_DENSE": 19,
+      "FG_DECODE_SUBMIT_GROUP": 2,
+      "FG_ROOFLINE": 2047,
+      "FG_ROOF_HC": 96,
+      "FG_ROOF_GDN": 1,
+      "FG_ROOF_EXPERT": 33024,
+      "FG_ROOF_RECURRENT": 3,
+      "FG_EXPERT_Q8_WIDE": 1,
+      "FG_ROOF_QSA": 3
+    },
+    "binary_sha256": "02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0",
+    "shader_tree_sha256": "5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633",
+    "capture_sha256": "c5972ffd22bb261383986829773173fdd2e7a688c31bed1853e81af52af2eced",
+    "manifest_sha256": "0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252",
+    "capture_program": "/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/q4-eval-batch",
+    "wide": 1
+  },
+  "greedy_identity": true,
+  "health": {
+    "status": "ok",
+    "busy": false
+  },
+  "models": {
+    "object": "list",
+    "data": [
+      {
+        "id": "Qwen3.8-Flash-Next-Uncensored",
+        "object": "model",
+        "created": 0,
+        "owned_by": "flash-gordon",
+        "capabilities": {
+          "native_context": 262144,
+          "experimental_context": 0,
+          "tools": true,
+          "mtp": false,
+          "image": false,
+          "video": false,
+          "video_frames": false
+        }
+      }
+    ]
+  },
+  "restart_tested": true,
+  "verified": "2026-10-16T04:02:33.9053957-07:00"
+}

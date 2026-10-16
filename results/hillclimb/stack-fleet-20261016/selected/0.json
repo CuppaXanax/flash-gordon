@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "cf8f1a3d08e77cac94e91c44882e3187948f42a3c5b5c5846b92c4d287a7c79e  launch-current.sh\nb52b99b6815d337c2ed819ae51fa7d5020f6e564c9553f5d53932cb96a28989d  current.json\nf35d2b228e81e4d8a2b601085055703978c830d39f975fa27278cbf8667ea42d  ab-instance-stack-3bac55ceb9c2.sh",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "cf8f1a3d08e77cac94e91c44882e3187948f42a3c5b5c5846b92c4d287a7c79e  launch-current.sh\nb52b99b6815d337c2ed819ae51fa7d5020f6e564c9553f5d53932cb96a28989d  current.json\nf35d2b228e81e4d8a2b601085055703978c830d39f975fa27278cbf8667ea42d  ab-instance-stack-3bac55ceb9c2.sh",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "cf8f1a3d08e77cac94e91c44882e3187948f42a3c5b5c5846b92c4d287a7c79e  launch-current.sh\nb52b99b6815d337c2ed819ae51fa7d5020f6e564c9553f5d53932cb96a28989d  current.json\nf35d2b228e81e4d8a2b601085055703978c830d39f975fa27278cbf8667ea42d  ab-instance-stack-3bac55ceb9c2.sh",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "cf8f1a3d08e77cac94e91c44882e3187948f42a3c5b5c5846b92c4d287a7c79e  launch-current.sh\nb52b99b6815d337c2ed819ae51fa7d5020f6e564c9553f5d53932cb96a28989d  current.json\nf35d2b228e81e4d8a2b601085055703978c830d39f975fa27278cbf8667ea42d  ab-instance-stack-3bac55ceb9c2.sh",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "cf8f1a3d08e77cac94e91c44882e3187948f42a3c5b5c5846b92c4d287a7c79e  launch-current.sh\nb52b99b6815d337c2ed819ae51fa7d5020f6e564c9553f5d53932cb96a28989d  current.json\nf35d2b228e81e4d8a2b601085055703978c830d39f975fa27278cbf8667ea42d  ab-instance-stack-3bac55ceb9c2.sh",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "cf8f1a3d08e77cac94e91c44882e3187948f42a3c5b5c5846b92c4d287a7c79e  launch-current.sh\nb52b99b6815d337c2ed819ae51fa7d5020f6e564c9553f5d53932cb96a28989d  current.json\nf35d2b228e81e4d8a2b601085055703978c830d39f975fa27278cbf8667ea42d  ab-instance-stack-3bac55ceb9c2.sh",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "cf8f1a3d08e77cac94e91c44882e3187948f42a3c5b5c5846b92c4d287a7c79e  launch-current.sh\nb52b99b6815d337c2ed819ae51fa7d5020f6e564c9553f5d53932cb96a28989d  current.json\nf35d2b228e81e4d8a2b601085055703978c830d39f975fa27278cbf8667ea42d  ab-instance-stack-3bac55ceb9c2.sh",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "cf8f1a3d08e77cac94e91c44882e3187948f42a3c5b5c5846b92c4d287a7c79e  launch-current.sh\nb52b99b6815d337c2ed819ae51fa7d5020f6e564c9553f5d53932cb96a28989d  current.json\nf35d2b228e81e4d8a2b601085055703978c830d39f975fa27278cbf8667ea42d  ab-instance-stack-3bac55ceb9c2.sh",
+    "Stderr": ""
+  }
+]

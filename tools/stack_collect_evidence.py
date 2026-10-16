@@ -26,7 +26,7 @@ def collect(source, destination):
             continue
         relative = path.relative_to(source)
         is_raw = path.suffix in {".fgl", ".f32"} or path.name.endswith(".tar.gz")
-        is_metadata = path.suffix in {".json", ".jsonl", ".log", ".ps1", ".sh", ".sha256", ".fgev"}
+        is_metadata = path.suffix in {".json", ".jsonl", ".log", ".ps1", ".py", ".sh", ".sha256", ".fgev"}
         if not (is_raw or is_metadata):
             continue
         record = {"path": relative.as_posix(), "bytes": path.stat().st_size,

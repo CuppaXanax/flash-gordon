@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "2026-10-16T05:43:37-04:00\nbc250-59b36574\nFilesystem              1G-blocks  Used Available Use% Mounted on\n/dev/mapper/fedora-root      952G  842G      110G  89% /\nde6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58  /home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon\n0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252  /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-pre-stack-20261016.sh\nPID=219768 CMD=/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon api --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --model-name Qwen3.8-Flash-Next-Uncensored --host 0.0.0.0 --port 8080 --context-tokens 262144 --gpu-index-tokens 262144 --qsa-hot-tokens 0 --qsa-page-cache-mib 700 --sessions 2 \nFG_EXPERT_Q8_WIDE=0\nFG_RING_TRACE=1\nFG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "2026-10-16T05:43:37-04:00\nbc250-59b36646\nFilesystem              1G-blocks  Used Available Use% Mounted on\n/dev/mapper/fedora-root      236G  198G       39G  84% /\nde6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58  /home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon\n0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252  /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-pre-stack-20261016.sh\nPID=145491 CMD=/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 1 \nFG_EXPERT_Q8_WIDE=0\nFG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "2026-10-16T05:43:37-04:00\nbc250-59b25975\nFilesystem              1G-blocks  Used Available Use% Mounted on\n/dev/mapper/fedora-root      236G  188G       49G  80% /\nde6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58  /home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon\n0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252  /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-pre-stack-20261016.sh\nPID=141453 CMD=/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 2 \nFG_EXPERT_Q8_WIDE=0\nFG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "2026-10-16T05:43:37-04:00\nbc250-59b3664e\nFilesystem              1G-blocks  Used Available Use% Mounted on\n/dev/mapper/fedora-root      236G  225G       11G  96% /\nde6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58  /home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon\n0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252  /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-pre-stack-20261016.sh\nPID=140974 CMD=/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 3 \nFG_EXPERT_Q8_WIDE=0\nFG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "2026-10-16T05:43:37-04:00\nbc250-59b36660\nFilesystem              1G-blocks  Used Available Use% Mounted on\n/dev/mapper/fedora-root      236G  177G       60G  75% /\nde6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58  /home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon\n0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252  /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-pre-stack-20261016.sh\nPID=143992 CMD=/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 4 \nFG_EXPERT_Q8_WIDE=0\nFG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "2026-10-16T05:43:37-04:00\nbc250-59b25971\nFilesystem              1G-blocks  Used Available Use% Mounted on\n/dev/mapper/fedora-root      236G  194G       42G  83% /\nde6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58  /home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon\n0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252  /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-pre-stack-20261016.sh\nPID=140937 CMD=/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 5 \nFG_EXPERT_Q8_WIDE=0\nFG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "2026-10-16T05:43:37-04:00\nbc250-59b36b22\nFilesystem              1G-blocks  Used Available Use% Mounted on\n/dev/mapper/fedora-root      236G  192G       44G  82% /\nde6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58  /home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon\n0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252  /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-pre-stack-20261016.sh\nPID=141317 CMD=/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 6 \nFG_EXPERT_Q8_WIDE=0\nFG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "2026-10-16T05:43:37-04:00\nbc250-59b2596c\nFilesystem              1G-blocks  Used Available Use% Mounted on\n/dev/mapper/fedora-root      236G  229G        7G  98% /\nde6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58  /home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon\n0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252  /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-pre-stack-20261016.sh\nPID=142853 CMD=/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 7 \nFG_EXPERT_Q8_WIDE=0\nFG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan",
+    "Stderr": ""
+  }
+]

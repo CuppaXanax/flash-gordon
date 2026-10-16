@@ -1,0 +1,14 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "2026-10-16T05:59:04-04:00\nEVAL_CAPTURE index=423 prompt_tokens=35 generated=1\nEVAL_CAPTURE index=424 prompt_tokens=36 generated=1\nEVAL_CAPTURE index=425 prompt_tokens=37 generated=1\nEVAL_CAPTURE index=426 prompt_tokens=38 generated=1\nEVAL_CAPTURE index=427 prompt_tokens=39 generated=1\n0",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "2026-10-16T05:59:04-04:00\n428",
+    "Stderr": ""
+  }
+]

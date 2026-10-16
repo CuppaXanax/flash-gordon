@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/hc-abq-stack-live-20261016/stack.tar.gz: OK\n/home/xander/hc-abq-stack-live-20261016/teacher.tar.gz: OK\n02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\nc5972ffd22bb261383986829773173fdd2e7a688c31bed1853e81af52af2eced  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/q4-eval-batch\n9774aa189e260f794675c3b614c4aca697ea5ee8bc06cb3f4f747ae520afdf0d  /home/xander/flash-gordon-live/20261016-abq-quality-adaptive/q4-eval-batch\n\tlinux-vdso.so.1 (0x00007f811c8eb000)\n\tlibm.so.6 => /lib64/libm.so.6 (0x00007f811c4e9000)\n\tlibvulkan.so.1 => /lib64/libvulkan.so.1 (0x00007f811c84d000)\n\tlibc.so.6 => /lib64/libc.so.6 (0x00007f811c2f0000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007f811c8ed000)\n\tlinux-vdso.so.1 (0x00007f3bdd2ed000)\n\tlibm.so.6 => /lib64/libm.so.6 (0x00007f3bdcee9000)\n\tlibvulkan.so.1 => /lib64/libvulkan.so.1 (0x00007f3bdd24f000)\n\tlibc.so.6 => /lib64/libc.so.6 (0x00007f3bdccf0000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007f3bdd2ef000)",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/hc-abq-stack-live-20261016/stack.tar.gz: OK\n/home/xander/hc-abq-stack-live-20261016/teacher.tar.gz: OK\n02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\nc5972ffd22bb261383986829773173fdd2e7a688c31bed1853e81af52af2eced  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/q4-eval-batch\n9774aa189e260f794675c3b614c4aca697ea5ee8bc06cb3f4f747ae520afdf0d  /home/xander/flash-gordon-live/20261016-abq-quality-adaptive/q4-eval-batch\n\tlinux-vdso.so.1 (0x00007fea4fd4e000)\n\tlibm.so.6 => /lib64/libm.so.6 (0x00007fea4fc23000)\n\tlibvulkan.so.1 => /lib64/libvulkan.so.1 (0x00007fea4f977000)\n\tlibc.so.6 => /lib64/libc.so.6 (0x00007fea4f77e000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007fea4fd50000)\n\tlinux-vdso.so.1 (0x00007efd12da7000)\n\tlibm.so.6 => /lib64/libm.so.6 (0x00007efd12c7c000)\n\tlibvulkan.so.1 => /lib64/libvulkan.so.1 (0x00007efd12977000)\n\tlibc.so.6 => /lib64/libc.so.6 (0x00007efd1277e000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007efd12da9000)",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/hc-abq-stack-live-20261016/stack.tar.gz: OK\n/home/xander/hc-abq-stack-live-20261016/teacher.tar.gz: OK\n02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\nc5972ffd22bb261383986829773173fdd2e7a688c31bed1853e81af52af2eced  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/q4-eval-batch\n9774aa189e260f794675c3b614c4aca697ea5ee8bc06cb3f4f747ae520afdf0d  /home/xander/flash-gordon-live/20261016-abq-quality-adaptive/q4-eval-batch\n\tlinux-vdso.so.1 (0x00007fbea6452000)\n\tlibm.so.6 => /lib64/libm.so.6 (0x00007fbea60e9000)\n\tlibvulkan.so.1 => /lib64/libvulkan.so.1 (0x00007fbea6060000)\n\tlibc.so.6 => /lib64/libc.so.6 (0x00007fbea5e67000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007fbea6454000)\n\tlinux-vdso.so.1 (0x00007f61baa99000)\n\tlibm.so.6 => /lib64/libm.so.6 (0x00007f61ba6e9000)\n\tlibvulkan.so.1 => /lib64/libvulkan.so.1 (0x00007f61ba660000)\n\tlibc.so.6 => /lib64/libc.so.6 (0x00007f61ba467000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007f61baa9b000)",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/hc-abq-stack-live-20261016/stack.tar.gz: OK\n/home/xander/hc-abq-stack-live-20261016/teacher.tar.gz: OK\n02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\nc5972ffd22bb261383986829773173fdd2e7a688c31bed1853e81af52af2eced  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/q4-eval-batch\n9774aa189e260f794675c3b614c4aca697ea5ee8bc06cb3f4f747ae520afdf0d  /home/xander/flash-gordon-live/20261016-abq-quality-adaptive/q4-eval-batch\n\tlinux-vdso.so.1 (0x00007fd674539000)\n\tlibm.so.6 => /lib64/libm.so.6 (0x00007fd67440e000)\n\tlibvulkan.so.1 => /lib64/libvulkan.so.1 (0x00007fd674177000)\n\tlibc.so.6 => /lib64/libc.so.6 (0x00007fd673f7e000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007fd67453b000)\n\tlinux-vdso.so.1 (0x00007ff9ae218000)\n\tlibm.so.6 => /lib64/libm.so.6 (0x00007ff9adedd000)\n\tlibvulkan.so.1 => /lib64/libvulkan.so.1 (0x00007ff9ade54000)\n\tlibc.so.6 => /lib64/libc.so.6 (0x00007ff9adc5b000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007ff9ae21a000)",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/hc-abq-stack-live-20261016/stack.tar.gz: OK\n/home/xander/hc-abq-stack-live-20261016/teacher.tar.gz: OK\n02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\nc5972ffd22bb261383986829773173fdd2e7a688c31bed1853e81af52af2eced  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/q4-eval-batch\n9774aa189e260f794675c3b614c4aca697ea5ee8bc06cb3f4f747ae520afdf0d  /home/xander/flash-gordon-live/20261016-abq-quality-adaptive/q4-eval-batch\n\tlinux-vdso.so.1 (0x00007fd427bb4000)\n\tlibm.so.6 => /lib64/libm.so.6 (0x00007fd427a89000)\n\tlibvulkan.so.1 => /lib64/libvulkan.so.1 (0x00007fd427777000)\n\tlibc.so.6 => /lib64/libc.so.6 (0x00007fd42757e000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007fd427bb6000)\n\tlinux-vdso.so.1 (0x00007fd73299f000)\n\tlibm.so.6 => /lib64/libm.so.6 (0x00007fd732874000)\n\tlibvulkan.so.1 => /lib64/libvulkan.so.1 (0x00007fd732577000)\n\tlibc.so.6 => /lib64/libc.so.6 (0x00007fd73237e000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007fd7329a1000)",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/hc-abq-stack-live-20261016/stack.tar.gz: OK\n/home/xander/hc-abq-stack-live-20261016/teacher.tar.gz: OK\n02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\nc5972ffd22bb261383986829773173fdd2e7a688c31bed1853e81af52af2eced  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/q4-eval-batch\n9774aa189e260f794675c3b614c4aca697ea5ee8bc06cb3f4f747ae520afdf0d  /home/xander/flash-gordon-live/20261016-abq-quality-adaptive/q4-eval-batch\n\tlinux-vdso.so.1 (0x00007efce54c6000)\n\tlibm.so.6 => /lib64/libm.so.6 (0x00007efce50e9000)\n\tlibvulkan.so.1 => /lib64/libvulkan.so.1 (0x00007efce5429000)\n\tlibc.so.6 => /lib64/libc.so.6 (0x00007efce4ef0000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007efce54c8000)\n\tlinux-vdso.so.1 (0x00007faea858e000)\n\tlibm.so.6 => /lib64/libm.so.6 (0x00007faea8463000)\n\tlibvulkan.so.1 => /lib64/libvulkan.so.1 (0x00007faea8177000)\n\tlibc.so.6 => /lib64/libc.so.6 (0x00007faea7f7e000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007faea8590000)",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/hc-abq-stack-live-20261016/stack.tar.gz: OK\n/home/xander/hc-abq-stack-live-20261016/teacher.tar.gz: OK\n02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\nc5972ffd22bb261383986829773173fdd2e7a688c31bed1853e81af52af2eced  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/q4-eval-batch\n9774aa189e260f794675c3b614c4aca697ea5ee8bc06cb3f4f747ae520afdf0d  /home/xander/flash-gordon-live/20261016-abq-quality-adaptive/q4-eval-batch\n\tlinux-vdso.so.1 (0x00007fa79fa3e000)\n\tlibm.so.6 => /lib64/libm.so.6 (0x00007fa79f6e9000)\n\tlibvulkan.so.1 => /lib64/libvulkan.so.1 (0x00007fa79f660000)\n\tlibc.so.6 => /lib64/libc.so.6 (0x00007fa79f467000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007fa79fa40000)\n\tlinux-vdso.so.1 (0x00007fe449b3d000)\n\tlibm.so.6 => /lib64/libm.so.6 (0x00007fe449a12000)\n\tlibvulkan.so.1 => /lib64/libvulkan.so.1 (0x00007fe449777000)\n\tlibc.so.6 => /lib64/libc.so.6 (0x00007fe44957e000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007fe449b3f000)",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/hc-abq-stack-live-20261016/stack.tar.gz: OK\n/home/xander/hc-abq-stack-live-20261016/teacher.tar.gz: OK\n02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon\nc5972ffd22bb261383986829773173fdd2e7a688c31bed1853e81af52af2eced  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/q4-eval-batch\n9774aa189e260f794675c3b614c4aca697ea5ee8bc06cb3f4f747ae520afdf0d  /home/xander/flash-gordon-live/20261016-abq-quality-adaptive/q4-eval-batch\n\tlinux-vdso.so.1 (0x00007fa9bbf1b000)\n\tlibm.so.6 => /lib64/libm.so.6 (0x00007fa9bbae9000)\n\tlibvulkan.so.1 => /lib64/libvulkan.so.1 (0x00007fa9bbe7e000)\n\tlibc.so.6 => /lib64/libc.so.6 (0x00007fa9bb8f0000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007fa9bbf1d000)\n\tlinux-vdso.so.1 (0x00007fa2c5281000)\n\tlibm.so.6 => /lib64/libm.so.6 (0x00007fa2c4ee9000)\n\tlibvulkan.so.1 => /lib64/libvulkan.so.1 (0x00007fa2c4e60000)\n\tlibc.so.6 => /lib64/libc.so.6 (0x00007fa2c4c67000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007fa2c5283000)",
+    "Stderr": ""
+  }
+]

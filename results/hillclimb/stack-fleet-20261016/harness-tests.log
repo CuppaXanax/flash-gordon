@@ -1,0 +1,25 @@
+test_archive_rejects_links_paths_and_duplicates (test_candidate_stack.CandidateStack.test_archive_rejects_links_paths_and_duplicates) ... ok
+test_capture_failure_restores_baseline (test_candidate_stack.CandidateStack.test_capture_failure_restores_baseline) ... ok
+test_execution_requires_lease (test_candidate_stack.CandidateStack.test_execution_requires_lease) ... ok
+test_expired_lease_rejected (test_candidate_stack.CandidateStack.test_expired_lease_rejected) ... ok
+test_flag_injection_rejected (test_candidate_stack.CandidateStack.test_flag_injection_rejected) ... ok
+test_host_group_carries_exact_hash_reference (test_candidate_stack.CandidateStack.test_host_group_carries_exact_hash_reference) ... ok
+test_host_group_requires_same_kernel_control (test_candidate_stack.CandidateStack.test_host_group_requires_same_kernel_control) ... ok
+test_numeric_receipt_binds_flags_corpus_and_report (test_candidate_stack.CandidateStack.test_numeric_receipt_binds_flags_corpus_and_report) ... ok
+test_one_quality_and_performance_per_combination (test_candidate_stack.CandidateStack.test_one_quality_and_performance_per_combination) ... ok
+test_plan_is_offline (test_candidate_stack.CandidateStack.test_plan_is_offline) ... ok
+test_sessions_two_and_greedy_only_control (test_candidate_stack.CandidateStack.test_sessions_two_and_greedy_only_control) ... ok
+test_shell_path_injection_rejected (test_candidate_stack.CandidateStack.test_shell_path_injection_rejected) ... ok
+test_canonical_hash_comparison (test_hillclimb_ab.PairedHarness.test_canonical_hash_comparison) ... ok
+test_failed_deploy_restores_original (test_hillclimb_ab.PairedHarness.test_failed_deploy_restores_original) ... ok
+test_long_only_is_partial_qualification (test_hillclimb_ab.PairedHarness.test_long_only_is_partial_qualification) ... ok
+test_median_minimum_and_secondary_invariance (test_hillclimb_ab.PairedHarness.test_median_minimum_and_secondary_invariance) ... ok
+test_order_bodies_and_restore (test_hillclimb_ab.PairedHarness.test_order_bodies_and_restore) ... ok
+test_paired_statistics (test_hillclimb_ab.PairedHarness.test_paired_statistics) ... ok
+test_primary_policy_boundaries (test_hillclimb_ab.PairedHarness.test_primary_policy_boundaries) ... ok
+test_resume_keeps_complete_pairs (test_hillclimb_ab.PairedHarness.test_resume_keeps_complete_pairs) ... ok
+
+----------------------------------------------------------------------
+Ran 20 tests in 68.287s
+
+OK
