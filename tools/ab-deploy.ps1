@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)][hashtable]$Deployment,
     [string]$Arm = '',
     [switch]$SnapshotOnly,
-    [string]$FleetScript = 'D:\looking-glass-labs\bc-250-dbg\Invoke-BC250Fleet.ps1'
+    [string]$FleetScript = (Join-Path $PSScriptRoot 'ab-fleet.ps1')
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent

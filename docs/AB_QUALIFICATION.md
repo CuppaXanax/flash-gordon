@@ -12,6 +12,12 @@ pwsh -NoProfile -File tools\hillclimb.ps1 -ABConfig .build\abq\main-config.json 
 
 The included `ab-deploy.ps1`/`ab-instance.sh` operator accepts only the eight production owners, original/mix-04 manifests, and isolated `YYYYMMDD-abq*` releases. It verifies executable/manifest hashes, stops only owned numeric PIDs with exact executable and manifest arguments, waits after TERM, and refuses force/name kills. Original logs/PIDs remain outside the immutable original release. `.build\abq\live.json` records the last attempted deployment before launch so partial starts can be rolled back. The fleet runner receives an explicit target array. Do not run two operators concurrently.
 
+`ab-fleet.ps1` retains the user's fleet runner, credential source and file
+transfers, but feeds the decoded Bash payload on stdin instead of creating a
+remote script file. It accepts only explicit .42–.49 targets, has no sudo mode,
+and fails closed if the upstream runner's transport layout changes. The shared
+fleet runner itself is not modified.
+
 Starting rotates the preceding rank log/PID to `previous-rank-N.log`/`.pid`
 inside the operator directory. Download these immediately after a failed
 candidate restores: the next deployment rotates again. A runtime failure is
