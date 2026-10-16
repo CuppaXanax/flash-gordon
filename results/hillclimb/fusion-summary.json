@@ -1,0 +1,1163 @@
+{
+  "rounds": [
+    {
+      "seed": 1,
+      "baseline_wall_us": 2695.34025,
+      "candidate_wall_us": 2677.6467430555554,
+      "saving_us": 17.693506944444835,
+      "baseline_layers_us": [
+        391.3306597222222,
+        517.1212847222223,
+        389.05090277777776,
+        385.1142013888889,
+        384.35506944444444,
+        516.8703819444445
+      ],
+      "candidate_layers_us": [
+        387.35298611111114,
+        514.03375,
+        387.33756944444445,
+        383.2838888888889,
+        381.3748611111111,
+        513.4752777777778
+      ],
+      "a": {
+        "wall_us": 2693.098994791667,
+        "layers_us": [
+          390.29583333333335,
+          517.2578472222223,
+          388.115,
+          384.25368055555555,
+          384.2867361111111,
+          517.1647222222222
+        ],
+        "windows_wall_us": [
+          2646.18571875,
+          2665.15446875,
+          2691.6338125,
+          2718.062703125,
+          2678.142109375,
+          2694.208078125,
+          2712.8843125,
+          2729.819703125,
+          2701.800046875
+        ]
+      },
+      "b": {
+        "wall_us": 2677.6467430555554,
+        "layers_us": [
+          387.35298611111114,
+          514.03375,
+          387.33756944444445,
+          383.2838888888889,
+          381.3748611111111,
+          513.4752777777778
+        ],
+        "windows_wall_us": [
+          2633.043671875,
+          2649.06225,
+          2675.78553125,
+          2702.11253125,
+          2662.23871875,
+          2678.343484375,
+          2696.65184375,
+          2716.80884375,
+          2684.7738125
+        ]
+      },
+      "a2": {
+        "wall_us": 2697.5815052083335,
+        "layers_us": [
+          392.3654861111111,
+          516.9847222222222,
+          389.9868055555556,
+          385.9747222222222,
+          384.42340277777777,
+          516.5760416666667
+        ],
+        "windows_wall_us": [
+          2650.364625,
+          2669.64709375,
+          2697.677125,
+          2723.818734375,
+          2682.7243125,
+          2699.522453125,
+          2716.477171875,
+          2731.80796875,
+          2706.1940625
+        ]
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "93569dc5e9ec5bd1",
+        "gdn_state_hash": "d83cac426aa9f710"
+      }
+    },
+    {
+      "seed": 2,
+      "baseline_wall_us": 2694.8133602430553,
+      "candidate_wall_us": 2679.6648385416665,
+      "saving_us": 15.148521701388745,
+      "baseline_layers_us": [
+        391.28881944444447,
+        516.4279166666666,
+        389.23600694444445,
+        383.93895833333335,
+        386.2521527777778,
+        515.9565972222222
+      ],
+      "candidate_layers_us": [
+        387.0907638888889,
+        514.5988888888888,
+        387.6958333333333,
+        383.27201388888886,
+        381.3696527777778,
+        513.4089583333333
+      ],
+      "a": {
+        "wall_us": 2692.329871527778,
+        "layers_us": [
+          390.375,
+          516.5330555555555,
+          388.240625,
+          383.93111111111114,
+          386.25930555555556,
+          515.8548611111111
+        ],
+        "windows_wall_us": [
+          2644.933390625,
+          2665.36878125,
+          2690.554,
+          2720.060359375,
+          2677.663171875,
+          2692.875375,
+          2711.800734375,
+          2728.59375,
+          2699.11928125
+        ]
+      },
+      "b": {
+        "wall_us": 2679.6648385416665,
+        "layers_us": [
+          387.0907638888889,
+          514.5988888888888,
+          387.6958333333333,
+          383.27201388888886,
+          381.3696527777778,
+          513.4089583333333
+        ],
+        "windows_wall_us": [
+          2633.4115625,
+          2652.503640625,
+          2679.08275,
+          2704.830484375,
+          2664.155734375,
+          2680.501390625,
+          2699.290203125,
+          2716.28325,
+          2686.92453125
+        ]
+      },
+      "a2": {
+        "wall_us": 2697.296848958333,
+        "layers_us": [
+          392.2026388888889,
+          516.3227777777778,
+          390.2313888888889,
+          383.94680555555556,
+          386.245,
+          516.0583333333333
+        ],
+        "windows_wall_us": [
+          2650.248140625,
+          2669.176046875,
+          2697.351984375,
+          2727.313703125,
+          2684.4779375,
+          2696.996078125,
+          2715.5645625,
+          2731.1614375,
+          2703.38175
+        ]
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "ccf77f6025e536c3",
+        "gdn_state_hash": "8456f5ced6ee4628"
+      }
+    },
+    {
+      "seed": 3,
+      "baseline_wall_us": 2694.8741979166666,
+      "candidate_wall_us": 2678.4530052083333,
+      "saving_us": 16.421192708333365,
+      "baseline_layers_us": [
+        390.20572916666663,
+        516.9262152777778,
+        388.10416666666663,
+        384.9925694444444,
+        386.18173611111115,
+        516.6801041666668
+      ],
+      "candidate_layers_us": [
+        389.4275,
+        513.7222916666667,
+        385.250625,
+        381.3415277777778,
+        383.5886111111111,
+        513.2958333333333
+      ],
+      "a": {
+        "wall_us": 2695.8398020833333,
+        "layers_us": [
+          390.22305555555556,
+          516.6595833333333,
+          387.95395833333333,
+          386.00805555555553,
+          386.10319444444445,
+          517.0405555555556
+        ],
+        "windows_wall_us": [
+          2649.55896875,
+          2668.1599375,
+          2696.163921875,
+          2721.1908750000002,
+          2682.4758593750003,
+          2696.980078125,
+          2714.7309375,
+          2729.959328125,
+          2703.3383125
+        ]
+      },
+      "b": {
+        "wall_us": 2678.4530052083333,
+        "layers_us": [
+          389.4275,
+          513.7222916666667,
+          385.250625,
+          381.3415277777778,
+          383.5886111111111,
+          513.2958333333333
+        ],
+        "windows_wall_us": [
+          2631.272625,
+          2651.114625,
+          2675.890703125,
+          2702.642984375,
+          2664.68046875,
+          2679.06696875,
+          2697.099109375,
+          2716.820140625,
+          2687.489421875
+        ]
+      },
+      "a2": {
+        "wall_us": 2693.90859375,
+        "layers_us": [
+          390.18840277777775,
+          517.1928472222222,
+          388.254375,
+          383.9770833333333,
+          386.2602777777778,
+          516.3196527777778
+        ],
+        "windows_wall_us": [
+          2646.93871875,
+          2665.96671875,
+          2693.7024375,
+          2719.498171875,
+          2679.2465,
+          2694.968171875,
+          2712.091484375,
+          2730.24590625,
+          2702.519234375
+        ]
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "786c62a966630930",
+        "gdn_state_hash": "663f08804a9d4aec"
+      }
+    }
+  ],
+  "baseline_wall_us": 2695.009269386574,
+  "candidate_wall_us": 2678.5881956018516,
+  "saving_us": 16.421073784722466,
+  "saving_percent": 0.6093141857155896,
+  "round_bootstrap_saving_us_95": [
+    15.148521701388745,
+    17.693506944444835
+  ],
+  "round_bootstrap_speedup_95": [
+    1.0056531404538012,
+    1.0066078570634205
+  ],
+  "baseline_layers_us": [
+    390.9417361111111,
+    516.8251388888889,
+    388.79702546296295,
+    384.6819097222222,
+    385.5963194444445,
+    516.5023611111111
+  ],
+  "candidate_layers_us": [
+    387.95708333333334,
+    514.1183101851852,
+    386.7613425925926,
+    382.63247685185183,
+    382.11104166666667,
+    513.3933564814815
+  ],
+  "scope": "synthetic layers 6..11, static GDN replay, short committed contexts",
+  "dispatches": {
+    "0": {
+      "6": 33,
+      "7": 41,
+      "8": 33,
+      "9": 33,
+      "10": 33,
+      "11": 41
+    },
+    "7": {
+      "6": 29,
+      "7": 37,
+      "8": 29,
+      "9": 29,
+      "10": 29,
+      "11": 37
+    }
+  },
+  "profiles": {
+    "0": {
+      "kernels": [
+        {
+          "kind": "kernel",
+          "scope": "gr_attn_read",
+          "name": "fg_group_rms_norm.spv",
+          "count": 6,
+          "gpu_us": 14.8
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_attn_read",
+          "name": "fg_hc_inject_partial.spv",
+          "count": 6,
+          "gpu_us": 40.36
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_attn_read",
+          "name": "fg_dense_compact_long.spv",
+          "count": 6,
+          "gpu_us": 68.44
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_attn_read",
+          "name": "fg_silu_scaled.spv",
+          "count": 6,
+          "gpu_us": 5.08
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_attn_read",
+          "name": "fg_dense_compact_iq4.spv",
+          "count": 6,
+          "gpu_us": 62.88
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_attn_read",
+          "name": "fg_gr_mix_partial.spv",
+          "count": 6,
+          "gpu_us": 27.4
+        },
+        {
+          "kind": "kernel",
+          "scope": "gdn_projection",
+          "name": "fg_dense_compact.spv",
+          "count": 4,
+          "gpu_us": 215.24
+        },
+        {
+          "kind": "kernel",
+          "scope": "gdn_projection",
+          "name": "fg_dense_compact_mid.spv",
+          "count": 4,
+          "gpu_us": 154.36
+        },
+        {
+          "kind": "kernel",
+          "scope": "gdn_projection",
+          "name": "fg_dense_f32.spv",
+          "count": 8,
+          "gpu_us": 41.88
+        },
+        {
+          "kind": "kernel",
+          "scope": "gdn_recurrent",
+          "name": "fg_gdn_conv_decode.spv",
+          "count": 4,
+          "gpu_us": 9.08
+        },
+        {
+          "kind": "kernel",
+          "scope": "gdn_recurrent",
+          "name": "fg_gdn_recurrent_algebraic.spv",
+          "count": 4,
+          "gpu_us": 115.2
+        },
+        {
+          "kind": "kernel",
+          "scope": "gdn_output",
+          "name": "fg_dense_compact.spv",
+          "count": 4,
+          "gpu_us": 121.76
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_attn_write",
+          "name": "fg_gr_write.spv",
+          "count": 6,
+          "gpu_us": 9.76
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_ffn_read",
+          "name": "fg_group_rms_norm.spv",
+          "count": 6,
+          "gpu_us": 12.36
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_ffn_read",
+          "name": "fg_hc_inject_partial.spv",
+          "count": 6,
+          "gpu_us": 39.08
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_ffn_read",
+          "name": "fg_dense_compact_long.spv",
+          "count": 6,
+          "gpu_us": 68.2
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_ffn_read",
+          "name": "fg_silu_scaled.spv",
+          "count": 6,
+          "gpu_us": 5.0
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_ffn_read",
+          "name": "fg_dense_compact_iq4.spv",
+          "count": 6,
+          "gpu_us": 62.88
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_ffn_read",
+          "name": "fg_gr_mix_partial.spv",
+          "count": 6,
+          "gpu_us": 26.48
+        },
+        {
+          "kind": "kernel",
+          "scope": "router",
+          "name": "fg_dense_f32.spv",
+          "count": 6,
+          "gpu_us": 94.2
+        },
+        {
+          "kind": "kernel",
+          "scope": "router_quantization",
+          "name": "fg_quantize_q8_k.spv",
+          "count": 6,
+          "gpu_us": 0.4
+        },
+        {
+          "kind": "kernel",
+          "scope": "shared_expert",
+          "name": "fg_dense_soa_r4.spv",
+          "count": 12,
+          "gpu_us": 53.64
+        },
+        {
+          "kind": "kernel",
+          "scope": "shared_expert",
+          "name": "fg_dense_f32.spv",
+          "count": 6,
+          "gpu_us": 2.16
+        },
+        {
+          "kind": "kernel",
+          "scope": "shared_expert",
+          "name": "fg_swiglu.spv",
+          "count": 6,
+          "gpu_us": 5.24
+        },
+        {
+          "kind": "kernel",
+          "scope": "shared_expert",
+          "name": "fg_dense_compact_iq4.spv",
+          "count": 6,
+          "gpu_us": 35.32
+        },
+        {
+          "kind": "kernel",
+          "scope": "expert_decode",
+          "name": "fg_router_top10.spv",
+          "count": 6,
+          "gpu_us": 55.36
+        },
+        {
+          "kind": "kernel",
+          "scope": "expert_decode",
+          "name": "fg_decode_tile_schedule.spv",
+          "count": 6,
+          "gpu_us": 6.44
+        },
+        {
+          "kind": "kernel",
+          "scope": "expert_decode",
+          "name": "fg_moe_decode_gate_up.spv",
+          "count": 6,
+          "gpu_us": 344.6
+        },
+        {
+          "kind": "kernel",
+          "scope": "expert_decode",
+          "name": "fg_moe_decode_down_reduce.spv",
+          "count": 6,
+          "gpu_us": 229.4
+        },
+        {
+          "kind": "kernel",
+          "scope": "moe_reduce",
+          "name": "fg_moe_shared_add.spv",
+          "count": 6,
+          "gpu_us": 6.08
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_ffn_write",
+          "name": "fg_gr_write.spv",
+          "count": 6,
+          "gpu_us": 6.84
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_projection",
+          "name": "fg_dense_compact.spv",
+          "count": 2,
+          "gpu_us": 140.44
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_projection",
+          "name": "fg_dense_soa_r4.spv",
+          "count": 4,
+          "gpu_us": 24.8
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_projection",
+          "name": "fg_qsa_prepare.spv",
+          "count": 2,
+          "gpu_us": 11.8
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_projection",
+          "name": "fg_dense_bf16_f32.spv",
+          "count": 4,
+          "gpu_us": 68.48
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_projection",
+          "name": "fg_qsa_index_prepare.spv",
+          "count": 2,
+          "gpu_us": 5.0
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_projection",
+          "name": "fg_quantize_q8_0.spv",
+          "count": 6,
+          "gpu_us": 68.48
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_state_attention",
+          "name": "fg_qsa_record_commit.spv",
+          "count": 2,
+          "gpu_us": 3.48
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_state_attention",
+          "name": "fg_qsa_record_gather.spv",
+          "count": 2,
+          "gpu_us": 13.04
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_state_attention",
+          "name": "fg_qsa_decode_attention_split.spv",
+          "count": 2,
+          "gpu_us": 93.44
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_state_attention",
+          "name": "fg_qsa_attention_merge.spv",
+          "count": 2,
+          "gpu_us": 4.84
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_output",
+          "name": "fg_dense_compact.spv",
+          "count": 2,
+          "gpu_us": 63.32
+        }
+      ],
+      "parity": {
+        "kind": "parity",
+        "output_hash": "6059a8c1695ed516",
+        "gdn_state_hash": "e227a314dd4837c5"
+      },
+      "kind": "profile",
+      "gpu_us": 2544.68,
+      "gaps_us": 107.64,
+      "submissions": 10,
+      "dispatches": 214
+    },
+    "7": {
+      "kernels": [
+        {
+          "kind": "kernel",
+          "scope": "gr_attn_read",
+          "name": "fg_group_rms_norm.spv",
+          "count": 6,
+          "gpu_us": 14.84
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_attn_read",
+          "name": "fg_hc_inject_partial.spv",
+          "count": 6,
+          "gpu_us": 40.12
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_attn_read",
+          "name": "fg_dense_compact_long.spv",
+          "count": 6,
+          "gpu_us": 68.76
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_attn_read",
+          "name": "fg_silu_scaled.spv",
+          "count": 6,
+          "gpu_us": 5.08
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_attn_read",
+          "name": "fg_dense_compact_iq4.spv",
+          "count": 6,
+          "gpu_us": 63.12
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_attn_read",
+          "name": "fg_gr_mix_partial.spv",
+          "count": 6,
+          "gpu_us": 27.32
+        },
+        {
+          "kind": "kernel",
+          "scope": "gdn_projection",
+          "name": "fg_dense_compact.spv",
+          "count": 4,
+          "gpu_us": 217.32
+        },
+        {
+          "kind": "kernel",
+          "scope": "gdn_projection",
+          "name": "fg_dense_compact_mid.spv",
+          "count": 4,
+          "gpu_us": 153.88
+        },
+        {
+          "kind": "kernel",
+          "scope": "gdn_projection",
+          "name": "fg_dense_f32.spv",
+          "count": 8,
+          "gpu_us": 42.2
+        },
+        {
+          "kind": "kernel",
+          "scope": "gdn_recurrent",
+          "name": "fg_gdn_conv_decode.spv",
+          "count": 4,
+          "gpu_us": 9.2
+        },
+        {
+          "kind": "kernel",
+          "scope": "gdn_recurrent",
+          "name": "fg_gdn_recurrent_algebraic.spv",
+          "count": 4,
+          "gpu_us": 119.2
+        },
+        {
+          "kind": "kernel",
+          "scope": "gdn_output",
+          "name": "fg_dense_compact.spv",
+          "count": 4,
+          "gpu_us": 120.56
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_attn_write",
+          "name": "fg_gr_write.spv",
+          "count": 6,
+          "gpu_us": 9.8
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_ffn_read",
+          "name": "fg_group_rms_norm.spv",
+          "count": 6,
+          "gpu_us": 12.32
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_ffn_read",
+          "name": "fg_hc_inject_partial.spv",
+          "count": 6,
+          "gpu_us": 38.56
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_ffn_read",
+          "name": "fg_dense_compact_long.spv",
+          "count": 6,
+          "gpu_us": 68.12
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_ffn_read",
+          "name": "fg_silu_scaled.spv",
+          "count": 6,
+          "gpu_us": 5.12
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_ffn_read",
+          "name": "fg_dense_compact_iq4.spv",
+          "count": 6,
+          "gpu_us": 62.76
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_ffn_read",
+          "name": "fg_gr_mix_partial.spv",
+          "count": 6,
+          "gpu_us": 26.6
+        },
+        {
+          "kind": "kernel",
+          "scope": "router",
+          "name": "fg_dense_f32.spv",
+          "count": 6,
+          "gpu_us": 94.48
+        },
+        {
+          "kind": "kernel",
+          "scope": "router_quantization",
+          "name": "fg_quantize_q8_k.spv",
+          "count": 6,
+          "gpu_us": 0.44
+        },
+        {
+          "kind": "kernel",
+          "scope": "shared_expert",
+          "name": "fg_shared_swiglu_q4.spv",
+          "count": 6,
+          "gpu_us": 65.8
+        },
+        {
+          "kind": "kernel",
+          "scope": "shared_expert",
+          "name": "fg_dense_f32.spv",
+          "count": 6,
+          "gpu_us": 0.4
+        },
+        {
+          "kind": "kernel",
+          "scope": "shared_expert",
+          "name": "fg_dense_compact_iq4.spv",
+          "count": 6,
+          "gpu_us": 34.72
+        },
+        {
+          "kind": "kernel",
+          "scope": "expert_decode",
+          "name": "fg_router_top10_subgroup_tiles.spv",
+          "count": 6,
+          "gpu_us": 51.84
+        },
+        {
+          "kind": "kernel",
+          "scope": "expert_decode",
+          "name": "fg_moe_decode_gate_up.spv",
+          "count": 6,
+          "gpu_us": 343.32
+        },
+        {
+          "kind": "kernel",
+          "scope": "expert_decode",
+          "name": "fg_moe_decode_down_reduce.spv",
+          "count": 6,
+          "gpu_us": 229.0
+        },
+        {
+          "kind": "kernel",
+          "scope": "gr_ffn_write",
+          "name": "fg_moe_shared_gr_write.spv",
+          "count": 6,
+          "gpu_us": 9.32
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_projection",
+          "name": "fg_dense_compact.spv",
+          "count": 2,
+          "gpu_us": 141.56
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_projection",
+          "name": "fg_dense_soa_r4.spv",
+          "count": 4,
+          "gpu_us": 24.92
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_projection",
+          "name": "fg_qsa_prepare.spv",
+          "count": 2,
+          "gpu_us": 11.52
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_projection",
+          "name": "fg_dense_bf16_f32.spv",
+          "count": 4,
+          "gpu_us": 68.48
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_projection",
+          "name": "fg_qsa_index_prepare.spv",
+          "count": 2,
+          "gpu_us": 5.08
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_projection",
+          "name": "fg_quantize_q8_0.spv",
+          "count": 6,
+          "gpu_us": 68.96
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_state_attention",
+          "name": "fg_qsa_record_commit.spv",
+          "count": 2,
+          "gpu_us": 3.56
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_state_attention",
+          "name": "fg_qsa_record_gather.spv",
+          "count": 2,
+          "gpu_us": 12.8
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_state_attention",
+          "name": "fg_qsa_decode_attention_split.spv",
+          "count": 2,
+          "gpu_us": 91.8
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_state_attention",
+          "name": "fg_qsa_attention_merge.spv",
+          "count": 2,
+          "gpu_us": 4.84
+        },
+        {
+          "kind": "kernel",
+          "scope": "qsa_output",
+          "name": "fg_dense_compact.spv",
+          "count": 2,
+          "gpu_us": 63.12
+        }
+      ],
+      "parity": {
+        "kind": "parity",
+        "output_hash": "6059a8c1695ed516",
+        "gdn_state_hash": "e227a314dd4837c5"
+      },
+      "kind": "profile",
+      "gpu_us": 2525.92,
+      "gaps_us": 95.08,
+      "submissions": 10,
+      "dispatches": 190
+    }
+  },
+  "ablations": {
+    "0": {
+      "wall_us": 2740.5403802083333,
+      "layers_us": [
+        390.17645833333336,
+        578.2916666666666,
+        388.28770833333334,
+        383.87104166666666,
+        384.165625,
+        503.40270833333335
+      ],
+      "windows_wall_us": [
+        2865.799015625,
+        2662.852109375,
+        2692.970015625
+      ],
+      "parity": {
+        "kind": "parity",
+        "output_hash": "dff8152887ea9cad",
+        "gdn_state_hash": "1a033b4271863be6"
+      }
+    },
+    "1": {
+      "wall_us": 2659.3460416666667,
+      "layers_us": [
+        389.83125,
+        502.9295833333333,
+        385.69604166666664,
+        384.5025,
+        384.3620833333333,
+        500.98229166666664
+      ],
+      "windows_wall_us": [
+        2637.951265625,
+        2656.18121875,
+        2683.905640625
+      ],
+      "parity": {
+        "kind": "parity",
+        "output_hash": "dff8152887ea9cad",
+        "gdn_state_hash": "1a033b4271863be6"
+      }
+    },
+    "2": {
+      "wall_us": 2661.294453125,
+      "layers_us": [
+        391.25354166666665,
+        504.4085416666667,
+        386.979375,
+        382.62395833333335,
+        382.893125,
+        502.8225
+      ],
+      "windows_wall_us": [
+        2641.06015625,
+        2658.061921875,
+        2684.76128125
+      ],
+      "parity": {
+        "kind": "parity",
+        "output_hash": "dff8152887ea9cad",
+        "gdn_state_hash": "1a033b4271863be6"
+      }
+    },
+    "3": {
+      "wall_us": 2653.9262447916667,
+      "layers_us": [
+        386.8,
+        501.9275,
+        386.86541666666665,
+        383.47,
+        383.135,
+        500.29541666666665
+      ],
+      "windows_wall_us": [
+        2632.7416875,
+        2650.407234375,
+        2678.6298125
+      ],
+      "parity": {
+        "kind": "parity",
+        "output_hash": "dff8152887ea9cad",
+        "gdn_state_hash": "1a033b4271863be6"
+      }
+    },
+    "4": {
+      "wall_us": 2672.90953125,
+      "layers_us": [
+        390.46416666666664,
+        506.7104166666667,
+        388.56645833333334,
+        384.3516666666667,
+        386.24333333333334,
+        504.71125
+      ],
+      "windows_wall_us": [
+        2651.708515625,
+        2671.052890625,
+        2695.9671875
+      ],
+      "parity": {
+        "kind": "parity",
+        "output_hash": "dff8152887ea9cad",
+        "gdn_state_hash": "1a033b4271863be6"
+      }
+    },
+    "7": {
+      "wall_us": 2654.0320052083334,
+      "layers_us": [
+        389.37541666666664,
+        501.6925,
+        385.3147916666667,
+        381.5185416666667,
+        383.485625,
+        500.86375
+      ],
+      "windows_wall_us": [
+        2631.105,
+        2652.2065000000002,
+        2678.784515625
+      ],
+      "parity": {
+        "kind": "parity",
+        "output_hash": "dff8152887ea9cad",
+        "gdn_state_hash": "1a033b4271863be6"
+      }
+    }
+  },
+  "controls": {
+    "no-clocks-0": {
+      "wall_us": 2684.984578125,
+      "layers_us": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "windows_wall_us": [
+        2636.50790625,
+        2655.425265625,
+        2683.1735,
+        2711.785828125,
+        2672.13865625,
+        2689.245703125,
+        2703.339625,
+        2721.135109375,
+        2692.109609375
+      ],
+      "parity": {
+        "kind": "parity",
+        "output_hash": "93569dc5e9ec5bd1",
+        "gdn_state_hash": "d83cac426aa9f710"
+      }
+    },
+    "no-clocks-7": {
+      "wall_us": 2665.789027777778,
+      "layers_us": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "windows_wall_us": [
+        2619.662953125,
+        2638.77503125,
+        2665.262390625,
+        2689.68421875,
+        2651.542015625,
+        2666.7905625,
+        2685.60953125,
+        2702.114859375,
+        2672.6596875
+      ],
+      "parity": {
+        "kind": "parity",
+        "output_hash": "93569dc5e9ec5bd1",
+        "gdn_state_hash": "d83cac426aa9f710"
+      }
+    },
+    "q8-0": {
+      "wall_us": 3229.772140625,
+      "layers_us": [
+        488.6510416666667,
+        589.51375,
+        485.79791666666665,
+        482.62958333333336,
+        482.6272916666667,
+        588.89125
+      ],
+      "windows_wall_us": [
+        3207.237015625,
+        3228.957875,
+        3253.12153125
+      ],
+      "parity": {
+        "kind": "parity",
+        "output_hash": "548f24fa499ef092",
+        "gdn_state_hash": "697ac8539f681e2b"
+      }
+    },
+    "q8-7": {
+      "wall_us": 3223.081583333333,
+      "layers_us": [
+        487.02270833333336,
+        588.7422916666667,
+        482.1535416666667,
+        479.6610416666667,
+        479.39229166666667,
+        587.0089583333333
+      ],
+      "windows_wall_us": [
+        3201.8213125,
+        3221.20884375,
+        3246.21459375
+      ],
+      "parity": {
+        "kind": "parity",
+        "output_hash": "548f24fa499ef092",
+        "gdn_state_hash": "697ac8539f681e2b"
+      }
+    }
+  },
+  "projection_not_measurement": {
+    "gdn_saving_us": 2.638761574074067,
+    "qsa_saving_us": 2.9079166666666083,
+    "48_layer_saving_ms": 0.1298904166666657,
+    "anchored_ms_token": 37.30710958333333,
+    "anchored_tps": 26.804542382633215,
+    "warning": "Different clock/weight/context operating points; no fleet promotion or TPS claim.",
+    "raw_baseline_48_layer_ms": 20.150117916666666,
+    "raw_candidate_48_layer_ms": 20.0202275
+  }
+}

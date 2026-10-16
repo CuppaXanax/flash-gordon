@@ -101,6 +101,36 @@ bool fg_vk_profile_active(const fg_vk_context *context);
 void fg_vk_get_counters(const fg_vk_context *context,fg_vk_counters *counters);
 void fg_vk_get_memory_stats(const fg_vk_context *context,fg_vk_memory_stats *stats);
 
+#define FG_VK_LAYER_DISPATCHES 96u
+typedef struct fg_vk_layer_dispatch {
+    const char *name;
+    uint32_t grid[3],push[32],push_words,bindings;
+    uint64_t bytes[16];
+    bool barrier;
+} fg_vk_layer_dispatch;
+typedef struct fg_vk_layer_sample {
+    double gpu_us;
+    uint32_t dispatch_count;
+    fg_vk_layer_dispatch dispatches[FG_VK_LAYER_DISPATCHES];
+} fg_vk_layer_sample;
+/* Enable before recording static runs; query resets and two timestamps per
+ * layer are replayed with the original command buffers. Read after draining. */
+fg_status fg_vk_layer_clock_enable(fg_vk_context *context,fg_error *err);
+fg_status fg_vk_layer_clock_mark(fg_vk_context *context,uint32_t layer,bool end,fg_error *err);
+fg_status fg_vk_layer_clock_read(fg_vk_context *context,uint32_t layer,
+                                  fg_vk_layer_sample *sample,fg_error *err);
+
+/* FG_DECODE_FUSION bitmask: routing schedule, shared residual, shared SwiGLU. */
+uint32_t fg_vk_decode_fusion_mask(void);
+fg_status fg_vk_router_top10_tiles(fg_vk_context *context,fg_vk_tensor *selected,
+    fg_vk_tensor *gates,fg_vk_tensor *tiles,const fg_vk_tensor *logits,fg_error *err);
+fg_status fg_vk_moe_shared_gr_write(fg_vk_context *context,fg_vk_tensor *output,
+    const fg_vk_tensor *hyper,const fg_vk_tensor *reduced,const fg_vk_tensor *shared,
+    const fg_vk_tensor *scalar,const fg_vk_tensor *injection,fg_error *err);
+bool fg_vk_shared_swiglu_supported(const fg_vk_tensor *gate,const fg_vk_tensor *up);
+fg_status fg_vk_shared_swiglu(fg_vk_context *context,fg_vk_tensor *output,
+    const fg_vk_tensor *gate,const fg_vk_tensor *up,const fg_vk_tensor *input,fg_error *err);
+
 fg_status fg_vk_begin(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_end(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_flush(fg_vk_context *context,fg_error *err);

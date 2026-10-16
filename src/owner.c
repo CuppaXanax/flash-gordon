@@ -1580,6 +1580,9 @@ static fg_status owner_record_layer(fg_owner_executor *e,uint32_t layer,
     fg_vk_context *vk=fg_model_vk(e->model);
     fg_status status=FG_OK;
     (void)block_input;
+    status=ensure_decode_batch(vk,err);
+    if(status==FG_OK)status=fg_vk_layer_clock_mark(vk,layer,false,err);
+    if(status!=FG_OK)return status;
     const fg_vk_tensor *layer_input=*current;
     if(layer==1u){
         fg_vk_tensor *ple_input=NULL;
@@ -1629,15 +1632,19 @@ static fg_status owner_record_layer(fg_owner_executor *e,uint32_t layer,
         if(!shared_gate_w||!gate_w||!up_w||!down_w)status=FG_ERR_MISMATCH;
     }
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"shared_expert",err);
-    if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->shared_gate,gate_w,mixed,
+    bool fused_shared=(fg_vk_decode_fusion_mask()&4u)&&
+        fg_vk_shared_swiglu_supported(gate_w,up_w);
+    if(status==FG_OK&&fused_shared)
+        status=fg_vk_shared_swiglu(vk,e->shared_mid,gate_w,up_w,mixed,err);
+    if(status==FG_OK&&!fused_shared)status=fg_vk_dense_q8_0_f32(vk,e->shared_gate,gate_w,mixed,
         FG_HIDDEN_SIZE,640u,1u,1.0f,err);
-    if(status==FG_OK)fg_vk_next_dispatch_independent(vk);
-    if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->shared_up,up_w,mixed,
+    if(status==FG_OK&&!fused_shared)fg_vk_next_dispatch_independent(vk);
+    if(status==FG_OK&&!fused_shared)status=fg_vk_dense_q8_0_f32(vk,e->shared_up,up_w,mixed,
         FG_HIDDEN_SIZE,640u,1u,1.0f,err);
     if(status==FG_OK)fg_vk_next_dispatch_independent(vk);
     if(status==FG_OK)status=fg_vk_dense_f32(vk,e->shared_scalar,shared_gate_w,
         mixed,FG_HIDDEN_SIZE,1u,1u,err);
-    if(status==FG_OK)status=fg_vk_swiglu(vk,e->shared_mid,e->shared_gate,
+    if(status==FG_OK&&!fused_shared)status=fg_vk_swiglu(vk,e->shared_mid,e->shared_gate,
         e->shared_up,640u,err);
     if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,e->shared_output,down_w,
         e->shared_mid,640u,FG_HIDDEN_SIZE,1u,1.0f,err);
@@ -1646,11 +1653,18 @@ static fg_status owner_record_layer(fg_owner_executor *e,uint32_t layer,
     if(status==FG_OK)status=expert(expert_context,layer,e->activation_q8k,
         e->router_logits,&expert_output,err);
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"moe_reduce",err);
-    if(status==FG_OK)status=fg_vk_moe_decode_shared_add(vk,e->reduced,expert_output,
+    bool fused_residual=(fg_vk_decode_fusion_mask()&2u)!=0u;
+    if(status==FG_OK&&!fused_residual)status=fg_vk_moe_decode_shared_add(vk,e->reduced,expert_output,
         e->shared_output,e->shared_scalar,FG_HIDDEN_SIZE,err);
     if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gr_ffn_write",err);
-    if(status==FG_OK)status=gr_write_batch_into(e,residual,e->reduced,injection,1u,
+    if(status==FG_OK&&fused_residual){
+        fg_vk_tensor *dst=residual!=e->hyper_output?e->hyper_output:e->hyper_output_b;
+        status=fg_vk_moe_shared_gr_write(vk,dst,residual,expert_output,
+            e->shared_output,e->shared_scalar,injection,err);
+        if(status==FG_OK)*current=dst;
+    }else if(status==FG_OK)status=gr_write_batch_into(e,residual,e->reduced,injection,1u,
         e->hyper_output,e->hyper_output_b,current,err);
+    if(status==FG_OK)status=fg_vk_layer_clock_mark(vk,layer,true,err);
     return status;
 }
 

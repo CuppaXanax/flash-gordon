@@ -3954,9 +3954,144 @@ static int test_q8_split_silu_parity(void){
     free(cooked);free(raw);free(values);free(source);return ok;
 }
 
+static int test_decode_layer_clocks(void){
+    fg_vk_context *saved=context,*clock=NULL;
+    if(fg_vk_open(&clock,&error)!=FG_OK)return 0;
+    context=clock;
+    fg_vk_tensor *left=tensor(NULL,1024u),*right=tensor(NULL,1024u),*out=tensor(NULL,1024u);
+    int ok=left&&right&&out&&fg_vk_layer_clock_enable(clock,&error)==FG_OK;
+    if(ok)ok=fg_vk_static_begin(clock,0u,&error)==FG_OK&&
+        fg_vk_layer_clock_mark(clock,6u,false,&error)==FG_OK&&
+        fg_vk_add_f32(clock,out,left,right,256u,&error)==FG_OK&&
+        fg_vk_layer_clock_mark(clock,6u,true,&error)==FG_OK&&
+        fg_vk_static_end(clock,0u,&error)==FG_OK;
+    for(uint32_t replay=0;ok&&replay<3u;replay++){
+        float *a=fg_vk_tensor_map(left),*b=fg_vk_tensor_map(right);
+        for(uint32_t i=0;i<256u;i++){a[i]=(float)i;b[i]=(float)replay;}
+        ok=fg_vk_static_submit(clock,0u,&error)==FG_OK&&fg_vk_static_drain(clock,&error)==FG_OK;
+        fg_vk_layer_sample sample={0};
+        if(ok)ok=fg_vk_layer_clock_read(clock,6u,&sample,&error)==FG_OK&&
+            sample.gpu_us>0.0&&sample.dispatch_count==1u&&
+            strcmp(sample.dispatches[0].name,"fg_add_f32.spv")==0&&
+            sample.dispatches[0].bindings==3u&&sample.dispatches[0].bytes[0]==1024u;
+        const float *c=fg_vk_tensor_const_map(out);
+        for(uint32_t i=0;ok&&i<256u;i++)if(c[i]!=(float)i+replay)ok=0;
+    }
+    if(ok)ok=fg_vk_layer_clock_enable(clock,&error)==FG_ERR_MISMATCH;
+    fg_vk_tensor_destroy(out);fg_vk_tensor_destroy(right);fg_vk_tensor_destroy(left);
+    fg_vk_close(clock);context=saved;return ok;
+}
+
+static int test_decode_fusion_router(void){
+    fg_vk_tensor *logits=tensor(NULL,2048u),*selected=tensor(NULL,40u),
+        *gates=tensor(NULL,40u),*tiles=tensor(NULL,360u),
+        *selected_new=tensor(NULL,40u),*gates_new=tensor(NULL,40u),*tiles_new=tensor(NULL,360u);
+    int ok=logits&&selected&&gates&&tiles&&selected_new&&gates_new&&tiles_new;
+    for(uint32_t trial=0;ok&&trial<8u;trial++){
+        float values[512];
+        for(uint32_t i=0;i<512u;i++)values[i]=trial==0u?0.0f:sinf(i*0.71f+trial)*17.0f;
+        if(trial==5u)values[17]=NAN;
+        if(trial==6u)values[31]=INFINITY;
+        if(trial==7u)for(uint32_t i=0;i<512u;i++)values[i]=-INFINITY;
+        ok=fg_vk_tensor_write(logits,0,values,sizeof(values),&error)==FG_OK&&
+            fg_vk_begin(context,&error)==FG_OK&&
+            fg_vk_router_top10(context,selected,gates,logits,512u,1u,&error)==FG_OK&&
+            fg_vk_decode_tile_schedule(context,tiles,selected,&error)==FG_OK&&
+            fg_vk_router_top10_tiles(context,selected_new,gates_new,tiles_new,logits,&error)==FG_OK&&
+            fg_vk_end(context,&error)==FG_OK;
+        if(ok)ok=memcmp(fg_vk_tensor_const_map(selected),fg_vk_tensor_const_map(selected_new),40u)==0&&
+            memcmp(fg_vk_tensor_const_map(gates),fg_vk_tensor_const_map(gates_new),40u)==0&&
+            memcmp(fg_vk_tensor_const_map(tiles),fg_vk_tensor_const_map(tiles_new),360u)==0;
+    }
+    fg_vk_tensor_destroy(tiles_new);fg_vk_tensor_destroy(gates_new);fg_vk_tensor_destroy(selected_new);
+    fg_vk_tensor_destroy(tiles);fg_vk_tensor_destroy(gates);fg_vk_tensor_destroy(selected);fg_vk_tensor_destroy(logits);
+    return ok;
+}
+
+static int test_decode_fusion_residual(void){
+    fg_vk_tensor *hyper=tensor(NULL,40960u),*reduced=tensor(NULL,10240u),
+        *shared=tensor(NULL,10240u),*scalar=tensor(NULL,4u),*injection=tensor(NULL,16u),
+        *mid=tensor(NULL,10240u),*ref=tensor(NULL,40960u),*out=tensor(NULL,40960u);
+    int ok=hyper&&reduced&&shared&&scalar&&injection&&mid&&ref&&out;
+    if(ok){
+        float *h=fg_vk_tensor_map(hyper),*r=fg_vk_tensor_map(reduced),
+            *s=fg_vk_tensor_map(shared),*a=fg_vk_tensor_map(injection);
+        for(uint32_t i=0;i<10240u;i++)h[i]=cosf(i*0.31f)*2.0f;
+        for(uint32_t i=0;i<2560u;i++){r[i]=sinf(i*0.77f);s[i]=cosf(i*0.19f);}
+        for(uint32_t g=0;g<4u;g++)a[g]=0.13f+0.21f*g;
+    }
+    uint32_t changed=0;
+    for(uint32_t trial=0;ok&&trial<5u;trial++){
+        *(float *)fg_vk_tensor_map(scalar)=(float)trial*10.0f-20.0f;
+        ok=fg_vk_begin(context,&error)==FG_OK&&
+            fg_vk_moe_decode_shared_add(context,mid,reduced,shared,scalar,2560u,&error)==FG_OK&&
+            fg_vk_gr_write(context,ref,hyper,mid,injection,2560u,4u,1u,&error)==FG_OK&&
+            fg_vk_moe_shared_gr_write(context,out,hyper,reduced,shared,scalar,injection,&error)==FG_OK&&
+            fg_vk_end(context,&error)==FG_OK;
+        const float *a=fg_vk_tensor_const_map(ref),*b=fg_vk_tensor_const_map(out);
+        for(uint32_t i=0;ok&&i<10240u;i++){
+            if(memcmp(a+i,b+i,4u))changed++;
+            if(!isfinite(b[i])||fabsf(a[i]-b[i])>3e-7f*fmaxf(1.0f,fabsf(a[i])))ok=0;
+        }
+    }
+    fprintf(stderr,"residual changed=%u ",changed);
+    fg_vk_tensor_destroy(out);fg_vk_tensor_destroy(ref);fg_vk_tensor_destroy(mid);
+    fg_vk_tensor_destroy(injection);fg_vk_tensor_destroy(scalar);fg_vk_tensor_destroy(shared);
+    fg_vk_tensor_destroy(reduced);fg_vk_tensor_destroy(hyper);return ok;
+}
+
+static int test_decode_fusion_shared_i(int type){
+    const uint32_t k=2560u,m=640u,block=type==8?34u:144u;
+    uint64_t raw_bytes=(uint64_t)k*m/(type==8?32u:256u)*block;
+    uint64_t cooked_bytes=type==8?fg_q8_0_cooked_matrix_bytes(k,m):fg_dense_soa_bytes(k,m,12u);
+    uint8_t *raw=malloc(raw_bytes),*cooked=malloc(cooked_bytes);
+    fg_vk_tensor *w[2]={0},*x=tensor(NULL,k*4u),*g=tensor(NULL,m*4u),
+        *u=tensor(NULL,m*4u),*ref=tensor(NULL,m*4u),*out=tensor(NULL,m*4u);
+    int ok=raw&&cooked&&x&&g&&u&&ref&&out;
+    for(uint32_t projection=0;ok&&projection<2u;projection++){
+        for(uint64_t i=0;i<raw_bytes;i++)raw[i]=(uint8_t)(i*37u+i/19u+projection*71u);
+        for(uint64_t i=0;i<raw_bytes;i+=block){
+            uint16_t scale=fg_f32_to_f16(0.0005f+(i%7u)*0.0001f);memcpy(raw+i,&scale,2u);
+            if(type==12){scale=fg_f32_to_f16(0.0003f);memcpy(raw+i+2u,&scale,2u);}
+        }
+        ok=type==8?fg_cook_q8_0_rows(raw,cooked,cooked_bytes,k,m):
+            fg_cook_dense_soa(raw,cooked,cooked_bytes,k,m,12u);
+        if(ok)w[projection]=tensor(cooked,cooked_bytes);
+        ok=ok&&w[projection];
+        if(ok)fg_vk_tensor_set_format(w[projection],type==8?FG_VK_TENSOR_FORMAT_Q8_0_COOKED:
+            FG_VK_TENSOR_FORMAT_DENSE_SOA_Q4_K);
+    }
+    uint32_t changed=0;float max_error=0.0f;
+    for(uint32_t trial=0;ok&&trial<6u;trial++){
+        float *input=fg_vk_tensor_map(x);
+        for(uint32_t i=0;i<k;i++)input[i]=sinf(i*0.17f+trial)*0.3f;
+        ok=fg_vk_begin(context,&error)==FG_OK&&
+            fg_vk_dense_q8_0_f32(context,g,w[0],x,k,m,1u,1.0f,&error)==FG_OK&&
+            fg_vk_dense_q8_0_f32(context,u,w[1],x,k,m,1u,1.0f,&error)==FG_OK&&
+            fg_vk_swiglu(context,ref,g,u,m,&error)==FG_OK&&
+            fg_vk_shared_swiglu(context,out,w[0],w[1],x,&error)==FG_OK&&
+            fg_vk_end(context,&error)==FG_OK;
+        const float *a=fg_vk_tensor_const_map(ref),*b=fg_vk_tensor_const_map(out);
+        for(uint32_t i=0;ok&&i<m;i++){
+            if(memcmp(a+i,b+i,4u))changed++;
+            max_error=fmaxf(max_error,fabsf(a[i]-b[i]));
+            if(!isfinite(b[i])||fabsf(a[i]-b[i])>2e-6f*fmaxf(1.0f,fabsf(a[i])))ok=0;
+        }
+    }
+    fprintf(stderr,"shared type=%d changed=%u max_abs=%g ",type,changed,max_error);
+    fg_vk_tensor_destroy(out);fg_vk_tensor_destroy(ref);fg_vk_tensor_destroy(u);fg_vk_tensor_destroy(g);
+    fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w[1]);fg_vk_tensor_destroy(w[0]);
+    free(cooked);free(raw);return ok;
+}
+
 static int run_test(const char *name,int (*fn)(void)){if(!test_selected(name))return 1;selected_test_count++;fprintf(stderr,"  [%s] ... ",name);fflush(stderr);int ok=fn();fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 static int run_test_i(const char *name,int (*fn)(int),int arg){if(!test_selected(name))return 1;selected_test_count++;fprintf(stderr,"  [%s(%d)] ... ",name,arg);fflush(stderr);int ok=fn(arg);fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 int main(void){if(fg_vk_open(&context,&error)!=FG_OK){fprintf(stderr,"Vulkan unavailable: %s\n",error.message);return 77;}fprintf(stderr,"Flash Gordon Vulkan device: %s\n",fg_vk_device_name(context));int ok=1;
+ok=run_test("decode_fusion_router",test_decode_fusion_router)&&ok;
+ok=run_test("decode_layer_clocks",test_decode_layer_clocks)&&ok;
+ok=run_test("decode_fusion_residual",test_decode_fusion_residual)&&ok;
+ok=run_test_i("decode_fusion_shared",test_decode_fusion_shared_i,8)&&ok;
+ok=run_test_i("decode_fusion_shared",test_decode_fusion_shared_i,12)&&ok;
 ok=run_test("memory_telemetry_and_canary",test_memory_telemetry_and_canary)&&ok;
 ok=run_test("tensor_view_rebind",test_tensor_view_rebind)&&ok;
     ok=run_test("batch_submission_parity",test_batch_submission_parity)&&ok;

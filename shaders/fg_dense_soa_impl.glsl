@@ -12,6 +12,16 @@ layout(set=0,binding=0) readonly buffer Weights { uint w[]; };
 layout(set=0,binding=0) readonly buffer WideWeights { uvec4 w4[]; };
 layout(set=0,binding=1) readonly buffer Input { vec4 x[]; };
 layout(set=0,binding=2) writeonly buffer Output { float y[]; };
+#ifdef FG_SHARED_SWIGLU
+layout(set=0,binding=3) readonly buffer UpWeights { uint u[]; };
+layout(set=0,binding=3) readonly buffer UpWeightsVector { uvec4 u4[]; };
+uint projection;
+#define W(i) (projection==0u?w[i]:u[i])
+#define W4(i) (projection==0u?w4[i]:u4[i])
+#else
+#define W(i) w[i]
+#define W4(i) w4[i]
+#endif
 layout(push_constant) uniform Push {
     uint input_width,output_width,tokens,type,row_bytes;
     float scale;
@@ -39,7 +49,7 @@ float product(uint p,vec4 a,vec4 b){
 float value(uint base,uint groups,uint row,uint g,uint lane,vec4 a,vec4 b){
     if(TYPE==13u){
         uint off=base+groups*(COMPACT!=0?5u:16u)+(row*groups+g)*5u+lane;
-        uint p=w[off],next=w[off+1u],shift=lane*8u;
+        uint p=W(off),next=W(off+1u),shift=lane*8u;
         uint lo=(p>>shift)|(shift==0u?0u:next<<(32u-shift));
         uint hi=next>>shift;
         vec4 q0=vec4(bitfieldExtract(lo,0,5),bitfieldExtract(lo,5,5),
@@ -48,20 +58,24 @@ float value(uint base,uint groups,uint row,uint g,uint lane,vec4 a,vec4 b){
             ((lo>>30u)|(hi<<2u))&31u,(hi>>3u)&31u);
         return dot(q0,a)+dot(q1,b);
     }
-    uint p=w[base+groups*(TYPE==20u?4u:COMPACT!=0?5u:16u)+(row*groups+g)*4u+lane];
+    uint p=W(base+groups*(TYPE==20u?4u:COMPACT!=0?5u:16u)+(row*groups+g)*4u+lane);
     return product(p,a,b);
 }
 void compact_scales(uint base,uint groups,uint g,uint row,out vec4 d,out vec4 m){
-    uvec4 b=w4[(base+(g/8u)*8u+row)/4u];
+    uvec4 b=W4((base+(g/8u)*8u+row)/4u);
     vec2 b0=unpackHalf2x16(b.x),b1=unpackHalf2x16(b.y);
     vec2 b2=unpackHalf2x16(b.z),b3=unpackHalf2x16(b.w);
-    uvec4 codes=w4[(base+groups+g*4u)/4u];
+    uvec4 codes=W4((base+groups+g*4u)/4u);
     uvec2 c=row==0u?codes.xy:codes.zw;
     vec4 a=vec4(unpack8(c.x)),v=vec4(unpack8(c.y));
     d=vec4(b0.x,b1.x,b2.x,b3.x)*vec4(a.x,a.z,v.x,v.z);
     m=vec4(b0.y,b1.y,b2.y,b3.y)*vec4(a.y,a.w,v.y,v.w);
 }
 void main(){
+#ifdef FG_SHARED_SWIGLU
+    vec4 gate0=vec4(0.0),gate1=vec4(0.0);
+    [[unroll]] for(projection=0u;projection<2u;projection++){
+#endif
     uint lid=gl_LocalInvocationID.x,lane=lid&3u,cohort=lid>>2u;
 #if TYPE == 20
     if(lid<16u)table[lid]=float(grid(lid));
@@ -77,10 +91,10 @@ void main(){
         bool live=group<groups;
         uint g=min(group,groups-1u);
         uint meta=base+g*16u;
-        vec4 d0=uintBitsToFloat(w4[(meta+row)/4u]),d1=uintBitsToFloat(w4[meta/4u+1u]);
-        vec4 m0=uintBitsToFloat(w4[(meta+row)/4u+2u]),m1=uintBitsToFloat(w4[meta/4u+3u]);
+        vec4 d0=uintBitsToFloat(W4((meta+row)/4u)),d1=uintBitsToFloat(W4(meta/4u+1u));
+        vec4 m0=uintBitsToFloat(W4((meta+row)/4u+2u)),m1=uintBitsToFloat(W4(meta/4u+3u));
         if(TYPE==20u){
-            uvec4 packed=w4[(base+g*4u)/4u];
+            uvec4 packed=W4((base+g*4u)/4u);
             d0=row==0u?vec4(unpackHalf2x16(packed.x),unpackHalf2x16(packed.y)):
                 vec4(unpackHalf2x16(packed.z),unpackHalf2x16(packed.w));
             d1=vec4(unpackHalf2x16(packed.z),unpackHalf2x16(packed.w));
@@ -115,9 +129,22 @@ void main(){
     if(lid==0u){
         vec4 a=vec4(0.0),b=vec4(0.0);
         for(uint s=0u;s<gl_NumSubgroups;s++){a+=sums0[s];b+=sums1[s];}
+#ifdef FG_SHARED_SWIGLU
+        a*=pc.scale;b*=pc.scale;
+        if(projection==0u){gate0=a;gate1=b;}
+        else for(uint r=0u;r<4u;r++){
+            if(first+r<pc.output_width)y[first+r]=(gate0[r]/(1.0+exp(-gate0[r])))*a[r];
+            if(ROWS==8u&&first+r+4u<pc.output_width)y[first+r+4u]=(gate1[r]/(1.0+exp(-gate1[r])))*b[r];
+        }
+#else
         for(uint r=0u;r<4u;r++){
             if(first+r<pc.output_width)y[token*pc.output_width+first+r]=a[r]*pc.scale;
             if(ROWS==8u&&first+r+4u<pc.output_width)y[token*pc.output_width+first+r+4u]=b[r]*pc.scale;
         }
+#endif
     }
+#ifdef FG_SHARED_SWIGLU
+    barrier();
+    }
+#endif
 }

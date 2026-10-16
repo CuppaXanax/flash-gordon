@@ -400,10 +400,15 @@ fg_status fg_expert_decode_chain(fg_expert_executor *executor,uint32_t layer,
         &down_type,err);
     if(status!=FG_OK)return status;
     fg_vk_context *vk=fg_model_vk(executor->model);
-    status=fg_vk_router_top10(vk,executor->selected,executor->gates,router_logits,
-        FG_EXPERT_COUNT,1u,err);
-    if(status==FG_OK)status=fg_vk_decode_tile_schedule(vk,executor->tiles,
-        executor->selected,err);
+    if(fg_vk_decode_fusion_mask()&1u)
+        status=fg_vk_router_top10_tiles(vk,executor->selected,executor->gates,
+            executor->tiles,router_logits,err);
+    else{
+        status=fg_vk_router_top10(vk,executor->selected,executor->gates,router_logits,
+            FG_EXPERT_COUNT,1u,err);
+        if(status==FG_OK)status=fg_vk_decode_tile_schedule(vk,executor->tiles,
+            executor->selected,err);
+    }
     if(status==FG_OK)status=fg_vk_moe_decode_gate_up(vk,executor->mid,gate_weight,
         up_weight,activation,executor->tiles,640u,FG_HIDDEN_SIZE,gate_stride,
         up_stride,gate_type,up_type,FG_TOP_K,err);

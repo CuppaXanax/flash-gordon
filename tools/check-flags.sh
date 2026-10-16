@@ -35,6 +35,7 @@ expected_code="$(printf '%s\n' \
     FG_DENSE_K_COOKED \
     FG_DENSE_SOA \
     FG_DECODE_MS \
+    FG_DECODE_FUSION \
     FG_DECODE_PROFILE \
     FG_DECODE_RING \
     FG_DECODE_RING_TRACE \

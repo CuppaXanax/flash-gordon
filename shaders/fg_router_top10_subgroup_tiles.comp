@@ -1,0 +1,68 @@
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x=256)in;
+layout(set=0,binding=0)readonly buffer Logits{float logits[];};
+layout(set=0,binding=1)writeonly buffer Selected{uint selected[];};
+layout(set=0,binding=2)writeonly buffer Gates{float gates[];};
+layout(set=0,binding=3)writeonly buffer Tiles{uint tiles[];};
+layout(push_constant)uniform Push{uint experts;uint tokens;}pc;
+shared float subgroup_values[8],winners[10];
+shared uint subgroup_ids[8],winner_ids[10],invalid_logits;
+void write_tile(uint slot,uint expert){
+    for(uint word=0u;word<9u;word++)tiles[slot*9u+word]=0xffffffffu;
+    tiles[slot*9u]=expert;tiles[slot*9u+1u]=slot;
+}
+void main(){
+    uint lid=gl_LocalInvocationID.x;
+    float a=logits[lid],b=logits[lid+256u];
+    bool taken_a=false,taken_b=false;
+    if(lid==0u)invalid_logits=0u;
+    barrier();
+    if(isnan(a)||isnan(b)||(isinf(a)&&a>0.0)||(isinf(b)&&b>0.0))
+        atomicOr(invalid_logits,1u);
+    barrier();
+    if(invalid_logits!=0u){
+        if(lid<10u){selected[lid]=0xffffffffu;gates[lid]=0.0;write_tile(lid,0xffffffffu);}
+        return;
+    }
+    for(uint slot=0u;slot<10u;slot++){
+        uint id_a=taken_a?0xffffffffu:lid,id_b=taken_b?0xffffffffu:lid+256u;
+        float value_a=taken_a?-1.0/0.0:a,value_b=taken_b?-1.0/0.0:b;
+        bool use_b=value_b>value_a||(value_b==value_a&&id_b<id_a);
+        float value=use_b?value_b:value_a;
+        uint id=use_b?id_b:id_a;
+        float maximum=subgroupMax(value);
+        uint winner=subgroupMin(value==maximum?id:0xffffffffu);
+        if(subgroupElect()){
+            subgroup_values[gl_SubgroupID]=maximum;
+            subgroup_ids[gl_SubgroupID]=winner;
+        }
+        barrier();
+        if(lid==0u){
+            float best=-1.0/0.0;uint best_id=0xffffffffu;
+            for(uint s=0u;s<gl_NumSubgroups;s++){
+                float v=subgroup_values[s];uint i=subgroup_ids[s];
+                if(v>best||(v==best&&i<best_id)){best=v;best_id=i;}
+            }
+            winner_ids[slot]=best_id;
+            winners[slot]=logits[best_id];
+        }
+        barrier();
+        taken_a=taken_a||winner_ids[slot]==lid;
+        taken_b=taken_b||winner_ids[slot]==lid+256u;
+    }
+    if(lid==0u){
+        float maximum=winners[0],denominator=0.0;
+        float probabilities[10];
+        for(uint slot=0u;slot<10u;slot++){
+            probabilities[slot]=exp(winners[slot]-maximum);
+            denominator+=probabilities[slot];
+        }
+        for(uint slot=0u;slot<10u;slot++){
+            selected[slot]=winner_ids[slot];
+            gates[slot]=probabilities[slot]/denominator;
+        }
+    }
+    if(lid<10u)write_tile(lid,winner_ids[lid]);
+}

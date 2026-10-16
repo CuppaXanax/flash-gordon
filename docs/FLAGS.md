@@ -39,6 +39,7 @@ Status values:
 | `FG_DENSE_K_COOKED` | unset (off) | Cook supported Q4_K/Q5_K weights to the dense cooked layout at load. | variant (opt-in) |
 | `FG_DENSE_SOA` | unset (off) | Convert supported dense GGML weights to SoA layout at load. | variant (opt-in) |
 | `FG_EXPERT_Q8_WIDE` | unset (off) | `1` opts into subgroup-shuffle wide Q8 MoE decode; off pending fleet A/B. | variant (opt-in) |
+| `FG_DECODE_FUSION` | unset (off) | Chained decode fusion bitmask: `1` router + tile schedule, `2` shared add + HC residual, `4` supported shared gate/up + SwiGLU; `7` enables all. Invalid masks disable it. Synthetic parity/performance only; model KL qualification required. | variant (opt-in) |
 
 Prefix continuation (resuming exact token-prefix extensions from the recorded
 owner-state frontier) is the default. Disable it per run with
