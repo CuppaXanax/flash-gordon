@@ -327,10 +327,14 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
                      "experimental context and vision are not enabled in this runtime");
         return FG_ERR_UNAVAILABLE;
     }
+    if(fg_bf16_hops_enabled()&&fg_fp16_hops_mode()){
+        fg_error_set(err,FG_ERR_ARGUMENT,"choose only one hop precision codec");
+        return FG_ERR_ARGUMENT;
+    }
     if(resolved->experimental_flags&FG_RUNTIME_EXPERIMENTAL_MTP){
-        if(fg_bf16_hops_enabled()){
+        if(fg_bf16_hops_enabled()||fg_fp16_hops_mode()){
             fg_error_set(err,FG_ERR_UNAVAILABLE,
-                "BF16 decode hops cannot combine with f32 MTP verification; disable FG_BF16_HOPS");
+                "BF16 decode hops or scaled FP16 cannot combine with f32 MTP verification; disable hop codecs");
             return FG_ERR_UNAVAILABLE;
         }
         if(!resolved->mtp_window_tokens)resolved->mtp_window_tokens=

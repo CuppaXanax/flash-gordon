@@ -14,6 +14,7 @@ static float from_bits(uint32_t bits){float x;memcpy(&x,&bits,4u);return x;}
 static uint32_t bits(float x){uint32_t u;memcpy(&u,&x,4u);return u;}
 
 int main(void){
+    unsetenv("FG_FP16_HOPS");unsetenv("FG_FP16_HOP_MASK");
     assert(unsetenv("FG_BF16_HOPS")==0);assert(!fg_bf16_hops_enabled());
     assert(setenv("FG_BF16_HOPS","0",1)==0);assert(!fg_bf16_hops_enabled());
     assert(setenv("FG_BF16_HOPS","yes",1)==0);assert(!fg_bf16_hops_enabled());
@@ -35,6 +36,10 @@ int main(void){
     assert(setenv("FG_BF16_HOPS","0",1)==0);
     assert(fg_layer_work_encode(canonical,sizeof(canonical),&full,6,&source,&error)==FG_OK);
     assert(fg_decode_layer_work_encode(wire,sizeof(wire),&bytes,6,&source,&error)==FG_OK);
+    setenv("FG_FP16_SCALAR","1",1);
+    assert(fg_decode_layer_work_encode(canonical,sizeof(canonical),&full,6,&source,&error)==FG_OK);
+    assert(full==bytes&&!memcmp(canonical,wire,bytes));
+    unsetenv("FG_FP16_SCALAR");
     assert(bytes==full&&!memcmp(wire,canonical,bytes));
     for(uint32_t four=0;four<2;four++)for(uint32_t ngram=0;ngram<2;ngram++){
         source.position_mode=four?FG_POSITION_FOUR_AXIS:FG_POSITION_TEXT;
@@ -47,6 +52,9 @@ int main(void){
         assert(fg_decode_layer_work_encode(wire,bytes-1,&full,6,&source,&error)==FG_ERR_LIMIT);
         assert(setenv("FG_BF16_HOPS","0",1)==0);
         assert(fg_decode_layer_work_decode(&decoded,6,wire,bytes,&error)==FG_OK);
+        fg_layer_work portable;setenv("FG_FP16_SCALAR","1",1);
+        assert(fg_decode_layer_work_decode(&portable,6,wire,bytes,&error)==FG_OK);
+        assert(!memcmp(&portable,&decoded,sizeof(decoded)));unsetenv("FG_FP16_SCALAR");
         assert(decoded.flags==source.flags&&decoded.position_mode==source.position_mode);
         assert(!memcmp(decoded.position,source.position,sizeof(source.position)));
         for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)
@@ -107,7 +115,81 @@ int main(void){
     assert(resolved_status==FG_ERR_ARGUMENT);
     assert(setenv("FG_BF16_HOPS","1",1)==0);
     assert(fg_runtime_options_resolve(&resolved,m,&requested,&error)==FG_ERR_UNAVAILABLE);
-    assert(strstr(error.message,"BF16 decode hops"));unlink(path);free(m);
+    assert(strstr(error.message,"BF16 decode hops"));
+    unsetenv("FG_BF16_HOPS");
+    assert(setenv("FG_FP16_HOPS","1",1)==0);
+    assert(fg_runtime_options_resolve(&resolved,m,&requested,&error)==FG_ERR_UNAVAILABLE);
+    unlink(path);free(m);
+    for(uint32_t mode=0;mode<2;mode++){
+        const char *setting=mode?"128":"1";source.hyper[0]=1.0f+0x1p-11f;
+        source.hyper[1]=1.0f+3.0f*0x1p-11f;
+        for(uint32_t four=0;four<2;four++)for(uint32_t ng=0;ng<2;ng++){
+            source.position_mode=four?FG_POSITION_FOUR_AXIS:FG_POSITION_TEXT;
+            source.position[3]=four?9u:0u;source.flags=ng?FG_LAYER_WORK_HAS_NGRAM:0;
+            setenv("FG_FP16_HOPS",setting,1);
+            assert(fg_fp16_hops_mode()==(mode?128u:1u));
+            assert(fg_decode_layer_work_encode(wire,sizeof(wire),&bytes,6,&source,&error)==FG_OK);
+            uint32_t values=FG_HYPER_WIDTH+(ng?FG_NGRAM_EMBED_VALUES:0);
+            uint32_t header=four?28u:24u,scales=mode?(values+127u)/128u:1u;
+            assert(bytes==header+values*2u+scales*4u);
+            assert(fg_decode_layer_work_encode(wire,bytes-1u,&full,6,&source,&error)==FG_ERR_LIMIT);
+            unsetenv("FG_FP16_HOPS");
+            assert(fg_decode_layer_work_decode(&decoded,6,wire,bytes,&error)==FG_OK);
+            assert(bits(decoded.hyper[0])==bits(1.0f));
+            assert(bits(decoded.hyper[1])==bits(1.0f+0x1p-9f));
+            for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)
+                assert(fabsf(decoded.hyper[i]-source.hyper[i])<=0.0005f*fmaxf(1,fabsf(source.hyper[i])));
+            if(ng)for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++)
+                assert(fabsf(decoded.ngram_embedding[i]-source.ngram_embedding[i])<=
+                    0.0005f*fmaxf(1,fabsf(source.ngram_embedding[i])));
+            for(uint32_t n=0;n<bytes;n++)
+                assert(fg_decode_layer_work_decode(&decoded,6,wire,n,&error)!=FG_OK);
+            wire[header]=0x7f;wire[header+1]=0x80;wire[header+2]=wire[header+3]=0;
+            assert(fg_decode_layer_work_decode(&decoded,6,wire,bytes,&error)==FG_ERR_FORMAT);
+        }
+        setenv("FG_FP16_HOPS",setting,1);source.flags=0;source.position_mode=FG_POSITION_TEXT;
+        source.position[3]=0;
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)source.hyper[i]=(i&1u)?-FLT_MAX:FLT_MAX;
+        assert(fg_decode_layer_work_encode(wire,sizeof(wire),&bytes,6,&source,&error)==FG_OK);
+        assert(fg_decode_layer_work_decode(&decoded,6,wire,bytes,&error)==FG_OK);
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)assert(bits(decoded.hyper[i])==bits(source.hyper[i]));
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)source.hyper[i]=from_bits(i%128u);
+        source.hyper[0]=-0.0f;
+        assert(fg_decode_layer_work_encode(wire,sizeof(wire),&bytes,6,&source,&error)==FG_OK);
+        assert(fg_decode_layer_work_decode(&decoded,6,wire,bytes,&error)==FG_OK);
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)assert(bits(decoded.hyper[i])==bits(source.hyper[i]));
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)source.hyper[i]=(float)((int)(i%71)-35)/7.0f;
+        for(uint32_t ng=0;ng<2;ng++)for(uint32_t four=0;four<2;four++)
+          for(uint32_t slots=1;slots<=FG_DECODE_BATCH_MAX_SLOTS;slots++){
+            batch.flags=ng?FG_LAYER_WORK_HAS_NGRAM:0;
+            batch.position_mode=four?FG_POSITION_FOUR_AXIS:FG_POSITION_TEXT;batch.slot_count=(uint16_t)slots;
+            for(uint32_t i=0;i<slots;i++)batch.slots[i]=(fg_decode_batch_slot_work){
+                .token_index=i,.state_slot=i,.position={i,i,i,four?5u:0},
+                .hyper=source.hyper,.ngram_embedding=source.ngram_embedding};
+            assert(fg_decode_batch_work_encode(wire,sizeof(wire),&bytes,6,&batch,&error)==FG_OK);
+            assert(fg_decode_batch_work_decode(&result,6,hyper,
+                sizeof(hyper)/sizeof(float),ngram,sizeof(ngram)/sizeof(float),wire,bytes,&error)==FG_OK);
+            for(uint32_t s=0;s<slots;s++){
+                assert(result.slots[s].state_slot==s);
+                for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)
+                    assert(fabsf(result.slots[s].hyper[i]-source.hyper[i])<=0.0005f*fmaxf(1,fabsf(source.hyper[i])));
+                if(ng)for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++)
+                    assert(fabsf(result.slots[s].ngram_embedding[i]-source.ngram_embedding[i])<=
+                        0.0005f*fmaxf(1,fabsf(source.ngram_embedding[i])));
+            }
+            assert(fg_decode_batch_work_decode(&result,6,hyper,
+                sizeof(hyper)/sizeof(float),ngram,sizeof(ngram)/sizeof(float),wire,bytes-1u,&error)!=FG_OK);
+        }
+    }
+    setenv("FG_FP16_HOPS","1",1);setenv("FG_FP16_HOP_MASK","1",1);
+    assert(fg_decode_layer_work_encode(wire,sizeof(wire),&bytes,6,&source,&error)==FG_OK);
+    assert(!(wire[3]&(FG_LAYER_WORK_WIRE_FP16|FG_LAYER_WORK_WIRE_FP16_128)));
+    setenv("FG_FP16_HOP_MASK","2",1);
+    assert(fg_decode_layer_work_encode(wire,sizeof(wire),&bytes,6,&source,&error)==FG_OK);
+    assert(wire[3]&FG_LAYER_WORK_WIRE_FP16);
+    setenv("FG_BF16_HOPS","1",1);
+    assert(fg_decode_layer_work_encode(wire,sizeof(wire),&bytes,6,&source,&error)==FG_ERR_ARGUMENT);
+    unsetenv("FG_FP16_HOPS");unsetenv("FG_FP16_HOP_MASK");
     unsetenv("FG_BF16_HOPS");puts("BF16_HOPS codec/RNE/default/mixed-peer/truncation/batch/MTP-guard PASS");
     return 0;
 }

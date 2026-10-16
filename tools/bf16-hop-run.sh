@@ -20,7 +20,7 @@ cleanup(){
 }
 trap cleanup EXIT
 for rank in $ranks; do
-    timeout 180 source/tools/bench-bf16-hops "$rank" \
+    timeout 180 source/tools/bench-bf16-hops "$rank" "${HOP_BENCH_CODEC:-bf16}" \
         > "hop-$rank.jsonl" 2> "hop-$rank.stderr" &
     pids+=("$!")
 done

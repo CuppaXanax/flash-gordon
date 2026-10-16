@@ -12,7 +12,9 @@ static int cmp(const void *a,const void *b){
     double x=*(const double *)a,y=*(const double *)b;return (x>y)-(x<y);
 }
 int main(int argc,char **argv){
-    if(argc!=2)return 2;
+    if(argc!=2&&argc!=3)return 2;
+    const char *codec=argc==3?argv[2]:"bf16";
+    if(strcmp(codec,"bf16")&&strcmp(codec,"fp16")&&strcmp(codec,"fp16-128"))return 2;
     uint32_t rank=(uint32_t)strtoul(argv[1],NULL,10);
     if(rank>=FG_RANK_COUNT)return 2;
     fg_manifest manifest={0};manifest.protocol_version=FG_PROTOCOL_VERSION;
@@ -35,9 +37,13 @@ int main(int argc,char **argv){
     }else for(unsigned round=0;status==FG_OK&&round<5;round++)
       for(unsigned shape=0;status==FG_OK&&shape<2;shape++)
       for(unsigned leg=0;status==FG_OK&&leg<3;leg++){
-        bool bf16=((round&1u)?leg!=1u:leg==1u);
+        bool compressed=((round&1u)?leg!=1u:leg==1u);
+        bool bf16=compressed&&!strcmp(codec,"bf16");
         work.flags=(shape^(round&1u))?FG_LAYER_WORK_HAS_NGRAM:0u;
         setenv("FG_BF16_HOPS",bf16?"1":"0",1);
+        setenv("FG_FP16_HOPS",compressed&&!strcmp(codec,"fp16")?"1":
+            compressed&&!strcmp(codec,"fp16-128")?"128":"0",1);
+        unsetenv("FG_FP16_HOP_MASK");
         uint32_t bytes=0;double samples[SAMPLES],sum=0;
         status=fg_decode_layer_work_encode(wire,sizeof(wire),&bytes,6,&work,&error);
         if(status==FG_OK)status=fg_decode_layer_work_decode(&expected,6,wire,bytes,&error);
@@ -66,10 +72,12 @@ int main(int argc,char **argv){
         if(status==FG_OK&&rank==0){
             qsort(samples,SAMPLES,sizeof(*samples),cmp);
             printf("{\"round\":%u,\"leg\":%u,\"ngram\":%s,\"bf16\":%s,"
+                "\"compressed\":%s,\"codec\":\"%s\","
                 "\"payload_bytes\":%u,\"frame_bytes\":%zu,\"samples\":%u,"
                 "\"rtt_mean_us\":%.6f,\"rtt_p50_us\":%.6f,\"rtt_p99_us\":%.6f,"
                 "\"hop_rtt_over_2_p50_us\":%.6f,\"codec_validated\":true}\n",
                 round,leg,work.flags?"true":"false",bf16?"true":"false",
+                compressed?"true":"false",compressed?codec:"f32",
                 bytes,bytes+sizeof(fg_frame_header),SAMPLES,sum/SAMPLES,
                 samples[SAMPLES/2],samples[SAMPLES*99/100],samples[SAMPLES/2]/2);
             fflush(stdout);

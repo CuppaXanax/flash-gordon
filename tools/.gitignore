@@ -6,3 +6,5 @@ bench-bf16-hops
 bench-bf16-hops.d
 bf16-offline
 bf16-offline.d
+/fp16-wire-oracle
+/fp16-wire-oracle.d

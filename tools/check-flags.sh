@@ -31,6 +31,9 @@ extract() {
 
 expected_code="$(printf '%s\n' \
     FG_BF16_HOPS \
+    FG_FP16_HOPS \
+    FG_FP16_HOP_MASK \
+    FG_FP16_SCALAR \
     FG_BENCH_IQ_VARIANT \
     FG_BLOCK_BENCH \
     FG_DENSE_K_COOKED \

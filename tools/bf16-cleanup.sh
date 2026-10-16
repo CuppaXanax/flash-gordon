@@ -3,7 +3,7 @@ set -euo pipefail
 root=/home/xander/hc-bf16
 cd "$root"
 host=$(hostname -I)
-if pgrep -f '(^| )(source/tools/(bf16-offline|bench-bf16-hops)|python3 source/tools/bf16_source.py)( |$)'; then
+if pgrep -f '(^| )((source|hardware)/tools/(bf16-offline|bench-bf16-hops|fp16-wire-oracle|mtp-real-place)|python3 (source/tools/bf16_source.py|hardware/tools/fp16_q8_restore.py))( |$)'; then
     echo 'Refusing cleanup while owned numerical/transport work remains active' >&2
     exit 1
 fi

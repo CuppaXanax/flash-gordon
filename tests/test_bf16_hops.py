@@ -9,6 +9,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"tools"))
 import bf16_source as source
+import analyze_fp16_hops as fp16
+import fp16_q8_restore as q8_restore
 
 spec = importlib.util.spec_from_file_location(
     "bf16_analysis", Path(__file__).resolve().parents[1]/"tools"/"analyze_bf16_hops.py")
@@ -45,6 +47,54 @@ class AnalysisTests(unittest.TestCase):
         with self.assertRaises(ValueError):analysis.transport(r)
         r = self.receipt();r[1]["ExitCode"] = 1
         with self.assertRaises(ValueError):analysis.transport(r)
+
+    def test_scaled_transport_overhead(self):
+        import json
+        for codec in ("fp16","fp16-128"):
+            receipt=self.receipt();rows=[]
+            for line in receipt[0]["Stdout"].splitlines():
+                row=json.loads(line);compressed=row["bf16"]
+                count=10240+(2560 if row["ngram"] else 0)
+                overhead=(4*(count//128) if codec=="fp16-128" else 4) if compressed else 0
+                row.update(compressed=compressed,codec=codec if compressed else "f32",bf16=False)
+                row["payload_bytes"]+=overhead;row["frame_bytes"]+=overhead
+                rows.append(row)
+            receipt[0]["Stdout"]="\n".join(map(json.dumps,rows))
+            result=fp16.scaled_transport(receipt,codec)
+            self.assertEqual(result["eight_work_hop_model"]["modeled_saving_us"]["mean"],1600)
+            self.assertEqual(result["work_frames_fp16_bytes"],169408+(2640 if codec=="fp16-128" else 32))
+            if codec=="fp16":
+                for policy in ("mixed_first_f32_model","mixed_no_rank0_model"):
+                    self.assertEqual(result[policy]["saving_us"]["mean"],1400)
+                    self.assertEqual(result[policy]["saving_us"]["ci95_half"],0)
+            rows[0]["codec"]="wrong";receipt[0]["Stdout"]="\n".join(map(json.dumps,rows))
+            with self.assertRaises(AssertionError):fp16.scaled_transport(receipt,codec)
+
+    def test_cumulative_kl_not_additive(self):
+        teacher=[0.,1.,-1.];mixed=[.1,1.1,-1.2];candidate=[.01,1.01,-1.]
+        base,_=fp16.compare(teacher,mixed)
+        delta,_=fp16.compare(mixed,candidate)
+        cumulative,_=fp16.compare(teacher,candidate)
+        self.assertGreater(delta,0)
+        self.assertLess(cumulative,base)
+        self.assertNotAlmostEqual(cumulative,base+delta)
+
+    def test_q8_restore_preserves_existing_scratch(self):
+        args=MagicMock();args.rank=0
+        args.output.exists.return_value=False
+        scratch=args.output.with_suffix.return_value
+        scratch.exists.return_value=True
+        row=dict(name="tensor",rank=0)
+        with (patch.object(q8_restore,"load_manifest",side_effect=[
+                dict(sha256=q8_restore.ORIGINAL,records=[row]),
+                dict(sha256=q8_restore.MIXED,records=[row])]),
+              patch.object(q8_restore,"digest",return_value=q8_restore.DENSE),
+              patch.object(q8_restore,"gguf_header",return_value=dict(records=[]))):
+            with self.assertRaisesRegex(ValueError,"scratch already exists"):
+                q8_restore.restore(args)
+        args.output.open.assert_not_called()
+        scratch.write_bytes.assert_not_called()
+        scratch.unlink.assert_not_called()
 
     def test_quality_thresholds(self):
         rows = [dict(case=c, position=p, final=p == 3, vocab=248320, kl=.001,

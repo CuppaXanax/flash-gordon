@@ -104,6 +104,12 @@ static void prepare(const char *mp,const char *pack,const char *header,const cha
 }
 static void stage(const char *mp,const char *pack,uint32_t first,uint32_t last,
                     const char *in,const char *out){
+    const char *codec=getenv("HOP_OFFLINE_CODEC");if(!codec)codec="bf16";
+    need(!strcmp(codec,"bf16")||!strcmp(codec,"fp16")||!strcmp(codec,"fp16-128")||
+        !strcmp(codec,"f32"),"unknown offline codec");
+    const char *mask_text=getenv("HOP_OFFLINE_MASK");char *end=NULL;
+    unsigned long mask=mask_text?strtoul(mask_text,&end,0):255u;
+    need(!mask_text||(*mask_text&&!*end&&mask<256u),"offline destination mask");
     fg_manifest *m=manifest(mp);need(first<=last&&last<FG_LAYER_COUNT,"stage bounds");
     uint32_t rank=m->layer_owner[first];
     for(uint32_t l=first;l<=last;l++)need(m->layer_owner[l]==rank,"stage crosses rank");
@@ -135,23 +141,33 @@ static void stage(const char *mp,const char *pack,uint32_t first,uint32_t last,
     if(!first)check(fg_vk_tensor_create(vk,FG_NGRAM_EMBED_VALUES*4u,&ngram,&error));
     FILE *inputs[2]={frames(in,"teacher","rb"),frames(in,"candidate","rb")};
     FILE *outputs[2]={frames(out,"teacher","wbx"),frames(out,"candidate","wbx")};
+    const char *saved_teacher=getenv("HOP_OFFLINE_TEACHER");
+    FILE *saved=saved_teacher?fopen(saved_teacher,"rb"):NULL;
+    need(!saved_teacher||saved,"saved f32 teacher output");
     FILE *ng=!first?file(pack,"ngram.f32","rb"):NULL;
     float *h[2],*n=malloc((size_t)MAX_TOKENS*FG_NGRAM_EMBED_VALUES*4u);
     for(uint32_t s=0;s<2;s++)h[s]=malloc((size_t)MAX_TOKENS*FG_HYPER_WIDTH*4u);
     need(n&&h[0]&&h[1],"frame allocation");
     uint8_t wire[FG_LAYER_WORK_MAX_BYTES];fg_layer_work w,decoded;
-    double prefix_error=0;uint64_t rounded=0;
+    double prefix_error=0,square_error[2]={0},square_reference[2]={0};uint64_t rounded=0;
     for(uint32_t c=0;c<count;c++){
         uint32_t nt=cases[c].count;
         if(ng)read_data(ng,n,(size_t)nt*FG_NGRAM_EMBED_VALUES*4u);
         for(uint32_t s=0;s<2;s++){
             read_data(inputs[s],h[s],(size_t)nt*FG_HYPER_WIDTH*4u);
+            if(!s&&saved){
+                read_data(saved,h[s],(size_t)nt*FG_HYPER_WIDTH*4u);
+                write_data(outputs[s],h[s],(size_t)nt*FG_HYPER_WIDTH*4u);continue;
+            }
             check(fg_owner_reset_session(owner,s,&error));
             check(fg_owner_set_active_session(owner,s,&error));
             fg_vk_tensor *input=fg_owner_session_input(owner,s);
             for(uint32_t p=0;p<nt;p++){
-                bool bf16=s&&p>=nt-4u;
-                setenv("FG_BF16_HOPS",bf16?"1":"0",1);
+                bool compressed=s&&p>=nt-4u&&(mask&(1ul<<rank))&&strcmp(codec,"f32");
+                setenv("FG_BF16_HOPS",compressed&&!strcmp(codec,"bf16")?"1":"0",1);
+                setenv("FG_FP16_HOPS",compressed&&!strcmp(codec,"fp16")?"1":
+                    compressed&&!strcmp(codec,"fp16-128")?"128":"0",1);
+                unsetenv("FG_FP16_HOP_MASK");
                 memset(&w,0,sizeof(w));w.layer=(uint8_t)first;
                 w.source_rank=first?m->layer_owner[first-1u]:0u;w.destination_rank=(uint8_t)rank;
                 w.token_index=p;w.flags=!first?FG_LAYER_WORK_HAS_NGRAM:0u;
@@ -159,7 +175,14 @@ static void stage(const char *mp,const char *pack,uint32_t first,uint32_t last,
                 memcpy(w.hyper,h[s]+(size_t)p*FG_HYPER_WIDTH,sizeof(w.hyper));
                 if(!first)memcpy(w.ngram_embedding,n+(size_t)p*FG_NGRAM_EMBED_VALUES,sizeof(w.ngram_embedding));
                 uint32_t bytes=0;check(fg_decode_layer_work_encode(wire,sizeof(wire),&bytes,6,&w,&error));
-                check(fg_decode_layer_work_decode(&decoded,6,wire,bytes,&error));rounded+=bf16;
+                check(fg_decode_layer_work_decode(&decoded,6,wire,bytes,&error));rounded+=compressed;
+                if(compressed)for(uint32_t k=0;k<(!first?2u:1u);k++){
+                    const float *a=k?w.ngram_embedding:w.hyper,*b=k?decoded.ngram_embedding:decoded.hyper;
+                    for(uint32_t j=0;j<(k?FG_NGRAM_EMBED_VALUES:FG_HYPER_WIDTH);j++){
+                        double delta=(double)a[j]-b[j];square_error[k]+=delta*delta;
+                        square_reference[k]+=(double)a[j]*a[j];
+                    }
+                }
                 check(fg_vk_tensor_write(input,0,decoded.hyper,sizeof(decoded.hyper),&error));
                 if(ngram)check(fg_vk_tensor_write(ngram,0,decoded.ngram_embedding,sizeof(decoded.ngram_embedding),&error));
                 fg_vk_tensor *output=NULL;
@@ -183,13 +206,18 @@ static void stage(const char *mp,const char *pack,uint32_t first,uint32_t last,
         need(fclose(outputs[s])==0,"close stage output");free(h[s]);
     }
     if(ng)fclose(ng);
+    if(saved){need(fgetc(saved)==EOF,"saved teacher trailing frames");fclose(saved);}
     free(n);free(cases);
     fg_vk_tensor_destroy(ngram);fg_expert_executor_destroy(ex);
     fg_owner_executor_destroy(owner);fg_model_close(model);
     for(uint32_t s=0;s<2;s++)unlink(states[s]);
     printf("{\"kind\":\"stage_complete\",\"first\":%u,\"last\":%u,\"rank\":%u,"
-        "\"rounded_boundaries\":%llu,\"prefix_max_relative\":%.12g}\n",
-        first,last,rank,(unsigned long long)rounded,prefix_error);free(m);
+        "\"rounded_boundaries\":%llu,\"prefix_max_relative\":%.12g,"
+        "\"codec\":\"%s\",\"hop_mask\":%lu,\"wire_hyper_relative_l2\":%.12g,"
+        "\"wire_ngram_relative_l2\":%.12g}\n",
+        first,last,rank,(unsigned long long)rounded,prefix_error,codec,mask,
+        square_reference[0]?sqrt(square_error[0]/square_reference[0]):0,
+        square_reference[1]?sqrt(square_error[1]/square_reference[1]):0);free(m);
 }
 static void head(const char *mp,const char *pack,const char *in){
     fg_manifest *m=manifest(mp);sample *cases=calloc(MAX_CASES,sizeof(*cases));
@@ -227,6 +255,13 @@ static void head(const char *mp,const char *pack,const char *in){
             fg_sha256 hash;fg_sha256_init(&hash);
             fg_sha256_update(&hash,logits[s],FG_Q38_VOCAB_SIZE*4u);fg_sha256_final(&hash,digest[s]);
             for(uint32_t j=0;j<32;j++)snprintf(hex[s]+j*2u,3,"%02x",digest[s][j]);
+        }
+        const char *logits_directory=getenv("HOP_OFFLINE_LOGITS");
+        if(logits_directory&&p+1u==cases[c].count){
+            char name[64];snprintf(name,sizeof(name),"%03u.fgl",c);
+            FILE *f=file(logits_directory,name,"wbx");uint32_t vocab=FG_Q38_VOCAB_SIZE;
+            write_data(f,"FGLOG01\n",8);write_data(f,&vocab,4);
+            write_data(f,logits[1],FG_Q38_VOCAB_SIZE*4u);need(fclose(f)==0,"close saved logits");
         }
         printf("{\"kind\":\"quality\",\"case\":%u,\"position\":%u,\"final\":%s,"
             "\"vocab\":%u,\"kl\":%.15g,\"teacher_top1\":%u,\"bf16_top1\":%u,"

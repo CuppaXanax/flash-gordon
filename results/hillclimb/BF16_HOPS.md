@@ -3,6 +3,9 @@
 **Quality gate FAILED. Research-only, default off; no serving promotion.**
 The measured transport saving does not override the trained-model quality gate.
 
+The follow-up [scaled FP16 experiment](FP16_HOPS.md) keeps ten fraction bits
+with per-hop or block scales and reports cumulative original-Q8 comparisons.
+
 ## Scope and safety
 
 `FG_BF16_HOPS=1` enables round-to-nearest-even BF16 **at the send boundary**

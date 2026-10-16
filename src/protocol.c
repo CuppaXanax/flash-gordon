@@ -1,6 +1,7 @@
 #include "fg_protocol.h"
 #include "fg_q38_schema.h"
 #include "fg_topology.h"
+#include "fg_quant.h"
 
 #include <arpa/inet.h>
 #include <float.h>
@@ -11,6 +12,7 @@
 
 #if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
 #include <nmmintrin.h>
+#include <immintrin.h>
 #endif
 
 static uint16_t bswap16(uint16_t x){return (uint16_t)((x>>8)|(x<<8));}
@@ -380,6 +382,139 @@ bool fg_bf16_hops_enabled(void){
     return value&&strcmp(value,"1")==0;
 }
 
+uint32_t fg_fp16_hops_mode(void){
+    const char *value=getenv("FG_FP16_HOPS");
+    return !value?0u:!strcmp(value,"1")?1u:!strcmp(value,"128")?128u:0u;
+}
+
+static uint32_t fp16_hop_mode(uint8_t destination){
+    uint32_t mode=fg_fp16_hops_mode();
+    const char *mask=getenv("FG_FP16_HOP_MASK");
+    if(mask){
+        char *end=NULL;unsigned long bits=strtoul(mask,&end,0);
+        if(!*mask||*end||bits>=((unsigned long)1u<<FG_RANK_COUNT)||
+           destination>=FG_RANK_COUNT||!(bits&(1ul<<destination)))return 0u;
+    }
+    return mode;
+}
+
+static uint32_t fp16_wire_bytes(uint32_t values,uint32_t mode){
+    uint32_t block=mode==128u?128u:values;
+    return values*2u+4u*((values+block-1u)/block);
+}
+
+static float fp16_hop_scale(float maximum){
+    int exponent=maximum?ilogbf(maximum)-14:0;
+    return maximum?ldexpf(1.0f,exponent<-126?-126:exponent):1.0f;
+}
+
+#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
+static bool fp16_hardware(void){
+    const char *scalar=getenv("FG_FP16_SCALAR");
+    return !(scalar&&!strcmp(scalar,"1"))&&__builtin_cpu_supports("avx")&&
+        __builtin_cpu_supports("f16c")&&__builtin_cpu_supports("ssse3");
+}
+
+__attribute__((target("avx,f16c,ssse3")))
+static __m128 load_hop_f32(const uint8_t *in){
+    const __m128i order=_mm_setr_epi8(3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12);
+    return _mm_castsi128_ps(_mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)in),order));
+}
+
+__attribute__((target("avx,f16c,ssse3")))
+static void put_hop_fp16_hardware(uint8_t *out,const uint8_t *in,uint32_t count,uint32_t mode){
+    uint32_t block=mode==128u?128u:count;
+    const __m128 sign=_mm_set1_ps(-0.0f);
+    const __m128i order=_mm_setr_epi8(1,0,3,2,5,4,7,6,-1,-1,-1,-1,-1,-1,-1,-1);
+    for(uint32_t first=0;first<count;first+=block){
+        uint32_t n=count-first<block?count-first:block,j=0;__m128 peak=_mm_setzero_ps();
+        for(;j+4u<=n;j+=4u)
+            peak=_mm_max_ps(peak,_mm_andnot_ps(sign,load_hop_f32(in+4u*(first+j))));
+        float maxima[4];_mm_storeu_ps(maxima,peak);
+        float maximum=fmaxf(fmaxf(maxima[0],maxima[1]),fmaxf(maxima[2],maxima[3]));
+        for(;j<n;j++)maximum=fmaxf(maximum,fabsf(get_f32_be(in+4u*(first+j))));
+        float scale=fp16_hop_scale(maximum);put_f32_be(out,scale);out+=4u;
+        __m128 inverse=_mm_set1_ps(1.0f/scale);
+        for(j=0;j+4u<=n;j+=4u,out+=8u){
+            __m128 v=_mm_mul_ps(load_hop_f32(in+4u*(first+j)),inverse);
+            __m128i half=_mm_cvtps_ph(v,_MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC);
+            _mm_storel_epi64((__m128i *)out,_mm_shuffle_epi8(half,order));
+        }
+        for(;j<n;j++,out+=2u)
+            put_u16_be(out,fg_f32_to_f16(get_f32_be(in+4u*(first+j))/scale));
+    }
+}
+
+__attribute__((target("avx,f16c,ssse3")))
+static bool get_hop_fp16_hardware(uint8_t *out,const uint8_t *in,uint32_t count,uint32_t mode){
+    uint32_t block=mode==128u?128u:count;
+    const __m128 sign=_mm_set1_ps(-0.0f),limit=_mm_set1_ps(32768.0f);
+    const __m128i order16=_mm_setr_epi8(1,0,3,2,5,4,7,6,-1,-1,-1,-1,-1,-1,-1,-1);
+    const __m128i order32=_mm_setr_epi8(3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12);
+    for(uint32_t first=0;first<count;first+=block){
+        uint32_t n=count-first<block?count-first:block;float scale=get_f32_be(in);in+=4u;
+        if(!isfinite(scale)||scale<FLT_MIN||scale>0x1p113f||
+           frexpf(scale,&(int){0})!=0.5f)return false;
+        uint32_t j=0;
+        for(;j+4u<=n;j+=4u,in+=8u){
+            __m128i half=_mm_shuffle_epi8(_mm_loadl_epi64((const __m128i *)in),order16);
+            __m128 value=_mm_cvtph_ps(half),absolute=_mm_andnot_ps(sign,value);
+            if(_mm_movemask_ps(_mm_cmple_ps(absolute,limit))!=15)return false;
+            if(scale==0x1p113f){
+                absolute=_mm_min_ps(absolute,_mm_set1_ps(0x1.fffffep14f));
+                value=_mm_or_ps(absolute,_mm_and_ps(sign,value));
+            }
+            value=_mm_mul_ps(value,_mm_set1_ps(scale));
+            _mm_storeu_si128((__m128i *)(out+4u*(first+j)),
+                _mm_shuffle_epi8(_mm_castps_si128(value),order32));
+        }
+        for(;j<n;j++,in+=2u){
+            float half=fg_f16_to_f32(get_u16_be(in));
+            if(!isfinite(half)||fabsf(half)>32768.0f)return false;
+            float value=scale==0x1p113f&&fabsf(half)==32768.0f?copysignf(FLT_MAX,half):half*scale;
+            put_f32_be(out+4u*(first+j),value);
+        }
+    }
+    return true;
+}
+#endif
+
+static void put_hop_fp16(uint8_t *out,const uint8_t *in,uint32_t count,uint32_t mode){
+#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
+    if(fp16_hardware()){put_hop_fp16_hardware(out,in,count,mode);return;}
+#endif
+    uint32_t block=mode==128u?128u:count;
+    for(uint32_t first=0;first<count;first+=block){
+        uint32_t n=count-first<block?count-first:block;float maximum=0;
+        for(uint32_t j=0;j<n;j++)maximum=fmaxf(maximum,fabsf(get_f32_be(in+4u*(first+j))));
+        /* Power-of-two scaling is exact; leave one exponent bit of headroom. */
+        float scale=fp16_hop_scale(maximum);
+        put_f32_be(out,scale);out+=4u;
+        for(uint32_t j=0;j<n;j++,out+=2u)
+            put_u16_be(out,fg_f32_to_f16(get_f32_be(in+4u*(first+j))/scale));
+    }
+}
+
+static bool get_hop_fp16(uint8_t *out,const uint8_t *in,uint32_t count,uint32_t mode){
+#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
+    if(fp16_hardware())return get_hop_fp16_hardware(out,in,count,mode);
+#endif
+    uint32_t block=mode==128u?128u:count;
+    for(uint32_t first=0;first<count;first+=block){
+        uint32_t n=count-first<block?count-first:block;float scale=get_f32_be(in);in+=4u;
+        if(!isfinite(scale)||scale<FLT_MIN||scale>ldexpf(1.0f,113)||
+           frexpf(scale,&(int){0})!=0.5f)return false;
+        for(uint32_t j=0;j<n;j++,in+=2u){
+            float half=fg_f16_to_f32(get_u16_be(in));
+            if(!isfinite(half)||fabsf(half)>32768.0f)return false;
+            /* RNE at the finite f32 endpoint must not create infinity. */
+            float value=scale==0x1p113f&&fabsf(half)==32768.0f?copysignf(FLT_MAX,half):half*scale;
+            put_f32_be(out+4u*(first+j),value);
+        }
+    }
+    return true;
+}
+
 float fg_bf16_hop_round(float value){
     uint32_t bits;memcpy(&bits,&value,sizeof(bits));
     if((bits&UINT32_C(0x7f800000))==UINT32_C(0x7f800000)){
@@ -401,7 +536,7 @@ static float get_hop_bf16(const uint8_t *in){
     memcpy(&value,&bits,sizeof(value));return value;
 }
 
-fg_status fg_decode_layer_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+static fg_status decode_layer_work_encode_bf16(uint8_t *output,uint32_t capacity,uint32_t *bytes,
                                       uint16_t protocol_version,const fg_layer_work *work,
                                       fg_error *err){
     if(!fg_bf16_hops_enabled())
@@ -429,7 +564,7 @@ fg_status fg_decode_layer_work_encode(uint8_t *output,uint32_t capacity,uint32_t
     *bytes=required;return FG_OK;
 }
 
-fg_status fg_decode_layer_work_decode(fg_layer_work *work,uint16_t protocol_version,
+static fg_status decode_layer_work_decode_bf16(fg_layer_work *work,uint16_t protocol_version,
                                       const uint8_t *payload,uint32_t bytes,fg_error *err){
     if(!payload||bytes<4u||!(payload[3]&FG_LAYER_WORK_WIRE_BF16))
         return fg_layer_work_decode(work,protocol_version,payload,bytes,err);
@@ -449,6 +584,51 @@ fg_status fg_decode_layer_work_decode(fg_layer_work *work,uint16_t protocol_vers
     for(uint32_t i=0;i<values;i++)
         put_f32_be(canonical+header+i*4u,get_hop_bf16(payload+header+i*2u));
     return fg_layer_work_decode(work,protocol_version,canonical,header+values*4u,err);
+}
+
+fg_status fg_decode_layer_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                      uint16_t protocol_version,const fg_layer_work *work,
+                                      fg_error *err){
+    if(fg_fp16_hops_mode()&&fg_bf16_hops_enabled()){
+        fg_error_set(err,FG_ERR_ARGUMENT,"choose only one hop precision codec");return FG_ERR_ARGUMENT;
+    }
+    uint32_t mode=work?fp16_hop_mode(work->destination_rank):0u;
+    if(!mode)return decode_layer_work_encode_bf16(output,capacity,bytes,protocol_version,work,err);
+    if(!output||!bytes||protocol_version!=FG_PROTOCOL_VERSION){
+        fg_error_set(err,FG_ERR_ARGUMENT,"scaled fp16 requires protocol 6 and storage");return FG_ERR_ARGUMENT;
+    }
+    uint8_t canonical[FG_LAYER_WORK_MAX_BYTES];uint32_t full=0;
+    fg_status status=fg_layer_work_encode(canonical,sizeof(canonical),&full,protocol_version,work,err);
+    if(status!=FG_OK)return status;
+    uint32_t header=12u+(work->position_mode==FG_POSITION_FOUR_AXIS?4u:3u)*4u;
+    uint32_t count=(full-header)/4u,required=header+fp16_wire_bytes(count,mode);
+    if(capacity<required){fg_error_set(err,FG_ERR_LIMIT,"scaled fp16 work buffer too small");return FG_ERR_LIMIT;}
+    memcpy(output,canonical,header);
+    output[3]|=mode==128u?FG_LAYER_WORK_WIRE_FP16_128:FG_LAYER_WORK_WIRE_FP16;
+    put_hop_fp16(output+header,canonical+header,count,mode);*bytes=required;return FG_OK;
+}
+
+fg_status fg_decode_layer_work_decode(fg_layer_work *work,uint16_t protocol_version,
+                                      const uint8_t *payload,uint32_t bytes,fg_error *err){
+    uint8_t tag=payload&&bytes>=4u?payload[3]&224u:0u;
+    if(!tag||tag==FG_LAYER_WORK_WIRE_BF16)
+        return decode_layer_work_decode_bf16(work,protocol_version,payload,bytes,err);
+    if(!work||protocol_version!=FG_PROTOCOL_VERSION||bytes<FG_LAYER_WORK_TEXT_HEADER_BYTES||
+       (tag!=FG_LAYER_WORK_WIRE_FP16&&tag!=FG_LAYER_WORK_WIRE_FP16_128)){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid scaled fp16 work tag/header");return FG_ERR_FORMAT;
+    }
+    uint32_t mode=tag==FG_LAYER_WORK_WIRE_FP16_128?128u:1u,axes=payload[9];
+    uint32_t header=12u+axes*4u,count=FG_HYPER_WIDTH+
+        ((payload[3]&FG_LAYER_WORK_HAS_NGRAM)?FG_NGRAM_EMBED_VALUES:0u);
+    if((axes!=3u&&axes!=4u)||bytes!=header+fp16_wire_bytes(count,mode)){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid scaled fp16 work length");return FG_ERR_FORMAT;
+    }
+    uint8_t canonical[FG_LAYER_WORK_MAX_BYTES];memcpy(canonical,payload,header);
+    canonical[3]&=(uint8_t)~tag;
+    if(!get_hop_fp16(canonical+header,payload+header,count,mode)){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid scaled fp16 scale/value");return FG_ERR_FORMAT;
+    }
+    return fg_layer_work_decode(work,protocol_version,canonical,header+count*4u,err);
 }
 
 fg_status fg_decode_layer_result_encode(uint8_t output[FG_DECODE_LAYER_RESULT_BYTES],
@@ -532,7 +712,7 @@ static fg_status validate_decode_batch_result(const fg_decode_batch_result *resu
     return FG_OK;
 }
 
-fg_status fg_decode_batch_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+static fg_status decode_batch_work_encode_bf16(uint8_t *output,uint32_t capacity,uint32_t *bytes,
                                       uint16_t protocol_version,
                                       const fg_decode_batch_work *work,fg_error *err){
     if(!output||!bytes||!fg_protocol_version_supported(protocol_version)){
@@ -586,7 +766,7 @@ fg_status fg_decode_batch_work_encode(uint8_t *output,uint32_t capacity,uint32_t
     return FG_OK;
 }
 
-fg_status fg_decode_batch_work_decode(fg_decode_batch_work *work,uint16_t protocol_version,
+static fg_status decode_batch_work_decode_bf16(fg_decode_batch_work *work,uint16_t protocol_version,
                                       float *hyper_storage,uint64_t hyper_capacity_values,
                                       float *ngram_storage,uint64_t ngram_capacity_values,
                                       const uint8_t *payload,uint32_t bytes,fg_error *err){
@@ -641,6 +821,68 @@ fg_status fg_decode_batch_work_decode(fg_decode_batch_work *work,uint16_t protoc
         }
     }
     return validate_decode_batch_work(work,err);
+}
+
+fg_status fg_decode_batch_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
+                                      uint16_t protocol_version,const fg_decode_batch_work *work,
+                                      fg_error *err){
+    if(fg_fp16_hops_mode()&&fg_bf16_hops_enabled()){
+        fg_error_set(err,FG_ERR_ARGUMENT,"choose only one hop precision codec");return FG_ERR_ARGUMENT;
+    }
+    uint32_t mode=work?fp16_hop_mode(work->destination_rank):0u;
+    if(!mode)return decode_batch_work_encode_bf16(output,capacity,bytes,protocol_version,work,err);
+    if(!output||!bytes){fg_error_set(err,FG_ERR_ARGUMENT,"null scaled fp16 batch");return FG_ERR_ARGUMENT;}
+    uint8_t canonical[FG_DECODE_BATCH_WORK_MAX_BYTES];uint32_t full=0;
+    fg_status status=decode_batch_work_encode_bf16(canonical,sizeof(canonical),&full,protocol_version,work,err);
+    if(status!=FG_OK)return status;
+    uint32_t header=FG_DECODE_BATCH_SLOT_HEADER_BYTES+decode_batch_axes(work->position_mode)*4u;
+    uint32_t count=FG_HYPER_WIDTH+((work->flags&FG_LAYER_WORK_HAS_NGRAM)?FG_NGRAM_EMBED_VALUES:0u);
+    uint32_t packed=fp16_wire_bytes(count,mode);
+    uint32_t required=FG_DECODE_BATCH_HEADER_BYTES+work->slot_count*(header+packed);
+    if(capacity<required){fg_error_set(err,FG_ERR_LIMIT,"scaled fp16 batch buffer too small");return FG_ERR_LIMIT;}
+    memcpy(output,canonical,FG_DECODE_BATCH_HEADER_BYTES);
+    output[3]|=mode==128u?FG_LAYER_WORK_WIRE_FP16_128:FG_LAYER_WORK_WIRE_FP16;
+    uint32_t src=FG_DECODE_BATCH_HEADER_BYTES,dst=src;
+    for(uint32_t s=0;s<work->slot_count;s++){
+        memcpy(output+dst,canonical+src,header);src+=header;dst+=header;
+        put_hop_fp16(output+dst,canonical+src,count,mode);src+=count*4u;dst+=packed;
+    }
+    *bytes=required;return FG_OK;
+}
+
+fg_status fg_decode_batch_work_decode(fg_decode_batch_work *work,uint16_t protocol_version,
+                                      float *hyper_storage,uint64_t hyper_capacity_values,
+                                      float *ngram_storage,uint64_t ngram_capacity_values,
+                                      const uint8_t *payload,uint32_t bytes,fg_error *err){
+    uint8_t tag=payload&&bytes>=4u?payload[3]&224u:0u;
+    if(!tag||tag==FG_LAYER_WORK_WIRE_BF16)
+        return decode_batch_work_decode_bf16(work,protocol_version,hyper_storage,hyper_capacity_values,
+            ngram_storage,ngram_capacity_values,payload,bytes,err);
+    if(bytes<FG_DECODE_BATCH_HEADER_BYTES||protocol_version!=FG_PROTOCOL_VERSION||
+       (tag!=FG_LAYER_WORK_WIRE_FP16&&tag!=FG_LAYER_WORK_WIRE_FP16_128)){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid scaled fp16 batch tag/header");return FG_ERR_FORMAT;
+    }
+    uint32_t mode=tag==FG_LAYER_WORK_WIRE_FP16_128?128u:1u,axes=payload[11];
+    uint32_t slots=get_u16_be(payload+8u);
+    uint32_t header=FG_DECODE_BATCH_SLOT_HEADER_BYTES+axes*4u;
+    uint32_t count=FG_HYPER_WIDTH+((payload[3]&FG_LAYER_WORK_HAS_NGRAM)?FG_NGRAM_EMBED_VALUES:0u);
+    uint32_t packed=fp16_wire_bytes(count,mode);
+    if(!slots||slots>FG_DECODE_BATCH_MAX_SLOTS||(axes!=3u&&axes!=4u)||
+       bytes!=FG_DECODE_BATCH_HEADER_BYTES+slots*(header+packed)){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid scaled fp16 batch length");return FG_ERR_FORMAT;
+    }
+    uint8_t canonical[FG_DECODE_BATCH_WORK_MAX_BYTES];memcpy(canonical,payload,FG_DECODE_BATCH_HEADER_BYTES);
+    canonical[3]&=(uint8_t)~tag;
+    uint32_t src=FG_DECODE_BATCH_HEADER_BYTES,dst=src;
+    for(uint32_t s=0;s<slots;s++){
+        memcpy(canonical+dst,payload+src,header);src+=header;dst+=header;
+        if(!get_hop_fp16(canonical+dst,payload+src,count,mode)){
+            fg_error_set(err,FG_ERR_FORMAT,"invalid scaled fp16 batch scale/value");return FG_ERR_FORMAT;
+        }
+        src+=packed;dst+=count*4u;
+    }
+    return decode_batch_work_decode_bf16(work,protocol_version,hyper_storage,hyper_capacity_values,
+        ngram_storage,ngram_capacity_values,canonical,dst,err);
 }
 
 fg_status fg_decode_batch_result_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
