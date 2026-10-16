@@ -162,8 +162,10 @@ start)
 start-serving)
     phase="${2:?phase name}"; cap="${3:?maximum draft (0=off)}"
     small="${4:-0}"
+    sessions="${5:-2}"; fixed="${6:-0}"
     [[ "$phase" =~ ^[A-Za-z0-9_-]{1,32}$ && "$cap" =~ ^[0-3]$ ]]
     [[ "$small" == 0 || "$small" == 330 ]]
+    [[ "$sessions" =~ ^[12]$ && "$fixed" =~ ^[0-3]$ && "$fixed" -le "$cap" ]]
     [[ ! -e "$root/candidate.pid" && ! -e "$root/watchdog.cancel" ]]
     [[ "$(( $(date +%s)+30 ))" -lt "$(cat "$root/lease.deadline")" ]]
     command=(rank --manifest "$root/pack/manifest.fgm" --rank "$rank")
@@ -172,11 +174,12 @@ start-serving)
         command=(api --manifest "$root/pack/manifest.fgm"
             --model-name Qwen3.8-Flash-Next-Uncensored --host 0.0.0.0 --port 8080
             --context-tokens 262144 --gpu-index-tokens 262144
-            --qsa-hot-tokens 0 --qsa-page-cache-mib 700 --sessions 2)
+            --qsa-hot-tokens 0 --qsa-page-cache-mib 700 --sessions "$sessions")
         trace=(FG_RING_TRACE=1)
         if [[ "$cap" != 0 ]]; then
             command+=(--experimental-mtp --mtp-overlay "$root/native-q8.gguf"
                 --mtp-embedding "$root/embedding.fgme" --mtp-window 8192 --mtp-max-draft "$cap")
+            if [[ "$fixed" != 0 ]]; then command+=(--mtp-fixed-draft "$fixed"); fi
         fi
     fi
     (

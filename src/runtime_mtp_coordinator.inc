@@ -359,7 +359,8 @@ static fg_status runtime_mtp_round(fg_runtime *runtime,uint32_t pending,uint32_t
     fg_coordinator *c=&runtime->coordinator;
     uint32_t max_draft=c->options.mtp_max_draft;
     if(max_draft>limit)max_draft=limit;
-    uint32_t k=fg_mtp_policy_choose(&runtime->mtp_policy,max_draft);
+    uint32_t k=fg_mtp_policy_draft_width(&runtime->mtp_policy,max_draft,
+                                       c->options.mtp_fixed_draft);
     uint32_t first=(uint32_t)runtime->history_count-1u;
     uint32_t drafts[FG_MTP_MAX_DRAFT],input=pending;
     fg_status status=FG_OK;double start=dispatch_ts();
@@ -384,9 +385,9 @@ static fg_status runtime_mtp_round(fg_runtime *runtime,uint32_t pending,uint32_t
         status=fg_mtp_policy_observe(&runtime->mtp_policy,k,result->accepted,
                                      dispatch_ts()-start,err);
         if(status==FG_OK)fprintf(stderr,
-            "MTP_ROUND slot=%u first=%u k=%u accepted=%u emitted=%u consumed=%u ms=%.3f\n",
+            "MTP_ROUND slot=%u first=%u k=%u accepted=%u emitted=%u consumed=%u ms=%.3f mode=%s\n",
             c->output_session,first,k,result->accepted,result->count,result->consumed,
-            dispatch_ts()-start);
+            dispatch_ts()-start,c->options.mtp_fixed_draft?"fixed":"adaptive");
     }
     if(status!=FG_OK)transport_poison(&c->transport_state);
     return status;

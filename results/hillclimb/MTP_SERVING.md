@@ -1,5 +1,23 @@
 # MTP serving foundation on the promoted multisession base
 
+## Next lease: isolated single-session performance
+
+Prepared release `c9d0a7ad3170a088306b0e097c0a8a5088f53c14a861fd1b78b7be939a39a1c4`
+uses sessions1/mask330. Nine bracketed arms compare adaptive cap3 and true
+fixed k1/2/3 against serial MTP-off chat/code baselines. Fixed widths bypass
+adaptive selection and clamp only at generation boundaries. Eight actual
+greedy token-ID/public-completion cases gate each arm; SSE/stop/cancel run on
+adaptive3/fixed3. No concurrent-session result is claimed.
+
+.51 build, four numerical-double eight-rank rejection/repair runs, synthetic
+Q8 wide0/1 and independent expert component gates pass. All320 shader binaries
+are byte-identical to the actual-pack-qualified corrected release. Source and
+artifact identities explicitly bind inherited real-format proof to this
+performance-only build; no real-ring performance has been measured yet.
+The eager dual-session admission/residency work is deliberately excluded.
+The controller still requires a fresh exclusive lease, restores sessions2/wide1,
+and never promotes. See `results/hillclimb/mtp-single-session-ready.json`.
+
 ## Corrected-Q8 trained-pack lease — 2026-10-16: BLOCKED ON RESIDENCY
 
 Exclusive .42–.49 grant:14:02:38.992Z. Candidate `706d476`, sealed release

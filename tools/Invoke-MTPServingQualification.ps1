@@ -6,6 +6,7 @@ param(
     [ValidatePattern('^[A-Za-z0-9_-]{4,80}$')][string]$LeaseId='',
     [long]$LeaseStartedUnixSeconds=0,
     [ValidateRange(1,35)][int]$WorkMinutes=35,
+    [ValidateSet('DualSession','SingleSessionPerf')][string]$Profile='DualSession',
     [string]$Artifacts='',
     [string]$NativeOverlay='',
     [string]$ProductionRunner='D:\looking-glass-labs\fg-wt\ab-harness\tools\ab-fleet.ps1',
@@ -20,12 +21,21 @@ $phases=@(@('A0',0,0),@('B0',0,330),
     @('K1',1,0),@('S1',1,330),@('A1',0,0),
     @('K2',2,0),@('S2',2,330),@('A2',0,0),
     @('K3',3,0),@('S3',3,330),@('A3',0,0))
+$candidateSessions=2
+if($Profile -eq 'SingleSessionPerf'){
+    $candidateSessions=1
+    $phases=@(@('A0',0,330,0),@('D3',3,330,0),@('A1',0,330,0),
+        @('F1',3,330,1),@('A2',0,330,0),@('F2',3,330,2),
+        @('A3',0,330,0),@('F3',3,330,3),@('A4',0,330,0))
+}
 if($Action -eq 'Plan'){
     [ordered]@{
-        productionAccess=$false; ring='192.168.42.42-.49'; phases=$phases; smallKernelMasks=@(0,330)
+        productionAccess=$false; ring='192.168.42.42-.49'; phases=$phases
+        profile=$Profile;candidateSessions=$candidateSessions
+        smallKernelMasks=$(if($candidateSessions -eq 1){@(330)}else{@(0,330)})
         greedy='eight prompts, same binary/pack/kernels, exact token-ID SHA256/count and completion identity'
         perf='three repeats of two chat/two code prompts, 128 output tokens, bracketed paired ratios'
-        coexist='three two-session chat/code overlaps per phase; SSE/stop/cancel on K3/S3'
+        coexist=$(if($candidateSessions -eq 1){'none; sequential single-session chat/code; SSE/stop/cancel on D3/F3'}else{'three two-session chat/code overlaps per phase; SSE/stop/cancel on K3/S3'})
         workDeadlineMinutes=$WorkMinutes; watchdogWorkerMinute=38; watchdogCoordinatorMinute=39
         wallBudgetMinutes=45
         restore='31508ee / 20261016-abq-stack-adaptive + sealed mix-04, sessions2 wide1; exact pinned launcher/env'
@@ -190,10 +200,11 @@ try {
     $null=Guard 'arm-coordinator-watchdog' "arm $($started.AddMinutes(39).ToUnixTimeSeconds())" @('192.168.42.42')
     foreach($phase in $phases){
         $name=[string]$phase[0];$cap=[int]$phase[1];$small=[int]$phase[2]
+        $fixed=if($phase.Count -gt 3){[int]$phase[3]}else{0}
         if(-not $mutated){$mutated=$true;$null=Guard 'stop-production' 'stop-prod' $all}
         else {$null=Guard "stop-before-$name" 'stop-candidate' $all}
-        $null=Guard "start-workers-$name" "start-serving $name $cap $small" $workers
-        $null=Guard "start-coordinator-$name" "start-serving $name $cap $small" @('192.168.42.42')
+        $null=Guard "start-workers-$name" "start-serving $name $cap $small $candidateSessions $fixed" $workers
+        $null=Guard "start-coordinator-$name" "start-serving $name $cap $small $candidateSessions $fixed" @('192.168.42.42')
         $null=WaitApi
         $greedyFile=Join-Path $run "$name-greedy.json"
         Client @('run','--phase',$name,'--suite','greedy','--base',$ApiBaseUrl,'--output',$greedyFile)
@@ -201,11 +212,12 @@ try {
         $null=Remote "token-receipts-$name" ':' @('192.168.42.42') -Download "$root/serving-$name-rank-0.log" -Local $trace
         Client @('verify','--candidate',$greedyFile,'--baseline',(Join-Path $run 'A0-greedy.json'),
             '--trace',$trace,'--baseline-trace',(Join-Path $run 'A0-rank-0.log'))
-        Client @('run','--phase',$name,'--suite','perf','--base',$ApiBaseUrl,
-            '--output',(Join-Path $run "$name-perf.json"))
-        if($name -in @('K3','S3')){
-            Client @('run','--phase',$name,'--suite','stream','--base',$ApiBaseUrl,
-                '--output',(Join-Path $run "$name-stream.json"))
+        $single=if($candidateSessions -eq 1){@('--single-session')}else{@()}
+        Client (@('run','--phase',$name,'--suite','perf','--base',$ApiBaseUrl,
+            '--output',(Join-Path $run "$name-perf.json"))+$single)
+        if($name -in @('K3','S3','D3','F3')){
+            Client (@('run','--phase',$name,'--suite','stream','--base',$ApiBaseUrl,
+                '--output',(Join-Path $run "$name-stream.json"))+$single)
         }
         $null=Remote "complete-round-traces-$name" ':' @('192.168.42.42') `
             -Download "$root/serving-$name-rank-0.log" -Local $trace

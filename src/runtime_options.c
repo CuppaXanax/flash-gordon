@@ -311,6 +311,7 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
     resolved->mtp_embedding=input.mtp_embedding;
     resolved->mtp_window_tokens=input.mtp_window_tokens;
     resolved->mtp_max_draft=input.mtp_max_draft;
+    resolved->mtp_fixed_draft=input.mtp_fixed_draft;
     resolved->specified=mask;
     if(resolved->prefill_microbatch!=manifest->prefill_microbatch||
        resolved->prefill_window!=manifest->prefill_window){
@@ -336,6 +337,7 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
            !resolved->mtp_window_tokens||
            resolved->mtp_window_tokens>resolved->logical_context_tokens||
            resolved->mtp_max_draft>FG_MTP_MAX_DRAFT_TOKENS||
+           resolved->mtp_fixed_draft>resolved->mtp_max_draft||
            resolved->prefill_microbatch<FG_MTP_MAX_DRAFT_TOKENS+1u||
            manifest->session.position_mode!=FG_POSITION_TEXT||
            !manifest->layer_owner[FG_LAYER_COUNT-1u]||manifest->protocol_version<6u){
@@ -344,7 +346,8 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
                 "text ring with a remote final block");
             return FG_ERR_ARGUMENT;
         }
-    }else if(input.mtp_overlay||input.mtp_embedding||input.mtp_window_tokens||input.mtp_max_draft){
+    }else if(input.mtp_overlay||input.mtp_embedding||input.mtp_window_tokens||
+             input.mtp_max_draft||input.mtp_fixed_draft){
         fg_error_set(err,FG_ERR_ARGUMENT,"MTP options require --experimental-mtp");
         return FG_ERR_ARGUMENT;
     }

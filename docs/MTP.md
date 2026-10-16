@@ -11,9 +11,36 @@ two-session or streaming gate is qualified. All eight owners were restored,
 verified and cleaned; the ring was released at14:12:25Z, under10min.
 See [current lease report](../results/hillclimb/MTP_SERVING.md) and
 [raw receipts](../results/hillclimb/mtp-serving-q8-lease.json).
-The next candidate must actually fit the owner/native weights and both private
-sessions, including deferred allocations, and enforce that budget before
-readiness; do not bypass the residency cap or repeat this candidate unchanged.
+The two-session successor must fit both private target/native sessions,
+including deferred allocations, before readiness. Do not bypass the residency
+cap. A separate single-session performance candidate answers the speed question
+without treating dual-session residency as a prerequisite.
+
+### Single-session performance gate (prepared, no new ring access)
+
+The frozen performance-only release is
+`c9d0a7ad3170a088306b0e097c0a8a5088f53c14a861fd1b78b7be939a39a1c4`.
+It adds `--mtp-fixed-draft 1..3`: true fixed width bypasses the adaptive chooser,
+but still clamps to the remaining generation allowance. Without that option,
+`--mtp-max-draft 3` retains adaptive exploration and width selection.
+The fixed width must not exceed the maximum draft width. MTP remains default off.
+
+`Invoke-MTPServingQualification.ps1 -Profile SingleSessionPerf -Action Plan`
+performs no production access. Its candidate uses `--sessions 1`, mask330 and
+nine arms: `A0/D3/A1/F1/A2/F2/A3/F3/A4`. D3 is adaptive with cap3; F1/F2/F3
+are fixed1/2/3. Each MTP arm gets same-mask, same-session off baselines on both
+sides, eight greedy token-ID/completion comparisons and serial chat/code TPS.
+D3/F3 additionally exercise SSE/stop/cancel. This does **not** qualify concurrent
+two-session serving. Restoration remains the pinned sessions2/wide1 service.
+The unchanged 35-minute work limit and 38/39-minute watchdogs leave restoration
+inside the 45-minute exclusive lease. No promotion is authorized.
+
+On .51, C17-Werror, four numerical-double eight-rank runtime runs (adaptive and
+fixed1/2/3), session/publication tests, synthetic native-Q8 wide0/1 and independent
+expert component checks pass. All320 SPIRV binaries and arithmetic-engine source
+files match the prior authentic-pack qualification; its real-tensor proof is
+inherited explicitly, not rerun or presented as new real-model greedy evidence.
+The frozen source excludes subsequent eager-admission and residency-probe work.
 
 **Real-format component gate: PASS.** The corrected `3c84f62` engine passed .51 with the exact
 891,289,600-byte real-pack Q8 down slab:36 byte-exact native-N1 comparisons,

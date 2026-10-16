@@ -18,6 +18,8 @@ typedef struct fg_mtp_policy {
 fg_status fg_mtp_policy_init(fg_mtp_policy *policy,double serial_ms,
     double draft_ms,const double verify_ratios[FG_MTP_MAX_DRAFT],fg_error *err);
 uint32_t fg_mtp_policy_choose(const fg_mtp_policy *policy,uint32_t max_draft);
+uint32_t fg_mtp_policy_draft_width(const fg_mtp_policy *policy,uint32_t max_draft,
+                                  uint32_t fixed_draft);
 fg_status fg_mtp_policy_observe(fg_mtp_policy *policy,uint32_t drafted,
     uint32_t accepted,double round_ms,fg_error *err);
 

@@ -5,6 +5,7 @@ import pathlib
 import shutil
 import types
 import unittest
+from unittest import mock
 
 SPEC = importlib.util.spec_from_file_location(
     "mtp_serving_qualify", pathlib.Path(__file__).parents[1] / "tools" / "mtp_serving_qualify.py")
@@ -80,6 +81,33 @@ class ServingClientTest(unittest.TestCase):
         for comparison in expanded["comparisons"]:
             for result in comparison["bracketed_tps_ratios"].values():
                 self.assertEqual(result["paired_median"], 2)
+
+    def test_single_session_perf_is_serial(self):
+        args = types.SimpleNamespace(suite="perf", single_session=True, base="unused",
+                                     phase="D3", output=str(self.root / "perf.json"))
+        with mock.patch.object(CLIENT, "request", return_value={"decode_tps": 30}) as call:
+            with mock.patch.object(CLIENT.concurrent.futures, "ThreadPoolExecutor") as pool:
+                CLIENT.run_suite(args)
+        self.assertEqual(call.call_count, 12)
+        pool.assert_not_called()
+        rows = json.loads((self.root / "perf.json").read_text())["rows"]
+        self.assertEqual(len(rows), 12)
+        self.assertFalse(any(row["case"] == "coexist" for row in rows))
+
+    def test_single_session_brackets(self):
+        phases = ["A0", "D3", "A1", "F1", "A2", "F2", "A3", "F3", "A4"]
+        for phase in phases:
+            scale = 1 if phase.startswith("A") else 2
+            rows = [{"case": "chat-0", "repeat": 0, "category": "chat", "decode_tps": 30 * scale},
+                    {"case": "code-0", "repeat": 0, "category": "code", "decode_tps": 30 * scale}]
+            (self.root / f"{phase}-perf.json").write_text(json.dumps({"rows": rows}), encoding="utf-8")
+        CLIENT.summarize(types.SimpleNamespace(directory=str(self.root)))
+        summary = json.loads((self.root / "serving-summary.json").read_text())
+        self.assertEqual([r["phase"] for r in summary["comparisons"]], ["D3", "F1", "F2", "F3"])
+        self.assertTrue(summary["qualification"].startswith("single-session"))
+        for comparison in summary["comparisons"]:
+            self.assertEqual(set(comparison["bracketed_tps_ratios"]), {"chat", "code"})
+            self.assertTrue(all(r["paired_median"] == 2 for r in comparison["bracketed_tps_ratios"].values()))
 
 
 if __name__ == "__main__":

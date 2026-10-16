@@ -39,6 +39,7 @@ static void usage(FILE *file) {
             "--qsa-page-cache-mib N\n"
             "  --experimental-context N --experimental-mtp --experimental-vision\n"
             "  --mtp-overlay FILE --mtp-embedding FILE --mtp-window N --mtp-max-draft 1..3\n"
+            "  --mtp-fixed-draft 1..3 (disable adaptive width; clamp at generation limit)\n"
             "  --no-prefix-cont (force a cold reset instead of resuming an exact prefix)\n"
             "Deployment profiles:\n"
             "  --profile " FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_128_NAME
@@ -134,6 +135,9 @@ static fg_status parse_runtime_option(int *index, int argc, char **argv,
     if (!strcmp(flag, "--mtp-max-draft"))
         return parse_u32(arg_value(index,argc,argv,flag,err),flag,1u,
                          FG_MTP_MAX_DRAFT_TOKENS,&options->mtp_max_draft,err);
+    if (!strcmp(flag, "--mtp-fixed-draft"))
+        return parse_u32(arg_value(index,argc,argv,flag,err),flag,1u,
+                         FG_MTP_MAX_DRAFT_TOKENS,&options->mtp_fixed_draft,err);
     if (!strcmp(flag, "--experimental-vision")) {
         options->experimental_flags |= FG_RUNTIME_EXPERIMENTAL_VISION;
         return FG_OK;

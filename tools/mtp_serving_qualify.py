@@ -90,7 +90,7 @@ def run_suite(args):
                     continue
                 rows.append({"case": name, "category": category, "repeat": repeat,
                              **request(args.base, prompt, f"perf-{name}", 128)})
-        for repeat in range(3):
+        for repeat in range(0 if args.single_session else 3):
             started = time.perf_counter()
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                 pending = [pool.submit(request, args.base, case[2], f"coexist-{case[1]}", 128)
@@ -126,10 +126,13 @@ def run_suite(args):
                 assert line, "stream ended before cancellation point"
                 if line.startswith(b"data: ") and b'"content"' in line:
                     break
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            pair = list(pool.map(lambda case: request(args.base, case[2],
-                                                     f"after-cancel-{case[1]}", 32),
-                                 (CASES[0], CASES[4])))
+        def after_cancel(case):
+            return request(args.base, case[2], f"after-cancel-{case[1]}", 32)
+        if args.single_session:
+            pair = [after_cancel(case) for case in (CASES[0], CASES[4])]
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                pair = list(pool.map(after_cancel, (CASES[0], CASES[4])))
         rows.extend([{"case": "stream-parity", "result": streamed},
                      {"case": "post-cancel-coexist", "requests": pair}])
     output = pathlib.Path(args.output)
@@ -161,14 +164,19 @@ def summarize(args):
     directory = pathlib.Path(args.directory)
     phases = ["A0", "K1", "A1", "K2", "A2", "K3", "A3"]
     expanded = (directory / "B0-perf.json").exists()
+    single = (directory / "D3-perf.json").exists()
     if expanded:
         phases = ["A0", "B0", "K1", "S1", "A1", "K2", "S2", "A2", "K3", "S3", "A3"]
+    if single:
+        phases = ["A0", "D3", "A1", "F1", "A2", "F2", "A3", "F3", "A4"]
     data = {phase: json.loads((directory / f"{phase}-perf.json").read_text(encoding="utf-8"))
             for phase in phases}
     comparisons = []
     arms = [(1, 0, 2), (3, 2, 4), (5, 4, 6)]
     if expanded:
         arms = [(2, 0, 4), (3, 0, 4), (5, 4, 7), (6, 4, 7), (8, 7, 10), (9, 7, 10)]
+    if single:
+        arms = [(1, 0, 2), (3, 2, 4), (5, 4, 6), (7, 6, 8)]
     for index, left, right in arms:
         phase = phases[index]
         before, candidate, after = (data[phases[i]]["rows"] for i in (left, index, right))
@@ -213,7 +221,8 @@ def summarize(args):
             group["mean_round_ms"] = group["milliseconds"] / group["rounds"]
         native[phase] = grouped
     result = {"instrumentation": "stock recipe plus existing FG_RING_TRACE request token-ID hashes",
-              "qualification": "short-context serving only; no promotion or long-context claim",
+              "qualification": ("single-session " if single else "") +
+                               "short-context serving only; no promotion or long-context claim",
               "comparisons": comparisons, "native_rounds_all_phase_requests": native}
     (directory / "serving-summary.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result))
@@ -227,6 +236,7 @@ def main():
     run.add_argument("--phase", required=True)
     run.add_argument("--suite", choices=("greedy", "perf", "stream"), required=True)
     run.add_argument("--output", required=True)
+    run.add_argument("--single-session", action="store_true")
     check = commands.add_parser("verify")
     for name in ("candidate", "baseline", "trace", "baseline-trace"):
         check.add_argument("--" + name, required=True)

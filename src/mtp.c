@@ -39,6 +39,13 @@ uint32_t fg_mtp_policy_choose(const fg_mtp_policy *policy,uint32_t max_draft){
     return chosen;
 }
 
+uint32_t fg_mtp_policy_draft_width(const fg_mtp_policy *policy,uint32_t max_draft,
+                                  uint32_t fixed_draft){
+    if(max_draft>FG_MTP_MAX_DRAFT)max_draft=FG_MTP_MAX_DRAFT;
+    return fixed_draft?(fixed_draft<max_draft?fixed_draft:max_draft):
+        fg_mtp_policy_choose(policy,max_draft);
+}
+
 fg_status fg_mtp_policy_observe(fg_mtp_policy *policy,uint32_t drafted,
     uint32_t accepted,double round_ms,fg_error *err){
     if(!policy||!drafted||drafted>FG_MTP_MAX_DRAFT||accepted>drafted||

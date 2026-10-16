@@ -76,6 +76,7 @@ typedef struct fg_runtime_options {
     const char *mtp_embedding;
     uint32_t mtp_window_tokens;
     uint32_t mtp_max_draft;
+    uint32_t mtp_fixed_draft;
 } fg_runtime_options;
 
 typedef struct fg_runtime_profile_definition {

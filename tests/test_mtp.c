@@ -175,6 +175,16 @@ static void policy(void){
         CHECK(fg_mtp_policy_observe(&streams[0],3u,0u,200.0,&err)==FG_OK);
     CHECK(fg_mtp_policy_choose(&streams[0],3u)==1u);
     CHECK(!streams[0].observations[0]&&!streams[0].observations[1]);
+    for(uint32_t round=0u;round<100u;round++){
+        streams[0].rounds=round;
+        CHECK(fg_mtp_policy_draft_width(&streams[0],3u,0u)==
+              fg_mtp_policy_choose(&streams[0],3u));
+        for(uint32_t fixed=1u;fixed<=3u;fixed++){
+            CHECK(fg_mtp_policy_draft_width(&streams[0],3u,fixed)==fixed);
+            CHECK(fg_mtp_policy_draft_width(&streams[0],1u,fixed)==1u);
+            CHECK(fg_mtp_policy_draft_width(&streams[0],0u,fixed)==0u);
+        }
+    }
 }
 
 int main(void){

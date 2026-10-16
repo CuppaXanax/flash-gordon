@@ -120,6 +120,15 @@ function Test-FormatPreflight([string]$kind){
     Write-Output "$kind audit preflight: PASS"
 }
 try {
+    $plan=& (Join-Path $repo 'tools\Invoke-MTPServingQualification.ps1') -Action Plan -Profile SingleSessionPerf |
+        ConvertFrom-Json
+    Check (-not $plan.productionAccess -and $plan.candidateSessions -eq 1) 'Perf profile is not single-session/no-access.'
+    Check (($plan.phases | ForEach-Object {$_[0]}) -join ',' -eq 'A0,D3,A1,F1,A2,F2,A3,F3,A4') 'Perf arms are not bracketed.'
+    Check (@($plan.smallKernelMasks).Count -eq 1 -and $plan.smallKernelMasks -eq 330) 'Perf mask differs.'
+    Check ($plan.phases[1][3] -eq 0 -and $plan.phases[3][3] -eq 1 -and
+           $plan.phases[5][3] -eq 2 -and $plan.phases[7][3] -eq 3) 'Fixed/adaptive plan differs.'
+    Check ($plan.restore -like '*sessions2 wide1*') 'Perf plan changes restoration.'
+    Write-Output 'Single-session adaptive/fixed lease plan: PASS'
     foreach($kind in @('success','evidence','download','restore','greedy','cleanup')){
         Test-Finalizer $kind
     }

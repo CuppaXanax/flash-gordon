@@ -480,6 +480,14 @@ static void test_runtime_option_contract(void){
         CHECK(fg_runtime_options_resolve(&resolved,mtp,&requested,&error)==FG_OK);
         CHECK((resolved.experimental_flags&FG_RUNTIME_EXPERIMENTAL_MTP)!=0);
         CHECK(resolved.mtp_window_tokens==8192u&&resolved.mtp_max_draft==3u&&resolved.sessions==2u);
+        requested.mtp_fixed_draft=3u;
+        CHECK(fg_runtime_options_resolve(&resolved,mtp,&requested,&error)==FG_OK);
+        CHECK(resolved.mtp_fixed_draft==3u);
+        requested.mtp_fixed_draft=4u;
+        CHECK(fg_runtime_options_resolve(&resolved,mtp,&requested,&error)==FG_ERR_ARGUMENT);
+        requested.mtp_fixed_draft=2u;requested.mtp_max_draft=1u;
+        CHECK(fg_runtime_options_resolve(&resolved,mtp,&requested,&error)==FG_ERR_ARGUMENT);
+        requested.mtp_fixed_draft=0u;
         if(current)CHECK(fg_runtime_options_resolve(&resolved,current,&requested,&error)==FG_OK);
         requested.mtp_max_draft=4u;
         CHECK(fg_runtime_options_resolve(&resolved,mtp,&requested,&error)==FG_ERR_ARGUMENT);

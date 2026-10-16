@@ -1,0 +1,115 @@
+{
+  "schema": 1,
+  "status": "single-session performance ready; no ring lease granted",
+  "production_access": false,
+  "profile": "SingleSessionPerf",
+  "candidate_sessions": 1,
+  "restore_sessions": 2,
+  "small_kernel_mask": 330,
+  "phases": [
+    "A0",
+    "D3",
+    "A1",
+    "F1",
+    "A2",
+    "F2",
+    "A3",
+    "F3",
+    "A4"
+  ],
+  "source_snapshot": {
+    "tree": "287721a8626f548dd4a7050c5d76797df6f30b69",
+    "sourceArchiveSha256": "42052cd55307a9477862677bb38af50f1e23da65671c25a00f4b66e85ab1e491",
+    "base": "c6d0e8a8a65b49a99ca6c6e68a12c7f46dcd830a"
+  },
+  "release_sha256": "c9d0a7ad3170a088306b0e097c0a8a5088f53c14a861fd1b78b7be939a39a1c4",
+  "raw_evidence_sha256": "e855bf0cecd2d2a0a2364d274fc58da8510ecaaa36c627d4c47dd11caf3bd33a",
+  "binary_sha256": "49ed36c1861ea7955d46af13880274a11abef389805604a6372a4b44651a3709",
+  "shader_count": 320,
+  "all_shaders_byte_identical_to_actual_pack_release": true,
+  "unchanged_arithmetic_source": {
+    "src/vk.c": {
+      "frozen_bytes_sha256": "fd4aee04467d6d52712ef2b24a36a1cec550a15113e31e8ec0edc1d40d5d00bd",
+      "LF_canonical_sha256": "213eca44e35d2a0d5f900c41222f7222834fc9910e21974762c8fc55e0b4726c",
+      "matches_actual_pack_qualified_base_ignoring_line_endings": true
+    },
+    "src/owner.c": {
+      "frozen_bytes_sha256": "b5647b4cc5fa7092c91abad31774186179a539cd5bd10402b83f988904445ee8",
+      "LF_canonical_sha256": "3ca0fe672f4ada94a965d8c6c59885e59518984abbedbe027a696f4d88ebc3cc",
+      "matches_actual_pack_qualified_base_ignoring_line_endings": true
+    },
+    "src/expert.c": {
+      "frozen_bytes_sha256": "b25cf2e72ee6601a006f7e5dfe7c41fd11d778539226d00fae150a30d54e0af0",
+      "LF_canonical_sha256": "d48bfb6ea1a8a257840ed205b2c8a613015e4d65e52a6c3105a12b6c6bdccabf",
+      "matches_actual_pack_qualified_base_ignoring_line_endings": true
+    },
+    "src/model.c": {
+      "frozen_bytes_sha256": "8403d2852c08c363f2ff70ff79452fade52a33a7b5035c4249cf643209da620c",
+      "LF_canonical_sha256": "1494fda26dd12f3052fe24226065eecbb97f8075917e1b965399dc33a5d37a4f",
+      "matches_actual_pack_qualified_base_ignoring_line_endings": true
+    },
+    "src/mtp_head.c": {
+      "frozen_bytes_sha256": "3a18f5fc6e9152f64ecdd67799dccd36213eaaf3ca85e017c25063932847e642",
+      "LF_canonical_sha256": "38d9704e173fae19b32b89f99398571480ae5d093eca24d1e5c327fceb42813b",
+      "matches_actual_pack_qualified_base_ignoring_line_endings": true
+    },
+    "src/mtp_native.c": {
+      "frozen_bytes_sha256": "076bda1ad885e69e65abdb783187bc7477fb54a1cbc0c5ca69a4ddfa415e2822",
+      "LF_canonical_sha256": "2f724cbe264d85bf6b68a976c83a5f334fd6edca599e0ae8699f4b6ec384aba9",
+      "matches_actual_pack_qualified_base_ignoring_line_endings": true
+    },
+    "src/output.c": {
+      "frozen_bytes_sha256": "0b8b3462dbfee3bf7c12cad9a9cf594cf9fdc81e063b8102ecfb046d56897a04",
+      "LF_canonical_sha256": "68b6cae726286292a13f3318487838da75b58ae380c5b75c1dc17a75a49f4a44",
+      "matches_actual_pack_qualified_base_ignoring_line_endings": true
+    },
+    "src/qsa.c": {
+      "frozen_bytes_sha256": "2bf7598517b0f31a9bf8b28074d7ab67cfdba233c8ae5f4995fbb826e962290b",
+      "LF_canonical_sha256": "bf2b851cd0c7863c755a613f75374300dd33ad975bec56556f635ae4fa5012e0",
+      "matches_actual_pack_qualified_base_ignoring_line_endings": true
+    },
+    "src/quant.c": {
+      "frozen_bytes_sha256": "cab4d8a295df71bc5a8d8650f3f51b9a9d48e71e1486e899b15bcb7050c45288",
+      "LF_canonical_sha256": "1f168f6003c539c3c2d06dace462cc691fe6ed87eb8f8c48d8cf845a7881b586",
+      "matches_actual_pack_qualified_base_ignoring_line_endings": true
+    },
+    "src/q38_math.c": {
+      "frozen_bytes_sha256": "35cdec17eccddbe6ab0d7723bb2163e5b5c7cf67f0681e65f338aa5880fad113",
+      "LF_canonical_sha256": "f9299085dbc8fedbf33995ae9d3be44f0c0754c6efd91ae247a35902e189dff4",
+      "matches_actual_pack_qualified_base_ignoring_line_endings": true
+    }
+  },
+  "inherited_actual_pack_proof": {
+    "release_sha256": "54be56c2f1188a2847923f4d1ab9c81f39ea8bb95c4bbbe8653fc2eab107d6f5",
+    "audit_sha256": "19fffad5f708c6577e996da1e2c26aafb5530317e925bd04845654ee4d6f61be",
+    "receipt": "results/hillclimb/mtp-format-audit.json",
+    "new_actual_pack_or_ring_run": false
+  },
+  "tests": {
+    "C17_Werror": true,
+    "host_8rank_runs": 4,
+    "fixed_widths": [
+      1,
+      2,
+      3
+    ],
+    "synthetic_q8_exact_cases": 18,
+    "expert_cpu_components": true,
+    "client_python_cases": 5,
+    "controller_finalizer_cases": 6,
+    "controller_audit_preflight_cases": 8,
+    "controller_profile_plan": true
+  },
+  "exclusions": [
+    "no research shader/model-hook changes",
+    "no eager-admission/residency-probe changes",
+    "no concurrent-session qualification",
+    "no promotion"
+  ],
+  "cleanup_receipt": {
+    "IP": "192.168.42.51",
+    "ExitCode": 0,
+    "Stdout": "/etc/cyan-skillfish-governor-smu/config.toml: OK\nScratch absent twice; no owned executable; governor unchanged; no production access",
+    "Stderr": ""
+  }
+}

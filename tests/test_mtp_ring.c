@@ -373,13 +373,16 @@ static int run_rank(fg_manifest *m,uint32_t rank){
             fg_vk_tensor_destroy(c->prefill_layer[0].token_tensor);
             require(fg_vk_tensor_create(NULL,FG_MTP_MAX_VERIFY*4u,
                 &c->prefill_layer[0].token_tensor,&e),&e);
+            for(uint32_t fixed=0u;fixed<2u;fixed++)
             for(uint32_t k=1u;k<=3u;k++){
                 uint32_t next_pending=(uint32_t)history[runtime->history_count-1u]+1u;
                 history[runtime->history_count++]=(int32_t)next_pending;
                 uint32_t pending=(uint32_t)history[runtime->history_count-1u];
                 require(runtime_mtp_policy_init(runtime,&e),&e);
                 runtime->mtp_policy.rounds=1u;c->options.mtp_max_draft=k;
+                c->options.mtp_fixed_draft=fixed?k:0u;
                 for(uint32_t j=0;j<k;j++)runtime->mtp_policy.round_ms[j]=j+1u==k?1.0:1000.0;
+                if(fixed)runtime->mtp_policy.rounds=0u;
                 fg_mtp_result result;float logits[4];
                 require(runtime_mtp_round(runtime,pending,4u,&result,logits,&e),&e);
                 VERIFY(result.accepted==(rejection<k?rejection:k));
@@ -389,6 +392,7 @@ static int run_rank(fg_manifest *m,uint32_t rank){
                     history[runtime->history_count++]=(int32_t)result.tokens[i];
                 VERIFY(transport_ready(&c->transport_state));
             }
+            c->options.mtp_fixed_draft=0u;
             generation_cases(runtime,&e);
         }
         coexist_cases(runtimes,&owner,f,&e);
