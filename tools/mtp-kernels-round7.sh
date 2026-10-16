@@ -37,6 +37,9 @@ FG_SMALL_KERNELS=2097482 DS4_REMOTE_TEST_FILTER=small_dense_vector_layout \
     ./tests/test_fg_vk > ../round7/vector-residency.txt 2>&1
 FG_SMALL_KERNELS=8388608 DS4_REMOTE_TEST_FILTER=small_qsa_select \
     ./tests/test_fg_vk > ../round7/wave-topk-cpu.txt 2>&1
+RADV_DEBUG=shaderstats MESA_SHADER_CACHE_DISABLE=true FG_SMALL_KERNELS=8388608 \
+    DS4_REMOTE_TEST_FILTER=small_qsa_select ./tests/test_fg_vk \
+    > ../round7/wave-isa-cpu.txt 2> ../round7/wave-isa.stderr
 for wide in 0 1; do
     FG_EXPERT_Q8_WIDE=$wide FG_SMALL_KERNELS=4194634 DS4_REMOTE_TEST_FILTER=expert_small_component \
         ./tests/test_fg_vk > "../round7/expert-cpu-wide$wide.txt" 2>&1
