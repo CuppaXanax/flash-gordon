@@ -257,6 +257,14 @@ fg_status fg_owner_decode_block(fg_owner_executor *executor,uint32_t first_layer
 typedef fg_status (*fg_owner_expert_inline_fn)(void *context,uint32_t layer,
     const fg_vk_tensor *activation_q8k,const fg_vk_tensor *router_logits,
     fg_vk_tensor **expert_output,fg_error *err);
+typedef fg_status (*fg_owner_expert_small_fn)(void *context,uint32_t layer,
+    const fg_vk_tensor *activation_q8k,const fg_vk_tensor *router_logits,
+    uint32_t tokens,fg_vk_tensor **expert_output,fg_error *err);
+/* Mutates one sequence's state. Checkpoint/rollback is the caller's job. */
+fg_status fg_owner_decode_small_n(fg_owner_executor *executor,uint32_t first_layer,
+    uint32_t last_layer,uint32_t first_token,const uint32_t *positions,
+    uint32_t tokens,const fg_vk_tensor *input,const fg_vk_tensor *ngram,
+    fg_owner_expert_small_fn expert,void *context,fg_vk_tensor **output,fg_error *err);
 fg_status fg_owner_decode_block_chained(fg_owner_executor *executor,uint32_t first_layer,
                                         uint32_t last_layer,uint32_t token_index,
                                         const uint32_t position[3],const fg_vk_tensor *hyper_input,

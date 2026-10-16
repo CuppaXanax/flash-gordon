@@ -16,7 +16,7 @@ _Static_assert(FG_Q38_DECODE_TILE_WORDS==9u,
 struct fg_expert_executor {
     fg_model *model;
     fg_vk_tensor *activation,*tiles,*gates,*selected;
-    fg_vk_tensor *gate,*up,*mid,*down,*reduced,*result_readback;
+    fg_vk_tensor *gate,*up,*mid,*down,*small_down_parts,*reduced,*result_readback;
     fg_vk_expert_graph *decode_graph[FG_LAYER_COUNT];
     uint32_t max_tokens,max_pairs;
     uint16_t *locals;
@@ -39,14 +39,14 @@ static fg_status create_scratch(fg_expert_executor *executor,fg_error *err){
         status=FG_ERR_MISMATCH;
     }
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*4u,&executor->gates,err);
-    if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)FG_TOP_K*4u,&executor->selected,err);
+    if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*4u,&executor->selected,err);
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*640u*4u,&executor->gate,err);
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*640u*4u,&executor->up,err);
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*640u*4u,&executor->mid,err);
     if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*FG_HIDDEN_SIZE*4u,&executor->down,err);
 
     if(status==FG_OK)status=fg_vk_tensor_create(vk,
-        (uint64_t)1u*FG_HIDDEN_SIZE*4u,
+        (uint64_t)executor->max_tokens*FG_HIDDEN_SIZE*4u,
         &executor->reduced,err);
     if(status==FG_OK)status=fg_vk_tensor_create_cached(vk,
         (uint64_t)executor->max_tokens*FG_HIDDEN_SIZE*4u,
@@ -66,7 +66,7 @@ static fg_status create_scratch(fg_expert_executor *executor,fg_error *err){
 }
 
 fg_status fg_expert_executor_create(fg_expert_executor **out,fg_model *model,fg_error *err){if(!out||!model){fg_error_set(err,FG_ERR_ARGUMENT,"invalid expert executor arguments");return FG_ERR_ARGUMENT;}*out=NULL;fg_expert_executor *executor=calloc(1,sizeof(*executor));if(!executor){fg_error_set(err,FG_ERR_OOM,"allocate expert executor");return FG_ERR_OOM;}executor->model=model;fg_status status=create_scratch(executor,err);if(status==FG_OK)status=create_decode_graphs(executor,err);if(status!=FG_OK){fg_expert_executor_destroy(executor);return status;}*out=executor;return FG_OK;}
-void fg_expert_executor_destroy(fg_expert_executor *executor){if(!executor)return;for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++)fg_vk_expert_graph_destroy(executor->decode_graph[layer]);free(executor->schedule);free(executor->locals);fg_vk_tensor_destroy(executor->result_readback);fg_vk_tensor_destroy(executor->reduced);fg_vk_tensor_destroy(executor->down);fg_vk_tensor_destroy(executor->mid);fg_vk_tensor_destroy(executor->up);fg_vk_tensor_destroy(executor->gate);fg_vk_tensor_destroy(executor->selected);fg_vk_tensor_destroy(executor->gates);fg_vk_tensor_destroy(executor->tiles);fg_vk_tensor_destroy(executor->activation);free(executor);}
+void fg_expert_executor_destroy(fg_expert_executor *executor){if(!executor)return;for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++)fg_vk_expert_graph_destroy(executor->decode_graph[layer]);free(executor->schedule);free(executor->locals);fg_vk_tensor_destroy(executor->result_readback);fg_vk_tensor_destroy(executor->reduced);fg_vk_tensor_destroy(executor->small_down_parts);fg_vk_tensor_destroy(executor->down);fg_vk_tensor_destroy(executor->mid);fg_vk_tensor_destroy(executor->up);fg_vk_tensor_destroy(executor->gate);fg_vk_tensor_destroy(executor->selected);fg_vk_tensor_destroy(executor->gates);fg_vk_tensor_destroy(executor->tiles);fg_vk_tensor_destroy(executor->activation);free(executor);}
 
 uint32_t fg_expert_local_count(const fg_manifest *manifest,uint32_t layer,
                                uint32_t rank){
@@ -383,6 +383,44 @@ fg_status fg_expert_decode_chain_ready(fg_expert_executor *executor,uint32_t lay
     uint32_t gate_type=0u,up_type=0u,down_type=0u;
     return chain_expert_layout(executor,layer,&gate_weight,&up_weight,&down_weight,
         &gate_stride,&up_stride,&down_stride,&gate_type,&up_type,&down_type,err);
+}
+
+fg_status fg_expert_decode_small_n(fg_expert_executor *executor,uint32_t layer,
+    const fg_vk_tensor *activation,const fg_vk_tensor *router_logits,
+    uint32_t tokens,fg_vk_tensor **reduced,fg_error *err){
+    if(!executor||!activation||!router_logits||!reduced||tokens<2u||tokens>4u||
+       tokens>executor->max_tokens){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid small-N expert batch");return FG_ERR_ARGUMENT;
+    }
+    fg_status status=fg_expert_decode_chain_ready(executor,layer,err);
+    fg_vk_tensor *gate=NULL,*up=NULL,*down=NULL;
+    uint32_t gs=0u,us=0u,ds=0u,gt=0u,ut=0u,dt=0u;
+    if(status==FG_OK)status=chain_expert_layout(executor,layer,&gate,&up,&down,
+        &gs,&us,&ds,&gt,&ut,&dt,err);
+    fg_vk_context *vk=fg_model_vk(executor->model);
+    if(status==FG_OK&&!executor->small_down_parts){
+        uint32_t capacity=executor->max_tokens<4u?executor->max_tokens:4u;
+        status=fg_vk_tensor_create(vk,(uint64_t)capacity*FG_TOP_K*FG_HIDDEN_SIZE*4u*4u,
+            &executor->small_down_parts,err);
+    }
+    if(status==FG_OK)status=fg_vk_router_top10(vk,executor->selected,executor->gates,
+        router_logits,FG_EXPERT_COUNT,tokens,err);
+    if(status==FG_OK)status=fg_vk_small_n_schedule(vk,executor->tiles,
+        executor->selected,tokens,err);
+    if(status==FG_OK)status=fg_vk_small_n_experts(vk,executor->mid,executor->small_down_parts,executor->reduced,
+        gate,up,down,activation,executor->tiles,executor->selected,executor->gates,
+        gs,us,ds,gt,ut,dt,tokens,err);
+    if(status==FG_OK)*reduced=executor->reduced;
+    return status;
+}
+
+fg_status fg_expert_selected_readback(fg_expert_executor *executor,
+    uint32_t tokens,uint32_t *selected,fg_error *err){
+    if(!executor||!selected||!tokens||tokens>4u||tokens>executor->max_tokens){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid expert routing readback");return FG_ERR_ARGUMENT;
+    }
+    return fg_vk_tensor_read(executor->selected,0,selected,
+        (uint64_t)tokens*FG_TOP_K*sizeof(*selected),err);
 }
 
 fg_status fg_expert_decode_chain(fg_expert_executor *executor,uint32_t layer,

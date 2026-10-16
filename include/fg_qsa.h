@@ -16,6 +16,9 @@ fg_status fg_qsa_session_rollback(fg_qsa_session *session,
 
 /* Submits every open batch level before QSA reads mapped projection data. */
 fg_status fg_qsa_submit_host_reads(fg_vk_context *vk,fg_error *err);
+fg_status fg_qsa_session_small_n(fg_qsa_session *session,uint32_t layer,
+    uint32_t first,const uint32_t *positions,uint32_t count,
+    const fg_vk_tensor *hidden,fg_vk_tensor **output,fg_error *err);
 
 #define FG_QSA_RESIDENT_SEGMENT_TOKEN_CAPACITY 131072u
 #define FG_QSA_RESIDENT_MAX_SEGMENTS 2u

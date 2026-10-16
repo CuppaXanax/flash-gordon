@@ -7,11 +7,42 @@
 #ifndef COMPACT
 #define COMPACT 0
 #endif
+#ifdef SMALL_N
+#ifndef SMALL_ROWS
+#define SMALL_ROWS 4
+#endif
+shared vec4 small_sums[SMALL_N*SMALL_N*8*(SMALL_ROWS/4)];
+layout(constant_id=0) const uint small_wg=64u;
+layout(constant_id=1) const uint small_compact=1u;
+#undef WG
+#ifdef SMALL_INTERLEAVED
+#define WG (small_wg/SMALL_COLS)
+#else
+#ifdef SMALL_PAIR_COUNT
+#define WG (small_wg/SMALL_PAIR_COUNT)
+#else
+#define WG small_wg
+#endif
+#endif
+#undef COMPACT
+#define COMPACT small_compact
+layout(local_size_x_id=0) in;
+#else
 layout(local_size_x=WG) in;
+#endif
+#ifdef SMALL_N
 layout(set=0,binding=0) readonly buffer Weights { uint w[]; };
-layout(set=0,binding=0) readonly buffer WideWeights { uvec4 w4[]; };
+layout(set=0,binding=1) restrict readonly buffer Input { vec4 x[]; };
+#else
+layout(set=0,binding=0) readonly buffer Weights { uint w[]; };
 layout(set=0,binding=1) readonly buffer Input { vec4 x[]; };
+#endif
+layout(set=0,binding=0) readonly buffer WideWeights { uvec4 w4[]; };
+#ifdef SMALL_N
+layout(set=0,binding=2) restrict writeonly buffer Output { float y[]; };
+#else
 layout(set=0,binding=2) writeonly buffer Output { float y[]; };
+#endif
 layout(push_constant) uniform Push {
     uint input_width,output_width,tokens,type,row_bytes;
     float scale;
@@ -61,13 +92,188 @@ void compact_scales(uint base,uint groups,uint g,uint row,out vec4 d,out vec4 m)
     d=vec4(b0.x,b1.x,b2.x,b3.x)*vec4(a.x,a.z,v.x,v.z);
     m=vec4(b0.y,b1.y,b2.y,b3.y)*vec4(a.y,a.w,v.y,v.w);
 }
+#if defined(SMALL_N) && !defined(SMALL_INTERLEAVED)
+void small_weight(uint base,uint groups,uint g,uint row,uint lane,out vec4 lo,out vec4 hi){
+    uint off=base+groups*(TYPE==20u?4u:COMPACT!=0?5u:16u);
+    if(TYPE==13u){
+        off+=row*groups*5u+g*5u+lane;
+        uint p=w[off],next=w[off+1u],shift=lane*8u;
+        uint a=(p>>shift)|(shift==0u?0u:next<<(32u-shift)),b=next>>shift;
+        lo=vec4(bitfieldExtract(a,0,5),bitfieldExtract(a,5,5),
+            bitfieldExtract(a,10,5),bitfieldExtract(a,15,5));
+        hi=vec4(bitfieldExtract(a,20,5),bitfieldExtract(a,25,5),
+            ((a>>30u)|(b<<2u))&31u,(b>>3u)&31u);
+    }else{
+        uint p=w[off+(row*groups+g)*4u+lane];
+        lo=quants(p&0x0f0f0f0fu);hi=quants((p>>4u)&0x0f0f0f0fu);
+    }
+}
+#define FG_SMALL_INPUT(T,A,B,S) \
+    vec4 A=live?x[min(token_base+T,pc.tokens-1u)*(pc.input_width/4u)+g*8u+lane]:vec4(0.0); \
+    vec4 B=live?x[min(token_base+T,pc.tokens-1u)*(pc.input_width/4u)+g*8u+lane+4u]:vec4(0.0); \
+    float S=dot(A+B,vec4(1.0));
+#define FG_SMALL_ACC(A,C,X,Y,S) { \
+    float p=dot(qlo,X)+dot(qhi,Y); \
+    A.C+=d.C*p-m.C*S; }
+#if SMALL_N >= 3
+#define FG_SMALL_ACC2(A,C) FG_SMALL_ACC(A,C,a2,b2,sx2)
+#else
+#define FG_SMALL_ACC2(A,C)
+#endif
+#if SMALL_N >= 4
+#define FG_SMALL_ACC3(A,C) FG_SMALL_ACC(A,C,a3,b3,sx3)
+#else
+#define FG_SMALL_ACC3(A,C)
+#endif
+#define FG_SMALL_ROW(R,C,A0,A1,A2,A3) { \
+    vec4 qlo,qhi;small_weight(base,groups,g,row+R,lane,qlo,qhi); \
+    FG_SMALL_ACC(A0,C,a0,b0,sx0) FG_SMALL_ACC(A1,C,a1,b1,sx1) \
+    FG_SMALL_ACC2(A2,C) FG_SMALL_ACC3(A3,C) }
+#ifdef SMALL_PAIR_COUNT
+#define FG_SMALL_REDUCE(T,A) { \
+    vec4 r=A; \
+    for(uint offset=SMALL_PAIR_COUNT;offset<gl_SubgroupSize;offset*=2u) \
+        r+=subgroupShuffleXor(r,offset); \
+    if(gl_SubgroupInvocationID<SMALL_PAIR_COUNT) \
+        small_sums[((T)*gl_NumSubgroups+gl_SubgroupID)*SMALL_PAIR_COUNT+pair]=r; }
+#define FG_SMALL_STORE(T,R) { \
+    vec4 total=vec4(0.0); \
+    for(uint s=0u;s<WG/gl_SubgroupSize;s++){ \
+        uint p=((T)*gl_NumSubgroups+s*SMALL_PAIR_COUNT)*SMALL_PAIR_COUNT+pair; \
+        vec4 v=small_sums[p]+small_sums[p+SMALL_PAIR_COUNT]; \
+        if(COMPACT!=0&&TYPE==20u&&WG==gl_SubgroupSize)total=v;else total+=v; \
+    } \
+    uint output_token=token_base+((T)%SMALL_N); \
+    for(uint r=0u;r<4u;r++)if(first+(R)+r<pc.output_width&&output_token<pc.tokens) \
+        y[output_token*pc.output_width+first+(R)+r]=total[r]*pc.scale; }
+#else
+#define FG_SMALL_REDUCE(T,A) { \
+    vec4 r=vec4(subgroupAdd(A.x),subgroupAdd(A.y),subgroupAdd(A.z),subgroupAdd(A.w)); \
+    if(subgroupElect())small_sums[(T)*8u+gl_SubgroupID]=r; }
+#define FG_SMALL_STORE(T,R) { \
+    vec4 total=vec4(0.0); \
+    for(uint s=0u;s<gl_NumSubgroups;s++)total+=small_sums[(T)*8u+s]; \
+    for(uint r=0u;r<4u;r++)if(first+(R)+r<pc.output_width) \
+        y[((T)%SMALL_N)*pc.output_width+first+(R)+r]=total[r]*pc.scale; }
+#endif
 void main(){
+#ifdef SMALL_PAIR_COUNT
+    uint pair=gl_LocalInvocationID.x%SMALL_PAIR_COUNT;
+    uint lid=gl_LocalInvocationID.x/SMALL_PAIR_COUNT,token_base=pair*SMALL_N;
+    uint lane=lid&3u,cohort=lid>>2u;
+#else
+    uint token_base=0u;
     uint lid=gl_LocalInvocationID.x,lane=lid&3u,cohort=lid>>2u;
+#endif
 #if TYPE == 20
-    if(lid<16u)table[lid]=float(grid(lid));
+    if(gl_LocalInvocationID.x<16u)table[gl_LocalInvocationID.x]=float(grid(gl_LocalInvocationID.x));
     barrier();
 #endif
-    uint first=gl_WorkGroupID.x*ROWS,token=gl_WorkGroupID.y;
+    uint first=gl_WorkGroupID.x*SMALL_ROWS,groups=pc.input_width/32u;
+    uint base=(first/8u)*groups*(TYPE==13u?(COMPACT!=0?45u:56u):
+        TYPE==20u?36u:(COMPACT!=0?37u:48u)),row=first&7u;
+    vec4 acc0=vec4(0.0),acc1=vec4(0.0);
+#if SMALL_N >= 3
+    vec4 acc2=vec4(0.0);
+#endif
+#if SMALL_N >= 4
+    vec4 acc3=vec4(0.0);
+#endif
+#if SMALL_ROWS == 8
+    vec4 high0=vec4(0.0),high1=vec4(0.0);
+#if SMALL_N >= 3
+    vec4 high2=vec4(0.0);
+#endif
+#if SMALL_N >= 4
+    vec4 high3=vec4(0.0);
+#endif
+#endif
+    for(uint i=0u;i<(groups+WG/4u-1u)/(WG/4u);i++){
+        uint group=i*(WG/4u)+cohort;
+        bool live=group<groups;
+        uint g=min(group,groups-1u),meta=base+g*16u;
+        FG_SMALL_INPUT(0u,a0,b0,sx0)
+        FG_SMALL_INPUT(1u,a1,b1,sx1)
+#if SMALL_N >= 3
+        FG_SMALL_INPUT(2u,a2,b2,sx2)
+#endif
+#if SMALL_N >= 4
+        FG_SMALL_INPUT(3u,a3,b3,sx3)
+#endif
+        vec4 d=uintBitsToFloat(w4[(meta+row)/4u]);
+        vec4 m=uintBitsToFloat(w4[(meta+row)/4u+2u]);
+        if(TYPE==20u){
+            uvec4 packed=w4[(base+g*4u)/4u];
+            d=row<4u?vec4(unpackHalf2x16(packed.x),unpackHalf2x16(packed.y)):
+                vec4(unpackHalf2x16(packed.z),unpackHalf2x16(packed.w));
+            m=vec4(0.0);
+        }else if(COMPACT!=0)compact_scales(base,groups,g,row&4u,d,m);
+        FG_SMALL_ROW(0u,x,acc0,acc1,acc2,acc3)
+        FG_SMALL_ROW(1u,y,acc0,acc1,acc2,acc3)
+        FG_SMALL_ROW(2u,z,acc0,acc1,acc2,acc3)
+        FG_SMALL_ROW(3u,w,acc0,acc1,acc2,acc3)
+#if SMALL_ROWS == 8
+        d=uintBitsToFloat(w4[meta/4u+1u]);
+        m=uintBitsToFloat(w4[meta/4u+3u]);
+        if(COMPACT!=0)compact_scales(base,groups,g,4u,d,m);
+        FG_SMALL_ROW(4u,x,high0,high1,high2,high3)
+        FG_SMALL_ROW(5u,y,high0,high1,high2,high3)
+        FG_SMALL_ROW(6u,z,high0,high1,high2,high3)
+        FG_SMALL_ROW(7u,w,high0,high1,high2,high3)
+#endif
+    }
+    FG_SMALL_REDUCE(0u,acc0) FG_SMALL_REDUCE(1u,acc1)
+#if SMALL_N >= 3
+    FG_SMALL_REDUCE(2u,acc2)
+#endif
+#if SMALL_N >= 4
+    FG_SMALL_REDUCE(3u,acc3)
+#endif
+#if SMALL_ROWS == 8
+    FG_SMALL_REDUCE(SMALL_N,high0) FG_SMALL_REDUCE(SMALL_N+1u,high1)
+#if SMALL_N >= 3
+    FG_SMALL_REDUCE(SMALL_N+2u,high2)
+#endif
+#if SMALL_N >= 4
+    FG_SMALL_REDUCE(SMALL_N+3u,high3)
+#endif
+#endif
+    barrier();
+    if(lid==0u){
+        FG_SMALL_STORE(0u,0u) FG_SMALL_STORE(1u,0u)
+#if SMALL_N >= 3
+        FG_SMALL_STORE(2u,0u)
+#endif
+#if SMALL_N >= 4
+        FG_SMALL_STORE(3u,0u)
+#endif
+#if SMALL_ROWS == 8
+        FG_SMALL_STORE(SMALL_N,4u) FG_SMALL_STORE(SMALL_N+1u,4u)
+#if SMALL_N >= 3
+        FG_SMALL_STORE(SMALL_N+2u,4u)
+#endif
+#if SMALL_N >= 4
+        FG_SMALL_STORE(SMALL_N+3u,4u)
+#endif
+#endif
+    }
+}
+#else
+void main(){
+#ifdef SMALL_INTERLEAVED
+    uint token=gl_LocalInvocationID.x%SMALL_COLS;
+    uint lid=gl_LocalInvocationID.x/SMALL_COLS,lane=lid&3u,cohort=lid>>2u;
+#else
+    uint lid=gl_LocalInvocationID.x,lane=lid&3u,cohort=lid>>2u;
+#endif
+#if TYPE == 20
+    if(gl_LocalInvocationID.x<16u)table[gl_LocalInvocationID.x]=float(grid(gl_LocalInvocationID.x));
+    barrier();
+#endif
+    uint first=gl_WorkGroupID.x*ROWS;
+#ifndef SMALL_INTERLEAVED
+    uint token=gl_WorkGroupID.y;
+#endif
     uint groups=pc.input_width/32u;
     uint base=(first/8u)*groups*(TYPE==13u?(COMPACT!=0?45u:56u):TYPE==20u?36u:(COMPACT!=0?37u:48u)),row=first&7u;
     vec4 acc0=vec4(0.0),acc1=vec4(0.0);
@@ -101,6 +307,44 @@ void main(){
             acc1+=d1*p1-m1*sx;
         }
     }
+#ifdef SMALL_INTERLEAVED
+    for(uint offset=SMALL_COLS;offset<gl_SubgroupSize;offset*=2u){
+        acc0+=subgroupShuffleXor(acc0,offset);
+        acc1+=subgroupShuffleXor(acc1,offset);
+    }
+    uint subgroups=WG/gl_SubgroupSize;
+    if(gl_SubgroupInvocationID<SMALL_COLS){
+        small_sums[gl_SubgroupID*SMALL_COLS+token]=acc0;
+#if SMALL_ROWS == 8
+        small_sums[(gl_NumSubgroups+gl_SubgroupID)*SMALL_COLS+token]=acc1;
+#endif
+    }
+    barrier();
+    if(lid==0u){
+        vec4 a=vec4(0.0),b=vec4(0.0);
+        for(uint s=0u;s<subgroups;s++){
+            uint p=s*SMALL_COLS*SMALL_COLS+token;
+            vec4 u=small_sums[p]+small_sums[p+SMALL_COLS];
+#if SMALL_N == 4
+            u+=small_sums[p+2u*SMALL_COLS]+small_sums[p+3u*SMALL_COLS];
+#endif
+            if(COMPACT!=0&&TYPE==20u&&subgroups==1u)a=u;
+            else a+=u;
+#if SMALL_ROWS == 8
+            p+=gl_NumSubgroups*SMALL_COLS;
+            vec4 v=small_sums[p]+small_sums[p+SMALL_COLS];
+#if SMALL_N == 4
+            v+=small_sums[p+2u*SMALL_COLS]+small_sums[p+3u*SMALL_COLS];
+#endif
+            b+=v;
+#endif
+        }
+        for(uint r=0u;r<4u;r++){
+            if(first+r<pc.output_width)y[token*pc.output_width+first+r]=a[r]*pc.scale;
+            if(ROWS==8u&&first+r+4u<pc.output_width)y[token*pc.output_width+first+r+4u]=b[r]*pc.scale;
+        }
+    }
+#else
     vec4 r0=vec4(subgroupAdd(acc0.x),subgroupAdd(acc0.y),subgroupAdd(acc0.z),subgroupAdd(acc0.w));
     vec4 r1=vec4(subgroupAdd(acc1.x),subgroupAdd(acc1.y),subgroupAdd(acc1.z),subgroupAdd(acc1.w));
     if(COMPACT!=0&&TYPE==20u&&gl_NumSubgroups==1u){
@@ -120,4 +364,6 @@ void main(){
             if(ROWS==8u&&first+r+4u<pc.output_width)y[token*pc.output_width+first+r+4u]=b[r]*pc.scale;
         }
     }
+#endif
 }
+#endif

@@ -66,7 +66,7 @@ test-mtp: tests/test_mtp
 	./tests/test_mtp
 
 tools/bench-decode-fusion: tools/bench_decode_fusion.c src/expert.o src/owner.o src/qsa.o $(TEST_COMMON) | shaders
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< src/expert.o src/owner.o src/qsa.o $(TEST_COMMON) $(LDLIBS)
 
 test: tests/test_q4_repack
 test: tests/test_prefill_collective tests/test_core tests/test_session tests/test_prefix tests/test_chat tests/test_chat_runtime tests/test_api tests/test_ngram_deployment tests/test_prefill_dispatch tests/test_decode_batch tests/test_video tests/test_mtp
@@ -93,6 +93,12 @@ vulkan/%.spv: shaders/%.comp
 	$(GLSLC) -O --target-env=vulkan1.1 -o $@ $<
 
 vulkan/fg_dense_q4_k.spv vulkan/fg_dense_q5_k.spv vulkan/fg_dense_q6_k.spv vulkan/fg_dense_iq4_nl.spv: shaders/fg_dense_quant_impl.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_small_q4*.comp shaders/fg_small_q5*.comp shaders/fg_small_iq4*.comp)): shaders/fg_small_dense.glsl shaders/fg_dense_soa_impl.glsl
+vulkan/fg_small_gate_up.spv vulkan/fg_small_gate_up_pairs.spv: shaders/fg_small_gate_up.glsl
+vulkan/fg_gdn_recurrent_algebraic.spv vulkan/fg_gdn_small.spv: shaders/fg_gdn_algebraic.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_small_f32*.comp shaders/fg_small_router_bf16*.comp shaders/fg_small_index_bf16*.comp)): shaders/fg_small_plain.glsl
+vulkan/fg_dense_q8_0_cooked.spv $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_small_q8*.comp)): shaders/fg_small_q8_parallel.glsl
+vulkan/fg_moe_decode_down_reduce.spv vulkan/fg_small_down.spv: shaders/fg_moe_decode_down_reduce.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_dense_soa*.comp)): shaders/fg_dense_soa_impl.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_dense_soa*tile*.comp)): shaders/fg_dense_soa_tile_impl.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_dense_compact*.comp)): shaders/fg_dense_soa_impl.glsl shaders/fg_dense_compact_gemv.glsl

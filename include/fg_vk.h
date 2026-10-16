@@ -45,6 +45,21 @@ fg_status fg_vk_dense_quant(fg_vk_context *context,fg_vk_tensor *out,
 /* Pre-recorded token-invariant runs; each slot owns a private descriptor set
  * window so a dynamic epoch reset can never rewrite its bindings. */
 #define FG_VK_STATIC_SLOTS 4u
+/* Explicit research path; ordinary decode and prefill remain unchanged. */
+void fg_vk_small_n_mode(fg_vk_context *context,bool enabled);
+bool fg_vk_small_n_active(const fg_vk_context *context);
+fg_status fg_vk_small_n_schedule(fg_vk_context *context,fg_vk_tensor *tiles,
+    const fg_vk_tensor *selected,uint32_t tokens,fg_error *err);
+fg_status fg_vk_small_n_experts(fg_vk_context *context,fg_vk_tensor *mid,fg_vk_tensor *down_parts,
+    fg_vk_tensor *reduced,const fg_vk_tensor *gate,const fg_vk_tensor *up,
+    const fg_vk_tensor *down,const fg_vk_tensor *activation,
+    const fg_vk_tensor *tiles,const fg_vk_tensor *selected,const fg_vk_tensor *gates,
+    uint32_t gate_stride,uint32_t up_stride,uint32_t down_stride,
+    uint32_t gate_type,uint32_t up_type,uint32_t down_type,
+    uint32_t tokens,fg_error *err);
+fg_status fg_vk_small_n_shared(fg_vk_context *context,fg_vk_tensor *output,
+    const fg_vk_tensor *experts,const fg_vk_tensor *shared,
+    const fg_vk_tensor *scalar,uint32_t tokens,fg_error *err);
 
 typedef struct fg_vk_profile_kernel {
     const char *scope;

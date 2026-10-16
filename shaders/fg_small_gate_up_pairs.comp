@@ -1,0 +1,4 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define PAIR_LANES 2
+#include "fg_small_gate_up.glsl"

@@ -1,0 +1,73 @@
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_control_flow_attributes : require
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Weights { uint wb[]; };
+layout(set = 0, binding = 1) readonly buffer Input { vec4 x4[]; };
+layout(set = 0, binding = 2) writeonly buffer Output { float y[]; };
+layout(push_constant) uniform Push {
+    uint out_dim;
+    uint n_tok;
+    uint blocks;
+    uint tile_bytes;
+    float scale;
+} pc;
+
+shared vec4 subgroup_sum[64];
+
+float dot_quant(uint packed, vec4 input_value) {
+    return dot(vec4(unpack8(int32_t(packed))), input_value);
+}
+
+void main() {
+    uint local_id = gl_LocalInvocationID.x;
+    uint cohort = local_id >> 3u;
+    uint cohort_lane = local_id & 7u;
+    uint first_row = gl_WorkGroupID.x * 4u;
+    uint token = gl_WorkGroupID.y;
+    if (first_row >= pc.out_dim || token >= pc.n_tok) return;
+
+    uint cohorts = (pc.blocks + 7u) / 8u;
+    uint tile_row = first_row & 15u;
+    uint tile_base = (first_row >> 4u) * pc.tile_bytes;
+    uint quant_offset = (16u * pc.blocks * 2u + 63u) & ~63u;
+    uvec4 quant_base = tile_base + quant_offset +
+        uvec4(tile_row, tile_row + 1u, tile_row + 2u, tile_row + 3u) * pc.blocks * 32u;
+    uint input_base = token * pc.blocks * 8u;
+    vec4 accumulator = vec4(0.0);
+    for (uint group = 0u; group < cohorts; group++) {
+        uint block = group * 8u + cohort;
+        bool live = block < pc.blocks;
+        uint safe_block = live ? block : (pc.blocks - 1u);
+        uint scale_word = (tile_base >> 2u) + safe_block * 8u + (tile_row >> 1u);
+        vec4 delta = live ? vec4(unpackHalf2x16(wb[scale_word]), unpackHalf2x16(wb[scale_word + 1u])) : vec4(0.0);
+        uint word_offset = safe_block * 32u + cohort_lane * 4u;
+        uint packed0 = wb[(quant_base.x + word_offset) >> 2u];
+        uint packed1 = wb[(quant_base.y + word_offset) >> 2u];
+        uint packed2 = wb[(quant_base.z + word_offset) >> 2u];
+        uint packed3 = wb[(quant_base.w + word_offset) >> 2u];
+        vec4 input_value = live ? x4[input_base + safe_block * 8u + cohort_lane] : vec4(0.0);
+        vec4 products = vec4(dot_quant(packed0, input_value), dot_quant(packed1, input_value),
+                             dot_quant(packed2, input_value), dot_quant(packed3, input_value));
+        accumulator = fma(delta, products, accumulator);
+    }
+
+    vec4 reduced = vec4(subgroupAdd(accumulator.x), subgroupAdd(accumulator.y),
+                        subgroupAdd(accumulator.z), subgroupAdd(accumulator.w));
+    if (subgroupElect()) subgroup_sum[gl_SubgroupID] = reduced;
+    barrier();
+    if (local_id == 0u) {
+        vec4 total = vec4(0.0);
+        for (uint subgroup = 0u; subgroup < gl_NumSubgroups; subgroup++) {
+            total += subgroup_sum[subgroup];
+        }
+        if (first_row < pc.out_dim) y[token * pc.out_dim + first_row] = total.x * pc.scale;
+        if (first_row + 1u < pc.out_dim) y[token * pc.out_dim + first_row + 1u] = total.y * pc.scale;
+        if (first_row + 2u < pc.out_dim) y[token * pc.out_dim + first_row + 2u] = total.z * pc.scale;
+        if (first_row + 3u < pc.out_dim) y[token * pc.out_dim + first_row + 3u] = total.w * pc.scale;
+    }
+}

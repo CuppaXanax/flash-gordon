@@ -1,0 +1,13 @@
+#version 460
+layout(local_size_x=256) in;
+layout(set=0,binding=0) readonly buffer Experts{float expert[];};
+layout(set=0,binding=1) readonly buffer Shared{float shared_value[];};
+layout(set=0,binding=2) readonly buffer Scalar{float scalar[];};
+layout(set=0,binding=3) writeonly buffer Output{float output_value[];};
+layout(push_constant) uniform Push{uint width,tokens;}pc;
+void main(){
+    uint i=gl_GlobalInvocationID.x,t=gl_WorkGroupID.y;
+    if(i>=pc.width||t>=pc.tokens)return;
+    uint off=t*pc.width+i;
+    output_value[off]=expert[off]+(1.0/(1.0+exp(-scalar[t])))*shared_value[off];
+}
