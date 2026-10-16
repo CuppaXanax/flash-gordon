@@ -66,6 +66,7 @@ expected_code="$(printf '%s\n' \
     FG_RING_TRACE \
     FG_ROOFLINE \
     FG_ROOF_DENSE \
+    FG_ROOF_EXPERT \
     FG_ROOF_QSA \
     FG_SET_TRACE \
     FG_SHADER_DIR \

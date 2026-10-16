@@ -1,0 +1,21 @@
+{
+  "status": "pending_real_pack_gate",
+  "production_enabled": false,
+  "reference": "Current production kernel paths, FG_ROOFLINE=0; identical real pack bytes and frozen teacher-forced contexts",
+  "pack_sha256": null,
+  "quality": {
+    "mean_full_vocab_kl_current_to_candidate_max": 0.005,
+    "top1_agreement_min": 0.985,
+    "protocol": "Use the Q4 qualification corpus/capture protocol in q4_quality.py and q4_qualify.py; retain its performance and greedy checks. Record pack/corpus hashes and verify candidate shader dispatches, including graph-only expert-path coverage, before claiming promotion."
+  },
+  "component_policy": "Finite and dimension checks plus existing CPU/component oracles, roughly 1e-4 reassociation tolerance; full-block float/hash changes are diagnostics, not model-quality vetoes.",
+  "candidates": [
+    {"id": "readmitted-dense6", "FG_ROOFLINE": 1, "FG_ROOF_DENSE": 6},
+    {"id": "readmitted-qsa-eight-splits", "FG_ROOFLINE": 66, "FG_ROOF_QSA": 3},
+    {"id": "readmitted-alpha-beta-vec4", "FG_ROOFLINE": 128},
+    {"id": "readmitted-combined", "FG_ROOFLINE": 219, "FG_ROOF_DENSE": 6, "FG_ROOF_QSA": 3},
+    {"id": "adaptive-gemv", "FG_ROOFLINE": 1, "FG_ROOF_DENSE": 19},
+    {"id": "expert-prefetch4", "FG_ROOFLINE": 32, "FG_ROOF_EXPERT": 2},
+    {"id": "bandwidth-combined", "FG_ROOFLINE": 251, "FG_ROOF_DENSE": 19, "FG_ROOF_QSA": 3, "FG_ROOF_EXPERT": 2}
+  ]
+}

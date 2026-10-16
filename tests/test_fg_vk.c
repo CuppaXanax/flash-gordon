@@ -235,14 +235,16 @@ static int quant_dense_shape(uint32_t type,uint32_t in,uint32_t rows,uint32_t to
         }
         if(ok)ok=fg_vk_end(context,&error)==FG_OK&&fg_vk_profile_end(context,&profile,&error)==FG_OK;
         if(ok){
-            double ms=0.0,q8ms=0.0,prior_ms=0.0;uint64_t candidate_count=0u,q8_count=0u,prior_count=0u;
+            double ms=0.0,q8ms=0.0,prior_ms=0.0;uint64_t candidate_count=0u,q8_count=0u,prior_count=0u,merge_count=0u;
             for(uint32_t i=0;i<profile.kernel_count;i++){
                 const fg_vk_profile_kernel *k=&profile.kernels[i];
                 if(strstr(k->name,"fg_dense_q8_0_")==k->name){q8ms+=k->gpu_ms;q8_count+=k->invocations;}
                 else if(prior&&strstr(k->name,"fg_dense_soa")==k->name){prior_ms+=k->gpu_ms;prior_count+=k->invocations;}
-                else{ms+=k->gpu_ms;candidate_count+=k->invocations;}
+                else{ms+=k->gpu_ms;candidate_count+=k->invocations;
+                    if(strcmp(k->name,"fg_roof_split_merge.spv")==0)merge_count+=k->invocations;}
             }
-            if(candidate_count!=iterations||q8_count!=iterations||(prior&&prior_count!=iterations)||ms<=0.0||q8ms<=0.0){
+            if(candidate_count!=iterations+merge_count||q8_count!=iterations||
+               (merge_count&&merge_count!=iterations)||(prior&&prior_count!=iterations)||ms<=0.0||q8ms<=0.0){
                 fprintf(stderr,"invalid paired dense profile\n");ok=0;
             }
             ms/=iterations;q8ms/=iterations;prior_ms/=iterations;
@@ -4039,8 +4041,8 @@ static int test_roof_controls(void){
         for(uint32_t r=0;ok&&r<M;r++){
             double cpu=0.0;
             for(uint32_t i=0;i<K;i++)cpu+=(double)a[r*K+i]*b[i];
-            if(!isfinite(got[r])||fabs(got[r]-cpu)>2e-4*fmax(1.0,fabs(cpu))||
-                fabsf(got[r]-ref[r])>2e-4f*fmaxf(1.0f,fabsf(ref[r])))ok=0;
+            if(!isfinite(got[r])||fabs(got[r]-cpu)>1e-4*fmax(1.0,fabs(cpu))||
+                fabsf(got[r]-ref[r])>1e-4f*fmaxf(1.0f,fabsf(ref[r])))ok=0;
         }
     }
     if(saved){setenv("FG_ROOFLINE",saved,1);free(saved);}else unsetenv("FG_ROOFLINE");
@@ -4091,7 +4093,7 @@ static int test_roof_qsa(void){
                 for(uint32_t i=0;ok&&i<Q;i++){
                     float diff=fabsf(candidate[i]-reference[i]);
                     maximum=fmaxf(maximum,diff);
-                    if(!isfinite(candidate[i])||diff>4e-4f*fmaxf(1.0f,fabsf(reference[i])))ok=0;
+                    if(!isfinite(candidate[i])||diff>1e-4f*fmaxf(1.0f,fabsf(reference[i])))ok=0;
                 }
                 fprintf(stderr,"ROOF_QSA count=%u variant=%u splits=%u max_abs=%g %s\n",
                     count,v,splits,maximum,ok?"PASS":"FAIL");

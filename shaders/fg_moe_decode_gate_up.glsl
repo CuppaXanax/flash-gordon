@@ -1,4 +1,7 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#ifdef FG_ROOF_EXPERT
+#extension GL_KHR_shader_subgroup_shuffle : require
+#endif
 
 /* Batch-1 decode, one dispatch for all routed experts: fused gate + up
    projections with the SwiGLU activation.
@@ -32,7 +35,13 @@
    rolled loop.  The generic rolled loop remains for the Q8_0/cooked paths and
    for mixed-type pairs. */
 
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+#ifndef FG_EXPERT_WG
+#define FG_EXPERT_WG 64
+#endif
+#ifndef FG_PREFETCH
+#define FG_PREFETCH 1
+#endif
+layout(local_size_x = FG_EXPERT_WG, local_size_y = 1, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) readonly buffer GateWeights { uint gws[]; };
 layout(set = 0, binding = 0) readonly buffer GateWeightsVector { uvec4 gwv[]; };
@@ -117,6 +126,41 @@ int sum32(uint packed) {
 /* The Q4_K/Q5_K block loop, duplicated per gate/up type by the uniform
    branch in main so no runtime type test sits inside the loop.  All offsets
    are per-lane constants advanced by a fixed per-block stride. */
+#if FG_PREFETCH > 1
+#define FG_BLOCKS_BEGIN(G5V,U5V) \
+    for(uint first_block=0u;first_block<pc.blocks;first_block+=FG_PREFETCH){ \
+        uvec4 gp[FG_PREFETCH],up[FG_PREFETCH],gm[FG_PREFETCH],um[FG_PREFETCH]; \
+        uvec4 ghp[FG_PREFETCH],uhp[FG_PREFETCH]; \
+        [[unroll]]for(uint pre=0u;pre<FG_PREFETCH;pre++){ \
+            uint b=min(first_block+pre,pc.blocks-1u); \
+            gp[pre]=gwv[gq_vec+b*gq_step];up[pre]=uwv[uq_vec+b*uq_step]; \
+            gm[pre]=uvec4(gws[gd_word+b*gss],gws[gm_word+b*gss], \
+                         gws[gm_word+b*gss+1u],gws[gm_word+b*gss+2u]); \
+            um[pre]=uvec4(uws[ud_word+b*uss],uws[um_word+b*uss], \
+                         uws[um_word+b*uss+1u],uws[um_word+b*uss+2u]); \
+            if(G5V)ghp[pre]=gwv[gh_vec+b*gq_step]; \
+            if(U5V)uhp[pre]=uwv[uh_vec+b*uq_step]; \
+        } \
+        [[unroll]]for(uint pre=0u;pre<FG_PREFETCH;pre++){ \
+            uint block=first_block+pre;if(block>=pc.blocks)continue;
+#define FG_BLOCKS_END }}
+#define FG_GATE_META gm[pre]
+#define FG_UP_META um[pre]
+#define FG_GATE_QUANT gp[pre]
+#define FG_UP_QUANT up[pre]
+#define FG_GATE_HIGH ghp[pre]
+#define FG_UP_HIGH uhp[pre]
+#else
+#define FG_BLOCKS_BEGIN(G5V,U5V) for(uint block=0u;block<pc.blocks;block++){
+#define FG_BLOCKS_END }
+#define FG_GATE_META uvec4(gws[gbw],gws[gm_word+block*gss],gws[gm_word+block*gss+1u],gws[gm_word+block*gss+2u])
+#define FG_UP_META uvec4(uws[ubw],uws[um_word+block*uss],uws[um_word+block*uss+1u],uws[um_word+block*uss+2u])
+#define FG_GATE_QUANT gwv[gq_vec+block*gq_step]
+#define FG_UP_QUANT uwv[uq_vec+block*uq_step]
+#define FG_GATE_HIGH gwv[gh_vec+block*gq_step]
+#define FG_UP_HIGH uwv[uh_vec+block*uq_step]
+#endif
+
 #define FG_KPAIR(G5V, U5V) { \
     uint gq_vec = ((gate_row_base + gate_quant_offset + tile_row_k * 128u) >> 4u) + lane; \
     uint uq_vec = ((up_row_base + up_quant_offset + tile_row_k * 128u) >> 4u) + lane; \
@@ -130,27 +174,24 @@ int sum32(uint packed) {
     uint uq_step = up_block_bytes >> 4u; \
     uint gss = gate_block_bytes >> 2u; \
     uint uss = up_block_bytes >> 2u; \
-    for (uint block = 0u; block < pc.blocks; block++) { \
+    FG_BLOCKS_BEGIN(G5V,U5V) \
         uint gbw = gd_word + block * gss; \
         uint ubw = ud_word + block * uss; \
-        vec2 gdm = unpackHalf2x16(gws[gbw]); \
-        vec2 udm = unpackHalf2x16(uws[ubw]); \
-        uint gm0 = gws[gm_word + block * gss]; \
-        uint gm1 = gws[gm_word + block * gss + 1u]; \
-        uint gm2 = gws[gm_word + block * gss + 2u]; \
-        uint um0 = uws[um_word + block * uss]; \
-        uint um1 = uws[um_word + block * uss + 1u]; \
-        uint um2 = uws[um_word + block * uss + 2u]; \
+        uvec4 gmeta=FG_GATE_META,umeta=FG_UP_META; \
+        vec2 gdm = unpackHalf2x16(gmeta.x); \
+        vec2 udm = unpackHalf2x16(umeta.x); \
+        uint gm0=gmeta.y,gm1=gmeta.z,gm2=gmeta.w; \
+        uint um0=umeta.y,um1=umeta.z,um2=umeta.w; \
         vec2 gma = scale_min(gm0, gm1, gm2, group_a); \
         vec2 gmb = scale_min(gm0, gm1, gm2, group_b); \
         vec2 uma = scale_min(um0, um1, um2, group_a); \
         vec2 umb = scale_min(um0, um1, um2, group_b); \
-        uvec4 gqw = gwv[gq_vec + block * gq_step]; \
-        uvec4 uqw = uwv[uq_vec + block * uq_step]; \
+        uvec4 gqw = FG_GATE_QUANT; \
+        uvec4 uqw = FG_UP_QUANT; \
         uvec4 ghw = uvec4(0u); \
         uvec4 uhw = uvec4(0u); \
-        if (G5V) ghw = gwv[gh_vec + block * gq_step]; \
-        if (U5V) uhw = uwv[uh_vec + block * uq_step]; \
+        if (G5V) ghw = FG_GATE_HIGH; \
+        if (U5V) uhw = FG_UP_HIGH; \
         uint act_vec = (block * Q8K_WORDS) >> 1u; \
         uvec2 a01 = q8p[act_vec + act_a0]; \
         uvec2 a23 = q8p[act_vec + act_a0 + 1u]; \
@@ -175,13 +216,13 @@ int sum32(uint packed) {
                 float(int(uma.y) * sum32(sums.x) + int(umb.y) * sum32(sums.y)), \
                 up_min); \
         } \
-    } }
+    FG_BLOCKS_END }
 
 void main() {
     uint lid = gl_LocalInvocationID.x;
     uint row_slot = lid >> 3u;
     uint lane = lid & 7u;
-    uint row = gl_WorkGroupID.x * 8u + row_slot;
+    uint row = gl_WorkGroupID.x * (FG_EXPERT_WG/8u) + row_slot;
     uint tile_base = gl_WorkGroupID.y * TILE_WORDS;
     uint expert = tiles[tile_base];
     uint pair = tiles[tile_base + 1u];

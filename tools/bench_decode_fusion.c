@@ -74,6 +74,9 @@ static void add_weight(fg_model *model,fg_manifest *manifest,uint32_t layer,
         cooked_bytes=fg_q8_0_cooked_matrix_bytes(k,m);
     }else if(type==12u||type==20u){
         bool compact=fg_dense_prefer_compact(k,m,type);
+        const char *variant=getenv("FG_ROOF_DENSE"),*mask=getenv("FG_ROOFLINE");
+        if(type==12u&&m>=2560u&&variant&&strtoul(variant,NULL,0)==21u&&mask&&
+           ((uint32_t)strtoul(mask,NULL,0)&1u)!=0u)compact=false;
         layout=compact?FG_TENSOR_LAYOUT_DENSE_COMPACT:FG_TENSOR_LAYOUT_DENSE_SOA;
         format=fg_vk_dense_saved_format(type,layout);
         cooked_bytes=compact?fg_dense_compact_bytes(k,m,type):fg_dense_soa_bytes(k,m,type);
@@ -158,9 +161,12 @@ int main(int argc,char **argv){
     if(!model->tensor)return 1;
     check(fg_vk_open(&model->vk,&error),&error);
     printf("{\"kind\":\"roofline\",\"mask\":\"%s\",\"dense_variant\":\"%s\","
+           "\"qsa_variant\":\"%s\",\"expert_variant\":\"%s\","
            "\"reported_cus\":%u,\"subgroup_size\":%u}\n",
            getenv("FG_ROOFLINE")?getenv("FG_ROOFLINE"):"0",
            getenv("FG_ROOF_DENSE")?getenv("FG_ROOF_DENSE"):"7",
+           getenv("FG_ROOF_QSA")?getenv("FG_ROOF_QSA"):"2",
+           getenv("FG_ROOF_EXPERT")?getenv("FG_ROOF_EXPERT"):"0",
            fg_vk_active_compute_units(model->vk),fg_vk_subgroup_size(model->vk));
     for(uint32_t l=0;l<FG_LAYER_COUNT;l++){
         manifest->layer_owner[l]=(l>=6u&&l<=11u)?1u:2u;

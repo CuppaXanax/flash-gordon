@@ -41,8 +41,27 @@ Status values:
 | `FG_EXPERT_Q8_WIDE` | unset (off) | `1` opts into subgroup-shuffle wide Q8 MoE decode; off pending fleet A/B. | variant (opt-in) |
 | `FG_DECODE_FUSION` | unset (off) | Chained decode fusion bitmask: `1` router + tile schedule, `2` shared add + HC residual, `4` supported shared gate/up + SwiGLU; `7` enables all. Invalid masks disable it. Synthetic parity/performance only; model KL qualification required. | variant (opt-in) |
 | `FG_ROOFLINE` | unset (off) | Wave64 decode research mask: `1` large compact Q4 GEMV geometry, `2` QSA head geometry, `4` recurrent state-update/output loop, `8` one-wave router, `16` HC injection shuffle reduction and four-group mixing, `32` expert gate/up shuffle reduction, `64` QSA eight-way split for at least eight records, `128` vec4/WG256 GDN alpha/beta F32 GEMV. Unsupported subgroup devices fall back (split count is portable). No production promotion; see `results/hillclimb/ROOFLINE.md`. Set before static recording; graph-only expert paths retain the baseline. | variant (opt-in) |
-| `FG_ROOF_DENSE` | `7` | With roofline bit `1`, large compact Q4 GEMV geometry: `1` r4/WG64, `2` r4/WG128, `3` r8/WG256, `4` r8/WG128, `5` r8/WG64, `6` shape-selected WG64 for K=2560 and WG128 otherwise, `7` retain the baseline gate geometry and use r8/WG64 elsewhere to preserve accumulation order. M<2560 retains baseline. Other values fall back. | variant (opt-in) |
+| `FG_ROOF_DENSE` | `7` | With roofline bit `1`, compact Q4 GEMV geometry: `1` r4/WG64, `2` r4/WG128, `3` r8/WG256, `4` r8/WG128, `5` r8/WG64, `6` shape-selected WG64 for K=2560 and WG128 otherwise, `7` retain the baseline gate geometry and use r8/WG64 elsewhere to preserve accumulation order. Selections 1-7 leave M<2560 unchanged. Research selections 8-22 are described below; unrecognized selections fall back. | variant (opt-in) |
 | `FG_ROOF_QSA` | `2` | With roofline bit `2`: `1` register-tiled one-head/WG64, `2` LDS-tiled three-head/WG192, `3` six-head/WG384, `4` one-head/WG64. Other values retain baseline. | variant (opt-in) |
+| `FG_ROOF_EXPERT` | `0` | With roofline bit `32`, low three bits select gate/up: `0` original shuffle epilogue, `1/2` two/four prefetched blocks wave64, `3` one block wave32, `4/5` two/four prefetched blocks wave32. Add `8` for true wave32 expert down. Wave32 requires subgroup-size-control support; unsupported selections fall back. Component tolerance is a bug gate, not model quality: real-pack KL mean <=0.005 and top-1 >=98.5% remain mandatory. | variant (opt-in) |
+
+Roofline dense selections `8/9/10` additionally test one/two/four independent
+uvec4 streams per lane with wave64; `11/12` use two/four streams with **true
+wave32**, not half-populated wave64. These stream variants cover compact Q4
+and IQ4, including HC up/down and small outputs. They do not change pack bytes.
+All reassociated variants, including dense `6`, split bit `64` and control bit
+`128`, are candidates for the real-pack KL/top-1 gate, not bit-exactness gates.
+
+Further dense research selections: `13/14` use four/eight K splits for compact
+Q4 with K>=8192 and M<=1024 (including an extra merge dispatch), and selection
+`6` elsewhere. `15/16` use two/one lanes per K-group with aligned uvec2/uvec4
+loads and WG64; `17/18` use those geometries with true wave32. Non-Q4 retains
+selection `6`. `19` selects `18` for the K=2560 gate/query shapes, `15` for
+other large Q4 matrices, and the baseline small/HC geometry. `20` tests IQ4
+wave32, `21` tests expanded-F32-metadata wide SoA Q4 with two lanes/group
+(requires a matching wide layout; the replay bench recooks large Q4 when
+this flag is selected), and `22` tests two lanes/group with WG128. These
+are off-by-default experiments, not a commitment to their performance.
 
 Prefix continuation (resuming exact token-prefix extensions from the recorded
 owner-state frontier) is the default. Disable it per run with

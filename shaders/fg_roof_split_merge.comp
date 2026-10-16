@@ -1,0 +1,12 @@
+#version 460
+layout(local_size_x=256)in;
+layout(set=0,binding=0)readonly buffer Partials{float p[];};
+layout(set=0,binding=1)writeonly buffer Output{float y[];};
+layout(push_constant)uniform Push{uint m,splits;}pc;
+void main(){
+    uint row=gl_GlobalInvocationID.x;
+    if(row>=pc.m)return;
+    float sum=0.0;
+    for(uint split=0u;split<pc.splits;split++)sum+=p[split*pc.m+row];
+    y[row]=sum;
+}

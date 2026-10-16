@@ -1,4 +1,168 @@
-# Decode roofline experiment
+# Decode roofline: reassociation and bandwidth follow-up
+
+2026-10-15; all flags remain **off by default**. Same .50-only, stock-safe
+2000 MHz GFX operating point and replay protocol as the historical study below.
+Each row is **five alternating A/B/A rounds**, independently seeded, at each
+live CU setting. Intervals bootstrap rounds, not individual correlated tokens.
+
+| Candidate | CUs | Six-layer wall before -> after ms | Saving | 95% saving CI, us |
+|---|---:|---:|---:|---:|
+| Readmitted: mask 219, dense 6, QSA 3 | 40 | 2.686937 -> **2.458141** | **8.515%** | 225.897-232.389 |
+| Readmitted | 24 | 2.939492 -> **2.711450** | **7.758%** | 225.046-231.131 |
+| Bandwidth: mask 251, dense 19, QSA 3, expert 2 | 40 | 2.685013 -> **2.406759** | **10.363%** | 276.285-279.937 |
+| Bandwidth | 24 | 2.944236 -> **2.677356** | **9.064%** | 263.771-270.409 |
+
+Bandwidth policy adds about **51.4 us / 34.1 us** to the readmitted saving
+at 40/24 CUs, respectively. This difference compares separate five-round
+studies, not a third directly paired experiment or its own confidence interval.
+
+## Corrected quality gate
+
+Floating-point reassociation is acceptable. **Real-pack full-vocabulary mean
+KL(current || candidate) <=0.005 and top-1 agreement >=98.5%** are required,
+with the same frozen corpus and pack bytes as Q4 qualification. Component
+oracles remain bug checks, approximately fp32-reassociation tolerance; QSA
+and alpha/beta component checks now use `1e-4*max(1,abs(reference))`.
+The existing quant CPU sum-absolute-products bound and mixed-expert oracle
+are unchanged; the latter reports up to **2.37e-4** in its existing mixed
+Q4/Q5 fixture. No tolerance was loosened to mask a failing component.
+
+The arbitrary `2e-6` full-block veto is removed. Baseline A/A2 is still
+byte-identical; candidate dumps must be finite, nonempty and correctly sized.
+All 3,276,800 output and 3,309,568 state floats per phase are inspected.
+Across five seeds, readmitted max scaled output/state-absolute drift is
+**1.3585e-3 / 2.9373e-4**; bandwidth is **1.1571e-3 / 5.1212e-3**, identical
+at both CU settings. These synthetic accumulated drifts are diagnostics,
+**not** a model-quality pass or automatic failure. Real-pack quality is
+**not run / pending**, including the larger bandwidth-candidate drift.
+`roofline-quality-candidates.json` lists dense 6, eight-split QSA, vec4
+alpha/beta, both combinations, adaptive dense and expert prefetch for the
+fleet gate. Verify the flagged shaders actually execute in real-pack paths;
+graph-only expert execution currently retains its baseline path.
+
+## Exact production-shape bandwidth results
+
+Five intrusive profile pairs, separate from wall-time qualification.
+Each cell is **before -> after us (before -> after % of 450 GB/s)**.
+BW uses stored logical weight bytes, not hardware DRAM counters or an
+arithmetic-free lower bound. HC rows show the attention-read scope; the
+separate FFN-read scope remains in the dispatch CSV.
+
+| Shape/type | Weight bytes | 40 CUs | 24 CUs |
+|---|---:|---:|---:|
+| QKV Q4, K2560 M10240 | 15,155,200 | 53.664 -> **50.106** (62.8 -> **67.2%**) | 61.826 -> **57.614** (54.5 -> **58.5%**) |
+| GDN gate Q4, K2560 M6144 | 9,093,120 | 38.254 -> **31.104** (52.8 -> **65.0%**) | 42.494 -> **35.894** (47.6 -> **56.3%**) |
+| GDN output Q4, K6144 M2560 | 9,093,120 | 30.032 -> **25.864** (67.3 -> **78.1%**) | 33.588 -> **29.222** (60.2 -> **69.2%**) |
+| QSA query Q4, K2560 M12288 | 18,186,240 | 69.980 -> **59.580** (57.8 -> **67.8%**) | 74.092 -> **68.768** (54.5 -> **58.8%**) |
+| QSA output Q4, K6144 M2560 | 9,093,120 | 30.872 -> **26.328** (65.5 -> **76.8%**) | 33.932 -> **29.564** (59.6 -> **68.4%**) |
+| HC down Q4, K10240 M320, unchanged | 1,894,400 | 11.477 -> 11.565 (36.7 -> 36.4%) | 12.147 -> 12.053 (34.7 -> 34.9%) |
+| HC up IQ4, K320 M10240, unchanged | 1,843,200 | 10.569 -> 10.565 (38.8 -> 38.8%) | 13.435 -> 13.397 (30.5 -> 30.6%) |
+| Expert gate/up Q4, K2560 M640, top10 | 18,432,000 | 57.199 -> **56.643** (71.6 -> **72.3%**) | 74.181 -> **72.744** (55.2 -> **56.3%**) |
+| Expert down Q5_1, K640 M2560, top10, unchanged | 12,288,000 | 38.171 -> 38.187 (71.5 -> 71.5%) | 46.128 -> 46.181 (59.2 -> 59.1%) |
+
+**The >=85% large-shape target was not reached.** Best replay result is
+78.1% (standalone output GEMV reached 80.3%). HC and experts remain major
+gaps; unchanged-path noise is not credited as a win.
+
+| Other component | 40 CU before -> after us | 24 CU before -> after us |
+|---|---:|---:|
+| QSA split, 257 records | 46.544 -> **13.732** | 46.696 -> **16.300** |
+| QSA merge, now eight partials | 2.388 -> 5.928 | 2.428 -> 5.964 |
+| Alpha/beta F32, K2560 M48, per dispatch | 5.207 -> **3.851** | 5.184 -> **3.230** |
+| Router top10 | 9.259 -> **5.020** | 9.195 -> **4.984** |
+| HC injection, attention-read | 6.677 -> **3.463** | 6.612 -> **3.451** |
+| HC mixing, attention-read | 4.631 -> **2.329** | 4.544 -> **2.341** |
+| Recurrence, unchanged | 28.936 -> 29.520 | 28.902 -> 29.248 |
+
+Eight QSA splits save **29.272 us net of the more expensive merge** at
+40 CUs, about **0.351 ms/model token** for twelve QSA layers, rather than
+crediting the split-only ~0.39 ms opportunity. Router is 5.37 dependent-step
+floors and HC mixing 2.49, using the sibling's 0.934 us reference; these are
+comparisons, not measured universal limits. No floor microbench was duplicated.
+
+## What was tried and why the selected policy helps
+
+Read-only llama.cpp `mul_mat_vec_q4_k` and packed Q8 implementations informed
+subgroup-only reductions and load granularity. Native packed INT8 dot remains
+unavailable on this RADV target; no unsupported instruction assumption is made.
+Every research choice is retained behind the registered roofline selectors.
+
+* **Dense 15-18:** original eight-row layout, two/one lanes per 32-value group,
+  aligned uvec2/uvec4 payloads, vec4 activations, prefetched metadata and a
+  subgroup-only epilogue without LDS. Policy **19** selects two lanes/WG64
+  for QKV/output, one lane/**true wave32** for gate/query, and baseline
+  geometry for small/HC/IQ4 shapes. Subgroup-size-control is queried/enabled;
+  this is not a half-populated wave64 approximation.
+* **Dense 8-12:** one row per lane and one/two/four independent uvec4 streams,
+  wave64 and true wave32. Large QKV regresses to roughly 61-79 us; HC down
+  25-45 us. More register-level prefetch alone does not guarantee occupancy
+  or decode-issue throughput. No ISA occupancy counter was collected.
+* **Dense 13/14:** low-M HC down K-split four/eight, **including merge cost**:
+  13.182/12.629 us versus 11.484 us baseline in the sweep. Extra dispatch
+  and reduction outweigh the parallelism; not selected.
+* **Dense 20:** true-wave32 IQ4 is 12.096 versus 10.533 us; not selected.
+  **22:** two-lane WG128 regresses QKV to 67.673 us and output to 29.373 us.
+* **Dense 21, actual repack/layout test:** expand compact scale/min metadata
+  into wide F32 records, avoiding unpack work but increasing weight bytes
+  **29.7%**. QKV/gate/output/query become 58.810/36.800/48.797/71.147 us.
+  It loses even before accounting for larger traffic. Wide format tags and
+  actual wide byte counts are used; no artificial compact-byte BW gain.
+* **Expert:** two/four independent uvec4 block prefetches include scale/min
+  words, wave64 and true wave32, plus true-wave32 down. Selector **2** keeps
+  four prefetched blocks/wave64; gain is small (~0.6 us at 40 CU), unlike
+  dense. Wave32 gate/up and down did not produce a credible improvement.
+
+The archived sweep contains all component-oracle and three-seed exploratory
+results; only final selected combinations have five-round 40/24-CU CIs.
+Large-shape CPU quant oracles passed throughout; all 96 targeted test
+invocations (both studies, both masks, both CU settings, twelve filters)
+pass. Local C17/shader builds, 13 Python analysis tests, flag registration,
+shell syntax and diff whitespace checks pass.
+
+## Block accounting, projection and reproducibility
+
+Final bandwidth candidate keeps **214 dispatches / ten profiled submissions**.
+No-clocks controls: 2657.182 -> 2381.696 us (40 CU), 2914.826 -> 2646.305 us
+(24 CU). Token-2048 intrusive controls: 4057.973 -> 3838.949 us and
+4285.211 -> 4201.163 us. Ordered single pairs are not extra CIs or
+long-context service qualification.
+
+Type-weighted measured layer deltas, `36*GDN + 12*QSA`, project **2.0492 ms**
+saved/model token (40 CU; 95% CI 2.0463-2.0523) and **2.0297 ms** (24 CU;
+2.0246-2.0349). Conditionally subtracting the latter from the historical
+37.437 ms eight-rank anchor gives **35.4073 ms/token**, arithmetic CI
+35.4021-35.4124, or **28.24 TPS**. Readmitted-only 24-CU projection is
+35.7092 ms/token. **Neither is measured fleet performance**; quality,
+real-pack path coverage and operating-point transfer remain unqualified.
+
+Evidence: `roofline-followup-captures.tar.gz`, SHA256
+`e353dce74d9fdbff7847ec28b6115479942231d076d62912c31496ee7bac2e69`.
+It includes `bandwidth/`, `readmitted/`, `requalified/` and operating-point
+evidence, excluding large float dumps and governor logs. Summaries/dispatch
+CSVs are separately named `roofline-readmitted-*` and `roofline-bandwidth-*`;
+the original exact-study captures are preserved. Reproduce with
+`tools/roofline-bandwidth.sh`, `tools/roofline-wide.sh`,
+`tools/roofline-requalify.sh` through the .50-only runner, then
+`roofline-ledger.py CAPTURES --mask 219 --dense 6` or `--mask 251 --dense 19`
+with explicit `--output` and `--dispatch-csv`.
+Services and original governor config were restored and health checked;
+40/40 routed CUs restored. `/home/xander/hc-roof` was removed and its absence
+independently asserted by the cleanup script.
+
+---
+
+# Historical first iteration
+
+**Superseded numerical policy:** the first-iteration results below document
+the historical bit-exact candidate, not the current promotion requirement.
+An additional follow-up section accompanies the readmitted and bandwidth
+captures. The old `2e-6` block veto was unnecessarily strict: the reported
+`3.078e-6` QSA drift and other reassociation differences are **not model
+quality failures**. Dense policy 6, eight QSA splits and vec4 alpha/beta are
+readmitted behind their existing opt-in flags. The real gate is full-vocabulary
+real-pack mean KL <=0.005 and top-1 agreement >=98.5% against current.
+`roofline-quality-candidates.json` lists pending individual and combined gates.
+No real-pack quality measurement or deployment is claimed here.
 
 2026-10-15; branch `cuppaxanax/roofline`, base `origin/main a63a166` plus
 `cuppaxanax/decode-fusion f207404`. **Opt-in synthetic replay win, not deployment.**

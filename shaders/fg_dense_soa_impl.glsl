@@ -7,9 +7,13 @@
 #ifndef COMPACT
 #define COMPACT 0
 #endif
+#ifndef FG_GROUP_LANES
+#define FG_GROUP_LANES 4
+#endif
 layout(local_size_x=WG) in;
 layout(set=0,binding=0) readonly buffer Weights { uint w[]; };
 layout(set=0,binding=0) readonly buffer WideWeights { uvec4 w4[]; };
+layout(set=0,binding=0) readonly buffer PairWeights { uvec2 w2[]; };
 layout(set=0,binding=1) readonly buffer Input { vec4 x[]; };
 layout(set=0,binding=2) writeonly buffer Output { float y[]; };
 #ifdef FG_SHARED_SWIGLU
@@ -71,12 +75,26 @@ void compact_scales(uint base,uint groups,uint g,uint row,out vec4 d,out vec4 m)
     d=vec4(b0.x,b1.x,b2.x,b3.x)*vec4(a.x,a.z,v.x,v.z);
     m=vec4(b0.y,b1.y,b2.y,b3.y)*vec4(a.y,a.w,v.y,v.w);
 }
+#if FG_GROUP_LANES < 4
+float value_multi(uint base,uint groups,uint row,uint g,uint lane,
+                  vec4 a[4/FG_GROUP_LANES],vec4 b[4/FG_GROUP_LANES]){
+    uint off=base+groups*(COMPACT!=0?5u:16u)+(row*groups+g)*4u;
+#if FG_GROUP_LANES == 1
+    uvec4 packed=w4[off/4u];
+#else
+    uvec2 packed=w2[off/2u+lane];
+#endif
+    float sum=0.0;
+    [[unroll]]for(uint i=0u;i<4u/FG_GROUP_LANES;i++)sum+=product(packed[i],a[i],b[i]);
+    return sum;
+}
+#endif
 void main(){
 #ifdef FG_SHARED_SWIGLU
     vec4 gate0=vec4(0.0),gate1=vec4(0.0);
     [[unroll]] for(projection=0u;projection<2u;projection++){
 #endif
-    uint lid=gl_LocalInvocationID.x,lane=lid&3u,cohort=lid>>2u;
+    uint lid=gl_LocalInvocationID.x,lane=lid%FG_GROUP_LANES,cohort=lid/FG_GROUP_LANES;
 #if TYPE == 20
     if(lid<16u)table[lid]=float(grid(lid));
     barrier();
@@ -88,8 +106,8 @@ void main(){
 #ifdef FG_ROOF_UNROLL
     [[unroll]]
 #endif
-    for(uint i=0u;i<(groups+WG/4u-1u)/(WG/4u);i++){
-        uint group=i*(WG/4u)+cohort;
+    for(uint i=0u;i<(groups+WG/FG_GROUP_LANES-1u)/(WG/FG_GROUP_LANES);i++){
+        uint group=i*(WG/FG_GROUP_LANES)+cohort;
         if(COMPACT!=0&&TYPE==20u&&group>=groups)continue;
         bool live=group<groups;
         uint g=min(group,groups-1u);
@@ -106,6 +124,22 @@ void main(){
             compact_scales(base,groups,g,row,d0,m0);
             compact_scales(base,groups,g,4u,d1,m1);
         }
+#if FG_GROUP_LANES < 4
+        vec4 a[4/FG_GROUP_LANES],b[4/FG_GROUP_LANES];float sx=0.0;
+        [[unroll]]for(uint t=0u;t<4u/FG_GROUP_LANES;t++){
+            uint at=token*(pc.input_width/4u)+g*8u+lane*(4u/FG_GROUP_LANES)+t;
+            a[t]=live?x[at]:vec4(0.0);b[t]=live?x[at+4u]:vec4(0.0);
+            sx+=dot(a[t]+b[t],vec4(1.0));
+        }
+        vec4 p0=vec4(value_multi(base,groups,row,g,lane,a,b),value_multi(base,groups,row+1u,g,lane,a,b),
+            value_multi(base,groups,row+2u,g,lane,a,b),value_multi(base,groups,row+3u,g,lane,a,b));
+        acc0+=d0*p0-m0*sx;
+        if(ROWS==8u){
+            vec4 p1=vec4(value_multi(base,groups,4u,g,lane,a,b),value_multi(base,groups,5u,g,lane,a,b),
+                value_multi(base,groups,6u,g,lane,a,b),value_multi(base,groups,7u,g,lane,a,b));
+            acc1+=d1*p1-m1*sx;
+        }
+#else
         vec4 a=live?x[token*(pc.input_width/4u)+g*8u+lane]:vec4(0.0);
         vec4 b=live?x[token*(pc.input_width/4u)+g*8u+lane+4u]:vec4(0.0);
         float sx=dot(a+b,vec4(1.0));
@@ -117,12 +151,13 @@ void main(){
                 value(base,groups,6u,g,lane,a,b),value(base,groups,7u,g,lane,a,b));
             acc1+=d1*p1-m1*sx;
         }
+#endif
     }
     vec4 r0=vec4(subgroupAdd(acc0.x),subgroupAdd(acc0.y),subgroupAdd(acc0.z),subgroupAdd(acc0.w));
     vec4 r1=vec4(subgroupAdd(acc1.x),subgroupAdd(acc1.y),subgroupAdd(acc1.z),subgroupAdd(acc1.w));
-    if(COMPACT!=0&&gl_NumSubgroups==1u
+    if(gl_NumSubgroups==1u
 #ifndef FG_ROOF_UNROLL
-       &&TYPE==20u
+       &&COMPACT!=0&&TYPE==20u
 #endif
     ){
         if(subgroupElect())for(uint r=0u;r<4u;r++){

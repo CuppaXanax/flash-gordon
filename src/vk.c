@@ -87,8 +87,9 @@ struct fg_vk_context {
     fg_vk_kernel moe_prefill_reduce,moe_prefill_shard_reduce;
     fg_vk_kernel router_top10_tiles,router_top10_fast,moe_shared_gr_write;
     fg_vk_kernel shared_swiglu_q4,shared_swiglu_q8;
-    fg_vk_kernel roof[15];
-    bool roof_supported;
+    fg_vk_kernel roof[41];
+    bool roof_supported,roof_wave32;
+    fg_vk_tensor *roof_partials;
 };
 
 static bool roof_enabled(const fg_vk_context *c,uint32_t bit){
@@ -235,7 +236,7 @@ static void destroy_kernel(fg_vk_context *context,fg_vk_kernel *kernel){
     if(kernel==&context->dense)
         for(uint32_t i=0;i<37u;i++)destroy_kernel(context,&context->dense_quant[i]);
     if(kernel==&context->dense)
-        for(uint32_t i=0;i<15u;i++)destroy_kernel(context,&context->roof[i]);
+        for(uint32_t i=0;i<41u;i++)destroy_kernel(context,&context->roof[i]);
     if(kernel==&context->moe_decode_down_reduce)destroy_kernel(context,&context->moe_decode_down_q8);
     if(kernel==&context->moe_q5_1)destroy_kernel(context,&context->moe_q5_1_cooked);
     if(kernel==&context->kquant)destroy_kernel(context,&context->kquant_cooked);
@@ -252,7 +253,13 @@ static fg_status create_kernel(fg_vk_context *context,fg_vk_kernel *kernel,fg_er
     if(kernel->bindings>16u){vkDestroyShaderModule(context->device,module,NULL);fg_error_set(err,FG_ERR_LIMIT,"Vulkan kernel has too many bindings");return FG_ERR_LIMIT;}kernel->set_layout=context->descriptor_set_layout;
     VkPushConstantRange push={.stageFlags=VK_SHADER_STAGE_COMPUTE_BIT,.offset=0,.size=kernel->push_bytes};VkPipelineLayoutCreateInfo pl={.sType=VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,.setLayoutCount=1,.pSetLayouts=&kernel->set_layout,.pushConstantRangeCount=kernel->push_bytes?1u:0u,.pPushConstantRanges=kernel->push_bytes?&push:NULL};
     vr=vkCreatePipelineLayout(context->device,&pl,NULL,&kernel->layout);if(vr!=VK_SUCCESS){vkDestroyShaderModule(context->device,module,NULL);destroy_kernel(context,kernel);return vk_error(err,"create pipeline layout",vr);}
-    VkPipelineShaderStageCreateInfo stage={.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,.stage=VK_SHADER_STAGE_COMPUTE_BIT,.module=module,.pName="main"};VkComputePipelineCreateInfo cp={.sType=VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,.stage=stage,.layout=kernel->layout};
+    VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT required_wave={
+        .sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT,
+        .requiredSubgroupSize=32u};
+    VkPipelineShaderStageCreateInfo stage={.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext=context->roof_wave32&&strstr(kernel->file,"_w32.spv")?&required_wave:NULL,
+        .stage=VK_SHADER_STAGE_COMPUTE_BIT,.module=module,.pName="main"};
+    VkComputePipelineCreateInfo cp={.sType=VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,.stage=stage,.layout=kernel->layout};
     vr=vkCreateComputePipelines(context->device,context->pipeline_cache,1,&cp,NULL,&kernel->pipeline);vkDestroyShaderModule(context->device,module,NULL);if(vr!=VK_SUCCESS){destroy_kernel(context,kernel);return vk_error(err,"create compute pipeline",vr);}return FG_OK;
 }
 
@@ -313,8 +320,30 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
     if(integer_dot_extension){VkPhysicalDeviceFeatures2 available_features={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,.pNext=&integer_dot_features};vkGetPhysicalDeviceFeatures2(c->physical,&available_features);}
     c->integer_dot_product=integer_dot_extension&&integer_dot_properties.integerDotProduct4x8BitPackedSignedAccelerated&&integer_dot_features.shaderIntegerDotProduct;
     float priority=1.0f;VkDeviceQueueCreateInfo qc={.sType=VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,.queueFamilyIndex=family,.queueCount=1,.pQueuePriorities=&priority};
-    const char *device_extensions[1];uint32_t device_extension_count=0;VkPhysicalDeviceShaderIntegerDotProductFeaturesKHR enabled_integer_dot={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_FEATURES_KHR,.shaderIntegerDotProduct=c->integer_dot_product?VK_TRUE:VK_FALSE};VkPhysicalDeviceFeatures2 enabled_features={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,.pNext=c->integer_dot_product?&enabled_integer_dot:NULL};if(c->integer_dot_product)device_extensions[device_extension_count++]="VK_KHR_shader_integer_dot_product";
-    VkDeviceCreateInfo dc={.sType=VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,.pNext=c->integer_dot_product?&enabled_features:NULL,.queueCreateInfoCount=1,.pQueueCreateInfos=&qc,.enabledExtensionCount=device_extension_count,.ppEnabledExtensionNames=device_extension_count?device_extensions:NULL};vr=vkCreateDevice(c->physical,&dc,NULL,&c->device);if(vr!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create Vulkan device",vr);}vkGetDeviceQueue(c->device,family,0,&c->queue);
+    VkPhysicalDeviceSubgroupSizeControlFeaturesEXT wave_features={
+        .sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT};
+    VkPhysicalDeviceSubgroupSizeControlPropertiesEXT wave_properties={
+        .sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES_EXT};
+    if(device_has_extension(c->physical,VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME)){
+        VkPhysicalDeviceFeatures2 query={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,.pNext=&wave_features};
+        VkPhysicalDeviceProperties2 props={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&wave_properties};
+        vkGetPhysicalDeviceFeatures2(c->physical,&query);vkGetPhysicalDeviceProperties2(c->physical,&props);
+        c->roof_wave32=wave_features.subgroupSizeControl&&wave_properties.minSubgroupSize<=32u&&
+            wave_properties.maxSubgroupSize>=32u&&
+            (wave_properties.requiredSubgroupSizeStages&VK_SHADER_STAGE_COMPUTE_BIT)!=0u;
+    }
+    const char *device_extensions[2];uint32_t device_extension_count=0;
+    VkPhysicalDeviceSubgroupSizeControlFeaturesEXT enabled_wave={
+        .sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT,
+        .subgroupSizeControl=c->roof_wave32?VK_TRUE:VK_FALSE};
+    VkPhysicalDeviceShaderIntegerDotProductFeaturesKHR enabled_integer_dot={
+        .sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_FEATURES_KHR,
+        .pNext=c->roof_wave32?&enabled_wave:NULL,.shaderIntegerDotProduct=c->integer_dot_product?VK_TRUE:VK_FALSE};
+    VkPhysicalDeviceFeatures2 enabled_features={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        .pNext=c->integer_dot_product?(void *)&enabled_integer_dot:c->roof_wave32?(void *)&enabled_wave:NULL};
+    if(c->integer_dot_product)device_extensions[device_extension_count++]="VK_KHR_shader_integer_dot_product";
+    if(c->roof_wave32)device_extensions[device_extension_count++]=VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME;
+    VkDeviceCreateInfo dc={.sType=VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,.pNext=enabled_features.pNext?&enabled_features:NULL,.queueCreateInfoCount=1,.pQueueCreateInfos=&qc,.enabledExtensionCount=device_extension_count,.ppEnabledExtensionNames=device_extension_count?device_extensions:NULL};vr=vkCreateDevice(c->physical,&dc,NULL,&c->device);if(vr!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create Vulkan device",vr);}vkGetDeviceQueue(c->device,family,0,&c->queue);
     VkCommandPoolCreateInfo pc={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,.queueFamilyIndex=family};if((vr=vkCreateCommandPool(c->device,&pc,NULL,&c->command_pool))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create command pool",vr);}VkCommandBufferAllocateInfo ca={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,.commandPool=c->command_pool,.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY,.commandBufferCount=2};VkCommandBuffer commands[2]={0};if((vr=vkAllocateCommandBuffers(c->device,&ca,commands))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"allocate command buffer",vr);}c->command=commands[0];c->command_alt=commands[1];
     VkFenceCreateInfo fc={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};if((vr=vkCreateFence(c->device,&fc,NULL,&c->fence))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create fence",vr);}if((vr=vkCreateFence(c->device,&fc,NULL,&c->expert_fence))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create expert fence",vr);}if((vr=vkCreateFence(c->device,&fc,NULL,&c->fence_alt))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create alternate fence",vr);}if((vr=vkCreateFence(c->device,&fc,NULL,&c->held_fence))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create held-batch fence",vr);}VkSemaphoreCreateInfo sc={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};for(uint32_t i=0;i<2u;i++)if((vr=vkCreateSemaphore(c->device,&sc,NULL,&c->flush_semaphores[i]))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create pipeline semaphore",vr);}c->pipeline_ready=true;VkDescriptorSetLayoutBinding layout_bindings[16];for(uint32_t i=0;i<16u;i++)layout_bindings[i]=(VkDescriptorSetLayoutBinding){.binding=i,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.descriptorCount=1u,.stageFlags=VK_SHADER_STAGE_COMPUTE_BIT};VkDescriptorSetLayoutCreateInfo layout_create={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,.bindingCount=16u,.pBindings=layout_bindings};if((vr=vkCreateDescriptorSetLayout(c->device,&layout_create,NULL,&c->descriptor_set_layout))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create shared descriptor layout",vr);}VkDescriptorPoolSize ps={.type=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.descriptorCount=FG_VK_BATCH_MAX_SETS*16u};VkDescriptorPoolCreateInfo dp={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,.maxSets=FG_VK_BATCH_MAX_SETS,.poolSizeCount=1,.pPoolSizes=&ps};if((vr=vkCreateDescriptorPool(c->device,&dp,NULL,&c->descriptor_pool))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create descriptor pool",vr);}VkDescriptorSetLayout set_layouts[FG_VK_BATCH_MAX_SETS];for(uint32_t i=0;i<FG_VK_BATCH_MAX_SETS;i++)set_layouts[i]=c->descriptor_set_layout;VkDescriptorSetAllocateInfo set_allocate={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,.descriptorPool=c->descriptor_pool,.descriptorSetCount=FG_VK_BATCH_MAX_SETS,.pSetLayouts=set_layouts};if((vr=vkAllocateDescriptorSets(c->device,&set_allocate,c->descriptor_sets))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"preallocate descriptor sets",vr);}VkDescriptorPoolSize static_ps={.type=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.descriptorCount=FG_VK_STATIC_SET_COUNT*16u};VkDescriptorPoolCreateInfo static_dp={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,.maxSets=FG_VK_STATIC_SET_COUNT,.poolSizeCount=1,.pPoolSizes=&static_ps};if((vr=vkCreateDescriptorPool(c->device,&static_dp,NULL,&c->static_descriptor_pool))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create static descriptor pool",vr);}VkDescriptorSetAllocateInfo static_allocate={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,.descriptorPool=c->static_descriptor_pool,.descriptorSetCount=FG_VK_STATIC_SET_COUNT,.pSetLayouts=set_layouts};if((vr=vkAllocateDescriptorSets(c->device,&static_allocate,c->static_descriptor_sets))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"preallocate static descriptor sets",vr);}VkPipelineCacheCreateInfo pci={.sType=VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};if((vr=vkCreatePipelineCache(c->device,&pci,NULL,&c->pipeline_cache))!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create pipeline cache",vr);}
     c->quant_q8k=(fg_vk_kernel){.file="fg_quantize_q8_k.spv",.bindings=2,.push_bytes=12};c->quant_q8=(fg_vk_kernel){.file="fg_quantize_q8_0.spv",.bindings=2,.push_bytes=12};c->quant_q4=(fg_vk_kernel){.file="fg_quantize_q4_0.spv",.bindings=2,.push_bytes=12};
@@ -354,6 +383,7 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
 void fg_vk_close(fg_vk_context *c){
     if(!c)return;
     if(c->device)vkDeviceWaitIdle(c->device);
+    fg_vk_tensor_destroy(c->roof_partials);
     if(c->layer_query_pool)vkDestroyQueryPool(c->device,c->layer_query_pool,NULL);
     free(c->layer_samples);
     destroy_kernel(c,&c->moe_decode_shared_add);destroy_kernel(c,&c->moe_decode_down_reduce);destroy_kernel(c,&c->moe_decode_gate_up);destroy_kernel(c,&c->moe_prefill_shard_reduce);destroy_kernel(c,&c->moe_prefill_reduce);destroy_kernel(c,&c->q8_0_grouped);destroy_kernel(c,&c->q8_0_cooked_grouped);destroy_kernel(c,&c->q5_1_cooked_grouped);destroy_kernel(c,&c->kquant_cooked_grouped_int);destroy_kernel(c,&c->kquant_cooked_grouped);destroy_kernel(c,&c->decode_tile_schedule);destroy_kernel(c,&c->expert_major_pack);destroy_kernel(c,&c->router_top10);destroy_kernel(c,&c->dense_cooked_tile);destroy_kernel(c,&c->bench_cooked_layout);destroy_kernel(c,&c->bench_stream_vec);destroy_kernel(c,&c->bench_stream_wide);destroy_kernel(c,&c->bench_dot_nored);destroy_kernel(c,&c->bench_dequant);destroy_kernel(c,&c->bench_stream);destroy_kernel(c,&c->kquant);destroy_kernel(c,&c->moe_reduce);destroy_kernel(c,&c->moe_q8_0);destroy_kernel(c,&c->moe_q8_0_cooked);destroy_kernel(c,&c->moe_q5_1);destroy_kernel(c,&c->topk_v2);destroy_kernel(c,&c->topk_select);destroy_kernel(c,&c->topk_select_fallback);destroy_kernel(c,&c->apply_penalties);destroy_kernel(c,&c->qsa_resident_attention);destroy_kernel(c,&c->qsa_resident_merge);destroy_kernel(c,&c->qsa_resident_select);destroy_kernel(c,&c->qsa_resident_commit);destroy_kernel(c,&c->qsa_attention_split);destroy_kernel(c,&c->qsa_decode_attention_split);destroy_kernel(c,&c->qsa_attention_merge);destroy_kernel(c,&c->qsa_attention_split_batch);destroy_kernel(c,&c->qsa_attention_merge_batch);destroy_kernel(c,&c->qsa_record_gather_batch);destroy_kernel(c,&c->qsa_select_resolve);destroy_kernel(c,&c->qsa_attention);destroy_kernel(c,&c->qsa_score);destroy_kernel(c,&c->qsa_record_gather);destroy_kernel(c,&c->qsa_record_commit);destroy_kernel(c,&c->qsa_index_prepare_prefill);destroy_kernel(c,&c->qsa_index_prepare);destroy_kernel(c,&c->qsa_prepare_prefill);destroy_kernel(c,&c->qsa_prepare);destroy_kernel(c,&c->gdn_prefill_output);destroy_kernel(c,&c->gdn_prefill_recurrence);destroy_kernel(c,&c->gdn_prefill_qk_norm);destroy_kernel(c,&c->gdn_recurrent_prefill);destroy_kernel(c,&c->gdn_recurrent_algebraic);destroy_kernel(c,&c->gdn_recurrent);destroy_kernel(c,&c->gdn_conv_prefill);destroy_kernel(c,&c->gdn_conv);destroy_kernel(c,&c->add);destroy_kernel(c,&c->ple_conv_prefill);destroy_kernel(c,&c->ple_conv);destroy_kernel(c,&c->ple_conv_add);destroy_kernel(c,&c->ple_gate_prefill);destroy_kernel(c,&c->ple_gate);destroy_kernel(c,&c->gr_write);destroy_kernel(c,&c->hc_finalize);destroy_kernel(c,&c->gr_partial);destroy_kernel(c,&c->hc_inject_partial);destroy_kernel(c,&c->gr);destroy_kernel(c,&c->rms);destroy_kernel(c,&c->dense_cooked);destroy_kernel(c,&c->dense_subgroup);destroy_kernel(c,&c->dense_bf16);destroy_kernel(c,&c->dense_f32);destroy_kernel(c,&c->dense);destroy_kernel(c,&c->silu_scaled);destroy_kernel(c,&c->swiglu);destroy_kernel(c,&c->embedding_batch);destroy_kernel(c,&c->embedding);destroy_kernel(c,&c->dequant_iq4nl);destroy_kernel(c,&c->quant_q4);destroy_kernel(c,&c->quant_q8);destroy_kernel(c,&c->quant_q8k);if(c->profile_query_pool)vkDestroyQueryPool(c->device,c->profile_query_pool,NULL);if(c->pipeline_cache)vkDestroyPipelineCache(c->device,c->pipeline_cache,NULL);if(c->descriptor_pool)vkDestroyDescriptorPool(c->device,c->descriptor_pool,NULL);if(c->static_descriptor_pool)vkDestroyDescriptorPool(c->device,c->static_descriptor_pool,NULL);if(c->descriptor_set_layout)vkDestroyDescriptorSetLayout(c->device,c->descriptor_set_layout,NULL);if(c->expert_fence)vkDestroyFence(c->device,c->expert_fence,NULL);if(c->fence)vkDestroyFence(c->device,c->fence,NULL);if(c->copy_fence)vkDestroyFence(c->device,c->copy_fence,NULL);if(c->command_pool)vkDestroyCommandPool(c->device,c->command_pool,NULL);if(c->copy_pool)vkDestroyCommandPool(c->device,c->copy_pool,NULL);if(c->device)vkDestroyDevice(c->device,NULL);if(c->instance)vkDestroyInstance(c->instance,NULL);free(c);
@@ -577,6 +607,18 @@ static fg_status dispatch(fg_vk_context *c,fg_vk_kernel *kernel,const fg_vk_tens
         kernel=roof_kernel(c,13u,"fg_roof_hc_mix.spv",5u,16u);
     }else if(kernel==&c->moe_decode_gate_up&&roof_enabled(c,32u)){
         kernel=roof_kernel(c,9u,"fg_roof_expert.spv",5u,32u);
+        const char *value=getenv("FG_ROOF_EXPERT");
+        uint32_t v=value?(uint32_t)strtoul(value,NULL,0)&7u:0u;
+        if(v>=1u&&v<=5u&&(v<3u||c->roof_wave32)){
+            static const char *files[]={"fg_roof_expert_p2.spv","fg_roof_expert_p4.spv",
+                "fg_roof_expert_w32.spv","fg_roof_expert_p2_w32.spv","fg_roof_expert_p4_w32.spv"};
+            kernel=roof_kernel(c,24u+v,files[v-1u],5u,32u);
+            if(v>=3u)gx*=2u;
+        }
+    }else if(kernel==&c->moe_decode_down_reduce&&roof_enabled(c,32u)&&c->roof_wave32){
+        const char *value=getenv("FG_ROOF_EXPERT");
+        if(value&&((uint32_t)strtoul(value,NULL,0)&8u)!=0u)
+            kernel=roof_kernel(c,30u,"fg_roof_down_w32.spv",5u,28u);
     }else if(kernel==&c->dense_f32&&push&&((const uint32_t *)push)[0]==2560u&&
              ((const uint32_t *)push)[1]==48u&&roof_enabled(c,128u)){
         kernel=roof_kernel(c,14u,"fg_roof_control.spv",3u,12u);
@@ -1050,9 +1092,66 @@ fg_status fg_vk_dense_quant(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tenso
             }
         }
     }
-    if(compact&&type==12u&&tokens==1u&&rows>=2560u&&roof_enabled(c,1u)){
+    if(soa&&!compact&&type==12u&&tokens==1u&&rows>=2560u&&roof_enabled(c,1u)){
+        const char *roof_variant=getenv("FG_ROOF_DENSE");
+        if(roof_variant&&strtoul(roof_variant,NULL,0)==21u)
+            return dispatch(c,roof_kernel(c,39u,"fg_roof_dense_wide_l2.spv",3u,24u),
+                bindings,&push,(rows+7u)/8u,1u,1u,err);
+    }
+    if(compact&&(type==12u||type==20u)&&tokens==1u&&roof_enabled(c,1u)){
         const char *variant=getenv("FG_ROOF_DENSE");
         uint32_t v=variant?(uint32_t)strtoul(variant,NULL,0):7u;
+        if(v==22u){
+            if(type==12u)
+                return dispatch(c,roof_kernel(c,40u,"fg_roof_dense_l2_w128.spv",3u,24u),
+                    bindings,&push,(rows+7u)/8u,1u,1u,err);
+            v=6u;
+        }
+        if(v==19u)v=type==12u&&rows>=2560u?
+            (in==2560u&&(rows==6144u||rows==12288u)?18u:15u):6u;
+        if(v==20u){
+            if(type==20u&&c->roof_wave32)
+                return dispatch(c,roof_kernel(c,38u,"fg_roof_dense_iq4_w32.spv",3u,24u),
+                    bindings,&push,(rows+7u)/8u,1u,1u,err);
+            v=6u;
+        }
+        if(v>=15u&&v<=18u){
+            if(type==12u&&(v<=16u||c->roof_wave32)){
+                static const char *files[]={"fg_roof_dense_l2.spv","fg_roof_dense_l1.spv",
+                    "fg_roof_dense_l2_w32.spv","fg_roof_dense_l1_w32.spv"};
+                return dispatch(c,roof_kernel(c,34u+v-15u,files[v-15u],3u,24u),
+                    bindings,&push,(rows+7u)/8u,1u,1u,err);
+            }
+            v=6u;
+        }
+        if(v==13u||v==14u){
+            if(type==12u&&in>=8192u&&rows<=1024u){
+                fg_status status=FG_OK;
+                if(!c->roof_partials)status=fg_vk_tensor_create(c,8u*1024u*4u,&c->roof_partials,err);
+                if(status!=FG_OK)return status;
+                uint32_t splits=v==13u?4u:8u;
+                const fg_vk_tensor *partial_bindings[]={w,x,c->roof_partials};
+                status=dispatch(c,roof_kernel(c,31u+(v-13u),
+                    v==13u?"fg_roof_stream_q4_split4.spv":"fg_roof_stream_q4_split8.spv",3u,24u),
+                    partial_bindings,&push,(rows+7u)/8u,splits,1u,err);
+                const fg_vk_tensor *merge_bindings[]={c->roof_partials,out};
+                struct{uint32_t m,splits;}merge={rows,splits};
+                return status==FG_OK?dispatch(c,roof_kernel(c,33u,"fg_roof_split_merge.spv",2u,8u),
+                    merge_bindings,&merge,(rows+255u)/256u,1u,1u,err):status;
+            }
+            v=6u;
+        }
+        if(v>=8u&&v<=12u&&(v<11u||c->roof_wave32)){
+            static const char *files[][2]={
+                {"fg_roof_stream_q4_p1.spv","fg_roof_stream_iq4_p1.spv"},
+                {"fg_roof_stream_q4_p2.spv","fg_roof_stream_iq4_p2.spv"},
+                {"fg_roof_stream_q4_p4.spv","fg_roof_stream_iq4_p4.spv"},
+                {"fg_roof_stream_q4_p2_w32.spv","fg_roof_stream_iq4_p2_w32.spv"},
+                {"fg_roof_stream_q4_p4_w32.spv","fg_roof_stream_iq4_p4_w32.spv"}};
+            return dispatch(c,roof_kernel(c,15u+(v-8u)*2u+(type==20u),files[v-8u][type==20u],3u,24u),
+                bindings,&push,(rows+7u)/8u,1u,1u,err);
+        }
+        if(type!=12u||rows<2560u)v=0u;
         if(v==6u)v=in==2560u?5u:4u;
         if(v==7u)v=in==2560u&&rows==6144u?0u:5u;
         if(v>=1u&&v<=5u){

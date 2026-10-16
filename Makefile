@@ -87,6 +87,9 @@ vulkan/fg_router_top10.spv vulkan/fg_router_top10_tiles.spv: shaders/fg_router_t
 vulkan/fg_dense_q8_0_cooked_r8.spv vulkan/fg_shared_swiglu_q8.spv: shaders/fg_dense_q8_0_cooked_r8.glsl
 vulkan/fg_shared_swiglu_q4.spv: shaders/fg_dense_soa_impl.glsl
 vulkan/fg_moe_decode_gate_up.spv vulkan/fg_roof_expert.spv: shaders/fg_moe_decode_gate_up.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_expert*.comp)): shaders/fg_moe_decode_gate_up.glsl
+vulkan/fg_moe_decode_down_reduce.spv vulkan/fg_roof_down_w32.spv: shaders/fg_moe_decode_down_reduce.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_stream*.comp)): shaders/fg_roof_stream.glsl
 vulkan/fg_qsa_decode_attention_split.spv vulkan/fg_roof_qsa_h1.spv vulkan/fg_roof_qsa_h3.spv vulkan/fg_roof_qsa_h6.spv: shaders/fg_qsa_decode_attention_split.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_dense*.comp)): shaders/fg_dense_soa_impl.glsl shaders/fg_dense_compact_gemv.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_dense_soa*.comp)): shaders/fg_dense_soa_impl.glsl
