@@ -1,0 +1,4 @@
+# Retain exact collected bytes so evidence checksums survive checkout.
+AB_QUALIFY.* -text
+ab-*.json -text
+ab-*/** -text

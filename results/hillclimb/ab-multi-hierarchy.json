@@ -1,0 +1,8 @@
+{
+  "quality_pass": false,
+  "long_skipped_reason": "The first screen pair failed during concurrent generation. No complete paired sample or interval; candidate is operationally unqualified.",
+  "screen_result": "D:\\looking-glass-labs\\fg-wt\\ab-harness\\results\\hillclimb\\ab-multi\\ab-result.json",
+  "long_measured": false,
+  "eligible": false,
+  "complete": false
+}

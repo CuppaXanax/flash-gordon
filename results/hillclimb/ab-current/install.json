@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "e21cb0e3c986a9c473a538c05b471506f8ec3a6ad78fbcac9ae202875219b1db  ab-instance.sh\n4639149906babad5e2d03cc795dfca9135831679224be94a1ac34234d9f4577e  launch-current.sh\nefb7aa2728128b4a61c15617fc74b0a6c4fdde5fd9e89ab4817f906f1834be68  current.json",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "e21cb0e3c986a9c473a538c05b471506f8ec3a6ad78fbcac9ae202875219b1db  ab-instance.sh\n4639149906babad5e2d03cc795dfca9135831679224be94a1ac34234d9f4577e  launch-current.sh\nefb7aa2728128b4a61c15617fc74b0a6c4fdde5fd9e89ab4817f906f1834be68  current.json",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "e21cb0e3c986a9c473a538c05b471506f8ec3a6ad78fbcac9ae202875219b1db  ab-instance.sh\n4639149906babad5e2d03cc795dfca9135831679224be94a1ac34234d9f4577e  launch-current.sh\nefb7aa2728128b4a61c15617fc74b0a6c4fdde5fd9e89ab4817f906f1834be68  current.json",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "e21cb0e3c986a9c473a538c05b471506f8ec3a6ad78fbcac9ae202875219b1db  ab-instance.sh\n4639149906babad5e2d03cc795dfca9135831679224be94a1ac34234d9f4577e  launch-current.sh\nefb7aa2728128b4a61c15617fc74b0a6c4fdde5fd9e89ab4817f906f1834be68  current.json",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "e21cb0e3c986a9c473a538c05b471506f8ec3a6ad78fbcac9ae202875219b1db  ab-instance.sh\n4639149906babad5e2d03cc795dfca9135831679224be94a1ac34234d9f4577e  launch-current.sh\nefb7aa2728128b4a61c15617fc74b0a6c4fdde5fd9e89ab4817f906f1834be68  current.json",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "e21cb0e3c986a9c473a538c05b471506f8ec3a6ad78fbcac9ae202875219b1db  ab-instance.sh\n4639149906babad5e2d03cc795dfca9135831679224be94a1ac34234d9f4577e  launch-current.sh\nefb7aa2728128b4a61c15617fc74b0a6c4fdde5fd9e89ab4817f906f1834be68  current.json",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "e21cb0e3c986a9c473a538c05b471506f8ec3a6ad78fbcac9ae202875219b1db  ab-instance.sh\n4639149906babad5e2d03cc795dfca9135831679224be94a1ac34234d9f4577e  launch-current.sh\nefb7aa2728128b4a61c15617fc74b0a6c4fdde5fd9e89ab4817f906f1834be68  current.json",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "e21cb0e3c986a9c473a538c05b471506f8ec3a6ad78fbcac9ae202875219b1db  ab-instance.sh\n4639149906babad5e2d03cc795dfca9135831679224be94a1ac34234d9f4577e  launch-current.sh\nefb7aa2728128b4a61c15617fc74b0a6c4fdde5fd9e89ab4817f906f1834be68  current.json",
+    "Stderr": ""
+  }
+]

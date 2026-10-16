@@ -1,0 +1,28 @@
+{
+  "change_kind": "exact",
+  "deploy_script": "D:\\looking-glass-labs\\fg-wt\\ab-harness\\tools\\ab-deploy.ps1",
+  "B": {
+    "binary_sha256": "1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789",
+    "manifest": "/home/xander/fg-ring-pack-abliterated/manifest.fgm",
+    "release": "/home/xander/flash-gordon-live/20261015-abq-main",
+    "manifest_sha256": "35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb",
+    "sessions": 1,
+    "wide": 0
+  },
+  "restore_script": "D:\\looking-glass-labs\\fg-wt\\ab-harness\\tools\\ab-restore.ps1",
+  "contexts": [
+    4096,
+    32768,
+    131072
+  ],
+  "A": {
+    "binary_sha256": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2",
+    "manifest": "/home/xander/fg-ring-pack-abliterated/manifest.fgm",
+    "release": "/home/xander/flash-gordon-live/20260926-abl2",
+    "manifest_sha256": "35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb",
+    "sessions": 1,
+    "wide": 0
+  },
+  "resume_reason": "Unsupported optional gpu_busy_percent sensor caused status failure after pair 0; original restored healthy. Preserve pair 0; continue fixed rounds 1 and 2, not performance-based resampling.",
+  "snapshot_script": "D:\\looking-glass-labs\\fg-wt\\ab-harness\\tools\\ab-deploy.ps1"
+}

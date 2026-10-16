@@ -1,0 +1,28 @@
+{
+  "health": {
+    "status": "ok",
+    "busy": false
+  },
+  "chat": {
+    "id": "chatcmpl-fg-1792130788-2",
+    "object": "chat.completion",
+    "created": 1792130788,
+    "model": "Qwen3.8-Flash-Next-Uncensored",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "OK"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 16,
+      "completion_tokens": 1,
+      "total_tokens": 17
+    }
+  },
+  "verified_at": "2026-10-15T23:06:28.8740472-07:00"
+}

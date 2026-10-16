@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "RING_OWN_BLOCK chunk=827 layers=6..11 ms=82.9\nRING_DONE chunk=827 in_flight=0 completed=828 handle_ms=0.0 t=694750.947\nrequest chatcmpl-fg-1792124400-5: prefill interrupted after 26496/260071 tokens, frontier 26496, 694.8 s, client_failed 1",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "[rank 1] QSA Vulkan index canary: eager_segments=1 of=2 max_segment=17825792 requested=17825792 allocated=17825792 touched=17825792 bytes\n[rank 1] QSA decode session: 262144 logical, 65536 cache pages, 1 layers, 20.0 MiB eager index, 309.0 MiB record cache\n[rank 1] Vulkan memory: live_requested=11572168472 live_allocated=11572168496 peak_requested=11572168472 peak_allocated=11572168496 live_allocations=107",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "[rank 2] QSA Vulkan index canary: eager_segments=1 of=2 max_segment=17825792 requested=17825792 allocated=17825792 touched=17825792 bytes\n[rank 2] QSA decode session: 262144 logical, 65536 cache pages, 1 layers, 20.0 MiB eager index, 309.0 MiB record cache\n[rank 2] Vulkan memory: live_requested=10816886552 live_allocated=10816886576 peak_requested=10816886552 peak_allocated=10816886576 live_allocations=104",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "[rank 3] QSA Vulkan index canary: eager_segments=2 of=4 max_segment=17825792 requested=35651584 allocated=35651584 touched=35651584 bytes\n[rank 3] QSA decode session: 262144 logical, 131072 cache pages, 2 layers, 37.0 MiB eager index, 618.0 MiB record cache\n[rank 3] Vulkan memory: live_requested=11344719896 live_allocated=11344719920 peak_requested=11344719896 peak_allocated=11344719920 live_allocations=89",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "[rank 4] QSA Vulkan index canary: eager_segments=1 of=2 max_segment=17825792 requested=17825792 allocated=17825792 touched=17825792 bytes\n[rank 4] QSA decode session: 262144 logical, 65536 cache pages, 1 layers, 20.0 MiB eager index, 309.0 MiB record cache\n[rank 4] Vulkan memory: live_requested=11333896472 live_allocated=11333896496 peak_requested=11333896472 peak_allocated=11333896496 live_allocations=116",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "[rank 5] QSA Vulkan index canary: eager_segments=2 of=4 max_segment=17825792 requested=35651584 allocated=35651584 touched=35651584 bytes\n[rank 5] QSA decode session: 262144 logical, 131072 cache pages, 2 layers, 37.0 MiB eager index, 618.0 MiB record cache\n[rank 5] Vulkan memory: live_requested=11606863896 live_allocated=11606863920 peak_requested=11606863896 peak_allocated=11606863920 live_allocations=89",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "[rank 6] QSA Vulkan index canary: eager_segments=1 of=2 max_segment=17825792 requested=17825792 allocated=17825792 touched=17825792 bytes\n[rank 6] QSA decode session: 262144 logical, 65536 cache pages, 1 layers, 20.0 MiB eager index, 309.0 MiB record cache\n[rank 6] Vulkan memory: live_requested=10647396376 live_allocated=10647396400 peak_requested=10647396376 peak_allocated=10647396400 live_allocations=91",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "[rank 7] QSA Vulkan index canary: eager_segments=2 of=4 max_segment=17825792 requested=35651584 allocated=35651584 touched=35651584 bytes\n[rank 7] QSA decode session: 262144 logical, 131072 cache pages, 2 layers, 37.0 MiB eager index, 618.0 MiB record cache\n[rank 7] Vulkan memory: live_requested=11874970136 live_allocated=11874970160 peak_requested=11874970136 peak_allocated=11874970160 live_allocations=98",
+    "Stderr": ""
+  }
+]

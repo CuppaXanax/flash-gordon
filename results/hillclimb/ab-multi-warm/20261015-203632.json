@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "metadata": {
+    "timestamp": "2026-10-15T20:36:32.0791603-07:00",
+    "base_url": "http://192.168.42.42:8080/v1",
+    "quick": false,
+    "model": "Qwen3.8-Flash-Next-Uncensored",
+    "ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50",
+    "git_sha": null,
+    "server_headers": {
+      "Connection": "keep-alive",
+      "Cache-Control": "no-store",
+      "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+      "X-Flash-Gordon-Prompt-Tokens": "99",
+      "X-Flash-Gordon-Prefilled-Tokens": "99",
+      "X-Flash-Gordon-Reused-Tokens": "0",
+      "X-Flash-Gordon-Prefix-Cache": "miss",
+      "X-Flash-Gordon-Exact-Frontier": "false",
+      "X-Flash-Gordon-Reset-Reason": "cold-start",
+      "X-Flash-Gordon-Completion-Tokens": "1",
+      "X-Flash-Gordon-Context-Tokens": "100",
+      "X-Flash-Gordon-Prefill-Seconds": "3.120310776",
+      "X-Flash-Gordon-Prefill-TPS": "31.727609",
+      "X-Flash-Gordon-Decode-Seconds": "0.093508846",
+      "X-Flash-Gordon-Decode-TPS": "10.694175",
+      "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50",
+      "Content-Type": "application/json",
+      "Content-Length": "289"
+    },
+    "notes": [
+      "SSE delta timestamps measure visible content events; the API does not expose token IDs or engine metric headers on streamed responses.",
+      "ignore_eos/min_tokens are not implemented by src/api.c. Decode requests use greedy sampling and report actual usage token counts; max_tokens is only a ceiling.",
+      "Long-context engine decode headers come from a cached follow-on non-stream continuation, not the exact SSE generation. This preserves the long KV context without a second cold prefill."
+    ],
+    "run_id": "1e3bb9b347d04fd5ba96d55da83cebd3",
+    "reference_write_requested": false,
+    "elapsed_seconds": 115.6516583
+  },
+  "prefill": [],
+  "ttft": [],
+  "decode": [],
+  "concurrency": null,
+  "correctness": [],
+  "errors": [
+    {
+      "message": "Exception calling \"GetResult\" with \"0\" argument(s): \"An error occurred while sending the request.\"",
+      "script_stack": "at Invoke-NonStream, D:\\looking-glass-labs\\fg-wt\\multi-session-int\\tools\\hillclimb.ps1: line 235\r\nat Invoke-ConcurrentGeneration, D:\\looking-glass-labs\\fg-wt\\multi-session-int\\tools\\hillclimb.ps1: line 579\r\nat <ScriptBlock>, D:\\looking-glass-labs\\fg-wt\\multi-session-int\\tools\\hillclimb.ps1: line 658"
+    }
+  ]
+}

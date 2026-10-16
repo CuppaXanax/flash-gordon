@@ -1,0 +1,6 @@
+{
+  "timestamp": "2026-10-15T20:43:33.3887431-07:00",
+  "parent_pid": 35356,
+  "reason": "Cancel old-binary HTTP client after reproducing and fixing static slots 4..7 descriptor guard. Keep parent rollback alive; retain failed data; run repaired-binary probe afresh.",
+  "pid": 17964
+}

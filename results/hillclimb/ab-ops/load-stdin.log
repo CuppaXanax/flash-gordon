@@ -1,0 +1,4 @@
+AB_DEPLOY arm=diagnostic-warm-forensic release=/home/xander/flash-gordon-live/20261015-abq-multi-fix sessions=2 wide=0 healthy=true
+AB_DEPLOY arm=restore release=/home/xander/flash-gordon-live/20260926-abl2 sessions=1 wide=0 healthy=true
+DIAGNOSTIC warm-forensic complete=False exit=1 restored=True
+AB_DEPLOY arm=diagnostic-near262k-final release=/home/xander/flash-gordon-live/20261015-abq-multi-fix sessions=2 wide=0 healthy=true

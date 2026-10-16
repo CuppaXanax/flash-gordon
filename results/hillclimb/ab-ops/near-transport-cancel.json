@@ -1,0 +1,6 @@
+{
+  "timestamp": "2026-10-15T21:31:31.8499094-07:00",
+  "parent_pid": 52680,
+  "client_pid": 12472,
+  "reason": "Transfer operator ownership to the validated stdin-only fleet transport. Preserve the interrupted resource probe; do not alter any completed A/B samples. Capture and restore original immediately, then run one final capacity probe."
+}

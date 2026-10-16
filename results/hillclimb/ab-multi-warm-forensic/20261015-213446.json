@@ -1,0 +1,155 @@
+{
+  "schema": 1,
+  "metadata": {
+    "timestamp": "2026-10-15T21:34:46.0922924-07:00",
+    "base_url": "http://192.168.42.42:8080/v1",
+    "quick": false,
+    "model": "Qwen3.8-Flash-Next-Uncensored",
+    "ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50",
+    "git_sha": null,
+    "server_headers": {
+      "Connection": "keep-alive",
+      "Cache-Control": "no-store",
+      "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+      "X-Flash-Gordon-Prompt-Tokens": "93",
+      "X-Flash-Gordon-Prefilled-Tokens": "93",
+      "X-Flash-Gordon-Reused-Tokens": "0",
+      "X-Flash-Gordon-Prefix-Cache": "miss",
+      "X-Flash-Gordon-Exact-Frontier": "false",
+      "X-Flash-Gordon-Reset-Reason": "cold-start",
+      "X-Flash-Gordon-Completion-Tokens": "1",
+      "X-Flash-Gordon-Context-Tokens": "94",
+      "X-Flash-Gordon-Prefill-Seconds": "3.132358057",
+      "X-Flash-Gordon-Prefill-TPS": "29.690092",
+      "X-Flash-Gordon-Decode-Seconds": "0.689850863",
+      "X-Flash-Gordon-Decode-TPS": "1.449589",
+      "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50",
+      "Content-Type": "application/json",
+      "Content-Length": "288"
+    },
+    "notes": [
+      "SSE delta timestamps measure visible content events; the API does not expose token IDs or engine metric headers on streamed responses.",
+      "ignore_eos/min_tokens are not implemented by src/api.c. Decode requests use greedy sampling and report actual usage token counts; max_tokens is only a ceiling.",
+      "Long-context engine decode headers come from a cached follow-on non-stream continuation, not the exact SSE generation. This preserves the long KV context without a second cold prefill."
+    ],
+    "run_id": "82138aec903742fbbf701a427a5c8642",
+    "reference_write_requested": false,
+    "elapsed_seconds": 268.4772017
+  },
+  "prefill": [],
+  "ttft": [],
+  "decode": [],
+  "concurrency": {
+    "mode": "two-warm-prefix-generations",
+    "capacity_probe": false,
+    "complete": false,
+    "trials": [
+      {
+        "repeat": 0,
+        "isolated": [
+          {
+            "name": "chat-style",
+            "ttft_ms": 1155.8322,
+            "wall_seconds": 14.6458878,
+            "completion_tokens": 128,
+            "prompt_tokens": 160,
+            "prefix": {
+              "reused_tokens": 125,
+              "prefilled_tokens": 35
+            },
+            "first_content_clock_ticks": 1512293188121,
+            "last_content_clock_ticks": 1512427619538,
+            "client_decode_tps": 9.488470900001332,
+            "client_end_to_end_tps": 8.739654553409865,
+            "visible_delta_events": 109,
+            "inter_event_p95_ms": 416.7988999999998,
+            "finish_received": true,
+            "sha256": "02714a3e17156d0393684f23f5e1aa430a0595cd50c2084920fb1cb3dd8b360d",
+            "visible_text": "1. Refactor legacy code\n2. Write unit tests\n3. Debug production errors\n4. Optimize database queries\n5. Update dependencies\n6. Configure CI/CD pipelines\n7. Design API endpoints\n8. Implement authentication\n9. Create user interfaces\n10. Manage state management\n11. Handle error logging\n12. Perform code reviews\n13. Document API usage\n14. Set up local environments\n15. Deploy to staging\n16. Monitor server health\n17. Scale microservices\n18. Cache frequent requests\n19. Validate input data\n2"
+          },
+          {
+            "name": "agent-style",
+            "ttft_ms": 1223.5018,
+            "wall_seconds": 1.2920315,
+            "completion_tokens": 1,
+            "prompt_tokens": 4199,
+            "prefix": {
+              "reused_tokens": 4164,
+              "prefilled_tokens": 35
+            },
+            "first_content_clock_ticks": 1512440367367,
+            "last_content_clock_ticks": 1512440367422,
+            "client_decode_tps": 14.592213303137175,
+            "client_end_to_end_tps": 0.7739749379175352,
+            "visible_delta_events": 1,
+            "inter_event_p95_ms": null,
+            "finish_received": true,
+            "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "visible_text": "1"
+          }
+        ],
+        "load": {
+          "streams": [
+            {
+              "name": "chat-style",
+              "ttft_ms": 1394.3971,
+              "wall_seconds": 17.7466303,
+              "completion_tokens": 128,
+              "prompt_tokens": 160,
+              "prefix": {
+                "reused_tokens": 125,
+                "prefilled_tokens": 35
+              },
+              "first_content_clock_ticks": 1513591733887,
+              "last_content_clock_ticks": 1513754851078,
+              "client_decode_tps": 7.8276770172284476,
+              "client_end_to_end_tps": 7.212636868870819,
+              "visible_delta_events": 109,
+              "inter_event_p95_ms": 465.2070999999996,
+              "finish_received": true,
+              "sha256": "02714a3e17156d0393684f23f5e1aa430a0595cd50c2084920fb1cb3dd8b360d",
+              "visible_text": "1. Refactor legacy code\n2. Write unit tests\n3. Debug production errors\n4. Optimize database queries\n5. Update dependencies\n6. Configure CI/CD pipelines\n7. Design API endpoints\n8. Implement authentication\n9. Create user interfaces\n10. Manage state management\n11. Handle error logging\n12. Perform code reviews\n13. Document API usage\n14. Set up local environments\n15. Deploy to staging\n16. Monitor server health\n17. Scale microservices\n18. Cache frequent requests\n19. Validate input data\n2",
+              "isolated_decode_tps": 9.488470900001332,
+              "decode_retention": 0.8249671732910462,
+              "isolated_ttft_ms": 1155.8322,
+              "same_prompt_hash_match": true,
+              "requested_token_ceiling": 128
+            },
+            {
+              "name": "agent-style",
+              "ttft_ms": 1304.1067,
+              "wall_seconds": 1.3985206,
+              "completion_tokens": 1,
+              "prompt_tokens": 4199,
+              "prefix": {
+                "reused_tokens": 4164,
+                "prefilled_tokens": 35
+              },
+              "first_content_clock_ticks": 1513590807697,
+              "last_content_clock_ticks": 1513590807740,
+              "client_decode_tps": 10.591660761815799,
+              "client_end_to_end_tps": 0.7150413086514421,
+              "visible_delta_events": 1,
+              "inter_event_p95_ms": null,
+              "finish_received": true,
+              "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+              "visible_text": "1"
+            }
+          ],
+          "aggregate_client_decode_tps": 7.844401277805537,
+          "overlapping_visible_decode_seconds": 0.0,
+          "chat_first_token_before_agent_first_token": false,
+          "token_count_source": "usage on these exact SSE streams",
+          "denominator": "sum actual completion tokens / (latest DONE - earliest first visible token), including gaps and fill/drain"
+        }
+      }
+    ]
+  },
+  "correctness": [],
+  "errors": [
+    {
+      "message": "Insufficient sustained generation: agent-style emitted 1 tokens.",
+      "script_stack": "at Invoke-ConcurrentGeneration, D:\\looking-glass-labs\\fg-wt\\multi-session-int\\tools\\hillclimb.ps1: line 603\r\nat <ScriptBlock>, D:\\looking-glass-labs\\fg-wt\\multi-session-int\\tools\\hillclimb.ps1: line 663"
+    }
+  ]
+}

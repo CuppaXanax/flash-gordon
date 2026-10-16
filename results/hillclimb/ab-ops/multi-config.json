@@ -1,0 +1,30 @@
+{
+  "change_kind": "weight-format",
+  "deploy_script": "D:\\looking-glass-labs\\fg-wt\\ab-harness\\tools\\ab-deploy.ps1",
+  "B": {
+    "binary_sha256": "c59611b11f95d5946624b6ed0b8a9c07c4720fb6e853ed4cba035fcb27165a47",
+    "manifest": "/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm",
+    "release": "/home/xander/flash-gordon-live/20261015-abq-multi",
+    "manifest_sha256": "0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252",
+    "sessions": 2,
+    "wide": 0
+  },
+  "restore_script": "D:\\looking-glass-labs\\fg-wt\\ab-harness\\tools\\ab-restore.ps1",
+  "contexts": [
+    4096
+  ],
+  "A": {
+    "binary_sha256": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2",
+    "manifest": "/home/xander/fg-ring-pack-abliterated/manifest.fgm",
+    "release": "/home/xander/flash-gordon-live/20260926-abl2",
+    "manifest_sha256": "35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb",
+    "sessions": 1,
+    "wide": 0
+  },
+  "quality_file": "D:\\looking-glass-labs\\fg-wt\\ab-harness\\.build\\abq\\mix04-quality-receipt.json",
+  "snapshot_script": "D:\\looking-glass-labs\\fg-wt\\ab-harness\\tools\\ab-deploy.ps1",
+  "required_exact_control": "D:\\looking-glass-labs\\fg-wt\\ab-harness\\results\\hillclimb\\ab-main\\ab-result.json",
+  "requires_long_qualification": true,
+  "qualification_scope": "Predeclared hierarchical 4K/short/TTFT/concurrency screen; 32K/128K three-pair long-only battery required only if every screen metric passes. No promotion after screen failure.",
+  "exact_hash_reference": "D:\\looking-glass-labs\\fg-wt\\ab-harness\\results\\hillclimb\\ab-mix\\ab-result.json"
+}

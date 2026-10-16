@@ -1,0 +1,7 @@
+Write-Error: D:\looking-glass-labs\fg-wt\multi-session-int\tools\hillclimb.ps1:757
+Line |
+ 757 |  … k failed; partial results saved to $runPath. $($_.Exception.Message)"
+     |                                                   ~~~~~~~~~~~~~~~~~~~~
+     | Benchmark failed; partial results saved to
+     | D:\looking-glass-labs\fg-wt\ab-harness\results\hillclimb\ab-multi-warm-forensic\20261015-213446.json.
+     | Insufficient sustained generation: agent-style emitted 1 tokens.

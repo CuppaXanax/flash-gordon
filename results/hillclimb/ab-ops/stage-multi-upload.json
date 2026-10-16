@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "c59611b11f95d5946624b6ed0b8a9c07c4720fb6e853ed4cba035fcb27165a47  flash-gordon",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "c59611b11f95d5946624b6ed0b8a9c07c4720fb6e853ed4cba035fcb27165a47  flash-gordon",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "c59611b11f95d5946624b6ed0b8a9c07c4720fb6e853ed4cba035fcb27165a47  flash-gordon",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "c59611b11f95d5946624b6ed0b8a9c07c4720fb6e853ed4cba035fcb27165a47  flash-gordon",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "c59611b11f95d5946624b6ed0b8a9c07c4720fb6e853ed4cba035fcb27165a47  flash-gordon",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "c59611b11f95d5946624b6ed0b8a9c07c4720fb6e853ed4cba035fcb27165a47  flash-gordon",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "c59611b11f95d5946624b6ed0b8a9c07c4720fb6e853ed4cba035fcb27165a47  flash-gordon",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "c59611b11f95d5946624b6ed0b8a9c07c4720fb6e853ed4cba035fcb27165a47  flash-gordon",
+    "Stderr": ""
+  }
+]

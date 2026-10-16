@@ -1,0 +1,8 @@
+{
+  "complete": true,
+  "long_skipped_reason": "Predeclared screen failed protected-metric noninferiority or quality; long performance is not qualified.",
+  "quality_pass": true,
+  "long_measured": false,
+  "screen_result": "D:\\looking-glass-labs\\fg-wt\\ab-harness\\results\\hillclimb\\ab-multi-fixed\\ab-result.json",
+  "eligible": false
+}

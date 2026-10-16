@@ -1,0 +1,234 @@
+AB round=0 arm=A deploying
+AB_DEPLOY arm=A release=/home/xander/flash-gordon-live/20260926-abl2 sessions=1 wide=0 healthy=true
+AB round=0 arm=B deploying
+AB_DEPLOY arm=B release=/home/xander/flash-gordon-live/20261015-abq-main sessions=1 wide=0 healthy=true
+AB round=1 arm=B deploying
+192.168.42.42 1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789  /home/xander/flash-gordon-live/20261015-abq-main/flash-gordon
+35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm
+PID=187611 EXE=/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon CMD=/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon api --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --model-name Qwen3.8-Flash-Next-Uncensored --host 0.0.0.0 --port 8080 --context-tokens 262144 --gpu-index-tokens 262144 --qsa-hot-tokens 0 --qsa-page-cache-mib 700 
+MemAvailable:    2944132 kB
+SwapTotal:       8388604 kB
+SwapFree:        8360476 kB
+SENSOR /sys/class/drm/card0/device/pp_dpm_sclk
+0: 1000Mhz *
+1: 1500Mhz 
+2: 2000Mhz 
+SENSOR /sys/class/drm/card0/device/pp_dpm_mclk
+0: 450Mhz *
+SENSOR /sys/class/drm/card0/device/gpu_busy_percent cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported
+
+192.168.42.43 1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789  /home/xander/flash-gordon-live/20261015-abq-main/flash-gordon
+35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm
+PID=119037 EXE=/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon CMD=/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 1 
+MemAvailable:    3799892 kB
+SwapTotal:       8388604 kB
+SwapFree:        8376144 kB
+SENSOR /sys/class/drm/card0/device/pp_dpm_sclk
+0: 1000Mhz *
+1: 1500Mhz 
+2: 2000Mhz 
+SENSOR /sys/class/drm/card0/device/pp_dpm_mclk
+0: 450Mhz *
+SENSOR /sys/class/drm/card0/device/gpu_busy_percent cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported
+
+192.168.42.44 1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789  /home/xander/flash-gordon-live/20261015-abq-main/flash-gordon
+35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm
+PID=115020 EXE=/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon CMD=/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 2 
+MemAvailable:    4545624 kB
+SwapTotal:       8388604 kB
+SwapFree:        8387596 kB
+SENSOR /sys/class/drm/card0/device/pp_dpm_sclk
+0: 1000Mhz *
+1: 1500Mhz 
+2: 2000Mhz 
+SENSOR /sys/class/drm/card0/device/pp_dpm_mclk
+0: 450Mhz *
+SENSOR /sys/class/drm/card0/device/gpu_busy_percent cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported
+
+192.168.42.45 1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789  /home/xander/flash-gordon-live/20261015-abq-main/flash-gordon
+35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm
+PID=114703 EXE=/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon CMD=/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 3 
+MemAvailable:    4213484 kB
+SwapTotal:       8388604 kB
+SwapFree:        8388248 kB
+SENSOR /sys/class/drm/card0/device/pp_dpm_sclk
+0: 1000Mhz *
+1: 1500Mhz 
+2: 2000Mhz 
+SENSOR /sys/class/drm/card0/device/pp_dpm_mclk
+0: 450Mhz *
+SENSOR /sys/class/drm/card0/device/gpu_busy_percent cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported
+
+192.168.42.46 1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789  /home/xander/flash-gordon-live/20261015-abq-main/flash-gordon
+35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm
+PID=117637 EXE=/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon CMD=/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 4 
+MemAvailable:    4179440 kB
+SwapTotal:       8388604 kB
+SwapFree:        8385236 kB
+SENSOR /sys/class/drm/card0/device/pp_dpm_sclk
+0: 1000Mhz *
+1: 1500Mhz 
+2: 2000Mhz 
+SENSOR /sys/class/drm/card0/device/pp_dpm_mclk
+0: 450Mhz *
+SENSOR /sys/class/drm/card0/device/gpu_busy_percent cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported
+
+192.168.42.47 1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789  /home/xander/flash-gordon-live/20261015-abq-main/flash-gordon
+35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm
+PID=114666 EXE=/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon CMD=/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 5 
+MemAvailable:    3976740 kB
+SwapTotal:       8388604 kB
+SwapFree:        8388268 kB
+SENSOR /sys/class/drm/card0/device/pp_dpm_sclk
+0: 1000Mhz *
+1: 1500Mhz 
+2: 2000Mhz 
+SENSOR /sys/class/drm/card0/device/pp_dpm_mclk
+0: 450Mhz *
+SENSOR /sys/class/drm/card0/device/gpu_busy_percent cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported
+
+192.168.42.48 1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789  /home/xander/flash-gordon-live/20261015-abq-main/flash-gordon
+35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm
+PID=114988 EXE=/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon CMD=/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 6 
+MemAvailable:    4866604 kB
+SwapTotal:       8388604 kB
+SwapFree:        8385996 kB
+SENSOR /sys/class/drm/card0/device/pp_dpm_sclk
+0: 1000Mhz *
+1: 1500Mhz 
+2: 2000Mhz 
+SENSOR /sys/class/drm/card0/device/pp_dpm_mclk
+0: 450Mhz *
+SENSOR /sys/class/drm/card0/device/gpu_busy_percent cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported
+
+192.168.42.49 1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789  /home/xander/flash-gordon-live/20261015-abq-main/flash-gordon
+35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm
+PID=116185 EXE=/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon CMD=/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 7 
+MemAvailable:    3713000 kB
+SwapTotal:       8388604 kB
+SwapFree:        8361936 kB
+SENSOR /sys/class/drm/card0/device/pp_dpm_sclk
+0: 1000Mhz *
+1: 1500Mhz 
+2: 2000Mhz 
+SENSOR /sys/class/drm/card0/device/pp_dpm_mclk
+0: 450Mhz *
+SENSOR /sys/class/drm/card0/device/gpu_busy_percent cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported
+
+192.168.42.42 e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2  /home/xander/flash-gordon-live/20260926-abl2/flash-gordon
+35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm
+PID=187792 EXE=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon CMD=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon api --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --model-name Qwen3.8-Flash-Next-Uncensored --host 0.0.0.0 --port 8080 --context-tokens 262144 --gpu-index-tokens 262144 --qsa-hot-tokens 0 --qsa-page-cache-mib 700 
+MemAvailable:    2939728 kB
+SwapTotal:       8388604 kB
+SwapFree:        8360476 kB
+SENSOR /sys/class/drm/card0/device/pp_dpm_sclk
+0: 1000Mhz *
+1: 1500Mhz 
+2: 2000Mhz 
+SENSOR /sys/class/drm/card0/device/pp_dpm_mclk
+0: 450Mhz *
+SENSOR /sys/class/drm/card0/device/gpu_busy_percent cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported
+
+192.168.42.43 e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2  /home/xander/flash-gordon-live/20260926-abl2/flash-gordon
+35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm
+PID=119223 EXE=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon CMD=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 1 
+MemAvailable:    3795932 kB
+SwapTotal:       8388604 kB
+SwapFree:        8376144 kB
+SENSOR /sys/class/drm/card0/device/pp_dpm_sclk
+0: 1000Mhz *
+1: 1500Mhz 
+2: 2000Mhz 
+SENSOR /sys/class/drm/card0/device/pp_dpm_mclk
+0: 450Mhz *
+SENSOR /sys/class/drm/card0/device/gpu_busy_percent cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported
+
+192.168.42.44 e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2  /home/xander/flash-gordon-live/20260926-abl2/flash-gordon
+35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm
+PID=115216 EXE=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon CMD=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 2 
+MemAvailable:    4528956 kB
+SwapTotal:       8388604 kB
+SwapFree:        8387596 kB
+SENSOR /sys/class/drm/card0/device/pp_dpm_sclk
+0: 1000Mhz *
+1: 1500Mhz 
+2: 2000Mhz 
+SENSOR /sys/class/drm/card0/device/pp_dpm_mclk
+0: 450Mhz *
+SENSOR /sys/class/drm/card0/device/gpu_busy_percent cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported
+
+192.168.42.45 e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2  /home/xander/flash-gordon-live/20260926-abl2/flash-gordon
+35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm
+PID=114889 EXE=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon CMD=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 3 
+MemAvailable:    4208400 kB
+SwapTotal:       8388604 kB
+SwapFree:        8388248 kB
+SENSOR /sys/class/drm/card0/device/pp_dpm_sclk
+0: 1000Mhz *
+1: 1500Mhz 
+2: 2000Mhz 
+SENSOR /sys/class/drm/card0/device/pp_dpm_mclk
+0: 450Mhz *
+SENSOR /sys/class/drm/card0/device/gpu_busy_percent cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported
+
+192.168.42.46 e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2  /home/xander/flash-gordon-live/20260926-abl2/flash-gordon
+35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm
+PID=117824 EXE=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon CMD=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 4 
+MemAvailable:    4173384 kB
+SwapTotal:       8388604 kB
+SwapFree:        8385236 kB
+SENSOR /sys/class/drm/card0/device/pp_dpm_sclk
+0: 1000Mhz *
+1: 1500Mhz 
+2: 2000Mhz 
+SENSOR /sys/class/drm/card0/device/pp_dpm_mclk
+0: 450Mhz *
+SENSOR /sys/class/drm/card0/device/gpu_busy_percent cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported
+
+192.168.42.47 e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2  /home/xander/flash-gordon-live/20260926-abl2/flash-gordon
+35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm
+PID=114855 EXE=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon CMD=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 5 
+MemAvailable:    3956012 kB
+SwapTotal:       8388604 kB
+SwapFree:        8388268 kB
+SENSOR /sys/class/drm/card0/device/pp_dpm_sclk
+0: 1000Mhz *
+1: 1500Mhz 
+2: 2000Mhz 
+SENSOR /sys/class/drm/card0/device/pp_dpm_mclk
+0: 450Mhz *
+SENSOR /sys/class/drm/card0/device/gpu_busy_percent cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported
+
+192.168.42.48 e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2  /home/xander/flash-gordon-live/20260926-abl2/flash-gordon
+35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm
+PID=115174 EXE=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon CMD=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 6 
+MemAvailable:    4863136 kB
+SwapTotal:       8388604 kB
+SwapFree:        8385996 kB
+SENSOR /sys/class/drm/card0/device/pp_dpm_sclk
+0: 1000Mhz *
+1: 1500Mhz 
+2: 2000Mhz 
+SENSOR /sys/class/drm/card0/device/pp_dpm_mclk
+0: 450Mhz *
+SENSOR /sys/class/drm/card0/device/gpu_busy_percent cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported
+
+192.168.42.49 e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2  /home/xander/flash-gordon-live/20260926-abl2/flash-gordon
+35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm
+PID=116370 EXE=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon CMD=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 7 
+MemAvailable:    3719112 kB
+SwapTotal:       8388604 kB
+SwapFree:        8361936 kB
+SENSOR /sys/class/drm/card0/device/pp_dpm_sclk
+0: 1000Mhz *
+1: 1500Mhz 
+2: 2000Mhz 
+SENSOR /sys/class/drm/card0/device/pp_dpm_mclk
+0: 450Mhz *
+SENSOR /sys/class/drm/card0/device/gpu_busy_percent cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported
+
+Exception: D:\looking-glass-labs\fg-wt\ab-harness\tools\ab-deploy.ps1:45
+Line |
+  45 |              throw "Fleet $Action failed."
+     |              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Fleet status failed.

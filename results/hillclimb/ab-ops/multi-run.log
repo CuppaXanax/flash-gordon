@@ -1,0 +1,12 @@
+AB round=0 arm=A deploying
+AB_DEPLOY arm=A release=/home/xander/flash-gordon-live/20260926-abl2 sessions=1 wide=0 healthy=true
+AB context=4096 prompt_tokens=4123 cold_wall_s=13.088746 decode_tokens=128
+AB round=0 arm=B deploying
+AB_DEPLOY arm=B release=/home/xander/flash-gordon-live/20261015-abq-multi sessions=2 wide=0 healthy=true
+AB context=4096 prompt_tokens=4123 cold_wall_s=107.825211 decode_tokens=128
+AB_DEPLOY arm=restore release=/home/xander/flash-gordon-live/20260926-abl2 sessions=1 wide=0 healthy=true
+ParentContainsErrorRecordException: D:\looking-glass-labs\fg-wt\ab-harness\tools\hillclimb-ab.ps1:113
+Line |
+ 113 |              $requests[$which].response = $requests[$which].task.GetAw …
+     |              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Exception calling "GetResult" with "0" argument(s): "An error occurred while sending the request."

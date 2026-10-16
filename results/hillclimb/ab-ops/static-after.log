@@ -1,0 +1,3 @@
+Flash Gordon Vulkan device: llvmpipe (LLVM 20.1.2, 256 bits)
+  [static_batch_replay] ... ok
+Flash Gordon native Vulkan production-dimension oracles: PASS

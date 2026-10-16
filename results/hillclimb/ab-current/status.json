@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2  /home/xander/flash-gordon-live/20260926-abl2/flash-gordon\n35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm\nPID=199840 EXE=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon CMD=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon api --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --model-name Qwen3.8-Flash-Next-Uncensored --host 0.0.0.0 --port 8080 --context-tokens 262144 --gpu-index-tokens 262144 --qsa-hot-tokens 0 --qsa-page-cache-mib 700 \nMemAvailable:    2972280 kB\nSwapTotal:       8388604 kB\nSwapFree:        8352632 kB\nSENSOR /sys/class/drm/card0/device/pp_dpm_sclk\n0: 1000Mhz *\n1: 1500Mhz \n2: 2000Mhz \nSENSOR /sys/class/drm/card0/device/pp_dpm_mclk\n0: 450Mhz *\nSENSOR /sys/class/drm/card0/device/gpu_busy_percent\nSENSOR unavailable\nSENSOR /sys/class/drm/card0/device/hwmon/hwmon1/temp1_input\n49000\nFilesystem                  1B-blocks         Used    Available Use% Mounted on\n/dev/mapper/fedora-root 1021363355648 903852728320 117510627328  89% /",
+    "Stderr": "cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported\n"
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2  /home/xander/flash-gordon-live/20260926-abl2/flash-gordon\n35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm\nPID=131381 EXE=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon CMD=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 1 \nMemAvailable:    3783136 kB\nSwapTotal:       8388604 kB\nSwapFree:        8376172 kB\nSENSOR /sys/class/drm/card0/device/pp_dpm_sclk\n0: 1000Mhz *\n1: 1500Mhz \n2: 2000Mhz \nSENSOR /sys/class/drm/card0/device/pp_dpm_mclk\n0: 450Mhz *\nSENSOR /sys/class/drm/card0/device/gpu_busy_percent\nSENSOR unavailable\nSENSOR /sys/class/drm/card0/device/hwmon/hwmon1/temp1_input\n48000\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 211729420288 41484906496  84% /",
+    "Stderr": "cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported\n"
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2  /home/xander/flash-gordon-live/20260926-abl2/flash-gordon\n35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm\nPID=127413 EXE=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon CMD=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 2 \nMemAvailable:    4532040 kB\nSwapTotal:       8388604 kB\nSwapFree:        8387596 kB\nSENSOR /sys/class/drm/card0/device/pp_dpm_sclk\n0: 1000Mhz *\n1: 1500Mhz \n2: 2000Mhz \nSENSOR /sys/class/drm/card0/device/pp_dpm_mclk\n0: 450Mhz *\nSENSOR /sys/class/drm/card0/device/gpu_busy_percent\nSENSOR unavailable\nSENSOR /sys/class/drm/card0/device/hwmon/hwmon1/temp1_input\n47000\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 201594036224 51620290560  80% /",
+    "Stderr": "cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported\n"
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2  /home/xander/flash-gordon-live/20260926-abl2/flash-gordon\n35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm\nPID=127065 EXE=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon CMD=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 3 \nMemAvailable:    4204436 kB\nSwapTotal:       8388604 kB\nSwapFree:        8388248 kB\nSENSOR /sys/class/drm/card0/device/pp_dpm_sclk\n0: 1000Mhz *\n1: 1500Mhz \n2: 2000Mhz \nSENSOR /sys/class/drm/card0/device/pp_dpm_mclk\n0: 450Mhz *\nSENSOR /sys/class/drm/card0/device/gpu_busy_percent\nSENSOR unavailable\nSENSOR /sys/class/drm/card0/device/hwmon/hwmon1/temp1_input\n49000\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 239406460928 13807865856  95% /",
+    "Stderr": "cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported\n"
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2  /home/xander/flash-gordon-live/20260926-abl2/flash-gordon\n35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm\nPID=130040 EXE=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon CMD=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 4 \nMemAvailable:    4172976 kB\nSwapTotal:       8388604 kB\nSwapFree:        8385236 kB\nSENSOR /sys/class/drm/card0/device/pp_dpm_sclk\n0: 1000Mhz *\n1: 1500Mhz \n2: 2000Mhz \nSENSOR /sys/class/drm/card0/device/pp_dpm_mclk\n0: 450Mhz *\nSENSOR /sys/class/drm/card0/device/gpu_busy_percent\nSENSOR unavailable\nSENSOR /sys/class/drm/card0/device/hwmon/hwmon1/temp1_input\n51000\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 188410503168 64803823616  75% /",
+    "Stderr": "cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported\n"
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2  /home/xander/flash-gordon-live/20260926-abl2/flash-gordon\n35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm\nPID=127039 EXE=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon CMD=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 5 \nMemAvailable:    3961772 kB\nSwapTotal:       8388604 kB\nSwapFree:        8388268 kB\nSENSOR /sys/class/drm/card0/device/pp_dpm_sclk\n0: 1000Mhz *\n1: 1500Mhz \n2: 2000Mhz \nSENSOR /sys/class/drm/card0/device/pp_dpm_mclk\n0: 450Mhz *\nSENSOR /sys/class/drm/card0/device/gpu_busy_percent\nSENSOR unavailable\nSENSOR /sys/class/drm/card0/device/hwmon/hwmon1/temp1_input\n52000\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 207189655552 46024671232  82% /",
+    "Stderr": "cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported\n"
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2  /home/xander/flash-gordon-live/20260926-abl2/flash-gordon\n35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm\nPID=127375 EXE=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon CMD=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 6 \nMemAvailable:    4866112 kB\nSwapTotal:       8388604 kB\nSwapFree:        8385996 kB\nSENSOR /sys/class/drm/card0/device/pp_dpm_sclk\n0: 1000Mhz *\n1: 1500Mhz \n2: 2000Mhz \nSENSOR /sys/class/drm/card0/device/pp_dpm_mclk\n0: 450Mhz *\nSENSOR /sys/class/drm/card0/device/gpu_busy_percent\nSENSOR unavailable\nSENSOR /sys/class/drm/card0/device/hwmon/hwmon1/temp1_input\n53000\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 205044772864 48169553920  81% /",
+    "Stderr": "cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported\n"
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "e4b9e9e494f6650c8c2e9e2ae80be5ae21214442a53525c30ab579767788fbb2  /home/xander/flash-gordon-live/20260926-abl2/flash-gordon\n35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb  /home/xander/fg-ring-pack-abliterated/manifest.fgm\nPID=128553 EXE=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon CMD=/home/xander/flash-gordon-live/20260926-abl2/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated/manifest.fgm --rank 7 \nMemAvailable:    3725964 kB\nSwapTotal:       8388604 kB\nSwapFree:        8361936 kB\nSENSOR /sys/class/drm/card0/device/pp_dpm_sclk\n0: 1000Mhz *\n1: 1500Mhz \n2: 2000Mhz \nSENSOR /sys/class/drm/card0/device/pp_dpm_mclk\n0: 450Mhz *\nSENSOR /sys/class/drm/card0/device/gpu_busy_percent\nSENSOR unavailable\nSENSOR /sys/class/drm/card0/device/hwmon/hwmon1/temp1_input\n49000\nFilesystem                 1B-blocks         Used  Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 243698466816 9515859968  97% /",
+    "Stderr": "cat: /sys/class/drm/card0/device/gpu_busy_percent: Operation not supported\n"
+  }
+]

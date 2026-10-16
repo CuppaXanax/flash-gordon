@@ -1,0 +1,8 @@
+{
+  "selection": "Predeclared mean direction-normalized log ratio across protected metrics, restricted to quality-approved same-pack arithmetic",
+  "scores": {
+    "mix": 0.07170708189204993,
+    "wide": 0.08859424411713569
+  },
+  "best_pack_configuration": "mix"
+}

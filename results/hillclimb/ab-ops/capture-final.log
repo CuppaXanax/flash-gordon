@@ -1,0 +1,2 @@
+AB_DEPLOY arm=restore release=/home/xander/flash-gordon-live/20260926-abl2 sessions=1 wide=0 healthy=true
+Final diagnostic interrupted, all eight archives secured, original restored.

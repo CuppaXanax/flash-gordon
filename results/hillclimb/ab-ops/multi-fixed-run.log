@@ -1,0 +1,20 @@
+AB round=0 arm=A deploying
+AB_DEPLOY arm=A release=/home/xander/flash-gordon-live/20260926-abl2 sessions=1 wide=0 healthy=true
+AB context=4096 prompt_tokens=4127 cold_wall_s=17.9633534 decode_tokens=128
+AB round=0 arm=B deploying
+AB_DEPLOY arm=B release=/home/xander/flash-gordon-live/20261015-abq-multi-fix sessions=2 wide=0 healthy=true
+AB context=4096 prompt_tokens=4127 cold_wall_s=107.5230744 decode_tokens=128
+AB round=1 arm=B deploying
+AB_DEPLOY arm=B release=/home/xander/flash-gordon-live/20261015-abq-multi-fix sessions=2 wide=0 healthy=true
+AB context=4096 prompt_tokens=4123 cold_wall_s=108.347538 decode_tokens=128
+AB round=1 arm=A deploying
+AB_DEPLOY arm=A release=/home/xander/flash-gordon-live/20260926-abl2 sessions=1 wide=0 healthy=true
+AB context=4096 prompt_tokens=4123 cold_wall_s=13.3491341 decode_tokens=128
+AB round=2 arm=A deploying
+AB_DEPLOY arm=A release=/home/xander/flash-gordon-live/20260926-abl2 sessions=1 wide=0 healthy=true
+AB context=4096 prompt_tokens=4119 cold_wall_s=13.2085511 decode_tokens=128
+AB round=2 arm=B deploying
+AB_DEPLOY arm=B release=/home/xander/flash-gordon-live/20261015-abq-multi-fix sessions=2 wide=0 healthy=true
+AB context=4096 prompt_tokens=4119 cold_wall_s=112.1089859 decode_tokens=128
+AB result=D:\looking-glass-labs\fg-wt\ab-harness\results\hillclimb\ab-multi-fixed\ab-result.json eligible=False
+AB_DEPLOY arm=restore release=/home/xander/flash-gordon-live/20260926-abl2 sessions=1 wide=0 healthy=true

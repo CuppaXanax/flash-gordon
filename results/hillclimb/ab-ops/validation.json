@@ -1,0 +1,15 @@
+{
+  "verified_at": "2026-10-15T21:51:12.6939698-07:00",
+  "harness_compatibility_transport": {
+    "source": "shell 1070",
+    "exit_code": 0,
+    "command": "python -m unittest tools.test_hillclimb_ab tools.test_q4_qualify tools.test_ab_fleet -q",
+    "passed": 16
+  },
+  "integration_concurrency": {
+    "exit_code": 0,
+    "command": "python -m unittest tools.test_hillclimb_concurrency -q",
+    "passed": 4
+  },
+  "full_native_suite_passed": false
+}

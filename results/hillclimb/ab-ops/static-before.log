@@ -1,0 +1,3 @@
+Flash Gordon Vulkan device: llvmpipe (LLVM 20.1.2, 256 bits)
+  [static_batch_replay] ... FAIL
+native Vulkan oracle failed: Vulkan batch exceeded 4096 descriptor sets

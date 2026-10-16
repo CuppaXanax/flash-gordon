@@ -1,0 +1,32 @@
+AB round=0 arm=A deploying
+AB_DEPLOY arm=A release=/home/xander/flash-gordon-live/20260926-abl2 sessions=1 wide=0 healthy=true
+AB context=4096 prompt_tokens=4117 cold_wall_s=13.2000365 decode_tokens=128
+AB context=32768 prompt_tokens=32797 cold_wall_s=99.7531522 decode_tokens=128
+AB context=131072 prompt_tokens=131103 cold_wall_s=401.333225 decode_tokens=128
+AB round=0 arm=B deploying
+AB_DEPLOY arm=B release=/home/xander/flash-gordon-live/20261015-abq-main sessions=1 wide=1 healthy=true
+AB context=4096 prompt_tokens=4117 cold_wall_s=12.5239482 decode_tokens=128
+AB context=32768 prompt_tokens=32797 cold_wall_s=85.8310378 decode_tokens=128
+AB context=131072 prompt_tokens=131103 cold_wall_s=346.1077977 decode_tokens=128
+AB round=1 arm=B deploying
+AB_DEPLOY arm=B release=/home/xander/flash-gordon-live/20261015-abq-main sessions=1 wide=1 healthy=true
+AB context=4096 prompt_tokens=4119 cold_wall_s=12.6948991 decode_tokens=128
+AB context=32768 prompt_tokens=32791 cold_wall_s=86.3142536 decode_tokens=128
+AB context=131072 prompt_tokens=131103 cold_wall_s=346.1869153 decode_tokens=128
+AB round=1 arm=A deploying
+AB_DEPLOY arm=A release=/home/xander/flash-gordon-live/20260926-abl2 sessions=1 wide=0 healthy=true
+AB context=4096 prompt_tokens=4119 cold_wall_s=13.292245 decode_tokens=128
+AB context=32768 prompt_tokens=32791 cold_wall_s=101.0259123 decode_tokens=128
+AB context=131072 prompt_tokens=131103 cold_wall_s=409.4932765 decode_tokens=128
+AB round=2 arm=A deploying
+AB_DEPLOY arm=A release=/home/xander/flash-gordon-live/20260926-abl2 sessions=1 wide=0 healthy=true
+AB context=4096 prompt_tokens=4129 cold_wall_s=13.2920406 decode_tokens=128
+AB context=32768 prompt_tokens=32793 cold_wall_s=91.1810652 decode_tokens=128
+AB context=131072 prompt_tokens=131097 cold_wall_s=353.1836515 decode_tokens=128
+AB round=2 arm=B deploying
+AB_DEPLOY arm=B release=/home/xander/flash-gordon-live/20261015-abq-main sessions=1 wide=1 healthy=true
+AB context=4096 prompt_tokens=4129 cold_wall_s=12.6004079 decode_tokens=128
+AB context=32768 prompt_tokens=32793 cold_wall_s=85.5934848 decode_tokens=128
+AB context=131072 prompt_tokens=131097 cold_wall_s=348.6550285 decode_tokens=128
+AB result=D:\looking-glass-labs\fg-wt\ab-harness\results\hillclimb\ab-wide\ab-result.json eligible=False
+AB_DEPLOY arm=restore release=/home/xander/flash-gordon-live/20260926-abl2 sessions=1 wide=0 healthy=true
