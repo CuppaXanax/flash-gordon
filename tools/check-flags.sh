@@ -78,6 +78,7 @@ expected_code="$(printf '%s\n' \
     FG_ROOF_QSA \
     FG_ROOF_RECURRENT \
     FG_SET_TRACE \
+    FG_SMALL_KERNELS \
     FG_SHADER_DIR \
     FG_STATIC_CHECK \
     FG_STATIC_RERECORD \
@@ -115,6 +116,7 @@ expected_test="$(printf '%s\n' \
     FG_EXPERT_BOUND_DUMP \
     FG_EXPERT_PARITY_DUMP \
     FG_RMS_HASH \
+    FG_SMALL_KERNELS \
     FG_ROOFLINE \
     FG_ROOF_DENSE \
     FG_ROOF_HC \

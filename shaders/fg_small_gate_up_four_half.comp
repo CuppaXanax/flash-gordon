@@ -1,0 +1,8 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define PAIR_LANES 1
+#define PAIR_COUNT 4
+#define FG_SMALL_ACT_CACHE
+#define FG_SMALL_SUBGROUP
+#define FG_SMALL_HALF
+#include "fg_small_gate_up.glsl"

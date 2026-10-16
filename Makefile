@@ -151,11 +151,23 @@ vulkan/fg_qsa_decode_attention_split.spv vulkan/fg_roof_qsa_h1.spv vulkan/fg_roo
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_dense*.comp)): shaders/fg_dense_soa_impl.glsl shaders/fg_dense_compact_gemv.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_dense_rows*.comp)): shaders/fg_roof_dense_rows.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_small_q4*.comp shaders/fg_small_q5*.comp shaders/fg_small_iq4*.comp)): shaders/fg_small_dense.glsl shaders/fg_dense_soa_impl.glsl
-vulkan/fg_small_gate_up.spv vulkan/fg_small_gate_up_pairs.spv: shaders/fg_small_gate_up.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_small_reuse*.comp)): shaders/fg_small_reuse.glsl shaders/fg_small_dense.glsl shaders/fg_dense_soa_impl.glsl
+vulkan/fg_small_gate_up.spv vulkan/fg_small_gate_up_pairs.spv vulkan/fg_small_gate_up_four.spv: shaders/fg_small_gate_up.glsl
+vulkan/fg_small_gate_up_subgroup.spv vulkan/fg_small_gate_up_four_subgroup.spv vulkan/fg_small_gate_up_prefetch.spv vulkan/fg_small_gate_up_four_prefetch.spv: shaders/fg_small_gate_up.glsl
+vulkan/fg_small_down.spv vulkan/fg_small_down_union.spv: shaders/fg_small_down_decode.glsl
+vulkan/fg_small_gate_up_fma.spv vulkan/fg_small_gate_up_four_fma.spv: shaders/fg_small_gate_up.glsl shaders/fg_small_fma.glsl
+$(foreach type,q4 q5 iq4,$(foreach n,2 3 4,vulkan/fg_small_reuse_$(type)_n$(n).spv)): shaders/fg_small_fma.glsl
+vulkan/fg_small_q8_reuse_n2.spv vulkan/fg_small_q8_reuse_n3.spv vulkan/fg_small_q8_reuse_n4.spv: shaders/fg_small_fma.glsl
+vulkan/fg_small_down.spv vulkan/fg_small_down_fma.spv: shaders/fg_small_down.glsl shaders/fg_small_down_decode.glsl shaders/fg_small_fma.glsl
+$(foreach rows,4 8,$(foreach type,q4 q5 iq4,$(foreach n,2 3 4,vulkan/fg_small_reuse$(rows)_$(type)_n$(n).spv))): shaders/fg_small_reuse_rows.glsl shaders/fg_small_reuse_decode.glsl shaders/fg_small_fma.glsl shaders/fg_small_dense.glsl shaders/fg_dense_soa_impl.glsl
+$(foreach type,q4 q5 iq4,$(foreach n,2 3 4,vulkan/fg_small_reuse_$(type)_n$(n).spv)): shaders/fg_small_reuse_decode.glsl
+vulkan/fg_small_gate_up_half.spv vulkan/fg_small_gate_up_four_half.spv: shaders/fg_small_gate_up.glsl
+vulkan/fg_small_gate_up_packed.spv vulkan/fg_small_gate_up_four_packed.spv: shaders/fg_small_gate_up.glsl shaders/fg_small_packed_dot.glsl
 vulkan/fg_gdn_recurrent_algebraic.spv vulkan/fg_gdn_small.spv: shaders/fg_gdn_algebraic.glsl
 vulkan/fg_dense_q8_0_cooked_r8.spv vulkan/fg_mtp_vocab_q8.spv vulkan/fg_mtp_fc_hidden.spv: shaders/fg_dense_q8_0_cooked_r8.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_small_f32*.comp shaders/fg_small_router_bf16*.comp shaders/fg_small_index_bf16*.comp)): shaders/fg_small_plain.glsl
 vulkan/fg_dense_q8_0_cooked.spv $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_small_q8*.comp)): shaders/fg_small_q8_parallel.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_small_q8_reuse*.comp)): shaders/fg_small_q8_reuse.glsl
 vulkan/fg_moe_decode_down_reduce.spv vulkan/fg_small_down.spv: shaders/fg_moe_decode_down_reduce.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_dense_soa*.comp)): shaders/fg_dense_soa_impl.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_dense_soa*tile*.comp)): shaders/fg_dense_soa_tile_impl.glsl

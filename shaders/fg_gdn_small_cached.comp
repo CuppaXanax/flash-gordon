@@ -1,0 +1,80 @@
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x=512) in;
+layout(set=0,binding=0) readonly buffer QKV{float qkv[];};
+layout(set=0,binding=1) readonly buffer ZGate{float z[];};
+layout(set=0,binding=2) readonly buffer Alpha{float alpha[];};
+layout(set=0,binding=3) readonly buffer Beta{float beta[];};
+layout(set=0,binding=4) readonly buffer ADecay{float a_decay[];};
+layout(set=0,binding=5) readonly buffer DtBias{float dt_bias[];};
+layout(set=0,binding=6) readonly buffer NormWeight{float norm_weight[];};
+layout(set=0,binding=7) buffer State{float state[];};
+layout(set=0,binding=8) writeonly buffer Output{float output_value[];};
+layout(push_constant) uniform Push{
+    uint value_heads,key_heads,head_dim,tokens;
+    float epsilon;
+}pc;
+shared float query[128],key[128],qk[16],memory[512],prior[512],delta[128],raw[128];
+shared vec2 norms[16];
+void main(){
+    uint lid=gl_LocalInvocationID.x,head=gl_WorkGroupID.x;
+    if(head>=pc.value_heads||pc.head_dim!=128u)return;
+    uint column=lid%128u,part=lid/128u,kh=head%pc.key_heads;
+    uint kw=pc.key_heads*128u,vw=pc.value_heads*128u,qkv_width=2u*kw+vw;
+    uint base=head*16384u+column;
+    float cached[32];
+    [[unroll]]for(uint i=0u;i<32u;i++)cached[i]=state[base+(part*32u+i)*128u];
+    for(uint token=0u;token<pc.tokens;token++){
+        uint qb=token*qkv_width,zb=token*vw,hb=token*pc.value_heads;
+        float q=lid<128u?qkv[qb+kh*128u+lid]:0.0;
+        float k=lid<128u?qkv[qb+kw+kh*128u+lid]:0.0;
+        vec2 norm=vec2(subgroupAdd(q*q),subgroupAdd(k*k));
+        if(subgroupElect())norms[gl_SubgroupID]=norm;
+        barrier();
+        if(lid<128u){
+            vec2 total=vec2(0.0);
+            for(uint s=0u;s<(128u+gl_SubgroupSize-1u)/gl_SubgroupSize;s++)total+=norms[s];
+            q*=inversesqrt(total.x+pc.epsilon)/sqrt(128.0);
+            k*=inversesqrt(total.y+pc.epsilon);
+            query[lid]=q;key[lid]=k;
+        }
+        float dot_value=subgroupAdd(q*k);
+        if(subgroupElect())qk[gl_SubgroupID]=dot_value;
+        barrier();
+        float a=alpha[hb+head]+dt_bias[head];
+        float decay=exp(a_decay[head]*(max(a,0.0)+log(1.0+exp(-abs(a)))));
+        float m=0.0,p=0.0;
+        [[unroll]]for(uint i=0u;i<32u;i++){
+            cached[i]*=decay;
+            m=fma(cached[i],key[part*32u+i],m);
+            p=fma(cached[i],query[part*32u+i],p);
+        }
+        memory[lid]=m;prior[lid]=p;
+        barrier();
+        if(lid<128u){
+            float total=(memory[lid]+memory[lid+128u])+(memory[lid+256u]+memory[lid+384u]);
+            float old=(prior[lid]+prior[lid+128u])+(prior[lid+256u]+prior[lid+384u]);
+            delta[lid]=(qkv[qb+2u*kw+head*128u+lid]-total)/(1.0+exp(-beta[hb+head]));
+            float dot_total=0.0;
+            for(uint s=0u;s<(128u+gl_SubgroupSize-1u)/gl_SubgroupSize;s++)dot_total+=qk[s];
+            float value=fma(delta[lid],dot_total,old);
+            raw[lid]=value;
+            float sum=subgroupAdd(value*value);
+            if(subgroupElect())norms[gl_SubgroupID]=vec2(sum,0.0);
+        }
+        barrier();
+        [[unroll]]for(uint i=0u;i<32u;i++)
+            cached[i]+=key[part*32u+i]*delta[column];
+        if(lid<128u){
+            float total=0.0;
+            for(uint s=0u;s<(128u+gl_SubgroupSize-1u)/gl_SubgroupSize;s++)total+=norms[s].x;
+            uint at=zb+head*128u+lid;
+            output_value[at]=raw[lid]*inversesqrt(total/128.0+pc.epsilon)*
+                norm_weight[lid]/(1.0+exp(-z[at]));
+        }
+        barrier();
+    }
+    [[unroll]]for(uint i=0u;i<32u;i++)
+        state[base+(part*32u+i)*128u]=cached[i];
+}

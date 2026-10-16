@@ -66,7 +66,7 @@ struct fg_vk_context {
     VkCommandBuffer group_commands[FG_VK_GROUP_COMMANDS];
     uint32_t group_count,group_index;
     VkPhysicalDeviceMemoryProperties memory;char device_name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
-    bool subgroup_topk;bool integer_dot_product;bool subgroup_expert_q8;
+    bool subgroup_topk;bool integer_dot_product;bool subgroup_expert_q8;bool small_subgroups;bool small_half;
     uint32_t batch_depth;uint32_t batch_set_count;VkDescriptorSet descriptor_sets[FG_VK_BATCH_MAX_SETS];bool batch_has_dispatch;bool barrier_elide_next;
     fg_vk_descriptor_cache descriptor_cache[FG_VK_BATCH_MAX_SETS];bool descriptor_cache_valid[FG_VK_BATCH_MAX_SETS];
     VkDescriptorSet static_descriptor_sets[FG_VK_STATIC_SET_COUNT];fg_vk_descriptor_cache static_descriptor_cache[FG_VK_STATIC_SET_COUNT];bool static_descriptor_cache_valid[FG_VK_STATIC_SET_COUNT];
@@ -84,7 +84,7 @@ struct fg_vk_context {
     fg_vk_kernel argmax,dense_subgroup,dense_cooked,dense_cooked_r8,mtp_vocab,mtp_fc,mtp_norm,dense_quant[37];
     bool small_n;
     uint32_t small_workgroup,small_rows;
-    fg_vk_kernel small_dense[75],small_gate_up[8],small_down,small_down_reduce,small_shared,small_union,small_gdn;
+    fg_vk_kernel small_dense[300],small_gate_up[8],small_down,small_down_reduce,small_shared,small_union,small_gdn;
     fg_vk_kernel small_plain[9];
     /* Decomposition benchmark kernels */
     fg_vk_kernel bench_stream,bench_dequant,bench_dot_nored;
@@ -123,13 +123,18 @@ struct fg_vk_expert_graph {
 };
 
 static fg_status vk_error(fg_error *err,const char *operation,VkResult result){fg_error_set(err,FG_ERR_UNAVAILABLE,"%s: Vulkan result %d",operation,(int)result);return FG_ERR_UNAVAILABLE;}
+static bool small_kernel_enabled(const fg_vk_context *c,uint32_t bit){
+    if(!c||!c->small_subgroups)return false;
+    const char *value=getenv("FG_SMALL_KERNELS");
+    return value&&((uint32_t)strtoul(value,NULL,0)&bit)!=0u;
+}
 void fg_vk_small_n_mode(fg_vk_context *c,bool enabled){if(c)c->small_n=enabled;}
 fg_status fg_vk_small_n_tune(fg_vk_context *c,uint32_t workgroup,uint32_t rows,fg_error *err){
     if(!c||(workgroup&&(workgroup<32u||workgroup>256u||
        (workgroup&(workgroup-1u))))||(rows&&rows!=4u&&rows!=8u)||c->batch_depth){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid small-N diagnostic geometry");return FG_ERR_ARGUMENT;
     }
-    for(uint32_t i=0;i<75u;i++)if(c->small_dense[i].pipeline){
+    for(uint32_t i=0;i<300u;i++)if(c->small_dense[i].pipeline){
         fg_error_set(err,FG_ERR_ARGUMENT,"small-N geometry requires fresh pipelines");return FG_ERR_ARGUMENT;
     }
     c->small_workgroup=workgroup;c->small_rows=rows;return FG_OK;
@@ -264,7 +269,7 @@ static void destroy_kernel(fg_vk_context *context,fg_vk_kernel *kernel){
         destroy_kernel(context,&context->mtp_cache_kv);
     }
     if(kernel==&context->dense){
-        for(uint32_t i=0;i<75u;i++)destroy_kernel(context,&context->small_dense[i]);
+        for(uint32_t i=0;i<300u;i++)destroy_kernel(context,&context->small_dense[i]);
         for(uint32_t i=0;i<9u;i++)destroy_kernel(context,&context->small_plain[i]);
         for(uint32_t i=0;i<8u;i++)destroy_kernel(context,&context->small_gate_up[i]);
         destroy_kernel(context,&context->small_down);
@@ -364,6 +369,12 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
         VK_SUBGROUP_FEATURE_SHUFFLE_BIT|VK_SUBGROUP_FEATURE_SHUFFLE_RELATIVE_BIT))==
         (VK_SUBGROUP_FEATURE_ARITHMETIC_BIT|VK_SUBGROUP_FEATURE_SHUFFLE_BIT|
         VK_SUBGROUP_FEATURE_SHUFFLE_RELATIVE_BIT);
+    c->small_subgroups=(subgroup.subgroupSize==32u||subgroup.subgroupSize==64u)&&
+        properties.limits.maxComputeWorkGroupInvocations>=512u&&
+        properties.limits.maxComputeWorkGroupSize[0]>=512u&&
+        (subgroup.supportedOperations&(VK_SUBGROUP_FEATURE_ARITHMETIC_BIT|
+        VK_SUBGROUP_FEATURE_SHUFFLE_BIT))==
+        (VK_SUBGROUP_FEATURE_ARITHMETIC_BIT|VK_SUBGROUP_FEATURE_SHUFFLE_BIT);
     const char *expert_q8_wide=getenv("FG_EXPERT_Q8_WIDE");
     c->subgroup_expert_q8=expert_q8_wide&&strcmp(expert_q8_wide,"1")==0&&subgroup.subgroupSize>=32u&&
         (subgroup.supportedStages&VK_SHADER_STAGE_COMPUTE_BIT)!=0u&&
@@ -387,7 +398,15 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
             wave_properties.maxSubgroupSize>=32u&&
             (wave_properties.requiredSubgroupSizeStages&VK_SHADER_STAGE_COMPUTE_BIT)!=0u;
     }
-    const char *device_extensions[2];uint32_t device_extension_count=0;
+    VkPhysicalDeviceShaderFloat16Int8Features half_features={
+        .sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES};
+    if(small_kernel_enabled(c,512u)&&device_has_extension(c->physical,VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME)){
+        VkPhysicalDeviceFeatures2 query={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+            .pNext=&half_features};
+        vkGetPhysicalDeviceFeatures2(c->physical,&query);
+        c->small_half=half_features.shaderFloat16;
+    }
+    const char *device_extensions[3];uint32_t device_extension_count=0;
     VkPhysicalDeviceSubgroupSizeControlFeaturesEXT enabled_wave={
         .sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT,
         .subgroupSizeControl=c->roof_wave32?VK_TRUE:VK_FALSE};
@@ -396,6 +415,13 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
         .pNext=c->roof_wave32?&enabled_wave:NULL,.shaderIntegerDotProduct=c->integer_dot_product?VK_TRUE:VK_FALSE};
     VkPhysicalDeviceFeatures2 enabled_features={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         .pNext=c->integer_dot_product?(void *)&enabled_integer_dot:c->roof_wave32?(void *)&enabled_wave:NULL};
+    VkPhysicalDeviceShaderFloat16Int8Features enabled_half={
+        .sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
+        .pNext=enabled_features.pNext,.shaderFloat16=c->small_half?VK_TRUE:VK_FALSE};
+    if(c->small_half){
+        enabled_features.pNext=&enabled_half;
+        device_extensions[device_extension_count++]=VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME;
+    }
     if(c->integer_dot_product)device_extensions[device_extension_count++]="VK_KHR_shader_integer_dot_product";
     if(c->roof_wave32)device_extensions[device_extension_count++]=VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME;
     VkDeviceCreateInfo dc={.sType=VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,.pNext=enabled_features.pNext?&enabled_features:NULL,.queueCreateInfoCount=1,.pQueueCreateInfos=&qc,.enabledExtensionCount=device_extension_count,.ppEnabledExtensionNames=device_extension_count?device_extensions:NULL};vr=vkCreateDevice(c->physical,&dc,NULL,&c->device);if(vr!=VK_SUCCESS){fg_vk_close(c);return vk_error(err,"create Vulkan device",vr);}vkGetDeviceQueue(c->device,family,0,&c->queue);
@@ -1437,20 +1463,40 @@ fg_status fg_vk_dense_quant(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tenso
         static const char *wide_files[]={
             "fg_small_q4_r8_n2.spv","fg_small_q4_r8_n3.spv","fg_small_q4_r8_n4.spv",
             "fg_small_q5_r8_n2.spv","fg_small_q5_r8_n3.spv","fg_small_q5_r8_n4.spv"};
+        static const char *reuse_files[]={
+            "fg_small_reuse_q4_n2.spv","fg_small_reuse_q4_n3.spv","fg_small_reuse_q4_n4.spv",
+            "fg_small_reuse_q5_n2.spv","fg_small_reuse_q5_n3.spv","fg_small_reuse_q5_n4.spv",
+            "fg_small_reuse_iq4_n2.spv","fg_small_reuse_iq4_n3.spv","fg_small_reuse_iq4_n4.spv"};
+        static const char *reuse4_files[]={
+            "fg_small_reuse4_q4_n2.spv","fg_small_reuse4_q4_n3.spv","fg_small_reuse4_q4_n4.spv",
+            "fg_small_reuse4_q5_n2.spv","fg_small_reuse4_q5_n3.spv","fg_small_reuse4_q5_n4.spv",
+            "fg_small_reuse4_iq4_n2.spv","fg_small_reuse4_iq4_n3.spv","fg_small_reuse4_iq4_n4.spv"};
+        static const char *reuse8_files[]={
+            "fg_small_reuse8_q4_n2.spv","fg_small_reuse8_q4_n3.spv","fg_small_reuse8_q4_n4.spv",
+            "fg_small_reuse8_q5_n2.spv","fg_small_reuse8_q5_n3.spv","fg_small_reuse8_q5_n4.spv",
+            "fg_small_reuse8_iq4_n2.spv","fg_small_reuse8_iq4_n3.spv","fg_small_reuse8_iq4_n4.spv"};
         uint32_t i=(type==12u?0u:type==13u?3u:6u)+tokens-2u;
         uint32_t geometry=type==12u&&rows<=1024u&&in>=8192u?2u:
             type==12u&&in==2560u&&rows==6144u?1u:
             type!=20u&&rows>1024u?3u:0u;
         bool wide=type!=20u&&(c->small_rows?c->small_rows==8u:rows>1024u);
-        fg_vk_kernel *kernel=&c->small_dense[(compact?0u:36u)+i*4u+geometry];
-        if(!kernel->file)*kernel=(fg_vk_kernel){.file=wide?wide_files[i]:small_files[i],.bindings=3,
+        bool large=rows>=1024u&&in>=1024u;
+        uint32_t reuse_rows=large&&small_kernel_enabled(c,256u)?8u:
+            large&&small_kernel_enabled(c,128u)?4u:2u;
+        bool reuse=small_kernel_enabled(c,1u)||reuse_rows>2u;
+        uint32_t variant=reuse?reuse_rows==8u?3u:reuse_rows==4u?2u:1u:0u;
+        uint32_t workgroup=c->small_workgroup?c->small_workgroup:
+            reuse?reuse_rows>2u?128u:geometry==3u?256u:64u:
+            geometry==3u?64u:64u<<geometry;
+        fg_vk_kernel *kernel=&c->small_dense[variant*75u+(compact?0u:36u)+i*4u+geometry];
+        const char *file=reuse_rows==8u?reuse8_files[i]:reuse_rows==4u?reuse4_files[i]:reuse_files[i];
+        if(!kernel->file)*kernel=(fg_vk_kernel){.file=reuse?file:wide?wide_files[i]:small_files[i],.bindings=3,
             .push_bytes=24,.specialization_count=2,
-            .specialization_values={c->small_workgroup?c->small_workgroup:
-                geometry==3u?64u:64u<<geometry,compact?1u:0u}};
+            .specialization_values={workgroup,compact?1u:0u}};
         struct{uint32_t in,rows,tokens,type,row_bytes;float scale;}
             p={in,rows,tokens,type,(uint32_t)row_bytes,scale};
         const fg_vk_tensor *b[]={w,x,out};
-        uint32_t small_rows=wide?8u:4u;
+        uint32_t small_rows=reuse?workgroup/32u*reuse_rows:wide?8u:4u;
         return dispatch(c,kernel,b,&p,(rows+small_rows-1u)/small_rows,1u,1u,err);
     }
     struct{uint32_t input_width,output_width,tokens,type,row_bytes;float scale;}
@@ -1640,10 +1686,14 @@ fg_status fg_vk_dense_q8_0_cooked_prefill(fg_vk_context *c,fg_vk_tensor *out,
     const fg_vk_tensor *bindings[]={w,x,out};
     if(c->small_n&&tokens<=4u){
         static const char *files[]={"fg_small_q8_n2.spv","fg_small_q8_n3.spv","fg_small_q8_n4.spv"};
-        fg_vk_kernel *k=&c->small_dense[72u+tokens-2u];
-        if(!k->file)*k=(fg_vk_kernel){.file=files[tokens-2u],.bindings=3,.push_bytes=20,
-            .specialization_count=1,.specialization_values={128u,0u}};
-        return dispatch(c,k,bindings,&push,(rows+3u)/4u,1u,1u,err);
+        static const char *reuse_files[]={"fg_small_q8_reuse_n2.spv","fg_small_q8_reuse_n3.spv","fg_small_q8_reuse_n4.spv"};
+        bool reuse=small_kernel_enabled(c,1u);
+        uint32_t workgroup=reuse?(c->small_workgroup?c->small_workgroup:256u):128u;
+        fg_vk_kernel *k=&c->small_dense[(reuse?75u:0u)+72u+tokens-2u];
+        if(!k->file)*k=(fg_vk_kernel){.file=reuse?reuse_files[tokens-2u]:files[tokens-2u],.bindings=3,.push_bytes=20,
+            .specialization_count=1,.specialization_values={workgroup,0u}};
+        uint32_t rows_per_group=reuse?workgroup/16u:4u;
+        return dispatch(c,k,bindings,&push,(rows+rows_per_group-1u)/rows_per_group,1u,1u,err);
     }
     return dispatch(c,&c->dense_cooked_tile,bindings,&push,(rows+63u)/64u,
         (tokens+31u)/32u,1u,err);
@@ -2173,7 +2223,8 @@ fg_status fg_vk_gdn_recurrent_prefill(fg_vk_context *c,fg_vk_tensor *out,
     fg_vk_kernel *kernel=&c->gdn_recurrent_prefill;
     if(c->small_n&&tokens<=4u){
         kernel=&c->small_gdn;
-        if(!kernel->file)*kernel=(fg_vk_kernel){.file="fg_gdn_small.spv",
+        if(!kernel->file)*kernel=(fg_vk_kernel){.file=small_kernel_enabled(c,2u)?
+            "fg_gdn_small_cached.spv":"fg_gdn_small.spv",
             .bindings=9,.push_bytes=20};
     }
     return dispatch(c,kernel,bindings,&push,value_heads,1u,1u,err);
@@ -2365,10 +2416,11 @@ fg_status fg_vk_qsa_decode_attention_split(fg_vk_context *c,fg_vk_tensor *partia
 fg_status fg_vk_qsa_attention_merge(fg_vk_context *c,fg_vk_tensor *output,const fg_vk_tensor *partials,const fg_vk_tensor *gate,uint32_t splits,fg_error *err){if(!c||!output||!splits||splits>8u||!tensor_range(gate,0,6144u*4u)||!tensor_range(output,0,6144u*4u)||!tensor_range(partials,0,(uint64_t)splits*24u*258u*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid merge QSA attention dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t splits;}push={splits};const fg_vk_tensor *bindings[]={partials,gate,output};return dispatch(c,&c->qsa_attention_merge,bindings,&push,24u,1u,1u,err);}
 fg_status fg_vk_qsa_attention_split_batch(fg_vk_context *c,fg_vk_tensor *partials,const fg_vk_tensor *records,const fg_vk_tensor *query,const fg_vk_tensor *counts,uint32_t query_count,uint32_t record_stride,uint32_t query_stride,uint32_t splits,fg_error *err){
     if(!c||!query_count||query_count>512u||!splits||splits>8u||
-       !record_stride||record_stride>FG_VK_QSA_SELECTED_TOKENS||
+       record_stride>FG_VK_QSA_SELECTED_TOKENS||
        query_stride<24u*FG_Q38_ATTN_HEAD_WIDTH||
        !tensor_range(partials,0,(uint64_t)query_count*24u*splits*258u*4u)||
-       !tensor_range(records,0,(uint64_t)query_count*record_stride*FG_Q38_QSA_TOKEN_RECORD_BYTES)||
+       !tensor_range(records,0,(uint64_t)(record_stride?query_count*record_stride:
+           FG_VK_QSA_SELECTED_TOKENS)*FG_Q38_QSA_TOKEN_RECORD_BYTES)||
        !tensor_range(query,0,(uint64_t)query_count*query_stride*4u)||
        !tensor_range(counts,0,(uint64_t)query_count*4u)){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid batched split QSA attention dispatch");
@@ -2630,11 +2682,26 @@ fg_status fg_vk_small_n_experts(fg_vk_context *c,fg_vk_tensor *mid,fg_vk_tensor 
         return FG_ERR_ARGUMENT;
     }
     fg_vk_kernel *gate_up=&c->small_gate_up[((gt==13u?2u:0u)+(ut==13u?1u:0u))*2u+(tokens>2u)];
-    if(!gate_up->file)*gate_up=(fg_vk_kernel){
-        .file=tokens==2u?"fg_small_gate_up.spv":"fg_small_gate_up_four.spv",.bindings=5,.push_bytes=32,
-        .specialization_count=2,.specialization_values={gt==13u,ut==13u}};
+    if(!gate_up->file){
+        const char *file=tokens==2u?"fg_small_gate_up.spv":"fg_small_gate_up_four.spv";
+        if(small_kernel_enabled(c,16u))file=tokens==2u?
+            "fg_small_gate_up_subgroup.spv":"fg_small_gate_up_four_subgroup.spv";
+        if(small_kernel_enabled(c,32u))file=tokens==2u?
+            "fg_small_gate_up_prefetch.spv":"fg_small_gate_up_four_prefetch.spv";
+        if(small_kernel_enabled(c,64u))file=tokens==2u?
+            "fg_small_gate_up_fma.spv":"fg_small_gate_up_four_fma.spv";
+        if(c->small_half)file=tokens==2u?
+            "fg_small_gate_up_half.spv":"fg_small_gate_up_four_half.spv";
+        if(small_kernel_enabled(c,1024u))file=tokens==2u?
+            "fg_small_gate_up_packed.spv":"fg_small_gate_up_four_packed.spv";
+        *gate_up=(fg_vk_kernel){.file=file,.bindings=5,.push_bytes=32,
+            .specialization_count=2,.specialization_values={gt==13u,ut==13u}};
+    }
+    bool union_down=small_kernel_enabled(c,4u);
     if(!c->small_down.file)c->small_down=(fg_vk_kernel){
-        .file="fg_small_down.spv",.bindings=4,.push_bytes=16};
+        .file=union_down?"fg_small_down_union.spv":
+            small_kernel_enabled(c,64u)?"fg_small_down_fma.spv":"fg_small_down.spv",
+        .bindings=union_down?5u:4u,.push_bytes=union_down?20u:16u};
     if(!c->small_down_reduce.file)c->small_down_reduce=(fg_vk_kernel){
         .file="fg_small_down_reduce.spv",.bindings=3,.push_bytes=4};
     struct{uint32_t rows,blocks,gtile,utile,gs,us,gt,ut;}gp={
@@ -2642,6 +2709,13 @@ fg_status fg_vk_small_n_experts(fg_vk_context *c,fg_vk_tensor *mid,fg_vk_tensor 
         (uint32_t)fg_k_quant_cooked_tile_bytes(2560u,ut),gs,us,gt,ut};
     const fg_vk_tensor *gb[]={gate,up,activation,tiles,mid};
     fg_status status=dispatch(c,gate_up,gb,&gp,80u,tokens*FG_TOP_K,1u,err);
+    if(union_down){
+        struct{uint32_t rows,in,tile,stride,tokens;}up={
+            FG_HIDDEN_SIZE,640u,(uint32_t)fg_q5_1_cooked_tile_bytes(640u),ds,tokens};
+        const fg_vk_tensor *ub[]={down,tiles,mid,gates,reduced};
+        if(status==FG_OK)status=dispatch(c,&c->small_down,ub,&up,FG_HIDDEN_SIZE/16u,1u,1u,err);
+        return status;
+    }
     struct{uint32_t rows,in,tile,stride;}dp={
         FG_HIDDEN_SIZE,640u,(uint32_t)fg_q5_1_cooked_tile_bytes(640u),ds};
     const fg_vk_tensor *db[]={down,tiles,mid,down_parts};

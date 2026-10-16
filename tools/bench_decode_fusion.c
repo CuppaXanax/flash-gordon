@@ -272,7 +272,7 @@ static bool close_values(const float *a,const float *b,uint64_t count,float *max
     for(uint64_t i=0;i<count;i++){
         float delta=fabsf(a[i]-b[i]);
         if(delta>*maximum)*maximum=delta;
-        if(!isfinite(b[i])||delta>2e-5f+1e-4f*fabsf(a[i]))ok=false;
+        if(!isfinite(a[i])||!isfinite(b[i])||delta>1e-4f*fmaxf(1.0f,fabsf(a[i])))ok=false;
     }
     return ok;
 }
@@ -448,7 +448,11 @@ static void test_small_block(fg_owner_executor *owner,fg_expert_executor *expert
         bool ok=close_values(reference,actual,n*FG_HYPER_WIDTH,&max_output);
         bool state_exact=same_state(&expected,&result);
         bool output_exact=!memcmp(reference,actual,n*FG_HYPER_WIDTH*4u);
-        ok=ok&&state_exact&&output_exact;
+        if(!bench_allow_reassociation)ok=ok&&state_exact&&output_exact;
+        if(expected.ple_values!=result.ple_values||
+           memcmp(expected.qsa_tokens,result.qsa_tokens,sizeof(expected.qsa_tokens)))ok=false;
+        if(expected.ple_values==result.ple_values&&expected.ple_values&&
+           !close_values(expected.ple_data,result.ple_data,expected.ple_values,&max_state))ok=false;
         if(expected.gdn_count!=result.gdn_count)ok=false;
         for(uint32_t i=0u;i<expected.gdn_count&&i<result.gdn_count;i++){
             if(expected.gdn[i].values!=result.gdn[i].values)ok=false;
@@ -673,12 +677,14 @@ int main(int argc,char **argv){
         fg_owner_prefill_input(owner),*output=NULL;
     float hidden[FG_MTP_MAX_VERIFY*FG_HYPER_WIDTH];
     if(clocks&&!intrusive)check(fg_vk_layer_clock_enable(model->vk,&error),&error);
+    const char *small_flags=getenv("FG_SMALL_KERNELS");
+    unsigned long small_mask=small_flags?strtoul(small_flags,NULL,0):0u;
     printf("{\"kind\":\"config\",\"weights\":\"synthetic-%s\",\"first_layer\":6,"
            "\"last_layer\":11,\"resident_bytes\":%llu,\"warmup\":%u,\"iterations\":%u,"
-           "\"windows\":%u,\"seed\":%u,\"batch\":%u,\"small_n\":%s,\"fusion_mask\":%u,\"clocks\":%s,\"intrusive\":%s,\"routing_trace\":%s,\"device\":\"%s\"}\n",
+           "\"windows\":%u,\"seed\":%u,\"batch\":%u,\"small_n\":%s,\"small_kernels\":%lu,\"fusion_mask\":%u,\"clocks\":%s,\"intrusive\":%s,\"routing_trace\":%s,\"device\":\"%s\"}\n",
            q4?"q4-compact":"q8-cooked",(unsigned long long)model->weight_bytes,
            warmup,iterations,windows,bench_seed,batch,
-           small_n?"true":"false",fg_vk_decode_fusion_mask(),clocks?"true":"false",intrusive?"true":"false",routing_trace?"true":"false",
+           small_n?"true":"false",small_mask,fg_vk_decode_fusion_mask(),clocks?"true":"false",intrusive?"true":"false",routing_trace?"true":"false",
            fg_vk_device_name(model->vk));
     uint64_t hash=UINT64_C(1469598103934665603);
     FILE *raw=dump?fopen(dump,"wb"):NULL;

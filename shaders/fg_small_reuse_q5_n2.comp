@@ -1,0 +1,6 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define SMALL_N 2
+#define TYPE 13
+#define FG_SMALL_REUSE
+#include "fg_small_dense.glsl"

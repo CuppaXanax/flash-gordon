@@ -145,7 +145,11 @@ float value_multi(uint base,uint groups,uint row,uint g,uint lane,
     return sum;
 }
 #endif
-#if defined(SMALL_N) && !defined(SMALL_INTERLEAVED)
+#ifdef FG_SMALL_REUSE_ROWS
+#include "fg_small_reuse_rows.glsl"
+#elif defined(FG_SMALL_REUSE)
+#include "fg_small_reuse.glsl"
+#elif defined(SMALL_N) && !defined(SMALL_INTERLEAVED)
 void small_weight(uint base,uint groups,uint g,uint row,uint lane,out vec4 lo,out vec4 hi){
     uint off=base+groups*(TYPE==20u?4u:COMPACT!=0?5u:16u);
     if(TYPE==13u){

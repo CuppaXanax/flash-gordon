@@ -54,7 +54,21 @@ Status values:
 | `FG_ROOF_EXPERT` | `0` | With roofline bit `32`, low three bits select gate/up: `0` original shuffle epilogue, `1/2` two/four prefetched blocks wave64, `3` one block wave32, `4/5` two/four prefetched blocks wave32, `6/7` WG128/256 with two-block prefetch. Add `8` for true wave32 down. Bits `16/32/48` select Q5_1 down WG64 shuffle / one lane per row / two lanes per row. Gate/up overrides `64/128/192` batch 2/10/5 experts per workgroup and cache activation in LDS; `256/512/1024` cache one expert / two with prefetch4 / one with true wave32. These overrides require Q4/Q4, K2560 and ten slots. Down `2048/4096` parallelizes ten slots in WG32/64 plus a merge, for M2560/ten slots. Wave32 requires subgroup-size-control support. Pending real-pack quality gate. | variant (opt-in) |
 | `FG_ROOF_HC` | `0` | Low two bits: `1` losslessly expand HC IQ4 integer-grid weights to cooked Q8 (same half scales), `2` also select one-row-per-lane vector-prefetched low-K Q8 GEMV. Expansion occurs at model load; raw and saved SoA/compact IQ4 are supported, with persistent-cap accounting. Bit `4` chooses eight rather than four HC-down splits, `8` WG64 rather than WG128, `16` true-wave32/WG32 (requires subgroup control), for roofline bit `512`. No weight quantization error is introduced by expansion; model-level qualification remains mandatory. | variant (opt-in) |
 | `FG_ROOF_RECURRENT` | `0` | With roofline bit `4`, `1` selects four column partitions/head, four K partitions/column and register-cached state, plus a separate RMS/gate dispatch. `2` uses vec4 state loads/stores, sixteen K parts and subgroup shuffles. `3` caches state in WG512/head and fuses final normalization. Restricted to production 48x128 state; other values retain the original bit-4 research kernel. | variant (opt-in) |
+| `FG_SMALL_KERNELS` | `0` | Small-N verification research bitmask, fixed before Vulkan pipelines are created. `1`: two rows/32-lane cohort, dequantize once across N2..4 Q4/Q5/IQ4 and cooked Q8 columns. `2`: WG512/head recurrence, 32 state values/lane across N causal updates. `4`: experimental union-down plus per-token gates in one dispatch, no global partials. `8`: one shared causal QSA prefix gather plus batched split/merge when the entire prefix is resident and at most 2051 tokens; indexed/cold paths retain the existing fallback. `16`: subgroup GU reductions; `32`: add next-block weight prefetch; `64`: scalar FMA GU/down plus subgroup GU reductions (`64` takes precedence over `32`, then `16`). `128`/`256`: four/eight rows per cohort on Q4/Q5/IQ4 with M,K >=1024, otherwise retain `1` or the legacy path; `256` takes precedence. Cohort/state variants require 32/64-lane subgroups and WG512 capability. N1 and ordinary prefill are unchanged. Component and N-versus-sequential-N1 gates are required; no model-quality, greedy-token equivalence, or serving promotion is implied. | variant (opt-in) |
 | `FG_ROOF_GDN` | `8` | With roofline bit `1024`, `1/2/4/8` selects F32 control rows per workgroup appended to the fused GDN gate GEMV, trading register pressure against workgroup count. Other values use eight rows. | variant (opt-in) |
+
+Small-N bit `512` is a **rejected precision experiment**, not a qualified
+selection: packed FP16 GU accumulation enables `shaderFloat16` only when
+requested and supported, but fails the independent `1e-4` CPU component gate.
+Exact integer operands do not make FP16 accumulation exact. Bit `1024` instead
+tests exact software-packed integer GU products: two signed 16-bit lanes,
+at most eight Q5-by-Q8 products per partial, with the low-lane borrow restored.
+It uses the existing lossless weights and FP32 scale/minimum accumulation,
+requires the subgroup capabilities above, and takes precedence over the other
+GU variants. Its four-pair activation cache stores packed words, not FP32 vectors.
+The production-shape `expert_small_component` CPU oracle is enabled only when
+`FG_SMALL_KERNELS` is explicitly present (including `0`); it allocates full
+512-expert-addressable GPU slabs, so run it as a targeted test on an idle device.
 
 Roofline dense selections `8/9/10` additionally test one/two/four independent
 uvec4 streams per lane with wave64; `11/12` use two/four streams with **true
