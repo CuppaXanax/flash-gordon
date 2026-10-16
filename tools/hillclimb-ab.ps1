@@ -210,6 +210,12 @@ function Invoke-PairedQualification {
     }
     if ($WriteReference) { throw 'A/B never overwrites historical references.' }
     if ($config.change_kind -notin @('exact','weight-format')) { throw 'Unknown change_kind.' }
+    if ($config.ContainsKey('required_exact_control')) {
+        $control = Get-Content -Raw -LiteralPath $config.required_exact_control | ConvertFrom-Json -AsHashtable
+        if (-not $control.complete -or -not $control.hash_identity) {
+            throw 'The required exact-math binary control did not pass greedy identity.'
+        }
+    }
     if ($config.change_kind -eq 'weight-format') {
         $receipt = Get-Content -Raw -LiteralPath $config.quality_file | ConvertFrom-Json -AsHashtable
         $quality = Get-Content -Raw -LiteralPath $receipt.quality_path | ConvertFrom-Json -AsHashtable
@@ -220,7 +226,18 @@ function Invoke-PairedQualification {
             throw 'Weight-format candidate lacks passing manifest-bound KL evidence.'
         }
     }
+    $referenceRun = $null
+    if ($config.ContainsKey('exact_hash_reference')) {
+        $referenceRun = Get-Content -Raw -LiteralPath $config.exact_hash_reference | ConvertFrom-Json -AsHashtable
+        if (-not $referenceRun.complete -or -not $referenceRun.quality_pass -or
+            $referenceRun.config.B.manifest_sha256 -ne $config.B.manifest_sha256) {
+            throw 'Exact hash reference must be a complete, quality-approved same-pack run.'
+        }
+    }
     $destination = if ($ABOutput) { $ABOutput } else { Join-Path $runRoot ("ab-" + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
+    if ((Test-Path -LiteralPath $destination) -and @(Get-ChildItem -LiteralPath $destination -Force).Count) {
+        throw 'A/B output directory must be fresh.'
+    }
     $null = New-Item -ItemType Directory -Path $destination -Force
     $result = [ordered]@{
         schema = 1; started = [DateTimeOffset]::Now.ToString('o'); config = $config
@@ -242,6 +259,10 @@ function Invoke-PairedQualification {
                 $contexts = if ($config.ContainsKey('contexts')) { [int[]]$config.contexts } else { @(4096,32768,131072) }
                 $pair[$arm] = Invoke-ABBattery $salt $contexts
                 $pair[$arm] | ConvertTo-Json -Depth 45 | Set-Content (Join-Path $destination "round-$round-$arm.json")
+                if ($config.ContainsKey('snapshot_script')) {
+                    & $config.snapshot_script -Deployment $config[$arm] -Arm $arm -SnapshotOnly
+                    if (-not $?) { throw 'Post-sample hardware snapshot failed.' }
+                }
             }
             for ($i = 0; $i -lt $pair.A.prefill.Count; $i++) {
                 if ($pair.A.prefill[$i].request_sha256 -ne $pair.B.prefill[$i].request_sha256) { throw 'Paired request bytes differ.' }
@@ -261,7 +282,6 @@ function Invoke-PairedQualification {
         $result.hash_identity = $hashPass
         $result.quality_pass = $config.change_kind -eq 'weight-format' -or $hashPass
         if ($config.ContainsKey('exact_hash_reference')) {
-            $referenceRun = Get-Content -Raw -LiteralPath $config.exact_hash_reference | ConvertFrom-Json -AsHashtable
             $referenceHashes = @{}
             foreach ($hash in $referenceRun.pairs[0].B.hashes) { $referenceHashes[$hash.name] = $hash.sha256 }
             $samePackPass = @($result.pairs | ForEach-Object { $_.B.hashes } |
@@ -276,9 +296,17 @@ function Invoke-PairedQualification {
         $result.error = $_.Exception.Message
         throw
     } finally {
-        & $config.restore_script
-        if (-not $?) { throw 'Original deployment restore failed.' }
-        $result.finished = [DateTimeOffset]::Now.ToString('o')
-        $result | ConvertTo-Json -Depth 55 | Set-Content $path
+        try {
+            & $config.restore_script
+            if (-not $?) { throw 'Original deployment restore failed.' }
+            $result.restored_original = $true
+        } catch {
+            $result.restore_error = $_.Exception.Message
+            $result.eligible = $false
+            throw
+        } finally {
+            $result.finished = [DateTimeOffset]::Now.ToString('o')
+            $result | ConvertTo-Json -Depth 55 | Set-Content $path
+        }
     }
 }

@@ -2,6 +2,7 @@
 param(
     [Parameter(Mandatory)][hashtable]$Deployment,
     [string]$Arm = '',
+    [switch]$SnapshotOnly,
     [string]$FleetScript = 'D:\looking-glass-labs\bc-250-dbg\Invoke-BC250Fleet.ps1'
 )
 $ErrorActionPreference = 'Stop'
@@ -44,6 +45,10 @@ function Invoke-ABFleet {
             throw "Fleet $Action failed."
         }
     } finally { Remove-Item $script -Force -ErrorAction SilentlyContinue }
+}
+if ($SnapshotOnly) {
+    Invoke-ABFleet status $Deployment @(0..7)
+    return
 }
 Invoke-ABFleet stop $live @(0..7)
 try {

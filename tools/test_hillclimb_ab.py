@@ -66,6 +66,9 @@ class PairedHarness(unittest.TestCase):
             "latency=@{value=100;higher_is_better=$false}}};"
             "B=@{metrics=@{speed=@{value=110;higher_is_better=$true};"
             "latency=@{value=110;higher_is_better=$false}}}}});"
+            "for($i=0;$i -lt 3;$i++){"
+            "$pairs[$i].A.metrics.noise=@{value=100;higher_is_better=$true};"
+            "$pairs[$i].B.metrics.noise=@{value=@(101,103,120)[$i];higher_is_better=$true}};"
             "Get-ABSummary $pairs -Replicates 1000 | ConvertTo-Json -Depth 8"
         )
         result = subprocess.run(["pwsh", "-NoProfile", "-Command", script],
@@ -77,8 +80,11 @@ class PairedHarness(unittest.TestCase):
         self.assertAlmostEqual(rows["speed"]["B_over_A"], 1.1)
         self.assertFalse(rows["latency"]["noninferior"])
         self.assertEqual(rows["latency"]["status"], "regression")
+        self.assertGreater(rows["noise"]["bootstrap_ci95"][0], 1)
+        self.assertLess(rows["noise"]["ci95"][0], 0.97)
+        self.assertFalse(rows["noise"]["noninferior"])
 
-    def test_order_bodies_and_restore(self):
+    def run_mode(self, fail=False):
         root = Path(__file__).resolve().parents[1]
         output = root / ".build" / ("ab-fixture-" + uuid.uuid4().hex)
         output.mkdir(parents=True)
@@ -87,7 +93,9 @@ class PairedHarness(unittest.TestCase):
         events = output / "events.txt"
         deploy.write_text(
             "param($Deployment,$Arm)\n"
-            f"Add-Content -LiteralPath '{events}' -Value $Arm\n", encoding="utf-8")
+            f"Add-Content -LiteralPath '{events}' -Value $Arm\n" +
+            ("if ($Arm -eq 'B') { throw 'fixture deployment failed' }\n" if fail else ""),
+            encoding="utf-8")
         restore.write_text(f"Add-Content -LiteralPath '{events}' -Value restore\n", encoding="utf-8")
         config = output / "config.json"
         config.write_text(json.dumps({
@@ -104,8 +112,16 @@ class PairedHarness(unittest.TestCase):
                 "-BaseUrl", f"http://127.0.0.1:{server.server_port}/v1",
                 "-ABConfig", str(config), "-ABOutput", str(output / "result"), "-ABRounds", "3"
             ], capture_output=True, text=True, timeout=180)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             data = json.loads((output / "result" / "ab-result.json").read_text(encoding="utf-8-sig"))
+            self.assertTrue(data["restored_original"])
+            if fail:
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(data["complete"])
+                self.assertFalse(data["eligible"])
+                self.assertIn("fixture deployment failed", data["error"])
+                self.assertEqual(events.read_text().splitlines(), ["A", "B", "restore"])
+                return
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertTrue(data["complete"])
             self.assertTrue(data["hash_identity"])
             self.assertEqual(events.read_text().splitlines(), ["A", "B", "B", "A", "A", "B", "restore"])
@@ -122,6 +138,12 @@ class PairedHarness(unittest.TestCase):
             server.server_close()
             thread.join()
             shutil.rmtree(output)
+
+    def test_order_bodies_and_restore(self):
+        self.run_mode()
+
+    def test_failed_deploy_restores_original(self):
+        self.run_mode(fail=True)
 
 
 if __name__ == "__main__":

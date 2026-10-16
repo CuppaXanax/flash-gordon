@@ -25,6 +25,11 @@ status)
         tr '\0' ' ' <"$proc/cmdline"; echo
     done
     grep -E 'MemAvailable|SwapFree|SwapTotal' /proc/meminfo
+    for device in /sys/class/drm/card[0-9]*/device; do
+        for value in "$device"/pp_dpm_sclk "$device"/pp_dpm_mclk "$device"/gpu_busy_percent "$device"/hwmon/hwmon*/temp1_input; do
+            if [[ -r $value ]]; then echo "SENSOR $value"; cat "$value"; fi
+        done
+    done
     df -B1 /home/xander
     ;;
 stop)
