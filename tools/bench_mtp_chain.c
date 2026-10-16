@@ -27,8 +27,16 @@ static void embedding_row(FILE *f,uint32_t token,float *out){
         fread(raw,1,sizeof(raw),f)==sizeof(raw),"reference embedding");
     fg_dequantize_q8_0(raw,out,FG_HIDDEN_SIZE);
 }
+static uint32_t read_le32(FILE *file){
+    uint8_t p[4];need(fread(p,1,4u,file)==4u,"subset integer");
+    return (uint32_t)p[0]|(uint32_t)p[1]<<8u|
+        (uint32_t)p[2]<<16u|(uint32_t)p[3]<<24u;
+}
 int main(int argc,char **argv){
-    if(argc!=5){fprintf(stderr,"usage: bench-mtp-chain CAPTURE MANIFEST OVERLAY EMBEDDING\n");return 2;}
+    if(argc!=5&&argc!=6){
+        fprintf(stderr,"usage: bench-mtp-chain CAPTURE MANIFEST OVERLAY EMBEDDING [DRAFT_HEAD_Q8_OR_FGDV]\n");
+        return 2;
+    }
     fg_manifest *manifest=malloc(sizeof(*manifest));need(manifest!=NULL,"manifest");
     check(fg_manifest_read(argv[2],manifest,&error));
     fg_vk_context *vk=NULL;check(fg_vk_open(&vk,&error));
@@ -41,15 +49,30 @@ int main(int argc,char **argv){
     fg_mtp_native_ack ack;
     check(fg_mtp_native_run(native,0u,&config,NULL,&ack,&error));
     char name[1600];need(snprintf(name,sizeof(name),"%s/head.q8",argv[1])<(int)sizeof(name),"head path");
+    const char *draft_head=argc==6?argv[5]:name;
     config=(fg_mtp_native_work){.operation=FG_MTP_NATIVE_LOCAL_HEAD,
-        .overlay=name,.count=(uint32_t)strlen(name)};
+        .overlay=draft_head,.count=(uint32_t)strlen(draft_head)};
     check(fg_mtp_native_run(native,0u,&config,NULL,&ack,&error));
+    uint32_t head_rows=FG_Q38_VOCAB_SIZE,*ids=NULL;
+    if(argc==6){
+        FILE *subset=fopen(draft_head,"rb");need(subset!=NULL,"draft head");
+        uint8_t magic[8],parent[32];
+        need(fread(magic,1,8u,subset)==8u,"draft head header");
+        if(!memcmp(magic,"FGDVOC1\0",8u)){
+            head_rows=read_le32(subset);need(head_rows&&head_rows<=FG_Q38_VOCAB_SIZE,"subset rows");
+            need(fread(parent,1,32u,subset)==32u,"subset parent");
+            ids=malloc((size_t)head_rows*4u);need(ids!=NULL,"subset IDs");
+            for(uint32_t i=0;i<head_rows;i++)ids[i]=read_le32(subset);
+        }
+        fclose(subset);
+    }
     fg_vk_context *reference_vk=NULL;check(fg_vk_open(&reference_vk,&error));
     fg_mtp_head *reference=NULL;
     check(fg_mtp_head_open(&reference,reference_vk,manifest,
         manifest->layer_owner[FG_LAYER_COUNT-1u],argv[3],8192u,&error));
     fg_mtp_vocab *reference_vocab=NULL;
-    check(fg_mtp_vocab_open(&reference_vocab,reference_vk,name,NULL,FG_Q38_VOCAB_SIZE,&error));
+    check(fg_mtp_vocab_open(&reference_vocab,reference_vk,name,ids,head_rows,&error));
+    free(ids);
     fg_vk_tensor *input=NULL,*embedding=NULL;
     check(fg_vk_tensor_create(reference_vk,FG_HYPER_WIDTH*4u,&input,&error));
     check(fg_vk_tensor_create(reference_vk,FG_HIDDEN_SIZE*4u,&embedding,&error));
@@ -71,7 +94,7 @@ int main(int argc,char **argv){
         need(fread(hc,FG_HYPER_WIDTH*4u,rows,f)==rows&&fgetc(f)==EOF,"hidden states");fclose(f);
         snprintf(name,sizeof(name),"%s.drafts.u32",id);f=open_case(argv[1],name);
         need(fread(proposals,4u,256u*3u,f)==256u*3u&&fgetc(f)==EOF,"frozen proposals");fclose(f);
-        for(uint32_t mode=0;mode<2u;mode++){
+        for(uint32_t mode=0;mode<(argc==6?3u:2u);mode++){
         check(fg_mtp_native_reset(native,slot,&error));
         fg_mtp_native_work prefix={.operation=FG_MTP_NATIVE_PREFIX,.limit=prompt};
         check(fg_mtp_native_run(native,slot,&prefix,NULL,&ack,&error));
@@ -84,7 +107,7 @@ int main(int argc,char **argv){
             check(fg_vk_tensor_write(embedding,0u,emb,sizeof(emb),&error));
             check(fg_mtp_head_step_replay(reference,input,embedding,i,&unused,&contracted,&error));
         }
-        uint32_t position=0u,round=0u,limit=mode?64u:256u;
+        uint32_t position=0u,round=0u,limit=mode==1u?64u:256u;
         while(position<limit){
             uint32_t first=prompt+position,keep=mode?1u+round%4u:1u;
             if(keep>limit-position)keep=limit-position;
@@ -109,6 +132,11 @@ int main(int argc,char **argv){
                 frozen_equal+=pending==proposals[position*3u+j];
                 prefix_match&=pending==tokens[first+1u+j];matched+=prefix_match;
             }
+            if(mode==2u){
+                /* Counterfactual accepted-frontier replay against the N1 teacher. */
+                keep=matched+1u;
+                if(keep>limit-position)keep=limit-position;
+            }
             checked+=3u;
             check(fg_mtp_native_observe_verify(native,slot,first,4u,
                 hc+(size_t)first*FG_HYPER_WIDTH,&error));
@@ -126,10 +154,10 @@ int main(int argc,char **argv){
                 check(fg_mtp_head_step_replay(reference,input,embedding,first+i,
                     &unused,&contracted,&error));
             }
-            printf("{\"case\":\"%s\",\"category\":\"%s\",\"mode\":%u,\"position\":%u,\"k\":3,"
+            printf("{\"case\":\"%s\",\"category\":\"%s\",\"mode\":%u,\"head_rows\":%u,\"position\":%u,\"k\":3,"
                 "\"round\":%u,\"keep\":%u,\"accepted\":%u,\"draft_ms\":%.9f,"
                 "\"native_repair_ms\":%.9f,\"reference_vocab_ms\":%.9f,\"reference_equal\":true}\n",
-                id,category,mode,position,round,keep,matched,draft_ms,repair_ms,reference_vocab_ms);
+                id,category,mode,head_rows,position,round,keep,matched,draft_ms,repair_ms,reference_vocab_ms);
             position+=keep;round++;
         }
         }

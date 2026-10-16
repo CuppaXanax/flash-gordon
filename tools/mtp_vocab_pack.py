@@ -9,6 +9,14 @@ import struct
 VOCAB_ROWS = 248320
 RAW_BYTES = VOCAB_ROWS * (2560 // 32 * 34)
 
+def read_ids(path, binary=False):
+    if not binary:
+        return json.loads(path.read_text())
+    data = path.read_bytes()
+    if not data or len(data) % 4:
+        raise ValueError("binary IDs must be nonempty little-endian u32 values")
+    return list(struct.unpack(f"<{len(data)//4}I", data))
+
 
 def pack(source, output, ids, parent_sha256):
     if (not ids or len(ids) > VOCAB_ROWS or
@@ -38,11 +46,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--ids", type=Path, required=True, help="JSON list of global token IDs")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--ids", type=Path, help="JSON list of global token IDs")
+    group.add_argument("--ids-bin", type=Path, help="Little-endian u32 global IDs, such as Strata data/draft_vocab.bin")
     parser.add_argument("--parent-sha256", required=True, help="Sealed output.weight cooked SHA256, not manifest/raw-head SHA")
     args = parser.parse_args()
     print(json.dumps(pack(args.source,args.output,
-        json.loads(args.ids.read_text()),args.parent_sha256),indent=2))
+        read_ids(args.ids or args.ids_bin, bool(args.ids_bin)),args.parent_sha256),indent=2))
 
 
 if __name__ == "__main__":

@@ -46,3 +46,15 @@ class VocabPackTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             MODULE.pack(self.source,self.output,[1],"ab"*32)
         self.assertFalse(self.output.exists())
+
+    def test_binary_ids(self):
+        ids=self.root/"ids.bin"
+        ids.write_bytes(struct.pack("<3I",19,2,100))
+        self.assertEqual(MODULE.read_ids(ids,True),[19,2,100])
+        for data in (b"",b"\0"*3):
+            ids.write_bytes(data)
+            with self.assertRaises(ValueError):
+                MODULE.read_ids(ids,True)
+        ids.write_bytes(struct.pack("<I",0xffffffff))
+        with self.assertRaises(ValueError):
+            MODULE.pack(self.source,self.output,MODULE.read_ids(ids,True),"ab"*32)

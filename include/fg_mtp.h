@@ -33,14 +33,17 @@ invalid:
 }
 
 typedef struct fg_mtp_policy {
+    double serial_ms;
+    uint64_t serial_observations;
     double acceptance[FG_MTP_MAX_DRAFT];
     double round_ms[FG_MTP_MAX_DRAFT];
     uint64_t observations[FG_MTP_MAX_DRAFT];
     uint64_t rounds;
 } fg_mtp_policy;
 
-/* A policy belongs to one stream. Ratios describe N=2,3,4 target service;
- * observed end-to-end round times replace these initialization estimates. */
+/* A policy belongs to one stream. Zero chooses ordinary serial decode.
+ * Ratios describe N=2,3,4 target service; measured complete-round prices
+ * replace the initialization estimates after first-use compilation. */
 fg_status fg_mtp_policy_init(fg_mtp_policy *policy,double serial_ms,
     double draft_ms,const double verify_ratios[FG_MTP_MAX_DRAFT],fg_error *err);
 uint32_t fg_mtp_policy_choose(const fg_mtp_policy *policy,uint32_t max_draft);
@@ -48,6 +51,9 @@ uint32_t fg_mtp_policy_draft_width(const fg_mtp_policy *policy,uint32_t max_draf
                                   uint32_t fixed_draft);
 fg_status fg_mtp_policy_observe(fg_mtp_policy *policy,uint32_t drafted,
     uint32_t accepted,double round_ms,fg_error *err);
+fg_status fg_mtp_policy_observe_serial(fg_mtp_policy *policy,double milliseconds,
+    fg_error *err);
+void fg_mtp_policy_new_context(fg_mtp_policy *policy);
 
 typedef struct fg_mtp_result {
     uint32_t tokens[FG_MTP_MAX_VERIFY];

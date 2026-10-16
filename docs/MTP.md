@@ -1,5 +1,11 @@
 # MTP: native head, causal verification and remaining execution gates
 
+Offline follow-up adds a true serial goodput competitor with native-state-safe
+fallback, size-guarded Q8 column reuse, authenticated real Strata ID sets and
+local-head/deferred-graph residency probes. **No new serving TPS or promotion
+claim:** chat noninferiority, whole-rank N4/N1≤1.5 and numerical qualification
+remain gates. See the latest section of [MTP_TO_PROD.md](MTP_TO_PROD.md).
+
 Latest: [production roadmap and authorized diagnostic](MTP_TO_PROD.md).
 The subsequent user-granted **a038dec A0/F3/A1** diagnostic completed:
 paired off/on decode TPS **chat31.063/22.378, code31.200/33.409**,
@@ -89,11 +95,26 @@ unchanged. A subset argmax maps its result back to the original global ID.
 There is no new environment flag; the existing local-head option accepts
 the typed container instead of a raw head.
 
+The latest [offline goodput/fit receipts](../results/hillclimb/MTP_GOODPUT_LOCAL.md)
+include actual Strata curated IDs, complete graph-warmed rank7 sessions2
+admission at explicitly smaller cache budgets, and retained40-case teacher
+acceptance. Subsets lose4.184% relative code yield in that counterfactual;
+head-speed savings alone are not an end-to-end win. No new policy serving
+noninferiority or whole-rank≤1.5× result is claimed.
+
 Create a container with:
 
 ```powershell
 python tools\mtp_vocab_pack.py head.q8 head.fgdv --ids ids.json --parent-sha256 COOKED_OUTPUT_WEIGHT_SHA256
+python tools\mtp_vocab_pack.py head.q8 head.fgdv --ids-bin draft_vocab.bin --parent-sha256 COOKED_OUTPUT_WEIGHT_SHA256
+python tools\mtp_vocab_inspect.py head.fgdv --raw-sha256 RAW_OUTPUT_WEIGHT_SHA256 --parent-sha256 COOKED_OUTPUT_WEIGHT_SHA256
 ```
+
+`--ids` and `--ids-bin` are alternatives; binary IDs are little-endian u32.
+The inspector authenticates the **complete raw source**, parent declaration,
+IDs and exact file size before staging, returning the container SHA.
+It does not replace the runtime's cooked-parent authentication or grant
+production admission.
 
 The parent is the sealed **cooked `output.weight` tensor SHA256**, not the
 manifest SHA or row-major raw-file SHA. IDs must be unique valid global IDs;
@@ -115,6 +136,19 @@ full/40,525/106,299-row heads using synthetic hidden vectors and compares
 subset results with the independent existing raw-row loader. Its contiguous
 low-ID sets are reproducibility/performance examples, **not curated language
 sets, measured draft acceptance or full-chain speedups**.
+To measure actual curated IDs instead, append one or more authenticated
+containers: `tools/bench-mtp-vocab MANIFEST FULL_RAW_HEAD_Q8 ENGLISH_FGDV CJK_FGDV`.
+The full-head control remains mandatory and each subset is independently
+compared with the original raw-row loader.
+
+`tools/mtp-residency MANIFEST OVERLAY EMBEDDING 2 --local-head FILE --verify-bench`
+adds the actual head before eager admission, then warms N1..4 target graphs
+and three-step native graphs for **both private sessions**. Exit3 is a policy
+denial, not a fit. Final `all_graphs_ready` is required; merely fitting
+`target_verify_ready` is insufficient. The optional target timings use authentic
+weights but synthetic HCs and zero ngram, not captured-state quality or acceptance.
+Use an explicit valid `FG_QSA_WORKER_CACHE_MIB` (16..640); changing its budget
+must be reported as a separate configuration.
 
 The cold-retain fix validates QSA frontiers only inside the verified
 journal's layer interval. A replicated coordinator intentionally reports
@@ -1543,10 +1577,27 @@ strength of component tests.
   1 GiB at 262K. This is a **draft approximation**, not a target KV change,
   and needs long-context acceptance qualification before serving selection.
 * `fg_mtp_policy` is a per-stream rolling conditional-acceptance/cost policy.
-  It maximizes expected committed tokens per millisecond for k=1..3, samples
-  other lengths periodically and never observes positions after the first
-  rejection. Real measured chat/code priors in the unit test choose k=2/k=3
-  under the stated target cost estimates; no prompt-text classifier is used.
+  It compares k=0 serial with k=1..3 expected committed tokens per millisecond,
+  requiring a speculative estimate to beat measured serial by0.5%. The first
+  adaptive token measures ordinary target-only service, excluding native
+  advancement. Conditional acceptance uses1/16 EWMA and never observes
+  positions after the first rejection; prices use complete round time.
+  Optimistic cold acceptance priors (.92/.87/.86) are hypotheses, not a
+  confidence guarantee or prompt-text classifier. One extreme first-shape
+  compile stall (>3× its estimated price) is excluded from price learning;
+  actual elapsed time is still logged/charged, and recurrent slow work is not
+  excluded. Ordinary baseline learning also resists a first-use cold stall.
+  Forced periodic speculative probes are removed. A losing stream latches
+  ordinary N1 and skips native ADVANCE RPC/GPU work until a successful new
+  prefix plan synchronizes native state. Exact-prefix continuation stays
+  serial, preventing drafts from stale native KV. A cold/new conversation
+  resets the acceptance prior, retaining observed prices and serial service;
+  a reused conversation keeps its learned acceptance. A one-token
+  tail uses N1; fixed-width research overrides still bypass policy selection.
+  Eight-rank CPU doubles cover both private slots, no-native-RPC fallback,
+  exact-prefix latching, prefix reset/resumption, cancellation and EOS.
+  **Chat≥1.0× and retained code gain remain measured serving gates, not claims
+  established by this policy formula or these correctness doubles.**
   Runtime selection now uses a private policy per stream; publishing a burst
   follows target commit rather than the draft execution.
 * The QSA page-service guard is now tied to its actual session namespace,

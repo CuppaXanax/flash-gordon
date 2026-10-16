@@ -1,0 +1,757 @@
+{
+  "schema": "FG_MTP_GOODPUT_LOCAL_V1",
+  "source_parent": "83af9f3568b527dafe0e25d6b40b37c55e0f68a9",
+  "blade": "192.168.42.51",
+  "reported_cus": 24,
+  "production_access": false,
+  "promotion": false,
+  "target_precision_floor": "Q4",
+  "draft_weights": "Q8_0 unchanged; lower bits permitted but not implemented here",
+  "sealed_manifest_sha256": "0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252",
+  "native_overlay_sha256": "536bab54b0a1bdea23b65871c4cdc38deee5803771501a0c770a0510bcd3283b",
+  "head_source_sha256": "2801d79db74bcae38b47fd5051f03136d8ca7715abeba7d92b49ba46c696bc33",
+  "raw_archive_sha256": "221a9aba787ba367842d88fbc9607ad6931c677b95f48d9a360b747bfae2eb37",
+  "curated_heads": [
+    {
+      "kind": "draft_vocab_parent",
+      "cooked_sha256": "fa90643ca673bf032655f6c645c2a5718bc1eac3b1b29bd3ff90eb13d14e19af"
+    },
+    {
+      "kind": "draft_vocab_bench",
+      "rows": 248320,
+      "reported_cus": 24,
+      "mean_ms": 2.2373,
+      "median_ms": 2.254269,
+      "p95_ms": 2.264776,
+      "resident_bytes": 676920320,
+      "saved_bytes": 0,
+      "three_call_saving_proxy_ms": 0.0,
+      "independent_loader_ids_scores_exact": true,
+      "subset_kind": "full vocabulary"
+    },
+    {
+      "kind": "draft_vocab_bench",
+      "rows": 40525,
+      "reported_cus": 24,
+      "mean_ms": 0.427269,
+      "median_ms": 0.433681,
+      "p95_ms": 0.442545,
+      "resident_bytes": 110479316,
+      "saved_bytes": 566441004,
+      "three_call_saving_proxy_ms": 5.430094,
+      "independent_loader_ids_scores_exact": true,
+      "subset_kind": "caller-provided authenticated IDs; acceptance unqualified"
+    },
+    {
+      "kind": "draft_vocab_bench",
+      "rows": 106299,
+      "reported_cus": 24,
+      "mean_ms": 1.016979,
+      "median_ms": 1.018835,
+      "p95_ms": 1.025152,
+      "resident_bytes": 289784684,
+      "saved_bytes": 387135636,
+      "three_call_saving_proxy_ms": 3.660964,
+      "independent_loader_ids_scores_exact": true,
+      "subset_kind": "caller-provided authenticated IDs; acceptance unqualified"
+    }
+  ],
+  "residency": [
+    {
+      "raw": "fit-cjk-440.jsonl",
+      "head_rows": 106299,
+      "qsa_worker_cache_mib": 440,
+      "small_kernel_mask": 330,
+      "sessions": 2,
+      "final_stage": "target_admission_rejected",
+      "complete_graph_fit": false,
+      "final_requested_bytes": 14634324460,
+      "peak_requested_bytes": 14634324460,
+      "final_allocated_bytes": 14634324480,
+      "cap_bytes": 14495514624,
+      "cap_minus_final_requested_bytes": -138809836,
+      "synthetic_hc_zero_ngram_timings": {}
+    },
+    {
+      "raw": "fit-english-440.jsonl",
+      "head_rows": 40525,
+      "qsa_worker_cache_mib": 440,
+      "small_kernel_mask": 330,
+      "sessions": 2,
+      "final_stage": "native_admission_rejected",
+      "complete_graph_fit": false,
+      "final_requested_bytes": 14455019092,
+      "peak_requested_bytes": 14455019092,
+      "final_allocated_bytes": 14455019152,
+      "cap_bytes": 14495514624,
+      "cap_minus_final_requested_bytes": 40495532,
+      "synthetic_hc_zero_ngram_timings": {}
+    },
+    {
+      "raw": "fit-cjk-320.jsonl",
+      "head_rows": 106299,
+      "qsa_worker_cache_mib": 320,
+      "small_kernel_mask": 330,
+      "sessions": 2,
+      "final_stage": "graph_admission_rejected",
+      "complete_graph_fit": false,
+      "final_requested_bytes": 14421421884,
+      "peak_requested_bytes": 14421421884,
+      "final_allocated_bytes": 14421421904,
+      "cap_bytes": 14495514624,
+      "cap_minus_final_requested_bytes": 74092740,
+      "synthetic_hc_zero_ngram_timings": {}
+    },
+    {
+      "raw": "fit-final-cjk-320.jsonl",
+      "head_rows": 106299,
+      "qsa_worker_cache_mib": 320,
+      "small_kernel_mask": 330,
+      "sessions": 2,
+      "final_stage": "all_graphs_ready",
+      "complete_graph_fit": true,
+      "final_requested_bytes": 14443303740,
+      "peak_requested_bytes": 14443303740,
+      "final_allocated_bytes": 14443303760,
+      "cap_bytes": 14495514624,
+      "cap_minus_final_requested_bytes": 52210884,
+      "synthetic_hc_zero_ngram_timings": {
+        "0": {
+          "1": {
+            "samples": 32,
+            "median_ms": 3.1393325,
+            "mean_ms": 3.27751071875,
+            "median_n_over_n1": 1.0
+          },
+          "2": {
+            "samples": 32,
+            "median_ms": 4.6570995,
+            "mean_ms": 4.65764884375,
+            "median_n_over_n1": 1.483468062080076
+          },
+          "3": {
+            "samples": 32,
+            "median_ms": 6.1670985,
+            "mean_ms": 6.1725083125,
+            "median_n_over_n1": 1.964461712800412
+          },
+          "4": {
+            "samples": 32,
+            "median_ms": 7.1276665,
+            "mean_ms": 7.1267106875,
+            "median_n_over_n1": 2.2704401333723014
+          }
+        },
+        "1": {
+          "1": {
+            "samples": 32,
+            "median_ms": 3.1446055,
+            "mean_ms": 3.145175625,
+            "median_n_over_n1": 1.0
+          },
+          "2": {
+            "samples": 32,
+            "median_ms": 4.6793005,
+            "mean_ms": 4.6793053125,
+            "median_n_over_n1": 1.488040550714549
+          },
+          "3": {
+            "samples": 32,
+            "median_ms": 6.2006075,
+            "mean_ms": 6.20204975,
+            "median_n_over_n1": 1.9718236516472418
+          },
+          "4": {
+            "samples": 32,
+            "median_ms": 7.155602,
+            "mean_ms": 7.1531449375,
+            "median_n_over_n1": 2.2755165950069096
+          }
+        }
+      }
+    },
+    {
+      "raw": "fit-final-english-416.jsonl",
+      "head_rows": 40525,
+      "qsa_worker_cache_mib": 416,
+      "small_kernel_mask": 330,
+      "sessions": 2,
+      "final_stage": "all_graphs_ready",
+      "complete_graph_fit": true,
+      "final_requested_bytes": 14465327940,
+      "peak_requested_bytes": 14465327940,
+      "final_allocated_bytes": 14465328000,
+      "cap_bytes": 14495514624,
+      "cap_minus_final_requested_bytes": 30186684,
+      "synthetic_hc_zero_ngram_timings": {
+        "0": {
+          "1": {
+            "samples": 32,
+            "median_ms": 3.445296,
+            "mean_ms": 3.4448045625,
+            "median_n_over_n1": 1.0
+          },
+          "2": {
+            "samples": 32,
+            "median_ms": 4.6362345000000005,
+            "mean_ms": 4.5339265625,
+            "median_n_over_n1": 1.3456708799476158
+          },
+          "3": {
+            "samples": 32,
+            "median_ms": 5.672559,
+            "mean_ms": 5.58900484375,
+            "median_n_over_n1": 1.6464649191245107
+          },
+          "4": {
+            "samples": 32,
+            "median_ms": 5.749952,
+            "mean_ms": 5.69439390625,
+            "median_n_over_n1": 1.668928301080662
+          }
+        },
+        "1": {
+          "1": {
+            "samples": 32,
+            "median_ms": 2.6004294999999997,
+            "mean_ms": 2.6017596875,
+            "median_n_over_n1": 1.0
+          },
+          "2": {
+            "samples": 32,
+            "median_ms": 3.7839470000000004,
+            "mean_ms": 3.78553321875,
+            "median_n_over_n1": 1.4551238555015626
+          },
+          "3": {
+            "samples": 32,
+            "median_ms": 4.8240704999999995,
+            "mean_ms": 4.8255015624999995,
+            "median_n_over_n1": 1.8551052816467433
+          },
+          "4": {
+            "samples": 32,
+            "median_ms": 5.506868,
+            "mean_ms": 5.504796125,
+            "median_n_over_n1": 2.117676330006255
+          }
+        }
+      }
+    },
+    {
+      "raw": "fit-guarded-english-416.jsonl",
+      "head_rows": 40525,
+      "qsa_worker_cache_mib": 416,
+      "small_kernel_mask": 4426,
+      "sessions": 2,
+      "final_stage": "all_graphs_ready",
+      "complete_graph_fit": true,
+      "final_requested_bytes": 14465327940,
+      "peak_requested_bytes": 14465327940,
+      "final_allocated_bytes": 14465328000,
+      "cap_bytes": 14495514624,
+      "cap_minus_final_requested_bytes": 30186684,
+      "synthetic_hc_zero_ngram_timings": {
+        "0": {
+          "1": {
+            "samples": 32,
+            "median_ms": 3.445519,
+            "mean_ms": 3.446476125,
+            "median_n_over_n1": 1.0
+          },
+          "2": {
+            "samples": 32,
+            "median_ms": 4.6403305,
+            "mean_ms": 4.80940890625,
+            "median_n_over_n1": 1.3467725762069518
+          },
+          "3": {
+            "samples": 32,
+            "median_ms": 5.5386245,
+            "mean_ms": 5.72622009375,
+            "median_n_over_n1": 1.6074862742013614
+          },
+          "4": {
+            "samples": 32,
+            "median_ms": 5.901231,
+            "mean_ms": 6.01866371875,
+            "median_n_over_n1": 1.7127262975476263
+          }
+        },
+        "1": {
+          "1": {
+            "samples": 32,
+            "median_ms": 2.7904530000000003,
+            "mean_ms": 2.7903246250000002,
+            "median_n_over_n1": 1.0
+          },
+          "2": {
+            "samples": 32,
+            "median_ms": 4.067035,
+            "mean_ms": 4.03551975,
+            "median_n_over_n1": 1.4574819930670753
+          },
+          "3": {
+            "samples": 32,
+            "median_ms": 4.8766845,
+            "mean_ms": 4.87879484375,
+            "median_n_over_n1": 1.7476318361212315
+          },
+          "4": {
+            "samples": 32,
+            "median_ms": 5.5427355,
+            "mean_ms": 5.54744515625,
+            "median_n_over_n1": 1.9863210381970238
+          }
+        }
+      }
+    }
+  ],
+  "acceptance": {
+    "full": {
+      "summary": {
+        "cases": 40,
+        "draft_tokens_reference_equal": 45120,
+        "frozen_draft_ids_equal": 45111,
+        "requested_live_bytes": 3527018592
+      },
+      "modes": {
+        "0": {
+          "chat": {
+            "cases": 20,
+            "rounds": 5120,
+            "accepted_draft_fraction": 0.4837890625,
+            "one_plus_mean_accepted": 2.4513671875,
+            "advanced_teacher_tokens": 5120,
+            "advanced_teacher_tokens_per_round": 1,
+            "mean_warm_local_draft_ms": 9.039642032290981,
+            "mean_warm_native_repair_ms": 0.003383086099411765
+          },
+          "code": {
+            "cases": 20,
+            "rounds": 5120,
+            "accepted_draft_fraction": 0.7828776041666666,
+            "one_plus_mean_accepted": 3.3486328125,
+            "advanced_teacher_tokens": 5120,
+            "advanced_teacher_tokens_per_round": 1,
+            "mean_warm_local_draft_ms": 9.010116328516471,
+            "mean_warm_native_repair_ms": 0.003340090494117647
+          }
+        },
+        "1": {
+          "chat": {
+            "cases": 20,
+            "rounds": 540,
+            "accepted_draft_fraction": 0.4783950617283951,
+            "one_plus_mean_accepted": 2.435185185185185,
+            "advanced_teacher_tokens": 1280,
+            "advanced_teacher_tokens_per_round": 2.3703703703703702,
+            "mean_warm_local_draft_ms": 8.961263348101923,
+            "mean_warm_native_repair_ms": 0.38535548443461537
+          },
+          "code": {
+            "cases": 20,
+            "rounds": 540,
+            "accepted_draft_fraction": 0.6851851851851852,
+            "one_plus_mean_accepted": 3.0555555555555554,
+            "advanced_teacher_tokens": 1280,
+            "advanced_teacher_tokens_per_round": 2.3703703703703702,
+            "mean_warm_local_draft_ms": 8.955847155763461,
+            "mean_warm_native_repair_ms": 0.3834214309096154
+          }
+        },
+        "2": {
+          "chat": {
+            "cases": 20,
+            "rounds": 2140,
+            "accepted_draft_fraction": 0.46682242990654205,
+            "one_plus_mean_accepted": 2.400467289719626,
+            "advanced_teacher_tokens": 5120,
+            "advanced_teacher_tokens_per_round": 2.392523364485981,
+            "mean_warm_local_draft_ms": 8.970582352399056,
+            "mean_warm_native_repair_ms": 0.3761294624216981
+          },
+          "code": {
+            "cases": 20,
+            "rounds": 1580,
+            "accepted_draft_fraction": 0.7521097046413502,
+            "one_plus_mean_accepted": 3.2563291139240507,
+            "advanced_teacher_tokens": 5120,
+            "advanced_teacher_tokens_per_round": 3.240506329113924,
+            "mean_warm_local_draft_ms": 8.96601873470641,
+            "mean_warm_native_repair_ms": 0.5979262462724358
+          }
+        }
+      }
+    },
+    "english": {
+      "summary": {
+        "cases": 40,
+        "draft_tokens_reference_equal": 45633,
+        "frozen_draft_ids_equal": 42578,
+        "requested_live_bytes": 2960577588
+      },
+      "modes": {
+        "0": {
+          "chat": {
+            "cases": 20,
+            "rounds": 5120,
+            "accepted_draft_fraction": 0.447265625,
+            "one_plus_mean_accepted": 2.341796875,
+            "advanced_teacher_tokens": 5120,
+            "advanced_teacher_tokens_per_round": 1,
+            "mean_warm_local_draft_ms": 3.6603890921907842,
+            "mean_warm_native_repair_ms": 0.0033684883507843137
+          },
+          "code": {
+            "cases": 20,
+            "rounds": 5120,
+            "accepted_draft_fraction": 0.7381510416666667,
+            "one_plus_mean_accepted": 3.214453125,
+            "advanced_teacher_tokens": 5120,
+            "advanced_teacher_tokens_per_round": 1,
+            "mean_warm_local_draft_ms": 3.6321474889392156,
+            "mean_warm_native_repair_ms": 0.0033388627166666667
+          }
+        },
+        "1": {
+          "chat": {
+            "cases": 20,
+            "rounds": 540,
+            "accepted_draft_fraction": 0.4271604938271605,
+            "one_plus_mean_accepted": 2.2814814814814817,
+            "advanced_teacher_tokens": 1280,
+            "advanced_teacher_tokens_per_round": 2.3703703703703702,
+            "mean_warm_local_draft_ms": 3.5875489343076925,
+            "mean_warm_native_repair_ms": 0.3827180541596154
+          },
+          "code": {
+            "cases": 20,
+            "rounds": 540,
+            "accepted_draft_fraction": 0.6351851851851852,
+            "one_plus_mean_accepted": 2.9055555555555554,
+            "advanced_teacher_tokens": 1280,
+            "advanced_teacher_tokens_per_round": 2.3703703703703702,
+            "mean_warm_local_draft_ms": 3.5871373092230767,
+            "mean_warm_native_repair_ms": 0.3834521946576923
+          }
+        },
+        "2": {
+          "chat": {
+            "cases": 20,
+            "rounds": 2242,
+            "accepted_draft_fraction": 0.4295272078501338,
+            "one_plus_mean_accepted": 2.2885816235504013,
+            "advanced_teacher_tokens": 5120,
+            "advanced_teacher_tokens_per_round": 2.2836752899197146,
+            "mean_warm_local_draft_ms": 3.59415367459766,
+            "mean_warm_native_repair_ms": 0.3445399827722772
+          },
+          "code": {
+            "cases": 20,
+            "rounds": 1649,
+            "accepted_draft_fraction": 0.7062866383666869,
+            "one_plus_mean_accepted": 3.1188599151000607,
+            "advanced_teacher_tokens": 5120,
+            "advanced_teacher_tokens_per_round": 3.1049120679199516,
+            "mean_warm_local_draft_ms": 3.5919891332387968,
+            "mean_warm_native_repair_ms": 0.5587410068815224
+          }
+        }
+      }
+    },
+    "cjk": {
+      "summary": {
+        "cases": 40,
+        "draft_tokens_reference_equal": 45633,
+        "frozen_draft_ids_equal": 42574,
+        "requested_live_bytes": 3139882956
+      },
+      "modes": {
+        "0": {
+          "chat": {
+            "cases": 20,
+            "rounds": 5120,
+            "accepted_draft_fraction": 0.447265625,
+            "one_plus_mean_accepted": 2.341796875,
+            "advanced_teacher_tokens": 5120,
+            "advanced_teacher_tokens_per_round": 1,
+            "mean_warm_local_draft_ms": 5.388148649115882,
+            "mean_warm_native_repair_ms": 0.0033709375211764705
+          },
+          "code": {
+            "cases": 20,
+            "rounds": 5120,
+            "accepted_draft_fraction": 0.7381510416666667,
+            "one_plus_mean_accepted": 3.214453125,
+            "advanced_teacher_tokens": 5120,
+            "advanced_teacher_tokens_per_round": 1,
+            "mean_warm_local_draft_ms": 5.321920858577451,
+            "mean_warm_native_repair_ms": 0.003408480448627451
+          }
+        },
+        "1": {
+          "chat": {
+            "cases": 20,
+            "rounds": 540,
+            "accepted_draft_fraction": 0.4271604938271605,
+            "one_plus_mean_accepted": 2.2814814814814817,
+            "advanced_teacher_tokens": 1280,
+            "advanced_teacher_tokens_per_round": 2.3703703703703702,
+            "mean_warm_local_draft_ms": 5.3133705786230765,
+            "mean_warm_native_repair_ms": 0.3880694448769231
+          },
+          "code": {
+            "cases": 20,
+            "rounds": 540,
+            "accepted_draft_fraction": 0.6351851851851852,
+            "one_plus_mean_accepted": 2.9055555555555554,
+            "advanced_teacher_tokens": 1280,
+            "advanced_teacher_tokens_per_round": 2.3703703703703702,
+            "mean_warm_local_draft_ms": 5.276131238273077,
+            "mean_warm_native_repair_ms": 0.3915349960211538
+          }
+        },
+        "2": {
+          "chat": {
+            "cases": 20,
+            "rounds": 2242,
+            "accepted_draft_fraction": 0.4295272078501338,
+            "one_plus_mean_accepted": 2.2885816235504013,
+            "advanced_teacher_tokens": 5120,
+            "advanced_teacher_tokens_per_round": 2.2836752899197146,
+            "mean_warm_local_draft_ms": 5.3186224588730875,
+            "mean_warm_native_repair_ms": 0.34868997464761475
+          },
+          "code": {
+            "cases": 20,
+            "rounds": 1649,
+            "accepted_draft_fraction": 0.7062866383666869,
+            "one_plus_mean_accepted": 3.1188599151000607,
+            "advanced_teacher_tokens": 5120,
+            "advanced_teacher_tokens_per_round": 3.1049120679199516,
+            "mean_warm_local_draft_ms": 5.291275611602824,
+            "mean_warm_native_repair_ms": 0.5753977365402088
+          }
+        }
+      }
+    }
+  },
+  "acceptance_scope": "Retained production N1 teacher, 40 cases. Mode0 every frontier; mode1 forced keep1..4; mode2 advance accepted+bonus. Neither current N4 outputs nor live TPS.",
+  "teacher_next_token_coverage": {
+    "english": {
+      "chat": {
+        "next_token_coverage": 0.928515625,
+        "count": 5120,
+        "missing": 366
+      },
+      "code": {
+        "next_token_coverage": 0.9626953125,
+        "count": 5120,
+        "missing": 191
+      }
+    },
+    "cjk": {
+      "chat": {
+        "next_token_coverage": 0.928515625,
+        "count": 5120,
+        "missing": 366
+      },
+      "code": {
+        "next_token_coverage": 0.9626953125,
+        "count": 5120,
+        "missing": 191
+      }
+    }
+  },
+  "capture_provenance": {
+    "files": [
+      "cases.tsv",
+      "chat-00.tokens.u32",
+      "chat-01.tokens.u32",
+      "chat-02.tokens.u32",
+      "chat-03.tokens.u32",
+      "chat-04.tokens.u32",
+      "chat-05.tokens.u32",
+      "chat-06.tokens.u32",
+      "chat-07.tokens.u32",
+      "chat-08.tokens.u32",
+      "chat-09.tokens.u32",
+      "chat-10.tokens.u32",
+      "chat-11.tokens.u32",
+      "chat-12.tokens.u32",
+      "chat-13.tokens.u32",
+      "chat-14.tokens.u32",
+      "chat-15.tokens.u32",
+      "chat-16.tokens.u32",
+      "chat-17.tokens.u32",
+      "chat-18.tokens.u32",
+      "chat-19.tokens.u32",
+      "code-00.tokens.u32",
+      "code-01.tokens.u32",
+      "code-02.tokens.u32",
+      "code-03.tokens.u32",
+      "code-04.tokens.u32",
+      "code-05.tokens.u32",
+      "code-06.tokens.u32",
+      "code-07.tokens.u32",
+      "code-08.tokens.u32",
+      "code-09.tokens.u32",
+      "code-10.tokens.u32",
+      "code-11.tokens.u32",
+      "code-12.tokens.u32",
+      "code-13.tokens.u32",
+      "code-14.tokens.u32",
+      "code-15.tokens.u32",
+      "code-16.tokens.u32",
+      "code-17.tokens.u32",
+      "code-18.tokens.u32",
+      "code-19.tokens.u32",
+      "embedding.q8",
+      "hc-7697192375568391859.f32",
+      "hc-7697192439690065774.f32",
+      "hc-7697192491346882974.f32",
+      "hc-7697192542758770343.f32",
+      "hc-7697192594749086101.f32",
+      "hc-7697192646365089406.f32",
+      "hc-7697192701745373569.f32",
+      "hc-7697192753573789722.f32",
+      "hc-7697192809247404349.f32",
+      "hc-7697192860522870196.f32",
+      "hc-7697192912412772286.f32",
+      "hc-7697192963993060174.f32",
+      "hc-7697193019367735499.f32",
+      "hc-7697193070841507477.f32",
+      "hc-7697193123050288584.f32",
+      "hc-7697193174751471359.f32",
+      "hc-7697193229953119489.f32",
+      "hc-7697193281355567470.f32",
+      "hc-7697193333361528188.f32",
+      "hc-7697193384874083889.f32",
+      "hc-7697193436773945078.f32",
+      "hc-7697193487867910113.f32",
+      "hc-7697193539643667537.f32",
+      "hc-7697193591035248225.f32",
+      "hc-7697193646348961121.f32",
+      "hc-7697193698011871191.f32",
+      "hc-7697193749799412517.f32",
+      "hc-7697193801444359468.f32",
+      "hc-7697193853339276522.f32",
+      "hc-7697193904648339713.f32",
+      "hc-7697193956403852381.f32",
+      "hc-7697194007968775364.f32",
+      "hc-7697194063013118790.f32",
+      "hc-7697194111158746862.f32",
+      "hc-7697194166324839120.f32",
+      "hc-7697194217725057810.f32",
+      "hc-7697194273402918836.f32",
+      "hc-7697194321545106191.f32",
+      "hc-7697194376774318819.f32",
+      "hc-7697194427999548445.f32",
+      "chat-00.drafts.u32",
+      "chat-01.drafts.u32",
+      "chat-02.drafts.u32",
+      "chat-03.drafts.u32",
+      "chat-04.drafts.u32",
+      "chat-05.drafts.u32",
+      "chat-06.drafts.u32",
+      "chat-07.drafts.u32",
+      "chat-08.drafts.u32",
+      "chat-09.drafts.u32",
+      "chat-10.drafts.u32",
+      "chat-11.drafts.u32",
+      "chat-12.drafts.u32",
+      "chat-13.drafts.u32",
+      "chat-14.drafts.u32",
+      "chat-15.drafts.u32",
+      "chat-16.drafts.u32",
+      "chat-17.drafts.u32",
+      "chat-18.drafts.u32",
+      "chat-19.drafts.u32",
+      "code-00.drafts.u32",
+      "code-01.drafts.u32",
+      "code-02.drafts.u32",
+      "code-03.drafts.u32",
+      "code-04.drafts.u32",
+      "code-05.drafts.u32",
+      "code-06.drafts.u32",
+      "code-07.drafts.u32",
+      "code-08.drafts.u32",
+      "code-09.drafts.u32",
+      "code-10.drafts.u32",
+      "code-11.drafts.u32",
+      "code-12.drafts.u32",
+      "code-13.drafts.u32",
+      "code-14.drafts.u32",
+      "code-15.drafts.u32",
+      "code-16.drafts.u32",
+      "code-17.drafts.u32",
+      "code-18.drafts.u32",
+      "code-19.drafts.u32"
+    ],
+    "capture_archive_sha256": "3e8b51df5bb859f1fa458b783d2da86571f5ec3964811a66226d7c32821a3317",
+    "scope": "Retained production N1 teacher HCs/tokens, old 40-case corpus; no new production access"
+  },
+  "offline_release_receipt": {
+    "IP": "192.168.42.51",
+    "ExitCode": 0,
+    "Stdout": "GOVERNOR_BASELINE_EMPTY_AND_STILL_NO_EXPOSED_GOVERNORS\nOFFLINE_51_RELEASED 2026-10-16T22:41:00Z root_absent_twice=1 owned_processes=0 test_ports_closed=1 governors_unchanged=1",
+    "Stderr": ""
+  },
+  "retained_candidate": {
+    "binary_sha256": "aee2cd761d7d1ca7ad07df4987abc343c2a7564d2fc814ada49f33a4cf6ed085",
+    "release_sha256": "8037308e8bf4185bfa5f46c95aebc5a7b6d804c634aa3ab89b59515eb9221c25",
+    "verified_closure_files": 326,
+    "scope": "Retained locally; not prepared/qualified for promotion"
+  },
+  "validation": {
+    "python_mtp_tests": 64,
+    "python_mtp_passed": true,
+    "c17_werror_build_passed": true,
+    "cpu_wire_native_embedding_passed": true,
+    "gpu_vocab_auth_negatives_passed": true,
+    "tcp_ring_variants_passed": 8,
+    "flags_checker_passed": true
+  },
+  "known_limitations": [
+    "Both 440MiB complete sessions2 admissions failed; fit requires explicitly different cache budgets.",
+    "First smaller-cache probe exposed a new probe-only absent-ngram-tensor bug; fixed and rerun.",
+    "Source staging shell CRLF failure was corrected before guarded/acceptance measurements.",
+    "Authentic target block timings use synthetic HCs/zero ngram; not model quality.",
+    "Adaptive chat noninferiority/code-win serving performance remains unmeasured.",
+    "Whole-rank N4/N1<=1.5 and original-Q8/N4 model gates remain unclosed."
+  ],
+  "cross_cohort_planning": {
+    "english": {
+      "relative_teacher_code_yield": 0.9581564584596726,
+      "modeled_round_ms": 95.90598839853239,
+      "relative_tps_vs_full_mtp": 1.0118461316133716,
+      "scope": "Cross-cohort planning sensitivity only, not a measured new ring result"
+    },
+    "cjk": {
+      "relative_teacher_code_yield": 0.9581564584596726,
+      "modeled_round_ms": 97.60527487689642,
+      "relative_tps_vs_full_mtp": 0.9942301118664455,
+      "scope": "Cross-cohort planning sensitivity only, not a measured new ring result"
+    }
+  },
+  "changed_source_lf_sha256": {
+    "include/fg_mtp.h": "ccc4e0acac998db52d3620ddf90181a4575d3d8b32bfd0c99a3ee06b93092319",
+    "include/fg_runtime.h": "91a3710c4bb88136b325254eeda8eb260e59c961564bc703a3a2bd0ee9652302",
+    "src/mtp.c": "902a3da19fca7b1e9d21c4ddeb049fee7462c108af6065b21c50a013acf71ae4",
+    "src/runtime.c": "693cc78067fa3a9291f497e05005490200484547c6b2edf5e5112fe989b3f09a",
+    "src/runtime_mtp_coordinator.inc": "5d55aa616633713b05e7e5dcdf1a1da749c86d7fa570988111a2bda93043acbe",
+    "src/vk.c": "80baf3ac181365f7db27002e0341c6f6ff178857217c5042e20504d2e3aee799",
+    "tests/test_mtp.c": "3bc59b8fde95f6c57efbafe3be0da62fb878c400583cfcf990de9fef2d2219a7",
+    "tests/test_mtp_ring.c": "976945c8d9fd342727e1c58c2e6fe3160131ddd938687be651c76647d1096bfa",
+    "tests/test_mtp_serving_plan.py": "37d08ee0906c53a579c06a3fa47ce2e7f67191d0a40d59b0df0ac8b3e0d72d4a",
+    "tests/test_mtp_vocab_inspect.py": "f059467759cd0cabc5e892ce8cf688e82d6daa710928bd881308c2f80971fc24",
+    "tests/test_mtp_vocab_pack.py": "340a9624ddd40e3921b63caf4bb301ec99195a0d90952d5b9a329c8cd8420a13",
+    "tools/Invoke-MTPServingQualification.ps1": "98f4e678cdd5810ddcccf06de3604ae88bc850cd47181bcdd866dec93f05958f",
+    "tools/bench_mtp_chain.c": "bfaaed7b3b61fb45eaf94a7286063877a67a141db3cae86882f4f67d94b5434c",
+    "tools/bench_mtp_vocab.c": "0ff92c4d40c26c8cd47abd9ef45ccf0642652f2365229afc46b668a561c0c6c8",
+    "tools/mtp_residency.c": "e0cb68db433e6647b9df1e1de0b540b249f6199a31ed314b64bbc05a816dfb7d",
+    "tools/mtp_vocab_inspect.py": "86b2af069b20874516ee1bccc1cc18cb8b2c5ad2c0412c8ebb9e5eb964064d51",
+    "tools/mtp_vocab_pack.py": "8368ace3d8674996287b0de08a10b831bcaf066bc009753fbfd615bd5be6917b"
+  }
+}

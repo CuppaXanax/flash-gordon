@@ -1688,7 +1688,8 @@ fg_status fg_vk_dense_q8_0_cooked_prefill(fg_vk_context *c,fg_vk_tensor *out,
     if(c->small_n&&tokens<=4u){
         static const char *files[]={"fg_small_q8_n2.spv","fg_small_q8_n3.spv","fg_small_q8_n4.spv"};
         static const char *reuse_files[]={"fg_small_q8_reuse_n2.spv","fg_small_q8_reuse_n3.spv","fg_small_q8_reuse_n4.spv"};
-        bool reuse=small_kernel_enabled(c,1u);
+        bool reuse=small_kernel_enabled(c,1u)||
+            (rows>=1024u&&in>=1024u&&small_kernel_enabled(c,4096u));
         uint32_t workgroup=reuse?(c->small_workgroup?c->small_workgroup:256u):128u;
         fg_vk_kernel *k=&c->small_dense[(reuse?75u:0u)+72u+tokens-2u];
         if(!k->file)*k=(fg_vk_kernel){.file=reuse?reuse_files[tokens-2u]:files[tokens-2u],.bindings=3,.push_bytes=20,

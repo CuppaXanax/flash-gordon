@@ -9,7 +9,7 @@ fg_status fg_mtp_policy_init(fg_mtp_policy *policy,double serial_ms,
        !isfinite(draft_ms)||draft_ms<0.0){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid MTP policy costs");return FG_ERR_ARGUMENT;
     }
-    fg_mtp_policy next={.acceptance={0.80,0.78,0.77}};
+    fg_mtp_policy next={.serial_ms=serial_ms,.acceptance={0.92,0.87,0.86}};
     for(uint32_t j=0;j<FG_MTP_MAX_DRAFT;j++){
         double cost=serial_ms*verify_ratios[j]+(j+1u)*draft_ms;
         if(!isfinite(verify_ratios[j])||verify_ratios[j]<=0.0||
@@ -23,14 +23,10 @@ fg_status fg_mtp_policy_init(fg_mtp_policy *policy,double serial_ms,
 }
 
 uint32_t fg_mtp_policy_choose(const fg_mtp_policy *policy,uint32_t max_draft){
-    if(!policy||!max_draft)return 0u;
+    if(!policy||!max_draft||!policy->serial_observations)return 0u;
     if(max_draft>FG_MTP_MAX_DRAFT)max_draft=FG_MTP_MAX_DRAFT;
-    /* Periodically sample every shape, including shorter shapes after a
-     * workload change. No proposal choice changes the target distribution. */
-    if((policy->rounds%32u)==0u)
-        return 1u+(uint32_t)((policy->rounds/32u)%max_draft);
-    double prefix=1.0,yield=1.0,best=-1.0;
-    uint32_t chosen=1u;
+    double prefix=1.0,yield=1.0,best=1.005/policy->serial_ms;
+    uint32_t chosen=0u;
     for(uint32_t j=0;j<max_draft;j++){
         prefix*=policy->acceptance[j];yield+=prefix;
         double goodput=yield/policy->round_ms[j];
@@ -52,16 +48,38 @@ fg_status fg_mtp_policy_observe(fg_mtp_policy *policy,uint32_t drafted,
        !isfinite(round_ms)||round_ms<=0.0){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid MTP policy observation");return FG_ERR_ARGUMENT;
     }
-    const double alpha=1.0/32.0;
+    const double alpha=1.0/16.0;
     for(uint32_t j=0;j<drafted&&j<=accepted;j++){
         double matched=j<accepted?1.0:0.0;
         policy->acceptance[j]+=alpha*(matched-policy->acceptance[j]);
     }
     uint32_t shape=drafted-1u;
-    if(!policy->observations[shape])policy->round_ms[shape]=round_ms;
+    /* Ignore one extreme first-use compilation stall, not recurring slow work. */
+    if(!policy->observations[shape]){
+        if(round_ms<=3.0*policy->round_ms[shape])policy->round_ms[shape]=round_ms;
+    }
     else policy->round_ms[shape]+=alpha*(round_ms-policy->round_ms[shape]);
     policy->observations[shape]++;policy->rounds++;
     return FG_OK;
+}
+
+fg_status fg_mtp_policy_observe_serial(fg_mtp_policy *p,double ms,fg_error *err){
+    if(!p||!isfinite(ms)||ms<=0.0){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid serial MTP baseline");
+        return FG_ERR_ARGUMENT;
+    }
+    /* A first-use compilation stall must not make speculation look profitable. */
+    if(!p->serial_observations)p->serial_ms=fmin(p->serial_ms,ms);
+    else p->serial_ms+=(fmin(ms,p->serial_ms*1.125)-p->serial_ms)*.125;
+    p->serial_observations++;
+    return FG_OK;
+}
+
+void fg_mtp_policy_new_context(fg_mtp_policy *p){
+    if(!p)return;
+    const double prior[]={.92,.87,.86};
+    memcpy(p->acceptance,prior,sizeof(prior));
+    p->rounds=0u;
 }
 
 fg_status fg_mtp_cycle_greedy(const fg_mtp_ops *ops,uint32_t pending,

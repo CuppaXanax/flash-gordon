@@ -242,11 +242,28 @@ fg_status __wrap_fg_mtp_head_step_replay(fg_mtp_head *h,const fg_vk_tensor *a,
 
 static fg_status fixture_serial(fg_coordinator *c,const int32_t *h,size_t n,
     uint32_t token,uint32_t position,uint32_t *next,float *logit,fg_error *e){
-    (void)token;(void)position;
-    fg_runtime *r=(fg_runtime *)((uint8_t *)c - offsetof(fg_runtime,coordinator));
-    fg_mtp_result result;float logits[4];
-    fg_status status=runtime_mtp_round(r,(uint32_t)h[n-1u],1u,&result,logits,e);
-    if(status==FG_OK){VERIFY(result.count==1u&&result.consumed==1u);*next=result.tokens[0];*logit=logits[0];}
+    VERIFY(token==position&&n==token+1u);
+    uint32_t work[2]={token,(uint32_t)h[n-1u]};
+    fg_status status=FG_OK;
+    for(uint32_t peer=1u;status==FG_OK&&peer<FG_RANK_COUNT;peer++)
+        status=fg_fabric_send(c->fabric,peer,FG_FABRIC_CONTROL,FG_MSG_LAYER_WORK,
+            c->session_id,token,0u,work,sizeof(work),e);
+    for(uint32_t l=0;l<FG_LAYER_COUNT;l++)if(c->manifest->layer_owner[l]==0u){
+        VERIFY(c->owner->frontier[c->output_session][l]==token);
+        c->owner->frontier[c->output_session][l]++;
+    }
+    for(uint32_t peer=1u;status==FG_OK&&peer<FG_RANK_COUNT;peer++){
+        uint32_t reply[2],bytes=0u;fg_frame_header header;
+        status=fg_fabric_recv(c->fabric,peer,FG_FABRIC_CONTROL,&header,
+            reply,sizeof(reply),&bytes,e);
+        if(status==FG_OK)VERIFY(fg_frame_type(&header)==FG_MSG_LAYER_RESULT&&
+            fg_frame_session_slot(&header)==c->output_session&&bytes==sizeof(reply)&&
+            !memcmp(work,reply,sizeof(work)));
+    }
+    if(status==FG_OK&&!c->mtp->serial_only[c->output_session])
+        status=coordinator_mtp_advance(c,work[1],token,e);
+    c->mtp->serial_target_ms[c->output_session]=32.0;
+    if(status==FG_OK){*next=work[1]+1u;*logit=1.0f;}
     return status;
 }
 
@@ -304,8 +321,41 @@ static void generation_cases(fg_runtime *r,fg_error *e){
         8u,capture,&out,cancel,&out,&stats,e),e);
     VERIFY(out.count>=3u&&out.count<=6u&&r->state_position==r->history_count);
     require(fixture_sse_finish(out.sse,e),e);
-    puts("Actual generation loop: limits1..8, final one-input verifier seam, cancel drain and EOS PASS");
+    puts("Actual generation loop: limits1..8, ordinary serial tail, cancel drain and EOS PASS");
     puts("Actual API SSE sink: multi-token commits, split-stop suppression, completion framing and DONE PASS");
+}
+
+static void fallback_cases(fg_runtime *r,fg_error *e){
+    fg_coordinator *c=&r->coordinator;uint32_t slot=c->output_session;
+    require(fg_mtp_policy_observe_serial(&r->mtp_policy,32.0,e),e);
+    for(uint32_t j=0;j<FG_MTP_MAX_DRAFT;j++){
+        r->mtp_policy.acceptance[j]=0.0;r->mtp_policy.round_ms[j]=200.0;
+    }
+    c->mtp->serial_only[slot]=false;c->options.mtp_fixed_draft=0u;
+    uint32_t rpc=c->mtp->rpc_sequence;
+    for(uint32_t pass=0;pass<2u;pass++){
+        uint32_t first=r->next_token;capture_tokens out={0};fg_generation_stats stats;
+        fg_tokens prompt={.data=(uint32_t *)r->history,.count=r->history_count};
+        require(runtime_generate_tokens(r,"fixture",&prompt,true,NULL,NULL,false,0u,
+            4u,capture,&out,cancel,&out,&stats,e),e);
+        VERIFY(out.count==4u&&r->state_position==r->history_count);
+        for(uint32_t i=0;i<out.count;i++)VERIFY(out.ids[i]==first+i);
+        VERIFY(c->mtp->serial_only[slot]&&c->mtp->rpc_sequence==rpc);
+    }
+    require(coordinator_mtp_prefix(c,r->history,0u,
+        (uint32_t)r->history_count,true,e),e);
+    VERIFY(!c->mtp->serial_only[slot]);
+    fg_mtp_policy_new_context(&r->mtp_policy);
+    r->mtp_policy.serial_observations=0u;
+    for(uint32_t j=0;j<FG_MTP_MAX_DRAFT;j++)r->mtp_policy.round_ms[j]=1.0;
+    uint32_t first=r->next_token;capture_tokens out={0};fg_generation_stats stats;
+    fg_tokens prompt={.data=(uint32_t *)r->history,.count=r->history_count};
+    rpc=c->mtp->rpc_sequence;
+    require(runtime_generate_tokens(r,"fixture",&prompt,true,NULL,NULL,false,0u,
+        6u,capture,&out,cancel,&out,&stats,e),e);
+    VERIFY(out.count==6u&&r->state_position==r->history_count&&c->mtp->rpc_sequence>rpc);
+    for(uint32_t i=0;i<out.count;i++)VERIFY(out.ids[i]==first+i);
+    puts("True serial fallback: no native RPC, exact-prefix latch, prefix reset and safe draft resumption PASS");
 }
 
 typedef struct coexist_job {
@@ -490,7 +540,7 @@ static int run_rank(fg_manifest *m,uint32_t rank,uint32_t native_owner){
                 for(uint32_t j=0;j<k;j++)runtime->mtp_policy.round_ms[j]=j+1u==k?1.0:1000.0;
                 if(fixed)runtime->mtp_policy.rounds=0u;
                 fg_mtp_result result;float logits[4];
-                require(runtime_mtp_round(runtime,pending,4u,&result,logits,&e),&e);
+                require(runtime_mtp_round(runtime,pending,4u,k,&result,logits,&e),&e);
                 VERIFY(result.accepted==(rejection<k?rejection:k));
                 VERIFY(result.count==result.accepted+1u);
                 for(uint32_t i=0;i<result.count;i++)VERIFY(result.tokens[i]==pending+i+1u);
@@ -500,6 +550,7 @@ static int run_rank(fg_manifest *m,uint32_t rank,uint32_t native_owner){
             }
             c->options.mtp_fixed_draft=0u;
             generation_cases(runtime,&e);
+            fallback_cases(runtime,&e);
         }
         coexist_cases(runtimes,&owner,f,&e);
         if(native_owner==6u){
@@ -532,7 +583,16 @@ static int run_rank(fg_manifest *m,uint32_t rank,uint32_t native_owner){
             uint32_t slot=fg_frame_session_slot(&header);VERIFY(slot<2u);
             fg_fabric_set_slot(f,slot);require(fg_owner_set_active_session(&owner,slot,&e),&e);
             fg_status status=FG_ERR_FORMAT;
-            if(type==FG_MSG_MTP_NATIVE_WORK)
+            if(type==FG_MSG_LAYER_WORK){
+                VERIFY(bytes==8u);uint32_t work[2];memcpy(work,context.result_wire,sizeof(work));
+                for(uint32_t l=0;l<FG_LAYER_COUNT;l++)if(m->layer_owner[l]==rank){
+                    VERIFY(owner.frontier[slot][l]==work[0]);owner.frontier[slot][l]++;
+                }
+                float hc[FG_HYPER_WIDTH]={0};hc[0]=(float)work[1]*1000.0f+48.0f;
+                status=fg_mtp_native_observe_decode(native,slot,work[0],hc,&e);
+                if(status==FG_OK)status=fg_fabric_send(f,peer,FG_FABRIC_CONTROL,
+                    FG_MSG_LAYER_RESULT,nonce[slot],work[0],0u,work,sizeof(work),&e);
+            }else if(type==FG_MSG_MTP_NATIVE_WORK)
                 status=handle_mtp_native_work(f,&owner,m,rank,nonce[slot],peer,&header,
                     context.result_wire,bytes,&context,&depthb,&e);
             else if(type==FG_MSG_MTP_PREFILL_WORK)

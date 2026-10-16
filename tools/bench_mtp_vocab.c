@@ -17,6 +17,11 @@ static void need(bool ok){
 static void le32(uint8_t *p,uint32_t n){
     for(uint32_t i=0;i<4u;i++)p[i]=(uint8_t)(n>>(8u*i));
 }
+static uint32_t read_le32(FILE *file){
+    uint8_t p[4];need(fread(p,1,4u,file)==4u);
+    return (uint32_t)p[0]|(uint32_t)p[1]<<8u|
+        (uint32_t)p[2]<<16u|(uint32_t)p[3]<<24u;
+}
 static double now(void){
     struct timespec t;need(!clock_gettime(CLOCK_MONOTONIC,&t));
     return t.tv_sec*1000.+t.tv_nsec*1e-6;
@@ -25,7 +30,7 @@ static int compare(const void *a,const void *b){
     double x=*(const double *)a,y=*(const double *)b;return (x>y)-(x<y);
 }
 int main(int argc,char **argv){
-    if(argc!=3){fprintf(stderr,"usage: bench-mtp-vocab MANIFEST FULL_RAW_HEAD_Q8\n");return 2;}
+    if(argc<3){fprintf(stderr,"usage: bench-mtp-vocab MANIFEST FULL_RAW_HEAD_Q8 [SUBSET_FGDV...]\n");return 2;}
     fg_manifest *manifest=malloc(sizeof(*manifest));need(manifest!=NULL);
     check(fg_manifest_read(argv[1],manifest,&error));
     const fg_tensor_record *record=NULL;
@@ -42,11 +47,21 @@ int main(int argc,char **argv){
         input[j][i]=sinf(i*.013f+j*.27f)*.13f;
     const uint32_t sizes[]={FG_Q38_VOCAB_SIZE,40525u,106299u};
     double full_ms=0.;uint64_t full_bytes=0u;
-    for(uint32_t shape=0;shape<3u;shape++){
-        uint32_t rows=sizes[shape],*ids=malloc((size_t)rows*4u);need(ids!=NULL);
-        for(uint32_t i=0;i<rows;i++)ids[i]=i;
+    uint32_t shapes=argc==3?3u:(uint32_t)argc-2u;
+    for(uint32_t shape=0;shape<shapes;shape++){
+        bool provided=shape&&argc>3;
+        uint32_t rows=provided?0u:sizes[shape];FILE *subset=NULL;
+        if(provided){
+            subset=fopen(argv[shape+2u],"rb");need(subset!=NULL);
+            uint8_t magic[8];need(fread(magic,1,8u,subset)==8u&&!memcmp(magic,"FGDVOC1\0",8u));
+            rows=read_le32(subset);need(rows&&rows<=FG_Q38_VOCAB_SIZE);
+            uint8_t parent[32];need(fread(parent,1,32u,subset)==32u&&!memcmp(parent,record->sha256,32u));
+        }
+        uint32_t *ids=malloc((size_t)rows*4u);need(ids!=NULL);
+        for(uint32_t i=0;i<rows;i++)ids[i]=provided?read_le32(subset):i;
+        if(provided)need(!fclose(subset));
         char path[128];snprintf(path,sizeof(path),".build/vocab-bench-%ld.fgdv",(long)getpid());
-        if(shape){
+        if(shape&&!provided){
             FILE *src=fopen(argv[2],"rb"),*dst=fopen(path,"wbx");need(src&&dst);
             uint8_t header[44]={0};memcpy(header,"FGDVOC1\0",8u);le32(header+8u,rows);
             memcpy(header+12u,record->sha256,32u);need(fwrite(header,1,sizeof(header),dst)==sizeof(header));
@@ -57,7 +72,7 @@ int main(int argc,char **argv){
         }
         fg_vk_memory_stats before,after;fg_vk_get_memory_stats(vk,&before);
         fg_mtp_vocab *vocab=NULL;
-        check(fg_mtp_vocab_open_draft(&vocab,vk,shape?path:argv[2],record,&error));
+        check(fg_mtp_vocab_open_draft(&vocab,vk,provided?argv[shape+2u]:shape?path:argv[2],record,&error));
         fg_vk_get_memory_stats(vk,&after);
         uint64_t bytes=after.requested_live_bytes-before.requested_live_bytes;
         uint32_t tokens[8];float scores[8];double timing[100];
@@ -83,10 +98,12 @@ int main(int argc,char **argv){
             "\"mean_ms\":%.6f,\"median_ms\":%.6f,\"p95_ms\":%.6f,\"resident_bytes\":%llu,"
             "\"saved_bytes\":%llu,\"three_call_saving_proxy_ms\":%.6f,"
             "\"independent_loader_ids_scores_exact\":true,"
-            "\"subset_kind\":\"contiguous-low-IDs smoke test, not curated or acceptance-qualified\"}\n",
+            "\"subset_kind\":\"%s\"}\n",
             rows,fg_vk_active_compute_units(vk),mean,(timing[49]+timing[50])*.5,timing[94],
-            (unsigned long long)bytes,(unsigned long long)(full_bytes-bytes),3.*(full_ms-mean));
-        fflush(stdout);if(shape)need(!unlink(path));free(ids);
+            (unsigned long long)bytes,(unsigned long long)(full_bytes-bytes),3.*(full_ms-mean),
+            provided?"caller-provided authenticated IDs; acceptance unqualified":
+                shape?"contiguous-low-IDs smoke test, not curated or acceptance-qualified":"full vocabulary");
+        fflush(stdout);if(shape&&!provided)need(!unlink(path));free(ids);
     }
     fg_vk_tensor_destroy(hidden);fg_vk_close(vk);free(manifest);return 0;
 }

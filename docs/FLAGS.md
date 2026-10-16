@@ -57,6 +57,13 @@ Status values:
 | `FG_SMALL_KERNELS` | `0` | Small-N verification research bitmask, fixed before Vulkan pipelines are created. `1`: two rows/32-lane cohort, dequantize once across N2..4 Q4/Q5/IQ4 and cooked Q8 columns. `2`: WG512/head recurrence, 32 state values/lane across N causal updates. `4`: experimental union-down plus per-token gates in one dispatch, no global partials. `8`: one shared causal QSA prefix gather plus batched split/merge when the entire prefix is resident and at most 2051 tokens; indexed/cold paths retain the existing fallback. `16`: subgroup GU reductions; `32`: add next-block weight prefetch; `64`: scalar FMA GU/down plus subgroup GU reductions (`64` takes precedence over `32`, then `16`). `128`/`256`: four/eight rows per cohort on Q4/Q5/IQ4 with M,K >=1024, otherwise retain `1` or the legacy path; `256` takes precedence. Cohort/state variants require 32/64-lane subgroups and WG512 capability. N1 and ordinary prefill are unchanged. Component and N-versus-sequential-N1 gates are required; no model-quality, greedy-token equivalence, or serving promotion is implied. | variant (opt-in) |
 | `FG_ROOF_GDN` | `8` | With roofline bit `1024`, `1/2/4/8` selects F32 control rows per workgroup appended to the fused GDN gate GEMV, trading register pressure against workgroup count. Other values use eight rows. | variant (opt-in) |
 
+Small-N bit `4096` enables cooked-Q8 load/dequantize-once column reuse only
+when both M and K are at least1024, retaining legacy small/HC geometry.
+It does not enable bit1's two-row Q4/Q5/IQ4 path. With the existing330
+profile, the combined research mask is4426. A representative2560×6144
+Q8 matrix measured N4/N1≈1.44 on the24-CU .51; this is not a whole-rank
+or model-quality pass. N1 and ordinary prefill remain unchanged.
+
 Small-N bit `512` is a **rejected precision experiment**, not a qualified
 selection: packed FP16 GU accumulation enables `shaderFloat16` only when
 requested and supported, but fails the independent `1e-4` CPU component gate.

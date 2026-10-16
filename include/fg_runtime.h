@@ -201,6 +201,10 @@ fg_status fg_runtime_probe_mtp_residency(const char *manifest_path,
 fg_status fg_runtime_probe_mtp_residency_owner(const char *manifest_path,
     const char *overlay,const char *embedding,uint32_t sessions,
     uint32_t native_rank_plus_one,fg_error *err);
+fg_status fg_runtime_probe_mtp_residency_head(const char *manifest_path,
+    const char *overlay,const char *embedding,uint32_t sessions,
+    uint32_t native_rank_plus_one,const char *local_head,bool verify_bench,
+    fg_error *err);
 /* Test-only depth-B parity gate: two canned conversations run at depth 1 and
  * interleaved through the B=2 ring, with exact token/logit/state comparison and
  * an injected abort-retry.  Not part of the serving path. */

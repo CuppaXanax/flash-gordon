@@ -3113,9 +3113,72 @@ static void residency_stage(fg_model *model,fg_owner_executor *owner,const char 
     fflush(stdout);
 }
 
-fg_status fg_runtime_probe_mtp_residency_owner(const char *path,const char *overlay,
-    const char *embedding,uint32_t sessions,uint32_t native_rank_plus_one,fg_error *err){
-    if(!path||!overlay||!embedding||!sessions||sessions>FG_OWNER_SESSION_MAX){
+static fg_status residency_verify_bench(fg_model *model,fg_owner_executor *owner,
+    fg_expert_executor *expert,fg_mtp_native *native,layer_work_context *work,
+    uint32_t sessions,fg_error *err){
+    const fg_manifest *m=fg_model_manifest(model);
+    uint32_t rank=fg_model_rank(model),lo=0u,hi=FG_LAYER_COUNT-1u;
+    while(lo<FG_LAYER_COUNT&&m->layer_owner[lo]!=rank)lo++;
+    while(hi>lo&&m->layer_owner[hi]!=rank)hi--;
+    if(lo==FG_LAYER_COUNT)return FG_ERR_MISMATCH;
+    float input[FG_MTP_MAX_VERIFY*FG_HYPER_WIDTH],output[FG_MTP_MAX_VERIFY*FG_HYPER_WIDTH];
+    float zero_ngram[FG_MTP_MAX_VERIFY*FG_NGRAM_EMBED_VALUES]={0};
+    fg_status status=work->ngram_tensor?
+        fg_vk_tensor_write(work->ngram_tensor,0u,zero_ngram,sizeof(zero_ngram),err):FG_OK;
+    for(uint32_t slot=0;status==FG_OK&&slot<sessions;slot++)
+    for(uint32_t n=1;status==FG_OK&&n<=FG_MTP_MAX_VERIFY;n++){
+        status=fg_owner_set_active_session(owner,slot,err);
+        if(status==FG_OK)status=fg_owner_reset_session(owner,slot,err);
+        for(uint32_t turn=0;status==FG_OK&&turn<56u;turn++){
+            uint32_t positions[FG_MTP_MAX_VERIFY*3u];
+            for(uint32_t t=0;t<n;t++){
+                for(uint32_t axis=0;axis<3u;axis++)positions[t*3u+axis]=turn*n+t;
+                for(uint32_t i=0;i<FG_HYPER_WIDTH;i++)
+                    input[t*FG_HYPER_WIDTH+i]=sinf(i*.13f+(turn*n+t)*.019f)*.2f;
+            }
+            fg_vk_tensor *in=fg_owner_prefill_input(owner),*out=NULL;
+            status=fg_vk_tensor_write(in,0u,input,(uint64_t)n*FG_HYPER_WIDTH*4u,err);
+            double start=dispatch_ts();
+            if(status==FG_OK&&n==1u)status=fg_owner_decode_block_chained(owner,lo,hi,
+                turn,positions,in,work->ngram_tensor,chained_decode_expert,
+                &work->decode_dispatch,&out,err);
+            else if(status==FG_OK)status=fg_owner_decode_small_n(owner,lo,hi,
+                turn*n,positions,n,in,work->ngram_tensor,mtp_small_expert,expert,&out,err);
+            double ms=dispatch_ts()-start;
+            if(status==FG_OK)status=fg_vk_tensor_read(out,0u,output,
+                (uint64_t)n*FG_HYPER_WIDTH*4u,err);
+            for(uint32_t i=0;status==FG_OK&&i<n*FG_HYPER_WIDTH;i++)
+                if(!isfinite(output[i])){
+                    fg_error_set(err,FG_ERR_FORMAT,"nonfinite residency target probe");
+                    status=FG_ERR_FORMAT;
+                }
+            if(status==FG_OK&&turn>=24u)printf(
+                "{\"kind\":\"authentic_weight_synthetic_hc_block\",\"slot\":%u,"
+                "\"rank\":%u,\"first_layer\":%u,\"last_layer\":%u,\"n\":%u,"
+                "\"sample\":%u,\"ms\":%.6f,\"zero_ngram\":true}\n",
+                slot,rank,lo,hi,n,turn-24u,ms);
+        }
+        if(status==FG_OK)residency_stage(model,owner,"target_graph_warmed");
+    }
+    for(uint32_t slot=0;status==FG_OK&&slot<sessions;slot++){
+        fg_mtp_native_ack ack;
+        fg_mtp_native_work prefix={.operation=FG_MTP_NATIVE_PREFIX,.limit=2u};
+        status=fg_mtp_native_run(native,slot,&prefix,NULL,&ack,err);
+        uint32_t next[]={1u,2u};
+        if(status==FG_OK)status=fg_mtp_native_observe_prefill(native,slot,0u,2u,
+            input,next,err);
+        fg_mtp_chain_result result;
+        if(status==FG_OK)status=fg_mtp_native_chain(native,slot,2u,2u,3u,&result,err);
+        if(status==FG_OK)residency_stage(model,owner,"native_graph_warmed");
+    }
+    return status;
+}
+
+fg_status fg_runtime_probe_mtp_residency_head(const char *path,const char *overlay,
+    const char *embedding,uint32_t sessions,uint32_t native_rank_plus_one,
+    const char *local_head,bool verify_bench,fg_error *err){
+    if(!path||!overlay||!embedding||!sessions||sessions>FG_OWNER_SESSION_MAX||
+       (verify_bench&&!local_head)){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid MTP residency probe");
         return FG_ERR_ARGUMENT;
     }
@@ -3182,6 +3245,12 @@ fg_status fg_runtime_probe_mtp_residency_owner(const char *path,const char *over
                 .limit=logical<8192u?logical:8192u};
             status=fg_mtp_native_run(native,0u,&config,NULL,&ack,err);
             if(status==FG_OK)residency_stage(model,owner,"native_session0");
+            if(status==FG_OK&&local_head){
+                fg_mtp_native_work head={.operation=FG_MTP_NATIVE_LOCAL_HEAD,
+                    .overlay=local_head,.count=(uint32_t)strlen(local_head)};
+                status=fg_mtp_native_run(native,0u,&head,NULL,&ack,err);
+                if(status==FG_OK)residency_stage(model,owner,"native_local_head");
+            }
         }
     }
     if(status==FG_OK){
@@ -3208,6 +3277,12 @@ fg_status fg_runtime_probe_mtp_residency_owner(const char *path,const char *over
         status=fg_mtp_native_run(native,0u,&prepare,NULL,&ack,err);
         residency_stage(model,owner,status==FG_OK?"native_all_ready":"native_admission_rejected");
     }
+    if(status==FG_OK&&verify_bench){
+        status=residency_verify_bench(model,owner,expert,native,&work,sessions,err);
+        fg_mtp_native_work prepare={.operation=FG_MTP_NATIVE_PREPARE,.argument=sessions};
+        if(status==FG_OK)status=fg_mtp_native_run(native,0u,&prepare,NULL,&ack,err);
+        residency_stage(model,owner,status==FG_OK?"all_graphs_ready":"graph_admission_rejected");
+    }
     fg_mtp_native_close(native);
     for(uint32_t slot=0;slot<FG_OWNER_SESSION_MAX;slot++)
         qsa_owner_runtime_destroy(&qsa[slot]);
@@ -3215,6 +3290,12 @@ fg_status fg_runtime_probe_mtp_residency_owner(const char *path,const char *over
     fg_ngram_resident_close(ngram);fg_output_hc_destroy(hc);
     fg_owner_executor_destroy(owner);fg_expert_executor_destroy(expert);
     fg_model_close(model);free(manifest);return status;
+}
+
+fg_status fg_runtime_probe_mtp_residency_owner(const char *path,const char *overlay,
+    const char *embedding,uint32_t sessions,uint32_t native_rank_plus_one,fg_error *err){
+    return fg_runtime_probe_mtp_residency_head(path,overlay,embedding,sessions,
+        native_rank_plus_one,NULL,false,err);
 }
 
 fg_status fg_runtime_probe_mtp_residency(const char *path,const char *overlay,
@@ -5893,12 +5974,16 @@ static fg_status coordinator_decode_token_local(fg_coordinator *coordinator,cons
 static fg_status coordinator_decode_token(fg_coordinator *coordinator,const int32_t *history,
     size_t history_count,uint32_t token_index,uint32_t position,uint32_t *next_token,
     float *logit,fg_error *err){
+    double serial_start=coordinator->mtp?dispatch_ts():0.0;
     fg_status status=coordinator->ring_decode?
         coordinator_decode_token_ring(coordinator,history,history_count,token_index,
             position,next_token,logit,err):
         coordinator_decode_token_local(coordinator,history,history_count,token_index,
             position,next_token,logit,err);
-    if(status==FG_OK&&coordinator->mtp)
+    if(coordinator->mtp)
+        coordinator->mtp->serial_target_ms[coordinator->output_session]=dispatch_ts()-serial_start;
+    if(status==FG_OK&&coordinator->mtp&&
+       !coordinator->mtp->serial_only[coordinator->output_session])
         status=coordinator_mtp_advance(coordinator,(uint32_t)history[history_count-1u],
                                        token_index,err);
     return status;
@@ -6349,6 +6434,8 @@ static fg_status runtime_generate_tokens(
     if(status==FG_OK&&prefill_offset<prompt->count)
         status=coordinator_mtp_prefix(&runtime->coordinator,runtime->history,
             (uint32_t)prefill_offset,(uint32_t)prompt->count,!vision&&!position_bias,err);
+    if(status==FG_OK&&runtime->coordinator.mtp&&prefill_offset<prompt->count&&!plan.hit)
+        fg_mtp_policy_new_context(&runtime->mtp_policy);
     if(status==FG_OK&&prefill_offset<prompt->count)
         status=coordinator_prefill_pipeline(&runtime->coordinator,runtime->history,
             runtime->history_count,prompt->data+(size_t)prefill_offset,
@@ -6433,16 +6520,33 @@ static fg_status runtime_generate_tokens(
         state_mutated=true;
         if(generate_trace)fprintf(stderr,"GENERATE_TOKEN n=%u id=%u logit=%.6g\n",
             generated,next,logit);
+        uint32_t mtp_width=0u,remaining=max_tokens-generated;
+        if(mtp_eligible&&remaining>1u&&!stop&&
+           !runtime->coordinator.mtp->serial_only[runtime->coordinator.output_session]){
+            uint32_t cap=runtime->coordinator.options.mtp_max_draft;
+            if(cap>=remaining)cap=remaining-1u;
+            mtp_width=fg_mtp_policy_draft_width(&runtime->mtp_policy,cap,
+                runtime->coordinator.options.mtp_fixed_draft);
+        }
         if(mtp_eligible&&mtp_ready.count&&mtp_index+1u<mtp_ready.count){
             mtp_index++;next=mtp_ready.tokens[mtp_index];logit=mtp_logits[mtp_index];
-        }else if(mtp_eligible&&generated<max_tokens&&!stop){
+        }else if(mtp_eligible&&generated<max_tokens&&!stop&&mtp_width){
             uint32_t first=(uint32_t)runtime->history_count-1u;
-            status=runtime_mtp_round(runtime,next,max_tokens-generated,&mtp_ready,mtp_logits,err);
+            status=runtime_mtp_round(runtime,next,max_tokens-generated,mtp_width,&mtp_ready,mtp_logits,err);
             if(status==FG_OK){
                 runtime->state_position=first+mtp_ready.consumed;
                 mtp_index=0u;next=mtp_ready.tokens[0];logit=mtp_logits[0];
             }
         }else{
+            if(mtp_eligible&&remaining>1u&&!stop&&
+               runtime->mtp_policy.serial_observations&&
+               !runtime->coordinator.options.mtp_fixed_draft&&
+               !runtime->coordinator.mtp->serial_only[runtime->coordinator.output_session]){
+                runtime->coordinator.mtp->serial_only[runtime->coordinator.output_session]=true;
+                fprintf(stderr,"MTP_FALLBACK slot=%u first=%zu mode=serial serial_ms=%.6f\n",
+                    runtime->coordinator.output_session,runtime->history_count-1u,
+                    runtime->mtp_policy.serial_ms);
+            }
 #ifdef FG_RUNTIME_TEST_SERIAL_DECODE
             status=FG_RUNTIME_TEST_SERIAL_DECODE(&runtime->coordinator,runtime->history,
                 runtime->history_count,(uint32_t)runtime->history_count-1u,
@@ -6453,6 +6557,10 @@ static fg_status runtime_generate_tokens(
                 runtime->state_position,&next,&logit,err);
 #endif
             if(status==FG_OK)runtime->state_position++;
+            if(status==FG_OK&&mtp_eligible){
+                double ms=runtime->coordinator.mtp->serial_target_ms[runtime->coordinator.output_session];
+                if(ms>0.0)status=fg_mtp_policy_observe_serial(&runtime->mtp_policy,ms,err);
+            }
             mtp_ready.count=0u;
         }
         if(generate_trace)gt_decode+=dispatch_ts()-t_mark;

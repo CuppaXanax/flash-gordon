@@ -4,11 +4,13 @@ struct fg_mtp_serving {
     uint32_t receive_capacity,rpc_sequence,warm_start,prefix_end,native_owner;
     int32_t *history;
     size_t history_capacity;
+    bool serial_only[FG_OWNER_SESSION_MAX];
+    double serial_target_ms[FG_OWNER_SESSION_MAX];
 };
 
 static fg_status runtime_mtp_policy_init(fg_runtime *runtime,fg_error *err){
-    const double ratios[FG_MTP_MAX_DRAFT]={1.5,2.05,2.55};
-    return fg_mtp_policy_init(&runtime->mtp_policy,32.0,2.0,ratios,err);
+    const double ratios[FG_MTP_MAX_DRAFT]={1.8,2.3,2.9};
+    return fg_mtp_policy_init(&runtime->mtp_policy,32.0,3.3,ratios,err);
 }
 
 static void coordinator_mtp_close(fg_mtp_serving *mtp){
@@ -177,7 +179,9 @@ static fg_status coordinator_mtp_prefix(fg_coordinator *c,const int32_t *history
     uint32_t expected=offset>m->warm_start?offset:m->warm_start;
     /* A reused prefix warms cell offset-1 before the first new target input;
      * both the reused and safely reset cases therefore end at max(offset,start). */
-    return coordinator_mtp_rpc(c,&work,expected,err);
+    fg_status status=coordinator_mtp_rpc(c,&work,expected,err);
+    if(status==FG_OK)m->serial_only[c->output_session]=false;
+    return status;
 }
 
 static fg_status coordinator_mtp_advance(fg_coordinator *c,uint32_t token,
@@ -436,12 +440,8 @@ static fg_status mtp_round_commit(void *opaque,fg_error *err){
 }
 
 static fg_status runtime_mtp_round(fg_runtime *runtime,uint32_t pending,uint32_t limit,
-    fg_mtp_result *result,float logits[FG_MTP_MAX_VERIFY],fg_error *err){
+    uint32_t k,fg_mtp_result *result,float logits[FG_MTP_MAX_VERIFY],fg_error *err){
     fg_coordinator *c=&runtime->coordinator;
-    uint32_t max_draft=c->options.mtp_max_draft;
-    if(max_draft>limit)max_draft=limit;
-    uint32_t k=fg_mtp_policy_draft_width(&runtime->mtp_policy,max_draft,
-                                       c->options.mtp_fixed_draft);
     uint32_t first=(uint32_t)runtime->history_count-1u;
     uint32_t drafts[FG_MTP_MAX_DRAFT],input=pending;
     fg_status status=FG_OK;double start=dispatch_ts();

@@ -77,6 +77,57 @@ still requires eager measurement. Subset language/tool coverage, acceptance
 and live TPS remain unmeasured. See
 [retained follow-up evidence](../results/hillclimb/MTP_RETAIN_SUBSET.md).
 
+### Latest offline complete rank7 admission
+
+The actual Strata ID sets, rather than the earlier contiguous smoke sets,
+now pass exact independent raw-row GPU comparison. On the same reported24-CU
+.51, full/English/CJK means are **2.237300/0.427269/1.016979 ms/head**.
+Three-call differences are **5.430094/3.660964 ms proxies**, not measured
+serving savings or guaranteed acceptance preservation.
+
+All152 trained rank7 tensors were reconstructed and read back against sealed
+production tensor SHAs, without production access. With the authentic native
+Q8 overlay, authenticated head/embedding, target buffers and **both private
+target/native sessions**, final N1..4 target and k3 native graph warmup gives:
+
+| Head / worker QSA cache |Complete graph-warmed requested bytes |13.5 GiB headroom |Result |
+|---|---:|---:|---|
+|106,299 CJK /320 MiB |14,443,303,740 |52,210,884 |**PASS offline admission** |
+|40,525 English /416 MiB |14,465,327,940 |30,186,684 |**PASS offline admission** |
+|106,299 CJK /440 MiB |14,634,324,460 before second native session |−138,809,836 |Target admission rejects |
+|40,525 English /440 MiB |14,455,019,092 before second native session |40,495,532 available vs50,348,032 reserved |Native admission rejects |
+
+The cap is unchanged at14,495,514,624 bytes. These are **different explicit
+cache configurations**: neither subset alone proves the440 MiB configuration
+fits. Graph warmup adds further allocations, so an earlier
+`target_verify_ready`/`native_all_ready` is not the final fit certificate.
+This closes the bounded short-context two-slot allocation experiment,
+**not production disk-space, long-context cache pressure or coexistence gates**.
+The legacy serving controller still denies dual-session local heads at its
+440 MiB configuration; a powered controller must bind the new cache/receipt.
+
+Retained authentic **40-case N1-teacher** replay now measures the acceptance
+tradeoff, with no new production capture. Both subsets produce the same
+accepted-frontier schedule on this English chat/code cohort:
+
+| Head |Chat tokens/round |Code tokens/round |Warm local code k3 draft |
+|---|---:|---:|---:|
+|Full248,320 |2.392523 |3.240506 |8.966019 ms |
+|English40,525 |2.283675 |3.104912 |3.591989 ms |
+|CJK106,299 |2.283675 |3.104912 |5.291276 ms |
+
+These frontiers advance by `accepted+bonus`, clipped at256 tokens/case, with
+native state repaired from retained target HCs. **136,386/136,386 draft IDs**
+match an independent direct GPU/raw-row reference across all replay modes.
+Code yield drops **4.184%**; target next-token coverage is96.270% code and
+92.852% chat for either subset on this cohort. Do not present head latency
+alone as a serving win. Transferring only the measured relative code yield
+and local draft delta onto101.280 ms full-head rounds gives a **cross-cohort
+planning model**, English≈1.012×/CJK≈0.994× versus full-head MTP; neither is
+a measured new ring TPS result. New N4 acceptance, multilingual/tool coverage,
+adaptive chat noninferiority and the six-pair performance gate remain open.
+See [sealed offline results](../results/hillclimb/MTP_GOODPUT_LOCAL.md).
+
 ## Earlier failed lease: historical measurements
 
 | Observation | Measured result | Limitation |
@@ -121,7 +172,7 @@ Do not describe either failed attempt as a completed serving comparison.
 | Reference provenance |New Q8-control archive SHA `d4ca5b1351204674082c580e3623e90bb97fb518cd0c577efbf81b3b67fd48c3`; historical80 geometry discrepancy is not N4 attribution. Separate480-natural-context/p99 gate is not interchangeable |
 | N1 target prerequisite |**Reported FAIL** on matched80 forced-frontier contexts: current-Q8→current-mix04 mean KL0.051191953/top1 85%; this is already an N1 target/profile gap, not evidence against N4 |
 | State correctness |Cold coordinator failure fixed offline and confirmed on authentic a038dec ring:775 completed aligned rounds;24 GPU fixtures/8 TCP cases also pass |
-| Residency |Single-session eager admission observed; only36.31 MiB requested-live headroom. Dual sessions, extra speculative banks and long-context/deferred peaks remain unqualified |
+| Residency |Offline complete two-session/deferred graph fit now passes with CJK320 MiB or English416 MiB caches; both440 MiB admissions reject. Production disk/coexistence/long-context and any future extra speculative banks remain unqualified |
 | Performance |Paired A0/F3/A1 completed: code1.074×, chat0.736× median paired decode ratio; warm≈101.3 ms rounds, not60 ms |
 | Temperature sampling |Standard rejection-sampling primitive exists; production path/gates here are greedy, not temperature qualification |
 | Lease hygiene |PASS: latest a038dec A0/F3/A1 restored/verified/cleaned; independent all-eight verification21:15:32Z, no promotion |
@@ -176,7 +227,24 @@ error and exercise all keep1..4 frontiers.
 Warm every N1..4 graph/pipeline before timing, without publishing dummy tokens;
 prove state restoration after warmup. No further production access is implied.
 
-1. **Dense verify weight reuse: target5–15 ms/round research range;
+1. **Goodput/serial fallback: implemented offline; serving gate still pending.**
+   The chooser now includes true k=0, compares complete-round expected yield
+   against a measured target-only serial price with0.5% headroom, and removes
+   forced periodic speculative probes. Acceptance is per-stream1/16 EWMA;
+   initial priors are optimistic estimates, not calibrated confidence.
+   Losing streams skip native ADVANCE RPC/GPU work, latching serial until a
+   successful prefix synchronization; exact-prefix reuse cannot draft from
+   stale KV. Cold/new conversations reset acceptance, while prefix-hit
+   continuations retain their learned policy. Both private slots, serial
+   fallback without native RPC, restart, cancellation and EOS have bounded
+   eight-rank regression coverage. Fixed-width diagnostics remain overrides.
+   First-use compilation is not a valid warm price; one extreme first-shape
+   stall is excluded from price learning but remains charged in raw timings.
+   **Chat≥1.0× and retaining the code win are not yet measured for this policy.**
+   Initial probing can still incur regret; correctness tests are not a
+   noninferiority result. Suffix proposals and calibrated probability stops
+   remain future work; subset-normalized confidence is not acceptance.
+2. **Dense verify weight reuse: target5–15 ms/round research range;
    combined owner-compute research budget≈25 ms.**
    The authentic code N4 owner compute sum is65.160 ms, not the old47.493 ms
    proxy; all-shape code mean is64.979 ms. Aim for40 ms using dense
@@ -186,7 +254,14 @@ prove state restoration after warmup. No further production access is implied.
    addresses; select rows/K splits by actual VGPR/spill/occupancy measurements.
    Keep target≥Q4. Require authentic warmed whole-block measurements and N4
    model-quality gates; the cold lease pass is not evidence this target is met.
-2. **Restricted draft-only vocabulary: target1–7 ms/round;387–566 MB
+   The new size-guarded cooked-Q8 reuse bit4096 avoids the small-HC
+   regression caused by blanket bit1. On24-CU .51,2560×6144 Q8 reaches
+   N4/N1≈1.44; representative Q4 remains≈1.66. Synthetic whole-block
+   replay measurements still miss1.5× and do not demonstrate an end-to-end
+   win. Forcing wave32 made representative Q4 worse and was rejected.
+   This is a measured partial kernel-path improvement, not the requested
+   whole-rank result or a credited5–15 ms serving gain.
+3. **Restricted draft-only vocabulary: target1–7 ms/round;387–566 MB
    rank7 saving.**
    Keep a locally resident authenticated subset of target Q8 rows, mapping
    selected IDs back to full vocabulary. The audit's40,525-ID English/code
@@ -195,22 +270,20 @@ prove state restoration after warmup. No further production access is implied.
    above, without weakening full-head source authentication.
    **The full target vocabulary is unchanged.** Measure multilingual/tool/code
    coverage and acceptance; English-only subsets can damage CJK acceptance.
-   The saving exceeds0.24 GiB as a raw same-baseline comparison, so it can
-   plausibly remove that historical overrun, but **does not prove the new
-   local-head dual-session configuration fits**. Include any additional full
-   head/private banks, alignment, deferred peaks and driver reservations.
-3. **Confidence/suffix drafting with actual serial fallback: recover chat
-   toward paired serial≈31.06 TPS before seeking a speculative win.**
-   Existing adaptive widths choose k≥1; add a real k=0/no-draft alternative
-   using complete-round goodput versus a recent serial baseline. Use bounded
-   probes, calibrated confidence stops and exact token-history suffix lookup
-   as cheap proposal sources, always verified by the full target. Preserve
-   native KV catch-up when switching proposal sources. A subset-normalized
-   probability or raw margin is not automatically measured acceptance.
-   The audit's0–15% repetitive-code opportunity is an estimate, not credited
-   in the cumulative table. At measured chat yield2.219512 and31.063 serial
-   TPS, speculation must beat≈71.45 ms/round merely to break even; do not
-   force the observed101.40 ms fixed-k3 path onto novel chat.
+   Raw row savings alone did **not** solve full440 MiB dual admission.
+   The measured complete-fit configurations above additionally reduce the
+   worker cache to320 MiB (CJK) or416 MiB (English). Include every private
+   bank, alignment, deferred peak and driver reservation; do not count a
+   requested-byte headroom measurement as a long-context service gate.
+   The actual Strata sets have now been located:40525 English/code IDs from
+   `f2a08d4b2da99bb0638dd03dc1d097d132f0af68` and106299 CJK-inclusive IDs
+   from its current data file (binary SHA
+   `b1e1d3a7a9e4bf862dcd5923ce661fb59bbd07907e594df5cf86a62ac235cb91`).
+   These are not the earlier contiguous-ID smoke fixtures. The packer accepts
+   little-endian binary IDs; benchmarks can authenticate caller-supplied
+   containers.    Complete rank7 graph fit and retained40-case N1-teacher acceptance are
+   now measured above. Actual N4 serving acceptance/performance and
+   multilingual/tool coverage remain separate evidence requirements.
 4. **Partition GDN recurrent state across cooperating threads: target2–8
    ms/round research range, included in the target-service bundle.**
    Replace each lane's128-float private column with four cooperating groups
@@ -219,7 +292,7 @@ prove state restoration after warmup. No further production access is implied.
    register retention. Requalify reassociated reductions. Saved-input
    state-only retention and remote-first fanout already exist; do not count
    their implementation again or regress to whole-transformer repair.
-   This overlaps item1's≈25 ms bundle and is **not an extra2–8 ms credit**.
+   This overlaps item2's≈25 ms bundle and is **not an extra2–8 ms credit**.
 5. **Batch target vocabulary: target≈2 ms critical-path saving.**
    The current verify head performs four serial calls/slice. Reduce the
    measured≈3.10 ms maximum per-head-rank compute to≈1.1 ms by loading each
@@ -233,7 +306,7 @@ prove state restoration after warmup. No further production access is implied.
    reads; expert-only Q2 is primarily a residency lever. Native packed storage
    and kernels are required—dequantizing whole weights back to Q8 would erase
    the residency benefit. See the format/acceptance requirements below.
-   Restricted vocabulary is the lower-integration-risk alternative in item2;
+   Restricted vocabulary is the lower-integration-risk alternative in item3;
    **do not add its1–7 ms to the same head's5.35 ms low-bit saving**.
 7. **Actual N4 framing/amortization: target3.22 ms saving.**
    Improve the measured pair-transfer model14.216→11 ms with frame/header
@@ -365,6 +438,12 @@ per-request median TPS, code33.409/chat22.378. Draft restriction/quantization,
 lookahead or a serial-fallback policy can change yield. This is not an additive
 measured speedup or confidence interval; chat should first recover its serial
 baseline rather than be forced onto fixed k3.
+The newly measured subset counterfactual loses4.184% code yield relative to
+its full-head control. Therefore the unchanged-yield restricted-vocab rows
+are **not supported for these curated subsets**. Applying that cross-cohort
+ratio merely as a sensitivity model gives≈54.14 code TPS at59.933 ms and
+≈57.91 at56.033 ms, not60+. Better subset coverage/acceptance or a different
+draft format is still needed; no such correction is credited as measured.
 
 **60 ms rounds do not imply60 TPS.** At code yield3.386667,60 TPS requires
 ≤56.444 ms/round; at60 ms it requires yield≥3.6. After the≤60 ms budget is
@@ -382,9 +461,13 @@ offline retain fix was confirmed in the completed authentic run, including
 paired chat/code, SSE/stop/cancel and warm-stage logs, using the authenticated
 **full Q8 head** to isolate that fix. All eight owners were independently
 restored/verified/cleaned and released21:15:32Z. No lease remains active.
-The controller deliberately still pins the raw full-head SHA; subset serving
-needs explicit typed-artifact staging validation and a curated ID set first,
-not bypassing that check or silently substituting the smoke-test IDs.
+The controller now validates either raw Q8 or typed subsets against the
+complete pinned raw source and cooked-parent declaration, then verifies the
+actual container SHA on staging. It still rejects dual-session local heads
+at its440 MiB configuration. It must bind a complete graph-warmed receipt
+and the explicitly smaller cache before a two-session subset lease.
+Its old non-head700 MiB argument was invalid and silently resolved to640;
+it now declares640 directly, preserving actual behavior/provenance.
 Future requests must go directly to the user/delegated authority, not sol-abqual;
 do not treat prepared artifacts as an active lease.
 
@@ -393,3 +476,16 @@ Complete same-geometry Q8/N4 quality and emission capture before any
 qualification/promotion; an explicitly unqualified diagnostic may precede
 that separate gate. Test full two-session eager/deferred/cancel/restore peaks
 separately. No serving ref, launcher or default is promoted by this plan.
+
+The requested powered promotion experiment is **six balanced arm pairs**
+(three AB, three BA), not six requests inside one arm: A=MTP off,
+B=adaptive k0..3 with the same binary/target/profile. Bind the curated head,
+actual cache and full-rank fit receipt; warm both slots and N1..4 graphs
+without changing published history. Record paired chat/code decode and
+client-wall TPS, acceptance, complete stages, coexistence and cancellation.
+The arm pair is the statistical unit. Require chat noninferiority at1.0×
+and a retained code win, in addition to every model-quality/state/memory gate.
+No promotion lease is requested while whole-rank reuse, numerical
+qualification or powered-controller preparation is missing. A subsequently
+authorized six-pair lease can establish the new policy's on/off performance;
+it does not waive those prerequisites.

@@ -27,7 +27,7 @@ $phases=@(@('A0',0,0),@('B0',0,330),
     @('K2',2,0),@('S2',2,330),@('A2',0,0),
     @('K3',3,0),@('S3',3,330),@('A3',0,0))
 $candidateSessions=2
-$candidateQsaCacheMiB=if($LocalHead){440}else{700}
+$candidateQsaCacheMiB=if($LocalHead){440}else{640}
 if($LocalHead -and $Profile -ne 'SingleSessionPerf'){
     throw 'The local-head performance lease requires the single-session profile; dual-session residency is unqualified.'
 }
@@ -70,9 +70,13 @@ if($Action -eq 'Run'){
     if(-not $DiagnosticGreedy -and -not $CorrectnessArtifacts){
         throw 'MTP qualification requires complete pass-local/Q8 artifacts; use explicit DiagnosticGreedy only for an unqualified performance lease.'
     }
-    if($LocalHead -and (Get-FileHash $LocalHead -Algorithm SHA256).Hash.ToLowerInvariant() -ne
-       '2801d79db74bcae38b47fd5051f03136d8ca7715abeba7d92b49ba46c696bc33'){
-        throw 'Local head differs from the authenticated full Q8 output vocabulary.'
+    if($LocalHead){
+        $headJson=& python (Join-Path $PSScriptRoot 'mtp_vocab_inspect.py') $LocalHead `
+            --raw-sha256 '2801d79db74bcae38b47fd5051f03136d8ca7715abeba7d92b49ba46c696bc33' `
+            --parent-sha256 'fa90643ca673bf032655f6c645c2a5718bc1eac3b1b29bd3ff90eb13d14e19af'
+        if($LASTEXITCODE -ne 0){throw 'Local draft-head source/container validation failed.'}
+        $localHeadInfo=$headJson | ConvertFrom-Json
+        $localHeadSha256=$localHeadInfo.sha256
     }
     $prepared=Get-Content (Join-Path $Artifacts 'prepared.json') -Raw | ConvertFrom-Json
     if((Get-FileHash $release -Algorithm SHA256).Hash.ToLowerInvariant() -ne $prepared.releaseSha256){
@@ -223,7 +227,7 @@ try {
     $null=Remote 'fetch-exact-embedding' ':' @('192.168.42.42') -Download "$root/embedding.fgme" -Local $embedding
     $null=Remote 'stage-exact-embedding-final-owner' ':' @('192.168.42.49') -Upload $embedding -Destination "$root/embedding.fgme"
     if($LocalHead -and -not $N4Diagnostic){
-        $null=Remote 'stage-local-head-final-owner' "echo '2801d79db74bcae38b47fd5051f03136d8ca7715abeba7d92b49ba46c696bc33  $root/local-head.q8' | sha256sum -c -" `
+        $null=Remote 'stage-local-head-final-owner' "echo '$localHeadSha256  $root/local-head.q8' | sha256sum -c -" `
             @('192.168.42.49') -Upload $LocalHead -Destination "$root/local-head.q8" -Timeout 240
     }
     $armed=$true
@@ -252,7 +256,7 @@ fi
         if(-not $mutated){$mutated=$true;$null=Guard 'stop-production' 'stop-prod' $all}
         else {$null=Guard "stop-before-$name" 'stop-candidate' $all}
         if($N4Diagnostic -and $LocalHead -and $cap){
-            $null=Remote 'stage-n4-local-head' "echo '2801d79db74bcae38b47fd5051f03136d8ca7715abeba7d92b49ba46c696bc33  $root/local-head.q8' | sha256sum -c -" `
+            $null=Remote 'stage-n4-local-head' "echo '$localHeadSha256  $root/local-head.q8' | sha256sum -c -" `
                 @('192.168.42.49') -Upload $LocalHead -Destination "$root/local-head.q8" -Timeout 240
         }
         $localHeadEnabled=[int][bool]$LocalHead

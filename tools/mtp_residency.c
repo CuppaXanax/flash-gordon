@@ -116,19 +116,25 @@ int main(int argc,char **argv){
         }
         return native_only(argv[2],argv[3],plus_one);
     }
-    if((argc!=5&&argc!=7)||(strcmp(argv[4],"1")&&strcmp(argv[4],"2"))){
-        fprintf(stderr,"usage: mtp-residency MANIFEST OVERLAY EMBEDDING SESSIONS(1|2) [--native-rank N]\n");
+    if(argc<5||argc>10||(strcmp(argv[4],"1")&&strcmp(argv[4],"2"))){
+        fprintf(stderr,"usage: mtp-residency MANIFEST OVERLAY EMBEDDING SESSIONS(1|2) [--native-rank N] [--local-head FILE] [--verify-bench]\n");
         return 2;
     }
-    uint32_t plus_one=0u;
-    if(argc==7){
-        char *end=NULL;unsigned long rank=strtoul(argv[6],&end,10);
-        if(strcmp(argv[5],"--native-rank")||!argv[6][0]||*end||rank>=FG_RANK_COUNT)return 2;
-        plus_one=(uint32_t)rank+1u;
+    uint32_t plus_one=0u;const char *local_head=NULL;bool verify_bench=false;
+    for(int i=5;i<argc;i++){
+        if(!strcmp(argv[i],"--native-rank")&&i+1<argc&&!plus_one){
+            char *end=NULL;unsigned long rank=strtoul(argv[++i],&end,10);
+            if(!argv[i][0]||*end||rank>=FG_RANK_COUNT)return 2;
+            plus_one=(uint32_t)rank+1u;
+        }else if(!strcmp(argv[i],"--local-head")&&i+1<argc&&!local_head){
+            local_head=argv[++i];if(!local_head[0])return 2;
+        }else if(!strcmp(argv[i],"--verify-bench")&&!verify_bench){
+            verify_bench=true;
+        }else return 2;
     }
     fg_error err={0};
-    fg_status status=fg_runtime_probe_mtp_residency_owner(
-        argv[1],argv[2],argv[3],(uint32_t)(argv[4][0]-'0'),plus_one,&err);
+    fg_status status=fg_runtime_probe_mtp_residency_head(
+        argv[1],argv[2],argv[3],(uint32_t)(argv[4][0]-'0'),plus_one,local_head,verify_bench,&err);
     if(status!=FG_OK)fprintf(stderr,"MTP_RESIDENCY status=%u %s\n",status,err.message);
     else puts("MTP_RESIDENCY ready: all requested target/native sessions pre-provisioned");
     return status==FG_OK?0:status==FG_ERR_LIMIT?3:1;

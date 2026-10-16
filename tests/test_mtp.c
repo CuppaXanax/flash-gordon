@@ -163,7 +163,10 @@ static void policy(void){
     fg_mtp_policy streams[2];
     for(uint32_t i=0;i<2u;i++)
         CHECK(fg_mtp_policy_init(&streams[i],37.0,1.5,ratios,&err)==FG_OK);
-    CHECK(fg_mtp_policy_choose(&streams[0],3u)==1u);
+    CHECK(fg_mtp_policy_choose(&streams[0],3u)==0u);
+    for(uint32_t i=0;i<2u;i++)
+        CHECK(fg_mtp_policy_observe_serial(&streams[i],37.0,&err)==FG_OK);
+    CHECK(fg_mtp_policy_choose(&streams[0],3u)==3u);
     const double chat[]={.7125,.644189,.610213},code[]={.891016,.880535,.857854};
     memcpy(streams[0].acceptance,chat,sizeof(chat));
     memcpy(streams[1].acceptance,code,sizeof(code));
@@ -188,15 +191,17 @@ static void policy(void){
     const double invalid[]={1.2,NAN,1.6};
     CHECK(fg_mtp_policy_init(&streams[0],37.0,1.5,invalid,&err)==FG_ERR_ARGUMENT);
     CHECK(!memcmp(&streams[0],&saved,sizeof(saved)));
-    for(uint32_t n=1u;n<=3u;n++){
-        streams[1].rounds=(n-1u)*32u;
-        CHECK(fg_mtp_policy_choose(&streams[1],3u)==n);
+    for(uint32_t n=0u;n<100u;n++){
+        streams[1].rounds=n;
+        CHECK(fg_mtp_policy_choose(&streams[1],3u)==3u);
     }
     CHECK(fg_mtp_policy_init(&streams[0],37.0,1.5,ratios,&err)==FG_OK);
+    CHECK(fg_mtp_policy_observe_serial(&streams[0],1000.0,&err)==FG_OK);
+    CHECK(streams[0].serial_ms==37.0);
     streams[0].rounds=1u;
     for(uint32_t i=0;i<256u;i++)
         CHECK(fg_mtp_policy_observe(&streams[0],3u,0u,200.0,&err)==FG_OK);
-    CHECK(fg_mtp_policy_choose(&streams[0],3u)==1u);
+    CHECK(fg_mtp_policy_choose(&streams[0],3u)==0u);
     CHECK(!streams[0].observations[0]&&!streams[0].observations[1]);
     for(uint32_t round=0u;round<100u;round++){
         streams[0].rounds=round;
@@ -208,6 +213,27 @@ static void policy(void){
             CHECK(fg_mtp_policy_draft_width(&streams[0],0u,fixed)==0u);
         }
     }
+    saved=streams[0];
+    CHECK(fg_mtp_policy_observe_serial(&streams[0],NAN,&err)==FG_ERR_ARGUMENT);
+    CHECK(fg_mtp_policy_observe_serial(&streams[0],0.0,&err)==FG_ERR_ARGUMENT);
+    CHECK(!memcmp(&saved,&streams[0],sizeof(saved)));
+    fg_mtp_policy_new_context(&streams[0]);
+    CHECK(streams[0].serial_ms==saved.serial_ms&&streams[0].round_ms[2]==saved.round_ms[2]);
+    CHECK(streams[0].acceptance[0]==.92&&streams[0].rounds==0u);
+    CHECK(fg_mtp_policy_init(&streams[0],32.0,3.3,(double[]){1.8,2.3,2.9},&err)==FG_OK);
+    CHECK(fg_mtp_policy_observe_serial(&streams[0],32.0,&err)==FG_OK);
+    CHECK(fg_mtp_policy_choose(&streams[0],3u)>0u);
+    double warm=streams[0].round_ms[2];
+    CHECK(fg_mtp_policy_observe(&streams[0],3u,3u,1300.0,&err)==FG_OK);
+    CHECK(streams[0].round_ms[2]==warm&&streams[0].observations[2]==1u);
+    CHECK(fg_mtp_policy_observe(&streams[0],3u,3u,101.3,&err)==FG_OK);
+    CHECK(fg_mtp_policy_choose(&streams[0],3u)>0u);
+    for(uint32_t i=0;i<32u;i++)
+        CHECK(fg_mtp_policy_observe(&streams[0],3u,3u,101.3,&err)==FG_OK);
+    CHECK(fg_mtp_policy_choose(&streams[0],3u)==3u);
+    for(uint32_t i=0;i<32u;i++)
+        CHECK(fg_mtp_policy_observe(&streams[0],3u,0u,101.3,&err)==FG_OK);
+    CHECK(fg_mtp_policy_choose(&streams[0],3u)==0u);
 }
 
 int main(void){
