@@ -16,6 +16,14 @@
     {"id": "readmitted-combined", "FG_ROOFLINE": 219, "FG_ROOF_DENSE": 6, "FG_ROOF_QSA": 3},
     {"id": "adaptive-gemv", "FG_ROOFLINE": 1, "FG_ROOF_DENSE": 19},
     {"id": "expert-prefetch4", "FG_ROOFLINE": 32, "FG_ROOF_EXPERT": 2},
-    {"id": "bandwidth-combined", "FG_ROOFLINE": 251, "FG_ROOF_DENSE": 19, "FG_ROOF_QSA": 3, "FG_ROOF_EXPERT": 2}
+    {"id": "bandwidth-combined", "FG_ROOFLINE": 251, "FG_ROOF_DENSE": 19, "FG_ROOF_QSA": 3, "FG_ROOF_EXPERT": 2},
+    {"id": "expert-cached-activation", "FG_ROOFLINE": 32, "FG_ROOF_EXPERT": 256},
+    {"id": "expert-down-slot-cohorts", "FG_ROOFLINE": 32, "FG_ROOF_EXPERT": 32768},
+    {"id": "hc-up-mix-fusion", "FG_ROOFLINE": 256},
+    {"id": "hc-down-inject-silu-fusion", "FG_ROOFLINE": 512, "FG_ROOF_HC": 96},
+    {"id": "cached-recurrence", "FG_ROOFLINE": 4, "FG_ROOF_RECURRENT": 3},
+    {"id": "gdn-gate-controls-fusion", "FG_ROOFLINE": 1024, "FG_ROOF_GDN": 1},
+    {"id": "remaining-excess-combined", "FG_ROOFLINE": 2047, "FG_ROOF_DENSE": 19, "FG_ROOF_QSA": 3,
+     "FG_ROOF_EXPERT": 33024, "FG_ROOF_HC": 96, "FG_ROOF_RECURRENT": 3, "FG_ROOF_GDN": 1}
   ]
 }

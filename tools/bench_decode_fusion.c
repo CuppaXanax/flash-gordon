@@ -56,6 +56,10 @@ static void add_weight(fg_model *model,fg_manifest *manifest,uint32_t layer,
     if(!fg_gguf_tensor_bytes(type,2u,shape,&raw_bytes)){
         fprintf(stderr,"invalid synthetic shape %s\n",spec.name);exit(1);
     }
+    const char *hc=getenv("FG_ROOF_HC");
+    uint32_t hc_variant=hc?(uint32_t)strtoul(hc,NULL,0)&3u:0u;
+    bool expand=type==20u&&hc_variant>=1u&&hc_variant<=2u&&
+        strstr(spec.name,"hc_")&&strstr(spec.name,"_up.weight");
     uint8_t layout=FG_TENSOR_LAYOUT_GGML;
     uint64_t cooked_bytes=raw_bytes;
     fg_vk_tensor_format format=FG_VK_TENSOR_FORMAT_DEFAULT;
@@ -69,7 +73,7 @@ static void add_weight(fg_model *model,fg_manifest *manifest,uint32_t layer,
             format=FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED;
             cooked_bytes=fg_q5_1_cooked_matrix_bytes(k,m);
         }
-    }else if(type==8u){
+    }else if(type==8u||expand){
         layout=FG_TENSOR_LAYOUT_Q8_0_COOKED;format=FG_VK_TENSOR_FORMAT_Q8_0_COOKED;
         cooked_bytes=fg_q8_0_cooked_matrix_bytes(k,m);
     }else if(type==12u||type==20u){
@@ -87,7 +91,7 @@ static void add_weight(fg_model *model,fg_manifest *manifest,uint32_t layer,
     else snprintf(record.name,sizeof(record.name),"blk.%u.%s",layer,spec.name);
     record.layer=(uint16_t)layer;record.rank=1u;record.expert=UINT16_MAX;
     record.kind=expert?FG_TENSOR_ROUTED_EXPERT:FG_TENSOR_COMMON;
-    record.ggml_type=type;record.layout=layout;record.dims=expert?3u:2u;
+    record.ggml_type=expand?8u:type;record.layout=layout;record.dims=expert?3u:2u;
     record.shape[0]=k;record.shape[1]=m;record.shape[2]=count;
     record.bytes=cooked_bytes*count;record.offset=fg_align_up_u64(model->weight_bytes,FG_ALIGNMENT);
     check(fg_manifest_add_tensor(manifest,&record,error),error);
@@ -100,7 +104,8 @@ static void add_weight(fg_model *model,fg_manifest *manifest,uint32_t layer,
     if(strcmp(spec.name,"ssm_a")==0)
         for(uint32_t i=0;i<48u;i++)((float *)raw)[i]=-1.0f;
     bool ok=true;
-    if(layout==FG_TENSOR_LAYOUT_Q8_0_COOKED)ok=fg_cook_q8_0_rows(raw,cooked,cooked_bytes,k,m);
+    if(expand)ok=fg_expand_iq4_q8_cooked(raw,cooked,cooked_bytes,k,m,false);
+    else if(layout==FG_TENSOR_LAYOUT_Q8_0_COOKED)ok=fg_cook_q8_0_rows(raw,cooked,cooked_bytes,k,m);
     else if(layout==FG_TENSOR_LAYOUT_K_QUANT_EXPERT_COOKED)ok=fg_cook_k_quant_rows(raw,cooked,cooked_bytes,k,m,type);
     else if(layout==FG_TENSOR_LAYOUT_Q5_1_EXPERT_COOKED)ok=fg_cook_q5_1_rows(raw,cooked,cooked_bytes,k,m);
     else if(layout==FG_TENSOR_LAYOUT_DENSE_COMPACT)ok=fg_cook_dense_compact(raw,cooked,cooked_bytes,k,m,type);
@@ -161,12 +166,15 @@ int main(int argc,char **argv){
     if(!model->tensor)return 1;
     check(fg_vk_open(&model->vk,&error),&error);
     printf("{\"kind\":\"roofline\",\"mask\":\"%s\",\"dense_variant\":\"%s\","
-           "\"qsa_variant\":\"%s\",\"expert_variant\":\"%s\","
+           "\"qsa_variant\":\"%s\",\"expert_variant\":\"%s\",\"hc_variant\":\"%s\",\"recurrent_variant\":\"%s\",\"gdn_variant\":\"%s\","
            "\"reported_cus\":%u,\"subgroup_size\":%u}\n",
            getenv("FG_ROOFLINE")?getenv("FG_ROOFLINE"):"0",
            getenv("FG_ROOF_DENSE")?getenv("FG_ROOF_DENSE"):"7",
            getenv("FG_ROOF_QSA")?getenv("FG_ROOF_QSA"):"2",
            getenv("FG_ROOF_EXPERT")?getenv("FG_ROOF_EXPERT"):"0",
+           getenv("FG_ROOF_HC")?getenv("FG_ROOF_HC"):"0",
+           getenv("FG_ROOF_RECURRENT")?getenv("FG_ROOF_RECURRENT"):"0",
+           getenv("FG_ROOF_GDN")?getenv("FG_ROOF_GDN"):"8",
            fg_vk_active_compute_units(model->vk),fg_vk_subgroup_size(model->vk));
     for(uint32_t l=0;l<FG_LAYER_COUNT;l++){
         manifest->layer_owner[l]=(l>=6u&&l<=11u)?1u:2u;

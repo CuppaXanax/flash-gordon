@@ -93,6 +93,19 @@ bool fg_vk_integer_dot_product_enabled(const fg_vk_context *context);
 uint32_t fg_vk_active_compute_units(const fg_vk_context *context);
 uint32_t fg_vk_subgroup_size(const fg_vk_context *context);
 uint32_t fg_vk_hc_inject_pieces(const fg_vk_context *context);
+bool fg_vk_hc_up_mix_supported(const fg_vk_context *context,const fg_vk_tensor *weights);
+bool fg_vk_hc_down_inject_supported(const fg_vk_context *context,const fg_vk_tensor *weights);
+bool fg_vk_gdn_gate_controls_supported(const fg_vk_context *context,const fg_vk_tensor *weights);
+fg_status fg_vk_gdn_gate_controls(fg_vk_context *context,fg_vk_tensor *gate,
+    fg_vk_tensor *alpha,fg_vk_tensor *beta,const fg_vk_tensor *weights,
+    const fg_vk_tensor *alpha_weight,const fg_vk_tensor *beta_weight,
+    const fg_vk_tensor *hidden,fg_error *err);
+fg_status fg_vk_hc_down_inject(fg_vk_context *context,fg_vk_tensor *low,fg_vk_tensor *activated,
+    fg_vk_tensor *partials,const fg_vk_tensor *weights,const fg_vk_tensor *input,
+    const fg_vk_tensor *inject_weights,uint32_t pieces,fg_error *err);
+fg_status fg_vk_hc_up_mix(fg_vk_context *context,fg_vk_tensor *mixed,fg_vk_tensor *injection,
+    const fg_vk_tensor *weights,const fg_vk_tensor *input,const fg_vk_tensor *normalized,
+    const fg_vk_tensor *partials,uint32_t input_width,uint32_t hidden,uint32_t pieces,fg_error *err);
 
 fg_status fg_vk_profile_begin(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_profile_set_scope(fg_vk_context *context,const char *scope,fg_error *err);

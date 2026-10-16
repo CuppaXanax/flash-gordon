@@ -1,0 +1,5 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define FG_DOWN_SHUFFLE 1
+#define FG_DOWN_SPLIT 1
+#include "fg_moe_decode_down_reduce.glsl"

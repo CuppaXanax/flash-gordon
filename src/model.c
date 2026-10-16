@@ -63,6 +63,30 @@ static fg_status build_tensor_lookup(fg_model *model,fg_error *err){
         const fg_tensor_record *record=&model->manifest->tensors[i];
         if(record->kind==FG_TENSOR_COMMON&&record->dims==2u&&model->tensor[i]){
             fg_vk_tensor_format format=fg_vk_dense_saved_format(record->ggml_type,record->layout);
+            const char *hc=getenv("FG_ROOF_HC");
+            uint32_t hc_variant=hc?(uint32_t)strtoul(hc,NULL,0)&3u:0u;
+            if(hc_variant>=1u&&hc_variant<=2u&&record->ggml_type==20u&&
+               (record->shape[0]==320u||record->shape[0]==640u)&&record->shape[1]<=UINT32_MAX&&
+               (strstr(record->name,".hc_attn_up.weight")||strstr(record->name,".hc_ffn_up.weight"))&&
+               (record->layout==FG_TENSOR_LAYOUT_GGML||record->layout==FG_TENSOR_LAYOUT_DENSE_SOA||
+                record->layout==FG_TENSOR_LAYOUT_DENSE_COMPACT)){
+                uint64_t size=fg_q8_0_cooked_matrix_bytes((uint32_t)record->shape[0],(uint32_t)record->shape[1]);
+                if(!size||model->weight_bytes>model->manifest->persistent_cap_bytes||
+                   size>model->manifest->persistent_cap_bytes-model->weight_bytes){
+                    fg_error_set(err,FG_ERR_LIMIT,"lossless IQ4 expansion exceeds persistent cap");return FG_ERR_LIMIT;
+                }
+                fg_vk_tensor *replacement=NULL;
+                fg_status status=fg_vk_tensor_create(model->vk,size,&replacement,err);
+                if(status!=FG_OK)return status;
+                if(!fg_expand_iq4_q8_cooked(fg_vk_tensor_const_map(model->tensor[i]),fg_vk_tensor_map(replacement),
+                    size,(uint32_t)record->shape[0],(uint32_t)record->shape[1],record->layout!=FG_TENSOR_LAYOUT_GGML)){
+                    fg_vk_tensor_destroy(replacement);
+                    fg_error_set(err,FG_ERR_FORMAT,"expand HC IQ4 integer grid");return FG_ERR_FORMAT;
+                }
+                fg_vk_tensor_set_format(replacement,FG_VK_TENSOR_FORMAT_Q8_0_COOKED);
+                fg_vk_tensor_destroy(model->tensor[i]);model->tensor[i]=replacement;model->weight_bytes+=size;
+                continue;
+            }
             if(record->layout==FG_TENSOR_LAYOUT_DENSE_SOA||
                record->layout==FG_TENSOR_LAYOUT_DENSE_COMPACT){
                 fg_vk_tensor_set_format(model->tensor[i],format);

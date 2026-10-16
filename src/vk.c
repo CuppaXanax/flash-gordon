@@ -87,9 +87,9 @@ struct fg_vk_context {
     fg_vk_kernel moe_prefill_reduce,moe_prefill_shard_reduce;
     fg_vk_kernel router_top10_tiles,router_top10_fast,moe_shared_gr_write;
     fg_vk_kernel shared_swiglu_q4,shared_swiglu_q8;
-    fg_vk_kernel roof[41];
+    fg_vk_kernel roof[88];
     bool roof_supported,roof_wave32;
-    fg_vk_tensor *roof_partials;
+    fg_vk_tensor *roof_partials,*roof_gdn,*roof_expert_partials;
 };
 
 static bool roof_enabled(const fg_vk_context *c,uint32_t bit){
@@ -236,7 +236,7 @@ static void destroy_kernel(fg_vk_context *context,fg_vk_kernel *kernel){
     if(kernel==&context->dense)
         for(uint32_t i=0;i<37u;i++)destroy_kernel(context,&context->dense_quant[i]);
     if(kernel==&context->dense)
-        for(uint32_t i=0;i<41u;i++)destroy_kernel(context,&context->roof[i]);
+        for(uint32_t i=0;i<sizeof(context->roof)/sizeof(context->roof[0]);i++)destroy_kernel(context,&context->roof[i]);
     if(kernel==&context->moe_decode_down_reduce)destroy_kernel(context,&context->moe_decode_down_q8);
     if(kernel==&context->moe_q5_1)destroy_kernel(context,&context->moe_q5_1_cooked);
     if(kernel==&context->kquant)destroy_kernel(context,&context->kquant_cooked);
@@ -384,6 +384,8 @@ void fg_vk_close(fg_vk_context *c){
     if(!c)return;
     if(c->device)vkDeviceWaitIdle(c->device);
     fg_vk_tensor_destroy(c->roof_partials);
+    fg_vk_tensor_destroy(c->roof_gdn);
+    fg_vk_tensor_destroy(c->roof_expert_partials);
     if(c->layer_query_pool)vkDestroyQueryPool(c->device,c->layer_query_pool,NULL);
     free(c->layer_samples);
     destroy_kernel(c,&c->moe_decode_shared_add);destroy_kernel(c,&c->moe_decode_down_reduce);destroy_kernel(c,&c->moe_decode_gate_up);destroy_kernel(c,&c->moe_prefill_shard_reduce);destroy_kernel(c,&c->moe_prefill_reduce);destroy_kernel(c,&c->q8_0_grouped);destroy_kernel(c,&c->q8_0_cooked_grouped);destroy_kernel(c,&c->q5_1_cooked_grouped);destroy_kernel(c,&c->kquant_cooked_grouped_int);destroy_kernel(c,&c->kquant_cooked_grouped);destroy_kernel(c,&c->decode_tile_schedule);destroy_kernel(c,&c->expert_major_pack);destroy_kernel(c,&c->router_top10);destroy_kernel(c,&c->dense_cooked_tile);destroy_kernel(c,&c->bench_cooked_layout);destroy_kernel(c,&c->bench_stream_vec);destroy_kernel(c,&c->bench_stream_wide);destroy_kernel(c,&c->bench_dot_nored);destroy_kernel(c,&c->bench_dequant);destroy_kernel(c,&c->bench_stream);destroy_kernel(c,&c->kquant);destroy_kernel(c,&c->moe_reduce);destroy_kernel(c,&c->moe_q8_0);destroy_kernel(c,&c->moe_q8_0_cooked);destroy_kernel(c,&c->moe_q5_1);destroy_kernel(c,&c->topk_v2);destroy_kernel(c,&c->topk_select);destroy_kernel(c,&c->topk_select_fallback);destroy_kernel(c,&c->apply_penalties);destroy_kernel(c,&c->qsa_resident_attention);destroy_kernel(c,&c->qsa_resident_merge);destroy_kernel(c,&c->qsa_resident_select);destroy_kernel(c,&c->qsa_resident_commit);destroy_kernel(c,&c->qsa_attention_split);destroy_kernel(c,&c->qsa_decode_attention_split);destroy_kernel(c,&c->qsa_attention_merge);destroy_kernel(c,&c->qsa_attention_split_batch);destroy_kernel(c,&c->qsa_attention_merge_batch);destroy_kernel(c,&c->qsa_record_gather_batch);destroy_kernel(c,&c->qsa_select_resolve);destroy_kernel(c,&c->qsa_attention);destroy_kernel(c,&c->qsa_score);destroy_kernel(c,&c->qsa_record_gather);destroy_kernel(c,&c->qsa_record_commit);destroy_kernel(c,&c->qsa_index_prepare_prefill);destroy_kernel(c,&c->qsa_index_prepare);destroy_kernel(c,&c->qsa_prepare_prefill);destroy_kernel(c,&c->qsa_prepare);destroy_kernel(c,&c->gdn_prefill_output);destroy_kernel(c,&c->gdn_prefill_recurrence);destroy_kernel(c,&c->gdn_prefill_qk_norm);destroy_kernel(c,&c->gdn_recurrent_prefill);destroy_kernel(c,&c->gdn_recurrent_algebraic);destroy_kernel(c,&c->gdn_recurrent);destroy_kernel(c,&c->gdn_conv_prefill);destroy_kernel(c,&c->gdn_conv);destroy_kernel(c,&c->add);destroy_kernel(c,&c->ple_conv_prefill);destroy_kernel(c,&c->ple_conv);destroy_kernel(c,&c->ple_conv_add);destroy_kernel(c,&c->ple_gate_prefill);destroy_kernel(c,&c->ple_gate);destroy_kernel(c,&c->gr_write);destroy_kernel(c,&c->hc_finalize);destroy_kernel(c,&c->gr_partial);destroy_kernel(c,&c->hc_inject_partial);destroy_kernel(c,&c->gr);destroy_kernel(c,&c->rms);destroy_kernel(c,&c->dense_cooked);destroy_kernel(c,&c->dense_subgroup);destroy_kernel(c,&c->dense_bf16);destroy_kernel(c,&c->dense_f32);destroy_kernel(c,&c->dense);destroy_kernel(c,&c->silu_scaled);destroy_kernel(c,&c->swiglu);destroy_kernel(c,&c->embedding_batch);destroy_kernel(c,&c->embedding);destroy_kernel(c,&c->dequant_iq4nl);destroy_kernel(c,&c->quant_q4);destroy_kernel(c,&c->quant_q8);destroy_kernel(c,&c->quant_q8k);if(c->profile_query_pool)vkDestroyQueryPool(c->device,c->profile_query_pool,NULL);if(c->pipeline_cache)vkDestroyPipelineCache(c->device,c->pipeline_cache,NULL);if(c->descriptor_pool)vkDestroyDescriptorPool(c->device,c->descriptor_pool,NULL);if(c->static_descriptor_pool)vkDestroyDescriptorPool(c->device,c->static_descriptor_pool,NULL);if(c->descriptor_set_layout)vkDestroyDescriptorSetLayout(c->device,c->descriptor_set_layout,NULL);if(c->expert_fence)vkDestroyFence(c->device,c->expert_fence,NULL);if(c->fence)vkDestroyFence(c->device,c->fence,NULL);if(c->copy_fence)vkDestroyFence(c->device,c->copy_fence,NULL);if(c->command_pool)vkDestroyCommandPool(c->device,c->command_pool,NULL);if(c->copy_pool)vkDestroyCommandPool(c->device,c->copy_pool,NULL);if(c->device)vkDestroyDevice(c->device,NULL);if(c->instance)vkDestroyInstance(c->instance,NULL);free(c);
@@ -598,6 +600,25 @@ static fg_status dispatch(fg_vk_context *c,fg_vk_kernel *kernel,const fg_vk_tens
         else if(v==3u){kernel=roof_kernel(c,11u,"fg_roof_qsa_h6.spv",3u,8u);gx=4u;}
         else if(v==4u){kernel=roof_kernel(c,12u,"fg_roof_qsa_h1.spv",3u,8u);gx=24u;}
     }else if(kernel==&c->gdn_recurrent_algebraic&&roof_enabled(c,4u)){
+        const char *value=getenv("FG_ROOF_RECURRENT");
+        uint32_t recurrent_variant=value?(uint32_t)strtoul(value,NULL,0):0u;
+        if(recurrent_variant==3u&&push&&((const uint32_t *)push)[0]==48u)
+            return dispatch_impl(c,roof_kernel(c,87u,"fg_roof_recurrent_single.spv",9u,16u),
+                tensors,push,48u,1u,1u,true,err);
+        if((recurrent_variant==1u||recurrent_variant==2u)&&push&&((const uint32_t *)push)[0]==48u){
+            fg_status status=FG_OK;
+            if(!c->roof_gdn)status=fg_vk_tensor_create(c,48u*128u*4u,&c->roof_gdn,err);
+            if(status!=FG_OK)return status;
+            const fg_vk_tensor *first[9];
+            for(uint32_t i=0;i<8u;i++)first[i]=tensors[i];
+            first[8]=c->roof_gdn;
+            status=dispatch_impl(c,roof_kernel(c,recurrent_variant==1u?53u:73u,
+                recurrent_variant==1u?"fg_roof_recurrent_split.spv":"fg_roof_recurrent_vec.spv",9u,16u),
+                first,push,48u,4u,1u,true,err);
+            const fg_vk_tensor *last[]={c->roof_gdn,tensors[1],tensors[6],tensors[8]};
+            return status==FG_OK?dispatch_impl(c,roof_kernel(c,54u,"fg_roof_recurrent_norm.spv",4u,16u),
+                last,push,48u,1u,1u,true,err):status;
+        }
         kernel=roof_kernel(c,6u,"fg_roof_recurrent.spv",9u,16u);
     }else if(kernel==&c->router_top10&&roof_enabled(c,8u)){
         kernel=roof_kernel(c,7u,"fg_roof_router.spv",3u,8u);
@@ -614,11 +635,66 @@ static fg_status dispatch(fg_vk_context *c,fg_vk_kernel *kernel,const fg_vk_tens
                 "fg_roof_expert_w32.spv","fg_roof_expert_p2_w32.spv","fg_roof_expert_p4_w32.spv"};
             kernel=roof_kernel(c,24u+v,files[v-1u],5u,32u);
             if(v>=3u)gx*=2u;
+        }else if(v==6u||v==7u){
+            kernel=roof_kernel(c,41u+v-6u,v==6u?"fg_roof_expert_w128.spv":"fg_roof_expert_w256.spv",5u,32u);
+            gx=(gx+(v==6u?1u:3u))/(v==6u?2u:4u);
         }
-    }else if(kernel==&c->moe_decode_down_reduce&&roof_enabled(c,32u)&&c->roof_wave32){
+        uint32_t full=value?(uint32_t)strtoul(value,NULL,0):0u;
+        if(gy==10u&&push&&((const uint32_t *)push)[1]==10u&&
+           ((const uint32_t *)push)[6]==12u&&((const uint32_t *)push)[7]==12u&&(full&1984u)!=0u){
+            if((full&1024u)!=0u&&c->roof_wave32){
+                kernel=roof_kernel(c,58u,"fg_roof_expert_cache_w32.spv",5u,32u);
+            }else if((full&512u)!=0u){
+                kernel=roof_kernel(c,56u,"fg_roof_expert_slots2_p4.spv",5u,32u);gy=5u;
+            }else if((full&256u)!=0u){
+                kernel=roof_kernel(c,55u,"fg_roof_expert_cache.spv",5u,32u);
+            }else if((full&192u)==192u){
+                kernel=roof_kernel(c,57u,"fg_roof_expert_slots5.spv",5u,32u);gy=2u;
+            }else if((full&128u)!=0u){
+                kernel=roof_kernel(c,47u,"fg_roof_expert_slots10.spv",5u,32u);gy=1u;
+            }else if((full&64u)!=0u){
+                kernel=roof_kernel(c,46u,"fg_roof_expert_slots2.spv",5u,32u);gy=5u;
+            }
+            gx=(((const uint32_t *)push)[0]+7u)/8u;
+        }
+    }else if(kernel==&c->moe_decode_down_reduce&&roof_enabled(c,32u)){
         const char *value=getenv("FG_ROOF_EXPERT");
-        if(value&&((uint32_t)strtoul(value,NULL,0)&8u)!=0u)
+        uint32_t v=value?(uint32_t)strtoul(value,NULL,0):0u;
+        if(push&&((const uint32_t *)push)[0]==2560u&&((const uint32_t *)push)[5]==10u&&
+           ((const uint32_t *)push)[6]==7u&&(v&6144u)!=0u){
+            fg_status status=FG_OK;
+            if(!c->roof_expert_partials)status=fg_vk_tensor_create(c,10u*2560u*4u,&c->roof_expert_partials,err);
+            if(status!=FG_OK)return status;
+            const fg_vk_tensor *first[]={tensors[0],tensors[1],tensors[2],tensors[3],c->roof_expert_partials};
+            bool wide=(v&4096u)!=0u;
+            status=dispatch_impl(c,roof_kernel(c,wide?60u:59u,
+                wide?"fg_roof_down_split_w64.spv":"fg_roof_down_split.spv",5u,28u),
+                first,push,wide?80u:160u,10u,1u,true,err);
+            const fg_vk_tensor *last[]={c->roof_expert_partials,tensors[4]};
+            struct{uint32_t width,slots;}merge={2560u,10u};
+            return status==FG_OK?dispatch_impl(c,roof_kernel(c,61u,"fg_roof_down_merge.spv",2u,8u),
+                last,&merge,20u,1u,1u,true,err):status;
+        }
+        if(push&&((const uint32_t *)push)[6]==7u&&((const uint32_t *)push)[2]==20u&&
+           ((const uint32_t *)push)[5]==10u&&(v&122880u)!=0u){
+            bool four=(v&(16384u|65536u))!=0u,wave32=c->roof_wave32&&(v&98304u)!=0u;
+            uint32_t slot=four?(wave32?78u:76u):(wave32?77u:75u);
+            const char *file=four?(wave32?"fg_roof_down_slots4_w32.spv":"fg_roof_down_slots4.spv"):
+                (wave32?"fg_roof_down_slots2_w32.spv":"fg_roof_down_slots2.spv");
+            kernel=roof_kernel(c,slot,file,5u,28u);
+        }else if(push&&((const uint32_t *)push)[6]==7u&&(v&48u)!=0u){
+            if((v&48u)==16u){kernel=roof_kernel(c,43u,"fg_roof_down_w64.spv",5u,28u);gx=(gx+1u)/2u;}
+            else if((v&48u)==32u){kernel=roof_kernel(c,44u,"fg_roof_down_rows1.spv",5u,28u);gx=(gx+3u)/4u;}
+            else{kernel=roof_kernel(c,45u,"fg_roof_down_rows2.spv",5u,28u);gx=(gx+1u)/2u;}
+        }else if(c->roof_wave32&&(v&8u)!=0u)
             kernel=roof_kernel(c,30u,"fg_roof_down_w32.spv",5u,28u);
+    }else if((kernel==&c->dense_cooked||kernel==&c->dense_cooked_r8)&&push&&((const uint32_t *)push)[0]==10240u&&
+             ((const uint32_t *)push)[1]==1u&&(((const uint32_t *)push)[2]==10u||
+             ((const uint32_t *)push)[2]==20u)&&c->roof_supported){
+        const char *value=getenv("FG_ROOF_HC");
+        if(value&&((uint32_t)strtoul(value,NULL,0)&3u)==2u){
+            kernel=roof_kernel(c,50u,"fg_roof_hc_q8_rows.spv",3u,20u);gx=160u;
+        }
     }else if(kernel==&c->dense_f32&&push&&((const uint32_t *)push)[0]==2560u&&
              ((const uint32_t *)push)[1]==48u&&roof_enabled(c,128u)){
         kernel=roof_kernel(c,14u,"fg_roof_control.spv",3u,12u);
@@ -1101,6 +1177,22 @@ fg_status fg_vk_dense_quant(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tenso
     if(compact&&(type==12u||type==20u)&&tokens==1u&&roof_enabled(c,1u)){
         const char *variant=getenv("FG_ROOF_DENSE");
         uint32_t v=variant?(uint32_t)strtoul(variant,NULL,0):7u;
+        if(v>=25u&&v<=28u){
+            if(type==12u&&rows>=2560u&&(v<=26u||c->roof_wave32)){
+                static const char *files[]={"fg_roof_dense_rows_p2.spv","fg_roof_dense_rows_p4.spv",
+                    "fg_roof_dense_rows_p2_w32.spv","fg_roof_dense_rows_p4_w32.spv"};
+                return dispatch(c,roof_kernel(c,62u+v-25u,files[v-25u],3u,24u),bindings,&push,
+                    (rows+(v<=26u?15u:7u))/(v<=26u?16u:8u),1u,1u,err);
+            }
+            v=19u;
+        }
+        if(v==23u||v==24u){
+            if(type==20u&&(v==23u||c->roof_wave32))
+                return dispatch(c,roof_kernel(c,v==23u?51u:52u,
+                    v==23u?"fg_roof_dense_iq4_l2.spv":"fg_roof_dense_iq4_l1_w32.spv",3u,24u),
+                    bindings,&push,(rows+7u)/8u,1u,1u,err);
+            v=19u;
+        }
         if(v==22u){
             if(type==12u)
                 return dispatch(c,roof_kernel(c,40u,"fg_roof_dense_l2_w128.spv",3u,24u),
@@ -1214,6 +1306,94 @@ fg_status fg_vk_dense_bf16_f32(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_te
 fg_status fg_vk_silu_scaled(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *input,uint32_t values,float input_scale,fg_error *err){if(!c||!values||!tensor_range(input,0,(uint64_t)values*4u)||!tensor_range(out,0,(uint64_t)values*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid scaled SiLU dispatch");return FG_ERR_ARGUMENT;}struct {uint32_t values;float scale;}push={values,input_scale};const fg_vk_tensor *bindings[]={input,out};return dispatch(c,&c->silu_scaled,bindings,&push,(values+255u)/256u,1,1,err);}
 fg_status fg_vk_group_rms_norm(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *x,const fg_vk_tensor *w,uint32_t width,uint32_t groups,uint32_t tokens,float epsilon,fg_error *err){uint64_t values=(uint64_t)width*groups*tokens;if(!c||!width||!groups||!tokens||!tensor_range(x,0,values*4u)||!tensor_range(w,0,(uint64_t)width*groups*4u)||!tensor_range(out,0,values*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid grouped RMS dispatch");return FG_ERR_ARGUMENT;}struct {uint32_t width,groups,tokens;float epsilon;} push={width,groups,tokens,epsilon};const fg_vk_tensor *bindings[]={x,w,out};return dispatch(c,&c->rms,bindings,&push,groups,tokens,1,err);}
 fg_status fg_vk_gr_mix(fg_vk_context *c,fg_vk_tensor *mixed,fg_vk_tensor *injection,const fg_vk_tensor *norm,const fg_vk_tensor *up,const fg_vk_tensor *inject,uint32_t hidden,uint32_t groups,uint32_t tokens,fg_error *err){uint64_t hyper=(uint64_t)hidden*groups*tokens;if(!c||!hidden||!groups||!tokens||!tensor_range(norm,0,hyper*4u)||!tensor_range(up,0,hyper*4u)||!tensor_range(inject,0,(uint64_t)groups*tokens*4u)||!tensor_range(mixed,0,(uint64_t)hidden*tokens*4u)||!tensor_range(injection,0,(uint64_t)groups*tokens*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid gated residual dispatch");return FG_ERR_ARGUMENT;}struct {uint32_t hidden,groups,tokens;} push={hidden,groups,tokens};const fg_vk_tensor *bindings[]={norm,up,inject,mixed,injection};return dispatch(c,&c->gr,bindings,&push,tokens,1,1,err);}
+bool fg_vk_hc_up_mix_supported(const fg_vk_context *c,const fg_vk_tensor *w){
+    return c&&w&&roof_enabled(c,256u)&&(w->format==FG_VK_TENSOR_FORMAT_DENSE_COMPACT_IQ4_NL||
+        w->format==FG_VK_TENSOR_FORMAT_DENSE_SOA_IQ4_NL||w->format==FG_VK_TENSOR_FORMAT_Q8_0_COOKED);
+}
+bool fg_vk_hc_down_inject_supported(const fg_vk_context *c,const fg_vk_tensor *w){
+    return c&&w&&roof_enabled(c,512u)&&w->format==FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K;
+}
+bool fg_vk_gdn_gate_controls_supported(const fg_vk_context *c,const fg_vk_tensor *w){
+    return c&&w&&roof_enabled(c,1024u)&&c->roof_wave32&&
+        w->format==FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K;
+}
+fg_status fg_vk_gdn_gate_controls(fg_vk_context *c,fg_vk_tensor *gate,
+    fg_vk_tensor *alpha,fg_vk_tensor *beta,const fg_vk_tensor *w,
+    const fg_vk_tensor *alpha_w,const fg_vk_tensor *beta_w,const fg_vk_tensor *hidden,fg_error *err){
+    if(!fg_vk_gdn_gate_controls_supported(c,w)||
+        !tensor_range(w,0,fg_dense_compact_bytes(2560u,6144u,12u))||
+        !tensor_range(hidden,0,2560u*4u)||!tensor_range(gate,0,6144u*4u)||
+        !tensor_range(alpha_w,0,48u*2560u*4u)||!tensor_range(beta_w,0,48u*2560u*4u)||
+        !tensor_range(alpha,0,48u*4u)||!tensor_range(beta,0,48u*4u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid fused GDN gate/control dispatch");return FG_ERR_ARGUMENT;
+    }
+    struct{uint32_t input,output,tokens,type,row_bytes;float scale;}push={2560u,6144u,1u,12u,0u,1.0f};
+    const fg_vk_tensor *bindings[]={w,hidden,gate,alpha_w,beta_w,alpha,beta};
+    const char *value=getenv("FG_ROOF_GDN");
+    uint32_t rows=value?(uint32_t)strtoul(value,NULL,0):8u,slot=74u;
+    const char *file="fg_roof_gdn_gate_controls_w32.spv";
+    if(rows==1u){slot=79u;file="fg_roof_gdn_gate_controls1_w32.spv";}
+    else if(rows==2u){slot=80u;file="fg_roof_gdn_gate_controls2_w32.spv";}
+    else if(rows==4u){slot=81u;file="fg_roof_gdn_gate_controls4_w32.spv";}
+    else rows=8u;
+    return dispatch(c,roof_kernel(c,slot,file,7u,24u),
+        bindings,&push,6144u/8u+96u/rows,1u,1u,err);
+}
+fg_status fg_vk_hc_down_inject(fg_vk_context *c,fg_vk_tensor *low,fg_vk_tensor *active,
+    fg_vk_tensor *partials,const fg_vk_tensor *w,const fg_vk_tensor *input,
+    const fg_vk_tensor *inject_w,uint32_t pieces,fg_error *err){
+    if(!fg_vk_hc_down_inject_supported(c,w)||!pieces||pieces>40u||
+       !tensor_range(w,0,fg_dense_compact_bytes(10240u,320u,12u))||
+       !tensor_range(input,0,10240u*4u)||!tensor_range(inject_w,0,10240u*16u)||
+       !tensor_range(low,0,320u*4u)||!tensor_range(active,0,320u*4u)||!tensor_range(partials,0,(uint64_t)pieces*16u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid fused HC down/injection dispatch");return FG_ERR_ARGUMENT;
+    }
+    const char *value=getenv("FG_ROOF_HC");
+    uint32_t variant=value?(uint32_t)strtoul(value,NULL,0):0u;
+    struct{uint32_t in,out,tokens,type,row_bytes;float scale;uint32_t pieces;}push={10240u,320u,1u,12u,0u,1.0f,pieces};
+    if((variant&32u)!=0u){
+        uint32_t single_slot=82u;
+        const char *single="fg_roof_hc_down_single.spv";
+        if((variant&128u)!=0u){single_slot=86u;single="fg_roof_hc_down_single_w512.spv";}
+        else if((variant&64u)!=0u){single_slot=85u;single="fg_roof_hc_down_single_w256.spv";}
+        else if((variant&16u)!=0u&&c->roof_wave32){single_slot=84u;single="fg_roof_hc_down_single_w32.spv";}
+        else if((variant&8u)!=0u){single_slot=83u;single="fg_roof_hc_down_single_w64.spv";}
+        const fg_vk_tensor *bindings[]={w,input,low,inject_w,partials,active};
+        return dispatch(c,roof_kernel(c,single_slot,single,6u,28u),bindings,&push,40u,1u,1u,err);
+    }
+    fg_status status=FG_OK;
+    if(!c->roof_partials)status=fg_vk_tensor_create(c,8u*1024u*4u,&c->roof_partials,err);
+    if(status!=FG_OK)return status;
+    uint32_t splits=(variant&4u)!=0u?8u:4u,slot=splits==4u?66u:68u;
+    const char *file=splits==4u?"fg_roof_hc_down4.spv":"fg_roof_hc_down8.spv";
+    if((variant&16u)!=0u&&c->roof_wave32){
+        slot=splits==4u?71u:72u;file=splits==4u?"fg_roof_hc_down4_w32.spv":"fg_roof_hc_down8_w32.spv";
+    }else if((variant&8u)!=0u){
+        slot=splits==4u?69u:70u;file=splits==4u?"fg_roof_hc_down4_w64.spv":"fg_roof_hc_down8_w64.spv";
+    }
+    const fg_vk_tensor *first[]={w,input,c->roof_partials,inject_w,partials};
+    status=dispatch(c,roof_kernel(c,slot,file,5u,28u),first,&push,40u,splits,1u,err);
+    const fg_vk_tensor *last[]={c->roof_partials,low,active};
+    struct{uint32_t width,splits;}merge={320u,splits};
+    return status==FG_OK?dispatch(c,roof_kernel(c,67u,"fg_roof_hc_down_merge.spv",3u,8u),last,&merge,3u,1u,1u,err):status;
+}
+fg_status fg_vk_hc_up_mix(fg_vk_context *c,fg_vk_tensor *mixed,fg_vk_tensor *injection,
+    const fg_vk_tensor *w,const fg_vk_tensor *input,const fg_vk_tensor *normalized,
+    const fg_vk_tensor *partials,uint32_t in,uint32_t hidden,uint32_t pieces,fg_error *err){
+    bool q8=w&&w->format==FG_VK_TENSOR_FORMAT_Q8_0_COOKED;
+    uint64_t bytes=hidden>UINT32_MAX/4u?0u:q8?fg_q8_0_cooked_matrix_bytes(in,hidden*4u):
+        fg_dense_compact_bytes(in,hidden*4u,20u);
+    if(!fg_vk_hc_up_mix_supported(c,w)||(in!=320u&&in!=640u)||!hidden||hidden%8u||
+       !bytes||!pieces||pieces>64u||!tensor_range(w,0,bytes)||!tensor_range(input,0,(uint64_t)in*4u)||
+       !tensor_range(normalized,0,(uint64_t)hidden*16u)||!tensor_range(partials,0,(uint64_t)pieces*16u)||
+       !tensor_range(mixed,0,(uint64_t)hidden*4u)||!tensor_range(injection,0,16u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid fused HC up/mix dispatch");return FG_ERR_ARGUMENT;
+    }
+    struct{uint32_t in,hidden,pieces;}push={in,hidden,pieces};
+    const fg_vk_tensor *bindings[]={w,input,normalized,partials,mixed,injection};
+    return dispatch(c,roof_kernel(c,q8?49u:48u,q8?"fg_roof_hc_up_mix_q8.spv":"fg_roof_hc_up_mix_iq4.spv",6u,12u),
+        bindings,&push,hidden/8u,1u,1u,err);
+}
 fg_status fg_vk_hc_inject_partial(fg_vk_context *c,fg_vk_tensor *partials,const fg_vk_tensor *normalized,const fg_vk_tensor *weights,uint32_t hidden,uint32_t groups,uint32_t tokens,uint32_t pieces,fg_error *err){uint64_t width=(uint64_t)hidden*groups;if(!c||!hidden||!groups||groups>4u||!tokens||!pieces||pieces>64u||!tensor_range(normalized,0,width*tokens*4u)||!tensor_range(weights,0,width*groups*4u)||!tensor_range(partials,0,(uint64_t)tokens*pieces*groups*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid HC injection partial dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t hidden,groups,tokens,pieces;}push={hidden,groups,tokens,pieces};const fg_vk_tensor *bindings[]={normalized,weights,partials};return dispatch(c,&c->hc_inject_partial,bindings,&push,pieces,tokens,1,err);}
 fg_status fg_vk_gr_mix_partial(fg_vk_context *c,fg_vk_tensor *mixed,fg_vk_tensor *injection,const fg_vk_tensor *normalized,const fg_vk_tensor *up,const fg_vk_tensor *partials,uint32_t hidden,uint32_t groups,uint32_t tokens,uint32_t pieces,fg_error *err){uint64_t hyper=(uint64_t)hidden*groups*tokens;if(!c||!hidden||!groups||groups>4u||!tokens||!pieces||pieces>64u||!tensor_range(normalized,0,hyper*4u)||!tensor_range(up,0,hyper*4u)||!tensor_range(partials,0,(uint64_t)tokens*pieces*groups*4u)||!tensor_range(mixed,0,(uint64_t)hidden*tokens*4u)||!tensor_range(injection,0,(uint64_t)groups*tokens*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid gated residual partial dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t hidden,groups,tokens,pieces;}push={hidden,groups,tokens,pieces};const fg_vk_tensor *bindings[]={normalized,up,partials,mixed,injection};return dispatch(c,&c->gr_partial,bindings,&push,tokens*((hidden+255u)/256u),1,1,err);}
 fg_status fg_vk_hc_finalize(fg_vk_context *c,fg_vk_tensor *output,const fg_vk_tensor *normalized,const fg_vk_tensor *up,uint32_t hidden,uint32_t groups,uint32_t tokens,fg_error *err){uint64_t hyper=(uint64_t)hidden*groups*tokens;if(!c||!hidden||!groups||!tokens||!tensor_range(normalized,0,hyper*4u)||!tensor_range(up,0,hyper*4u)||!tensor_range(output,0,(uint64_t)hidden*tokens*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid final hyper-connection dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t hidden,groups,tokens;}push={hidden,groups,tokens};const fg_vk_tensor *bindings[]={normalized,up,output};return dispatch(c,&c->hc_finalize,bindings,&push,(hidden*tokens+255u)/256u,1,1,err);}

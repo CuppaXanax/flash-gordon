@@ -86,12 +86,19 @@ vulkan/fg_dense_q4_k.spv vulkan/fg_dense_q5_k.spv vulkan/fg_dense_q6_k.spv vulka
 vulkan/fg_router_top10.spv vulkan/fg_router_top10_tiles.spv: shaders/fg_router_top10.glsl
 vulkan/fg_dense_q8_0_cooked_r8.spv vulkan/fg_shared_swiglu_q8.spv: shaders/fg_dense_q8_0_cooked_r8.glsl
 vulkan/fg_shared_swiglu_q4.spv: shaders/fg_dense_soa_impl.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_gdn_gate_controls*.comp)): shaders/fg_dense_soa_impl.glsl shaders/fg_dense_compact_gemv.glsl
 vulkan/fg_moe_decode_gate_up.spv vulkan/fg_roof_expert.spv: shaders/fg_moe_decode_gate_up.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_expert*.comp)): shaders/fg_moe_decode_gate_up.glsl
-vulkan/fg_moe_decode_down_reduce.spv vulkan/fg_roof_down_w32.spv: shaders/fg_moe_decode_down_reduce.glsl
+vulkan/fg_moe_decode_down_reduce.spv vulkan/fg_roof_down_w32.spv vulkan/fg_roof_down_w64.spv: shaders/fg_moe_decode_down_reduce.glsl
+vulkan/fg_roof_down_split.spv vulkan/fg_roof_down_split_w64.spv: shaders/fg_moe_decode_down_reduce.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_down_slots*.comp)): shaders/fg_moe_decode_down_reduce.glsl
+vulkan/fg_roof_down_rows1.spv vulkan/fg_roof_down_rows2.spv: shaders/fg_roof_down_rows.glsl
+vulkan/fg_roof_hc_up_mix_iq4.spv vulkan/fg_roof_hc_up_mix_q8.spv: shaders/fg_roof_hc_up_mix.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_hc_down[48]*.comp shaders/fg_roof_hc_down_single*.comp)): shaders/fg_dense_soa_impl.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_stream*.comp)): shaders/fg_roof_stream.glsl
 vulkan/fg_qsa_decode_attention_split.spv vulkan/fg_roof_qsa_h1.spv vulkan/fg_roof_qsa_h3.spv vulkan/fg_roof_qsa_h6.spv: shaders/fg_qsa_decode_attention_split.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_dense*.comp)): shaders/fg_dense_soa_impl.glsl shaders/fg_dense_compact_gemv.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_dense_rows*.comp)): shaders/fg_roof_dense_rows.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_dense_soa*.comp)): shaders/fg_dense_soa_impl.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_dense_soa*tile*.comp)): shaders/fg_dense_soa_tile_impl.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_dense_compact*.comp)): shaders/fg_dense_soa_impl.glsl shaders/fg_dense_compact_gemv.glsl

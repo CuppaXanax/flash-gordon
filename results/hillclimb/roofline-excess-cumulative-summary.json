@@ -1,0 +1,2708 @@
+{
+  "40": {
+    "baseline_flags": {
+      "kind": "roofline",
+      "mask": "0",
+      "dense_variant": "19",
+      "qsa_variant": "3",
+      "expert_variant": "2",
+      "hc_variant": "0",
+      "recurrent_variant": "0",
+      "gdn_variant": "8",
+      "reported_cus": 24,
+      "subgroup_size": 64
+    },
+    "candidate_flags": {
+      "kind": "roofline",
+      "mask": "2047",
+      "dense_variant": "19",
+      "qsa_variant": "3",
+      "expert_variant": "33024",
+      "hc_variant": "96",
+      "recurrent_variant": "3",
+      "gdn_variant": "1",
+      "reported_cus": 24,
+      "subgroup_size": 64
+    },
+    "model_quality_gate": {
+      "status": "not_run",
+      "kl_mean_max": 0.005,
+      "top1_agreement_min": 0.985,
+      "warning": "Synthetic component/block comparisons cannot qualify model quality."
+    },
+    "rounds": [
+      {
+        "seed": 1,
+        "baseline_wall_us": 2685.0503140624996,
+        "candidate_wall_us": 2274.93636875,
+        "saving_us": 410.1139453124997,
+        "saving_percent": 15.273976177079321,
+        "speedup": 1.1802749083209934,
+        "baseline_layers_us": [
+          390.7521875,
+          511.385,
+          388.36287500000003,
+          383.922875,
+          385.0825,
+          509.838375
+        ],
+        "candidate_layers_us": [
+          332.282875,
+          423.1345,
+          329.2465,
+          327.383125,
+          327.853625,
+          422.228375
+        ],
+        "gdn_saving_us": 57.838578124999984,
+        "qsa_saving_us": 87.93024999999997,
+        "projected_48_layer_saving_ms": 3.137351812499999,
+        "windows": [
+          {
+            "wall_us": 2685.980521875,
+            "layers_us": [
+              390.5395,
+              511.171125,
+              388.327875,
+              383.860125,
+              384.1015,
+              509.737375
+            ],
+            "windows_wall_us": [
+              2656.21303125,
+              2677.641859375,
+              2698.346875,
+              2719.42809375,
+              2678.27275
+            ]
+          },
+          {
+            "wall_us": 2274.93636875,
+            "layers_us": [
+              332.282875,
+              423.1345,
+              329.2465,
+              327.383125,
+              327.853625,
+              422.228375
+            ],
+            "windows_wall_us": [
+              2258.6759375,
+              2266.12603125,
+              2276.96978125,
+              2284.593515625,
+              2288.316578125
+            ]
+          },
+          {
+            "wall_us": 2684.12010625,
+            "layers_us": [
+              390.964875,
+              511.598875,
+              388.397875,
+              383.985625,
+              386.0635,
+              509.939375
+            ],
+            "windows_wall_us": [
+              2650.756109375,
+              2671.46671875,
+              2695.832515625,
+              2720.552453125,
+              2681.992734375
+            ]
+          }
+        ],
+        "parity": {
+          "output": {
+            "elements": 3276800,
+            "changed": 2996436,
+            "bit_exact": false,
+            "max_abs": 0.15838623046875,
+            "max_scaled": 0.0011914947749409324,
+            "tolerance": null,
+            "relative": true
+          },
+          "state": {
+            "elements": 3309568,
+            "changed": 3132636,
+            "bit_exact": false,
+            "max_abs": 4.1961669921875e-05,
+            "max_scaled": 4.1961669921875e-05,
+            "tolerance": null,
+            "relative": false
+          }
+        }
+      },
+      {
+        "seed": 2,
+        "baseline_wall_us": 2690.0253984375004,
+        "candidate_wall_us": 2283.040953125,
+        "saving_us": 406.98444531250016,
+        "saving_percent": 15.129390434339276,
+        "speedup": 1.1782641895912662,
+        "baseline_layers_us": [
+          391.594,
+          510.5621875,
+          389.06487500000003,
+          383.90918750000003,
+          384.892625,
+          509.49706249999997
+        ],
+        "candidate_layers_us": [
+          332.6905,
+          423.345,
+          329.662875,
+          327.38,
+          328.056125,
+          422.137375
+        ],
+        "gdn_saving_us": 57.91779687500002,
+        "qsa_saving_us": 87.28843749999996,
+        "projected_48_layer_saving_ms": 3.1325019375000003,
+        "windows": [
+          {
+            "wall_us": 2690.522128125,
+            "layers_us": [
+              390.5095,
+              510.54325,
+              389.99675,
+              383.857625,
+              383.993875,
+              509.72275
+            ],
+            "windows_wall_us": [
+              2660.3836875,
+              2675.909375,
+              2701.238109375,
+              2726.967984375,
+              2688.111484375
+            ]
+          },
+          {
+            "wall_us": 2283.040953125,
+            "layers_us": [
+              332.6905,
+              423.345,
+              329.662875,
+              327.38,
+              328.056125,
+              422.137375
+            ],
+            "windows_wall_us": [
+              2268.71709375,
+              2274.56740625,
+              2284.81875,
+              2290.915734375,
+              2296.1857812499998
+            ]
+          },
+          {
+            "wall_us": 2689.52866875,
+            "layers_us": [
+              392.6785,
+              510.581125,
+              388.133,
+              383.96075,
+              385.791375,
+              509.271375
+            ],
+            "windows_wall_us": [
+              2656.616984375,
+              2677.582578125,
+              2700.513828125,
+              2726.9809999999998,
+              2685.948953125
+            ]
+          }
+        ],
+        "parity": {
+          "output": {
+            "elements": 3276800,
+            "changed": 2921763,
+            "bit_exact": false,
+            "max_abs": 0.012939453125,
+            "max_scaled": 0.0001280943325940489,
+            "tolerance": null,
+            "relative": true
+          },
+          "state": {
+            "elements": 3309568,
+            "changed": 3224364,
+            "bit_exact": false,
+            "max_abs": 0.0049037933349609375,
+            "max_scaled": 0.0049037933349609375,
+            "tolerance": null,
+            "relative": false
+          }
+        }
+      },
+      {
+        "seed": 3,
+        "baseline_wall_us": 2683.1576531250003,
+        "candidate_wall_us": 2278.1552125,
+        "saving_us": 405.0024406250004,
+        "saving_percent": 15.09424689053605,
+        "speedup": 1.1777764914360507,
+        "baseline_layers_us": [
+          390.6774375,
+          511.455875,
+          388.05625,
+          383.7685,
+          384.35175,
+          510.228375
+        ],
+        "candidate_layers_us": [
+          332.304,
+          422.726375,
+          329.507875,
+          327.487375,
+          327.965875,
+          422.718625
+        ],
+        "gdn_saving_us": 57.397203125000004,
+        "qsa_saving_us": 88.11962500000001,
+        "projected_48_layer_saving_ms": 3.1237348125000004,
+        "windows": [
+          {
+            "wall_us": 2683.146334375,
+            "layers_us": [
+              390.689625,
+              511.436,
+              387.88575,
+              383.815625,
+              384.347875,
+              510.36625
+            ],
+            "windows_wall_us": [
+              2649.266328125,
+              2668.2484375,
+              2694.27240625,
+              2721.332875,
+              2682.611625
+            ]
+          },
+          {
+            "wall_us": 2278.1552125,
+            "layers_us": [
+              332.304,
+              422.726375,
+              329.507875,
+              327.487375,
+              327.965875,
+              422.718625
+            ],
+            "windows_wall_us": [
+              2268.141375,
+              2268.0971250000002,
+              2276.67484375,
+              2285.146984375,
+              2292.715734375
+            ]
+          },
+          {
+            "wall_us": 2683.168971875,
+            "layers_us": [
+              390.66525,
+              511.47575,
+              388.22675,
+              383.721375,
+              384.355625,
+              510.0905
+            ],
+            "windows_wall_us": [
+              2649.564859375,
+              2670.307375,
+              2693.988125,
+              2719.51915625,
+              2682.46534375
+            ]
+          }
+        ],
+        "parity": {
+          "output": {
+            "elements": 3276800,
+            "changed": 3054212,
+            "bit_exact": false,
+            "max_abs": 0.1583251953125,
+            "max_scaled": 0.00029077142037827727,
+            "tolerance": null,
+            "relative": true
+          },
+          "state": {
+            "elements": 3309568,
+            "changed": 3131235,
+            "bit_exact": false,
+            "max_abs": 9.5367431640625e-06,
+            "max_scaled": 9.5367431640625e-06,
+            "tolerance": null,
+            "relative": false
+          }
+        }
+      },
+      {
+        "seed": 4,
+        "baseline_wall_us": 2683.2348859374997,
+        "candidate_wall_us": 2275.69870625,
+        "saving_us": 407.5361796874995,
+        "saving_percent": 15.188240948392028,
+        "speedup": 1.179081782033904,
+        "baseline_layers_us": [
+          390.83,
+          510.93431250000003,
+          389.0583125,
+          384.9346875,
+          384.180375,
+          510.4575625
+        ],
+        "candidate_layers_us": [
+          332.21325,
+          423.373875,
+          329.35925,
+          327.377625,
+          328.09225,
+          422.504625
+        ],
+        "gdn_saving_us": 57.99025,
+        "qsa_saving_us": 87.75668750000003,
+        "projected_48_layer_saving_ms": 3.1407292500000006,
+        "windows": [
+          {
+            "wall_us": 2683.618490625,
+            "layers_us": [
+              390.77475,
+              511.1735,
+              390.063375,
+              383.97125,
+              384.488875,
+              510.54325
+            ],
+            "windows_wall_us": [
+              2650.732671875,
+              2670.329265625,
+              2695.710046875,
+              2720.387328125,
+              2680.933140625
+            ]
+          },
+          {
+            "wall_us": 2275.69870625,
+            "layers_us": [
+              332.21325,
+              423.373875,
+              329.35925,
+              327.377625,
+              328.09225,
+              422.504625
+            ],
+            "windows_wall_us": [
+              2259.37334375,
+              2266.24296875,
+              2277.418234375,
+              2284.97709375,
+              2290.481890625
+            ]
+          },
+          {
+            "wall_us": 2682.85128125,
+            "layers_us": [
+              390.88525,
+              510.695125,
+              388.05325,
+              385.898125,
+              383.871875,
+              510.371875
+            ],
+            "windows_wall_us": [
+              2649.18821875,
+              2668.838515625,
+              2695.23140625,
+              2719.749015625,
+              2681.24925
+            ]
+          }
+        ],
+        "parity": {
+          "output": {
+            "elements": 3276800,
+            "changed": 3057642,
+            "bit_exact": false,
+            "max_abs": 0.070556640625,
+            "max_scaled": 0.0002904592773320648,
+            "tolerance": null,
+            "relative": true
+          },
+          "state": {
+            "elements": 3309568,
+            "changed": 3214024,
+            "bit_exact": false,
+            "max_abs": 0.001865386962890625,
+            "max_scaled": 0.001865386962890625,
+            "tolerance": null,
+            "relative": false
+          }
+        }
+      },
+      {
+        "seed": 5,
+        "baseline_wall_us": 2683.9172296875004,
+        "candidate_wall_us": 2274.18326875,
+        "saving_us": 409.73396093750034,
+        "saving_percent": 15.266266649557124,
+        "speedup": 1.1801675206073914,
+        "baseline_layers_us": [
+          392.72893750000003,
+          511.0923125,
+          388.12706249999997,
+          383.8635625,
+          385.0078125,
+          509.8514375
+        ],
+        "candidate_layers_us": [
+          332.337625,
+          422.093625,
+          329.3685,
+          327.325875,
+          327.837125,
+          422.608875
+        ],
+        "gdn_saving_us": 58.2145625,
+        "qsa_saving_us": 88.12062499999999,
+        "projected_48_layer_saving_ms": 3.15317175,
+        "windows": [
+          {
+            "wall_us": 2683.67469375,
+            "layers_us": [
+              392.730625,
+              511.174375,
+              388.229125,
+              384.084375,
+              384.125625,
+              509.975875
+            ],
+            "windows_wall_us": [
+              2651.085828125,
+              2671.178,
+              2695.34440625,
+              2720.403765625,
+              2680.36146875
+            ]
+          },
+          {
+            "wall_us": 2274.18326875,
+            "layers_us": [
+              332.337625,
+              422.093625,
+              329.3685,
+              327.325875,
+              327.837125,
+              422.608875
+            ],
+            "windows_wall_us": [
+              2259.221375,
+              2264.311921875,
+              2274.009421875,
+              2282.596078125,
+              2290.777546875
+            ]
+          },
+          {
+            "wall_us": 2684.159765625,
+            "layers_us": [
+              392.72725,
+              511.01025,
+              388.025,
+              383.64275,
+              385.89,
+              509.727
+            ],
+            "windows_wall_us": [
+              2648.548703125,
+              2670.074625,
+              2697.0097031249998,
+              2722.4340625,
+              2682.731734375
+            ]
+          }
+        ],
+        "parity": {
+          "output": {
+            "elements": 3276800,
+            "changed": 2850485,
+            "bit_exact": false,
+            "max_abs": 0.017475128173828125,
+            "max_scaled": 0.0013362198708144837,
+            "tolerance": null,
+            "relative": true
+          },
+          "state": {
+            "elements": 3309568,
+            "changed": 2554407,
+            "bit_exact": false,
+            "max_abs": 5.7220458984375e-06,
+            "max_scaled": 5.7220458984375e-06,
+            "tolerance": null,
+            "relative": false
+          }
+        }
+      }
+    ],
+    "baseline_wall_us": 2685.07709625,
+    "candidate_wall_us": 2277.202901875,
+    "saving_us": 407.8741943750001,
+    "saving_percent": 15.190409055465873,
+    "saving_us_95_ci": [
+      406.30199031250015,
+      409.4463984374999
+    ],
+    "saving_percent_95_ci": [
+      15.127103119628536,
+      15.253745320332984
+    ],
+    "speedup_95_ci": [
+      1.1782326288177076,
+      1.1799933279781347
+    ],
+    "baseline_layers_us": [
+      391.3165125,
+      511.0859375,
+      388.533875,
+      384.0797625,
+      384.7030125,
+      509.9745625
+    ],
+    "candidate_layers_us": [
+      332.36565,
+      422.934675,
+      329.429,
+      327.3908,
+      327.961,
+      422.439575
+    ],
+    "projection_not_measurement": {
+      "gdn_saving_us": 57.871678125,
+      "qsa_saving_us": 87.84312499999999,
+      "48_layer_saving_ms": 3.1374979125,
+      "48_layer_saving_ms_95_ci": [
+        3.1291816125,
+        3.1458738
+      ],
+      "historical_anchor_ms_token": 37.437,
+      "anchored_ms_token": 34.299502087499995,
+      "anchored_ms_token_95_ci": [
+        34.2911262,
+        34.3078183875
+      ],
+      "anchored_tps": 29.154942175222914,
+      "warning": "Different weight/context/clock operating points; not eight-rank measurement or deployment."
+    },
+    "controls": {
+      "no-clocks": [
+        {
+          "wall_us": 2662.3685677083336,
+          "layers_us": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "windows_wall_us": [
+            2641.17028125,
+            2660.047625,
+            2685.887796875
+          ]
+        },
+        {
+          "wall_us": 2251.021463541667,
+          "layers_us": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "windows_wall_us": [
+            2243.355578125,
+            2249.512,
+            2260.1968125
+          ]
+        }
+      ],
+      "long": [
+        {
+          "wall_us": 4121.722,
+          "layers_us": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "windows_wall_us": [
+            4121.722
+          ]
+        },
+        {
+          "wall_us": 3685.247,
+          "layers_us": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "windows_wall_us": [
+            3685.247
+          ]
+        }
+      ]
+    },
+    "ranked_baseline_excess": [
+      {
+        "scope": "gdn_gate_controls",
+        "shader": "gdn_gate_controls",
+        "model_occurrences": 36,
+        "model_excess_us": 950.7072,
+        "baseline_us": 48.8,
+        "candidate_us": 35.891999999999996,
+        "reference_bytes": 10076160
+      },
+      {
+        "scope": "expert_decode",
+        "shader": "fg_moe_decode_gate_up.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 780.2239999999999,
+        "baseline_us": 57.214666666666666,
+        "candidate_us": 54.72666666666667,
+        "reference_bytes": 18432000
+      },
+      {
+        "scope": "gdn_qkv",
+        "shader": "fg_dense_compact.spv",
+        "model_occurrences": 36,
+        "model_excess_us": 729.136,
+        "baseline_us": 53.932,
+        "candidate_us": 49.964,
+        "reference_bytes": 15155200
+      },
+      {
+        "scope": "gr_attn_read",
+        "shader": "hc_down_inject",
+        "model_occurrences": 48,
+        "model_excess_us": 685.0833066666667,
+        "baseline_us": 18.944,
+        "candidate_us": 13.076,
+        "reference_bytes": 2102144
+      },
+      {
+        "scope": "gr_ffn_read",
+        "shader": "hc_down_inject",
+        "model_occurrences": 48,
+        "model_excess_us": 669.2753066666667,
+        "baseline_us": 18.61466666666667,
+        "candidate_us": 12.84,
+        "reference_bytes": 2102144
+      },
+      {
+        "scope": "qsa_state_attention",
+        "shader": "fg_qsa_decode_attention_split.spv",
+        "model_occurrences": 12,
+        "model_excess_us": 547.5600000000001,
+        "baseline_us": 46.564,
+        "candidate_us": 13.703999999999999,
+        "reference_bytes": 353344
+      },
+      {
+        "scope": "gdn_recurrent",
+        "shader": "fg_gdn_recurrent_algebraic.spv",
+        "model_occurrences": 36,
+        "model_excess_us": 529.3401600000001,
+        "baseline_us": 28.888,
+        "candidate_us": 19.396,
+        "reference_bytes": 6382848
+      },
+      {
+        "scope": "expert_decode",
+        "shader": "fg_moe_decode_down_reduce.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 527.104,
+        "baseline_us": 38.288000000000004,
+        "candidate_us": 37.46933333333333,
+        "reference_bytes": 12288000
+      },
+      {
+        "scope": "gr_attn_read",
+        "shader": "hc_up_mix",
+        "model_occurrences": 48,
+        "model_excess_us": 517.9349333333333,
+        "baseline_us": 15.092,
+        "candidate_us": 11.392,
+        "reference_bytes": 1935760
+      },
+      {
+        "scope": "gr_ffn_read",
+        "shader": "hc_up_mix",
+        "model_occurrences": 48,
+        "model_excess_us": 504.81493333333344,
+        "baseline_us": 14.818666666666667,
+        "candidate_us": 11.061333333333334,
+        "reference_bytes": 1935760
+      },
+      {
+        "scope": "expert_decode",
+        "shader": "fg_router_top10.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 398.3040000000001,
+        "baseline_us": 9.232000000000001,
+        "candidate_us": 4.985333333333333,
+        "reference_bytes": 2128
+      },
+      {
+        "scope": "qsa_projection",
+        "shader": "fg_quantize_q8_0.spv",
+        "model_occurrences": 36,
+        "model_excess_us": 377.49600000000004,
+        "baseline_us": 11.42,
+        "candidate_us": 11.425333333333334,
+        "reference_bytes": 2592
+      },
+      {
+        "scope": "qsa_projection",
+        "shader": "fg_dense_compact.spv",
+        "model_occurrences": 12,
+        "model_excess_us": 358.5856000000001,
+        "baseline_us": 70.296,
+        "candidate_us": 59.628,
+        "reference_bytes": 18186240
+      },
+      {
+        "scope": "gdn_output",
+        "shader": "fg_dense_compact.spv",
+        "model_occurrences": 36,
+        "model_excess_us": 356.2944,
+        "baseline_us": 30.104,
+        "candidate_us": 26.168,
+        "reference_bytes": 9093120
+      },
+      {
+        "scope": "qsa_projection",
+        "shader": "fg_dense_bf16_f32.spv",
+        "model_occurrences": 24,
+        "model_excess_us": 325.5146666666667,
+        "baseline_us": 17.204,
+        "candidate_us": 16.978,
+        "reference_bytes": 2621440
+      },
+      {
+        "scope": "router",
+        "shader": "fg_dense_f32.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 204.15146666666664,
+        "baseline_us": 15.904,
+        "candidate_us": 16.132,
+        "reference_bytes": 5242880
+      },
+      {
+        "scope": "shared_expert",
+        "shader": "fg_dense_compact_iq4.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 183.93599999999998,
+        "baseline_us": 5.88,
+        "candidate_us": 6.038666666666667,
+        "reference_bytes": 921600
+      },
+      {
+        "scope": "shared_expert",
+        "shader": "fg_dense_soa_r4.spv",
+        "model_occurrences": 96,
+        "model_excess_us": 167.232,
+        "baseline_us": 4.472666666666667,
+        "candidate_us": 4.5040000000000004,
+        "reference_bytes": 1228800
+      },
+      {
+        "scope": "qsa_output",
+        "shader": "fg_dense_compact.spv",
+        "model_occurrences": 12,
+        "model_excess_us": 132.6848,
+        "baseline_us": 31.264,
+        "candidate_us": 26.552,
+        "reference_bytes": 9093120
+      },
+      {
+        "scope": "qsa_projection",
+        "shader": "fg_dense_soa_r4.spv",
+        "model_occurrences": 24,
+        "model_excess_us": 97.4272,
+        "baseline_us": 6.244,
+        "candidate_us": 6.25,
+        "reference_bytes": 983040
+      },
+      {
+        "scope": "gr_attn_read",
+        "shader": "fg_group_rms_norm.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 73.63199999999999,
+        "baseline_us": 2.468,
+        "candidate_us": 2.48,
+        "reference_bytes": 122880
+      },
+      {
+        "scope": "qsa_projection",
+        "shader": "fg_qsa_prepare.spv",
+        "model_occurrences": 12,
+        "model_excess_us": 62.616,
+        "baseline_us": 6.152,
+        "candidate_us": 6.5040000000000004,
+        "reference_bytes": 104460
+      },
+      {
+        "scope": "qsa_state_attention",
+        "shader": "fg_qsa_record_gather.spv",
+        "model_occurrences": 12,
+        "model_excess_us": 62.018559999999994,
+        "baseline_us": 6.58,
+        "candidate_us": 6.632,
+        "reference_bytes": 635304
+      },
+      {
+        "scope": "gr_ffn_read",
+        "shader": "fg_group_rms_norm.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 52.57600000000001,
+        "baseline_us": 2.0293333333333337,
+        "candidate_us": 2.0853333333333333,
+        "reference_bytes": 122880
+      },
+      {
+        "scope": "gdn_recurrent",
+        "shader": "fg_gdn_conv_decode.spv",
+        "model_occurrences": 36,
+        "model_excess_us": 36.20479999999999,
+        "baseline_us": 2.28,
+        "candidate_us": 2.306,
+        "reference_bytes": 573440
+      },
+      {
+        "scope": "gr_attn_write",
+        "shader": "fg_gr_write.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 33.376,
+        "baseline_us": 1.6293333333333333,
+        "candidate_us": 1.6386666666666667,
+        "reference_bytes": 92176
+      },
+      {
+        "scope": "qsa_projection",
+        "shader": "fg_qsa_index_prepare.spv",
+        "model_occurrences": 12,
+        "model_excess_us": 20.567999999999998,
+        "baseline_us": 2.648,
+        "candidate_us": 2.724,
+        "reference_bytes": 4620
+      },
+      {
+        "scope": "qsa_state_attention",
+        "shader": "fg_qsa_attention_merge.spv",
+        "model_occurrences": 12,
+        "model_excess_us": 17.543999999999997,
+        "baseline_us": 2.396,
+        "candidate_us": 5.948,
+        "reference_bytes": 98688
+      },
+      {
+        "scope": "qsa_state_attention",
+        "shader": "fg_qsa_record_commit.spv",
+        "model_occurrences": 12,
+        "model_excess_us": 10.68,
+        "baseline_us": 1.824,
+        "candidate_us": 1.8679999999999999,
+        "reference_bytes": 2608
+      },
+      {
+        "scope": "gr_ffn_write",
+        "shader": "fg_gr_write.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 9.632000000000001,
+        "baseline_us": 1.1346666666666667,
+        "candidate_us": 1.1573333333333333,
+        "reference_bytes": 92176
+      },
+      {
+        "scope": "expert_decode",
+        "shader": "fg_decode_tile_schedule.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 5.919999999999993,
+        "baseline_us": 1.0573333333333332,
+        "candidate_us": 1.0133333333333334,
+        "reference_bytes": 400
+      },
+      {
+        "scope": "moe_reduce",
+        "shader": "fg_moe_shared_add.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 4.960000000000003,
+        "baseline_us": 1.0373333333333334,
+        "candidate_us": 1.024,
+        "reference_bytes": 30724
+      },
+      {
+        "scope": "router_quantization",
+        "shader": "fg_quantize_q8_k.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 0,
+        "baseline_us": 0.06666666666666667,
+        "candidate_us": 0.06533333333333333,
+        "reference_bytes": 13200
+      },
+      {
+        "scope": "shared_expert",
+        "shader": "fg_dense_f32.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 0,
+        "baseline_us": 0.5306666666666666,
+        "candidate_us": 0.456,
+        "reference_bytes": 10240
+      },
+      {
+        "scope": "shared_expert",
+        "shader": "fg_swiglu.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 0,
+        "baseline_us": 0.8626666666666667,
+        "candidate_us": 0.8586666666666667,
+        "reference_bytes": 7680
+      }
+    ],
+    "intrusive_envelopes": [
+      [
+        {
+          "kind": "profile",
+          "gpu_us": 2540.24,
+          "gaps_us": 100.48,
+          "submissions": 10,
+          "dispatches": 214,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_compact_long.spv",
+            "fg_dense_compact_mid.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gdn_recurrent_algebraic.spv",
+            "fg_gr_mix_partial.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_hc_inject_partial.spv",
+            "fg_moe_decode_down_reduce.spv",
+            "fg_moe_decode_gate_up.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_decode_attention_split.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_router_top10.spv",
+            "fg_silu_scaled.spv",
+            "fg_swiglu.spv"
+          ]
+        },
+        {
+          "kind": "profile",
+          "gpu_us": 2539.28,
+          "gaps_us": 104.8,
+          "submissions": 10,
+          "dispatches": 214,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_compact_long.spv",
+            "fg_dense_compact_mid.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gdn_recurrent_algebraic.spv",
+            "fg_gr_mix_partial.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_hc_inject_partial.spv",
+            "fg_moe_decode_down_reduce.spv",
+            "fg_moe_decode_gate_up.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_decode_attention_split.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_router_top10.spv",
+            "fg_silu_scaled.spv",
+            "fg_swiglu.spv"
+          ]
+        },
+        {
+          "kind": "profile",
+          "gpu_us": 2541.76,
+          "gaps_us": 102.64,
+          "submissions": 10,
+          "dispatches": 214,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_compact_long.spv",
+            "fg_dense_compact_mid.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gdn_recurrent_algebraic.spv",
+            "fg_gr_mix_partial.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_hc_inject_partial.spv",
+            "fg_moe_decode_down_reduce.spv",
+            "fg_moe_decode_gate_up.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_decode_attention_split.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_router_top10.spv",
+            "fg_silu_scaled.spv",
+            "fg_swiglu.spv"
+          ]
+        },
+        {
+          "kind": "profile",
+          "gpu_us": 2540.52,
+          "gaps_us": 106.84,
+          "submissions": 10,
+          "dispatches": 214,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_compact_long.spv",
+            "fg_dense_compact_mid.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gdn_recurrent_algebraic.spv",
+            "fg_gr_mix_partial.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_hc_inject_partial.spv",
+            "fg_moe_decode_down_reduce.spv",
+            "fg_moe_decode_gate_up.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_decode_attention_split.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_router_top10.spv",
+            "fg_silu_scaled.spv",
+            "fg_swiglu.spv"
+          ]
+        },
+        {
+          "kind": "profile",
+          "gpu_us": 2540.92,
+          "gaps_us": 106.6,
+          "submissions": 10,
+          "dispatches": 214,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_compact_long.spv",
+            "fg_dense_compact_mid.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gdn_recurrent_algebraic.spv",
+            "fg_gr_mix_partial.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_hc_inject_partial.spv",
+            "fg_moe_decode_down_reduce.spv",
+            "fg_moe_decode_gate_up.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_decode_attention_split.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_router_top10.spv",
+            "fg_silu_scaled.spv",
+            "fg_swiglu.spv"
+          ]
+        }
+      ],
+      [
+        {
+          "kind": "profile",
+          "gpu_us": 2151.28,
+          "gaps_us": 80.92,
+          "submissions": 10,
+          "dispatches": 170,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_roof_dense_l1_w32.spv",
+            "fg_roof_dense_l2.spv",
+            "fg_roof_down_slots2_w32.spv",
+            "fg_roof_expert_cache.spv",
+            "fg_roof_gdn_gate_controls1_w32.spv",
+            "fg_roof_hc_down_single_w256.spv",
+            "fg_roof_hc_up_mix_iq4.spv",
+            "fg_roof_qsa_h6.spv",
+            "fg_roof_recurrent_single.spv",
+            "fg_roof_router.spv",
+            "fg_swiglu.spv"
+          ]
+        },
+        {
+          "kind": "profile",
+          "gpu_us": 2147.04,
+          "gaps_us": 81.84,
+          "submissions": 10,
+          "dispatches": 170,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_roof_dense_l1_w32.spv",
+            "fg_roof_dense_l2.spv",
+            "fg_roof_down_slots2_w32.spv",
+            "fg_roof_expert_cache.spv",
+            "fg_roof_gdn_gate_controls1_w32.spv",
+            "fg_roof_hc_down_single_w256.spv",
+            "fg_roof_hc_up_mix_iq4.spv",
+            "fg_roof_qsa_h6.spv",
+            "fg_roof_recurrent_single.spv",
+            "fg_roof_router.spv",
+            "fg_swiglu.spv"
+          ]
+        },
+        {
+          "kind": "profile",
+          "gpu_us": 2153.08,
+          "gaps_us": 85.8,
+          "submissions": 10,
+          "dispatches": 170,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_roof_dense_l1_w32.spv",
+            "fg_roof_dense_l2.spv",
+            "fg_roof_down_slots2_w32.spv",
+            "fg_roof_expert_cache.spv",
+            "fg_roof_gdn_gate_controls1_w32.spv",
+            "fg_roof_hc_down_single_w256.spv",
+            "fg_roof_hc_up_mix_iq4.spv",
+            "fg_roof_qsa_h6.spv",
+            "fg_roof_recurrent_single.spv",
+            "fg_roof_router.spv",
+            "fg_swiglu.spv"
+          ]
+        },
+        {
+          "kind": "profile",
+          "gpu_us": 2152.48,
+          "gaps_us": 80.68,
+          "submissions": 10,
+          "dispatches": 170,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_roof_dense_l1_w32.spv",
+            "fg_roof_dense_l2.spv",
+            "fg_roof_down_slots2_w32.spv",
+            "fg_roof_expert_cache.spv",
+            "fg_roof_gdn_gate_controls1_w32.spv",
+            "fg_roof_hc_down_single_w256.spv",
+            "fg_roof_hc_up_mix_iq4.spv",
+            "fg_roof_qsa_h6.spv",
+            "fg_roof_recurrent_single.spv",
+            "fg_roof_router.spv",
+            "fg_swiglu.spv"
+          ]
+        },
+        {
+          "kind": "profile",
+          "gpu_us": 2151.28,
+          "gaps_us": 83.24,
+          "submissions": 10,
+          "dispatches": 170,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_roof_dense_l1_w32.spv",
+            "fg_roof_dense_l2.spv",
+            "fg_roof_down_slots2_w32.spv",
+            "fg_roof_expert_cache.spv",
+            "fg_roof_gdn_gate_controls1_w32.spv",
+            "fg_roof_hc_down_single_w256.spv",
+            "fg_roof_hc_up_mix_iq4.spv",
+            "fg_roof_qsa_h6.spv",
+            "fg_roof_recurrent_single.spv",
+            "fg_roof_router.spv",
+            "fg_swiglu.spv"
+          ]
+        }
+      ]
+    ],
+    "dispatch_count": 170
+  },
+  "24": {
+    "baseline_flags": {
+      "kind": "roofline",
+      "mask": "0",
+      "dense_variant": "19",
+      "qsa_variant": "3",
+      "expert_variant": "2",
+      "hc_variant": "0",
+      "recurrent_variant": "0",
+      "gdn_variant": "8",
+      "reported_cus": 24,
+      "subgroup_size": 64
+    },
+    "candidate_flags": {
+      "kind": "roofline",
+      "mask": "2047",
+      "dense_variant": "19",
+      "qsa_variant": "3",
+      "expert_variant": "33024",
+      "hc_variant": "96",
+      "recurrent_variant": "3",
+      "gdn_variant": "1",
+      "reported_cus": 24,
+      "subgroup_size": 64
+    },
+    "model_quality_gate": {
+      "status": "not_run",
+      "kl_mean_max": 0.005,
+      "top1_agreement_min": 0.985,
+      "warning": "Synthetic component/block comparisons cannot qualify model quality."
+    },
+    "rounds": [
+      {
+        "seed": 1,
+        "baseline_wall_us": 2941.415153125,
+        "candidate_wall_us": 2500.9466,
+        "saving_us": 440.46855312499974,
+        "saving_percent": 14.974715577195552,
+        "speedup": 1.1761207348949392,
+        "baseline_layers_us": [
+          437.0578125,
+          545.650125,
+          434.107875,
+          430.6938125,
+          431.5186875,
+          544.64825
+        ],
+        "candidate_layers_us": [
+          369.5705,
+          461.344375,
+          365.841875,
+          364.664,
+          365.098125,
+          461.093125
+        ],
+        "gdn_saving_us": 67.050921875,
+        "qsa_saving_us": 83.93043749999998,
+        "projected_48_layer_saving_ms": 3.4209984374999993,
+        "windows": [
+          {
+            "wall_us": 2944.766925,
+            "layers_us": [
+              437.0905,
+              545.6315,
+              434.11125,
+              430.8085,
+              430.464,
+              544.448875
+            ],
+            "windows_wall_us": [
+              2913.682046875,
+              2934.3421875,
+              2957.18090625,
+              2981.106203125,
+              2937.52328125
+            ]
+          },
+          {
+            "wall_us": 2500.9466,
+            "layers_us": [
+              369.5705,
+              461.344375,
+              365.841875,
+              364.664,
+              365.098125,
+              461.093125
+            ],
+            "windows_wall_us": [
+              2483.66078125,
+              2493.6044375,
+              2501.830578125,
+              2509.24071875,
+              2516.396484375
+            ]
+          },
+          {
+            "wall_us": 2938.06338125,
+            "layers_us": [
+              437.025125,
+              545.66875,
+              434.1045,
+              430.579125,
+              432.573375,
+              544.847625
+            ],
+            "windows_wall_us": [
+              2906.396515625,
+              2926.5091875,
+              2949.8611875,
+              2973.052921875,
+              2934.49709375
+            ]
+          }
+        ],
+        "parity": {
+          "output": {
+            "elements": 3276800,
+            "changed": 2996436,
+            "bit_exact": false,
+            "max_abs": 0.15838623046875,
+            "max_scaled": 0.0011914947749409324,
+            "tolerance": null,
+            "relative": true
+          },
+          "state": {
+            "elements": 3309568,
+            "changed": 3132636,
+            "bit_exact": false,
+            "max_abs": 4.1961669921875e-05,
+            "max_scaled": 4.1961669921875e-05,
+            "tolerance": null,
+            "relative": false
+          }
+        }
+      },
+      {
+        "seed": 2,
+        "baseline_wall_us": 2935.4205734375,
+        "candidate_wall_us": 2501.70505625,
+        "saving_us": 433.71551718750015,
+        "saving_percent": 14.775242808889944,
+        "speedup": 1.1733679660213943,
+        "baseline_layers_us": [
+          436.91481250000004,
+          545.7296249999999,
+          434.268625,
+          430.3920625,
+          430.33218750000003,
+          544.1821875
+        ],
+        "candidate_layers_us": [
+          369.5765,
+          461.570125,
+          366.10125,
+          364.65575,
+          365.316375,
+          461.997875
+        ],
+        "gdn_saving_us": 66.56445312500001,
+        "qsa_saving_us": 83.17190624999998,
+        "projected_48_layer_saving_ms": 3.3943831875,
+        "windows": [
+          {
+            "wall_us": 2935.63193125,
+            "layers_us": [
+              436.88425,
+              545.83325,
+              434.1925,
+              430.281875,
+              430.399875,
+              544.148375
+            ],
+            "windows_wall_us": [
+              2904.840234375,
+              2923.95859375,
+              2946.3675,
+              2969.302859375,
+              2933.69046875
+            ]
+          },
+          {
+            "wall_us": 2501.70505625,
+            "layers_us": [
+              369.5765,
+              461.570125,
+              366.10125,
+              364.65575,
+              365.316375,
+              461.997875
+            ],
+            "windows_wall_us": [
+              2484.29921875,
+              2493.463921875,
+              2500.7428125,
+              2510.587640625,
+              2519.4316875
+            ]
+          },
+          {
+            "wall_us": 2935.209215625,
+            "layers_us": [
+              436.945375,
+              545.626,
+              434.34475,
+              430.50225,
+              430.2645,
+              544.216
+            ],
+            "windows_wall_us": [
+              2904.203078125,
+              2923.257453125,
+              2946.7962187499998,
+              2969.628296875,
+              2932.16103125
+            ]
+          }
+        ],
+        "parity": {
+          "output": {
+            "elements": 3276800,
+            "changed": 2921763,
+            "bit_exact": false,
+            "max_abs": 0.012939453125,
+            "max_scaled": 0.0001280943325940489,
+            "tolerance": null,
+            "relative": true
+          },
+          "state": {
+            "elements": 3309568,
+            "changed": 3224364,
+            "bit_exact": false,
+            "max_abs": 0.0049037933349609375,
+            "max_scaled": 0.0049037933349609375,
+            "tolerance": null,
+            "relative": false
+          }
+        }
+      },
+      {
+        "seed": 3,
+        "baseline_wall_us": 2939.9551078124996,
+        "candidate_wall_us": 2502.07704375,
+        "saving_us": 437.87806406249956,
+        "saving_percent": 14.894039126614647,
+        "speedup": 1.1750058277207274,
+        "baseline_layers_us": [
+          437.039125,
+          546.23525,
+          435.00856250000004,
+          430.35175000000004,
+          431.49868749999996,
+          545.1546875
+        ],
+        "candidate_layers_us": [
+          369.6315,
+          461.625125,
+          366.24675,
+          365.125375,
+          365.448875,
+          461.38575
+        ],
+        "gdn_saving_us": 66.86140625,
+        "qsa_saving_us": 84.18953124999999,
+        "projected_48_layer_saving_ms": 3.4172849999999997,
+        "windows": [
+          {
+            "wall_us": 2940.00105,
+            "layers_us": [
+              436.979625,
+              546.19425,
+              436.00675,
+              430.37775,
+              430.311375,
+              545.11225
+            ],
+            "windows_wall_us": [
+              2908.153828125,
+              2927.754328125,
+              2951.002109375,
+              2975.48459375,
+              2937.610390625
+            ]
+          },
+          {
+            "wall_us": 2502.07704375,
+            "layers_us": [
+              369.6315,
+              461.625125,
+              366.24675,
+              365.125375,
+              365.448875,
+              461.38575
+            ],
+            "windows_wall_us": [
+              2484.273703125,
+              2492.83215625,
+              2502.37046875,
+              2513.045625,
+              2517.863265625
+            ]
+          },
+          {
+            "wall_us": 2939.909165625,
+            "layers_us": [
+              437.098625,
+              546.27625,
+              434.010375,
+              430.32575,
+              432.686,
+              545.197125
+            ],
+            "windows_wall_us": [
+              2908.685171875,
+              2929.04725,
+              2950.308046875,
+              2973.601390625,
+              2937.90396875
+            ]
+          }
+        ],
+        "parity": {
+          "output": {
+            "elements": 3276800,
+            "changed": 3054212,
+            "bit_exact": false,
+            "max_abs": 0.1583251953125,
+            "max_scaled": 0.00029077142037827727,
+            "tolerance": null,
+            "relative": true
+          },
+          "state": {
+            "elements": 3309568,
+            "changed": 3131235,
+            "bit_exact": false,
+            "max_abs": 9.5367431640625e-06,
+            "max_scaled": 9.5367431640625e-06,
+            "tolerance": null,
+            "relative": false
+          }
+        }
+      },
+      {
+        "seed": 4,
+        "baseline_wall_us": 2938.6855078125,
+        "candidate_wall_us": 2503.08338125,
+        "saving_us": 435.60212656249996,
+        "saving_percent": 14.823026329440529,
+        "speedup": 1.1740262149577163,
+        "baseline_layers_us": [
+          438.02225,
+          546.34825,
+          434.28993749999995,
+          430.57825,
+          430.4345,
+          544.5449375000001
+        ],
+        "candidate_layers_us": [
+          369.303125,
+          461.229875,
+          365.938375,
+          364.721125,
+          365.20875,
+          462.061875
+        ],
+        "gdn_saving_us": 67.03839062499999,
+        "qsa_saving_us": 83.80071875000004,
+        "projected_48_layer_saving_ms": 3.4189906875000005,
+        "windows": [
+          {
+            "wall_us": 2938.815915625,
+            "layers_us": [
+              438.910375,
+              546.106625,
+              434.297875,
+              430.431875,
+              430.4175,
+              544.723
+            ],
+            "windows_wall_us": [
+              2907.230859375,
+              2926.839984375,
+              2950.037140625,
+              2973.843234375,
+              2936.128359375
+            ]
+          },
+          {
+            "wall_us": 2503.08338125,
+            "layers_us": [
+              369.303125,
+              461.229875,
+              365.938375,
+              364.721125,
+              365.20875,
+              462.061875
+            ],
+            "windows_wall_us": [
+              2486.2033125,
+              2501.325125,
+              2500.8475625,
+              2509.115140625,
+              2517.925765625
+            ]
+          },
+          {
+            "wall_us": 2938.5551,
+            "layers_us": [
+              437.134125,
+              546.589875,
+              434.282,
+              430.724625,
+              430.4515,
+              544.366875
+            ],
+            "windows_wall_us": [
+              2910.483734375,
+              2924.95671875,
+              2950.273,
+              2971.8778125,
+              2935.184234375
+            ]
+          }
+        ],
+        "parity": {
+          "output": {
+            "elements": 3276800,
+            "changed": 3057642,
+            "bit_exact": false,
+            "max_abs": 0.070556640625,
+            "max_scaled": 0.0002904592773320648,
+            "tolerance": null,
+            "relative": true
+          },
+          "state": {
+            "elements": 3309568,
+            "changed": 3214024,
+            "bit_exact": false,
+            "max_abs": 0.001865386962890625,
+            "max_scaled": 0.001865386962890625,
+            "tolerance": null,
+            "relative": false
+          }
+        }
+      },
+      {
+        "seed": 5,
+        "baseline_wall_us": 2940.5055468749997,
+        "candidate_wall_us": 2507.833565625,
+        "saving_us": 432.6719812499996,
+        "saving_percent": 14.714203879323353,
+        "speedup": 1.172528188146397,
+        "baseline_layers_us": [
+          438.44181249999997,
+          545.9543125,
+          434.532125,
+          431.80112499999996,
+          430.66331249999996,
+          545.0073125
+        ],
+        "candidate_layers_us": [
+          369.66575,
+          462.069125,
+          365.928375,
+          364.70825,
+          364.982125,
+          461.636125
+        ],
+        "gdn_saving_us": 67.53846874999996,
+        "qsa_saving_us": 83.62818750000002,
+        "projected_48_layer_saving_ms": 3.434923124999999,
+        "windows": [
+          {
+            "wall_us": 2938.03936875,
+            "layers_us": [
+              437.55525,
+              545.798875,
+              434.390375,
+              430.643875,
+              430.741625,
+              544.793375
+            ],
+            "windows_wall_us": [
+              2906.8743125,
+              2925.792484375,
+              2949.053984375,
+              2973.5401875,
+              2934.935875
+            ]
+          },
+          {
+            "wall_us": 2507.833565625,
+            "layers_us": [
+              369.66575,
+              462.069125,
+              365.928375,
+              364.70825,
+              364.982125,
+              461.636125
+            ],
+            "windows_wall_us": [
+              2489.701671875,
+              2500.884765625,
+              2507.99084375,
+              2515.674984375,
+              2524.9155625
+            ]
+          },
+          {
+            "wall_us": 2942.971725,
+            "layers_us": [
+              439.328375,
+              546.10975,
+              434.673875,
+              432.958375,
+              430.585,
+              545.22125
+            ],
+            "windows_wall_us": [
+              2910.676046875,
+              2930.45853125,
+              2953.513828125,
+              2978.1659531249998,
+              2942.044265625
+            ]
+          }
+        ],
+        "parity": {
+          "output": {
+            "elements": 3276800,
+            "changed": 2850485,
+            "bit_exact": false,
+            "max_abs": 0.017475128173828125,
+            "max_scaled": 0.0013362198708144837,
+            "tolerance": null,
+            "relative": true
+          },
+          "state": {
+            "elements": 3309568,
+            "changed": 2554407,
+            "bit_exact": false,
+            "max_abs": 5.7220458984375e-06,
+            "max_scaled": 5.7220458984375e-06,
+            "tolerance": null,
+            "relative": false
+          }
+        }
+      }
+    ],
+    "baseline_wall_us": 2939.1963778125,
+    "candidate_wall_us": 2503.129129375,
+    "saving_us": 436.0672484375,
+    "saving_percent": 14.836274694991408,
+    "saving_us_95_ci": [
+      433.6754246874999,
+      438.59984812499977
+    ],
+    "saving_percent_95_ci": [
+      14.760383941173425,
+      14.918685733418249
+    ],
+    "speedup_95_ci": [
+      1.1731637046586598,
+      1.175347199685388
+    ],
+    "baseline_layers_us": [
+      437.4951625,
+      545.9835125,
+      434.441425,
+      430.7634,
+      430.889475,
+      544.707475
+    ],
+    "candidate_layers_us": [
+      369.54947500000003,
+      461.567725,
+      366.011325,
+      364.7749,
+      365.21085,
+      461.63495
+    ],
+    "projection_not_measurement": {
+      "gdn_saving_us": 67.010728125,
+      "qsa_saving_us": 83.74415625,
+      "48_layer_saving_ms": 3.4173160874999997,
+      "48_layer_saving_ms_95_ci": [
+        3.4042866,
+        3.4282090124999995
+      ],
+      "historical_anchor_ms_token": 37.437,
+      "anchored_ms_token": 34.0196839125,
+      "anchored_ms_token_95_ci": [
+        34.0087909875,
+        34.0327134
+      ],
+      "anchored_tps": 29.39474695214807,
+      "warning": "Different weight/context/clock operating points; not eight-rank measurement or deployment."
+    },
+    "controls": {
+      "no-clocks": [
+        {
+          "wall_us": 2922.0079010416666,
+          "layers_us": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "windows_wall_us": [
+            2901.765328125,
+            2920.76734375,
+            2943.49103125
+          ]
+        },
+        {
+          "wall_us": 2485.841427083333,
+          "layers_us": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "windows_wall_us": [
+            2477.99371875,
+            2486.907125,
+            2492.6234375
+          ]
+        }
+      ],
+      "long": [
+        {
+          "wall_us": 4359.771,
+          "layers_us": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "windows_wall_us": [
+            4359.771
+          ]
+        },
+        {
+          "wall_us": 3956.344,
+          "layers_us": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "windows_wall_us": [
+            3956.344
+          ]
+        }
+      ]
+    },
+    "ranked_baseline_excess": [
+      {
+        "scope": "expert_decode",
+        "shader": "fg_moe_decode_gate_up.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 1587.3919999999998,
+        "baseline_us": 74.03066666666666,
+        "candidate_us": 71.616,
+        "reference_bytes": 18432000
+      },
+      {
+        "scope": "gdn_gate_controls",
+        "shader": "gdn_gate_controls",
+        "model_occurrences": 36,
+        "model_excess_us": 1098.7392,
+        "baseline_us": 52.912,
+        "candidate_us": 37.694,
+        "reference_bytes": 10076160
+      },
+      {
+        "scope": "gdn_qkv",
+        "shader": "fg_dense_compact.spv",
+        "model_occurrences": 36,
+        "model_excess_us": 1015.4079999999999,
+        "baseline_us": 61.884,
+        "candidate_us": 57.738,
+        "reference_bytes": 15155200
+      },
+      {
+        "scope": "expert_decode",
+        "shader": "fg_moe_decode_down_reduce.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 902.4000000000001,
+        "baseline_us": 46.10666666666667,
+        "candidate_us": 41.716,
+        "reference_bytes": 12288000
+      },
+      {
+        "scope": "gr_attn_read",
+        "shader": "hc_down_inject",
+        "model_occurrences": 48,
+        "model_excess_us": 717.9153066666665,
+        "baseline_us": 19.628,
+        "candidate_us": 12.470666666666668,
+        "reference_bytes": 2102144
+      },
+      {
+        "scope": "gr_ffn_read",
+        "shader": "hc_down_inject",
+        "model_occurrences": 48,
+        "model_excess_us": 696.2193066666666,
+        "baseline_us": 19.176000000000002,
+        "candidate_us": 12.411999999999999,
+        "reference_bytes": 2102144
+      },
+      {
+        "scope": "gr_attn_read",
+        "shader": "hc_up_mix",
+        "model_occurrences": 48,
+        "model_excess_us": 654.5109333333332,
+        "baseline_us": 17.937333333333335,
+        "candidate_us": 14.091999999999999,
+        "reference_bytes": 1935760
+      },
+      {
+        "scope": "gr_ffn_read",
+        "shader": "hc_up_mix",
+        "model_occurrences": 48,
+        "model_excess_us": 638.8309333333333,
+        "baseline_us": 17.610666666666667,
+        "candidate_us": 13.836,
+        "reference_bytes": 1935760
+      },
+      {
+        "scope": "qsa_state_attention",
+        "shader": "fg_qsa_decode_attention_split.spv",
+        "model_occurrences": 12,
+        "model_excess_us": 547.08,
+        "baseline_us": 46.524,
+        "candidate_us": 16.304,
+        "reference_bytes": 353344
+      },
+      {
+        "scope": "gdn_recurrent",
+        "shader": "fg_gdn_recurrent_algebraic.spv",
+        "model_occurrences": 36,
+        "model_excess_us": 521.78016,
+        "baseline_us": 28.678,
+        "candidate_us": 19.296,
+        "reference_bytes": 6382848
+      },
+      {
+        "scope": "gdn_output",
+        "shader": "fg_dense_compact.spv",
+        "model_occurrences": 36,
+        "model_excess_us": 491.1504000000001,
+        "baseline_us": 33.85,
+        "candidate_us": 29.066,
+        "reference_bytes": 9093120
+      },
+      {
+        "scope": "qsa_projection",
+        "shader": "fg_dense_compact.spv",
+        "model_occurrences": 12,
+        "model_excess_us": 405.5776000000001,
+        "baseline_us": 74.212,
+        "candidate_us": 68.988,
+        "reference_bytes": 18186240
+      },
+      {
+        "scope": "expert_decode",
+        "shader": "fg_router_top10.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 398.88000000000005,
+        "baseline_us": 9.244,
+        "candidate_us": 5.009333333333333,
+        "reference_bytes": 2128
+      },
+      {
+        "scope": "qsa_projection",
+        "shader": "fg_quantize_q8_0.spv",
+        "model_occurrences": 36,
+        "model_excess_us": 377.4,
+        "baseline_us": 11.417333333333334,
+        "candidate_us": 11.438666666666666,
+        "reference_bytes": 2592
+      },
+      {
+        "scope": "qsa_projection",
+        "shader": "fg_dense_bf16_f32.spv",
+        "model_occurrences": 24,
+        "model_excess_us": 323.1626666666667,
+        "baseline_us": 17.106,
+        "candidate_us": 17.098,
+        "reference_bytes": 2621440
+      },
+      {
+        "scope": "shared_expert",
+        "shader": "fg_dense_compact_iq4.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 205.56799999999996,
+        "baseline_us": 6.330666666666667,
+        "candidate_us": 6.757333333333333,
+        "reference_bytes": 921600
+      },
+      {
+        "scope": "router",
+        "shader": "fg_dense_f32.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 187.57546666666667,
+        "baseline_us": 15.558666666666667,
+        "candidate_us": 15.734666666666666,
+        "reference_bytes": 5242880
+      },
+      {
+        "scope": "qsa_output",
+        "shader": "fg_dense_compact.spv",
+        "model_occurrences": 12,
+        "model_excess_us": 166.9088,
+        "baseline_us": 34.116,
+        "candidate_us": 29.508,
+        "reference_bytes": 9093120
+      },
+      {
+        "scope": "shared_expert",
+        "shader": "fg_dense_soa_r4.spv",
+        "model_occurrences": 96,
+        "model_excess_us": 165.63200000000003,
+        "baseline_us": 4.456,
+        "candidate_us": 4.453333333333333,
+        "reference_bytes": 1228800
+      },
+      {
+        "scope": "qsa_projection",
+        "shader": "fg_dense_soa_r4.spv",
+        "model_occurrences": 24,
+        "model_excess_us": 81.01119999999999,
+        "baseline_us": 5.56,
+        "candidate_us": 5.604,
+        "reference_bytes": 983040
+      },
+      {
+        "scope": "gr_attn_read",
+        "shader": "fg_group_rms_norm.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 74.144,
+        "baseline_us": 2.478666666666667,
+        "candidate_us": 2.486666666666667,
+        "reference_bytes": 122880
+      },
+      {
+        "scope": "qsa_projection",
+        "shader": "fg_qsa_prepare.spv",
+        "model_occurrences": 12,
+        "model_excess_us": 64.008,
+        "baseline_us": 6.268,
+        "candidate_us": 6.072,
+        "reference_bytes": 104460
+      },
+      {
+        "scope": "qsa_state_attention",
+        "shader": "fg_qsa_record_gather.spv",
+        "model_occurrences": 12,
+        "model_excess_us": 53.37855999999999,
+        "baseline_us": 5.859999999999999,
+        "candidate_us": 5.9639999999999995,
+        "reference_bytes": 635304
+      },
+      {
+        "scope": "gr_ffn_read",
+        "shader": "fg_group_rms_norm.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 53.27999999999999,
+        "baseline_us": 2.044,
+        "candidate_us": 2.1053333333333333,
+        "reference_bytes": 122880
+      },
+      {
+        "scope": "gdn_recurrent",
+        "shader": "fg_gdn_conv_decode.spv",
+        "model_occurrences": 36,
+        "model_excess_us": 37.1408,
+        "baseline_us": 2.306,
+        "candidate_us": 2.326,
+        "reference_bytes": 573440
+      },
+      {
+        "scope": "gr_attn_write",
+        "shader": "fg_gr_write.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 33.184,
+        "baseline_us": 1.6253333333333333,
+        "candidate_us": 1.6546666666666667,
+        "reference_bytes": 92176
+      },
+      {
+        "scope": "qsa_projection",
+        "shader": "fg_qsa_index_prepare.spv",
+        "model_occurrences": 12,
+        "model_excess_us": 20.375999999999998,
+        "baseline_us": 2.632,
+        "candidate_us": 2.62,
+        "reference_bytes": 4620
+      },
+      {
+        "scope": "qsa_state_attention",
+        "shader": "fg_qsa_attention_merge.spv",
+        "model_occurrences": 12,
+        "model_excess_us": 17.976,
+        "baseline_us": 2.432,
+        "candidate_us": 5.98,
+        "reference_bytes": 98688
+      },
+      {
+        "scope": "qsa_state_attention",
+        "shader": "fg_qsa_record_commit.spv",
+        "model_occurrences": 12,
+        "model_excess_us": 10.104,
+        "baseline_us": 1.776,
+        "candidate_us": 1.828,
+        "reference_bytes": 2608
+      },
+      {
+        "scope": "gr_ffn_write",
+        "shader": "fg_gr_write.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 8.607999999999995,
+        "baseline_us": 1.1133333333333333,
+        "candidate_us": 1.1426666666666667,
+        "reference_bytes": 92176
+      },
+      {
+        "scope": "expert_decode",
+        "shader": "fg_decode_tile_schedule.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 6.559999999999997,
+        "baseline_us": 1.0706666666666667,
+        "candidate_us": 0.9706666666666667,
+        "reference_bytes": 400
+      },
+      {
+        "scope": "moe_reduce",
+        "shader": "fg_moe_shared_add.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 5.856,
+        "baseline_us": 1.056,
+        "candidate_us": 1.02,
+        "reference_bytes": 30724
+      },
+      {
+        "scope": "router_quantization",
+        "shader": "fg_quantize_q8_k.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 0,
+        "baseline_us": 0.06,
+        "candidate_us": 0.064,
+        "reference_bytes": 13200
+      },
+      {
+        "scope": "shared_expert",
+        "shader": "fg_dense_f32.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 0,
+        "baseline_us": 0.112,
+        "candidate_us": 0.08,
+        "reference_bytes": 10240
+      },
+      {
+        "scope": "shared_expert",
+        "shader": "fg_swiglu.spv",
+        "model_occurrences": 48,
+        "model_excess_us": 0,
+        "baseline_us": 0.864,
+        "candidate_us": 0.8666666666666667,
+        "reference_bytes": 7680
+      }
+    ],
+    "intrusive_envelopes": [
+      [
+        {
+          "kind": "profile",
+          "gpu_us": 2796.32,
+          "gaps_us": 101.96,
+          "submissions": 10,
+          "dispatches": 214,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_compact_long.spv",
+            "fg_dense_compact_mid.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gdn_recurrent_algebraic.spv",
+            "fg_gr_mix_partial.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_hc_inject_partial.spv",
+            "fg_moe_decode_down_reduce.spv",
+            "fg_moe_decode_gate_up.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_decode_attention_split.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_router_top10.spv",
+            "fg_silu_scaled.spv",
+            "fg_swiglu.spv"
+          ]
+        },
+        {
+          "kind": "profile",
+          "gpu_us": 2800.68,
+          "gaps_us": 106.48,
+          "submissions": 10,
+          "dispatches": 214,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_compact_long.spv",
+            "fg_dense_compact_mid.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gdn_recurrent_algebraic.spv",
+            "fg_gr_mix_partial.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_hc_inject_partial.spv",
+            "fg_moe_decode_down_reduce.spv",
+            "fg_moe_decode_gate_up.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_decode_attention_split.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_router_top10.spv",
+            "fg_silu_scaled.spv",
+            "fg_swiglu.spv"
+          ]
+        },
+        {
+          "kind": "profile",
+          "gpu_us": 2800.36,
+          "gaps_us": 105.36,
+          "submissions": 10,
+          "dispatches": 214,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_compact_long.spv",
+            "fg_dense_compact_mid.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gdn_recurrent_algebraic.spv",
+            "fg_gr_mix_partial.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_hc_inject_partial.spv",
+            "fg_moe_decode_down_reduce.spv",
+            "fg_moe_decode_gate_up.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_decode_attention_split.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_router_top10.spv",
+            "fg_silu_scaled.spv",
+            "fg_swiglu.spv"
+          ]
+        },
+        {
+          "kind": "profile",
+          "gpu_us": 2804.8,
+          "gaps_us": 105.6,
+          "submissions": 10,
+          "dispatches": 214,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_compact_long.spv",
+            "fg_dense_compact_mid.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gdn_recurrent_algebraic.spv",
+            "fg_gr_mix_partial.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_hc_inject_partial.spv",
+            "fg_moe_decode_down_reduce.spv",
+            "fg_moe_decode_gate_up.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_decode_attention_split.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_router_top10.spv",
+            "fg_silu_scaled.spv",
+            "fg_swiglu.spv"
+          ]
+        },
+        {
+          "kind": "profile",
+          "gpu_us": 2794.52,
+          "gaps_us": 101.88,
+          "submissions": 10,
+          "dispatches": 214,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_compact_long.spv",
+            "fg_dense_compact_mid.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gdn_recurrent_algebraic.spv",
+            "fg_gr_mix_partial.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_hc_inject_partial.spv",
+            "fg_moe_decode_down_reduce.spv",
+            "fg_moe_decode_gate_up.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_decode_attention_split.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_router_top10.spv",
+            "fg_silu_scaled.spv",
+            "fg_swiglu.spv"
+          ]
+        }
+      ],
+      [
+        {
+          "kind": "profile",
+          "gpu_us": 2371.52,
+          "gaps_us": 82.44,
+          "submissions": 10,
+          "dispatches": 170,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_roof_dense_l1_w32.spv",
+            "fg_roof_dense_l2.spv",
+            "fg_roof_down_slots2_w32.spv",
+            "fg_roof_expert_cache.spv",
+            "fg_roof_gdn_gate_controls1_w32.spv",
+            "fg_roof_hc_down_single_w256.spv",
+            "fg_roof_hc_up_mix_iq4.spv",
+            "fg_roof_qsa_h6.spv",
+            "fg_roof_recurrent_single.spv",
+            "fg_roof_router.spv",
+            "fg_swiglu.spv"
+          ]
+        },
+        {
+          "kind": "profile",
+          "gpu_us": 2369.52,
+          "gaps_us": 81.72,
+          "submissions": 10,
+          "dispatches": 170,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_roof_dense_l1_w32.spv",
+            "fg_roof_dense_l2.spv",
+            "fg_roof_down_slots2_w32.spv",
+            "fg_roof_expert_cache.spv",
+            "fg_roof_gdn_gate_controls1_w32.spv",
+            "fg_roof_hc_down_single_w256.spv",
+            "fg_roof_hc_up_mix_iq4.spv",
+            "fg_roof_qsa_h6.spv",
+            "fg_roof_recurrent_single.spv",
+            "fg_roof_router.spv",
+            "fg_swiglu.spv"
+          ]
+        },
+        {
+          "kind": "profile",
+          "gpu_us": 2383.24,
+          "gaps_us": 79.28,
+          "submissions": 10,
+          "dispatches": 170,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_roof_dense_l1_w32.spv",
+            "fg_roof_dense_l2.spv",
+            "fg_roof_down_slots2_w32.spv",
+            "fg_roof_expert_cache.spv",
+            "fg_roof_gdn_gate_controls1_w32.spv",
+            "fg_roof_hc_down_single_w256.spv",
+            "fg_roof_hc_up_mix_iq4.spv",
+            "fg_roof_qsa_h6.spv",
+            "fg_roof_recurrent_single.spv",
+            "fg_roof_router.spv",
+            "fg_swiglu.spv"
+          ]
+        },
+        {
+          "kind": "profile",
+          "gpu_us": 2384.12,
+          "gaps_us": 81.16,
+          "submissions": 10,
+          "dispatches": 170,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_roof_dense_l1_w32.spv",
+            "fg_roof_dense_l2.spv",
+            "fg_roof_down_slots2_w32.spv",
+            "fg_roof_expert_cache.spv",
+            "fg_roof_gdn_gate_controls1_w32.spv",
+            "fg_roof_hc_down_single_w256.spv",
+            "fg_roof_hc_up_mix_iq4.spv",
+            "fg_roof_qsa_h6.spv",
+            "fg_roof_recurrent_single.spv",
+            "fg_roof_router.spv",
+            "fg_swiglu.spv"
+          ]
+        },
+        {
+          "kind": "profile",
+          "gpu_us": 2379.0,
+          "gaps_us": 82.32,
+          "submissions": 10,
+          "dispatches": 170,
+          "executed_shaders": [
+            "fg_decode_tile_schedule.spv",
+            "fg_dense_bf16_f32.spv",
+            "fg_dense_compact_iq4.spv",
+            "fg_dense_f32.spv",
+            "fg_dense_soa_r4.spv",
+            "fg_gdn_conv_decode.spv",
+            "fg_gr_write.spv",
+            "fg_group_rms_norm.spv",
+            "fg_moe_shared_add.spv",
+            "fg_qsa_attention_merge.spv",
+            "fg_qsa_index_prepare.spv",
+            "fg_qsa_prepare.spv",
+            "fg_qsa_record_commit.spv",
+            "fg_qsa_record_gather.spv",
+            "fg_quantize_q8_0.spv",
+            "fg_quantize_q8_k.spv",
+            "fg_roof_dense_l1_w32.spv",
+            "fg_roof_dense_l2.spv",
+            "fg_roof_down_slots2_w32.spv",
+            "fg_roof_expert_cache.spv",
+            "fg_roof_gdn_gate_controls1_w32.spv",
+            "fg_roof_hc_down_single_w256.spv",
+            "fg_roof_hc_up_mix_iq4.spv",
+            "fg_roof_qsa_h6.spv",
+            "fg_roof_recurrent_single.spv",
+            "fg_roof_router.spv",
+            "fg_swiglu.spv"
+          ]
+        }
+      ]
+    ],
+    "dispatch_count": 170
+  }
+}

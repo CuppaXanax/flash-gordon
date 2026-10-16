@@ -1,4 +1,247 @@
-# Decode roofline: reassociation and bandwidth follow-up
+# Remaining-excess follow-up: experts, HC and GDN
+
+2026-10-15. Experimental selection: `FG_ROOFLINE=2047`,
+`FG_ROOF_DENSE=19`, `FG_ROOF_QSA=3`, `FG_ROOF_EXPERT=33024`,
+`FG_ROOF_HC=96`, `FG_ROOF_RECURRENT=3`, `FG_ROOF_GDN=1`.
+**Defaults are unchanged; real-pack KL/top-1 qualification remains pending.**
+All measurements use .50 only, at the same stock-safe pinned **2000 MHz GFX**
+operating point. This is not a claim that sysfs MCLK was set to 2000 MHz.
+Live CU routing, not Vulkan's unchanged reported count of 24, defines 40/24 CU.
+
+## Definitive paired result
+
+Each row is a fresh **five-round A/B/A** study: seeds 1-5, 256 warmup steps,
+five 64-step windows per phase, alternating baseline/candidate/baseline.
+Confidence intervals bootstrap whole rounds, not correlated individual tokens.
+Incremental baseline is the previous `251/19/3/2` bandwidth selection;
+cumulative baseline is mask zero. Candidate settings above are identical at
+both CU counts. Intrusive profiles are separate from wall-time qualification.
+
+| Comparison | CUs | Six-layer wall before -> after, ms | Saving | 95% saving CI, us |
+|---|---:|---:|---:|---:|
+| Incremental vs mask 251 | 40 | 2.406567 -> **2.277085** | **5.380%** | 125.268-133.097 |
+| Incremental vs mask 251 | 24 | 2.676635 -> **2.505894** | **6.379%** | 168.649-173.227 |
+| Cumulative vs mask 0 | 40 | 2.685077 -> **2.277203** | **15.190%** | 406.302-409.446 |
+| Cumulative vs mask 0 | 24 | 2.939196 -> **2.503129** | **14.836%** | 433.675-438.600 |
+
+No-clock controls preserve the incremental improvement: **2384.093 ->
+2259.648 us** at 40 CUs, **2655.493 -> 2480.948 us** at 24. Separate
+2048-warmup intrusive controls also improve, but their instrumented wall
+times are not substituted for the table above.
+
+### Production-shape bandwidth: complete operations
+
+Five intrusive profile pairs. Cells are **before -> after us
+(before -> after % of 450 GB/s)**, incremental comparison.
+Weight bytes exclude activation/intermediate traffic consistently on both
+sides. Recurrence uses the ledger's **6,382,848 logical state/read-write and
+small-tensor bytes**, not a hardware DRAM read counter. HC rows include the
+adjacent operations before fusion; they must not be compared with an isolated
+old GEMV. The same 450 GB/s normalization is used at both CU settings, not
+a separately measured 24-CU bandwidth ceiling.
+
+| Operation and production K x M | Weight/state bytes | 40 CUs | 24 CUs |
+|---|---:|---:|---:|
+| Expert gate/up/SiLU, 2560 x 640 x ten, Q4_K | 18,432,000 | 56.803 -> **54.829** (72.1 -> **74.7%**) | 72.721 -> **71.756** (56.3 -> **57.1%**) |
+| Expert down/reduce, 640 x 2560 x ten, Q5_1 | 12,288,000 | 38.123 -> **37.653** (71.6 -> **72.5%**) | 46.049 -> **41.631** (59.3 -> **65.6%**) |
+| HC attention up IQ4 + mix, 320 x 10240 | 1,843,200 | 12.844 -> **11.428** (31.9 -> **35.8%**) | 15.700 -> **14.049** (26.1 -> **29.2%**) |
+| HC FFN up IQ4 + mix, 320 x 10240 | 1,843,200 | 12.621 -> **11.133** (32.5 -> **36.8%**) | 15.313 -> **13.831** (26.7 -> **29.6%**) |
+| HC attention down Q4 + inject + SiLU, 10240 x 320 | 2,058,240 | 15.771 -> **13.037** (29.0 -> **35.1%**) | 16.347 -> **12.553** (28.0 -> **36.4%**) |
+| HC FFN down Q4 + inject + SiLU, 10240 x 320 | 2,058,240 | 15.412 -> **12.929** (29.7 -> **35.4%**) | 15.876 -> **12.472** (28.8 -> **36.7%**) |
+| GDN gate Q4 + both F32 controls, 2560 x (6144+48+48) | 10,076,160 | 38.880 -> **35.902** (57.6 -> **62.4%**) | 42.432 -> **37.690** (52.8 -> **59.4%**) |
+| GDN cached recurrence, 48 heads x 128 x 128 | 6,382,848 | 28.896 -> **20.582** (49.1 -> **68.9%**) | 29.066 -> **19.360** (48.8 -> **73.3%**) |
+| GDN QKV Q4, 2560 x 10240, unchanged geometry | 15,155,200 | 50.070 -> 50.002 (67.3 -> 67.4%) | 57.752 -> 57.670 (58.3 -> 58.4%) |
+| GDN output Q4, 6144 x 2560, unchanged | 9,093,120 | 25.890 -> 26.212 (78.0 -> 77.1%) | 29.246 -> 29.114 (69.1 -> 69.4%) |
+| QSA query Q4, 2560 x 12288, unchanged | 18,186,240 | 59.352 -> 59.308 (68.1 -> 68.1%) | 68.652 -> 68.788 (58.9 -> 58.8%) |
+| QSA output Q4, 6144 x 2560, unchanged | 9,093,120 | 26.496 -> 26.512 (76.3 -> 76.2%) | 29.500 -> 29.460 (68.5 -> 68.6%) |
+
+**The >=85% large-shape target is still not attained.** Expert improvements
+are modest, especially gate/up at 24 CUs. The largest reliable new gains are
+recurrence and removal of HC/control passes. Unchanged rows illustrate profile
+noise; their small differences are not credited as independent optimizations.
+Final recurrence profiles are slower than the exploratory 18-us observations;
+the table deliberately uses the fresh five-pair result.
+
+### Low-K shape check, not a substitute for replay
+
+Five paired 64-iteration component profiles at each CU setting, H2560,
+four HC groups. Values are complete up+mix before -> fused after, us.
+Expanded-Q8 rows use identical dequantized IQ4 values but more bytes.
+
+| K / format | Weight bytes | 40 CUs | 24 CUs |
+|---|---:|---:|---:|
+| 320 / IQ4 | 1,843,200 | 13.401 -> 14.056 | 16.081 -> 15.030 |
+| 640 / IQ4 | 3,686,400 | 21.458 -> 20.863 | 22.522 -> 21.852 |
+| 320 / expanded Q8 | 3,481,600 | 16.327 -> 17.950 | 17.980 -> 17.900 |
+| 640 / expanded Q8 | 6,963,200 | 26.797 -> 27.922 | 27.960 -> 28.173 |
+
+The isolated 40-CU K320 IQ4 case **regresses**, despite the gain in the
+production replay's two HC scopes. This is not a universal fusion win:
+working-set/order matters, and real-pack shader coverage and quality remain
+mandatory. K640 is shape-only evidence, not a second whole-model replay.
+Lossless Q8 expansion is not selected at either K.
+
+### Conditional eight-rank arithmetic
+
+Using the fresh cumulative layer deltas, 36 GDN + 12 QSA layers save
+**3.417316 ms/token at restricted 24 CUs**, against the historical 37.437-ms
+anchor: **34.019684 ms/token, 29.395 TPS** (round-only 95% interval
+34.008791-34.032713 ms). Incremental arithmetic saves another **1.393667 ms**
+against the earlier 35.407-ms projection, yielding **34.013333 ms**.
+These agree closely but are **not measured eight-rank throughput**: fabric,
+context, quality, flag coverage and operating-point assumptions remain.
+The 40-CU cumulative arithmetic is 34.299502 ms/token, not a production-CU
+forecast. Confidence intervals do not include those systematic uncertainties.
+
+## What changed
+
+* **Expert gate/up was already fused with SiLU, and both expert stages already
+  process all ten selections in one dispatch each.** No credit is taken for
+  inventing that fusion. The selected gate/up variant caches the K2560 Q8_K
+  activation once per WG and prefetches four weight blocks. Down uses two
+  selected-slot cohorts in WG64 with true wave32, retains sixteen output rows
+  per WG, and merges cohort results in LDS: no extra dispatch or global
+  partial buffer. Selector `33024 = 256 + 32768`.
+* **HC up + mix** computes the four groups of logits and their sigmoid-weighted
+  residual mix together, also finalizing injection partials. It avoids the
+  intermediate logit write/read and a dispatch. IQ4 weights remain IQ4.
+* **HC down + injection + scaled SiLU** shares the normalized input in one
+  WG256 dispatch. `FG_ROOF_HC=96` selects the unsplit path and WG256.
+  The activation is `SiLU(0.25 * low)`, not `0.25 * SiLU(low)`.
+  The owner decode path uses both HC fusions; prefill/unsupported formats
+  retain the existing paths.
+* **Cached recurrence** assigns all 128 output columns and four K partitions
+  to WG512/head. Each lane retains 32 decayed state values, computes the
+  memory/prior terms, and updates state without rereading it. Final RMS/gating
+  is in the same dispatch. This is compared against the existing **~29 us
+  algebraic** kernel, never the ~139 us non-algebraic oracle implementation.
+* **GDN gate + alpha/beta** appends 96 one-row F32-control workgroups to the
+  true-wave32 compact-Q4 gate GEMV. Three projections become one dispatch.
+  One control row/WG avoids the substantial register-pressure hypothesis
+  observed with eight rows; register allocation itself was not instrumented.
+
+## Bounded hypothesis sweeps and rejected alternatives
+
+Exploratory numbers below are three seeded intrusive replay profiles, not
+confidence-qualified wall-time wins. Times include every merge/normalization
+kernel where needed. All rejected variants remain opt-in and documented.
+
+| Hypothesis | Measured outcome, us | Decision |
+|---|---|---|
+| Serialize all ten selected experts per row/WG | Gate/up **128.882**, versus 57.393 original | Occupancy loss; reject |
+| Serialize two/five experts, shared activation | 40-CU gate/up 54.569 / 75.502; two-slot path **76.967 at 24 CUs** versus 72.707 | Two-slot wins at 40 only; not selected |
+| Cache one expert's activation, prefetch4, native64 | Gate/up **54.802 / 71.511**, 40/24 CUs | Balanced selected gate/up geometry |
+| Expert down full row, one/two lanes | 40-CU **99.384 / 71.080**, versus 38.240 | Reject |
+| Expert down WG64 with twice the output rows | **53.164**, versus 38.240 | Smaller grid loses; reject |
+| Parallel expert slots, global partials + merge | **36.593 + 3.676 = 40.269**, versus ~38.2 | Partial-only timing would be misleading; reject |
+| Two/four internal slot cohorts, native64 | 40 CUs **40.742 / 40.342**; 24 CUs **47.116 / 52.040** | Reject |
+| Two/four internal cohorts, true wave32 | 40 CUs **37.498 / 35.980**; 24 CUs **41.522 / 43.611** | Select two for both settings; four remains an explicit 40-CU alternative |
+| IQ4 two/one lanes per group | 40-CU HC up **12.111 / 13.480**, versus 10.536 | Reject |
+| Losslessly expand IQ4 to Q8, native / row-lane / fused mix | 40 CUs **13.278 / 32.576 / 14.984**; original IQ4 native/fused **10.536 / 11.389** | Expansion is exact in dequantized values, but slower; reject |
+| HC down split4/WG64 + merge | **12.640 + 1.787 = 14.427**, versus 15.760 combined old path | Small win, superseded by single dispatch |
+| HC unsplit WG64 / true-wave32-WG32 | 40 CUs **25.909 / 42.513** | Too few waves in flight; reject |
+| HC unsplit WG256 / WG512 | 40 CUs **13.069 / 13.369**; 24 CUs **12.478 / 14.053** | Select WG256 |
+| Q4 four-lane row cohorts, uvec4 x2/x4, wave64/32 | 40-CU QKV **79.430-85.237**, versus adaptive ~50.2; gate **48.567-49.837**, versus ~31.1 | Reassociation oracles pass, performance loses; reject |
+| Cached four-column-split recurrence + RMS pass | 40 CUs **21.167 + 2.253 = 23.420**; 24 CUs **30.867 + 1.980 = 32.847** | Loses at 24; superseded by WG512/head |
+| Vec4-state recurrence + RMS pass | 40 CUs **22.273 + 2.290 = 24.563** | Fewer load instructions alone do not ensure a win |
+| GDN fused controls, 8/4/2/1 rows per WG | 40 CUs **71.997 / 49.453 / 40.683 / 36.000**; old gate + both controls ~38.75 | Select one row; do not enable the eight-row variant |
+
+The exact IQ4 expansion preserves every original half scale and maps the
+nonlinear four-bit integer grid directly to signed int8: **no requantization**.
+Raw GGML and saved eight-row SoA/compact inputs have byte-identical dequantized
+CPU tests, including padded rows and signed/zero scales. The persistent runtime
+copy is cap-accounted and the source pack is unchanged. At K320/M10240 it grows
+weight storage **1,843,200 -> 3,481,600 bytes**. Higher reported GB/s from this
+larger numerator is not credited as a speedup. The selected profile does
+**not** expand IQ4.
+
+## Gates, accounting and scope
+
+New HC up/mix CPU checks cover K320/640, H2560, IQ4 and expanded Q8.
+HC down/injection covers eleven geometries and 1/7/24/40 injection pieces.
+GDN gate/controls covers all 6144 gate outputs plus 48 alpha/beta values,
+three input seeds including zero, and every control-row geometry.
+Recurrence checks **all output and state elements over eight sequential
+updates**, with component tolerance `1e-4*max(1,abs(reference))`; observed
+cached-recurrence output/state maxima are **3.25e-6 / 7.45e-8**.
+The new M640 x ten-selected-expert gate/up oracle uses the same approximately 1e-4
+reassociation bound; the existing down oracle is unchanged. A fixture bug
+was fixed by clearing regenerated raw Q4 rows before their bitwise-OR packer,
+not by relaxing a failed shader's tolerance.
+
+Full-block candidate dumps are finite/dimension diagnostics, **not** a
+substitute for model quality or an arbitrary 3e-6 veto. Baseline A/A2 must
+remain byte-identical. Every selected new individual path and the combination
+is listed in `roofline-quality-candidates.json` for the unchanged real-pack
+gate: **mean full-vocabulary KL(current || candidate) <=0.005, top-1 >=98.5%**,
+same frozen Q4-qualification corpus and pack hashes. That gate has not been
+run; no production promotion or rollout is claimed. Graph-only expert paths
+still retain baseline kernels; fleet qualification must verify actual shader
+coverage rather than silently measuring a flag that did not execute.
+
+Integration note: sibling `cuppaxanax/mtp` commit `a6344e6` independently fixes
+existing routed Q8 activation addressing. It is not merged into this Q4_K/Q5_1
+experiment. Integration must carry both fused Q8 `act_word = act_base + 2 +
+lane*8` corrections into the new shared `fg_moe_decode_gate_up.glsl`, as well
+as the generic `fg_moe_kquant_cooked.comp` correction; patching only the `.comp`
+wrapper would miss them. Re-run its independent two-block
+`expert_decode_fused_q8_gates` CPU oracle and native-head oracle after integration.
+
+The analyzer now compares HC up+mix, HC down+injection+SiLU, and GDN gate+both
+controls as complete groups, preserving all unrelated dispatch multiplicity.
+Expert split+merge and recurrence+normalization always sum both passes.
+Grouped CSV byte counts are **baseline-equivalent logical traffic**, including
+intermediates removed by fusion, not hardware DRAM counters. The bandwidth
+table uses the stated weight/state numerator consistently on both sides;
+a fused kernel's time cannot be split back into an invented isolated GEMV.
+Historical 7996bbd statistics and every ranked dispatch reproduce unchanged
+in the ungrouped analyzer.
+
+## Follow-up evidence and restoration
+
+* `roofline-excess-incremental-summary.json` and `-dispatches.csv` retain the
+  fresh comparison against mask 251; corresponding `-cumulative-*` files retain
+  comparison against mask zero. Each profile envelope lists executed shaders.
+  All five profiles at both CU counts execute the selected cached expert,
+  two-cohort down, both HC fusions, single-pass recurrence and one-row controls.
+* `roofline-excess-captures.tar.gz` contains raw wall/profile JSONL, all-element
+  diagnostics, component logs, exploratory sweeps and original/restored
+  operating-point evidence. SHA256:
+  `9dcf6069d9de415a854026df9364236555afc60e2124db204e31f3489d1ec519`.
+  Replay binary SHA256:
+  `76fb6d06c9a379f9ed84d2ddaeb9e14fd77b273e4c6e9654aecee165c11ae0e6`.
+  Timed source archive SHA256:
+  `8d453d984040625edc30ebe9bfd292a15d3b38b20a6a18dd4345b96474a184ac`.
+* **64 retained selected-native invocation logs pass**, across both CU
+  settings, plus five supplemental rejected-path logs (Q8 rows at K320/640,
+  actual IQ4 dense23/24, expert6/7). The supplemental run used the restored
+  governor and is correctness-only; its timings are not performance evidence.
+  Native/GLSL builds, exact CPU repack tests, **18 Python ledger tests**, flag
+  registration (`48 code / 32 test / 76 documented`) and shell syntax pass.
+  The supplemental test binary adds K640 Q8 shape coverage; timed kernel and
+  replay-binary sources did not change.
+* The standalone diagnostic helper previously leaked its mask variable,
+  retaining the last candidate expert log instead of a separate baseline log.
+  Its variables are now local. Recorded selectors verify that the **60 wall
+  captures and all profile pairs are unaffected**; no standalone expert A/B
+  timing is claimed from the overwritten files.
+* All **20 A/A2 output and state comparisons are byte-identical**.
+  Candidate dumps inspect 3,276,800 output and 3,309,568 state elements per
+  phase. Maximum incremental scaled-output/absolute-state drift is
+  **1.33998e-3 / 2.19345e-4**; cumulative is
+  **1.33622e-3 / 4.90379e-3**. These are accumulated synthetic diagnostics,
+  not a real-pack model-quality pass or veto.
+* Only **192.168.42.50** was used. Both `bc250-embed` and `bc250-rerank` were
+  stopped for clean timing and restarted, with both health endpoints returning
+  `{"status":"ok"}`. Original governor configuration is byte-identical,
+  governor/service units are active, and original **40/40 CU routing** is
+  restored. `/home/xander/hc-roof` was removed and absence tested.
+  `roofline-excess-cleanup.txt` retains the final cleanup result.
+  No production-ring or sibling blades were touched.
+
+The earlier study follows for context; its numbers are not the new A/B result.
+
+# Prior decode roofline: reassociation and bandwidth follow-up
 
 2026-10-15; all flags remain **off by default**. Same .50-only, stock-safe
 2000 MHz GFX operating point and replay protocol as the historical study below.

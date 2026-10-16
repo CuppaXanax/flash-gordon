@@ -16,6 +16,28 @@ layout(set=0,binding=0) readonly buffer WideWeights { uvec4 w4[]; };
 layout(set=0,binding=0) readonly buffer PairWeights { uvec2 w2[]; };
 layout(set=0,binding=1) readonly buffer Input { vec4 x[]; };
 layout(set=0,binding=2) writeonly buffer Output { float y[]; };
+#ifdef FG_HC_SILU
+layout(set=0,binding=5)writeonly buffer Activated{float activated[];};
+#endif
+void store_dense(uint index,float value){
+    y[index]=value;
+#ifdef FG_HC_SILU
+    float v=value*0.25;
+    activated[index]=v/(1.0+exp(-v));
+#endif
+}
+#ifdef FG_GDN_CONTROLS
+layout(set=0,binding=3)readonly buffer AlphaWeight{vec4 alpha_w[];};
+layout(set=0,binding=4)readonly buffer BetaWeight{vec4 beta_w[];};
+layout(set=0,binding=5)writeonly buffer AlphaOutput{float alpha_out[];};
+layout(set=0,binding=6)writeonly buffer BetaOutput{float beta_out[];};
+#endif
+#ifdef FG_HC_INJECT
+layout(set=0,binding=1)readonly buffer Scalars{float scalar_x[];};
+layout(set=0,binding=3)readonly buffer InjectWeight{float inject_w[];};
+layout(set=0,binding=4)writeonly buffer InjectPartial{vec4 inject_partial[];};
+shared vec4 inject_sums[8];
+#endif
 #ifdef FG_SHARED_SWIGLU
 layout(set=0,binding=3) readonly buffer UpWeights { uint u[]; };
 layout(set=0,binding=3) readonly buffer UpWeightsVector { uvec4 u4[]; };
@@ -29,6 +51,9 @@ uint projection;
 layout(push_constant) uniform Push {
     uint input_width,output_width,tokens,type,row_bytes;
     float scale;
+#ifdef FG_HC_INJECT
+    uint pieces;
+#endif
 } pc;
 shared vec4 sums0[8],sums1[8];
 #if TYPE == 20
@@ -78,7 +103,7 @@ void compact_scales(uint base,uint groups,uint g,uint row,out vec4 d,out vec4 m)
 #if FG_GROUP_LANES < 4
 float value_multi(uint base,uint groups,uint row,uint g,uint lane,
                   vec4 a[4/FG_GROUP_LANES],vec4 b[4/FG_GROUP_LANES]){
-    uint off=base+groups*(COMPACT!=0?5u:16u)+(row*groups+g)*4u;
+    uint off=base+groups*(TYPE==20u?4u:COMPACT!=0?5u:16u)+(row*groups+g)*4u;
 #if FG_GROUP_LANES == 1
     uvec4 packed=w4[off/4u];
 #else
@@ -90,6 +115,35 @@ float value_multi(uint base,uint groups,uint row,uint g,uint lane,
 }
 #endif
 void main(){
+#ifdef FG_GDN_CONTROLS
+    if(gl_WorkGroupID.x>=pc.output_width/ROWS){
+        uint workgroup=gl_WorkGroupID.x-pc.output_width/ROWS;
+#ifndef FG_CONTROL_ROWS
+#define FG_CONTROL_ROWS 8
+#endif
+        bool is_beta=workgroup>=48u/FG_CONTROL_ROWS;
+        uint first_control=(workgroup%(48u/FG_CONTROL_ROWS))*FG_CONTROL_ROWS;
+        vec4 controls0=vec4(0.0),controls1=vec4(0.0);
+        for(uint block=gl_LocalInvocationID.x;block<640u;block+=WG){
+            vec4 input_value=x[block];
+            [[unroll]]for(uint row=0u;row<FG_CONTROL_ROWS;row++){
+                vec4 weight=is_beta?beta_w[(first_control+row)*640u+block]:
+                    alpha_w[(first_control+row)*640u+block];
+                if(row<4u)controls0[row]+=dot(weight,input_value);
+                else controls1[row-4u]+=dot(weight,input_value);
+            }
+        }
+        controls0=subgroupAdd(controls0);controls1=subgroupAdd(controls1);
+        if(subgroupElect()){
+            [[unroll]]for(uint row=0u;row<FG_CONTROL_ROWS;row++){
+                float value=row<4u?controls0[row]:controls1[row-4u];
+                if(is_beta)beta_out[first_control+row]=value;
+                else alpha_out[first_control+row]=value;
+            }
+        }
+        return;
+    }
+#endif
 #ifdef FG_SHARED_SWIGLU
     vec4 gate0=vec4(0.0),gate1=vec4(0.0);
     [[unroll]] for(projection=0u;projection<2u;projection++){
@@ -101,16 +155,31 @@ void main(){
 #endif
     uint first=gl_WorkGroupID.x*ROWS,token=gl_WorkGroupID.y;
     uint groups=pc.input_width/32u;
+    uint begin_group=0u,end_group=groups,out_token=token;
+#ifdef FG_DENSE_SPLITS
+    token=0u;out_token=gl_WorkGroupID.y;
+    begin_group=groups*gl_WorkGroupID.y/FG_DENSE_SPLITS;
+    end_group=groups*(gl_WorkGroupID.y+1u)/FG_DENSE_SPLITS;
+#endif
+#ifdef FG_HC_INJECT
+    bool inject_live=gl_WorkGroupID.y==0u&&gl_WorkGroupID.x<pc.pieces;
+    vec4 inject_acc=vec4(0.0);
+    if(inject_live)for(uint at=gl_WorkGroupID.x*WG+lid;at<pc.input_width;at+=pc.pieces*WG){
+        float v=scalar_x[at];
+        inject_acc=fma(vec4(inject_w[at],inject_w[pc.input_width+at],
+            inject_w[2u*pc.input_width+at],inject_w[3u*pc.input_width+at]),vec4(v),inject_acc);
+    }
+#endif
     uint base=(first/8u)*groups*(TYPE==13u?(COMPACT!=0?45u:56u):TYPE==20u?36u:(COMPACT!=0?37u:48u)),row=first&7u;
     vec4 acc0=vec4(0.0),acc1=vec4(0.0);
 #ifdef FG_ROOF_UNROLL
     [[unroll]]
 #endif
-    for(uint i=0u;i<(groups+WG/FG_GROUP_LANES-1u)/(WG/FG_GROUP_LANES);i++){
-        uint group=i*(WG/FG_GROUP_LANES)+cohort;
-        if(COMPACT!=0&&TYPE==20u&&group>=groups)continue;
-        bool live=group<groups;
-        uint g=min(group,groups-1u);
+    for(uint i=0u;i<(end_group-begin_group+WG/FG_GROUP_LANES-1u)/(WG/FG_GROUP_LANES);i++){
+        uint group=begin_group+i*(WG/FG_GROUP_LANES)+cohort;
+        if(COMPACT!=0&&TYPE==20u&&group>=end_group)continue;
+        bool live=group<end_group;
+        uint g=min(group,end_group-1u);
         uint meta=base+g*16u;
         vec4 d0=uintBitsToFloat(W4((meta+row)/4u)),d1=uintBitsToFloat(W4(meta/4u+1u));
         vec4 m0=uintBitsToFloat(W4((meta+row)/4u+2u)),m1=uintBitsToFloat(W4(meta/4u+3u));
@@ -155,15 +224,26 @@ void main(){
     }
     vec4 r0=vec4(subgroupAdd(acc0.x),subgroupAdd(acc0.y),subgroupAdd(acc0.z),subgroupAdd(acc0.w));
     vec4 r1=vec4(subgroupAdd(acc1.x),subgroupAdd(acc1.y),subgroupAdd(acc1.z),subgroupAdd(acc1.w));
+#ifdef FG_HC_INJECT
+    vec4 ir=vec4(0.0);
+    if(inject_live){
+        ir=vec4(subgroupAdd(inject_acc.x),subgroupAdd(inject_acc.y),
+            subgroupAdd(inject_acc.z),subgroupAdd(inject_acc.w));
+        if(subgroupElect())inject_sums[gl_SubgroupID]=ir;
+    }
+#endif
     if(gl_NumSubgroups==1u
 #ifndef FG_ROOF_UNROLL
        &&COMPACT!=0&&TYPE==20u
 #endif
     ){
         if(subgroupElect())for(uint r=0u;r<4u;r++){
-            if(first+r<pc.output_width)y[token*pc.output_width+first+r]=r0[r]*pc.scale;
-            if(ROWS==8u&&first+r+4u<pc.output_width)y[token*pc.output_width+first+r+4u]=r1[r]*pc.scale;
+            if(first+r<pc.output_width)store_dense(out_token*pc.output_width+first+r,r0[r]*pc.scale);
+            if(ROWS==8u&&first+r+4u<pc.output_width)store_dense(out_token*pc.output_width+first+r+4u,r1[r]*pc.scale);
         }
+#ifdef FG_HC_INJECT
+        if(inject_live&&subgroupElect())inject_partial[gl_WorkGroupID.x]=ir;
+#endif
         return;
     }
     if(subgroupElect()){sums0[gl_SubgroupID]=r0;sums1[gl_SubgroupID]=r1;}
@@ -171,6 +251,13 @@ void main(){
     if(lid==0u){
         vec4 a=vec4(0.0),b=vec4(0.0);
         for(uint s=0u;s<gl_NumSubgroups;s++){a+=sums0[s];b+=sums1[s];}
+#ifdef FG_HC_INJECT
+        if(inject_live){
+            vec4 value=vec4(0.0);
+            for(uint s=0u;s<gl_NumSubgroups;s++)value+=inject_sums[s];
+            inject_partial[gl_WorkGroupID.x]=value;
+        }
+#endif
 #ifdef FG_SHARED_SWIGLU
         a*=pc.scale;b*=pc.scale;
         if(projection==0u){gate0=a;gate1=b;}
@@ -180,8 +267,8 @@ void main(){
         }
 #else
         for(uint r=0u;r<4u;r++){
-            if(first+r<pc.output_width)y[token*pc.output_width+first+r]=a[r]*pc.scale;
-            if(ROWS==8u&&first+r+4u<pc.output_width)y[token*pc.output_width+first+r+4u]=b[r]*pc.scale;
+            if(first+r<pc.output_width)store_dense(out_token*pc.output_width+first+r,a[r]*pc.scale);
+            if(ROWS==8u&&first+r+4u<pc.output_width)store_dense(out_token*pc.output_width+first+r+4u,b[r]*pc.scale);
         }
 #endif
     }

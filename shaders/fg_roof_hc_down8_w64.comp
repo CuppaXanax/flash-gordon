@@ -1,0 +1,13 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_EXT_control_flow_attributes : require
+#define TYPE 12
+#define COMPACT 1
+#define WG 64u
+#define ROWS 8u
+#define FG_DENSE_SPLITS 8
+#define FG_HC_INJECT 1
+#define FG_ROOF_UNROLL 1
+#include "fg_dense_soa_impl.glsl"

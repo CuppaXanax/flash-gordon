@@ -41,6 +41,9 @@
 #ifndef FG_PREFETCH
 #define FG_PREFETCH 1
 #endif
+#ifndef FG_SLOT_BATCH
+#define FG_SLOT_BATCH 1
+#endif
 layout(local_size_x = FG_EXPERT_WG, local_size_y = 1, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) readonly buffer GateWeights { uint gws[]; };
@@ -71,6 +74,16 @@ const uint Q8K_WORDS = 74u;
 
 shared float gate_partial[64];
 shared float up_partial[64];
+#if FG_SLOT_BATCH > 1 || defined(FG_ACT_CACHE)
+shared uvec2 routed_activation[370];
+#endif
+uvec2 activation_pair(uint at){
+#if FG_SLOT_BATCH > 1 || defined(FG_ACT_CACHE)
+    return routed_activation[at];
+#else
+    return q8p[at];
+#endif
+}
 
 /* Six-bit scale/min pair for one 32-value K group, same decode as the
    cooked prefill kernel's unpacked three-word metadata. */
@@ -193,10 +206,10 @@ int sum32(uint packed) {
         if (G5V) ghw = FG_GATE_HIGH; \
         if (U5V) uhw = FG_UP_HIGH; \
         uint act_vec = (block * Q8K_WORDS) >> 1u; \
-        uvec2 a01 = q8p[act_vec + act_a0]; \
-        uvec2 a23 = q8p[act_vec + act_a0 + 1u]; \
-        uvec2 b01 = q8p[act_vec + act_b0]; \
-        uvec2 b23 = q8p[act_vec + act_b0 + 1u]; \
+        uvec2 a01 = activation_pair(act_vec + act_a0); \
+        uvec2 a23 = activation_pair(act_vec + act_a0 + 1u); \
+        uvec2 b01 = activation_pair(act_vec + act_b0); \
+        uvec2 b23 = activation_pair(act_vec + act_b0 + 1u); \
         uint aw0 = a01.x, aw1 = a01.y, aw2 = a23.x, aw3 = a23.y; \
         uint bw0 = b01.x, bw1 = b01.y, bw2 = b23.x, bw3 = b23.y; \
         float gia = 0.0, gib = 0.0, uia = 0.0, uib = 0.0; \
@@ -204,11 +217,11 @@ int sum32(uint packed) {
         FG_KWORD(1, G5V, U5V) \
         FG_KWORD(2, G5V, U5V) \
         FG_KWORD(3, G5V, U5V) \
-        float act_delta = uintBitsToFloat(q8[block * Q8K_WORDS]); \
+        float act_delta = uintBitsToFloat(activation_pair(block * 37u).x); \
         gate_acc = fma(gdm.x * act_delta, gma.x * gia + gmb.x * gib, gate_acc); \
         up_acc = fma(udm.x * act_delta, uma.x * uia + umb.x * uib, up_acc); \
         if (sub == 0u) { \
-            uvec2 sums = q8p[act_vec + 33u + group_pair]; \
+            uvec2 sums = activation_pair(act_vec + 33u + group_pair); \
             gate_min = fma(-gdm.y * act_delta, \
                 float(int(gma.y) * sum32(sums.x) + int(gmb.y) * sum32(sums.y)), \
                 gate_min); \
@@ -220,13 +233,19 @@ int sum32(uint packed) {
 
 void main() {
     uint lid = gl_LocalInvocationID.x;
+#if FG_SLOT_BATCH > 1 || defined(FG_ACT_CACHE)
+    for(uint at=lid;at<pc.blocks*37u;at+=FG_EXPERT_WG)
+        routed_activation[at]=q8p[at];
+    barrier();
+#endif
     uint row_slot = lid >> 3u;
     uint lane = lid & 7u;
     uint row = gl_WorkGroupID.x * (FG_EXPERT_WG/8u) + row_slot;
-    uint tile_base = gl_WorkGroupID.y * TILE_WORDS;
+    for(uint slot_iteration=0u;slot_iteration<FG_SLOT_BATCH;slot_iteration++){
+    uint tile_base = (gl_WorkGroupID.y*FG_SLOT_BATCH+slot_iteration) * TILE_WORDS;
     uint expert = tiles[tile_base];
     uint pair = tiles[tile_base + 1u];
-    if (expert == INVALID || pair == INVALID) return;
+    if (expert == INVALID || pair == INVALID) continue;
 
     bool row_live = row < pc.out_dim;
     bool gate_q5 = pc.gate_type == Q5_K;
@@ -426,4 +445,5 @@ void main() {
         y[pair * pc.out_dim + row] = (gate_value / (1.0 + exp(-gate_value))) * up_value;
     }
 #endif
+    }
 }

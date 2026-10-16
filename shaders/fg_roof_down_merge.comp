@@ -1,0 +1,11 @@
+#version 460
+layout(local_size_x=128)in;
+layout(set=0,binding=0)readonly buffer Input{float x[];};
+layout(set=0,binding=1)writeonly buffer Output{float y[];};
+layout(push_constant)uniform Push{uint width,slots;}pc;
+void main(){
+    uint at=gl_GlobalInvocationID.x;if(at>=pc.width)return;
+    float sum=0.0;
+    for(uint slot=0u;slot<pc.slots;slot++)sum+=x[slot*pc.width+at];
+    y[at]=sum;
+}

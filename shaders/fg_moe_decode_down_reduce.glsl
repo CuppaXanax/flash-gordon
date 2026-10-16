@@ -1,4 +1,7 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#ifdef FG_DOWN_SHUFFLE
+#extension GL_KHR_shader_subgroup_shuffle : require
+#endif
 
 /* Batch-1 decode, one dispatch for all routed experts: the down projection
    with the gate-weighted reduction folded in.
@@ -28,7 +31,13 @@
 
    A workgroup still owns 16 output rows and the same dispatch grid. */
 
-layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+#ifndef FG_DOWN_WG
+#define FG_DOWN_WG 32
+#endif
+#ifndef FG_DOWN_SLOT_PARTS
+#define FG_DOWN_SLOT_PARTS 1
+#endif
+layout(local_size_x = FG_DOWN_WG, local_size_y = 1, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) readonly buffer Weights { uint wb[]; };
 layout(set = 0, binding = 0) readonly buffer WeightsVector { uvec2 wv[]; };
@@ -50,10 +59,10 @@ layout(push_constant) uniform Push {
 const uint Q5_1 = 7u;
 const uint TILE_WORDS = 9u;
 const uint INVALID = 0xffffffffu;
-const uint ROWS_PER_WORKGROUP = 16u;
+const uint ROWS_PER_WORKGROUP = FG_DOWN_WG/(2u*FG_DOWN_SLOT_PARTS);
 const uint PARTS = 4u;
 
-shared float partial[64];
+shared float partial[FG_DOWN_WG*2];
 
 /* One owned 32-value block of a row pair.  The pair's scale/min and fifth-bit
    words are adjacent u32s, so one uvec2 each feeds both rows; the four
@@ -162,8 +171,10 @@ void main() {
         }
         return;
     }
-    uint part = local_id & (PARTS - 1u);
-    uint pair_slot = local_id >> 2u;
+    uint slot_part=local_id/(FG_DOWN_WG/FG_DOWN_SLOT_PARTS);
+    uint row_local=local_id%(FG_DOWN_WG/FG_DOWN_SLOT_PARTS);
+    uint part = row_local & (PARTS - 1u);
+    uint pair_slot = row_local >> 2u;
     uint row = gl_WorkGroupID.x * ROWS_PER_WORKGROUP + pair_slot * 2u;
     bool row_live = row < pc.out_dim;
     uint seg = part & 1u;
@@ -171,7 +182,11 @@ void main() {
 
     float accumulator = 0.0;
     float accumulator_pair = 0.0;
-    for (uint slot = 0u; slot < pc.slots; slot++) {
+    uint first_slot=slot_part,end_slot=pc.slots;
+#ifdef FG_DOWN_SPLIT
+    first_slot=gl_WorkGroupID.y;end_slot=first_slot+1u;
+#endif
+    for (uint slot = first_slot; slot < end_slot; slot+=FG_DOWN_SLOT_PARTS) {
         uint tile_base = slot * TILE_WORDS;
         uint expert = tiles[tile_base];
         if (expert == INVALID) continue;
@@ -260,11 +275,36 @@ void main() {
         accumulator_pair = fma(gate, slot_acc_pair, accumulator_pair);
     }
 
-    partial[(pair_slot * 2u) * PARTS + part] = accumulator;
-    partial[(pair_slot * 2u + 1u) * PARTS + part] = accumulator_pair;
+#ifdef FG_DOWN_SHUFFLE
+    accumulator+=subgroupShuffleXor(accumulator,1u);
+    accumulator_pair+=subgroupShuffleXor(accumulator_pair,1u);
+    accumulator+=subgroupShuffleXor(accumulator,2u);
+    accumulator_pair+=subgroupShuffleXor(accumulator_pair,2u);
+    if(row_live&&part==0u){
+        uint offset=0u;
+#ifdef FG_DOWN_SPLIT
+        offset=gl_WorkGroupID.y*pc.out_dim;
+#endif
+        y[offset+row]=accumulator;
+        if(row+1u<pc.out_dim)y[offset+row+1u]=accumulator_pair;
+    }
+#else
+    uint part_base=slot_part*ROWS_PER_WORKGROUP*PARTS;
+    partial[part_base+(pair_slot * 2u) * PARTS + part] = accumulator;
+    partial[part_base+(pair_slot * 2u + 1u) * PARTS + part] = accumulator_pair;
     barrier();
-    if (row_live && part == 0u) {
+    if (row_live && part == 0u&&slot_part==0u) {
         uint offset = (pair_slot * 2u) * PARTS;
+#if FG_DOWN_SLOT_PARTS > 1
+        float total=0.0,total_pair=0.0;
+        [[unroll]]for(uint p=0u;p<FG_DOWN_SLOT_PARTS;p++){
+            uint base=p*ROWS_PER_WORKGROUP*PARTS+offset;
+            total+=(partial[base]+partial[base+1u])+(partial[base+2u]+partial[base+3u]);
+            total_pair+=(partial[base+4u]+partial[base+5u])+(partial[base+6u]+partial[base+7u]);
+        }
+        y[row]=total;
+        if(row+1u<pc.out_dim)y[row+1u]=total_pair;
+#else
         y[row] = (partial[offset] + partial[offset + 1u]) +
             (partial[offset + 2u] + partial[offset + 3u]);
         uint pair_row = row + 1u;
@@ -273,5 +313,7 @@ void main() {
             y[pair_row] = (partial[pair_offset] + partial[pair_offset + 1u]) +
                 (partial[pair_offset + 2u] + partial[pair_offset + 3u]);
         }
+#endif
     }
+#endif
 }

@@ -1,0 +1,16 @@
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x=128)in;
+layout(set=0,binding=0)readonly buffer Input{float x[];};
+layout(set=0,binding=1)readonly buffer ZGate{float z[];};
+layout(set=0,binding=2)readonly buffer Weight{float w[];};
+layout(set=0,binding=3)writeonly buffer Output{float y[];};
+layout(push_constant)uniform Push{uint value_heads,key_heads,head_dim;float epsilon;}pc;
+shared float sums[2];
+void main(){
+    uint lane=gl_LocalInvocationID.x,at=gl_WorkGroupID.x*128u+lane;
+    float v=x[at],s=subgroupAdd(v*v);
+    if(subgroupElect())sums[gl_SubgroupID]=s;
+    barrier();
+    y[at]=v*inversesqrt((sums[0]+sums[1])/128.0+pc.epsilon)*w[lane]/(1.0+exp(-z[at]));
+}

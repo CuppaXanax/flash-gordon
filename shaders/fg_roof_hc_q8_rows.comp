@@ -1,0 +1,35 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x=64)in;
+layout(set=0,binding=0)readonly buffer Weights{uint w[];};
+layout(set=0,binding=0)readonly buffer Vectors{uvec4 w4[];};
+layout(set=0,binding=1)readonly buffer Input{vec4 x[];};
+layout(set=0,binding=2)writeonly buffer Output{float y[];};
+layout(push_constant)uniform Push{uint out_dim,n_tok,blocks,tile_bytes;float scale;}pc;
+void main(){
+    uint row=gl_WorkGroupID.x*64u+gl_LocalInvocationID.x;
+    if(row>=pc.out_dim)return;
+    uint base=(row/16u)*pc.tile_bytes,local_row=row%16u;
+    uint quant_offset=(pc.blocks*32u+63u)&~63u;
+    vec4 acc=vec4(0.0);
+    for(uint first=0u;first<pc.blocks;first+=2u){
+        uvec4 lo[2],hi[2];uint meta[2];
+        [[unroll]]for(uint p=0u;p<2u;p++){
+            uint b=min(first+p,pc.blocks-1u);
+            uint at=base+quant_offset+(local_row*pc.blocks+b)*32u;
+            lo[p]=w4[at/16u];hi[p]=w4[at/16u+1u];
+            meta[p]=w[base/4u+b*8u+local_row/2u];
+        }
+        [[unroll]]for(uint p=0u;p<2u;p++){
+            uint b=first+p;if(b>=pc.blocks)continue;
+            vec2 sm=unpackHalf2x16(meta[p]);float d=(row&1u)==0u?sm.x:sm.y;
+            [[unroll]]for(uint j=0u;j<4u;j++){
+                float v=dot(vec4(unpack8(int(lo[p][j]))),x[b*8u+j])+
+                        dot(vec4(unpack8(int(hi[p][j]))),x[b*8u+j+4u]);
+                acc[j]=fma(d,v,acc[j]);
+            }
+        }
+    }
+    y[row]=dot(acc,vec4(1.0))*pc.scale;
+}

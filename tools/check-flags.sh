@@ -67,7 +67,10 @@ expected_code="$(printf '%s\n' \
     FG_ROOFLINE \
     FG_ROOF_DENSE \
     FG_ROOF_EXPERT \
+    FG_ROOF_GDN \
+    FG_ROOF_HC \
     FG_ROOF_QSA \
+    FG_ROOF_RECURRENT \
     FG_SET_TRACE \
     FG_SHADER_DIR \
     FG_STATIC_CHECK \
@@ -107,6 +110,7 @@ expected_test="$(printf '%s\n' \
     FG_RMS_HASH \
     FG_ROOFLINE \
     FG_ROOF_DENSE \
+    FG_ROOF_HC \
     FG_ROOF_QSA | LC_ALL=C sort -u)"
 
 actual_code="$(extract src include)"
