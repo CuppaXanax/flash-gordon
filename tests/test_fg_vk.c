@@ -2116,7 +2116,8 @@ static void make_q8_expert_row(uint8_t *destination,uint32_t width,uint32_t seed
     }
 }
 static int run_expert_decode_fused(uint32_t gate_type,uint32_t down_type,bool down_cooked){
-    enum{HIDDEN=256,MID=64,SLOTS=4,EXPERTS=2};
+    enum{MID=64,SLOTS=4,EXPERTS=2};
+    const uint32_t HIDDEN=gate_type==8u?512u:256u;
     uint32_t up_type=gate_type==8u?8u:(gate_type==12u?13u:12u);
     uint32_t gate_block=gate_type==13u?176u:144u,up_block=up_type==13u?176u:144u;
     uint64_t gate_stride=gate_type==8u?fg_q8_0_cooked_matrix_bytes(HIDDEN,MID):
@@ -2135,7 +2136,7 @@ static int run_expert_decode_fused(uint32_t gate_type,uint32_t down_type,bool do
     uint8_t *gate_source=malloc(gate_raw*EXPERTS),*up_source=malloc(up_raw*EXPERTS),*down_source=malloc(down_raw*EXPERTS);
     uint8_t *gate_cooked=malloc(gate_stride*EXPERTS),*up_cooked=malloc(up_stride*EXPERTS),*down_cooked_data=malloc(down_stride*EXPERTS);
     float input[HIDDEN],expected[HIDDEN],got[HIDDEN],gates[SLOTS];
-    uint8_t q8[FG_Q8_K_BLOCK_BYTES];
+    uint8_t q8[(HIDDEN/256u)*FG_Q8_K_BLOCK_BYTES];
     uint32_t schedule[SLOTS*9u];
     if(!gate_source||!up_source||!down_source||!gate_cooked||!up_cooked||!down_cooked_data)return 0;
     uint64_t down_row=down_type==7u?(uint64_t)(MID/32u)*FG_Q5_1_BLOCK_BYTES:
@@ -2145,15 +2146,15 @@ static int run_expert_decode_fused(uint32_t gate_type,uint32_t down_type,bool do
             for(uint32_t row=0;row<MID;row++)
                 make_q8_expert_row(gate_source+((uint64_t)expert*MID+row)*(HIDDEN/32u)*FG_Q8_0_BLOCK_BYTES,HIDDEN,expert*13u+row);
         }else{
-            for(uint32_t row=0;row<MID;row++)
-                make_k_row(gate_source+((uint64_t)expert*MID+row)*(HIDDEN/256u)*gate_block,gate_type==13u,expert*13u+row);
+            for(uint32_t row=0;row<MID;row++)for(uint32_t block=0;block<HIDDEN/256u;block++)
+                make_k_row(gate_source+(((uint64_t)expert*MID+row)*(HIDDEN/256u)+block)*gate_block,gate_type==13u,expert*13u+row+block*7u);
         }
         if(up_type==8u){
             for(uint32_t row=0;row<MID;row++)
                 make_q8_expert_row(up_source+((uint64_t)expert*MID+row)*(HIDDEN/32u)*FG_Q8_0_BLOCK_BYTES,HIDDEN,expert*17u+row);
         }else{
-            for(uint32_t row=0;row<MID;row++)
-                make_k_row(up_source+((uint64_t)expert*MID+row)*(HIDDEN/256u)*up_block,up_type==13u,expert*17u+row);
+            for(uint32_t row=0;row<MID;row++)for(uint32_t block=0;block<HIDDEN/256u;block++)
+                make_k_row(up_source+(((uint64_t)expert*MID+row)*(HIDDEN/256u)+block)*up_block,up_type==13u,expert*17u+row+block*11u);
         }
         for(uint32_t row=0;row<HIDDEN;row++){
             uint8_t *destination=down_source+((uint64_t)expert*HIDDEN+row)*down_row;
@@ -2217,11 +2218,40 @@ static int run_expert_decode_fused(uint32_t gate_type,uint32_t down_type,bool do
         fg_vk_moe_reduce(context,reference,down,gate_values,tiles,HIDDEN,SLOTS,SLOTS,&error)==FG_OK&&
         fg_vk_end(context,&error)==FG_OK&&
         fg_vk_tensor_read(reference,0,expected,sizeof(expected),&error)==FG_OK;
+    float cpu_mid[SLOTS*MID],got_mid[SLOTS*MID];
+    if(ok&&gate_type==8u){
+        float activation_cpu[HIDDEN],weight_cpu[HIDDEN];
+        for(uint32_t block=0;block<HIDDEN/256u;block++){
+            float delta;memcpy(&delta,q8+block*FG_Q8_K_BLOCK_BYTES,4u);
+            const int8_t *values=(const int8_t *)(q8+block*FG_Q8_K_BLOCK_BYTES+8u);
+            for(uint32_t i=0;i<256u;i++)activation_cpu[block*256u+i]=delta*values[i];
+        }
+        for(uint32_t slot=0;slot<SLOTS;slot++)for(uint32_t row=0;row<MID;row++){
+            uint32_t expert=schedule[slot*9u],pair=schedule[slot*9u+1u];
+            uint64_t offset=((uint64_t)expert*MID+row)*(HIDDEN/32u)*FG_Q8_0_BLOCK_BYTES;
+            fg_dequantize_q8_0(gate_source+offset,weight_cpu,HIDDEN);
+            float g=0.0f,u=0.0f;
+            for(uint32_t i=0;i<HIDDEN;i++)g=fmaf(weight_cpu[i],activation_cpu[i],g);
+            fg_dequantize_q8_0(up_source+offset,weight_cpu,HIDDEN);
+            for(uint32_t i=0;i<HIDDEN;i++)u=fmaf(weight_cpu[i],activation_cpu[i],u);
+            cpu_mid[pair*MID+row]=(g/(1.0f+expf(-g)))*u;
+        }
+        ok=fg_vk_tensor_read(mid,0,got_mid,sizeof(got_mid),&error)==FG_OK;
+        for(uint32_t i=0;ok&&i<SLOTS*MID;i++)if(fabsf(got_mid[i]-cpu_mid[i])>3e-4f*fmaxf(1.0f,fabsf(cpu_mid[i]))){
+            fprintf(stderr,"Q8 generic gate/up CPU oracle row=%u gpu=%g cpu=%g\n",i,got_mid[i],cpu_mid[i]);ok=0;
+        }
+    }
     if(ok)ok=fg_vk_begin(context,&error)==FG_OK&&
         fg_vk_moe_decode_gate_up(context,mid,gw,uw,activation,tiles,MID,HIDDEN,(uint32_t)gate_stride,(uint32_t)up_stride,gate_type,up_type,SLOTS,&error)==FG_OK&&
         fg_vk_moe_decode_down_reduce(context,fused,dw,tiles,mid,gate_values,HIDDEN,MID,(uint32_t)down_stride,SLOTS,down_type,&error)==FG_OK&&
         fg_vk_end(context,&error)==FG_OK&&
         fg_vk_tensor_read(fused,0,got,sizeof(got),&error)==FG_OK;
+    if(ok&&gate_type==8u){
+        ok=fg_vk_tensor_read(mid,0,got_mid,sizeof(got_mid),&error)==FG_OK;
+        for(uint32_t i=0;ok&&i<SLOTS*MID;i++)if(fabsf(got_mid[i]-cpu_mid[i])>3e-4f*fmaxf(1.0f,fabsf(cpu_mid[i]))){
+            fprintf(stderr,"Q8 fused gate/up CPU oracle row=%u gpu=%g cpu=%g\n",i,got_mid[i],cpu_mid[i]);ok=0;
+        }
+    }
     for(uint32_t i=0;ok&&i<HIDDEN;i++)
         if(fabsf(got[i]-expected[i])>3e-4f*fmaxf(1.0f,fabsf(expected[i]))){
             fprintf(stderr,"expert_decode_fused down=%d cooked=%d type=%d row %u fused=%g legacy=%g err=%s\n",(int)down_type,(int)down_cooked,(int)gate_type,i,got[i],expected[i],error.message);
