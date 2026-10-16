@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "418 /home/xander/flash-gordon-live/20261016-abq-multisess-capacity/memory.jsonl\nFilesystem                  1B-blocks         Used    Available Use% Mounted on\n/dev/mapper/fedora-root 1021363355648 903851728896 117511626752  89% /",
+    "Stderr": "awk: fatal: cannot open file `/proc/209429/stat' for reading: No such file or directory\n"
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "418 /home/xander/flash-gordon-live/20261016-abq-multisess-capacity/memory.jsonl\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 211725180928 41489145856  84% /",
+    "Stderr": "awk: fatal: cannot open file `/proc/140484/stat' for reading: No such file or directory\n"
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "418 /home/xander/flash-gordon-live/20261016-abq-multisess-capacity/memory.jsonl\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 201046028288 52168298496  80% /",
+    "Stderr": "awk: fatal: cannot open file `/proc/136476/stat' for reading: No such file or directory\n"
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "418 /home/xander/flash-gordon-live/20261016-abq-multisess-capacity/memory.jsonl\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 241549656064 11664670720  96% /",
+    "Stderr": "awk: fatal: cannot open file `/proc/135976/stat' for reading: No such file or directory\n"
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "418 /home/xander/flash-gordon-live/20261016-abq-multisess-capacity/memory.jsonl\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 189478985728 63735341056  75% /",
+    "Stderr": "awk: fatal: cannot open file `/proc/138977/stat' for reading: No such file or directory\n"
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "418 /home/xander/flash-gordon-live/20261016-abq-multisess-capacity/memory.jsonl\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 208250580992 44963745792  83% /",
+    "Stderr": "awk: fatal: cannot open file `/proc/135981/stat' for reading: No such file or directory\n"
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "418 /home/xander/flash-gordon-live/20261016-abq-multisess-capacity/memory.jsonl\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 206111223808 47103102976  82% /",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "418 /home/xander/flash-gordon-live/20261016-abq-multisess-capacity/memory.jsonl\nFilesystem                 1B-blocks         Used  Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 245812994048 7401332736  98% /",
+    "Stderr": ""
+  }
+]

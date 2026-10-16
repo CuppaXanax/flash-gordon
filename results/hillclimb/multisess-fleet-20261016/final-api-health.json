@@ -1,0 +1,59 @@
+{
+  "health": {
+    "status": "ok",
+    "busy": false
+  },
+  "selection": {
+    "selected_at": "2026-10-16T01:51:22.132693-07:00",
+    "binary_sha256": "de6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58",
+    "manifest_sha256": "0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252",
+    "source_commit": "2d0f8a7",
+    "release": "/home/xander/flash-gordon-live/20261016-abq-multisess",
+    "wide": 0,
+    "sessions": 2,
+    "qualification": "MULTI_SESSION_FLEET.md",
+    "manifest": "/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm"
+  },
+  "models": {
+    "object": "list",
+    "data": [
+      {
+        "id": "Qwen3.8-Flash-Next-Uncensored",
+        "object": "model",
+        "created": 0,
+        "owned_by": "flash-gordon",
+        "capabilities": {
+          "native_context": 262144,
+          "experimental_context": 0,
+          "tools": true,
+          "mtp": false,
+          "image": false,
+          "video": false,
+          "video_frames": false
+        }
+      }
+    ]
+  },
+  "verified_at": "2026-10-16T01:54:05.1538445-07:00",
+  "reply": {
+    "id": "chatcmpl-fg-1792140844-12",
+    "object": "chat.completion",
+    "created": 1792140844,
+    "model": "Qwen3.8-Flash-Next-Uncensored",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "OK"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 26,
+      "completion_tokens": 1,
+      "total_tokens": 27
+    }
+  }
+}

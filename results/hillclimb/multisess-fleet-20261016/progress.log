@@ -1,0 +1,74 @@
+DEPLOY 0-A 2026-10-16T00:25:23.0707557-07:00
+AB_DEPLOY arm=0-A release=/home/xander/flash-gordon-live/20261015-abq-main sessions=1 wide=0 healthy=true
+SOLO 0 A 4096 prefill=319.646456 decode=27.655556
+SOLO 0 A 32768 prefill=367.578519 decode=24.784503
+FAILURE concurrency run failed; inspect D:\looking-glass-labs\fg-wt\multi-session-int\results\hillclimb\multisess-fleet-20261016\pair-0-A\concurrency.log
+DEPLOY FAILURE-RESTORE 2026-10-16T00:29:37.9258770-07:00
+AB_DEPLOY arm=FAILURE-RESTORE release=/home/xander/flash-gordon-live/20261015-abq-main sessions=1 wide=0 healthy=true
+Exception: D:\looking-glass-labs\fg-wt\multi-session-int\.build\multisess-fleet.ps1:137
+Line |
+ 137 |  … ncy.complete){throw "$name run failed; inspect $directory\$name.log"}
+     |                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | concurrency run failed; inspect
+     | D:\looking-glass-labs\fg-wt\multi-session-int\results\hillclimb\multisess-fleet-20261016\pair-0-A\concurrency.log
+DEPLOY 0-A 2026-10-16T00:35:32.2173693-07:00
+AB_DEPLOY arm=0-A release=/home/xander/flash-gordon-live/20261015-abq-main sessions=1 wide=0 healthy=true
+RESUME keeping every valid prior metric for 0 A
+MODE 0 A concurrency aggregate=21.8399113511173 chatTTFT=14051.5089 gap95=78.3007000000034
+MODE 0 A mixed aggregate=24.4031043570351 chatTTFT=100951.7504 gap95=48.6317999999883
+DEPLOY 0-B 2026-10-16T00:38:52.5364441-07:00
+AB_DEPLOY arm=0-B release=/home/xander/flash-gordon-live/20261016-abq-multisess sessions=2 wide=0 healthy=true
+SOLO 0 B 4096 prefill=334.713049 decode=27.856652
+SOLO 0 B 32768 prefill=393.392424 decode=25.599111
+MODE 0 B concurrency aggregate=48.3244196487317 chatTTFT=1085.5264 gap95=82.6825000000003
+MODE 0 B mixed aggregate=4.21208445450466 chatTTFT=2632.3054 gap95=206.599199999999
+DEPLOY 1-B 2026-10-16T00:45:07.1517386-07:00
+AB_DEPLOY arm=1-B release=/home/xander/flash-gordon-live/20261016-abq-multisess sessions=2 wide=0 healthy=true
+SOLO 1 B 4096 prefill=331.495524 decode=27.807591
+SOLO 1 B 32768 prefill=383.878762 decode=25.801301
+MODE 1 B concurrency aggregate=35.111088432152 chatTTFT=1106.9907 gap95=197.4995
+MODE 1 B mixed aggregate=4.22545718419254 chatTTFT=2398.8042 gap95=207.423999999999
+DEPLOY 1-A 2026-10-16T00:51:29.2593979-07:00
+AB_DEPLOY arm=1-A release=/home/xander/flash-gordon-live/20261015-abq-main sessions=1 wide=0 healthy=true
+SOLO 1 A 4096 prefill=335.31789 decode=28.168981
+SOLO 1 A 32768 prefill=381.775427 decode=26.074715
+MODE 1 A concurrency aggregate=21.8380185870968 chatTTFT=13753.6157 gap95=81.1651999999995
+MODE 1 A mixed aggregate=24.9210514960674 chatTTFT=96509.0013 gap95=61.3506000000052
+DEPLOY 2-A 2026-10-16T00:57:42.5325067-07:00
+AB_DEPLOY arm=2-A release=/home/xander/flash-gordon-live/20261015-abq-main sessions=1 wide=0 healthy=true
+SOLO 2 A 4096 prefill=335.940013 decode=28.323075
+SOLO 2 A 32768 prefill=382.659934 decode=25.706371
+MODE 2 A concurrency aggregate=22.1889455453373 chatTTFT=13744.5778 gap95=73.6548000000003
+MODE 2 A mixed aggregate=24.6786057455361 chatTTFT=97202.5957 gap95=62.3510999999999
+DEPLOY 2-B 2026-10-16T01:03:56.0808014-07:00
+AB_DEPLOY arm=2-B release=/home/xander/flash-gordon-live/20261016-abq-multisess sessions=2 wide=0 healthy=true
+SOLO 2 B 4096 prefill=333.248238 decode=28.048287
+SOLO 2 B 32768 prefill=381.975857 decode=26.042275
+MODE 2 B concurrency aggregate=47.8851119444492 chatTTFT=1101.1084 gap95=83.8973000000005
+MODE 2 B mixed aggregate=4.21651411258215 chatTTFT=2379.4006 gap95=205.841200000001
+DEPLOY 3-B 2026-10-16T01:10:13.5916400-07:00
+AB_DEPLOY arm=3-B release=/home/xander/flash-gordon-live/20261016-abq-multisess sessions=2 wide=0 healthy=true
+SOLO 3 B 4096 prefill=330.453476 decode=27.860989
+SOLO 3 B 32768 prefill=380.839454 decode=25.714812
+MODE 3 B concurrency aggregate=48.5810974839973 chatTTFT=1064.8929 gap95=81.4250999999999
+MODE 3 B mixed aggregate=4.18529758631101 chatTTFT=2407.824 gap95=206.239799999999
+DEPLOY 3-A 2026-10-16T01:16:32.5002591-07:00
+AB_DEPLOY arm=3-A release=/home/xander/flash-gordon-live/20261015-abq-main sessions=1 wide=0 healthy=true
+SOLO 3 A 4096 prefill=331.429319 decode=27.991678
+SOLO 3 A 32768 prefill=368.234442 decode=25.641861
+MODE 3 A concurrency aggregate=21.8658062585788 chatTTFT=13749.7567 gap95=83.265800000001
+MODE 3 A mixed aggregate=23.573481825642 chatTTFT=101104.5417 gap95=54.1147999999957
+DEPLOY 4-A 2026-10-16T01:22:54.8543826-07:00
+AB_DEPLOY arm=4-A release=/home/xander/flash-gordon-live/20261015-abq-main sessions=1 wide=0 healthy=true
+SOLO 4 A 4096 prefill=320.927831 decode=27.913475
+SOLO 4 A 32768 prefill=368.757603 decode=25.29365
+MODE 4 A concurrency aggregate=22.1551513478969 chatTTFT=13924.3129 gap95=78.5019000000011
+MODE 4 A mixed aggregate=24.3273434883964 chatTTFT=100995.5226 gap95=55.4809999999998
+DEPLOY 4-B 2026-10-16T01:29:17.2344781-07:00
+AB_DEPLOY arm=4-B release=/home/xander/flash-gordon-live/20261016-abq-multisess sessions=2 wide=0 healthy=true
+SOLO 4 B 4096 prefill=330.301301 decode=28.076826
+SOLO 4 B 32768 prefill=384.469329 decode=25.569232
+MODE 4 B concurrency aggregate=48.3766492528052 chatTTFT=1101.2722 gap95=83.6603
+MODE 4 B mixed aggregate=4.22419358644928 chatTTFT=2413.9905 gap95=205.8629
+PAIRED_BATTERY_COMPLETE
+Finalization: a missing-Targets cleanup invocation was rejected locally before remote execution. Explicit all-eight cleanup passed. An 8-token thinking-enabled API probe had no visible text; the complete /no_think probe returned OK (usage 1), with exact health/models verified. No paired sample was changed.

@@ -1,0 +1,30 @@
+{
+  "pairs": 5,
+  "B": {
+    "sessions": 2,
+    "manifest_sha256": "0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252",
+    "wide": 0,
+    "manifest": "/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm",
+    "binary_sha256": "de6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58",
+    "release": "/home/xander/flash-gordon-live/20261016-abq-multisess"
+  },
+  "order": [
+    "AB",
+    "BA",
+    "AB",
+    "BA",
+    "AB"
+  ],
+  "main_ancestor": "a63a166",
+  "started": "2026-10-16T00:18:41.4791789-07:00",
+  "source": "2d0f8a7",
+  "A": {
+    "binary_sha256": "1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789",
+    "manifest": "/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm",
+    "release": "/home/xander/flash-gordon-live/20261015-abq-main",
+    "manifest_sha256": "0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252",
+    "sessions": 1,
+    "wide": 0
+  },
+  "gate": "Solo higher-is-better paired median ratio >=0.97 and CI not wholly below 0.97; chat TTFT reversed. Aggregate paired median improves. Capacity must complete without OOM/swap/reserve violation."
+}

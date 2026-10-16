@@ -1,9 +1,14 @@
 # Independent sessions through the ring
 
-Status: **fleet-qualified NO-GO; do not promote this configuration**.
-The adaptive scheduler repair below has local regression coverage only; the
-qualification numbers in this introduction describe the previous fixed-32
-scheduler, not new performance measurements.
+Current adaptive-scheduler qualification and deployment decision:
+[`MULTI_SESSION_FLEET.md`](../results/hillclimb/MULTI_SESSION_FLEET.md).
+That report distinguishes the user's revised solo/aggregate promotion rule
+from the original full QoS/parity targets, including remaining limitations.
+
+## Historical fixed-32 qualification: NO-GO
+
+The numbers in this introduction describe the previous fixed-32 scheduler,
+not the adaptive scheduler's new fleet measurements.
 The main-based integration was tested on .42–.49 against immutable original
 production with three fresh-salt paired rounds. The repaired `79b0efc` native
 build and mix-04 pack pass all 15 same-pack single-session canonical hashes,
@@ -364,15 +369,26 @@ chat identity while leaving the agent identity assigned. The result records
 that real chat response separately, exercising chat allocation/generation with
 the completed near-limit agent still resident.
 
-`-ConcurrentGeneration` warms separate identities, measures each isolated,
+`-ConcurrentGeneration` primes separate identities with a complete Ready
+answer (32-token ceiling), then asks for a sustained list continuation. It measures each isolated,
 re-primes the identical prefixes, and submits **both** generation requests
 asynchronously before waiting for response headers. `-MixedPrefill` leaves the
 agent cold and delays chat submission into agent prefill. Per-stream TTFT ignores
-role-only/heartbeat chunks. TPS uses terminal usage from those exact streams,
-never token counts borrowed from another request or SSE-event counts.
-Aggregate TPS is summed actual completions divided by **latest DONE minus
-earliest visible token**, including fill/drain/gaps; it is not the sum of
-individual TPS. Warm samples require actual visible-generation overlap and at
+role-only/heartbeat chunks. TPS normally requires terminal usage from those
+exact streams, never counts borrowed from another request or SSE-event counts.
+For a legacy FIFO baseline only, `-AllowSerializedBaseline` permits missing
+usage/overlap/prefix metadata, but leaves accounting incomplete and rates null.
+Reconcile the captured request IDs against completion lines in that same
+coordinator's log before using those samples; exit 2 also signals pending
+accounting. `-PromptSalt` makes request nonces reproducible across paired arms;
+use a fresh salt for each new round.
+
+The legacy decode-window aggregate divides actual completions by **latest DONE
+minus earliest visible token**. `aggregate_wall_tps` instead starts at the
+first request launch and includes all prefill/queue delay. Use the latter for
+paired aggregate wall-throughput comparisons: the former omits FIFO prefill
+before the first token, but includes prefill overlapped with a pipelined chat.
+Neither is the sum of individual TPS. Warm samples require actual visible-generation overlap and at
 least 32 completions per stream. Early EOS invalidates a short sample; do not
 claim the requested ceiling was generated. A synthetic fixture's ~2x is not
 model throughput evidence.
@@ -383,8 +399,10 @@ their actual token counts and isolated/loaded hashes; do not erase early-EOS
 or failed-overlap observations by reporting only completed trials.
 
 Report JSON's isolated/loaded per-stream TPS, aggregate speedup, TTFT p50/p95,
-inter-event p95, prefix counts and same-prompt text hashes. Record commit/pack
-identity separately if the server lacks a Git SHA header. Promotion gates:
+inter-event p95, raw event times, prefix counts and same-prompt text hashes.
+Record commit/pack identity separately if the server lacks a Git SHA header.
+The original full-design acceptance targets below remain distinct from the
+latest user-authorized solo/aggregate decision rule in the fleet report:
 
 * Warm aggregate at least **1.7x** the mean isolated TPS (target approximately
   2x); each stream retains at least **85%** of isolated TPS.

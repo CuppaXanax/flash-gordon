@@ -1,0 +1,11 @@
+{
+  "selected_at": "2026-10-16T01:51:22.1326930-07:00",
+  "binary_sha256": "de6117dec8302daab1666fa9a990ec3c97f817acc1671160cad06f005324ef58",
+  "manifest_sha256": "0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252",
+  "source_commit": "2d0f8a7",
+  "release": "/home/xander/flash-gordon-live/20261016-abq-multisess",
+  "wide": 0,
+  "sessions": 2,
+  "qualification": "MULTI_SESSION_FLEET.md",
+  "manifest": "/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm"
+}

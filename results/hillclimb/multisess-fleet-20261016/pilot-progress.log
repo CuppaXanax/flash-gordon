@@ -1,0 +1,12 @@
+DEPLOY 0-A 2026-10-16T00:18:42.0128527-07:00
+AB_DEPLOY arm=0-A release=/home/xander/flash-gordon-live/20261015-abq-main sessions=1 wide=0 healthy=true
+SOLO 0 A 4096 prefill=332.125393 decode=28.273837
+SOLO 0 A 32768 prefill=382.22104 decode=25.412804
+FAILURE Unsustained generation chatcmpl-fg-1792135347-14
+DEPLOY FAILURE-RESTORE 2026-10-16T00:22:41.7883222-07:00
+AB_DEPLOY arm=FAILURE-RESTORE release=/home/xander/flash-gordon-live/20261015-abq-main sessions=1 wide=0 healthy=true
+Exception: D:\looking-glass-labs\fg-wt\multi-session-int\.build\multisess-fleet.ps1:58
+Line |
+  58 |  … ion_tokens -lt 32){throw "Unsustained generation $($row.request_id)"}
+     |                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Unsustained generation chatcmpl-fg-1792135347-14

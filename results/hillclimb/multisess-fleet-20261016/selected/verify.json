@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "/proc/209908/exe: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nrank=0 pid=209908 argv=/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon api --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --model-name Qwen3.8-Flash-Next-Uncensored --host 0.0.0.0 --port 8080 --context-tokens 262144 --gpu-index-tokens 262144 --qsa-hot-tokens 0 --qsa-page-cache-mib 700 --sessions 2 \nENV FG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan\nENV FG_EXPERT_Q8_WIDE=0\nENV FG_RING_TRACE=1\n610c5dd887815289e594c6c90c6fd7d5c029774b8953d5f0ff0992c02751ccd9  /home/xander/flash-gordon-live/20261015-abq-operator/current.json\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\ncea4362f7ce2552ad471d05b020db71da34862c3301b86486605d11e31cb9d3b  /home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-multisess.sh\nMemAvailable:    2417448 kB\nSwapTotal:       8388604 kB\nSwapFree:        8359284 kB",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "/proc/140870/exe: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nrank=1 pid=140870 argv=/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 1 \nENV FG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan\nENV FG_EXPERT_Q8_WIDE=0\n610c5dd887815289e594c6c90c6fd7d5c029774b8953d5f0ff0992c02751ccd9  /home/xander/flash-gordon-live/20261015-abq-operator/current.json\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\ncea4362f7ce2552ad471d05b020db71da34862c3301b86486605d11e31cb9d3b  /home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-multisess.sh\nMemAvailable:    3622428 kB\nSwapTotal:       8388604 kB\nSwapFree:        8376176 kB",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "/proc/136856/exe: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nrank=2 pid=136856 argv=/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 2 \nENV FG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan\nENV FG_EXPERT_Q8_WIDE=0\n610c5dd887815289e594c6c90c6fd7d5c029774b8953d5f0ff0992c02751ccd9  /home/xander/flash-gordon-live/20261015-abq-operator/current.json\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\ncea4362f7ce2552ad471d05b020db71da34862c3301b86486605d11e31cb9d3b  /home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-multisess.sh\nMemAvailable:    4336936 kB\nSwapTotal:       8388604 kB\nSwapFree:        8387596 kB",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "/proc/136377/exe: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nrank=3 pid=136377 argv=/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 3 \nENV FG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan\nENV FG_EXPERT_Q8_WIDE=0\n610c5dd887815289e594c6c90c6fd7d5c029774b8953d5f0ff0992c02751ccd9  /home/xander/flash-gordon-live/20261015-abq-operator/current.json\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\ncea4362f7ce2552ad471d05b020db71da34862c3301b86486605d11e31cb9d3b  /home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-multisess.sh\nMemAvailable:    3693320 kB\nSwapTotal:       8388604 kB\nSwapFree:        8388248 kB",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "/proc/139363/exe: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nrank=4 pid=139363 argv=/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 4 \nENV FG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan\nENV FG_EXPERT_Q8_WIDE=0\n610c5dd887815289e594c6c90c6fd7d5c029774b8953d5f0ff0992c02751ccd9  /home/xander/flash-gordon-live/20261015-abq-operator/current.json\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\ncea4362f7ce2552ad471d05b020db71da34862c3301b86486605d11e31cb9d3b  /home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-multisess.sh\nMemAvailable:    3944636 kB\nSwapTotal:       8388604 kB\nSwapFree:        8385236 kB",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "/proc/136363/exe: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nrank=5 pid=136363 argv=/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 5 \nENV FG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan\nENV FG_EXPERT_Q8_WIDE=0\n610c5dd887815289e594c6c90c6fd7d5c029774b8953d5f0ff0992c02751ccd9  /home/xander/flash-gordon-live/20261015-abq-operator/current.json\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\ncea4362f7ce2552ad471d05b020db71da34862c3301b86486605d11e31cb9d3b  /home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-multisess.sh\nMemAvailable:    3435508 kB\nSwapTotal:       8388604 kB\nSwapFree:        8388268 kB",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "/proc/136716/exe: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nrank=6 pid=136716 argv=/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 6 \nENV FG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan\nENV FG_EXPERT_Q8_WIDE=0\n610c5dd887815289e594c6c90c6fd7d5c029774b8953d5f0ff0992c02751ccd9  /home/xander/flash-gordon-live/20261015-abq-operator/current.json\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\ncea4362f7ce2552ad471d05b020db71da34862c3301b86486605d11e31cb9d3b  /home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-multisess.sh\nMemAvailable:    4641632 kB\nSwapTotal:       8388604 kB\nSwapFree:        8385996 kB",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "/proc/137880/exe: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nrank=7 pid=137880 argv=/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon rank --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank 7 \nENV FG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-multisess/vulkan\nENV FG_EXPERT_Q8_WIDE=0\n610c5dd887815289e594c6c90c6fd7d5c029774b8953d5f0ff0992c02751ccd9  /home/xander/flash-gordon-live/20261015-abq-operator/current.json\n8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\ncea4362f7ce2552ad471d05b020db71da34862c3301b86486605d11e31cb9d3b  /home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-multisess.sh\nMemAvailable:    3191720 kB\nSwapTotal:       8388604 kB\nSwapFree:        8361936 kB",
+    "Stderr": ""
+  }
+]

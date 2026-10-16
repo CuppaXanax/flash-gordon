@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "MONITOR rank=0 serving=209213 monitor=209429\nFilesystem                  1B-blocks         Used    Available Use% Mounted on\n/dev/mapper/fedora-root 1021363355648 903850573824 117512781824  89% /",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "MONITOR rank=1 serving=140257 monitor=140484\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 211724554240 41489772544  84% /",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "MONITOR rank=2 serving=136238 monitor=136476\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 201045307392 52169019392  80% /",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "MONITOR rank=3 serving=135749 monitor=135976\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 241548881920 11665444864  96% /",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "MONITOR rank=4 serving=138750 monitor=138977\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 189478297600 63736029184  75% /",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "MONITOR rank=5 serving=135751 monitor=135981\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 208249860096 44964466688  83% /",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "MONITOR rank=6 serving=136091 monitor=136330\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 206110568448 47103758336  82% /",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "MONITOR rank=7 serving=137271 monitor=137494\nFilesystem                 1B-blocks         Used  Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 245812334592 7401992192  98% /",
+    "Stderr": ""
+  }
+]

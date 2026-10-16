@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\n610c5dd887815289e594c6c90c6fd7d5c029774b8953d5f0ff0992c02751ccd9  /home/xander/flash-gordon-live/20261015-abq-operator/current.json\ncea4362f7ce2552ad471d05b020db71da34862c3301b86486605d11e31cb9d3b  /home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-multisess.sh",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\n610c5dd887815289e594c6c90c6fd7d5c029774b8953d5f0ff0992c02751ccd9  /home/xander/flash-gordon-live/20261015-abq-operator/current.json\ncea4362f7ce2552ad471d05b020db71da34862c3301b86486605d11e31cb9d3b  /home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-multisess.sh",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\n610c5dd887815289e594c6c90c6fd7d5c029774b8953d5f0ff0992c02751ccd9  /home/xander/flash-gordon-live/20261015-abq-operator/current.json\ncea4362f7ce2552ad471d05b020db71da34862c3301b86486605d11e31cb9d3b  /home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-multisess.sh",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\n610c5dd887815289e594c6c90c6fd7d5c029774b8953d5f0ff0992c02751ccd9  /home/xander/flash-gordon-live/20261015-abq-operator/current.json\ncea4362f7ce2552ad471d05b020db71da34862c3301b86486605d11e31cb9d3b  /home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-multisess.sh",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\n610c5dd887815289e594c6c90c6fd7d5c029774b8953d5f0ff0992c02751ccd9  /home/xander/flash-gordon-live/20261015-abq-operator/current.json\ncea4362f7ce2552ad471d05b020db71da34862c3301b86486605d11e31cb9d3b  /home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-multisess.sh",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\n610c5dd887815289e594c6c90c6fd7d5c029774b8953d5f0ff0992c02751ccd9  /home/xander/flash-gordon-live/20261015-abq-operator/current.json\ncea4362f7ce2552ad471d05b020db71da34862c3301b86486605d11e31cb9d3b  /home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-multisess.sh",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\n610c5dd887815289e594c6c90c6fd7d5c029774b8953d5f0ff0992c02751ccd9  /home/xander/flash-gordon-live/20261015-abq-operator/current.json\ncea4362f7ce2552ad471d05b020db71da34862c3301b86486605d11e31cb9d3b  /home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-multisess.sh",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "8ec020200234305bbcf3d6d8c029fcaf4e9aa334050e2c4db17290076f989418  /home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh\n610c5dd887815289e594c6c90c6fd7d5c029774b8953d5f0ff0992c02751ccd9  /home/xander/flash-gordon-live/20261015-abq-operator/current.json\ncea4362f7ce2552ad471d05b020db71da34862c3301b86486605d11e31cb9d3b  /home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-multisess.sh",
+    "Stderr": ""
+  }
+]

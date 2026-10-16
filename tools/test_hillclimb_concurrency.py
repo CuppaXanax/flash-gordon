@@ -1,4 +1,5 @@
 """Exercise the real PowerShell harness against local simultaneous SSE streams."""
+import hashlib
 import json
 import pathlib
 import re
@@ -16,6 +17,7 @@ class Handler(BaseHTTPRequestHandler):
     peak = 0
     agent_sse = 0
     short_loaded_chat = False
+    omit_stream_usage = False
     lock = threading.Lock()
 
     def log_message(self, *args):
@@ -62,14 +64,18 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(("data: " + json.dumps(value) + "\n\n").encode())
                 self.wfile.flush()
 
-            event({"choices": [{"delta": {"role": "assistant"}}]})
+            request_id = "chatcmpl-local-" + uuid.uuid4().hex
+            event({"id": request_id, "choices": [{"delta": {"role": "assistant"}}]})
             if body.get("user") == "hillclimb-agent" and not reused:
                 time.sleep(0.3)
             for _ in range(count):
                 time.sleep(0.005)
                 event({"choices": [{"delta": {"content": "task "}}]})
-            event({"choices": [{"delta": {}, "finish_reason": "length"}], "usage": usage,
-                   "flash_gordon": {"reused_tokens": reused, "prefilled_tokens": 96 - reused}})
+            terminal = {"id": request_id, "choices": [{"delta": {}, "finish_reason": "length"}]}
+            if not Handler.omit_stream_usage:
+                terminal.update(usage=usage, flash_gordon={
+                    "reused_tokens": reused, "prefilled_tokens": 96 - reused})
+            event(terminal)
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
         finally:
@@ -79,10 +85,11 @@ class Handler(BaseHTTPRequestHandler):
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell 7 is required")
 class ConcurrentHarness(unittest.TestCase):
-    def run_mode(self, mixed, capacity=False, short=False):
+    def run_mode(self, mixed, capacity=False, short=False, missing_usage=False):
         Handler.peak = 0
         Handler.agent_sse = 0
         Handler.short_loaded_chat = short
+        Handler.omit_stream_usage = missing_usage
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -100,6 +107,8 @@ class ConcurrentHarness(unittest.TestCase):
             command.append("-MixedPrefill")
         if capacity:
             command.append("-CapacityProbe")
+        if missing_usage:
+            command.extend(["-AllowSerializedBaseline", "-PromptSalt", "fixture-paired-salt"])
         artifact = None
         try:
             result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=45)
@@ -115,13 +124,32 @@ class ConcurrentHarness(unittest.TestCase):
                 self.assertEqual([s["completion_tokens"] for s in load["streams"]], [1, 64])
                 self.assertIn("Insufficient sustained generation", str(data["errors"]))
                 return
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(result.returncode, 2 if missing_usage else 0, result.stdout + result.stderr)
             self.assertIsNotNone(artifact, result.stdout)
             data = json.loads(artifact.read_text(encoding="utf-8-sig"))
             load = data["concurrency"]["trials"][0]["load"]
+            self.assertGreater(load["batch_wall_seconds"], 0)
+            self.assertGreaterEqual(load["batch_wall_seconds"], load["aggregate_window_seconds"])
+            for row in load["streams"]:
+                self.assertGreater(row["inter_event_p95_ms"], 0)
+                self.assertEqual(len(row["visible_event_times_ms"]), row["visible_delta_events"])
+            if missing_usage:
+                self.assertFalse(data["concurrency"]["complete"])
+                self.assertTrue(data["concurrency"]["requires_server_log_accounting"])
+                self.assertEqual(data["concurrency"]["prompt_salt"], "fixture-paired-salt")
+                self.assertIsNone(load["aggregate_client_decode_tps"])
+                self.assertIsNone(load["aggregate_wall_tps"])
+                self.assertGreater(load["aggregate_window_seconds"], 0)
+                self.assertTrue(all(row["completion_tokens"] is None for row in load["streams"]))
+                self.assertTrue(all(row["request_id"].startswith("chatcmpl-local-")
+                                    for row in load["streams"]))
+                self.assertTrue(all(len(row["visible_event_times_ms"]) == 64
+                                    for row in load["streams"]))
+                return
             self.assertEqual(Handler.peak, 2)
             self.assertTrue(data["metadata"]["correctness_pass"])
             self.assertEqual([row["completion_tokens"] for row in load["streams"]], [64, 64])
+            self.assertAlmostEqual(load["aggregate_wall_tps"], 128 / load["batch_wall_seconds"], places=8)
             if capacity:
                 self.assertTrue(load["streams"][0]["same_prompt_hash_match"])
                 self.assertIsNone(load["streams"][1]["same_prompt_hash_match"])
@@ -157,6 +185,28 @@ class ConcurrentHarness(unittest.TestCase):
 
     def test_short_generation_retains_partial_trial(self):
         self.run_mode(False, short=True)
+
+    def test_baseline_requires_exact_log_accounting(self):
+        self.run_mode(False, missing_usage=True)
+
+    def test_paired_salt_is_reproducible_and_counter_is_distinct(self):
+        root = pathlib.Path(__file__).resolve().parents[1]
+        path = str(root / "tools" / "hillclimb.ps1").replace("'", "''")
+        command = (
+            "$t=$null;$e=$null;"
+            f"$a=[Management.Automation.Language.Parser]::ParseFile('{path}',[ref]$t,[ref]$e);"
+            "$f=$a.EndBlock.Statements|Where-Object{"
+            "$_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -eq 'New-Nonce'};"
+            "Invoke-Expression $f.Extent.Text;$PromptSalt='fixture-paired-salt';$script:promptNonce=0;"
+            "$x=New-Nonce;$y=New-Nonce;@($x,$y)|ConvertTo-Json -Compress"
+        )
+        expected = [hashlib.sha256(f"fixture-paired-salt/{i}".encode()).hexdigest()[:32]
+                    for i in range(2)]
+        for _ in range(2):
+            result = subprocess.run(["pwsh", "-NoProfile", "-Command", command],
+                                    cwd=root, capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(json.loads(result.stdout), expected)
 
 
 if __name__ == "__main__":

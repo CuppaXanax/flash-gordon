@@ -1,0 +1,3 @@
+CONCURRENT repeat=0 mixed=False aggregate_tps=48.38 chat_ttft_ms=1101.3 chat_tps=24.44 agent_tps=24.23
+HILLCLIMB result=D:\looking-glass-labs\fg-wt\multi-session-int\results\hillclimb\multisess-fleet-20261016\pair-4-B\concurrency\20261016-013223.json model=Qwen3.8-Flash-Next-Uncensored quick=False
+HILLCLIMB elapsed_s=46.2 prefill=0 decode=0 ttft=0 correctness_pass=True

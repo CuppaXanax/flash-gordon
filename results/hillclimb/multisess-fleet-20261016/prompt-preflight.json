@@ -1,0 +1,16 @@
+[
+  {
+    "prime_limit": 1,
+    "prime": "Ready",
+    "tokens": 128,
+    "reused": "123",
+    "text": "1. Refactor legacy code\n2. Write unit tests\n3. Debug product"
+  },
+  {
+    "prime_limit": 32,
+    "prime": "Ready.",
+    "tokens": 128,
+    "reused": "126",
+    "text": "1. Implement user authentication\n2. Design database schema\n3"
+  }
+]

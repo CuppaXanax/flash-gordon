@@ -1,0 +1,74 @@
+REPLICATED_PROBE shared=1722970112 experts=9437184000 included=157 rank=0
+COORDINATOR_MASK rank=0 own_layers_only=1 shared=1722970112 masked_tensors=940 masked_bytes=2504208384
+EXPERT_LAYER_SUMS 0:1572864000 1:1572864000 2:2044723200 3:1572864000 4:1835008000 5:1572864000 6:1572864000 7:1572864000 8:1572864000 9:1572864000 10:1572864000 11:1572864000 12:1572864000 13:1572864000 14:1572864000 15:1572864000 16:1572864000 17:1572864000 18:1572864000 19:1572864000 20:1572864000 21:1572864000 22:1572864000 23:1572864000 24:1572864000 25:1572864000 26:1572864000 27:1572864000 28:1572864000 29:1572864000 30:1835008000 31:1572864000 32:1572864000 33:1572864000 34:1572864000 35:1572864000 36:1572864000 37:1572864000 38:1572864000 39:1572864000 40:1572864000 41:1572864000 42:1572864000 43:1572864000 44:1572864000 45:1572864000 46:1835008000 47:1835008000
+[rank 0] replicated model: 1.605 GiB (1225 manifest tensors from 8 ranks)
+OUTPUT_SPLIT rank=0 ways=4 way=1 rows=62080..124160
+[rank 0] QSA Vulkan index canary: eager_segments=2 of=4 max_segment=17825792 requested=35651584 allocated=35651584 touched=35651584 bytes
+[rank 0] QSA decode session: 262144 logical, 131072 cache pages, 2 layers, 37.0 MiB eager index, 618.0 MiB record cache
+[rank 0] Vulkan memory: live_requested=11948686640 live_allocated=11948686656 peak_requested=11948686640 peak_allocated=11948686656 live_allocations=56
+FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50
+COORDINATOR_VK_COMPONENTS model=11160154112 family=38010880 owner_state=13238272 pingpong=10485760 owner_activation=378880 expert_activation=378880 qsa_positions=3145728 qsa_index=35651584 qsa_record_cache=648019968 ngram=0 prefill_token=4096 known_total=11909468160 unclassified=49708336
+COORDINATOR_VK_LEDGER model_arena=11160154112 qsa_index=35651584 qsa_record_cache=648019968 ngram_payload=0 qsa_aux_shared=14336000 final_requested=11959176496 final_allocated=11959176512 live_allocations=66
+COORDINATOR_HOST_LEDGER prefill=105021440 async=41008 positions=12288 transport=0 fabric=103600 ngram=530952 ngram_io=524288 ngram_cache=0 qsa=6070376 startup_total=111779664
+COORDINATOR_DEFERRED_LEDGER qsa_staging_cache=0 ngram_cache=8437784 prefill_result_wire=10526848 prefill_work_wire=394256 transport=0 ngram_io_persistent=524288 ngram_vk=11960320 host_total=19358888 peak_with_persistent_io=31843496 peak_total=31319208
+COORDINATOR_RECLAIM vulkan=38189692 owner_transient=16051200 qsa_aux=3583612 prefill_layer=6553600 ngram_lazy=11960320 positions_host=4096
+COORDINATOR_HOST_RECLAIM prefill=111083648 expert_recv=102448 async_compact=368784 positions=4096
+COORDINATOR_MEMORY_LEDGER host_startup=111779664 host_peak=131138552 startup_used=12070956176 deferred_peak=31319208 projected_peak=12102275384 driver_reserve_bytes=536870912 projected_peak_with_driver=12639146296 projected_requested=12102275368 projected_requested_with_driver=12639146280 physical_bytes=15936978944 available_bytes=324993024 process_rss_bytes=83013632 conservative_peak_margin=3297832648 readiness=unknown-os-overhead unknown_os_overhead=unmeasured uma_vulkan_counted_once=1
+Flash Gordon API serving Qwen3.8-Flash-Next-Uncensored on http://0.0.0.0:8080
+FG_MULTI_MEMORY rank=0 sessions=2 logical=262144 layers=2 extra_bound=148242536 available=3190595584 reserve=536870912 physical=15936978944
+[rank 0] QSA Vulkan index canary: eager_segments=2 of=4 max_segment=17825792 requested=35651584 allocated=35651584 touched=35651584 bytes
+[rank 0] QSA decode session: 262144 logical, 131072 cache pages, 2 layers, 37.0 MiB eager index, 618.0 MiB record cache
+[rank 0] Vulkan memory: live_requested=12646718264 live_allocated=12646718288 peak_requested=12646718264 peak_allocated=12646718288 live_allocations=74
+FG_MULTI_SESSION sessions=2 idle_prefill=full quantum=128 window=1 slice_us=15000 decode_priority=1
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=59.0 t=59.009
+RING_STAGE chunk=0 layer=6 in_flight=1 t=180.790
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=147.1
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.5 t=953.498
+request chatcmpl-fg-1792140751-1: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 26/26 tokens 27.13 tok/s, generation 1 tokens 10.82 tok/s, context 27/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=136.8 t=136.755
+RING_STAGE chunk=0 layer=6 in_flight=1 t=421.748
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=185.4
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.9 t=2016.436
+request chatcmpl-fg-1792140752-2: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 91/91 tokens 45.03 tok/s, generation 1 tokens 14.42 tok/s, context 92/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=159.4 t=159.353
+RING_STAGE chunk=0 layer=6 in_flight=1 t=503.456
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=216.0
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.5 t=2381.671
+request chatcmpl-fg-1792140755-3: mode expert-parallel, prefix miss, reused 0, reset explicit, prefill 115/115 tokens 48.20 tok/s, generation 2 tokens 18.68 tok/s, context 117/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=120.3 t=120.264
+RING_STAGE chunk=0 layer=6 in_flight=1 t=453.319
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=211.9
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.3 t=2328.275
+request chatcmpl-fg-1792140757-4: mode expert-parallel, prefix miss, reused 0, reset explicit, prefill 116/116 tokens 49.73 tok/s, generation 2 tokens 19.22 tok/s, context 118/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+RING_ISSUE chunk=0 first=117 in_flight=1 issue_ms=34.1 t=34.140
+RING_STAGE chunk=0 layer=6 in_flight=1 t=179.651
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=102.3
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.1 t=1002.815
+request chatcmpl-fg-1792140760-5: mode expert-parallel, prefix hit, reused 117, reset none, prefill 35/152 tokens 34.77 tok/s, generation 64 tokens 23.53 tok/s, context 216/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+RING_ISSUE chunk=0 first=118 in_flight=1 issue_ms=22.3 t=22.345
+RING_STAGE chunk=0 layer=6 in_flight=1 t=167.706
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=93.5
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.1 t=973.280
+request chatcmpl-fg-1792140763-6: mode expert-parallel, prefix hit, reused 118, reset none, prefill 35/153 tokens 35.82 tok/s, generation 64 tokens 24.16 tok/s, context 217/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=5->2
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=110.4 t=110.387
+RING_STAGE chunk=0 layer=6 in_flight=1 t=448.299
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=217.9
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.3 t=2279.997
+request chatcmpl-fg-1792140767-7: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 115/115 tokens 50.34 tok/s, generation 2 tokens 19.21 tok/s, context 117/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=5->2
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=118.4 t=118.411
+RING_STAGE chunk=0 layer=6 in_flight=1 t=456.766
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=218.6
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.3 t=2322.415
+request chatcmpl-fg-1792140769-8: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 116/116 tokens 49.86 tok/s, generation 2 tokens 18.95 tok/s, context 118/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+RING_ISSUE chunk=0 first=118 in_flight=1 issue_ms=30.8 t=30.764
+RING_ISSUE chunk=0 first=117 in_flight=1 issue_ms=15.7 t=15.671
+RING_STAGE chunk=0 layer=6 in_flight=1 t=174.800
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=97.1
+RING_STAGE chunk=0 layer=6 in_flight=1 t=253.149
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=92.8
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.1 t=980.720
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.1 t=1065.243
+request chatcmpl-fg-1792140772-9: mode expert-parallel, prefix hit, reused 118, reset none, prefill 35/153 tokens 35.56 tok/s, generation 64 tokens 24.09 tok/s, context 217/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792140772-10: mode expert-parallel, prefix hit, reused 117, reset none, prefill 35/152 tokens 32.71 tok/s, generation 64 tokens 24.97 tok/s, context 216/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s

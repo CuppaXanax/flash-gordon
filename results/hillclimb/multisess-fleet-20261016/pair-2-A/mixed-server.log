@@ -1,0 +1,2330 @@
+REPLICATED_PROBE shared=1722970112 experts=9437184000 included=157 rank=0
+COORDINATOR_MASK rank=0 own_layers_only=1 shared=1722970112 masked_tensors=940 masked_bytes=2504208384
+EXPERT_LAYER_SUMS 0:1572864000 1:1572864000 2:2044723200 3:1572864000 4:1835008000 5:1572864000 6:1572864000 7:1572864000 8:1572864000 9:1572864000 10:1572864000 11:1572864000 12:1572864000 13:1572864000 14:1572864000 15:1572864000 16:1572864000 17:1572864000 18:1572864000 19:1572864000 20:1572864000 21:1572864000 22:1572864000 23:1572864000 24:1572864000 25:1572864000 26:1572864000 27:1572864000 28:1572864000 29:1572864000 30:1835008000 31:1572864000 32:1572864000 33:1572864000 34:1572864000 35:1572864000 36:1572864000 37:1572864000 38:1572864000 39:1572864000 40:1572864000 41:1572864000 42:1572864000 43:1572864000 44:1572864000 45:1572864000 46:1835008000 47:1835008000
+[rank 0] replicated model: 1.605 GiB (1225 manifest tensors from 8 ranks)
+OUTPUT_SPLIT rank=0 ways=4 way=1 rows=62080..124160
+[rank 0] QSA Vulkan index canary: eager_segments=2 of=4 max_segment=17825792 requested=35651584 allocated=35651584 touched=35651584 bytes
+[rank 0] QSA decode session: 262144 logical, 131072 cache pages, 2 layers, 37.0 MiB eager index, 618.0 MiB record cache
+[rank 0] Vulkan memory: live_requested=11948686640 live_allocated=11948686656 peak_requested=11948686640 peak_allocated=11948686656 live_allocations=56
+FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50
+COORDINATOR_VK_COMPONENTS model=11160154112 family=38010880 owner_state=13238272 pingpong=10485760 owner_activation=378880 expert_activation=378880 qsa_positions=3145728 qsa_index=35651584 qsa_record_cache=648019968 ngram=0 prefill_token=4096 known_total=11909468160 unclassified=49708336
+COORDINATOR_VK_LEDGER model_arena=11160154112 qsa_index=35651584 qsa_record_cache=648019968 ngram_payload=0 qsa_aux_shared=14336000 final_requested=11959176496 final_allocated=11959176512 live_allocations=66
+COORDINATOR_HOST_LEDGER prefill=105021440 async=41008 positions=12288 transport=0 fabric=103576 ngram=530952 ngram_io=524288 ngram_cache=0 qsa=6070376 startup_total=111779640
+COORDINATOR_DEFERRED_LEDGER qsa_staging_cache=0 ngram_cache=8437784 prefill_result_wire=10526848 prefill_work_wire=394256 transport=0 ngram_io_persistent=524288 ngram_vk=11960320 host_total=19358888 peak_with_persistent_io=31843496 peak_total=31319208
+COORDINATOR_RECLAIM vulkan=38189692 owner_transient=16051200 qsa_aux=3583612 prefill_layer=6553600 ngram_lazy=11960320 positions_host=4096
+COORDINATOR_HOST_RECLAIM prefill=111083648 expert_recv=102448 async_compact=368784 positions=4096
+COORDINATOR_MEMORY_LEDGER host_startup=111779640 host_peak=131138528 startup_used=12070956152 deferred_peak=31319208 projected_peak=12102275360 driver_reserve_bytes=536870912 projected_peak_with_driver=12639146272 projected_requested=12102275344 projected_requested_with_driver=12639146256 physical_bytes=15936978944 available_bytes=328880128 process_rss_bytes=82604032 conservative_peak_margin=3297832672 readiness=unknown-os-overhead unknown_os_overhead=unmeasured uma_vulkan_counted_once=1
+Flash Gordon API serving Qwen3.8-Flash-Next-Uncensored on http://0.0.0.0:8080
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=139.3 t=139.255
+RING_STAGE chunk=0 layer=6 in_flight=1 t=423.006
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=266.0
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=1.0 t=2068.570
+request chatcmpl-fg-1792137530-1: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 88/88 tokens 42.45 tok/s, generation 1 tokens 10.69 tok/s, context 89/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=3->2
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=99.8 t=99.777
+RING_ISSUE chunk=1 first=128 in_flight=2 issue_ms=49.7 t=149.525
+RING_ISSUE chunk=2 first=256 in_flight=3 issue_ms=48.2 t=197.770
+RING_ISSUE chunk=3 first=384 in_flight=4 issue_ms=48.0 t=245.852
+RING_ISSUE chunk=4 first=512 in_flight=5 issue_ms=47.7 t=293.614
+RING_ISSUE chunk=5 first=640 in_flight=6 issue_ms=47.6 t=341.247
+RING_ISSUE chunk=6 first=768 in_flight=7 issue_ms=324.4 t=665.686
+RING_ISSUE chunk=7 first=896 in_flight=8 issue_ms=50.5 t=716.264
+RING_STAGE chunk=0 layer=6 in_flight=8 t=722.966
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=226.5
+RING_STAGE chunk=1 layer=6 in_flight=8 t=954.561
+RING_OWN_BLOCK chunk=1 layers=6..11 ms=196.6
+RING_STAGE chunk=2 layer=6 in_flight=8 t=1155.715
+RING_OWN_BLOCK chunk=2 layers=6..11 ms=195.8
+RING_STAGE chunk=3 layer=6 in_flight=8 t=1356.465
+RING_OWN_BLOCK chunk=3 layers=6..11 ms=189.6
+RING_STAGE chunk=4 layer=6 in_flight=8 t=1550.715
+RING_OWN_BLOCK chunk=4 layers=6..11 ms=193.6
+RING_STAGE chunk=5 layer=6 in_flight=8 t=1749.012
+RING_OWN_BLOCK chunk=5 layers=6..11 ms=192.3
+RING_STAGE chunk=6 layer=6 in_flight=8 t=1946.021
+RING_OWN_BLOCK chunk=6 layers=6..11 ms=185.5
+RING_STAGE chunk=7 layer=6 in_flight=8 t=2135.927
+RING_OWN_BLOCK chunk=7 layers=6..11 ms=191.6
+RING_DONE chunk=0 in_flight=7 completed=1 handle_ms=0.0 t=2704.967
+RING_ISSUE chunk=8 first=1024 in_flight=8 issue_ms=48.0 t=2753.063
+RING_DONE chunk=1 in_flight=7 completed=2 handle_ms=0.0 t=2950.781
+RING_ISSUE chunk=9 first=1152 in_flight=8 issue_ms=48.0 t=2998.860
+RING_STAGE chunk=8 layer=6 in_flight=8 t=3066.135
+RING_OWN_BLOCK chunk=8 layers=6..11 ms=191.9
+RING_DONE chunk=2 in_flight=7 completed=3 handle_ms=0.0 t=3303.922
+RING_ISSUE chunk=10 first=1280 in_flight=8 issue_ms=48.0 t=3351.964
+RING_STAGE chunk=9 layer=6 in_flight=8 t=3373.415
+RING_OWN_BLOCK chunk=9 layers=6..11 ms=189.3
+RING_DONE chunk=3 in_flight=7 completed=4 handle_ms=0.0 t=3592.800
+RING_ISSUE chunk=11 first=1408 in_flight=8 issue_ms=47.6 t=3640.478
+RING_STAGE chunk=10 layer=6 in_flight=8 t=3688.527
+RING_OWN_BLOCK chunk=10 layers=6..11 ms=193.7
+RING_DONE chunk=4 in_flight=7 completed=5 handle_ms=0.0 t=3895.070
+RING_ISSUE chunk=12 first=1536 in_flight=8 issue_ms=48.9 t=3944.044
+RING_STAGE chunk=11 layer=6 in_flight=8 t=3992.637
+RING_OWN_BLOCK chunk=11 layers=6..11 ms=192.9
+RING_DONE chunk=5 in_flight=7 completed=6 handle_ms=0.0 t=4190.308
+RING_ISSUE chunk=13 first=1664 in_flight=8 issue_ms=49.1 t=4239.472
+RING_STAGE chunk=12 layer=6 in_flight=8 t=4292.463
+RING_OWN_BLOCK chunk=12 layers=6..11 ms=194.8
+RING_DONE chunk=6 in_flight=7 completed=7 handle_ms=0.0 t=4492.200
+RING_ISSUE chunk=14 first=1792 in_flight=8 issue_ms=48.9 t=4541.142
+RING_STAGE chunk=13 layer=6 in_flight=8 t=4583.744
+RING_OWN_BLOCK chunk=13 layers=6..11 ms=194.9
+RING_DONE chunk=7 in_flight=7 completed=8 handle_ms=0.0 t=4783.805
+RING_ISSUE chunk=15 first=1920 in_flight=8 issue_ms=48.6 t=4832.416
+RING_STAGE chunk=14 layer=6 in_flight=8 t=4891.451
+RING_OWN_BLOCK chunk=14 layers=6..11 ms=197.6
+RING_DONE chunk=8 in_flight=7 completed=9 handle_ms=0.0 t=5094.166
+RING_ISSUE chunk=16 first=2048 in_flight=8 issue_ms=49.0 t=5143.242
+RING_STAGE chunk=15 layer=6 in_flight=8 t=5198.204
+RING_OWN_BLOCK chunk=15 layers=6..11 ms=198.3
+RING_DONE chunk=9 in_flight=7 completed=10 handle_ms=0.0 t=5401.557
+RING_ISSUE chunk=17 first=2176 in_flight=8 issue_ms=49.0 t=5450.623
+RING_STAGE chunk=16 layer=6 in_flight=8 t=5509.309
+RING_OWN_BLOCK chunk=16 layers=6..11 ms=229.4
+RING_STAGE chunk=17 layer=6 in_flight=8 t=5802.829
+RING_OWN_BLOCK chunk=17 layers=6..11 ms=201.4
+RING_DONE chunk=10 in_flight=7 completed=11 handle_ms=0.0 t=6008.934
+RING_ISSUE chunk=18 first=2304 in_flight=8 issue_ms=47.5 t=6056.500
+RING_DONE chunk=11 in_flight=7 completed=12 handle_ms=0.0 t=6060.735
+RING_ISSUE chunk=19 first=2432 in_flight=8 issue_ms=47.6 t=6108.358
+RING_DONE chunk=12 in_flight=7 completed=13 handle_ms=0.0 t=6112.530
+RING_ISSUE chunk=20 first=2560 in_flight=8 issue_ms=47.8 t=6160.411
+RING_DONE chunk=13 in_flight=7 completed=14 handle_ms=0.0 t=6342.061
+RING_ISSUE chunk=21 first=2688 in_flight=8 issue_ms=47.9 t=6390.031
+RING_STAGE chunk=18 layer=6 in_flight=8 t=6394.343
+RING_OWN_BLOCK chunk=18 layers=6..11 ms=199.7
+RING_STAGE chunk=19 layer=6 in_flight=8 t=6634.227
+RING_OWN_BLOCK chunk=19 layers=6..11 ms=202.4
+RING_STAGE chunk=20 layer=6 in_flight=8 t=6855.643
+RING_OWN_BLOCK chunk=20 layers=6..11 ms=203.3
+RING_STAGE chunk=21 layer=6 in_flight=8 t=7073.610
+RING_OWN_BLOCK chunk=21 layers=6..11 ms=198.9
+RING_DONE chunk=14 in_flight=7 completed=15 handle_ms=0.0 t=7277.297
+RING_ISSUE chunk=22 first=2816 in_flight=8 issue_ms=47.4 t=7324.697
+RING_DONE chunk=15 in_flight=7 completed=16 handle_ms=0.0 t=7328.910
+RING_ISSUE chunk=23 first=2944 in_flight=8 issue_ms=47.6 t=7376.502
+RING_DONE chunk=16 in_flight=7 completed=17 handle_ms=0.0 t=7380.710
+RING_ISSUE chunk=24 first=3072 in_flight=8 issue_ms=47.6 t=7428.331
+RING_DONE chunk=17 in_flight=7 completed=18 handle_ms=0.0 t=7569.209
+RING_ISSUE chunk=25 first=3200 in_flight=8 issue_ms=47.9 t=7617.195
+RING_STAGE chunk=22 layer=6 in_flight=8 t=7658.853
+RING_OWN_BLOCK chunk=22 layers=6..11 ms=203.0
+RING_STAGE chunk=23 layer=6 in_flight=8 t=7899.252
+RING_OWN_BLOCK chunk=23 layers=6..11 ms=202.5
+RING_STAGE chunk=24 layer=6 in_flight=8 t=8139.817
+RING_OWN_BLOCK chunk=24 layers=6..11 ms=202.5
+RING_STAGE chunk=25 layer=6 in_flight=8 t=8356.515
+RING_OWN_BLOCK chunk=25 layers=6..11 ms=202.7
+RING_DONE chunk=18 in_flight=7 completed=19 handle_ms=0.0 t=8564.015
+RING_ISSUE chunk=26 first=3328 in_flight=8 issue_ms=47.5 t=8611.505
+RING_DONE chunk=19 in_flight=7 completed=20 handle_ms=0.0 t=8615.694
+RING_ISSUE chunk=27 first=3456 in_flight=8 issue_ms=47.6 t=8663.328
+RING_DONE chunk=20 in_flight=7 completed=21 handle_ms=0.0 t=8685.688
+RING_ISSUE chunk=28 first=3584 in_flight=8 issue_ms=47.5 t=8733.187
+RING_DONE chunk=21 in_flight=7 completed=22 handle_ms=0.0 t=8936.650
+RING_ISSUE chunk=29 first=3712 in_flight=8 issue_ms=48.1 t=8984.852
+RING_STAGE chunk=26 layer=6 in_flight=8 t=8994.339
+RING_OWN_BLOCK chunk=26 layers=6..11 ms=199.9
+RING_STAGE chunk=27 layer=6 in_flight=8 t=9210.399
+RING_OWN_BLOCK chunk=27 layers=6..11 ms=200.5
+RING_STAGE chunk=28 layer=6 in_flight=8 t=9422.436
+RING_OWN_BLOCK chunk=28 layers=6..11 ms=199.5
+RING_STAGE chunk=29 layer=6 in_flight=8 t=9627.267
+RING_OWN_BLOCK chunk=29 layers=6..11 ms=199.6
+RING_DONE chunk=22 in_flight=7 completed=23 handle_ms=0.0 t=9831.645
+RING_ISSUE chunk=30 first=3840 in_flight=8 issue_ms=47.8 t=9879.443
+RING_DONE chunk=23 in_flight=7 completed=24 handle_ms=0.0 t=9883.677
+RING_ISSUE chunk=31 first=3968 in_flight=8 issue_ms=47.6 t=9931.275
+RING_DONE chunk=24 in_flight=7 completed=25 handle_ms=0.0 t=9961.827
+RING_ISSUE chunk=32 first=4096 in_flight=8 issue_ms=43.7 t=10005.517
+RING_DONE chunk=25 in_flight=7 completed=26 handle_ms=0.0 t=10194.787
+RING_STAGE chunk=30 layer=6 in_flight=7 t=10237.071
+RING_OWN_BLOCK chunk=30 layers=6..11 ms=202.1
+RING_STAGE chunk=31 layer=6 in_flight=7 t=10467.487
+RING_OWN_BLOCK chunk=31 layers=6..11 ms=202.2
+RING_STAGE chunk=32 layer=6 in_flight=7 t=10671.162
+RING_OWN_BLOCK chunk=32 layers=6..11 ms=66.8
+RING_DONE chunk=26 in_flight=6 completed=27 handle_ms=0.0 t=10776.585
+RING_DONE chunk=27 in_flight=5 completed=28 handle_ms=0.0 t=11000.669
+RING_DONE chunk=28 in_flight=4 completed=29 handle_ms=0.0 t=11261.256
+RING_DONE chunk=29 in_flight=3 completed=30 handle_ms=0.0 t=11515.710
+RING_DONE chunk=30 in_flight=2 completed=31 handle_ms=0.0 t=11988.210
+RING_DONE chunk=31 in_flight=1 completed=32 handle_ms=0.0 t=12245.362
+RING_DONE chunk=32 in_flight=0 completed=33 handle_ms=0.1 t=12279.897
+request chatcmpl-fg-1792137532-2: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 4127/4127 tokens 335.94 tok/s, generation 1 tokens 14.81 tok/s, context 4128/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+RING_ISSUE chunk=0 first=4128 in_flight=1 issue_ms=31.2 t=31.161
+RING_STAGE chunk=0 layer=6 in_flight=1 t=135.216
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=73.8
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.1 t=717.540
+request chatcmpl-fg-1792137544-3: mode expert-parallel, prefix hit, reused 4128, reset none, prefill 31/4159 tokens 42.97 tok/s, generation 128 tokens 28.32 tok/s, context 4287/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=5->2
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=150.5 t=150.538
+RING_ISSUE chunk=1 first=128 in_flight=2 issue_ms=64.5 t=215.073
+RING_ISSUE chunk=2 first=256 in_flight=3 issue_ms=51.5 t=266.672
+RING_ISSUE chunk=3 first=384 in_flight=4 issue_ms=47.9 t=314.649
+RING_ISSUE chunk=4 first=512 in_flight=5 issue_ms=48.0 t=362.666
+RING_ISSUE chunk=5 first=640 in_flight=6 issue_ms=48.1 t=410.779
+RING_ISSUE chunk=6 first=768 in_flight=7 issue_ms=49.7 t=460.553
+RING_ISSUE chunk=7 first=896 in_flight=8 issue_ms=48.1 t=508.740
+RING_STAGE chunk=0 layer=6 in_flight=8 t=516.109
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=194.8
+RING_STAGE chunk=1 layer=6 in_flight=8 t=716.031
+RING_OWN_BLOCK chunk=1 layers=6..11 ms=180.5
+RING_STAGE chunk=2 layer=6 in_flight=8 t=901.509
+RING_OWN_BLOCK chunk=2 layers=6..11 ms=195.6
+RING_STAGE chunk=3 layer=6 in_flight=8 t=1111.120
+RING_OWN_BLOCK chunk=3 layers=6..11 ms=196.0
+RING_STAGE chunk=4 layer=6 in_flight=8 t=1329.079
+RING_OWN_BLOCK chunk=4 layers=6..11 ms=197.2
+RING_STAGE chunk=5 layer=6 in_flight=8 t=1531.852
+RING_OWN_BLOCK chunk=5 layers=6..11 ms=197.1
+RING_STAGE chunk=6 layer=6 in_flight=8 t=1734.274
+RING_OWN_BLOCK chunk=6 layers=6..11 ms=197.1
+RING_STAGE chunk=7 layer=6 in_flight=8 t=1941.264
+RING_OWN_BLOCK chunk=7 layers=6..11 ms=197.3
+RING_DONE chunk=0 in_flight=7 completed=1 handle_ms=0.0 t=2275.636
+RING_ISSUE chunk=8 first=1024 in_flight=8 issue_ms=48.2 t=2323.909
+RING_DONE chunk=1 in_flight=7 completed=2 handle_ms=0.0 t=2520.386
+RING_ISSUE chunk=9 first=1152 in_flight=8 issue_ms=48.2 t=2568.656
+RING_STAGE chunk=8 layer=6 in_flight=8 t=2633.123
+RING_OWN_BLOCK chunk=8 layers=6..11 ms=201.0
+RING_STAGE chunk=9 layer=6 in_flight=8 t=2882.276
+RING_OWN_BLOCK chunk=9 layers=6..11 ms=201.0
+RING_DONE chunk=2 in_flight=7 completed=3 handle_ms=0.0 t=3088.409
+RING_ISSUE chunk=10 first=1280 in_flight=8 issue_ms=47.8 t=3136.287
+RING_DONE chunk=3 in_flight=7 completed=4 handle_ms=0.0 t=3140.779
+RING_ISSUE chunk=11 first=1408 in_flight=8 issue_ms=47.9 t=3188.699
+RING_DONE chunk=4 in_flight=7 completed=5 handle_ms=0.0 t=3255.383
+RING_ISSUE chunk=12 first=1536 in_flight=8 issue_ms=48.6 t=3304.076
+RING_STAGE chunk=10 layer=6 in_flight=8 t=3444.085
+RING_OWN_BLOCK chunk=10 layers=6..11 ms=202.9
+RING_STAGE chunk=11 layer=6 in_flight=8 t=3674.450
+RING_OWN_BLOCK chunk=11 layers=6..11 ms=197.9
+RING_STAGE chunk=12 layer=6 in_flight=8 t=3890.798
+RING_OWN_BLOCK chunk=12 layers=6..11 ms=192.5
+RING_DONE chunk=5 in_flight=7 completed=6 handle_ms=0.0 t=4088.794
+RING_ISSUE chunk=13 first=1664 in_flight=8 issue_ms=49.3 t=4138.138
+RING_DONE chunk=6 in_flight=7 completed=7 handle_ms=0.0 t=4142.953
+RING_ISSUE chunk=14 first=1792 in_flight=8 issue_ms=49.7 t=4192.693
+RING_DONE chunk=7 in_flight=7 completed=8 handle_ms=0.0 t=4197.475
+RING_ISSUE chunk=15 first=1920 in_flight=8 issue_ms=49.0 t=4246.517
+RING_DONE chunk=8 in_flight=7 completed=9 handle_ms=0.0 t=4333.722
+RING_ISSUE chunk=16 first=2048 in_flight=8 issue_ms=48.7 t=4382.502
+RING_STAGE chunk=13 layer=6 in_flight=8 t=4448.876
+RING_OWN_BLOCK chunk=13 layers=6..11 ms=190.4
+RING_STAGE chunk=14 layer=6 in_flight=8 t=4670.679
+RING_OWN_BLOCK chunk=14 layers=6..11 ms=195.4
+RING_STAGE chunk=15 layer=6 in_flight=8 t=4883.617
+RING_OWN_BLOCK chunk=15 layers=6..11 ms=194.2
+RING_STAGE chunk=16 layer=6 in_flight=8 t=5092.114
+RING_OWN_BLOCK chunk=16 layers=6..11 ms=200.1
+RING_DONE chunk=9 in_flight=7 completed=10 handle_ms=0.0 t=5297.663
+RING_ISSUE chunk=17 first=2176 in_flight=8 issue_ms=49.3 t=5346.989
+RING_DONE chunk=10 in_flight=7 completed=11 handle_ms=0.0 t=5351.583
+RING_ISSUE chunk=18 first=2304 in_flight=8 issue_ms=49.2 t=5400.821
+RING_DONE chunk=11 in_flight=7 completed=12 handle_ms=0.0 t=5419.520
+RING_ISSUE chunk=19 first=2432 in_flight=8 issue_ms=48.1 t=5467.642
+RING_DONE chunk=12 in_flight=7 completed=13 handle_ms=0.0 t=5660.447
+RING_ISSUE chunk=20 first=2560 in_flight=8 issue_ms=48.9 t=5709.357
+RING_STAGE chunk=17 layer=6 in_flight=8 t=5714.894
+RING_OWN_BLOCK chunk=17 layers=6..11 ms=198.6
+RING_STAGE chunk=18 layer=6 in_flight=8 t=5918.673
+RING_OWN_BLOCK chunk=18 layers=6..11 ms=198.3
+RING_STAGE chunk=19 layer=6 in_flight=8 t=6132.981
+RING_OWN_BLOCK chunk=19 layers=6..11 ms=199.0
+RING_STAGE chunk=20 layer=6 in_flight=8 t=6337.316
+RING_OWN_BLOCK chunk=20 layers=6..11 ms=196.8
+RING_DONE chunk=13 in_flight=7 completed=14 handle_ms=0.0 t=6539.517
+RING_ISSUE chunk=21 first=2688 in_flight=8 issue_ms=49.1 t=6588.706
+RING_DONE chunk=14 in_flight=7 completed=15 handle_ms=0.0 t=6593.523
+RING_ISSUE chunk=22 first=2816 in_flight=8 issue_ms=49.3 t=6642.874
+RING_DONE chunk=15 in_flight=7 completed=16 handle_ms=0.0 t=6669.290
+RING_ISSUE chunk=23 first=2944 in_flight=8 issue_ms=48.9 t=6718.263
+RING_DONE chunk=16 in_flight=7 completed=17 handle_ms=0.0 t=6924.130
+RING_ISSUE chunk=24 first=3072 in_flight=8 issue_ms=48.8 t=6972.996
+RING_STAGE chunk=21 layer=6 in_flight=8 t=6977.979
+RING_OWN_BLOCK chunk=21 layers=6..11 ms=198.6
+RING_STAGE chunk=22 layer=6 in_flight=8 t=7181.743
+RING_OWN_BLOCK chunk=22 layers=6..11 ms=198.7
+RING_STAGE chunk=23 layer=6 in_flight=8 t=7385.653
+RING_OWN_BLOCK chunk=23 layers=6..11 ms=199.0
+RING_STAGE chunk=24 layer=6 in_flight=8 t=7589.917
+RING_OWN_BLOCK chunk=24 layers=6..11 ms=201.0
+RING_DONE chunk=17 in_flight=7 completed=18 handle_ms=0.0 t=7796.290
+RING_ISSUE chunk=25 first=3200 in_flight=8 issue_ms=49.4 t=7845.696
+RING_DONE chunk=18 in_flight=7 completed=19 handle_ms=0.0 t=7850.472
+RING_ISSUE chunk=26 first=3328 in_flight=8 issue_ms=49.5 t=7900.059
+RING_DONE chunk=19 in_flight=7 completed=20 handle_ms=0.0 t=7968.487
+RING_ISSUE chunk=27 first=3456 in_flight=8 issue_ms=48.5 t=8017.040
+RING_STAGE chunk=25 layer=6 in_flight=8 t=8175.096
+RING_OWN_BLOCK chunk=25 layers=6..11 ms=203.2
+RING_STAGE chunk=26 layer=6 in_flight=8 t=8407.792
+RING_OWN_BLOCK chunk=26 layers=6..11 ms=198.7
+RING_STAGE chunk=27 layer=6 in_flight=8 t=8621.809
+RING_OWN_BLOCK chunk=27 layers=6..11 ms=200.2
+RING_DONE chunk=20 in_flight=7 completed=21 handle_ms=0.0 t=8827.379
+RING_ISSUE chunk=28 first=3584 in_flight=8 issue_ms=48.8 t=8876.270
+RING_DONE chunk=21 in_flight=7 completed=22 handle_ms=0.0 t=8881.055
+RING_ISSUE chunk=29 first=3712 in_flight=8 issue_ms=49.8 t=8930.904
+RING_DONE chunk=22 in_flight=7 completed=23 handle_ms=0.0 t=8980.888
+RING_ISSUE chunk=30 first=3840 in_flight=8 issue_ms=49.5 t=9030.391
+RING_STAGE chunk=28 layer=6 in_flight=8 t=9189.703
+RING_OWN_BLOCK chunk=28 layers=6..11 ms=201.8
+RING_STAGE chunk=29 layer=6 in_flight=8 t=9426.233
+RING_OWN_BLOCK chunk=29 layers=6..11 ms=199.8
+RING_STAGE chunk=30 layer=6 in_flight=8 t=9641.525
+RING_OWN_BLOCK chunk=30 layers=6..11 ms=200.8
+RING_DONE chunk=23 in_flight=7 completed=24 handle_ms=0.0 t=9847.420
+RING_ISSUE chunk=31 first=3968 in_flight=8 issue_ms=47.8 t=9895.291
+RING_DONE chunk=24 in_flight=7 completed=25 handle_ms=0.0 t=9899.684
+RING_ISSUE chunk=32 first=4096 in_flight=8 issue_ms=47.7 t=9947.430
+RING_DONE chunk=25 in_flight=7 completed=26 handle_ms=0.0 t=9960.159
+RING_ISSUE chunk=33 first=4224 in_flight=8 issue_ms=48.1 t=10008.265
+RING_DONE chunk=26 in_flight=7 completed=27 handle_ms=0.0 t=10195.262
+RING_ISSUE chunk=34 first=4352 in_flight=8 issue_ms=48.2 t=10243.501
+RING_STAGE chunk=31 layer=6 in_flight=8 t=10259.850
+RING_OWN_BLOCK chunk=31 layers=6..11 ms=198.3
+RING_STAGE chunk=32 layer=6 in_flight=8 t=10463.004
+RING_OWN_BLOCK chunk=32 layers=6..11 ms=198.7
+RING_STAGE chunk=33 layer=6 in_flight=8 t=10672.932
+RING_OWN_BLOCK chunk=33 layers=6..11 ms=199.9
+RING_STAGE chunk=34 layer=6 in_flight=8 t=10879.310
+RING_OWN_BLOCK chunk=34 layers=6..11 ms=200.3
+RING_DONE chunk=27 in_flight=7 completed=28 handle_ms=0.0 t=11084.651
+RING_ISSUE chunk=35 first=4480 in_flight=8 issue_ms=47.9 t=11132.604
+RING_DONE chunk=28 in_flight=7 completed=29 handle_ms=0.0 t=11137.071
+RING_ISSUE chunk=36 first=4608 in_flight=8 issue_ms=47.7 t=11184.785
+RING_DONE chunk=29 in_flight=7 completed=30 handle_ms=0.0 t=11213.207
+RING_ISSUE chunk=37 first=4736 in_flight=8 issue_ms=47.8 t=11261.094
+RING_DONE chunk=30 in_flight=7 completed=31 handle_ms=0.0 t=11465.308
+RING_ISSUE chunk=38 first=4864 in_flight=8 issue_ms=48.6 t=11513.997
+RING_STAGE chunk=35 layer=6 in_flight=8 t=11518.981
+RING_OWN_BLOCK chunk=35 layers=6..11 ms=200.6
+RING_STAGE chunk=36 layer=6 in_flight=8 t=11724.786
+RING_OWN_BLOCK chunk=36 layers=6..11 ms=199.9
+RING_STAGE chunk=37 layer=6 in_flight=8 t=11930.099
+RING_OWN_BLOCK chunk=37 layers=6..11 ms=198.7
+RING_STAGE chunk=38 layer=6 in_flight=8 t=12134.001
+RING_OWN_BLOCK chunk=38 layers=6..11 ms=202.0
+RING_DONE chunk=31 in_flight=7 completed=32 handle_ms=0.0 t=12341.309
+RING_ISSUE chunk=39 first=4992 in_flight=8 issue_ms=49.0 t=12390.362
+RING_DONE chunk=32 in_flight=7 completed=33 handle_ms=0.0 t=12395.147
+RING_ISSUE chunk=40 first=5120 in_flight=8 issue_ms=49.7 t=12444.846
+RING_DONE chunk=33 in_flight=7 completed=34 handle_ms=0.0 t=12522.147
+RING_ISSUE chunk=41 first=5248 in_flight=8 issue_ms=48.5 t=12570.692
+RING_STAGE chunk=39 layer=6 in_flight=8 t=12720.043
+RING_OWN_BLOCK chunk=39 layers=6..11 ms=203.8
+RING_STAGE chunk=40 layer=6 in_flight=8 t=12954.684
+RING_OWN_BLOCK chunk=40 layers=6..11 ms=199.9
+RING_STAGE chunk=41 layer=6 in_flight=8 t=13167.719
+RING_OWN_BLOCK chunk=41 layers=6..11 ms=199.7
+RING_DONE chunk=34 in_flight=7 completed=35 handle_ms=0.0 t=13372.835
+RING_ISSUE chunk=42 first=5376 in_flight=8 issue_ms=49.3 t=13422.154
+RING_DONE chunk=35 in_flight=7 completed=36 handle_ms=0.0 t=13426.932
+RING_ISSUE chunk=43 first=5504 in_flight=8 issue_ms=49.9 t=13476.827
+RING_DONE chunk=36 in_flight=7 completed=37 handle_ms=0.0 t=13523.897
+RING_ISSUE chunk=44 first=5632 in_flight=8 issue_ms=49.8 t=13573.764
+RING_STAGE chunk=42 layer=6 in_flight=8 t=13740.895
+RING_OWN_BLOCK chunk=42 layers=6..11 ms=204.5
+RING_STAGE chunk=43 layer=6 in_flight=8 t=13973.650
+RING_OWN_BLOCK chunk=43 layers=6..11 ms=199.1
+RING_STAGE chunk=44 layer=6 in_flight=8 t=14186.107
+RING_OWN_BLOCK chunk=44 layers=6..11 ms=199.8
+RING_DONE chunk=37 in_flight=7 completed=38 handle_ms=0.0 t=14391.311
+RING_ISSUE chunk=45 first=5760 in_flight=8 issue_ms=48.9 t=14440.256
+RING_DONE chunk=38 in_flight=7 completed=39 handle_ms=0.0 t=14444.964
+RING_ISSUE chunk=46 first=5888 in_flight=8 issue_ms=49.1 t=14494.135
+RING_DONE chunk=39 in_flight=7 completed=40 handle_ms=0.0 t=14503.941
+RING_ISSUE chunk=47 first=6016 in_flight=8 issue_ms=49.2 t=14553.146
+RING_DONE chunk=40 in_flight=7 completed=41 handle_ms=0.0 t=14740.035
+RING_ISSUE chunk=48 first=6144 in_flight=8 issue_ms=48.5 t=14788.625
+RING_STAGE chunk=45 layer=6 in_flight=8 t=14802.245
+RING_OWN_BLOCK chunk=45 layers=6..11 ms=195.6
+RING_STAGE chunk=46 layer=6 in_flight=8 t=15002.827
+RING_OWN_BLOCK chunk=46 layers=6..11 ms=196.0
+RING_STAGE chunk=47 layer=6 in_flight=8 t=15206.474
+RING_OWN_BLOCK chunk=47 layers=6..11 ms=197.6
+RING_STAGE chunk=48 layer=6 in_flight=8 t=15409.052
+RING_OWN_BLOCK chunk=48 layers=6..11 ms=199.8
+RING_DONE chunk=41 in_flight=7 completed=42 handle_ms=0.0 t=15614.138
+RING_ISSUE chunk=49 first=6272 in_flight=8 issue_ms=49.3 t=15663.459
+RING_DONE chunk=42 in_flight=7 completed=43 handle_ms=0.0 t=15668.259
+RING_ISSUE chunk=50 first=6400 in_flight=8 issue_ms=49.7 t=15718.019
+RING_DONE chunk=43 in_flight=7 completed=44 handle_ms=0.0 t=15748.603
+RING_ISSUE chunk=51 first=6528 in_flight=8 issue_ms=48.8 t=15797.458
+RING_STAGE chunk=49 layer=6 in_flight=8 t=16010.721
+RING_OWN_BLOCK chunk=49 layers=6..11 ms=202.2
+RING_STAGE chunk=50 layer=6 in_flight=8 t=16233.300
+RING_OWN_BLOCK chunk=50 layers=6..11 ms=200.6
+RING_STAGE chunk=51 layer=6 in_flight=8 t=16444.922
+RING_OWN_BLOCK chunk=51 layers=6..11 ms=198.4
+RING_DONE chunk=44 in_flight=7 completed=45 handle_ms=0.0 t=16648.812
+RING_ISSUE chunk=52 first=6656 in_flight=8 issue_ms=49.3 t=16698.164
+RING_DONE chunk=45 in_flight=7 completed=46 handle_ms=0.0 t=16702.978
+RING_ISSUE chunk=53 first=6784 in_flight=8 issue_ms=49.0 t=16752.054
+RING_DONE chunk=46 in_flight=7 completed=47 handle_ms=0.0 t=16785.870
+RING_ISSUE chunk=54 first=6912 in_flight=8 issue_ms=48.3 t=16834.255
+RING_STAGE chunk=52 layer=6 in_flight=8 t=17027.735
+RING_OWN_BLOCK chunk=52 layers=6..11 ms=202.7
+RING_STAGE chunk=53 layer=6 in_flight=8 t=17254.441
+RING_OWN_BLOCK chunk=53 layers=6..11 ms=201.4
+RING_STAGE chunk=54 layer=6 in_flight=8 t=17466.850
+RING_OWN_BLOCK chunk=54 layers=6..11 ms=198.2
+RING_DONE chunk=47 in_flight=7 completed=48 handle_ms=0.0 t=17670.462
+RING_ISSUE chunk=55 first=7040 in_flight=8 issue_ms=49.4 t=17719.887
+RING_DONE chunk=48 in_flight=7 completed=49 handle_ms=0.0 t=17724.548
+RING_ISSUE chunk=56 first=7168 in_flight=8 issue_ms=49.1 t=17773.734
+RING_DONE chunk=49 in_flight=7 completed=50 handle_ms=0.0 t=17783.119
+RING_ISSUE chunk=57 first=7296 in_flight=8 issue_ms=49.0 t=17832.203
+RING_DONE chunk=50 in_flight=7 completed=51 handle_ms=0.0 t=18014.319
+RING_ISSUE chunk=58 first=7424 in_flight=8 issue_ms=48.4 t=18062.808
+RING_STAGE chunk=55 layer=6 in_flight=8 t=18082.055
+RING_OWN_BLOCK chunk=55 layers=6..11 ms=195.3
+RING_STAGE chunk=56 layer=6 in_flight=8 t=18282.275
+RING_OWN_BLOCK chunk=56 layers=6..11 ms=195.3
+RING_STAGE chunk=57 layer=6 in_flight=8 t=18486.883
+RING_OWN_BLOCK chunk=57 layers=6..11 ms=199.3
+RING_STAGE chunk=58 layer=6 in_flight=8 t=18691.464
+RING_OWN_BLOCK chunk=58 layers=6..11 ms=199.5
+RING_DONE chunk=51 in_flight=7 completed=52 handle_ms=0.0 t=18896.484
+RING_ISSUE chunk=59 first=7552 in_flight=8 issue_ms=49.2 t=18945.750
+RING_DONE chunk=52 in_flight=7 completed=53 handle_ms=0.0 t=18950.558
+RING_ISSUE chunk=60 first=7680 in_flight=8 issue_ms=49.4 t=18999.966
+RING_DONE chunk=53 in_flight=7 completed=54 handle_ms=0.0 t=19027.789
+RING_ISSUE chunk=61 first=7808 in_flight=8 issue_ms=48.7 t=19076.550
+RING_DONE chunk=54 in_flight=7 completed=55 handle_ms=0.0 t=19298.717
+RING_ISSUE chunk=62 first=7936 in_flight=8 issue_ms=48.0 t=19346.773
+RING_STAGE chunk=59 layer=6 in_flight=8 t=19351.390
+RING_OWN_BLOCK chunk=59 layers=6..11 ms=199.5
+RING_STAGE chunk=60 layer=6 in_flight=8 t=19555.973
+RING_OWN_BLOCK chunk=60 layers=6..11 ms=199.0
+RING_STAGE chunk=61 layer=6 in_flight=8 t=19760.047
+RING_OWN_BLOCK chunk=61 layers=6..11 ms=199.2
+RING_STAGE chunk=62 layer=6 in_flight=8 t=19964.241
+RING_OWN_BLOCK chunk=62 layers=6..11 ms=201.7
+RING_DONE chunk=55 in_flight=7 completed=56 handle_ms=0.0 t=20171.054
+RING_ISSUE chunk=63 first=8064 in_flight=8 issue_ms=48.0 t=20219.070
+RING_DONE chunk=56 in_flight=7 completed=57 handle_ms=0.0 t=20223.526
+RING_ISSUE chunk=64 first=8192 in_flight=8 issue_ms=48.1 t=20271.620
+RING_DONE chunk=57 in_flight=7 completed=58 handle_ms=0.0 t=20310.811
+RING_ISSUE chunk=65 first=8320 in_flight=8 issue_ms=47.8 t=20358.684
+RING_STAGE chunk=63 layer=6 in_flight=8 t=20565.075
+RING_OWN_BLOCK chunk=63 layers=6..11 ms=203.0
+RING_STAGE chunk=64 layer=6 in_flight=8 t=20786.973
+RING_OWN_BLOCK chunk=64 layers=6..11 ms=201.2
+RING_STAGE chunk=65 layer=6 in_flight=8 t=20997.831
+RING_OWN_BLOCK chunk=65 layers=6..11 ms=199.3
+RING_DONE chunk=58 in_flight=7 completed=59 handle_ms=0.0 t=21202.099
+RING_ISSUE chunk=66 first=8448 in_flight=8 issue_ms=47.7 t=21249.859
+RING_DONE chunk=59 in_flight=7 completed=60 handle_ms=0.0 t=21254.170
+RING_ISSUE chunk=67 first=8576 in_flight=8 issue_ms=48.0 t=21302.176
+RING_DONE chunk=60 in_flight=7 completed=61 handle_ms=0.0 t=21347.878
+RING_ISSUE chunk=68 first=8704 in_flight=8 issue_ms=48.1 t=21396.043
+RING_STAGE chunk=66 layer=6 in_flight=8 t=21583.479
+RING_OWN_BLOCK chunk=66 layers=6..11 ms=203.6
+RING_STAGE chunk=67 layer=6 in_flight=8 t=21811.315
+RING_OWN_BLOCK chunk=67 layers=6..11 ms=201.5
+RING_STAGE chunk=68 layer=6 in_flight=8 t=22022.467
+RING_OWN_BLOCK chunk=68 layers=6..11 ms=199.3
+RING_DONE chunk=61 in_flight=7 completed=62 handle_ms=0.0 t=22226.742
+RING_ISSUE chunk=69 first=8832 in_flight=8 issue_ms=47.5 t=22274.269
+RING_DONE chunk=62 in_flight=7 completed=63 handle_ms=0.0 t=22278.754
+RING_ISSUE chunk=70 first=8960 in_flight=8 issue_ms=47.8 t=22326.583
+RING_DONE chunk=63 in_flight=7 completed=64 handle_ms=0.0 t=22348.831
+RING_ISSUE chunk=71 first=9088 in_flight=8 issue_ms=47.9 t=22396.763
+RING_DONE chunk=64 in_flight=7 completed=65 handle_ms=0.0 t=22587.717
+RING_ISSUE chunk=72 first=9216 in_flight=8 issue_ms=48.2 t=22635.952
+RING_STAGE chunk=69 layer=6 in_flight=8 t=22642.049
+RING_OWN_BLOCK chunk=69 layers=6..11 ms=199.0
+RING_STAGE chunk=70 layer=6 in_flight=8 t=22845.785
+RING_OWN_BLOCK chunk=70 layers=6..11 ms=199.1
+RING_STAGE chunk=71 layer=6 in_flight=8 t=23049.888
+RING_OWN_BLOCK chunk=71 layers=6..11 ms=199.1
+RING_STAGE chunk=72 layer=6 in_flight=8 t=23253.799
+RING_OWN_BLOCK chunk=72 layers=6..11 ms=200.6
+RING_DONE chunk=65 in_flight=7 completed=66 handle_ms=0.0 t=23459.432
+RING_ISSUE chunk=73 first=9344 in_flight=8 issue_ms=47.8 t=23507.296
+RING_DONE chunk=66 in_flight=7 completed=67 handle_ms=0.0 t=23511.767
+RING_ISSUE chunk=74 first=9472 in_flight=8 issue_ms=47.8 t=23559.637
+RING_DONE chunk=67 in_flight=7 completed=68 handle_ms=0.0 t=23590.947
+RING_ISSUE chunk=75 first=9600 in_flight=8 issue_ms=47.8 t=23638.755
+RING_STAGE chunk=73 layer=6 in_flight=8 t=23855.151
+RING_OWN_BLOCK chunk=73 layers=6..11 ms=201.9
+RING_STAGE chunk=74 layer=6 in_flight=8 t=24074.597
+RING_OWN_BLOCK chunk=74 layers=6..11 ms=199.8
+RING_STAGE chunk=75 layer=6 in_flight=8 t=24284.201
+RING_OWN_BLOCK chunk=75 layers=6..11 ms=199.5
+RING_DONE chunk=68 in_flight=7 completed=69 handle_ms=0.0 t=24488.700
+RING_ISSUE chunk=76 first=9728 in_flight=8 issue_ms=47.6 t=24536.294
+RING_DONE chunk=69 in_flight=7 completed=70 handle_ms=0.0 t=24540.665
+RING_ISSUE chunk=77 first=9856 in_flight=8 issue_ms=47.7 t=24588.354
+RING_DONE chunk=70 in_flight=7 completed=71 handle_ms=0.0 t=24633.380
+RING_ISSUE chunk=78 first=9984 in_flight=8 issue_ms=48.3 t=24681.752
+RING_STAGE chunk=76 layer=6 in_flight=8 t=24876.805
+RING_OWN_BLOCK chunk=76 layers=6..11 ms=202.7
+RING_STAGE chunk=77 layer=6 in_flight=8 t=25101.051
+RING_OWN_BLOCK chunk=77 layers=6..11 ms=199.9
+RING_STAGE chunk=78 layer=6 in_flight=8 t=25310.743
+RING_OWN_BLOCK chunk=78 layers=6..11 ms=199.2
+RING_DONE chunk=71 in_flight=7 completed=72 handle_ms=0.0 t=25514.898
+RING_ISSUE chunk=79 first=10112 in_flight=8 issue_ms=47.7 t=25562.645
+RING_DONE chunk=72 in_flight=7 completed=73 handle_ms=0.0 t=25566.986
+RING_ISSUE chunk=80 first=10240 in_flight=8 issue_ms=47.7 t=25614.692
+RING_DONE chunk=73 in_flight=7 completed=74 handle_ms=0.0 t=25625.613
+RING_ISSUE chunk=81 first=10368 in_flight=8 issue_ms=47.9 t=25673.509
+RING_DONE chunk=74 in_flight=7 completed=75 handle_ms=0.0 t=25860.565
+RING_ISSUE chunk=82 first=10496 in_flight=8 issue_ms=48.0 t=25908.631
+RING_STAGE chunk=79 layer=6 in_flight=8 t=25930.447
+RING_OWN_BLOCK chunk=79 layers=6..11 ms=198.4
+RING_STAGE chunk=80 layer=6 in_flight=8 t=26133.499
+RING_OWN_BLOCK chunk=80 layers=6..11 ms=196.8
+RING_STAGE chunk=81 layer=6 in_flight=8 t=26339.454
+RING_OWN_BLOCK chunk=81 layers=6..11 ms=200.0
+RING_STAGE chunk=82 layer=6 in_flight=8 t=26544.427
+RING_OWN_BLOCK chunk=82 layers=6..11 ms=200.5
+RING_DONE chunk=75 in_flight=7 completed=76 handle_ms=0.0 t=26749.958
+RING_ISSUE chunk=83 first=10624 in_flight=8 issue_ms=48.0 t=26797.983
+RING_DONE chunk=76 in_flight=7 completed=77 handle_ms=0.0 t=26802.332
+RING_ISSUE chunk=84 first=10752 in_flight=8 issue_ms=47.7 t=26850.077
+RING_DONE chunk=77 in_flight=7 completed=78 handle_ms=0.0 t=26883.372
+RING_ISSUE chunk=85 first=10880 in_flight=8 issue_ms=47.5 t=26930.961
+RING_DONE chunk=78 in_flight=7 completed=79 handle_ms=0.0 t=27139.183
+RING_ISSUE chunk=86 first=11008 in_flight=8 issue_ms=48.1 t=27187.372
+RING_STAGE chunk=83 layer=6 in_flight=8 t=27191.888
+RING_OWN_BLOCK chunk=83 layers=6..11 ms=199.8
+RING_STAGE chunk=84 layer=6 in_flight=8 t=27396.428
+RING_OWN_BLOCK chunk=84 layers=6..11 ms=199.8
+RING_STAGE chunk=85 layer=6 in_flight=8 t=27601.071
+RING_OWN_BLOCK chunk=85 layers=6..11 ms=199.2
+RING_STAGE chunk=86 layer=6 in_flight=8 t=27805.123
+RING_OWN_BLOCK chunk=86 layers=6..11 ms=199.3
+RING_DONE chunk=79 in_flight=7 completed=80 handle_ms=0.0 t=28009.426
+RING_ISSUE chunk=87 first=11136 in_flight=8 issue_ms=47.7 t=28057.178
+RING_DONE chunk=80 in_flight=7 completed=81 handle_ms=0.0 t=28061.493
+RING_ISSUE chunk=88 first=11264 in_flight=8 issue_ms=47.5 t=28108.979
+RING_DONE chunk=81 in_flight=7 completed=82 handle_ms=0.0 t=28175.290
+RING_ISSUE chunk=89 first=11392 in_flight=8 issue_ms=47.9 t=28223.282
+RING_STAGE chunk=87 layer=6 in_flight=8 t=28397.576
+RING_OWN_BLOCK chunk=87 layers=6..11 ms=203.2
+RING_STAGE chunk=88 layer=6 in_flight=8 t=28626.980
+RING_OWN_BLOCK chunk=88 layers=6..11 ms=199.7
+RING_STAGE chunk=89 layer=6 in_flight=8 t=28838.351
+RING_OWN_BLOCK chunk=89 layers=6..11 ms=201.1
+RING_DONE chunk=82 in_flight=7 completed=83 handle_ms=0.0 t=29044.845
+RING_ISSUE chunk=90 first=11520 in_flight=8 issue_ms=49.1 t=29093.976
+RING_DONE chunk=83 in_flight=7 completed=84 handle_ms=0.0 t=29098.810
+RING_ISSUE chunk=91 first=11648 in_flight=8 issue_ms=49.4 t=29148.234
+RING_DONE chunk=84 in_flight=7 completed=85 handle_ms=0.0 t=29187.060
+RING_ISSUE chunk=92 first=11776 in_flight=8 issue_ms=49.6 t=29236.677
+RING_STAGE chunk=90 layer=6 in_flight=8 t=29421.994
+RING_OWN_BLOCK chunk=90 layers=6..11 ms=203.3
+RING_STAGE chunk=91 layer=6 in_flight=8 t=29646.491
+RING_OWN_BLOCK chunk=91 layers=6..11 ms=200.6
+RING_STAGE chunk=92 layer=6 in_flight=8 t=29856.555
+RING_OWN_BLOCK chunk=92 layers=6..11 ms=200.1
+RING_DONE chunk=85 in_flight=7 completed=86 handle_ms=0.0 t=30061.656
+RING_ISSUE chunk=93 first=11904 in_flight=8 issue_ms=47.9 t=30109.561
+RING_DONE chunk=86 in_flight=7 completed=87 handle_ms=0.0 t=30114.048
+RING_ISSUE chunk=94 first=12032 in_flight=8 issue_ms=47.9 t=30161.956
+RING_DONE chunk=87 in_flight=7 completed=88 handle_ms=0.0 t=30173.586
+RING_ISSUE chunk=95 first=12160 in_flight=8 issue_ms=48.0 t=30221.644
+RING_DONE chunk=88 in_flight=7 completed=89 handle_ms=0.0 t=30409.868
+RING_ISSUE chunk=96 first=12288 in_flight=8 issue_ms=48.2 t=30458.141
+RING_STAGE chunk=93 layer=6 in_flight=8 t=30479.938
+RING_OWN_BLOCK chunk=93 layers=6..11 ms=200.2
+RING_STAGE chunk=94 layer=6 in_flight=8 t=30684.786
+RING_OWN_BLOCK chunk=94 layers=6..11 ms=199.5
+RING_STAGE chunk=95 layer=6 in_flight=8 t=30892.107
+RING_OWN_BLOCK chunk=95 layers=6..11 ms=202.0
+RING_STAGE chunk=96 layer=6 in_flight=8 t=31099.138
+RING_OWN_BLOCK chunk=96 layers=6..11 ms=201.2
+RING_DONE chunk=89 in_flight=7 completed=90 handle_ms=0.0 t=31305.470
+RING_ISSUE chunk=97 first=12416 in_flight=8 issue_ms=47.8 t=31353.306
+RING_DONE chunk=90 in_flight=7 completed=91 handle_ms=0.0 t=31357.834
+RING_ISSUE chunk=98 first=12544 in_flight=8 issue_ms=47.8 t=31405.657
+RING_DONE chunk=91 in_flight=7 completed=92 handle_ms=0.0 t=31434.549
+RING_ISSUE chunk=99 first=12672 in_flight=8 issue_ms=47.7 t=31482.266
+RING_DONE chunk=92 in_flight=7 completed=93 handle_ms=0.0 t=31683.290
+RING_ISSUE chunk=100 first=12800 in_flight=8 issue_ms=48.1 t=31731.485
+RING_STAGE chunk=97 layer=6 in_flight=8 t=31747.212
+RING_OWN_BLOCK chunk=97 layers=6..11 ms=203.0
+RING_STAGE chunk=98 layer=6 in_flight=8 t=31955.140
+RING_OWN_BLOCK chunk=98 layers=6..11 ms=200.8
+RING_STAGE chunk=99 layer=6 in_flight=8 t=32160.742
+RING_OWN_BLOCK chunk=99 layers=6..11 ms=201.0
+RING_STAGE chunk=100 layer=6 in_flight=8 t=32366.861
+RING_OWN_BLOCK chunk=100 layers=6..11 ms=202.5
+RING_DONE chunk=93 in_flight=7 completed=94 handle_ms=0.0 t=32574.393
+RING_ISSUE chunk=101 first=12928 in_flight=8 issue_ms=47.9 t=32622.327
+RING_DONE chunk=94 in_flight=7 completed=95 handle_ms=0.0 t=32626.831
+RING_ISSUE chunk=102 first=13056 in_flight=8 issue_ms=47.8 t=32674.654
+RING_DONE chunk=95 in_flight=7 completed=96 handle_ms=0.0 t=32727.779
+RING_ISSUE chunk=103 first=13184 in_flight=8 issue_ms=48.0 t=32775.778
+RING_STAGE chunk=101 layer=6 in_flight=8 t=32967.537
+RING_OWN_BLOCK chunk=101 layers=6..11 ms=204.7
+RING_STAGE chunk=102 layer=6 in_flight=8 t=33194.360
+RING_OWN_BLOCK chunk=102 layers=6..11 ms=203.4
+RING_STAGE chunk=103 layer=6 in_flight=8 t=33402.697
+RING_OWN_BLOCK chunk=103 layers=6..11 ms=201.1
+RING_DONE chunk=96 in_flight=7 completed=97 handle_ms=0.0 t=33608.655
+RING_ISSUE chunk=104 first=13312 in_flight=8 issue_ms=47.8 t=33656.516
+RING_DONE chunk=97 in_flight=7 completed=98 handle_ms=0.0 t=33660.938
+RING_ISSUE chunk=105 first=13440 in_flight=8 issue_ms=47.8 t=33708.744
+RING_DONE chunk=98 in_flight=7 completed=99 handle_ms=0.0 t=33767.006
+RING_ISSUE chunk=106 first=13568 in_flight=8 issue_ms=48.5 t=33815.557
+RING_STAGE chunk=104 layer=6 in_flight=8 t=33983.930
+RING_OWN_BLOCK chunk=104 layers=6..11 ms=204.5
+RING_STAGE chunk=105 layer=6 in_flight=8 t=34220.822
+RING_OWN_BLOCK chunk=105 layers=6..11 ms=201.3
+RING_STAGE chunk=106 layer=6 in_flight=8 t=34433.890
+RING_OWN_BLOCK chunk=106 layers=6..11 ms=201.2
+RING_DONE chunk=99 in_flight=7 completed=100 handle_ms=0.0 t=34640.139
+RING_ISSUE chunk=107 first=13696 in_flight=8 issue_ms=47.6 t=34687.743
+RING_DONE chunk=100 in_flight=7 completed=101 handle_ms=0.0 t=34692.294
+RING_ISSUE chunk=108 first=13824 in_flight=8 issue_ms=48.0 t=34740.324
+RING_DONE chunk=101 in_flight=7 completed=102 handle_ms=0.0 t=34763.268
+RING_ISSUE chunk=109 first=13952 in_flight=8 issue_ms=47.7 t=34810.988
+RING_DONE chunk=102 in_flight=7 completed=103 handle_ms=0.0 t=35002.667
+RING_ISSUE chunk=110 first=14080 in_flight=8 issue_ms=48.2 t=35050.921
+RING_STAGE chunk=107 layer=6 in_flight=8 t=35062.351
+RING_OWN_BLOCK chunk=107 layers=6..11 ms=199.9
+RING_STAGE chunk=108 layer=6 in_flight=8 t=35266.935
+RING_OWN_BLOCK chunk=108 layers=6..11 ms=201.5
+RING_STAGE chunk=109 layer=6 in_flight=8 t=35473.519
+RING_OWN_BLOCK chunk=109 layers=6..11 ms=202.9
+RING_STAGE chunk=110 layer=6 in_flight=8 t=35681.320
+RING_OWN_BLOCK chunk=110 layers=6..11 ms=200.9
+RING_DONE chunk=103 in_flight=7 completed=104 handle_ms=0.0 t=35887.272
+RING_ISSUE chunk=111 first=14208 in_flight=8 issue_ms=47.8 t=35935.058
+RING_DONE chunk=104 in_flight=7 completed=105 handle_ms=0.0 t=35939.430
+RING_ISSUE chunk=112 first=14336 in_flight=8 issue_ms=47.8 t=35987.295
+RING_DONE chunk=105 in_flight=7 completed=106 handle_ms=0.0 t=36014.828
+RING_ISSUE chunk=113 first=14464 in_flight=8 issue_ms=47.7 t=36062.560
+RING_DONE chunk=106 in_flight=7 completed=107 handle_ms=0.0 t=36266.460
+RING_ISSUE chunk=114 first=14592 in_flight=8 issue_ms=48.1 t=36314.575
+RING_STAGE chunk=111 layer=6 in_flight=8 t=36330.665
+RING_OWN_BLOCK chunk=111 layers=6..11 ms=202.7
+RING_STAGE chunk=112 layer=6 in_flight=8 t=36538.223
+RING_OWN_BLOCK chunk=112 layers=6..11 ms=200.7
+RING_STAGE chunk=113 layer=6 in_flight=8 t=36743.720
+RING_OWN_BLOCK chunk=113 layers=6..11 ms=202.0
+RING_STAGE chunk=114 layer=6 in_flight=8 t=36950.839
+RING_OWN_BLOCK chunk=114 layers=6..11 ms=201.4
+RING_DONE chunk=107 in_flight=7 completed=108 handle_ms=0.0 t=37157.297
+RING_ISSUE chunk=115 first=14720 in_flight=8 issue_ms=47.7 t=37205.013
+RING_DONE chunk=108 in_flight=7 completed=109 handle_ms=0.0 t=37209.436
+RING_ISSUE chunk=116 first=14848 in_flight=8 issue_ms=47.8 t=37257.255
+RING_DONE chunk=109 in_flight=7 completed=110 handle_ms=0.0 t=37333.385
+RING_ISSUE chunk=117 first=14976 in_flight=8 issue_ms=48.1 t=37381.556
+RING_STAGE chunk=115 layer=6 in_flight=8 t=37539.069
+RING_OWN_BLOCK chunk=115 layers=6..11 ms=203.6
+RING_STAGE chunk=116 layer=6 in_flight=8 t=37773.523
+RING_OWN_BLOCK chunk=116 layers=6..11 ms=200.9
+RING_STAGE chunk=117 layer=6 in_flight=8 t=37985.209
+RING_OWN_BLOCK chunk=117 layers=6..11 ms=200.9
+RING_DONE chunk=110 in_flight=7 completed=111 handle_ms=0.0 t=38190.945
+RING_ISSUE chunk=118 first=15104 in_flight=8 issue_ms=47.6 t=38238.542
+RING_DONE chunk=111 in_flight=7 completed=112 handle_ms=0.0 t=38242.915
+RING_ISSUE chunk=119 first=15232 in_flight=8 issue_ms=47.8 t=38290.723
+RING_DONE chunk=112 in_flight=7 completed=113 handle_ms=0.0 t=38342.166
+RING_ISSUE chunk=120 first=15360 in_flight=8 issue_ms=48.4 t=38390.639
+RING_STAGE chunk=118 layer=6 in_flight=8 t=38560.943
+RING_OWN_BLOCK chunk=118 layers=6..11 ms=204.3
+RING_STAGE chunk=119 layer=6 in_flight=8 t=38794.533
+RING_OWN_BLOCK chunk=119 layers=6..11 ms=200.3
+RING_STAGE chunk=120 layer=6 in_flight=8 t=39005.865
+RING_OWN_BLOCK chunk=120 layers=6..11 ms=200.7
+RING_DONE chunk=113 in_flight=7 completed=114 handle_ms=0.0 t=39211.553
+RING_ISSUE chunk=121 first=15488 in_flight=8 issue_ms=47.9 t=39259.515
+RING_DONE chunk=114 in_flight=7 completed=115 handle_ms=0.0 t=39263.922
+RING_ISSUE chunk=122 first=15616 in_flight=8 issue_ms=47.8 t=39311.730
+RING_DONE chunk=115 in_flight=7 completed=116 handle_ms=0.0 t=39323.848
+RING_ISSUE chunk=123 first=15744 in_flight=8 issue_ms=47.9 t=39371.747
+RING_DONE chunk=116 in_flight=7 completed=117 handle_ms=0.0 t=39558.450
+RING_ISSUE chunk=124 first=15872 in_flight=8 issue_ms=48.4 t=39606.928
+RING_STAGE chunk=121 layer=6 in_flight=8 t=39622.202
+RING_OWN_BLOCK chunk=121 layers=6..11 ms=199.0
+RING_STAGE chunk=122 layer=6 in_flight=8 t=39825.767
+RING_OWN_BLOCK chunk=122 layers=6..11 ms=200.4
+RING_STAGE chunk=123 layer=6 in_flight=8 t=40032.613
+RING_OWN_BLOCK chunk=123 layers=6..11 ms=201.1
+RING_STAGE chunk=124 layer=6 in_flight=8 t=40238.426
+RING_OWN_BLOCK chunk=124 layers=6..11 ms=202.9
+RING_DONE chunk=117 in_flight=7 completed=118 handle_ms=0.0 t=40446.342
+RING_ISSUE chunk=125 first=16000 in_flight=8 issue_ms=47.8 t=40494.201
+RING_DONE chunk=118 in_flight=7 completed=119 handle_ms=0.0 t=40498.429
+RING_ISSUE chunk=126 first=16128 in_flight=8 issue_ms=47.9 t=40546.353
+RING_DONE chunk=119 in_flight=7 completed=120 handle_ms=0.0 t=40579.305
+RING_ISSUE chunk=127 first=16256 in_flight=8 issue_ms=47.8 t=40627.175
+RING_DONE chunk=120 in_flight=7 completed=121 handle_ms=0.0 t=40834.025
+RING_ISSUE chunk=128 first=16384 in_flight=8 issue_ms=48.3 t=40882.361
+RING_STAGE chunk=125 layer=6 in_flight=8 t=40886.776
+RING_OWN_BLOCK chunk=125 layers=6..11 ms=200.9
+RING_STAGE chunk=126 layer=6 in_flight=8 t=41092.349
+RING_OWN_BLOCK chunk=126 layers=6..11 ms=199.4
+RING_STAGE chunk=127 layer=6 in_flight=8 t=41296.230
+RING_OWN_BLOCK chunk=127 layers=6..11 ms=201.6
+RING_STAGE chunk=128 layer=6 in_flight=8 t=41502.749
+RING_OWN_BLOCK chunk=128 layers=6..11 ms=206.4
+RING_DONE chunk=121 in_flight=7 completed=122 handle_ms=0.0 t=41714.151
+RING_ISSUE chunk=129 first=16512 in_flight=8 issue_ms=48.0 t=41762.230
+RING_DONE chunk=122 in_flight=7 completed=123 handle_ms=0.0 t=41766.702
+RING_ISSUE chunk=130 first=16640 in_flight=8 issue_ms=47.9 t=41814.648
+RING_DONE chunk=123 in_flight=7 completed=124 handle_ms=0.0 t=41882.604
+RING_ISSUE chunk=131 first=16768 in_flight=8 issue_ms=48.3 t=41930.925
+RING_STAGE chunk=129 layer=6 in_flight=8 t=42098.406
+RING_OWN_BLOCK chunk=129 layers=6..11 ms=207.0
+RING_STAGE chunk=130 layer=6 in_flight=8 t=42334.523
+RING_OWN_BLOCK chunk=130 layers=6..11 ms=204.6
+RING_STAGE chunk=131 layer=6 in_flight=8 t=42550.156
+RING_OWN_BLOCK chunk=131 layers=6..11 ms=204.9
+RING_DONE chunk=124 in_flight=7 completed=125 handle_ms=0.0 t=42760.104
+RING_ISSUE chunk=132 first=16896 in_flight=8 issue_ms=47.7 t=42807.796
+RING_DONE chunk=125 in_flight=7 completed=126 handle_ms=0.0 t=42812.221
+RING_ISSUE chunk=133 first=17024 in_flight=8 issue_ms=47.6 t=42859.820
+RING_DONE chunk=126 in_flight=7 completed=127 handle_ms=0.0 t=42892.602
+RING_ISSUE chunk=134 first=17152 in_flight=8 issue_ms=47.7 t=42940.340
+RING_STAGE chunk=132 layer=6 in_flight=8 t=43137.897
+RING_OWN_BLOCK chunk=132 layers=6..11 ms=207.3
+RING_STAGE chunk=133 layer=6 in_flight=8 t=43367.973
+RING_OWN_BLOCK chunk=133 layers=6..11 ms=206.6
+RING_STAGE chunk=134 layer=6 in_flight=8 t=43580.468
+RING_OWN_BLOCK chunk=134 layers=6..11 ms=203.9
+RING_DONE chunk=127 in_flight=7 completed=128 handle_ms=0.0 t=43789.419
+RING_ISSUE chunk=135 first=17280 in_flight=8 issue_ms=47.6 t=43837.057
+RING_DONE chunk=128 in_flight=7 completed=129 handle_ms=0.0 t=43841.496
+RING_ISSUE chunk=136 first=17408 in_flight=8 issue_ms=47.5 t=43889.021
+RING_DONE chunk=129 in_flight=7 completed=130 handle_ms=0.0 t=43900.853
+RING_ISSUE chunk=137 first=17536 in_flight=8 issue_ms=47.8 t=43948.705
+RING_DONE chunk=130 in_flight=7 completed=131 handle_ms=0.0 t=44139.674
+RING_ISSUE chunk=138 first=17664 in_flight=8 issue_ms=48.0 t=44187.698
+RING_STAGE chunk=135 layer=6 in_flight=8 t=44211.163
+RING_OWN_BLOCK chunk=135 layers=6..11 ms=205.5
+RING_STAGE chunk=136 layer=6 in_flight=8 t=44421.414
+RING_OWN_BLOCK chunk=136 layers=6..11 ms=205.7
+RING_STAGE chunk=137 layer=6 in_flight=8 t=44632.183
+RING_OWN_BLOCK chunk=137 layers=6..11 ms=206.8
+RING_STAGE chunk=138 layer=6 in_flight=8 t=44843.911
+RING_OWN_BLOCK chunk=138 layers=6..11 ms=205.6
+RING_DONE chunk=131 in_flight=7 completed=132 handle_ms=0.0 t=45054.446
+RING_ISSUE chunk=139 first=17792 in_flight=8 issue_ms=47.6 t=45102.101
+RING_DONE chunk=132 in_flight=7 completed=133 handle_ms=0.0 t=45106.522
+RING_ISSUE chunk=140 first=17920 in_flight=8 issue_ms=47.7 t=45154.221
+RING_DONE chunk=133 in_flight=7 completed=134 handle_ms=0.0 t=45184.471
+RING_ISSUE chunk=141 first=18048 in_flight=8 issue_ms=47.7 t=45232.161
+RING_DONE chunk=134 in_flight=7 completed=135 handle_ms=0.0 t=45438.326
+RING_ISSUE chunk=142 first=18176 in_flight=8 issue_ms=48.0 t=45486.342
+RING_STAGE chunk=139 layer=6 in_flight=8 t=45497.474
+RING_OWN_BLOCK chunk=139 layers=6..11 ms=206.0
+RING_STAGE chunk=140 layer=6 in_flight=8 t=45708.400
+RING_OWN_BLOCK chunk=140 layers=6..11 ms=203.1
+RING_STAGE chunk=141 layer=6 in_flight=8 t=45916.489
+RING_OWN_BLOCK chunk=141 layers=6..11 ms=204.5
+RING_STAGE chunk=142 layer=6 in_flight=8 t=46125.954
+RING_OWN_BLOCK chunk=142 layers=6..11 ms=205.3
+RING_DONE chunk=135 in_flight=7 completed=136 handle_ms=0.0 t=46336.288
+RING_ISSUE chunk=143 first=18304 in_flight=8 issue_ms=47.5 t=46383.818
+RING_DONE chunk=136 in_flight=7 completed=137 handle_ms=0.0 t=46388.289
+RING_ISSUE chunk=144 first=18432 in_flight=8 issue_ms=47.7 t=46436.022
+RING_DONE chunk=137 in_flight=7 completed=138 handle_ms=0.0 t=46501.824
+RING_ISSUE chunk=145 first=18560 in_flight=8 issue_ms=48.1 t=46549.980
+RING_STAGE chunk=143 layer=6 in_flight=8 t=46722.892
+RING_OWN_BLOCK chunk=143 layers=6..11 ms=208.7
+RING_STAGE chunk=144 layer=6 in_flight=8 t=46957.367
+RING_OWN_BLOCK chunk=144 layers=6..11 ms=206.8
+RING_STAGE chunk=145 layer=6 in_flight=8 t=47174.935
+RING_OWN_BLOCK chunk=145 layers=6..11 ms=206.2
+RING_DONE chunk=138 in_flight=7 completed=139 handle_ms=0.0 t=47386.028
+RING_ISSUE chunk=146 first=18688 in_flight=8 issue_ms=47.6 t=47433.697
+RING_DONE chunk=139 in_flight=7 completed=140 handle_ms=0.0 t=47438.061
+RING_ISSUE chunk=147 first=18816 in_flight=8 issue_ms=47.9 t=47485.989
+RING_DONE chunk=140 in_flight=7 completed=141 handle_ms=0.0 t=47528.971
+RING_ISSUE chunk=148 first=18944 in_flight=8 issue_ms=48.1 t=47577.153
+RING_STAGE chunk=146 layer=6 in_flight=8 t=47758.935
+RING_OWN_BLOCK chunk=146 layers=6..11 ms=208.1
+RING_STAGE chunk=147 layer=6 in_flight=8 t=47990.093
+RING_OWN_BLOCK chunk=147 layers=6..11 ms=205.2
+RING_STAGE chunk=148 layer=6 in_flight=8 t=48206.306
+RING_OWN_BLOCK chunk=148 layers=6..11 ms=205.7
+RING_DONE chunk=141 in_flight=7 completed=142 handle_ms=0.0 t=48416.993
+RING_ISSUE chunk=149 first=19072 in_flight=8 issue_ms=47.7 t=48464.726
+RING_DONE chunk=142 in_flight=7 completed=143 handle_ms=0.0 t=48469.355
+RING_ISSUE chunk=150 first=19200 in_flight=8 issue_ms=47.8 t=48517.206
+RING_DONE chunk=143 in_flight=7 completed=144 handle_ms=0.0 t=48529.830
+RING_ISSUE chunk=151 first=19328 in_flight=8 issue_ms=47.6 t=48577.497
+RING_DONE chunk=144 in_flight=7 completed=145 handle_ms=0.0 t=48773.680
+RING_ISSUE chunk=152 first=19456 in_flight=8 issue_ms=48.2 t=48821.896
+RING_STAGE chunk=149 layer=6 in_flight=8 t=48836.242
+RING_OWN_BLOCK chunk=149 layers=6..11 ms=204.1
+RING_STAGE chunk=150 layer=6 in_flight=8 t=49045.083
+RING_OWN_BLOCK chunk=150 layers=6..11 ms=204.4
+RING_STAGE chunk=151 layer=6 in_flight=8 t=49254.458
+RING_OWN_BLOCK chunk=151 layers=6..11 ms=206.3
+RING_STAGE chunk=152 layer=6 in_flight=8 t=49465.623
+RING_OWN_BLOCK chunk=152 layers=6..11 ms=205.1
+RING_DONE chunk=145 in_flight=7 completed=146 handle_ms=0.0 t=49675.715
+RING_ISSUE chunk=153 first=19584 in_flight=8 issue_ms=47.6 t=49723.345
+RING_DONE chunk=146 in_flight=7 completed=147 handle_ms=0.0 t=49727.643
+RING_ISSUE chunk=154 first=19712 in_flight=8 issue_ms=47.6 t=49775.286
+RING_DONE chunk=147 in_flight=7 completed=148 handle_ms=0.0 t=49805.589
+RING_ISSUE chunk=155 first=19840 in_flight=8 issue_ms=47.8 t=49853.407
+RING_DONE chunk=148 in_flight=7 completed=149 handle_ms=0.0 t=50057.994
+RING_ISSUE chunk=156 first=19968 in_flight=8 issue_ms=48.0 t=50106.114
+RING_STAGE chunk=153 layer=6 in_flight=8 t=50119.070
+RING_OWN_BLOCK chunk=153 layers=6..11 ms=205.7
+RING_STAGE chunk=154 layer=6 in_flight=8 t=50329.729
+RING_OWN_BLOCK chunk=154 layers=6..11 ms=205.0
+RING_STAGE chunk=155 layer=6 in_flight=8 t=50539.609
+RING_OWN_BLOCK chunk=155 layers=6..11 ms=204.5
+RING_STAGE chunk=156 layer=6 in_flight=8 t=50748.994
+RING_OWN_BLOCK chunk=156 layers=6..11 ms=206.4
+RING_DONE chunk=149 in_flight=7 completed=150 handle_ms=0.0 t=50960.371
+RING_ISSUE chunk=157 first=20096 in_flight=8 issue_ms=47.4 t=51007.824
+RING_DONE chunk=150 in_flight=7 completed=151 handle_ms=0.0 t=51012.377
+RING_ISSUE chunk=158 first=20224 in_flight=8 issue_ms=47.6 t=51060.006
+RING_DONE chunk=151 in_flight=7 completed=152 handle_ms=0.0 t=51124.632
+RING_ISSUE chunk=159 first=20352 in_flight=8 issue_ms=48.2 t=51172.907
+RING_STAGE chunk=157 layer=6 in_flight=8 t=51344.309
+RING_OWN_BLOCK chunk=157 layers=6..11 ms=208.5
+RING_STAGE chunk=158 layer=6 in_flight=8 t=51580.301
+RING_OWN_BLOCK chunk=158 layers=6..11 ms=205.0
+RING_STAGE chunk=159 layer=6 in_flight=8 t=51795.947
+RING_OWN_BLOCK chunk=159 layers=6..11 ms=207.8
+RING_DONE chunk=152 in_flight=7 completed=153 handle_ms=0.0 t=52008.655
+RING_ISSUE chunk=160 first=20480 in_flight=8 issue_ms=47.7 t=52056.399
+RING_DONE chunk=153 in_flight=7 completed=154 handle_ms=0.0 t=52060.790
+RING_ISSUE chunk=161 first=20608 in_flight=8 issue_ms=47.8 t=52108.599
+RING_DONE chunk=154 in_flight=7 completed=155 handle_ms=0.0 t=52147.240
+RING_ISSUE chunk=162 first=20736 in_flight=8 issue_ms=47.9 t=52195.154
+RING_STAGE chunk=160 layer=6 in_flight=8 t=52382.178
+RING_OWN_BLOCK chunk=160 layers=6..11 ms=208.2
+RING_STAGE chunk=161 layer=6 in_flight=8 t=52613.774
+RING_OWN_BLOCK chunk=161 layers=6..11 ms=204.8
+RING_STAGE chunk=162 layer=6 in_flight=8 t=52829.596
+RING_OWN_BLOCK chunk=162 layers=6..11 ms=205.7
+RING_DONE chunk=155 in_flight=7 completed=156 handle_ms=0.0 t=53040.342
+RING_ISSUE chunk=163 first=20864 in_flight=8 issue_ms=47.7 t=53088.023
+RING_DONE chunk=156 in_flight=7 completed=157 handle_ms=0.0 t=53092.501
+RING_ISSUE chunk=164 first=20992 in_flight=8 issue_ms=47.7 t=53140.196
+RING_DONE chunk=157 in_flight=7 completed=158 handle_ms=0.0 t=53149.673
+RING_ISSUE chunk=165 first=21120 in_flight=8 issue_ms=47.7 t=53197.434
+RING_DONE chunk=158 in_flight=7 completed=159 handle_ms=0.0 t=53395.008
+RING_ISSUE chunk=166 first=21248 in_flight=8 issue_ms=47.9 t=53442.977
+RING_STAGE chunk=163 layer=6 in_flight=8 t=53458.648
+RING_OWN_BLOCK chunk=163 layers=6..11 ms=205.1
+RING_STAGE chunk=164 layer=6 in_flight=8 t=53668.549
+RING_OWN_BLOCK chunk=164 layers=6..11 ms=206.8
+RING_STAGE chunk=165 layer=6 in_flight=8 t=53880.331
+RING_OWN_BLOCK chunk=165 layers=6..11 ms=206.4
+RING_STAGE chunk=166 layer=6 in_flight=8 t=54091.674
+RING_OWN_BLOCK chunk=166 layers=6..11 ms=206.6
+RING_DONE chunk=159 in_flight=7 completed=160 handle_ms=0.0 t=54303.291
+RING_ISSUE chunk=167 first=21376 in_flight=8 issue_ms=47.6 t=54350.916
+RING_DONE chunk=160 in_flight=7 completed=161 handle_ms=0.0 t=54355.426
+RING_ISSUE chunk=168 first=21504 in_flight=8 issue_ms=47.8 t=54403.241
+RING_DONE chunk=161 in_flight=7 completed=162 handle_ms=0.0 t=54431.280
+RING_ISSUE chunk=169 first=21632 in_flight=8 issue_ms=47.7 t=54478.992
+RING_DONE chunk=162 in_flight=7 completed=163 handle_ms=0.0 t=54690.709
+RING_ISSUE chunk=170 first=21760 in_flight=8 issue_ms=48.2 t=54738.986
+RING_STAGE chunk=167 layer=6 in_flight=8 t=54747.924
+RING_OWN_BLOCK chunk=167 layers=6..11 ms=206.4
+RING_STAGE chunk=168 layer=6 in_flight=8 t=54959.366
+RING_OWN_BLOCK chunk=168 layers=6..11 ms=205.1
+RING_STAGE chunk=169 layer=6 in_flight=8 t=55169.431
+RING_OWN_BLOCK chunk=169 layers=6..11 ms=207.8
+RING_STAGE chunk=170 layer=6 in_flight=8 t=55382.240
+RING_OWN_BLOCK chunk=170 layers=6..11 ms=205.5
+RING_DONE chunk=163 in_flight=7 completed=164 handle_ms=0.0 t=55592.800
+RING_ISSUE chunk=171 first=21888 in_flight=8 issue_ms=47.6 t=55640.393
+RING_DONE chunk=164 in_flight=7 completed=165 handle_ms=0.0 t=55644.737
+RING_ISSUE chunk=172 first=22016 in_flight=8 issue_ms=47.8 t=55692.615
+RING_DONE chunk=165 in_flight=7 completed=166 handle_ms=0.0 t=55756.079
+RING_ISSUE chunk=173 first=22144 in_flight=8 issue_ms=48.3 t=55804.384
+RING_STAGE chunk=171 layer=6 in_flight=8 t=55985.573
+RING_OWN_BLOCK chunk=171 layers=6..11 ms=208.0
+RING_STAGE chunk=172 layer=6 in_flight=8 t=56213.136
+RING_OWN_BLOCK chunk=172 layers=6..11 ms=206.4
+RING_STAGE chunk=173 layer=6 in_flight=8 t=56428.552
+RING_OWN_BLOCK chunk=173 layers=6..11 ms=205.5
+RING_DONE chunk=166 in_flight=7 completed=167 handle_ms=0.0 t=56639.154
+RING_ISSUE chunk=174 first=22272 in_flight=8 issue_ms=47.8 t=56687.041
+RING_DONE chunk=167 in_flight=7 completed=168 handle_ms=0.0 t=56691.469
+RING_ISSUE chunk=175 first=22400 in_flight=8 issue_ms=47.8 t=56739.286
+RING_DONE chunk=168 in_flight=7 completed=169 handle_ms=0.0 t=56791.262
+RING_ISSUE chunk=176 first=22528 in_flight=8 issue_ms=48.2 t=56839.482
+RING_STAGE chunk=174 layer=6 in_flight=8 t=57008.152
+RING_OWN_BLOCK chunk=174 layers=6..11 ms=207.7
+RING_STAGE chunk=175 layer=6 in_flight=8 t=57250.423
+RING_OWN_BLOCK chunk=175 layers=6..11 ms=206.3
+RING_STAGE chunk=176 layer=6 in_flight=8 t=57467.934
+RING_OWN_BLOCK chunk=176 layers=6..11 ms=205.6
+RING_DONE chunk=169 in_flight=7 completed=170 handle_ms=0.0 t=57678.884
+RING_ISSUE chunk=177 first=22656 in_flight=8 issue_ms=49.0 t=57727.914
+RING_DONE chunk=170 in_flight=7 completed=171 handle_ms=0.0 t=57732.599
+RING_ISSUE chunk=178 first=22784 in_flight=8 issue_ms=49.1 t=57781.720
+RING_DONE chunk=171 in_flight=7 completed=172 handle_ms=0.0 t=57800.015
+RING_ISSUE chunk=179 first=22912 in_flight=8 issue_ms=48.7 t=57848.761
+RING_DONE chunk=172 in_flight=7 completed=173 handle_ms=0.0 t=58041.744
+RING_ISSUE chunk=180 first=23040 in_flight=8 issue_ms=48.9 t=58090.658
+RING_STAGE chunk=177 layer=6 in_flight=8 t=58100.719
+RING_OWN_BLOCK chunk=177 layers=6..11 ms=203.2
+RING_STAGE chunk=178 layer=6 in_flight=8 t=58309.088
+RING_OWN_BLOCK chunk=178 layers=6..11 ms=204.3
+RING_STAGE chunk=179 layer=6 in_flight=8 t=58518.862
+RING_OWN_BLOCK chunk=179 layers=6..11 ms=205.7
+RING_STAGE chunk=180 layer=6 in_flight=8 t=58729.939
+RING_OWN_BLOCK chunk=180 layers=6..11 ms=204.9
+RING_DONE chunk=173 in_flight=7 completed=174 handle_ms=0.0 t=58940.282
+RING_ISSUE chunk=181 first=23168 in_flight=8 issue_ms=49.3 t=58989.600
+RING_DONE chunk=174 in_flight=7 completed=175 handle_ms=0.0 t=58994.410
+RING_ISSUE chunk=182 first=23296 in_flight=8 issue_ms=49.5 t=59043.999
+RING_DONE chunk=175 in_flight=7 completed=176 handle_ms=0.0 t=59069.729
+RING_ISSUE chunk=183 first=23424 in_flight=8 issue_ms=49.2 t=59118.926
+RING_DONE chunk=176 in_flight=7 completed=177 handle_ms=0.0 t=59336.321
+RING_ISSUE chunk=184 first=23552 in_flight=8 issue_ms=48.6 t=59384.929
+RING_STAGE chunk=181 layer=6 in_flight=8 t=59390.954
+RING_OWN_BLOCK chunk=181 layers=6..11 ms=205.7
+RING_STAGE chunk=182 layer=6 in_flight=8 t=59602.112
+RING_OWN_BLOCK chunk=182 layers=6..11 ms=205.5
+RING_STAGE chunk=183 layer=6 in_flight=8 t=59812.675
+RING_OWN_BLOCK chunk=183 layers=6..11 ms=204.1
+RING_STAGE chunk=184 layer=6 in_flight=8 t=60021.803
+RING_OWN_BLOCK chunk=184 layers=6..11 ms=206.3
+RING_DONE chunk=177 in_flight=7 completed=178 handle_ms=0.0 t=60233.178
+RING_ISSUE chunk=185 first=23680 in_flight=8 issue_ms=47.6 t=60280.841
+RING_DONE chunk=178 in_flight=7 completed=179 handle_ms=0.0 t=60285.266
+RING_ISSUE chunk=186 first=23808 in_flight=8 issue_ms=48.1 t=60333.410
+RING_DONE chunk=179 in_flight=7 completed=180 handle_ms=0.0 t=60395.232
+RING_ISSUE chunk=187 first=23936 in_flight=8 issue_ms=48.3 t=60443.561
+RING_STAGE chunk=185 layer=6 in_flight=8 t=60623.454
+RING_OWN_BLOCK chunk=185 layers=6..11 ms=208.2
+RING_STAGE chunk=186 layer=6 in_flight=8 t=60853.168
+RING_OWN_BLOCK chunk=186 layers=6..11 ms=207.0
+RING_STAGE chunk=187 layer=6 in_flight=8 t=61069.467
+RING_OWN_BLOCK chunk=187 layers=6..11 ms=204.8
+RING_DONE chunk=180 in_flight=7 completed=181 handle_ms=0.0 t=61279.388
+RING_ISSUE chunk=188 first=24064 in_flight=8 issue_ms=47.9 t=61327.367
+RING_DONE chunk=181 in_flight=7 completed=182 handle_ms=0.0 t=61331.854
+RING_ISSUE chunk=189 first=24192 in_flight=8 issue_ms=47.8 t=61379.719
+RING_DONE chunk=182 in_flight=7 completed=183 handle_ms=0.0 t=61423.138
+RING_ISSUE chunk=190 first=24320 in_flight=8 issue_ms=48.1 t=61471.271
+RING_STAGE chunk=188 layer=6 in_flight=8 t=61661.899
+RING_OWN_BLOCK chunk=188 layers=6..11 ms=207.3
+RING_STAGE chunk=189 layer=6 in_flight=8 t=61888.237
+RING_OWN_BLOCK chunk=189 layers=6..11 ms=206.2
+RING_STAGE chunk=190 layer=6 in_flight=8 t=62102.028
+RING_OWN_BLOCK chunk=190 layers=6..11 ms=205.7
+RING_DONE chunk=183 in_flight=7 completed=184 handle_ms=0.0 t=62312.851
+RING_ISSUE chunk=191 first=24448 in_flight=8 issue_ms=47.7 t=62360.611
+RING_DONE chunk=184 in_flight=7 completed=185 handle_ms=0.0 t=62365.052
+RING_ISSUE chunk=192 first=24576 in_flight=8 issue_ms=47.8 t=62412.898
+RING_DONE chunk=185 in_flight=7 completed=186 handle_ms=0.0 t=62434.604
+RING_ISSUE chunk=193 first=24704 in_flight=8 issue_ms=47.7 t=62482.334
+RING_DONE chunk=186 in_flight=7 completed=187 handle_ms=0.0 t=62673.854
+RING_ISSUE chunk=194 first=24832 in_flight=8 issue_ms=48.2 t=62722.108
+RING_STAGE chunk=191 layer=6 in_flight=8 t=62738.623
+RING_OWN_BLOCK chunk=191 layers=6..11 ms=206.1
+RING_STAGE chunk=192 layer=6 in_flight=8 t=62949.465
+RING_OWN_BLOCK chunk=192 layers=6..11 ms=205.8
+RING_STAGE chunk=193 layer=6 in_flight=8 t=63160.376
+RING_OWN_BLOCK chunk=193 layers=6..11 ms=206.5
+RING_STAGE chunk=194 layer=6 in_flight=8 t=63371.933
+RING_OWN_BLOCK chunk=194 layers=6..11 ms=205.3
+RING_DONE chunk=187 in_flight=7 completed=188 handle_ms=0.0 t=63582.341
+RING_ISSUE chunk=195 first=24960 in_flight=8 issue_ms=47.9 t=63630.247
+RING_DONE chunk=188 in_flight=7 completed=189 handle_ms=0.0 t=63634.741
+RING_ISSUE chunk=196 first=25088 in_flight=8 issue_ms=47.7 t=63682.451
+RING_DONE chunk=189 in_flight=7 completed=190 handle_ms=0.0 t=63706.990
+RING_ISSUE chunk=197 first=25216 in_flight=8 issue_ms=47.5 t=63754.548
+RING_DONE chunk=190 in_flight=7 completed=191 handle_ms=0.0 t=63975.303
+RING_ISSUE chunk=198 first=25344 in_flight=8 issue_ms=48.6 t=64023.944
+RING_STAGE chunk=195 layer=6 in_flight=8 t=64030.722
+RING_OWN_BLOCK chunk=195 layers=6..11 ms=206.5
+RING_STAGE chunk=196 layer=6 in_flight=8 t=64242.267
+RING_OWN_BLOCK chunk=196 layers=6..11 ms=204.8
+RING_STAGE chunk=197 layer=6 in_flight=8 t=64452.138
+RING_OWN_BLOCK chunk=197 layers=6..11 ms=204.1
+RING_STAGE chunk=198 layer=6 in_flight=8 t=64661.310
+RING_OWN_BLOCK chunk=198 layers=6..11 ms=207.2
+RING_DONE chunk=191 in_flight=7 completed=192 handle_ms=0.0 t=64873.657
+RING_ISSUE chunk=199 first=25472 in_flight=8 issue_ms=48.0 t=64921.723
+RING_DONE chunk=192 in_flight=7 completed=193 handle_ms=0.0 t=64926.105
+RING_ISSUE chunk=200 first=25600 in_flight=8 issue_ms=47.6 t=64973.776
+RING_DONE chunk=193 in_flight=7 completed=194 handle_ms=0.0 t=65039.816
+RING_ISSUE chunk=201 first=25728 in_flight=8 issue_ms=48.1 t=65087.996
+RING_STAGE chunk=199 layer=6 in_flight=8 t=65257.743
+RING_OWN_BLOCK chunk=199 layers=6..11 ms=209.1
+RING_STAGE chunk=200 layer=6 in_flight=8 t=65494.882
+RING_OWN_BLOCK chunk=200 layers=6..11 ms=207.5
+RING_STAGE chunk=201 layer=6 in_flight=8 t=65712.231
+RING_OWN_BLOCK chunk=201 layers=6..11 ms=206.5
+RING_DONE chunk=194 in_flight=7 completed=195 handle_ms=0.0 t=65923.848
+RING_ISSUE chunk=202 first=25856 in_flight=8 issue_ms=47.7 t=65971.589
+RING_DONE chunk=195 in_flight=7 completed=196 handle_ms=0.0 t=65976.076
+RING_ISSUE chunk=203 first=25984 in_flight=8 issue_ms=48.0 t=66024.063
+RING_DONE chunk=196 in_flight=7 completed=197 handle_ms=0.0 t=66071.848
+RING_ISSUE chunk=204 first=26112 in_flight=8 issue_ms=48.2 t=66120.070
+RING_STAGE chunk=202 layer=6 in_flight=8 t=66291.974
+RING_OWN_BLOCK chunk=202 layers=6..11 ms=208.9
+RING_STAGE chunk=203 layer=6 in_flight=8 t=66528.438
+RING_OWN_BLOCK chunk=203 layers=6..11 ms=205.9
+RING_STAGE chunk=204 layer=6 in_flight=8 t=66743.431
+RING_OWN_BLOCK chunk=204 layers=6..11 ms=205.6
+RING_DONE chunk=197 in_flight=7 completed=198 handle_ms=0.0 t=66954.031
+RING_ISSUE chunk=205 first=26240 in_flight=8 issue_ms=47.6 t=67001.690
+RING_DONE chunk=198 in_flight=7 completed=199 handle_ms=0.0 t=67006.282
+RING_ISSUE chunk=206 first=26368 in_flight=8 issue_ms=47.5 t=67053.862
+RING_DONE chunk=199 in_flight=7 completed=200 handle_ms=0.0 t=67061.099
+RING_ISSUE chunk=207 first=26496 in_flight=8 issue_ms=47.5 t=67108.682
+RING_DONE chunk=200 in_flight=7 completed=201 handle_ms=0.0 t=67314.450
+RING_ISSUE chunk=208 first=26624 in_flight=8 issue_ms=48.1 t=67362.581
+RING_STAGE chunk=205 layer=6 in_flight=8 t=67377.225
+RING_OWN_BLOCK chunk=205 layers=6..11 ms=203.5
+RING_STAGE chunk=206 layer=6 in_flight=8 t=67585.417
+RING_OWN_BLOCK chunk=206 layers=6..11 ms=204.9
+RING_STAGE chunk=207 layer=6 in_flight=8 t=67795.301
+RING_OWN_BLOCK chunk=207 layers=6..11 ms=207.7
+RING_STAGE chunk=208 layer=6 in_flight=8 t=68007.961
+RING_OWN_BLOCK chunk=208 layers=6..11 ms=206.2
+RING_DONE chunk=201 in_flight=7 completed=202 handle_ms=0.0 t=68219.229
+RING_ISSUE chunk=209 first=26752 in_flight=8 issue_ms=47.8 t=68267.089
+RING_DONE chunk=202 in_flight=7 completed=203 handle_ms=0.0 t=68271.546
+RING_ISSUE chunk=210 first=26880 in_flight=8 issue_ms=47.8 t=68319.426
+RING_DONE chunk=203 in_flight=7 completed=204 handle_ms=0.0 t=68347.385
+RING_ISSUE chunk=211 first=27008 in_flight=8 issue_ms=47.9 t=68395.292
+RING_DONE chunk=204 in_flight=7 completed=205 handle_ms=0.0 t=68608.121
+RING_ISSUE chunk=212 first=27136 in_flight=8 issue_ms=48.2 t=68656.380
+RING_STAGE chunk=209 layer=6 in_flight=8 t=68661.983
+RING_OWN_BLOCK chunk=209 layers=6..11 ms=205.3
+RING_STAGE chunk=210 layer=6 in_flight=8 t=68872.377
+RING_OWN_BLOCK chunk=210 layers=6..11 ms=205.7
+RING_STAGE chunk=211 layer=6 in_flight=8 t=69082.970
+RING_OWN_BLOCK chunk=211 layers=6..11 ms=206.5
+RING_STAGE chunk=212 layer=6 in_flight=8 t=69294.449
+RING_OWN_BLOCK chunk=212 layers=6..11 ms=207.2
+RING_DONE chunk=205 in_flight=7 completed=206 handle_ms=0.0 t=69506.573
+RING_ISSUE chunk=213 first=27264 in_flight=8 issue_ms=47.5 t=69554.138
+RING_DONE chunk=206 in_flight=7 completed=207 handle_ms=0.0 t=69558.519
+RING_ISSUE chunk=214 first=27392 in_flight=8 issue_ms=47.6 t=69606.121
+RING_DONE chunk=207 in_flight=7 completed=208 handle_ms=0.0 t=69674.587
+RING_ISSUE chunk=215 first=27520 in_flight=8 issue_ms=48.1 t=69722.746
+RING_STAGE chunk=213 layer=6 in_flight=8 t=69897.445
+RING_OWN_BLOCK chunk=213 layers=6..11 ms=208.6
+RING_STAGE chunk=214 layer=6 in_flight=8 t=70129.383
+RING_OWN_BLOCK chunk=214 layers=6..11 ms=206.6
+RING_STAGE chunk=215 layer=6 in_flight=8 t=70344.917
+RING_OWN_BLOCK chunk=215 layers=6..11 ms=207.2
+RING_DONE chunk=208 in_flight=7 completed=209 handle_ms=0.0 t=70557.069
+RING_ISSUE chunk=216 first=27648 in_flight=8 issue_ms=47.8 t=70604.911
+RING_DONE chunk=209 in_flight=7 completed=210 handle_ms=0.0 t=70609.268
+RING_ISSUE chunk=217 first=27776 in_flight=8 issue_ms=47.5 t=70656.844
+RING_DONE chunk=210 in_flight=7 completed=211 handle_ms=0.0 t=70704.026
+RING_ISSUE chunk=218 first=27904 in_flight=8 issue_ms=48.1 t=70752.201
+RING_STAGE chunk=216 layer=6 in_flight=8 t=70925.884
+RING_OWN_BLOCK chunk=216 layers=6..11 ms=208.9
+RING_STAGE chunk=217 layer=6 in_flight=8 t=71161.271
+RING_OWN_BLOCK chunk=217 layers=6..11 ms=205.1
+RING_STAGE chunk=218 layer=6 in_flight=8 t=71375.512
+RING_OWN_BLOCK chunk=218 layers=6..11 ms=206.2
+RING_DONE chunk=211 in_flight=7 completed=212 handle_ms=0.0 t=71586.686
+RING_ISSUE chunk=219 first=28032 in_flight=8 issue_ms=47.7 t=71634.445
+RING_DONE chunk=212 in_flight=7 completed=213 handle_ms=0.0 t=71638.771
+RING_ISSUE chunk=220 first=28160 in_flight=8 issue_ms=47.5 t=71686.263
+RING_DONE chunk=213 in_flight=7 completed=214 handle_ms=0.0 t=71711.237
+RING_ISSUE chunk=221 first=28288 in_flight=8 issue_ms=47.6 t=71758.835
+RING_DONE chunk=214 in_flight=7 completed=215 handle_ms=0.0 t=71955.899
+RING_ISSUE chunk=222 first=28416 in_flight=8 issue_ms=48.1 t=72004.062
+RING_STAGE chunk=219 layer=6 in_flight=8 t=72008.434
+RING_OWN_BLOCK chunk=219 layers=6..11 ms=205.2
+RING_STAGE chunk=220 layer=6 in_flight=8 t=72218.569
+RING_OWN_BLOCK chunk=220 layers=6..11 ms=206.5
+RING_STAGE chunk=221 layer=6 in_flight=8 t=72429.942
+RING_OWN_BLOCK chunk=221 layers=6..11 ms=207.2
+RING_STAGE chunk=222 layer=6 in_flight=8 t=72642.035
+RING_OWN_BLOCK chunk=222 layers=6..11 ms=206.2
+RING_DONE chunk=215 in_flight=7 completed=216 handle_ms=0.0 t=72853.125
+RING_ISSUE chunk=223 first=28544 in_flight=8 issue_ms=47.8 t=72900.967
+RING_DONE chunk=216 in_flight=7 completed=217 handle_ms=0.0 t=72905.307
+RING_ISSUE chunk=224 first=28672 in_flight=8 issue_ms=47.9 t=72953.194
+RING_DONE chunk=217 in_flight=7 completed=218 handle_ms=0.0 t=72976.426
+RING_ISSUE chunk=225 first=28800 in_flight=8 issue_ms=47.9 t=73024.413
+RING_DONE chunk=218 in_flight=7 completed=219 handle_ms=0.0 t=73236.909
+RING_ISSUE chunk=226 first=28928 in_flight=8 issue_ms=48.0 t=73284.996
+RING_STAGE chunk=223 layer=6 in_flight=8 t=73297.004
+RING_OWN_BLOCK chunk=223 layers=6..11 ms=209.5
+RING_STAGE chunk=224 layer=6 in_flight=8 t=73511.441
+RING_OWN_BLOCK chunk=224 layers=6..11 ms=207.1
+RING_STAGE chunk=225 layer=6 in_flight=8 t=73723.574
+RING_OWN_BLOCK chunk=225 layers=6..11 ms=206.3
+RING_STAGE chunk=226 layer=6 in_flight=8 t=73935.367
+RING_OWN_BLOCK chunk=226 layers=6..11 ms=205.4
+RING_DONE chunk=219 in_flight=7 completed=220 handle_ms=0.0 t=74146.206
+RING_ISSUE chunk=227 first=29056 in_flight=8 issue_ms=48.9 t=74195.147
+RING_DONE chunk=220 in_flight=7 completed=221 handle_ms=0.0 t=74200.062
+RING_ISSUE chunk=228 first=29184 in_flight=8 issue_ms=49.8 t=74249.948
+RING_DONE chunk=221 in_flight=7 completed=222 handle_ms=0.0 t=74302.484
+RING_ISSUE chunk=229 first=29312 in_flight=8 issue_ms=49.3 t=74351.789
+RING_STAGE chunk=227 layer=6 in_flight=8 t=74545.203
+RING_OWN_BLOCK chunk=227 layers=6..11 ms=208.1
+RING_STAGE chunk=228 layer=6 in_flight=8 t=74771.236
+RING_OWN_BLOCK chunk=228 layers=6..11 ms=207.4
+RING_STAGE chunk=229 layer=6 in_flight=8 t=74986.331
+RING_OWN_BLOCK chunk=229 layers=6..11 ms=205.8
+RING_DONE chunk=222 in_flight=7 completed=223 handle_ms=0.0 t=75197.509
+RING_ISSUE chunk=230 first=29440 in_flight=8 issue_ms=49.3 t=75246.861
+RING_DONE chunk=223 in_flight=7 completed=224 handle_ms=0.0 t=75251.704
+RING_ISSUE chunk=231 first=29568 in_flight=8 issue_ms=49.8 t=75301.583
+RING_DONE chunk=224 in_flight=7 completed=225 handle_ms=0.0 t=75349.859
+RING_ISSUE chunk=232 first=29696 in_flight=8 issue_ms=49.7 t=75399.581
+RING_STAGE chunk=230 layer=6 in_flight=8 t=75570.604
+RING_OWN_BLOCK chunk=230 layers=6..11 ms=209.2
+RING_STAGE chunk=231 layer=6 in_flight=8 t=75808.600
+RING_OWN_BLOCK chunk=231 layers=6..11 ms=203.6
+RING_STAGE chunk=232 layer=6 in_flight=8 t=76021.850
+RING_OWN_BLOCK chunk=232 layers=6..11 ms=205.7
+RING_DONE chunk=225 in_flight=7 completed=226 handle_ms=0.0 t=76232.895
+RING_ISSUE chunk=233 first=29824 in_flight=8 issue_ms=49.1 t=76282.048
+RING_DONE chunk=226 in_flight=7 completed=227 handle_ms=0.0 t=76286.840
+RING_ISSUE chunk=234 first=29952 in_flight=8 issue_ms=49.3 t=76336.224
+RING_DONE chunk=227 in_flight=7 completed=228 handle_ms=0.0 t=76358.050
+RING_ISSUE chunk=235 first=30080 in_flight=8 issue_ms=48.9 t=76407.028
+RING_DONE chunk=228 in_flight=7 completed=229 handle_ms=0.0 t=76612.222
+RING_ISSUE chunk=236 first=30208 in_flight=8 issue_ms=48.5 t=76660.759
+RING_STAGE chunk=233 layer=6 in_flight=8 t=76665.797
+RING_OWN_BLOCK chunk=233 layers=6..11 ms=199.5
+RING_STAGE chunk=234 layer=6 in_flight=8 t=76870.132
+RING_OWN_BLOCK chunk=234 layers=6..11 ms=207.3
+RING_STAGE chunk=235 layer=6 in_flight=8 t=77082.874
+RING_OWN_BLOCK chunk=235 layers=6..11 ms=207.1
+RING_STAGE chunk=236 layer=6 in_flight=8 t=77295.523
+RING_OWN_BLOCK chunk=236 layers=6..11 ms=204.1
+RING_DONE chunk=229 in_flight=7 completed=230 handle_ms=0.0 t=77505.116
+RING_ISSUE chunk=237 first=30336 in_flight=8 issue_ms=49.5 t=77554.613
+RING_DONE chunk=230 in_flight=7 completed=231 handle_ms=0.0 t=77559.392
+RING_ISSUE chunk=238 first=30464 in_flight=8 issue_ms=49.3 t=77608.752
+RING_DONE chunk=231 in_flight=7 completed=232 handle_ms=0.0 t=77629.140
+RING_ISSUE chunk=239 first=30592 in_flight=8 issue_ms=49.1 t=77678.293
+RING_DONE chunk=232 in_flight=7 completed=233 handle_ms=0.0 t=77881.983
+RING_ISSUE chunk=240 first=30720 in_flight=8 issue_ms=48.7 t=77930.774
+RING_STAGE chunk=237 layer=6 in_flight=8 t=77946.974
+RING_OWN_BLOCK chunk=237 layers=6..11 ms=206.3
+RING_STAGE chunk=238 layer=6 in_flight=8 t=78158.720
+RING_OWN_BLOCK chunk=238 layers=6..11 ms=206.3
+RING_STAGE chunk=239 layer=6 in_flight=8 t=78370.424
+RING_OWN_BLOCK chunk=239 layers=6..11 ms=208.5
+RING_STAGE chunk=240 layer=6 in_flight=8 t=78584.340
+RING_OWN_BLOCK chunk=240 layers=6..11 ms=206.2
+RING_DONE chunk=233 in_flight=7 completed=234 handle_ms=0.0 t=78795.866
+RING_ISSUE chunk=241 first=30848 in_flight=8 issue_ms=49.4 t=78845.318
+RING_DONE chunk=234 in_flight=7 completed=235 handle_ms=0.0 t=78850.129
+RING_ISSUE chunk=242 first=30976 in_flight=8 issue_ms=49.6 t=78899.747
+RING_DONE chunk=235 in_flight=7 completed=236 handle_ms=0.0 t=78961.556
+RING_ISSUE chunk=243 first=31104 in_flight=8 issue_ms=49.7 t=79011.261
+RING_STAGE chunk=241 layer=6 in_flight=8 t=79177.849
+RING_OWN_BLOCK chunk=241 layers=6..11 ms=209.2
+RING_STAGE chunk=242 layer=6 in_flight=8 t=79416.680
+RING_OWN_BLOCK chunk=242 layers=6..11 ms=208.2
+RING_STAGE chunk=243 layer=6 in_flight=8 t=79631.085
+RING_OWN_BLOCK chunk=243 layers=6..11 ms=205.8
+RING_DONE chunk=236 in_flight=7 completed=237 handle_ms=0.0 t=79842.214
+RING_ISSUE chunk=244 first=31232 in_flight=8 issue_ms=49.4 t=79891.690
+RING_DONE chunk=237 in_flight=7 completed=238 handle_ms=0.0 t=79896.470
+RING_ISSUE chunk=245 first=31360 in_flight=8 issue_ms=49.3 t=79945.824
+RING_DONE chunk=238 in_flight=7 completed=239 handle_ms=0.0 t=79987.589
+RING_ISSUE chunk=246 first=31488 in_flight=8 issue_ms=49.1 t=80036.740
+RING_STAGE chunk=244 layer=6 in_flight=8 t=80221.614
+RING_OWN_BLOCK chunk=244 layers=6..11 ms=210.2
+RING_STAGE chunk=245 layer=6 in_flight=8 t=80453.634
+RING_OWN_BLOCK chunk=245 layers=6..11 ms=203.8
+RING_STAGE chunk=246 layer=6 in_flight=8 t=80664.337
+RING_OWN_BLOCK chunk=246 layers=6..11 ms=206.0
+RING_DONE chunk=239 in_flight=7 completed=240 handle_ms=0.0 t=80875.822
+RING_ISSUE chunk=247 first=31616 in_flight=8 issue_ms=48.8 t=80924.710
+RING_DONE chunk=240 in_flight=7 completed=241 handle_ms=0.0 t=80929.342
+RING_ISSUE chunk=248 first=31744 in_flight=8 issue_ms=49.4 t=80978.749
+RING_DONE chunk=241 in_flight=7 completed=242 handle_ms=0.0 t=80983.574
+RING_ISSUE chunk=249 first=31872 in_flight=8 issue_ms=49.1 t=81032.682
+RING_DONE chunk=242 in_flight=7 completed=243 handle_ms=0.0 t=81235.583
+RING_ISSUE chunk=250 first=32000 in_flight=8 issue_ms=48.7 t=81284.380
+RING_STAGE chunk=247 layer=6 in_flight=8 t=81297.892
+RING_OWN_BLOCK chunk=247 layers=6..11 ms=201.6
+RING_STAGE chunk=248 layer=6 in_flight=8 t=81504.326
+RING_OWN_BLOCK chunk=248 layers=6..11 ms=206.5
+RING_STAGE chunk=249 layer=6 in_flight=8 t=81716.260
+RING_OWN_BLOCK chunk=249 layers=6..11 ms=205.9
+RING_STAGE chunk=250 layer=6 in_flight=8 t=81927.507
+RING_OWN_BLOCK chunk=250 layers=6..11 ms=209.1
+RING_DONE chunk=243 in_flight=7 completed=244 handle_ms=0.0 t=82142.126
+RING_ISSUE chunk=251 first=32128 in_flight=8 issue_ms=49.3 t=82191.507
+RING_DONE chunk=244 in_flight=7 completed=245 handle_ms=0.0 t=82196.318
+RING_ISSUE chunk=252 first=32256 in_flight=8 issue_ms=49.1 t=82245.474
+RING_DONE chunk=245 in_flight=7 completed=246 handle_ms=0.0 t=82271.242
+RING_ISSUE chunk=253 first=32384 in_flight=8 issue_ms=49.0 t=82320.274
+RING_STAGE chunk=251 layer=6 in_flight=8 t=82557.957
+RING_OWN_BLOCK chunk=251 layers=6..11 ms=210.0
+RING_STAGE chunk=252 layer=6 in_flight=8 t=82784.027
+RING_OWN_BLOCK chunk=252 layers=6..11 ms=210.9
+RING_STAGE chunk=253 layer=6 in_flight=8 t=82999.698
+RING_OWN_BLOCK chunk=253 layers=6..11 ms=207.0
+RING_DONE chunk=246 in_flight=7 completed=247 handle_ms=0.0 t=83212.228
+RING_ISSUE chunk=254 first=32512 in_flight=8 issue_ms=49.2 t=83261.486
+RING_DONE chunk=247 in_flight=7 completed=248 handle_ms=0.0 t=83266.283
+RING_ISSUE chunk=255 first=32640 in_flight=8 issue_ms=49.6 t=83315.885
+RING_DONE chunk=248 in_flight=7 completed=249 handle_ms=0.0 t=83338.751
+RING_ISSUE chunk=256 first=32768 in_flight=8 issue_ms=44.4 t=83383.251
+RING_STAGE chunk=254 layer=6 in_flight=8 t=83616.832
+RING_OWN_BLOCK chunk=254 layers=6..11 ms=207.5
+RING_STAGE chunk=255 layer=6 in_flight=8 t=83849.495
+RING_OWN_BLOCK chunk=255 layers=6..11 ms=210.2
+RING_STAGE chunk=256 layer=6 in_flight=8 t=84061.181
+RING_OWN_BLOCK chunk=256 layers=6..11 ms=65.7
+RING_DONE chunk=249 in_flight=7 completed=250 handle_ms=0.0 t=84135.250
+RING_DONE chunk=250 in_flight=6 completed=251 handle_ms=0.0 t=84140.194
+RING_DONE chunk=251 in_flight=5 completed=252 handle_ms=0.0 t=84347.464
+RING_DONE chunk=252 in_flight=4 completed=253 handle_ms=0.0 t=84607.009
+RING_DONE chunk=253 in_flight=3 completed=254 handle_ms=0.0 t=84865.075
+RING_DONE chunk=254 in_flight=2 completed=255 handle_ms=0.0 t=85407.340
+RING_DONE chunk=255 in_flight=1 completed=256 handle_ms=0.0 t=85666.000
+RING_DONE chunk=256 in_flight=0 completed=257 handle_ms=0.1 t=85701.558
+request chatcmpl-fg-1792137550-4: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 32797/32797 tokens 382.66 tok/s, generation 1 tokens 15.87 tok/s, context 32798/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+RING_ISSUE chunk=0 first=32798 in_flight=1 issue_ms=28.3 t=28.324
+RING_STAGE chunk=0 layer=6 in_flight=1 t=134.251
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=76.7
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.1 t=730.593
+request chatcmpl-fg-1792137635-5: mode expert-parallel, prefix hit, reused 32798, reset none, prefill 31/32829 tokens 42.21 tok/s, generation 128 tokens 25.71 tok/s, context 32957/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=5->2
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=115.3 t=115.270
+RING_STAGE chunk=0 layer=6 in_flight=1 t=386.690
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=169.8
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.4 t=1823.790
+request chatcmpl-fg-1792137641-6: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 100/100 tokens 54.68 tok/s, generation 128 tokens 29.12 tok/s, context 228/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=3->2
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=137.0 t=137.010
+RING_STAGE chunk=0 layer=6 in_flight=1 t=419.082
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=182.0
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.2 t=1900.107
+request chatcmpl-fg-1792137648-7: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 97/97 tokens 50.92 tok/s, generation 1 tokens 16.17 tok/s, context 98/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=3->2
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=158.7 t=158.716
+RING_STAGE chunk=0 layer=6 in_flight=1 t=466.194
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=201.5
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.4 t=2174.029
+request chatcmpl-fg-1792137650-8: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 109/109 tokens 50.03 tok/s, generation 2 tokens 19.27 tok/s, context 111/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=3->2
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=131.2 t=131.223
+RING_STAGE chunk=0 layer=6 in_flight=1 t=482.819
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=222.4
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.5 t=2365.528
+request chatcmpl-fg-1792137652-9: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 122/122 tokens 51.47 tok/s, generation 2 tokens 19.21 tok/s, context 124/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH message[1].content@6 stored="5339c50368c2aac91d68e505f59e5845.  hello hello h" echoed="86cd50e02732e58cb3ab5967d4fdb011.  hello hello h"
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=128.4 t=128.423
+RING_ISSUE chunk=1 first=128 in_flight=2 issue_ms=11.3 t=139.795
+RING_STAGE chunk=0 layer=6 in_flight=2 t=485.474
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=233.4
+RING_STAGE chunk=1 layer=6 in_flight=2 t=719.571
+RING_OWN_BLOCK chunk=1 layers=6..11 ms=82.7
+RING_DONE chunk=0 in_flight=1 completed=1 handle_ms=0.0 t=2429.524
+RING_DONE chunk=1 in_flight=0 completed=2 handle_ms=0.2 t=2439.152
+request chatcmpl-fg-1792137655-10: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 142/142 tokens 58.10 tok/s, generation 256 tokens 25.00 tok/s, context 398/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=5->4
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=150.2 t=150.197
+RING_ISSUE chunk=1 first=128 in_flight=2 issue_ms=25.9 t=176.124
+RING_STAGE chunk=0 layer=6 in_flight=2 t=510.522
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=225.0
+RING_STAGE chunk=1 layer=6 in_flight=2 t=736.857
+RING_OWN_BLOCK chunk=1 layers=6..11 ms=73.3
+RING_DONE chunk=0 in_flight=1 completed=1 handle_ms=0.0 t=2450.311
+RING_DONE chunk=1 in_flight=0 completed=2 handle_ms=0.3 t=2490.303
+request chatcmpl-fg-1792137668-11: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 155/155 tokens 62.10 tok/s, generation 256 tokens 24.95 tok/s, context 411/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=5->2
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=161.1 t=161.106
+RING_STAGE chunk=0 layer=6 in_flight=1 t=480.298
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=194.5
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.3 t=2210.171
+request chatcmpl-fg-1792137681-12: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 109/109 tokens 49.21 tok/s, generation 2 tokens 19.11 tok/s, context 111/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=3->2
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=131.9 t=131.949
+RING_STAGE chunk=0 layer=6 in_flight=1 t=484.013
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=220.4
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.3 t=2370.346
+request chatcmpl-fg-1792137683-13: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 122/122 tokens 51.36 tok/s, generation 2 tokens 19.21 tok/s, context 124/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+RING_ISSUE chunk=0 first=124 in_flight=1 issue_ms=33.6 t=33.575
+RING_STAGE chunk=0 layer=6 in_flight=1 t=179.487
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=101.8
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.1 t=979.742
+request chatcmpl-fg-1792137685-14: mode expert-parallel, prefix hit, reused 124, reset none, prefill 35/159 tokens 35.58 tok/s, generation 256 tokens 24.89 tok/s, context 415/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=5->4
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=134.0 t=134.003
+RING_ISSUE chunk=1 first=128 in_flight=2 issue_ms=10.5 t=144.549
+RING_STAGE chunk=0 layer=6 in_flight=2 t=500.517
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=228.1
+RING_STAGE chunk=1 layer=6 in_flight=2 t=729.422
+RING_OWN_BLOCK chunk=1 layers=6..11 ms=50.6
+RING_DONE chunk=0 in_flight=1 completed=1 handle_ms=0.0 t=2444.107
+RING_DONE chunk=1 in_flight=0 completed=2 handle_ms=0.0 t=2453.535
+request chatcmpl-fg-1792137697-15: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 142/142 tokens 57.76 tok/s, generation 256 tokens 24.83 tok/s, context 398/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=5->2
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=133.9 t=133.931
+RING_STAGE chunk=0 layer=6 in_flight=1 t=410.518
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=179.1
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.2 t=1888.561
+request chatcmpl-fg-1792137711-16: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 91/91 tokens 48.06 tok/s, generation 1 tokens 15.75 tok/s, context 92/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=3->2
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=122.5 t=122.527
+RING_STAGE chunk=0 layer=6 in_flight=1 t=434.211
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=198.2
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.3 t=2128.531
+request chatcmpl-fg-1792137713-17: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 105/105 tokens 49.22 tok/s, generation 1 tokens 15.23 tok/s, context 106/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+RING_ISSUE chunk=0 first=106 in_flight=1 issue_ms=33.4 t=33.426
+RING_STAGE chunk=0 layer=6 in_flight=1 t=179.209
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=101.7
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.1 t=982.800
+request chatcmpl-fg-1792137715-18: mode expert-parallel, prefix hit, reused 106, reset none, prefill 35/141 tokens 35.47 tok/s, generation 256 tokens 23.86 tok/s, context 397/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=5->2
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=163.4 t=163.398
+RING_STAGE chunk=0 layer=6 in_flight=1 t=466.382
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=204.5
+RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=0.3 t=2179.037
+request chatcmpl-fg-1792137727-19: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 105/105 tokens 48.08 tok/s, generation 1 tokens 15.42 tok/s, context 106/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=3->2
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=151.3 t=151.342
+RING_ISSUE chunk=1 first=128 in_flight=2 issue_ms=47.5 t=198.898
+RING_ISSUE chunk=2 first=256 in_flight=3 issue_ms=47.4 t=246.290
+RING_ISSUE chunk=3 first=384 in_flight=4 issue_ms=47.6 t=293.903
+RING_ISSUE chunk=4 first=512 in_flight=5 issue_ms=47.5 t=341.395
+RING_ISSUE chunk=5 first=640 in_flight=6 issue_ms=47.4 t=388.790
+RING_ISSUE chunk=6 first=768 in_flight=7 issue_ms=47.4 t=436.226
+RING_ISSUE chunk=7 first=896 in_flight=8 issue_ms=47.5 t=483.801
+RING_STAGE chunk=0 layer=6 in_flight=8 t=518.177
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=216.5
+RING_STAGE chunk=1 layer=6 in_flight=8 t=739.194
+RING_OWN_BLOCK chunk=1 layers=6..11 ms=201.7
+RING_STAGE chunk=2 layer=6 in_flight=8 t=945.464
+RING_OWN_BLOCK chunk=2 layers=6..11 ms=208.2
+RING_STAGE chunk=3 layer=6 in_flight=8 t=1160.062
+RING_OWN_BLOCK chunk=3 layers=6..11 ms=209.3
+RING_STAGE chunk=4 layer=6 in_flight=8 t=1374.248
+RING_OWN_BLOCK chunk=4 layers=6..11 ms=199.5
+RING_STAGE chunk=5 layer=6 in_flight=8 t=1578.425
+RING_OWN_BLOCK chunk=5 layers=6..11 ms=199.8
+RING_STAGE chunk=6 layer=6 in_flight=8 t=1785.847
+RING_OWN_BLOCK chunk=6 layers=6..11 ms=201.8
+RING_STAGE chunk=7 layer=6 in_flight=8 t=1998.581
+RING_OWN_BLOCK chunk=7 layers=6..11 ms=203.2
+RING_DONE chunk=0 in_flight=7 completed=1 handle_ms=0.0 t=2437.691
+RING_ISSUE chunk=8 first=1024 in_flight=8 issue_ms=48.1 t=2485.809
+RING_DONE chunk=1 in_flight=7 completed=2 handle_ms=0.0 t=2692.337
+RING_ISSUE chunk=9 first=1152 in_flight=8 issue_ms=48.0 t=2740.371
+RING_STAGE chunk=8 layer=6 in_flight=8 t=2798.363
+RING_OWN_BLOCK chunk=8 layers=6..11 ms=198.9
+RING_DONE chunk=2 in_flight=7 completed=3 handle_ms=0.0 t=3002.054
+RING_ISSUE chunk=10 first=1280 in_flight=8 issue_ms=47.5 t=3049.591
+RING_STAGE chunk=9 layer=6 in_flight=8 t=3082.680
+RING_OWN_BLOCK chunk=9 layers=6..11 ms=199.4
+RING_DONE chunk=3 in_flight=7 completed=4 handle_ms=0.0 t=3287.144
+RING_ISSUE chunk=11 first=1408 in_flight=8 issue_ms=47.6 t=3334.785
+RING_STAGE chunk=10 layer=6 in_flight=8 t=3369.925
+RING_OWN_BLOCK chunk=10 layers=6..11 ms=199.1
+RING_DONE chunk=4 in_flight=7 completed=5 handle_ms=0.0 t=3574.070
+RING_ISSUE chunk=12 first=1536 in_flight=8 issue_ms=47.7 t=3621.806
+RING_STAGE chunk=11 layer=6 in_flight=8 t=3691.602
+RING_OWN_BLOCK chunk=11 layers=6..11 ms=202.3
+RING_STAGE chunk=12 layer=6 in_flight=8 t=3929.678
+RING_OWN_BLOCK chunk=12 layers=6..11 ms=203.0
+RING_DONE chunk=5 in_flight=7 completed=6 handle_ms=0.0 t=4137.797
+RING_ISSUE chunk=13 first=1664 in_flight=8 issue_ms=47.8 t=4185.603
+RING_DONE chunk=6 in_flight=7 completed=7 handle_ms=0.0 t=4189.984
+RING_ISSUE chunk=14 first=1792 in_flight=8 issue_ms=47.7 t=4237.764
+RING_DONE chunk=7 in_flight=7 completed=8 handle_ms=0.0 t=4242.287
+RING_ISSUE chunk=15 first=1920 in_flight=8 issue_ms=47.6 t=4289.943
+RING_STAGE chunk=13 layer=6 in_flight=8 t=4515.612
+RING_OWN_BLOCK chunk=13 layers=6..11 ms=202.2
+RING_STAGE chunk=14 layer=6 in_flight=8 t=4724.931
+RING_OWN_BLOCK chunk=14 layers=6..11 ms=201.6
+RING_STAGE chunk=15 layer=6 in_flight=8 t=4931.319
+RING_OWN_BLOCK chunk=15 layers=6..11 ms=204.0
+RING_DONE chunk=8 in_flight=7 completed=9 handle_ms=0.0 t=5140.402
+RING_ISSUE chunk=16 first=2048 in_flight=8 issue_ms=47.8 t=5188.283
+RING_DONE chunk=9 in_flight=7 completed=10 handle_ms=0.0 t=5192.678
+RING_ISSUE chunk=17 first=2176 in_flight=8 issue_ms=48.1 t=5240.784
+RING_DONE chunk=10 in_flight=7 completed=11 handle_ms=0.0 t=5245.267
+RING_ISSUE chunk=18 first=2304 in_flight=8 issue_ms=47.7 t=5292.956
+RING_DONE chunk=11 in_flight=7 completed=12 handle_ms=0.0 t=5406.895
+RING_ISSUE chunk=19 first=2432 in_flight=8 issue_ms=48.0 t=5454.961
+RING_STAGE chunk=16 layer=6 in_flight=8 t=5512.588
+RING_OWN_BLOCK chunk=16 layers=6..11 ms=211.5
+RING_STAGE chunk=17 layer=6 in_flight=8 t=5736.190
+RING_OWN_BLOCK chunk=17 layers=6..11 ms=208.8
+RING_STAGE chunk=18 layer=6 in_flight=8 t=5949.629
+RING_OWN_BLOCK chunk=18 layers=6..11 ms=208.7
+RING_STAGE chunk=19 layer=6 in_flight=8 t=6163.079
+RING_OWN_BLOCK chunk=19 layers=6..11 ms=209.4
+RING_DONE chunk=12 in_flight=7 completed=13 handle_ms=0.0 t=6377.454
+RING_ISSUE chunk=20 first=2560 in_flight=8 issue_ms=47.7 t=6425.226
+RING_DONE chunk=13 in_flight=7 completed=14 handle_ms=0.0 t=6429.482
+RING_ISSUE chunk=21 first=2688 in_flight=8 issue_ms=47.7 t=6477.198
+RING_DONE chunk=14 in_flight=7 completed=15 handle_ms=0.0 t=6488.947
+RING_ISSUE chunk=22 first=2816 in_flight=8 issue_ms=47.7 t=6536.705
+RING_DONE chunk=15 in_flight=7 completed=16 handle_ms=0.0 t=6748.220
+RING_ISSUE chunk=23 first=2944 in_flight=8 issue_ms=48.2 t=6796.438
+RING_STAGE chunk=20 layer=6 in_flight=8 t=6800.843
+RING_OWN_BLOCK chunk=20 layers=6..11 ms=208.8
+RING_STAGE chunk=21 layer=6 in_flight=8 t=7014.546
+RING_OWN_BLOCK chunk=21 layers=6..11 ms=209.1
+RING_STAGE chunk=22 layer=6 in_flight=8 t=7228.700
+RING_OWN_BLOCK chunk=22 layers=6..11 ms=209.6
+RING_STAGE chunk=23 layer=6 in_flight=8 t=7443.385
+RING_OWN_BLOCK chunk=23 layers=6..11 ms=211.5
+RING_DONE chunk=16 in_flight=7 completed=17 handle_ms=0.0 t=7660.231
+RING_ISSUE chunk=24 first=3072 in_flight=8 issue_ms=49.8 t=7710.036
+RING_DONE chunk=17 in_flight=7 completed=18 handle_ms=0.0 t=7714.780
+RING_ISSUE chunk=25 first=3200 in_flight=8 issue_ms=48.8 t=7763.625
+RING_DONE chunk=18 in_flight=7 completed=19 handle_ms=0.0 t=7771.963
+RING_ISSUE chunk=26 first=3328 in_flight=8 issue_ms=48.8 t=7820.837
+RING_DONE chunk=19 in_flight=7 completed=20 handle_ms=0.0 t=8038.263
+RING_ISSUE chunk=27 first=3456 in_flight=8 issue_ms=48.5 t=8086.818
+RING_STAGE chunk=24 layer=6 in_flight=8 t=8091.742
+RING_OWN_BLOCK chunk=24 layers=6..11 ms=209.8
+RING_STAGE chunk=25 layer=6 in_flight=8 t=8306.908
+RING_OWN_BLOCK chunk=25 layers=6..11 ms=209.4
+RING_STAGE chunk=26 layer=6 in_flight=8 t=8521.504
+RING_OWN_BLOCK chunk=26 layers=6..11 ms=204.2
+RING_STAGE chunk=27 layer=6 in_flight=8 t=8731.250
+RING_OWN_BLOCK chunk=27 layers=6..11 ms=201.9
+RING_DONE chunk=20 in_flight=7 completed=21 handle_ms=0.0 t=8938.513
+RING_ISSUE chunk=28 first=3584 in_flight=8 issue_ms=49.3 t=8987.887
+RING_DONE chunk=21 in_flight=7 completed=22 handle_ms=0.0 t=8992.666
+RING_ISSUE chunk=29 first=3712 in_flight=8 issue_ms=48.8 t=9041.456
+RING_DONE chunk=22 in_flight=7 completed=23 handle_ms=0.0 t=9054.517
+RING_ISSUE chunk=30 first=3840 in_flight=8 issue_ms=48.9 t=9103.496
+RING_DONE chunk=23 in_flight=7 completed=24 handle_ms=0.0 t=9312.770
+RING_ISSUE chunk=31 first=3968 in_flight=8 issue_ms=47.9 t=9360.736
+RING_STAGE chunk=28 layer=6 in_flight=8 t=9365.814
+RING_OWN_BLOCK chunk=28 layers=6..11 ms=203.5
+RING_STAGE chunk=29 layer=6 in_flight=8 t=9574.216
+RING_OWN_BLOCK chunk=29 layers=6..11 ms=202.7
+RING_STAGE chunk=30 layer=6 in_flight=8 t=9781.792
+RING_OWN_BLOCK chunk=30 layers=6..11 ms=204.1
+RING_STAGE chunk=31 layer=6 in_flight=8 t=9990.956
+RING_OWN_BLOCK chunk=31 layers=6..11 ms=204.2
+RING_DONE chunk=24 in_flight=7 completed=25 handle_ms=0.0 t=10200.216
+RING_ISSUE chunk=32 first=4096 in_flight=8 issue_ms=47.7 t=10247.963
+RING_DONE chunk=25 in_flight=7 completed=26 handle_ms=0.0 t=10252.370
+RING_ISSUE chunk=33 first=4224 in_flight=8 issue_ms=47.5 t=10299.901
+RING_DONE chunk=26 in_flight=7 completed=27 handle_ms=0.0 t=10340.981
+RING_ISSUE chunk=34 first=4352 in_flight=8 issue_ms=47.6 t=10388.667
+RING_STAGE chunk=32 layer=6 in_flight=8 t=10603.902
+RING_OWN_BLOCK chunk=32 layers=6..11 ms=204.5
+RING_STAGE chunk=33 layer=6 in_flight=8 t=10815.183
+RING_OWN_BLOCK chunk=33 layers=6..11 ms=201.8
+RING_STAGE chunk=34 layer=6 in_flight=8 t=11022.005
+RING_OWN_BLOCK chunk=34 layers=6..11 ms=203.2
+RING_DONE chunk=27 in_flight=7 completed=28 handle_ms=0.0 t=11230.383
+RING_ISSUE chunk=35 first=4480 in_flight=8 issue_ms=47.4 t=11277.851
+RING_DONE chunk=28 in_flight=7 completed=29 handle_ms=0.0 t=11282.226
+RING_ISSUE chunk=36 first=4608 in_flight=8 issue_ms=47.8 t=11330.017
+RING_DONE chunk=29 in_flight=7 completed=30 handle_ms=0.0 t=11377.999
+RING_ISSUE chunk=37 first=4736 in_flight=8 issue_ms=48.0 t=11426.052
+RING_STAGE chunk=35 layer=6 in_flight=8 t=11624.657
+RING_OWN_BLOCK chunk=35 layers=6..11 ms=205.0
+RING_STAGE chunk=36 layer=6 in_flight=8 t=11863.847
+RING_OWN_BLOCK chunk=36 layers=6..11 ms=204.5
+RING_STAGE chunk=37 layer=6 in_flight=8 t=12073.369
+RING_OWN_BLOCK chunk=37 layers=6..11 ms=198.3
+RING_DONE chunk=30 in_flight=7 completed=31 handle_ms=0.0 t=12276.787
+RING_ISSUE chunk=38 first=4864 in_flight=8 issue_ms=47.7 t=12324.498
+RING_DONE chunk=31 in_flight=7 completed=32 handle_ms=0.0 t=12328.977
+RING_ISSUE chunk=39 first=4992 in_flight=8 issue_ms=47.6 t=12376.649
+RING_DONE chunk=32 in_flight=7 completed=33 handle_ms=0.0 t=12381.085
+RING_ISSUE chunk=40 first=5120 in_flight=8 issue_ms=47.4 t=12428.548
+RING_DONE chunk=33 in_flight=7 completed=34 handle_ms=0.0 t=12596.498
+RING_ISSUE chunk=41 first=5248 in_flight=8 issue_ms=48.1 t=12644.694
+RING_STAGE chunk=38 layer=6 in_flight=8 t=12679.436
+RING_OWN_BLOCK chunk=38 layers=6..11 ms=197.2
+RING_STAGE chunk=39 layer=6 in_flight=8 t=12882.855
+RING_OWN_BLOCK chunk=39 layers=6..11 ms=198.4
+RING_STAGE chunk=40 layer=6 in_flight=8 t=13086.084
+RING_OWN_BLOCK chunk=40 layers=6..11 ms=197.2
+RING_STAGE chunk=41 layer=6 in_flight=8 t=13287.940
+RING_OWN_BLOCK chunk=41 layers=6..11 ms=200.3
+RING_DONE chunk=34 in_flight=7 completed=35 handle_ms=0.0 t=13493.366
+RING_ISSUE chunk=42 first=5376 in_flight=8 issue_ms=47.8 t=13541.275
+RING_DONE chunk=35 in_flight=7 completed=36 handle_ms=0.0 t=13545.711
+RING_ISSUE chunk=43 first=5504 in_flight=8 issue_ms=47.8 t=13593.561
+RING_DONE chunk=36 in_flight=7 completed=37 handle_ms=0.0 t=13625.873
+RING_ISSUE chunk=44 first=5632 in_flight=8 issue_ms=47.8 t=13673.708
+RING_STAGE chunk=42 layer=6 in_flight=8 t=13899.455
+RING_OWN_BLOCK chunk=42 layers=6..11 ms=200.5
+RING_STAGE chunk=43 layer=6 in_flight=8 t=14106.012
+RING_OWN_BLOCK chunk=43 layers=6..11 ms=197.0
+RING_STAGE chunk=44 layer=6 in_flight=8 t=14308.443
+RING_OWN_BLOCK chunk=44 layers=6..11 ms=200.2
+RING_DONE chunk=37 in_flight=7 completed=38 handle_ms=0.0 t=14514.158
+RING_ISSUE chunk=45 first=5760 in_flight=8 issue_ms=49.3 t=14563.480
+RING_DONE chunk=38 in_flight=7 completed=39 handle_ms=0.0 t=14568.240
+RING_ISSUE chunk=46 first=5888 in_flight=8 issue_ms=49.7 t=14617.953
+RING_DONE chunk=39 in_flight=7 completed=40 handle_ms=0.0 t=14667.509
+RING_ISSUE chunk=47 first=6016 in_flight=8 issue_ms=48.9 t=14716.490
+RING_STAGE chunk=45 layer=6 in_flight=8 t=14887.443
+RING_OWN_BLOCK chunk=45 layers=6..11 ms=201.0
+RING_STAGE chunk=46 layer=6 in_flight=8 t=15108.551
+RING_OWN_BLOCK chunk=46 layers=6..11 ms=194.1
+RING_STAGE chunk=47 layer=6 in_flight=8 t=15307.698
+RING_OWN_BLOCK chunk=47 layers=6..11 ms=198.4
+RING_DONE chunk=40 in_flight=7 completed=41 handle_ms=0.0 t=15511.513
+RING_ISSUE chunk=48 first=6144 in_flight=8 issue_ms=49.1 t=15560.646
+RING_DONE chunk=41 in_flight=7 completed=42 handle_ms=0.0 t=15565.447
+RING_ISSUE chunk=49 first=6272 in_flight=8 issue_ms=49.2 t=15614.801
+RING_DONE chunk=42 in_flight=7 completed=43 handle_ms=0.0 t=15640.305
+RING_ISSUE chunk=50 first=6400 in_flight=8 issue_ms=49.4 t=15689.777
+RING_STAGE chunk=48 layer=6 in_flight=8 t=15922.444
+RING_OWN_BLOCK chunk=48 layers=6..11 ms=199.0
+RING_STAGE chunk=49 layer=6 in_flight=8 t=16147.181
+RING_OWN_BLOCK chunk=49 layers=6..11 ms=199.9
+RING_STAGE chunk=50 layer=6 in_flight=8 t=16352.583
+RING_OWN_BLOCK chunk=50 layers=6..11 ms=197.2
+RING_DONE chunk=43 in_flight=7 completed=44 handle_ms=0.0 t=16555.260
+RING_ISSUE chunk=51 first=6528 in_flight=8 issue_ms=48.8 t=16604.058
+RING_DONE chunk=44 in_flight=7 completed=45 handle_ms=0.0 t=16610.193
+RING_ISSUE chunk=52 first=6656 in_flight=8 issue_ms=47.4 t=16657.661
+RING_DONE chunk=45 in_flight=7 completed=46 handle_ms=0.0 t=16662.139
+RING_ISSUE chunk=53 first=6784 in_flight=8 issue_ms=47.7 t=16709.875
+RING_DONE chunk=46 in_flight=7 completed=47 handle_ms=0.0 t=16869.545
+RING_ISSUE chunk=54 first=6912 in_flight=8 issue_ms=47.9 t=16917.540
+RING_STAGE chunk=51 layer=6 in_flight=8 t=16949.140
+RING_OWN_BLOCK chunk=51 layers=6..11 ms=196.5
+RING_STAGE chunk=52 layer=6 in_flight=8 t=17154.720
+RING_OWN_BLOCK chunk=52 layers=6..11 ms=199.1
+RING_STAGE chunk=53 layer=6 in_flight=8 t=17358.504
+RING_OWN_BLOCK chunk=53 layers=6..11 ms=199.2
+RING_STAGE chunk=54 layer=6 in_flight=8 t=17562.312
+RING_OWN_BLOCK chunk=54 layers=6..11 ms=200.9
+RING_DONE chunk=47 in_flight=7 completed=48 handle_ms=0.0 t=17768.177
+RING_ISSUE chunk=55 first=7040 in_flight=8 issue_ms=47.7 t=17815.937
+RING_DONE chunk=48 in_flight=7 completed=49 handle_ms=0.0 t=17820.210
+RING_ISSUE chunk=56 first=7168 in_flight=8 issue_ms=47.7 t=17867.908
+RING_DONE chunk=49 in_flight=7 completed=50 handle_ms=0.0 t=17900.237
+RING_ISSUE chunk=57 first=7296 in_flight=8 issue_ms=47.7 t=17947.950
+RING_STAGE chunk=55 layer=6 in_flight=8 t=18157.576
+RING_OWN_BLOCK chunk=55 layers=6..11 ms=201.5
+RING_STAGE chunk=56 layer=6 in_flight=8 t=18363.675
+RING_OWN_BLOCK chunk=56 layers=6..11 ms=198.3
+RING_STAGE chunk=57 layer=6 in_flight=8 t=18566.861
+RING_OWN_BLOCK chunk=57 layers=6..11 ms=201.0
+RING_DONE chunk=50 in_flight=7 completed=51 handle_ms=0.0 t=18772.825
+RING_ISSUE chunk=58 first=7424 in_flight=8 issue_ms=47.5 t=18820.360
+RING_DONE chunk=51 in_flight=7 completed=52 handle_ms=0.0 t=18824.704
+RING_ISSUE chunk=59 first=7552 in_flight=8 issue_ms=47.7 t=18872.439
+RING_DONE chunk=52 in_flight=7 completed=53 handle_ms=0.0 t=18931.422
+RING_ISSUE chunk=60 first=7680 in_flight=8 issue_ms=48.0 t=18979.508
+RING_STAGE chunk=58 layer=6 in_flight=8 t=19134.294
+RING_OWN_BLOCK chunk=58 layers=6..11 ms=200.4
+RING_STAGE chunk=59 layer=6 in_flight=8 t=19377.542
+RING_OWN_BLOCK chunk=59 layers=6..11 ms=200.2
+RING_STAGE chunk=60 layer=6 in_flight=8 t=19582.676
+RING_OWN_BLOCK chunk=60 layers=6..11 ms=199.5
+RING_DONE chunk=53 in_flight=7 completed=54 handle_ms=0.0 t=19787.151
+RING_ISSUE chunk=61 first=7808 in_flight=8 issue_ms=47.9 t=19835.038
+RING_DONE chunk=54 in_flight=7 completed=55 handle_ms=0.0 t=19839.535
+RING_ISSUE chunk=62 first=7936 in_flight=8 issue_ms=47.9 t=19887.494
+RING_DONE chunk=55 in_flight=7 completed=56 handle_ms=0.0 t=19897.604
+RING_ISSUE chunk=63 first=8064 in_flight=8 issue_ms=47.9 t=19945.503
+RING_DONE chunk=56 in_flight=7 completed=57 handle_ms=0.0 t=20152.212
+RING_ISSUE chunk=64 first=8192 in_flight=8 issue_ms=48.3 t=20200.504
+RING_STAGE chunk=61 layer=6 in_flight=8 t=20204.968
+RING_OWN_BLOCK chunk=61 layers=6..11 ms=195.1
+RING_STAGE chunk=62 layer=6 in_flight=8 t=20404.687
+RING_OWN_BLOCK chunk=62 layers=6..11 ms=198.6
+RING_STAGE chunk=63 layer=6 in_flight=8 t=20608.150
+RING_OWN_BLOCK chunk=63 layers=6..11 ms=200.5
+RING_STAGE chunk=64 layer=6 in_flight=8 t=20813.618
+RING_OWN_BLOCK chunk=64 layers=6..11 ms=199.6
+RING_DONE chunk=57 in_flight=7 completed=58 handle_ms=0.0 t=21018.189
+RING_ISSUE chunk=65 first=8320 in_flight=8 issue_ms=47.7 t=21065.964
+RING_DONE chunk=58 in_flight=7 completed=59 handle_ms=0.0 t=21070.372
+RING_ISSUE chunk=66 first=8448 in_flight=8 issue_ms=47.8 t=21118.202
+RING_DONE chunk=59 in_flight=7 completed=60 handle_ms=0.0 t=21127.040
+RING_ISSUE chunk=67 first=8576 in_flight=8 issue_ms=47.7 t=21174.814
+RING_STAGE chunk=65 layer=6 in_flight=8 t=21421.298
+RING_OWN_BLOCK chunk=65 layers=6..11 ms=202.4
+RING_STAGE chunk=66 layer=6 in_flight=8 t=21639.104
+RING_OWN_BLOCK chunk=66 layers=6..11 ms=200.5
+RING_STAGE chunk=67 layer=6 in_flight=8 t=21844.561
+RING_OWN_BLOCK chunk=67 layers=6..11 ms=199.2
+RING_DONE chunk=60 in_flight=7 completed=61 handle_ms=0.0 t=22048.892
+RING_ISSUE chunk=68 first=8704 in_flight=8 issue_ms=47.7 t=22096.594
+RING_DONE chunk=61 in_flight=7 completed=62 handle_ms=0.0 t=22101.063
+RING_ISSUE chunk=69 first=8832 in_flight=8 issue_ms=47.7 t=22148.796
+RING_DONE chunk=62 in_flight=7 completed=63 handle_ms=0.0 t=22182.833
+RING_ISSUE chunk=70 first=8960 in_flight=8 issue_ms=47.6 t=22230.479
+RING_STAGE chunk=68 layer=6 in_flight=8 t=22441.718
+RING_OWN_BLOCK chunk=68 layers=6..11 ms=199.8
+RING_STAGE chunk=69 layer=6 in_flight=8 t=22666.760
+RING_OWN_BLOCK chunk=69 layers=6..11 ms=200.2
+RING_STAGE chunk=70 layer=6 in_flight=8 t=22871.809
+RING_OWN_BLOCK chunk=70 layers=6..11 ms=200.3
+RING_DONE chunk=63 in_flight=7 completed=64 handle_ms=0.0 t=23077.205
+RING_ISSUE chunk=71 first=9088 in_flight=8 issue_ms=47.7 t=23124.896
+RING_DONE chunk=64 in_flight=7 completed=65 handle_ms=0.0 t=23129.371
+RING_ISSUE chunk=72 first=9216 in_flight=8 issue_ms=47.7 t=23177.063
+RING_DONE chunk=65 in_flight=7 completed=66 handle_ms=0.0 t=23181.472
+RING_ISSUE chunk=73 first=9344 in_flight=8 issue_ms=47.6 t=23229.134
+RING_DONE chunk=66 in_flight=7 completed=67 handle_ms=0.0 t=23429.501
+RING_ISSUE chunk=74 first=9472 in_flight=8 issue_ms=48.0 t=23477.554
+RING_STAGE chunk=71 layer=6 in_flight=8 t=23489.646
+RING_OWN_BLOCK chunk=71 layers=6..11 ms=195.9
+RING_STAGE chunk=72 layer=6 in_flight=8 t=23690.149
+RING_OWN_BLOCK chunk=72 layers=6..11 ms=199.5
+RING_STAGE chunk=73 layer=6 in_flight=8 t=23894.500
+RING_OWN_BLOCK chunk=73 layers=6..11 ms=199.1
+RING_STAGE chunk=74 layer=6 in_flight=8 t=24098.510
+RING_OWN_BLOCK chunk=74 layers=6..11 ms=199.5
+RING_DONE chunk=67 in_flight=7 completed=68 handle_ms=0.0 t=24303.089
+RING_ISSUE chunk=75 first=9600 in_flight=8 issue_ms=47.7 t=24350.816
+RING_DONE chunk=68 in_flight=7 completed=69 handle_ms=0.0 t=24355.213
+RING_ISSUE chunk=76 first=9728 in_flight=8 issue_ms=47.6 t=24402.894
+RING_DONE chunk=69 in_flight=7 completed=70 handle_ms=0.0 t=24433.048
+RING_ISSUE chunk=77 first=9856 in_flight=8 issue_ms=47.5 t=24480.594
+RING_STAGE chunk=75 layer=6 in_flight=8 t=24694.823
+RING_OWN_BLOCK chunk=75 layers=6..11 ms=200.8
+RING_STAGE chunk=76 layer=6 in_flight=8 t=24900.250
+RING_OWN_BLOCK chunk=76 layers=6..11 ms=198.8
+RING_STAGE chunk=77 layer=6 in_flight=8 t=25103.835
+RING_OWN_BLOCK chunk=77 layers=6..11 ms=200.0
+RING_DONE chunk=70 in_flight=7 completed=71 handle_ms=0.0 t=25308.810
+RING_ISSUE chunk=78 first=9984 in_flight=8 issue_ms=47.6 t=25356.401
+RING_DONE chunk=71 in_flight=7 completed=72 handle_ms=0.0 t=25360.789
+RING_ISSUE chunk=79 first=10112 in_flight=8 issue_ms=47.8 t=25408.596
+RING_DONE chunk=72 in_flight=7 completed=73 handle_ms=0.0 t=25481.107
+RING_ISSUE chunk=80 first=10240 in_flight=8 issue_ms=47.9 t=25529.080
+RING_STAGE chunk=78 layer=6 in_flight=8 t=25670.924
+RING_OWN_BLOCK chunk=78 layers=6..11 ms=200.5
+RING_STAGE chunk=79 layer=6 in_flight=8 t=25923.128
+RING_OWN_BLOCK chunk=79 layers=6..11 ms=200.3
+RING_STAGE chunk=80 layer=6 in_flight=8 t=26128.389
+RING_OWN_BLOCK chunk=80 layers=6..11 ms=199.0
+RING_DONE chunk=73 in_flight=7 completed=74 handle_ms=0.0 t=26332.431
+RING_ISSUE chunk=81 first=10368 in_flight=8 issue_ms=47.7 t=26380.199
+RING_DONE chunk=74 in_flight=7 completed=75 handle_ms=0.0 t=26384.597
+RING_ISSUE chunk=82 first=10496 in_flight=8 issue_ms=47.8 t=26432.474
+RING_DONE chunk=75 in_flight=7 completed=76 handle_ms=0.0 t=26464.865
+RING_ISSUE chunk=83 first=10624 in_flight=8 issue_ms=48.0 t=26512.913
+RING_DONE chunk=76 in_flight=7 completed=77 handle_ms=0.0 t=26704.145
+RING_ISSUE chunk=84 first=10752 in_flight=8 issue_ms=48.4 t=26752.591
+RING_STAGE chunk=81 layer=6 in_flight=8 t=26757.010
+RING_OWN_BLOCK chunk=81 layers=6..11 ms=194.7
+RING_STAGE chunk=82 layer=6 in_flight=8 t=26956.455
+RING_OWN_BLOCK chunk=82 layers=6..11 ms=198.0
+RING_STAGE chunk=83 layer=6 in_flight=8 t=27159.391
+RING_OWN_BLOCK chunk=83 layers=6..11 ms=201.8
+RING_STAGE chunk=84 layer=6 in_flight=8 t=27365.971
+RING_OWN_BLOCK chunk=84 layers=6..11 ms=200.6
+RING_DONE chunk=77 in_flight=7 completed=78 handle_ms=0.0 t=27571.676
+RING_ISSUE chunk=85 first=10880 in_flight=8 issue_ms=47.7 t=27619.412
+RING_DONE chunk=78 in_flight=7 completed=79 handle_ms=0.0 t=27623.877
+RING_ISSUE chunk=86 first=11008 in_flight=8 issue_ms=47.7 t=27671.608
+RING_DONE chunk=79 in_flight=7 completed=80 handle_ms=0.0 t=27675.942
+RING_ISSUE chunk=87 first=11136 in_flight=8 issue_ms=48.0 t=27724.012
+RING_DONE chunk=80 in_flight=7 completed=81 handle_ms=0.0 t=27903.384
+RING_ISSUE chunk=88 first=11264 in_flight=8 issue_ms=48.1 t=27951.518
+RING_STAGE chunk=85 layer=6 in_flight=8 t=27963.222
+RING_OWN_BLOCK chunk=85 layers=6..11 ms=198.7
+RING_STAGE chunk=86 layer=6 in_flight=8 t=28166.853
+RING_OWN_BLOCK chunk=86 layers=6..11 ms=199.4
+RING_STAGE chunk=87 layer=6 in_flight=8 t=28371.064
+RING_OWN_BLOCK chunk=87 layers=6..11 ms=197.0
+RING_STAGE chunk=88 layer=6 in_flight=8 t=28572.663
+RING_OWN_BLOCK chunk=88 layers=6..11 ms=200.0
+RING_DONE chunk=81 in_flight=7 completed=82 handle_ms=0.0 t=28777.576
+RING_ISSUE chunk=89 first=11392 in_flight=8 issue_ms=47.6 t=28825.164
+RING_DONE chunk=82 in_flight=7 completed=83 handle_ms=0.0 t=28829.521
+RING_ISSUE chunk=90 first=11520 in_flight=8 issue_ms=47.7 t=28877.236
+RING_DONE chunk=83 in_flight=7 completed=84 handle_ms=0.0 t=28965.472
+RING_ISSUE chunk=91 first=11648 in_flight=8 issue_ms=47.8 t=29013.337
+RING_STAGE chunk=89 layer=6 in_flight=8 t=29137.928
+RING_OWN_BLOCK chunk=89 layers=6..11 ms=201.0
+RING_STAGE chunk=90 layer=6 in_flight=8 t=29372.163
+RING_OWN_BLOCK chunk=90 layers=6..11 ms=201.8
+RING_STAGE chunk=91 layer=6 in_flight=8 t=29578.763
+RING_OWN_BLOCK chunk=91 layers=6..11 ms=199.3
+RING_DONE chunk=84 in_flight=7 completed=85 handle_ms=0.0 t=29783.119
+RING_ISSUE chunk=92 first=11776 in_flight=8 issue_ms=47.8 t=29830.901
+RING_DONE chunk=85 in_flight=7 completed=86 handle_ms=0.0 t=29835.136
+RING_ISSUE chunk=93 first=11904 in_flight=8 issue_ms=47.9 t=29883.073
+RING_DONE chunk=86 in_flight=7 completed=87 handle_ms=0.0 t=29944.495
+RING_ISSUE chunk=94 first=12032 in_flight=8 issue_ms=48.0 t=29992.573
+RING_STAGE chunk=92 layer=6 in_flight=8 t=30156.312
+RING_OWN_BLOCK chunk=92 layers=6..11 ms=202.3
+RING_STAGE chunk=93 layer=6 in_flight=8 t=30399.812
+RING_OWN_BLOCK chunk=93 layers=6..11 ms=200.9
+RING_STAGE chunk=94 layer=6 in_flight=8 t=30605.625
+RING_OWN_BLOCK chunk=94 layers=6..11 ms=199.9
+RING_DONE chunk=87 in_flight=7 completed=88 handle_ms=0.0 t=30810.506
+RING_ISSUE chunk=95 first=12160 in_flight=8 issue_ms=47.8 t=30858.349
+RING_DONE chunk=88 in_flight=7 completed=89 handle_ms=0.0 t=30862.838
+RING_ISSUE chunk=96 first=12288 in_flight=8 issue_ms=47.9 t=30910.725
+RING_DONE chunk=89 in_flight=7 completed=90 handle_ms=0.0 t=30915.012
+RING_ISSUE chunk=97 first=12416 in_flight=8 issue_ms=47.8 t=30962.823
+RING_DONE chunk=90 in_flight=7 completed=91 handle_ms=0.0 t=31131.252
+RING_ISSUE chunk=98 first=12544 in_flight=8 issue_ms=48.1 t=31179.365
+RING_STAGE chunk=95 layer=6 in_flight=8 t=31204.639
+RING_OWN_BLOCK chunk=95 layers=6..11 ms=197.5
+RING_STAGE chunk=96 layer=6 in_flight=8 t=31406.672
+RING_OWN_BLOCK chunk=96 layers=6..11 ms=197.5
+RING_STAGE chunk=97 layer=6 in_flight=8 t=31608.611
+RING_OWN_BLOCK chunk=97 layers=6..11 ms=198.7
+RING_STAGE chunk=98 layer=6 in_flight=8 t=31811.848
+RING_OWN_BLOCK chunk=98 layers=6..11 ms=202.9
+RING_DONE chunk=91 in_flight=7 completed=92 handle_ms=0.0 t=32019.713
+RING_ISSUE chunk=99 first=12672 in_flight=8 issue_ms=47.5 t=32067.282
+RING_DONE chunk=92 in_flight=7 completed=93 handle_ms=0.0 t=32071.658
+RING_ISSUE chunk=100 first=12800 in_flight=8 issue_ms=47.7 t=32119.413
+RING_DONE chunk=93 in_flight=7 completed=94 handle_ms=0.0 t=32145.332
+RING_ISSUE chunk=101 first=12928 in_flight=8 issue_ms=47.5 t=32192.825
+RING_STAGE chunk=99 layer=6 in_flight=8 t=32417.652
+RING_OWN_BLOCK chunk=99 layers=6..11 ms=202.6
+RING_STAGE chunk=100 layer=6 in_flight=8 t=32627.219
+RING_OWN_BLOCK chunk=100 layers=6..11 ms=201.4
+RING_STAGE chunk=101 layer=6 in_flight=8 t=32833.563
+RING_OWN_BLOCK chunk=101 layers=6..11 ms=201.5
+RING_DONE chunk=94 in_flight=7 completed=95 handle_ms=0.0 t=33040.125
+RING_ISSUE chunk=102 first=13056 in_flight=8 issue_ms=47.7 t=33087.877
+RING_DONE chunk=95 in_flight=7 completed=96 handle_ms=0.0 t=33092.339
+RING_ISSUE chunk=103 first=13184 in_flight=8 issue_ms=47.7 t=33140.062
+RING_DONE chunk=96 in_flight=7 completed=97 handle_ms=0.0 t=33191.753
+RING_ISSUE chunk=104 first=13312 in_flight=8 issue_ms=48.1 t=33239.938
+RING_STAGE chunk=102 layer=6 in_flight=8 t=33422.184
+RING_OWN_BLOCK chunk=102 layers=6..11 ms=202.0
+RING_STAGE chunk=103 layer=6 in_flight=8 t=33640.612
+RING_OWN_BLOCK chunk=103 layers=6..11 ms=203.1
+RING_STAGE chunk=104 layer=6 in_flight=8 t=33848.670
+RING_OWN_BLOCK chunk=104 layers=6..11 ms=200.6
+RING_DONE chunk=97 in_flight=7 completed=98 handle_ms=0.0 t=34054.248
+RING_ISSUE chunk=105 first=13440 in_flight=8 issue_ms=47.7 t=34102.003
+RING_DONE chunk=98 in_flight=7 completed=99 handle_ms=0.0 t=34106.430
+RING_ISSUE chunk=106 first=13568 in_flight=8 issue_ms=47.8 t=34154.266
+RING_DONE chunk=99 in_flight=7 completed=100 handle_ms=0.0 t=34188.610
+RING_ISSUE chunk=107 first=13696 in_flight=8 issue_ms=47.9 t=34236.543
+RING_STAGE chunk=105 layer=6 in_flight=8 t=34440.529
+RING_OWN_BLOCK chunk=105 layers=6..11 ms=203.1
+RING_STAGE chunk=106 layer=6 in_flight=8 t=34654.408
+RING_OWN_BLOCK chunk=106 layers=6..11 ms=201.5
+RING_STAGE chunk=107 layer=6 in_flight=8 t=34860.734
+RING_OWN_BLOCK chunk=107 layers=6..11 ms=201.5
+RING_DONE chunk=100 in_flight=7 completed=101 handle_ms=0.0 t=35067.229
+RING_ISSUE chunk=108 first=13824 in_flight=8 issue_ms=47.6 t=35114.897
+RING_DONE chunk=101 in_flight=7 completed=102 handle_ms=0.0 t=35119.328
+RING_ISSUE chunk=109 first=13952 in_flight=8 issue_ms=47.8 t=35167.112
+RING_DONE chunk=102 in_flight=7 completed=103 handle_ms=0.0 t=35199.016
+RING_ISSUE chunk=110 first=14080 in_flight=8 issue_ms=47.5 t=35246.601
+RING_STAGE chunk=108 layer=6 in_flight=8 t=35470.132
+RING_OWN_BLOCK chunk=108 layers=6..11 ms=201.8
+RING_STAGE chunk=109 layer=6 in_flight=8 t=35697.210
+RING_OWN_BLOCK chunk=109 layers=6..11 ms=202.4
+RING_STAGE chunk=110 layer=6 in_flight=8 t=35904.553
+RING_OWN_BLOCK chunk=110 layers=6..11 ms=200.2
+RING_DONE chunk=103 in_flight=7 completed=104 handle_ms=0.0 t=36109.811
+RING_ISSUE chunk=111 first=14208 in_flight=8 issue_ms=47.8 t=36157.620
+RING_DONE chunk=104 in_flight=7 completed=105 handle_ms=0.0 t=36162.055
+RING_ISSUE chunk=112 first=14336 in_flight=8 issue_ms=47.6 t=36209.707
+RING_DONE chunk=105 in_flight=7 completed=106 handle_ms=0.0 t=36241.849
+RING_ISSUE chunk=113 first=14464 in_flight=8 issue_ms=47.7 t=36289.542
+RING_DONE chunk=106 in_flight=7 completed=107 handle_ms=0.0 t=36477.744
+RING_ISSUE chunk=114 first=14592 in_flight=8 issue_ms=48.0 t=36525.870
+RING_STAGE chunk=111 layer=6 in_flight=8 t=36530.325
+RING_OWN_BLOCK chunk=111 layers=6..11 ms=195.9
+RING_STAGE chunk=112 layer=6 in_flight=8 t=36730.939
+RING_OWN_BLOCK chunk=112 layers=6..11 ms=199.3
+RING_STAGE chunk=113 layer=6 in_flight=8 t=36935.161
+RING_OWN_BLOCK chunk=113 layers=6..11 ms=199.6
+RING_STAGE chunk=114 layer=6 in_flight=8 t=37139.700
+RING_OWN_BLOCK chunk=114 layers=6..11 ms=201.3
+RING_DONE chunk=107 in_flight=7 completed=108 handle_ms=0.0 t=37346.098
+RING_ISSUE chunk=115 first=14720 in_flight=8 issue_ms=47.5 t=37393.652
+RING_DONE chunk=108 in_flight=7 completed=109 handle_ms=0.0 t=37397.997
+RING_ISSUE chunk=116 first=14848 in_flight=8 issue_ms=47.7 t=37445.742
+RING_DONE chunk=109 in_flight=7 completed=110 handle_ms=0.0 t=37475.439
+RING_ISSUE chunk=117 first=14976 in_flight=8 issue_ms=47.4 t=37522.897
+RING_STAGE chunk=115 layer=6 in_flight=8 t=37748.397
+RING_OWN_BLOCK chunk=115 layers=6..11 ms=203.4
+RING_STAGE chunk=116 layer=6 in_flight=8 t=37965.392
+RING_OWN_BLOCK chunk=116 layers=6..11 ms=200.4
+RING_STAGE chunk=117 layer=6 in_flight=8 t=38170.724
+RING_OWN_BLOCK chunk=117 layers=6..11 ms=201.0
+RING_DONE chunk=110 in_flight=7 completed=111 handle_ms=0.0 t=38376.758
+RING_ISSUE chunk=118 first=15104 in_flight=8 issue_ms=47.9 t=38424.715
+RING_DONE chunk=111 in_flight=7 completed=112 handle_ms=0.0 t=38429.039
+RING_ISSUE chunk=119 first=15232 in_flight=8 issue_ms=48.0 t=38477.057
+RING_DONE chunk=112 in_flight=7 completed=113 handle_ms=0.0 t=38524.863
+RING_ISSUE chunk=120 first=15360 in_flight=8 issue_ms=48.4 t=38573.271
+RING_STAGE chunk=118 layer=6 in_flight=8 t=38765.497
+RING_OWN_BLOCK chunk=118 layers=6..11 ms=200.7
+RING_STAGE chunk=119 layer=6 in_flight=8 t=38992.430
+RING_OWN_BLOCK chunk=119 layers=6..11 ms=201.2
+RING_STAGE chunk=120 layer=6 in_flight=8 t=39198.530
+RING_OWN_BLOCK chunk=120 layers=6..11 ms=200.0
+RING_DONE chunk=113 in_flight=7 completed=114 handle_ms=0.0 t=39403.516
+RING_ISSUE chunk=121 first=15488 in_flight=8 issue_ms=47.6 t=39451.112
+RING_DONE chunk=114 in_flight=7 completed=115 handle_ms=0.0 t=39455.626
+RING_ISSUE chunk=122 first=15616 in_flight=8 issue_ms=47.7 t=39503.351
+RING_DONE chunk=115 in_flight=7 completed=116 handle_ms=0.0 t=39507.650
+RING_ISSUE chunk=123 first=15744 in_flight=8 issue_ms=47.7 t=39555.416
+RING_DONE chunk=116 in_flight=7 completed=117 handle_ms=0.0 t=39754.013
+RING_ISSUE chunk=124 first=15872 in_flight=8 issue_ms=48.0 t=39802.067
+RING_STAGE chunk=121 layer=6 in_flight=8 t=39812.503
+RING_OWN_BLOCK chunk=121 layers=6..11 ms=196.6
+RING_STAGE chunk=122 layer=6 in_flight=8 t=40013.806
+RING_OWN_BLOCK chunk=122 layers=6..11 ms=199.9
+RING_STAGE chunk=123 layer=6 in_flight=8 t=40218.628
+RING_OWN_BLOCK chunk=123 layers=6..11 ms=201.0
+RING_STAGE chunk=124 layer=6 in_flight=8 t=40424.497
+RING_OWN_BLOCK chunk=124 layers=6..11 ms=200.9
+RING_DONE chunk=117 in_flight=7 completed=118 handle_ms=0.0 t=40630.501
+RING_ISSUE chunk=125 first=16000 in_flight=8 issue_ms=47.8 t=40678.367
+RING_DONE chunk=118 in_flight=7 completed=119 handle_ms=0.0 t=40682.725
+RING_ISSUE chunk=126 first=16128 in_flight=8 issue_ms=47.8 t=40730.505
+RING_DONE chunk=119 in_flight=7 completed=120 handle_ms=0.0 t=40749.229
+RING_ISSUE chunk=127 first=16256 in_flight=8 issue_ms=47.8 t=40797.069
+RING_DONE chunk=120 in_flight=7 completed=121 handle_ms=0.0 t=41005.852
+RING_ISSUE chunk=128 first=16384 in_flight=8 issue_ms=48.4 t=41054.321
+RING_STAGE chunk=125 layer=6 in_flight=8 t=41058.823
+RING_OWN_BLOCK chunk=125 layers=6..11 ms=200.1
+RING_STAGE chunk=126 layer=6 in_flight=8 t=41263.925
+RING_OWN_BLOCK chunk=126 layers=6..11 ms=200.8
+RING_STAGE chunk=127 layer=6 in_flight=8 t=41469.754
+RING_OWN_BLOCK chunk=127 layers=6..11 ms=201.5
+RING_STAGE chunk=128 layer=6 in_flight=8 t=41676.237
+RING_OWN_BLOCK chunk=128 layers=6..11 ms=204.7
+RING_DONE chunk=121 in_flight=7 completed=122 handle_ms=0.0 t=41885.949
+RING_ISSUE chunk=129 first=16512 in_flight=8 issue_ms=47.7 t=41933.695
+RING_DONE chunk=122 in_flight=7 completed=123 handle_ms=0.0 t=41938.050
+RING_ISSUE chunk=130 first=16640 in_flight=8 issue_ms=47.7 t=41985.780
+RING_DONE chunk=123 in_flight=7 completed=124 handle_ms=0.0 t=42031.521
+RING_ISSUE chunk=131 first=16768 in_flight=8 issue_ms=48.1 t=42079.702
+RING_DONE chunk=124 in_flight=7 completed=125 handle_ms=0.0 t=42280.509
+RING_ISSUE chunk=132 first=16896 in_flight=8 issue_ms=48.3 t=42328.905
+RING_STAGE chunk=129 layer=6 in_flight=8 t=42333.458
+RING_OWN_BLOCK chunk=129 layers=6..11 ms=203.4
+RING_STAGE chunk=130 layer=6 in_flight=8 t=42541.793
+RING_OWN_BLOCK chunk=130 layers=6..11 ms=204.0
+RING_STAGE chunk=131 layer=6 in_flight=8 t=42750.871
+RING_OWN_BLOCK chunk=131 layers=6..11 ms=203.0
+RING_STAGE chunk=132 layer=6 in_flight=8 t=42958.772
+RING_OWN_BLOCK chunk=132 layers=6..11 ms=203.3
+RING_DONE chunk=125 in_flight=7 completed=126 handle_ms=0.0 t=43166.907
+RING_ISSUE chunk=133 first=17024 in_flight=8 issue_ms=47.5 t=43214.456
+RING_DONE chunk=126 in_flight=7 completed=127 handle_ms=0.0 t=43218.767
+RING_ISSUE chunk=134 first=17152 in_flight=8 issue_ms=47.6 t=43266.445
+RING_DONE chunk=127 in_flight=7 completed=128 handle_ms=0.0 t=43275.943
+RING_ISSUE chunk=135 first=17280 in_flight=8 issue_ms=47.6 t=43323.561
+RING_DONE chunk=128 in_flight=7 completed=129 handle_ms=0.0 t=43510.895
+RING_ISSUE chunk=136 first=17408 in_flight=8 issue_ms=48.0 t=43558.964
+RING_STAGE chunk=133 layer=6 in_flight=8 t=43564.348
+RING_OWN_BLOCK chunk=133 layers=6..11 ms=203.7
+RING_STAGE chunk=134 layer=6 in_flight=8 t=43772.933
+RING_OWN_BLOCK chunk=134 layers=6..11 ms=203.9
+RING_STAGE chunk=135 layer=6 in_flight=8 t=43981.725
+RING_OWN_BLOCK chunk=135 layers=6..11 ms=204.0
+RING_STAGE chunk=136 layer=6 in_flight=8 t=44190.528
+RING_OWN_BLOCK chunk=136 layers=6..11 ms=204.4
+RING_DONE chunk=129 in_flight=7 completed=130 handle_ms=0.0 t=44399.900
+RING_ISSUE chunk=137 first=17536 in_flight=8 issue_ms=47.6 t=44447.527
+RING_DONE chunk=130 in_flight=7 completed=131 handle_ms=0.0 t=44451.924
+RING_ISSUE chunk=138 first=17664 in_flight=8 issue_ms=47.6 t=44499.539
+RING_DONE chunk=131 in_flight=7 completed=132 handle_ms=0.0 t=44588.263
+RING_ISSUE chunk=139 first=17792 in_flight=8 issue_ms=47.9 t=44636.225
+RING_STAGE chunk=137 layer=6 in_flight=8 t=44764.917
+RING_OWN_BLOCK chunk=137 layers=6..11 ms=206.7
+RING_STAGE chunk=138 layer=6 in_flight=8 t=44998.630
+RING_OWN_BLOCK chunk=138 layers=6..11 ms=206.2
+RING_STAGE chunk=139 layer=6 in_flight=8 t=45209.681
+RING_OWN_BLOCK chunk=139 layers=6..11 ms=204.7
+RING_DONE chunk=132 in_flight=7 completed=133 handle_ms=0.0 t=45419.399
+RING_ISSUE chunk=140 first=17920 in_flight=8 issue_ms=47.5 t=45466.911
+RING_DONE chunk=133 in_flight=7 completed=134 handle_ms=0.0 t=45471.401
+RING_ISSUE chunk=141 first=18048 in_flight=8 issue_ms=47.5 t=45518.931
+RING_DONE chunk=134 in_flight=7 completed=135 handle_ms=0.0 t=45580.743
+RING_ISSUE chunk=142 first=18176 in_flight=8 issue_ms=48.2 t=45628.934
+RING_STAGE chunk=140 layer=6 in_flight=8 t=45787.598
+RING_OWN_BLOCK chunk=140 layers=6..11 ms=207.0
+RING_STAGE chunk=141 layer=6 in_flight=8 t=46030.569
+RING_OWN_BLOCK chunk=141 layers=6..11 ms=205.8
+RING_STAGE chunk=142 layer=6 in_flight=8 t=46241.224
+RING_OWN_BLOCK chunk=142 layers=6..11 ms=204.7
+RING_DONE chunk=135 in_flight=7 completed=136 handle_ms=0.0 t=46450.947
+RING_ISSUE chunk=143 first=18304 in_flight=8 issue_ms=47.8 t=46498.731
+RING_DONE chunk=136 in_flight=7 completed=137 handle_ms=0.0 t=46503.217
+RING_ISSUE chunk=144 first=18432 in_flight=8 issue_ms=48.0 t=46551.210
+RING_DONE chunk=137 in_flight=7 completed=138 handle_ms=0.0 t=46555.506
+RING_ISSUE chunk=145 first=18560 in_flight=8 issue_ms=47.9 t=46603.399
+RING_DONE chunk=138 in_flight=7 completed=139 handle_ms=0.0 t=46791.678
+RING_ISSUE chunk=146 first=18688 in_flight=8 issue_ms=48.3 t=46840.053
+RING_STAGE chunk=143 layer=6 in_flight=8 t=46844.566
+RING_OWN_BLOCK chunk=143 layers=6..11 ms=200.0
+RING_STAGE chunk=144 layer=6 in_flight=8 t=47062.994
+RING_OWN_BLOCK chunk=144 layers=6..11 ms=205.1
+RING_STAGE chunk=145 layer=6 in_flight=8 t=47272.966
+RING_OWN_BLOCK chunk=145 layers=6..11 ms=203.5
+RING_STAGE chunk=146 layer=6 in_flight=8 t=47481.337
+RING_OWN_BLOCK chunk=146 layers=6..11 ms=205.3
+RING_DONE chunk=139 in_flight=7 completed=140 handle_ms=0.0 t=47691.602
+RING_ISSUE chunk=147 first=18816 in_flight=8 issue_ms=47.8 t=47739.385
+RING_DONE chunk=140 in_flight=7 completed=141 handle_ms=0.0 t=47743.664
+RING_ISSUE chunk=148 first=18944 in_flight=8 issue_ms=47.7 t=47791.396
+RING_DONE chunk=141 in_flight=7 completed=142 handle_ms=0.0 t=47797.477
+RING_ISSUE chunk=149 first=19072 in_flight=8 issue_ms=47.6 t=47845.154
+RING_DONE chunk=142 in_flight=7 completed=143 handle_ms=0.0 t=48053.241
+RING_ISSUE chunk=150 first=19200 in_flight=8 issue_ms=48.0 t=48101.317
+RING_STAGE chunk=147 layer=6 in_flight=8 t=48105.702
+RING_OWN_BLOCK chunk=147 layers=6..11 ms=203.5
+RING_STAGE chunk=148 layer=6 in_flight=8 t=48314.048
+RING_OWN_BLOCK chunk=148 layers=6..11 ms=203.7
+RING_STAGE chunk=149 layer=6 in_flight=8 t=48522.635
+RING_OWN_BLOCK chunk=149 layers=6..11 ms=205.0
+RING_STAGE chunk=150 layer=6 in_flight=8 t=48732.455
+RING_OWN_BLOCK chunk=150 layers=6..11 ms=203.3
+RING_DONE chunk=143 in_flight=7 completed=144 handle_ms=0.0 t=48940.622
+RING_ISSUE chunk=151 first=19328 in_flight=8 issue_ms=47.7 t=48988.338
+RING_DONE chunk=144 in_flight=7 completed=145 handle_ms=0.0 t=48992.660
+RING_ISSUE chunk=152 first=19456 in_flight=8 issue_ms=47.7 t=49040.410
+RING_DONE chunk=145 in_flight=7 completed=146 handle_ms=0.0 t=49070.781
+RING_ISSUE chunk=153 first=19584 in_flight=8 issue_ms=47.7 t=49118.537
+RING_DONE chunk=146 in_flight=7 completed=147 handle_ms=0.0 t=49313.349
+RING_ISSUE chunk=154 first=19712 in_flight=8 issue_ms=48.1 t=49361.530
+RING_STAGE chunk=151 layer=6 in_flight=8 t=49365.889
+RING_OWN_BLOCK chunk=151 layers=6..11 ms=204.7
+RING_STAGE chunk=152 layer=6 in_flight=8 t=49575.392
+RING_OWN_BLOCK chunk=152 layers=6..11 ms=204.0
+RING_STAGE chunk=153 layer=6 in_flight=8 t=49784.311
+RING_OWN_BLOCK chunk=153 layers=6..11 ms=204.9
+RING_STAGE chunk=154 layer=6 in_flight=8 t=49994.181
+RING_OWN_BLOCK chunk=154 layers=6..11 ms=203.6
+RING_DONE chunk=147 in_flight=7 completed=148 handle_ms=0.0 t=50202.703
+RING_ISSUE chunk=155 first=19840 in_flight=8 issue_ms=47.7 t=50250.418
+RING_DONE chunk=148 in_flight=7 completed=149 handle_ms=0.0 t=50254.674
+RING_ISSUE chunk=156 first=19968 in_flight=8 issue_ms=47.8 t=50302.456
+RING_DONE chunk=149 in_flight=7 completed=150 handle_ms=0.0 t=50357.916
+RING_ISSUE chunk=157 first=20096 in_flight=8 issue_ms=48.1 t=50406.030
+RING_STAGE chunk=155 layer=6 in_flight=8 t=50597.528
+RING_OWN_BLOCK chunk=155 layers=6..11 ms=208.3
+RING_STAGE chunk=156 layer=6 in_flight=8 t=50810.491
+RING_OWN_BLOCK chunk=156 layers=6..11 ms=203.7
+RING_STAGE chunk=157 layer=6 in_flight=8 t=51019.072
+RING_OWN_BLOCK chunk=157 layers=6..11 ms=205.6
+RING_DONE chunk=150 in_flight=7 completed=151 handle_ms=0.0 t=51229.763
+RING_ISSUE chunk=158 first=20224 in_flight=8 issue_ms=47.7 t=51277.539
+RING_DONE chunk=151 in_flight=7 completed=152 handle_ms=0.0 t=51281.906
+RING_ISSUE chunk=159 first=20352 in_flight=8 issue_ms=47.7 t=51329.597
+RING_DONE chunk=152 in_flight=7 completed=153 handle_ms=0.0 t=51387.524
+RING_ISSUE chunk=160 first=20480 in_flight=8 issue_ms=47.9 t=51435.468
+RING_STAGE chunk=158 layer=6 in_flight=8 t=51599.812
+RING_OWN_BLOCK chunk=158 layers=6..11 ms=206.6
+RING_STAGE chunk=159 layer=6 in_flight=8 t=51846.557
+RING_OWN_BLOCK chunk=159 layers=6..11 ms=206.5
+RING_STAGE chunk=160 layer=6 in_flight=8 t=52057.896
+RING_OWN_BLOCK chunk=160 layers=6..11 ms=205.8
+RING_DONE chunk=153 in_flight=7 completed=154 handle_ms=0.0 t=52268.749
+RING_ISSUE chunk=161 first=20608 in_flight=8 issue_ms=47.5 t=52316.256
+RING_DONE chunk=154 in_flight=7 completed=155 handle_ms=0.0 t=52320.804
+RING_ISSUE chunk=162 first=20736 in_flight=8 issue_ms=47.7 t=52368.566
+RING_DONE chunk=155 in_flight=7 completed=156 handle_ms=0.0 t=52373.238
+RING_ISSUE chunk=163 first=20864 in_flight=8 issue_ms=47.5 t=52420.798
+RING_DONE chunk=156 in_flight=7 completed=157 handle_ms=0.0 t=52631.438
+RING_ISSUE chunk=164 first=20992 in_flight=8 issue_ms=48.1 t=52679.543
+RING_STAGE chunk=161 layer=6 in_flight=8 t=52684.069
+RING_OWN_BLOCK chunk=161 layers=6..11 ms=201.6
+RING_STAGE chunk=162 layer=6 in_flight=8 t=52890.455
+RING_OWN_BLOCK chunk=162 layers=6..11 ms=203.9
+RING_STAGE chunk=163 layer=6 in_flight=8 t=53099.204
+RING_OWN_BLOCK chunk=163 layers=6..11 ms=206.3
+RING_STAGE chunk=164 layer=6 in_flight=8 t=53310.450
+RING_OWN_BLOCK chunk=164 layers=6..11 ms=205.4
+RING_DONE chunk=157 in_flight=7 completed=158 handle_ms=0.0 t=53520.927
+RING_ISSUE chunk=165 first=21120 in_flight=8 issue_ms=47.7 t=53568.647
+RING_DONE chunk=158 in_flight=7 completed=159 handle_ms=0.0 t=53573.043
+RING_ISSUE chunk=166 first=21248 in_flight=8 issue_ms=47.6 t=53620.668
+RING_DONE chunk=159 in_flight=7 completed=160 handle_ms=0.0 t=53624.980
+RING_ISSUE chunk=167 first=21376 in_flight=8 issue_ms=47.6 t=53672.575
+RING_DONE chunk=160 in_flight=7 completed=161 handle_ms=0.0 t=53879.439
+RING_ISSUE chunk=168 first=21504 in_flight=8 issue_ms=47.9 t=53927.427
+RING_STAGE chunk=165 layer=6 in_flight=8 t=53931.813
+RING_OWN_BLOCK chunk=165 layers=6..11 ms=204.7
+RING_STAGE chunk=166 layer=6 in_flight=8 t=54141.464
+RING_OWN_BLOCK chunk=166 layers=6..11 ms=204.3
+RING_STAGE chunk=167 layer=6 in_flight=8 t=54350.605
+RING_OWN_BLOCK chunk=167 layers=6..11 ms=204.8
+RING_STAGE chunk=168 layer=6 in_flight=8 t=54560.207
+RING_OWN_BLOCK chunk=168 layers=6..11 ms=206.4
+RING_DONE chunk=161 in_flight=7 completed=162 handle_ms=0.0 t=54771.574
+RING_ISSUE chunk=169 first=21632 in_flight=8 issue_ms=47.4 t=54819.045
+RING_DONE chunk=162 in_flight=7 completed=163 handle_ms=0.0 t=54823.400
+RING_ISSUE chunk=170 first=21760 in_flight=8 issue_ms=47.6 t=54870.988
+RING_DONE chunk=163 in_flight=7 completed=164 handle_ms=0.0 t=54912.486
+RING_ISSUE chunk=171 first=21888 in_flight=8 issue_ms=48.0 t=54960.496
+RING_DONE chunk=164 in_flight=7 completed=165 handle_ms=0.0 t=55163.158
+RING_ISSUE chunk=172 first=22016 in_flight=8 issue_ms=48.0 t=55211.253
+RING_STAGE chunk=169 layer=6 in_flight=8 t=55215.723
+RING_OWN_BLOCK chunk=169 layers=6..11 ms=205.3
+RING_STAGE chunk=170 layer=6 in_flight=8 t=55425.942
+RING_OWN_BLOCK chunk=170 layers=6..11 ms=204.6
+RING_STAGE chunk=171 layer=6 in_flight=8 t=55635.570
+RING_OWN_BLOCK chunk=171 layers=6..11 ms=205.4
+RING_STAGE chunk=172 layer=6 in_flight=8 t=55845.957
+RING_OWN_BLOCK chunk=172 layers=6..11 ms=204.0
+RING_DONE chunk=165 in_flight=7 completed=166 handle_ms=0.0 t=56055.134
+RING_ISSUE chunk=173 first=22144 in_flight=8 issue_ms=47.5 t=56102.670
+RING_DONE chunk=166 in_flight=7 completed=167 handle_ms=0.0 t=56106.925
+RING_ISSUE chunk=174 first=22272 in_flight=8 issue_ms=47.7 t=56154.652
+RING_DONE chunk=167 in_flight=7 completed=168 handle_ms=0.0 t=56187.999
+RING_ISSUE chunk=175 first=22400 in_flight=8 issue_ms=47.6 t=56235.670
+RING_DONE chunk=168 in_flight=7 completed=169 handle_ms=0.0 t=56436.972
+RING_ISSUE chunk=176 first=22528 in_flight=8 issue_ms=48.0 t=56485.077
+RING_STAGE chunk=173 layer=6 in_flight=8 t=56489.525
+RING_OWN_BLOCK chunk=173 layers=6..11 ms=204.3
+RING_STAGE chunk=174 layer=6 in_flight=8 t=56698.879
+RING_OWN_BLOCK chunk=174 layers=6..11 ms=205.3
+RING_STAGE chunk=175 layer=6 in_flight=8 t=56909.043
+RING_OWN_BLOCK chunk=175 layers=6..11 ms=203.9
+RING_STAGE chunk=176 layer=6 in_flight=8 t=57118.020
+RING_OWN_BLOCK chunk=176 layers=6..11 ms=204.9
+RING_DONE chunk=169 in_flight=7 completed=170 handle_ms=0.0 t=57327.970
+RING_ISSUE chunk=177 first=22656 in_flight=8 issue_ms=47.5 t=57375.461
+RING_DONE chunk=170 in_flight=7 completed=171 handle_ms=0.0 t=57379.857
+RING_ISSUE chunk=178 first=22784 in_flight=8 issue_ms=47.6 t=57427.466
+RING_DONE chunk=171 in_flight=7 completed=172 handle_ms=0.0 t=57492.059
+RING_ISSUE chunk=179 first=22912 in_flight=8 issue_ms=48.0 t=57540.120
+RING_STAGE chunk=177 layer=6 in_flight=8 t=57718.852
+RING_OWN_BLOCK chunk=177 layers=6..11 ms=204.8
+RING_STAGE chunk=178 layer=6 in_flight=8 t=57928.262
+RING_OWN_BLOCK chunk=178 layers=6..11 ms=205.2
+RING_STAGE chunk=179 layer=6 in_flight=8 t=58138.338
+RING_OWN_BLOCK chunk=179 layers=6..11 ms=205.5
+RING_DONE chunk=172 in_flight=7 completed=173 handle_ms=0.0 t=58348.785
+RING_ISSUE chunk=180 first=23040 in_flight=8 issue_ms=47.6 t=58396.397
+RING_DONE chunk=173 in_flight=7 completed=174 handle_ms=0.0 t=58400.671
+RING_ISSUE chunk=181 first=23168 in_flight=8 issue_ms=47.6 t=58448.320
+RING_DONE chunk=174 in_flight=7 completed=175 handle_ms=0.0 t=58519.751
+RING_ISSUE chunk=182 first=23296 in_flight=8 issue_ms=47.9 t=58567.659
+RING_STAGE chunk=180 layer=6 in_flight=8 t=58719.991
+RING_OWN_BLOCK chunk=180 layers=6..11 ms=206.9
+RING_STAGE chunk=181 layer=6 in_flight=8 t=58963.892
+RING_OWN_BLOCK chunk=181 layers=6..11 ms=206.1
+RING_STAGE chunk=182 layer=6 in_flight=8 t=59174.787
+RING_OWN_BLOCK chunk=182 layers=6..11 ms=205.0
+RING_DONE chunk=175 in_flight=7 completed=176 handle_ms=0.0 t=59384.601
+RING_ISSUE chunk=183 first=23424 in_flight=8 issue_ms=47.7 t=59432.303
+RING_DONE chunk=176 in_flight=7 completed=177 handle_ms=0.0 t=59436.617
+RING_ISSUE chunk=184 first=23552 in_flight=8 issue_ms=47.8 t=59484.460
+RING_DONE chunk=177 in_flight=7 completed=178 handle_ms=0.0 t=59515.518
+RING_ISSUE chunk=185 first=23680 in_flight=8 issue_ms=47.8 t=59563.355
+RING_DONE chunk=178 in_flight=7 completed=179 handle_ms=0.0 t=59766.397
+RING_ISSUE chunk=186 first=23808 in_flight=8 issue_ms=48.1 t=59814.610
+RING_STAGE chunk=183 layer=6 in_flight=8 t=59818.976
+RING_OWN_BLOCK chunk=183 layers=6..11 ms=203.6
+RING_STAGE chunk=184 layer=6 in_flight=8 t=60027.472
+RING_OWN_BLOCK chunk=184 layers=6..11 ms=205.6
+RING_STAGE chunk=185 layer=6 in_flight=8 t=60237.928
+RING_OWN_BLOCK chunk=185 layers=6..11 ms=205.8
+RING_STAGE chunk=186 layer=6 in_flight=8 t=60448.677
+RING_OWN_BLOCK chunk=186 layers=6..11 ms=205.1
+RING_DONE chunk=179 in_flight=7 completed=180 handle_ms=0.0 t=60658.791
+RING_ISSUE chunk=187 first=23936 in_flight=8 issue_ms=47.8 t=60706.610
+RING_DONE chunk=180 in_flight=7 completed=181 handle_ms=0.0 t=60710.981
+RING_ISSUE chunk=188 first=24064 in_flight=8 issue_ms=47.7 t=60758.692
+RING_DONE chunk=181 in_flight=7 completed=182 handle_ms=0.0 t=60762.970
+RING_ISSUE chunk=189 first=24192 in_flight=8 issue_ms=47.9 t=60810.866
+RING_DONE chunk=182 in_flight=7 completed=183 handle_ms=0.0 t=60975.071
+RING_ISSUE chunk=190 first=24320 in_flight=8 issue_ms=48.1 t=61023.196
+RING_STAGE chunk=187 layer=6 in_flight=8 t=61040.017
+RING_OWN_BLOCK chunk=187 layers=6..11 ms=205.9
+RING_STAGE chunk=188 layer=6 in_flight=8 t=61250.701
+RING_OWN_BLOCK chunk=188 layers=6..11 ms=202.6
+RING_STAGE chunk=189 layer=6 in_flight=8 t=61457.902
+RING_OWN_BLOCK chunk=189 layers=6..11 ms=203.4
+RING_STAGE chunk=190 layer=6 in_flight=8 t=61665.682
+RING_OWN_BLOCK chunk=190 layers=6..11 ms=204.9
+RING_DONE chunk=183 in_flight=7 completed=184 handle_ms=0.0 t=61875.524
+RING_ISSUE chunk=191 first=24448 in_flight=8 issue_ms=47.9 t=61923.498
+RING_DONE chunk=184 in_flight=7 completed=185 handle_ms=0.0 t=61927.796
+RING_ISSUE chunk=192 first=24576 in_flight=8 issue_ms=47.8 t=61975.645
+RING_DONE chunk=185 in_flight=7 completed=186 handle_ms=0.0 t=62047.769
+RING_ISSUE chunk=193 first=24704 in_flight=8 issue_ms=48.2 t=62095.972
+RING_STAGE chunk=191 layer=6 in_flight=8 t=62257.547
+RING_OWN_BLOCK chunk=191 layers=6..11 ms=206.0
+RING_STAGE chunk=192 layer=6 in_flight=8 t=62468.008
+RING_OWN_BLOCK chunk=192 layers=6..11 ms=202.8
+RING_STAGE chunk=193 layer=6 in_flight=8 t=62675.240
+RING_OWN_BLOCK chunk=193 layers=6..11 ms=205.5
+RING_DONE chunk=186 in_flight=7 completed=187 handle_ms=0.0 t=62885.681
+RING_ISSUE chunk=194 first=24832 in_flight=8 issue_ms=47.6 t=62933.276
+RING_DONE chunk=187 in_flight=7 completed=188 handle_ms=0.0 t=62937.560
+RING_ISSUE chunk=195 first=24960 in_flight=8 issue_ms=47.9 t=62985.479
+RING_DONE chunk=188 in_flight=7 completed=189 handle_ms=0.0 t=63066.975
+RING_ISSUE chunk=196 first=25088 in_flight=8 issue_ms=47.9 t=63114.970
+RING_STAGE chunk=194 layer=6 in_flight=8 t=63249.609
+RING_OWN_BLOCK chunk=194 layers=6..11 ms=206.9
+RING_STAGE chunk=195 layer=6 in_flight=8 t=63488.674
+RING_OWN_BLOCK chunk=195 layers=6..11 ms=206.7
+RING_STAGE chunk=196 layer=6 in_flight=8 t=63700.395
+RING_OWN_BLOCK chunk=196 layers=6..11 ms=206.2
+RING_DONE chunk=189 in_flight=7 completed=190 handle_ms=0.0 t=63911.530
+RING_ISSUE chunk=197 first=25216 in_flight=8 issue_ms=47.7 t=63959.220
+RING_DONE chunk=190 in_flight=7 completed=191 handle_ms=0.0 t=63963.601
+RING_ISSUE chunk=198 first=25344 in_flight=8 issue_ms=47.7 t=64011.287
+RING_DONE chunk=191 in_flight=7 completed=192 handle_ms=0.0 t=64041.775
+RING_ISSUE chunk=199 first=25472 in_flight=8 issue_ms=47.7 t=64089.538
+RING_STAGE chunk=197 layer=6 in_flight=8 t=64301.934
+RING_OWN_BLOCK chunk=197 layers=6..11 ms=205.8
+RING_STAGE chunk=198 layer=6 in_flight=8 t=64520.472
+RING_OWN_BLOCK chunk=198 layers=6..11 ms=206.7
+RING_STAGE chunk=199 layer=6 in_flight=8 t=64732.038
+RING_OWN_BLOCK chunk=199 layers=6..11 ms=206.8
+RING_DONE chunk=192 in_flight=7 completed=193 handle_ms=0.0 t=64943.766
+RING_ISSUE chunk=200 first=25600 in_flight=8 issue_ms=47.6 t=64991.436
+RING_DONE chunk=193 in_flight=7 completed=194 handle_ms=0.0 t=64995.811
+RING_ISSUE chunk=201 first=25728 in_flight=8 issue_ms=47.7 t=65043.494
+RING_DONE chunk=194 in_flight=7 completed=195 handle_ms=0.0 t=65047.847
+RING_ISSUE chunk=202 first=25856 in_flight=8 issue_ms=47.5 t=65095.382
+RING_DONE chunk=195 in_flight=7 completed=196 handle_ms=0.0 t=65284.045
+RING_ISSUE chunk=203 first=25984 in_flight=8 issue_ms=48.1 t=65332.176
+RING_STAGE chunk=200 layer=6 in_flight=8 t=65339.169
+RING_OWN_BLOCK chunk=200 layers=6..11 ms=201.7
+RING_STAGE chunk=201 layer=6 in_flight=8 t=65552.622
+RING_OWN_BLOCK chunk=201 layers=6..11 ms=206.1
+RING_STAGE chunk=202 layer=6 in_flight=8 t=65763.563
+RING_OWN_BLOCK chunk=202 layers=6..11 ms=205.2
+RING_STAGE chunk=203 layer=6 in_flight=8 t=65973.676
+RING_OWN_BLOCK chunk=203 layers=6..11 ms=205.9
+RING_DONE chunk=196 in_flight=7 completed=197 handle_ms=0.0 t=66184.705
+RING_ISSUE chunk=204 first=26112 in_flight=8 issue_ms=47.8 t=66232.556
+RING_DONE chunk=197 in_flight=7 completed=198 handle_ms=0.0 t=66236.904
+RING_ISSUE chunk=205 first=26240 in_flight=8 issue_ms=47.6 t=66284.509
+RING_DONE chunk=198 in_flight=7 completed=199 handle_ms=0.0 t=66323.147
+RING_ISSUE chunk=206 first=26368 in_flight=8 issue_ms=47.7 t=66370.880
+RING_STAGE chunk=204 layer=6 in_flight=8 t=66575.886
+RING_OWN_BLOCK chunk=204 layers=6..11 ms=205.1
+RING_STAGE chunk=205 layer=6 in_flight=8 t=66785.570
+RING_OWN_BLOCK chunk=205 layers=6..11 ms=206.2
+RING_STAGE chunk=206 layer=6 in_flight=8 t=66996.648
+RING_OWN_BLOCK chunk=206 layers=6..11 ms=205.9
+RING_DONE chunk=199 in_flight=7 completed=200 handle_ms=0.0 t=67207.539
+RING_ISSUE chunk=207 first=26496 in_flight=8 issue_ms=47.4 t=67255.009
+RING_DONE chunk=200 in_flight=7 completed=201 handle_ms=0.0 t=67259.547
+RING_ISSUE chunk=208 first=26624 in_flight=8 issue_ms=47.7 t=67307.279
+RING_DONE chunk=201 in_flight=7 completed=202 handle_ms=0.0 t=67355.857
+RING_ISSUE chunk=209 first=26752 in_flight=8 issue_ms=48.0 t=67403.934
+RING_STAGE chunk=207 layer=6 in_flight=8 t=67602.500
+RING_OWN_BLOCK chunk=207 layers=6..11 ms=206.5
+RING_STAGE chunk=208 layer=6 in_flight=8 t=67826.539
+RING_OWN_BLOCK chunk=208 layers=6..11 ms=205.6
+RING_STAGE chunk=209 layer=6 in_flight=8 t=68036.994
+RING_OWN_BLOCK chunk=209 layers=6..11 ms=205.8
+RING_DONE chunk=202 in_flight=7 completed=203 handle_ms=0.0 t=68247.846
+RING_ISSUE chunk=210 first=26880 in_flight=8 issue_ms=47.9 t=68295.771
+RING_DONE chunk=203 in_flight=7 completed=204 handle_ms=0.0 t=68300.263
+RING_ISSUE chunk=211 first=27008 in_flight=8 issue_ms=47.7 t=68347.980
+RING_DONE chunk=204 in_flight=7 completed=205 handle_ms=0.0 t=68377.168
+RING_ISSUE chunk=212 first=27136 in_flight=8 issue_ms=47.8 t=68424.971
+RING_DONE chunk=205 in_flight=7 completed=206 handle_ms=0.0 t=68625.068
+RING_ISSUE chunk=213 first=27264 in_flight=8 issue_ms=48.3 t=68673.404
+RING_STAGE chunk=210 layer=6 in_flight=8 t=68677.829
+RING_OWN_BLOCK chunk=210 layers=6..11 ms=203.9
+RING_STAGE chunk=211 layer=6 in_flight=8 t=68886.618
+RING_OWN_BLOCK chunk=211 layers=6..11 ms=205.0
+RING_STAGE chunk=212 layer=6 in_flight=8 t=69096.505
+RING_OWN_BLOCK chunk=212 layers=6..11 ms=205.3
+RING_STAGE chunk=213 layer=6 in_flight=8 t=69306.715
+RING_OWN_BLOCK chunk=213 layers=6..11 ms=205.9
+RING_DONE chunk=206 in_flight=7 completed=207 handle_ms=0.0 t=69517.718
+RING_ISSUE chunk=214 first=27392 in_flight=8 issue_ms=47.5 t=69565.207
+RING_DONE chunk=207 in_flight=7 completed=208 handle_ms=0.0 t=69569.644
+RING_ISSUE chunk=215 first=27520 in_flight=8 issue_ms=47.5 t=69617.140
+RING_DONE chunk=208 in_flight=7 completed=209 handle_ms=0.0 t=69628.455
+RING_ISSUE chunk=216 first=27648 in_flight=8 issue_ms=47.5 t=69675.986
+RING_DONE chunk=209 in_flight=7 completed=210 handle_ms=0.0 t=69895.720
+RING_ISSUE chunk=217 first=27776 in_flight=8 issue_ms=48.1 t=69943.823
+RING_STAGE chunk=214 layer=6 in_flight=8 t=69948.227
+RING_OWN_BLOCK chunk=214 layers=6..11 ms=206.4
+RING_STAGE chunk=215 layer=6 in_flight=8 t=70159.454
+RING_OWN_BLOCK chunk=215 layers=6..11 ms=205.9
+RING_STAGE chunk=216 layer=6 in_flight=8 t=70370.167
+RING_OWN_BLOCK chunk=216 layers=6..11 ms=205.6
+RING_STAGE chunk=217 layer=6 in_flight=8 t=70580.732
+RING_OWN_BLOCK chunk=217 layers=6..11 ms=204.7
+RING_DONE chunk=210 in_flight=7 completed=211 handle_ms=0.0 t=70790.282
+RING_ISSUE chunk=218 first=27904 in_flight=8 issue_ms=47.6 t=70837.913
+RING_DONE chunk=211 in_flight=7 completed=212 handle_ms=0.0 t=70842.232
+RING_ISSUE chunk=219 first=28032 in_flight=8 issue_ms=47.5 t=70889.786
+RING_DONE chunk=212 in_flight=7 completed=213 handle_ms=0.0 t=70941.708
+RING_ISSUE chunk=220 first=28160 in_flight=8 issue_ms=48.0 t=70989.747
+RING_STAGE chunk=218 layer=6 in_flight=8 t=71190.208
+RING_OWN_BLOCK chunk=218 layers=6..11 ms=209.2
+RING_STAGE chunk=219 layer=6 in_flight=8 t=71404.263
+RING_OWN_BLOCK chunk=219 layers=6..11 ms=205.5
+RING_STAGE chunk=220 layer=6 in_flight=8 t=71614.742
+RING_OWN_BLOCK chunk=220 layers=6..11 ms=205.9
+RING_DONE chunk=213 in_flight=7 completed=214 handle_ms=0.0 t=71825.781
+RING_ISSUE chunk=221 first=28288 in_flight=8 issue_ms=47.6 t=71873.453
+RING_DONE chunk=214 in_flight=7 completed=215 handle_ms=0.0 t=71877.863
+RING_ISSUE chunk=222 first=28416 in_flight=8 issue_ms=47.7 t=71925.580
+RING_DONE chunk=215 in_flight=7 completed=216 handle_ms=0.0 t=71968.276
+RING_ISSUE chunk=223 first=28544 in_flight=8 issue_ms=48.0 t=72016.284
+RING_STAGE chunk=221 layer=6 in_flight=8 t=72222.914
+RING_OWN_BLOCK chunk=221 layers=6..11 ms=205.4
+RING_STAGE chunk=222 layer=6 in_flight=8 t=72444.791
+RING_OWN_BLOCK chunk=222 layers=6..11 ms=206.9
+RING_STAGE chunk=223 layer=6 in_flight=8 t=72656.507
+RING_OWN_BLOCK chunk=223 layers=6..11 ms=207.7
+RING_DONE chunk=216 in_flight=7 completed=217 handle_ms=0.0 t=72869.156
+RING_ISSUE chunk=224 first=28672 in_flight=8 issue_ms=47.5 t=72916.654
+RING_DONE chunk=217 in_flight=7 completed=218 handle_ms=0.0 t=72921.209
+RING_ISSUE chunk=225 first=28800 in_flight=8 issue_ms=47.6 t=72968.853
+RING_DONE chunk=218 in_flight=7 completed=219 handle_ms=0.0 t=72997.268
+RING_ISSUE chunk=226 first=28928 in_flight=8 issue_ms=47.7 t=73045.004
+RING_DONE chunk=219 in_flight=7 completed=220 handle_ms=0.0 t=73245.495
+RING_ISSUE chunk=227 first=29056 in_flight=8 issue_ms=48.6 t=73294.188
+RING_STAGE chunk=224 layer=6 in_flight=8 t=73298.702
+RING_OWN_BLOCK chunk=224 layers=6..11 ms=204.2
+RING_STAGE chunk=225 layer=6 in_flight=8 t=73507.765
+RING_OWN_BLOCK chunk=225 layers=6..11 ms=205.1
+RING_STAGE chunk=226 layer=6 in_flight=8 t=73717.840
+RING_OWN_BLOCK chunk=226 layers=6..11 ms=205.2
+RING_STAGE chunk=227 layer=6 in_flight=8 t=73927.990
+RING_OWN_BLOCK chunk=227 layers=6..11 ms=206.6
+RING_DONE chunk=220 in_flight=7 completed=221 handle_ms=0.0 t=74139.761
+RING_ISSUE chunk=228 first=29184 in_flight=8 issue_ms=47.4 t=74187.212
+RING_DONE chunk=221 in_flight=7 completed=222 handle_ms=0.0 t=74191.491
+RING_ISSUE chunk=229 first=29312 in_flight=8 issue_ms=47.7 t=74239.204
+RING_DONE chunk=222 in_flight=7 completed=223 handle_ms=0.0 t=74244.151
+RING_ISSUE chunk=230 first=29440 in_flight=8 issue_ms=47.4 t=74291.631
+RING_DONE chunk=223 in_flight=7 completed=224 handle_ms=0.0 t=74492.683
+RING_ISSUE chunk=231 first=29568 in_flight=8 issue_ms=48.0 t=74540.747
+RING_STAGE chunk=228 layer=6 in_flight=8 t=74545.213
+RING_OWN_BLOCK chunk=228 layers=6..11 ms=205.7
+RING_STAGE chunk=229 layer=6 in_flight=8 t=74755.769
+RING_OWN_BLOCK chunk=229 layers=6..11 ms=205.1
+RING_STAGE chunk=230 layer=6 in_flight=8 t=74965.915
+RING_OWN_BLOCK chunk=230 layers=6..11 ms=205.1
+RING_STAGE chunk=231 layer=6 in_flight=8 t=75175.926
+RING_OWN_BLOCK chunk=231 layers=6..11 ms=206.1
+RING_DONE chunk=224 in_flight=7 completed=225 handle_ms=0.0 t=75386.983
+RING_ISSUE chunk=232 first=29696 in_flight=8 issue_ms=47.5 t=75434.463
+RING_DONE chunk=225 in_flight=7 completed=226 handle_ms=0.0 t=75438.890
+RING_ISSUE chunk=233 first=29824 in_flight=8 issue_ms=47.6 t=75486.509
+RING_DONE chunk=226 in_flight=7 completed=227 handle_ms=0.0 t=75560.652
+RING_ISSUE chunk=234 first=29952 in_flight=8 issue_ms=48.0 t=75608.734
+RING_STAGE chunk=232 layer=6 in_flight=8 t=75765.873
+RING_OWN_BLOCK chunk=232 layers=6..11 ms=206.6
+RING_STAGE chunk=233 layer=6 in_flight=8 t=75987.958
+RING_OWN_BLOCK chunk=233 layers=6..11 ms=207.2
+RING_STAGE chunk=234 layer=6 in_flight=8 t=76200.133
+RING_OWN_BLOCK chunk=234 layers=6..11 ms=206.2
+RING_DONE chunk=227 in_flight=7 completed=228 handle_ms=0.0 t=76411.307
+RING_ISSUE chunk=235 first=30080 in_flight=8 issue_ms=47.7 t=76459.000
+RING_DONE chunk=228 in_flight=7 completed=229 handle_ms=0.0 t=76463.508
+RING_ISSUE chunk=236 first=30208 in_flight=8 issue_ms=48.0 t=76511.526
+RING_DONE chunk=229 in_flight=7 completed=230 handle_ms=0.0 t=76568.078
+RING_ISSUE chunk=237 first=30336 in_flight=8 issue_ms=48.2 t=76616.361
+RING_STAGE chunk=235 layer=6 in_flight=8 t=76785.281
+RING_OWN_BLOCK chunk=235 layers=6..11 ms=207.1
+RING_STAGE chunk=236 layer=6 in_flight=8 t=77025.459
+RING_OWN_BLOCK chunk=236 layers=6..11 ms=207.5
+RING_STAGE chunk=237 layer=6 in_flight=8 t=77237.784
+RING_OWN_BLOCK chunk=237 layers=6..11 ms=206.7
+RING_DONE chunk=230 in_flight=7 completed=231 handle_ms=0.0 t=77449.620
+RING_ISSUE chunk=238 first=30464 in_flight=8 issue_ms=47.8 t=77497.491
+RING_DONE chunk=231 in_flight=7 completed=232 handle_ms=0.0 t=77502.093
+RING_ISSUE chunk=239 first=30592 in_flight=8 issue_ms=47.8 t=77549.931
+RING_DONE chunk=232 in_flight=7 completed=233 handle_ms=0.0 t=77566.337
+RING_ISSUE chunk=240 first=30720 in_flight=8 issue_ms=47.7 t=77614.102
+RING_DONE chunk=233 in_flight=7 completed=234 handle_ms=0.0 t=77805.447
+RING_ISSUE chunk=241 first=30848 in_flight=8 issue_ms=48.4 t=77853.854
+RING_STAGE chunk=238 layer=6 in_flight=8 t=77858.364
+RING_OWN_BLOCK chunk=238 layers=6..11 ms=202.1
+RING_STAGE chunk=239 layer=6 in_flight=8 t=78065.084
+RING_OWN_BLOCK chunk=239 layers=6..11 ms=206.0
+RING_STAGE chunk=240 layer=6 in_flight=8 t=78276.168
+RING_OWN_BLOCK chunk=240 layers=6..11 ms=207.2
+RING_STAGE chunk=241 layer=6 in_flight=8 t=78488.278
+RING_OWN_BLOCK chunk=241 layers=6..11 ms=208.5
+RING_DONE chunk=234 in_flight=7 completed=235 handle_ms=0.0 t=78701.896
+RING_ISSUE chunk=242 first=30976 in_flight=8 issue_ms=47.7 t=78749.695
+RING_DONE chunk=235 in_flight=7 completed=236 handle_ms=0.0 t=78754.209
+RING_ISSUE chunk=243 first=31104 in_flight=8 issue_ms=47.7 t=78801.960
+RING_DONE chunk=236 in_flight=7 completed=237 handle_ms=0.0 t=78814.783
+RING_ISSUE chunk=244 first=31232 in_flight=8 issue_ms=47.9 t=78862.748
+RING_DONE chunk=237 in_flight=7 completed=238 handle_ms=0.0 t=79054.839
+RING_ISSUE chunk=245 first=31360 in_flight=8 issue_ms=48.4 t=79103.256
+RING_STAGE chunk=242 layer=6 in_flight=8 t=79108.317
+RING_OWN_BLOCK chunk=242 layers=6..11 ms=204.9
+RING_STAGE chunk=243 layer=6 in_flight=8 t=79318.092
+RING_OWN_BLOCK chunk=243 layers=6..11 ms=207.4
+RING_STAGE chunk=244 layer=6 in_flight=8 t=79530.225
+RING_OWN_BLOCK chunk=244 layers=6..11 ms=206.1
+RING_STAGE chunk=245 layer=6 in_flight=8 t=79741.167
+RING_OWN_BLOCK chunk=245 layers=6..11 ms=206.6
+RING_DONE chunk=238 in_flight=7 completed=239 handle_ms=0.0 t=79952.805
+RING_ISSUE chunk=246 first=31488 in_flight=8 issue_ms=47.8 t=80000.617
+RING_DONE chunk=239 in_flight=7 completed=240 handle_ms=0.0 t=80005.003
+RING_ISSUE chunk=247 first=31616 in_flight=8 issue_ms=47.9 t=80052.952
+RING_DONE chunk=240 in_flight=7 completed=241 handle_ms=0.0 t=80095.316
+RING_ISSUE chunk=248 first=31744 in_flight=8 issue_ms=47.6 t=80143.007
+RING_DONE chunk=241 in_flight=7 completed=242 handle_ms=0.0 t=80339.523
+RING_ISSUE chunk=249 first=31872 in_flight=8 issue_ms=48.1 t=80387.658
+RING_STAGE chunk=246 layer=6 in_flight=8 t=80392.071
+RING_OWN_BLOCK chunk=246 layers=6..11 ms=205.7
+RING_STAGE chunk=247 layer=6 in_flight=8 t=80602.659
+RING_OWN_BLOCK chunk=247 layers=6..11 ms=206.2
+RING_STAGE chunk=248 layer=6 in_flight=8 t=80813.691
+RING_OWN_BLOCK chunk=248 layers=6..11 ms=206.9
+RING_STAGE chunk=249 layer=6 in_flight=8 t=81025.442
+RING_OWN_BLOCK chunk=249 layers=6..11 ms=206.6
+RING_DONE chunk=242 in_flight=7 completed=243 handle_ms=0.0 t=81236.959
+RING_ISSUE chunk=250 first=32000 in_flight=8 issue_ms=47.4 t=81284.412
+RING_DONE chunk=243 in_flight=7 completed=244 handle_ms=0.0 t=81288.757
+RING_ISSUE chunk=251 first=32128 in_flight=8 issue_ms=47.7 t=81336.511
+RING_DONE chunk=244 in_flight=7 completed=245 handle_ms=0.0 t=81358.850
+RING_ISSUE chunk=252 first=32256 in_flight=8 issue_ms=47.6 t=81406.520
+RING_DONE chunk=245 in_flight=7 completed=246 handle_ms=0.0 t=81596.297
+RING_ISSUE chunk=253 first=32384 in_flight=8 issue_ms=48.2 t=81644.568
+RING_STAGE chunk=250 layer=6 in_flight=8 t=81651.517
+RING_OWN_BLOCK chunk=250 layers=6..11 ms=204.8
+RING_STAGE chunk=251 layer=6 in_flight=8 t=81861.245
+RING_OWN_BLOCK chunk=251 layers=6..11 ms=206.3
+RING_STAGE chunk=252 layer=6 in_flight=8 t=82072.371
+RING_OWN_BLOCK chunk=252 layers=6..11 ms=205.0
+RING_STAGE chunk=253 layer=6 in_flight=8 t=82282.249
+RING_OWN_BLOCK chunk=253 layers=6..11 ms=206.6
+RING_DONE chunk=246 in_flight=7 completed=247 handle_ms=0.0 t=82493.794
+RING_ISSUE chunk=254 first=32512 in_flight=8 issue_ms=47.5 t=82541.329
+RING_DONE chunk=247 in_flight=7 completed=248 handle_ms=0.0 t=82545.604
+RING_ISSUE chunk=255 first=32640 in_flight=8 issue_ms=47.6 t=82593.270
+RING_DONE chunk=248 in_flight=7 completed=249 handle_ms=0.0 t=82656.245
+RING_ISSUE chunk=256 first=32768 in_flight=8 issue_ms=73.8 t=82730.121
+RING_STAGE chunk=254 layer=6 in_flight=8 t=82884.871
+RING_OWN_BLOCK chunk=254 layers=6..11 ms=206.5
+RING_STAGE chunk=255 layer=6 in_flight=8 t=83097.435
+RING_OWN_BLOCK chunk=255 layers=6..11 ms=208.4
+RING_STAGE chunk=256 layer=6 in_flight=8 t=83308.861
+RING_OWN_BLOCK chunk=256 layers=6..11 ms=140.6
+RING_DONE chunk=249 in_flight=7 completed=250 handle_ms=0.0 t=83454.783
+RING_DONE chunk=250 in_flight=6 completed=251 handle_ms=0.0 t=83459.067
+RING_DONE chunk=251 in_flight=5 completed=252 handle_ms=0.0 t=83669.242
+RING_DONE chunk=252 in_flight=4 completed=253 handle_ms=0.0 t=83910.288
+RING_DONE chunk=253 in_flight=3 completed=254 handle_ms=0.0 t=84130.796
+RING_DONE chunk=254 in_flight=2 completed=255 handle_ms=0.0 t=84664.743
+RING_DONE chunk=255 in_flight=1 completed=256 handle_ms=0.0 t=84921.380
+RING_DONE chunk=256 in_flight=0 completed=257 handle_ms=0.2 t=85052.933
+request chatcmpl-fg-1792137729-20: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 32843/32843 tokens 386.12 tok/s, generation 256 tokens 25.48 tok/s, context 33099/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH message[1].content@6 stored="49a81e6e0b3460c6988d9b18a88aed72.  hello hello h" echoed="cce93a1c608b41f1df1abac30563cdbe.  hello hello h"
+RING_ISSUE chunk=0 first=0 in_flight=1 issue_ms=150.8 t=150.776
+RING_ISSUE chunk=1 first=128 in_flight=2 issue_ms=6.3 t=157.068
+RING_STAGE chunk=0 layer=6 in_flight=2 t=476.800
+RING_OWN_BLOCK chunk=0 layers=6..11 ms=199.8
+RING_STAGE chunk=1 layer=6 in_flight=2 t=677.158
+RING_OWN_BLOCK chunk=1 layers=6..11 ms=35.6
+RING_DONE chunk=0 in_flight=1 completed=1 handle_ms=0.0 t=2201.269
+RING_DONE chunk=1 in_flight=0 completed=2 handle_ms=0.0 t=2201.773
+request chatcmpl-fg-1792137824-21: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 137/137 tokens 62.09 tok/s, generation 256 tokens 30.23 tok/s, context 393/262144 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s

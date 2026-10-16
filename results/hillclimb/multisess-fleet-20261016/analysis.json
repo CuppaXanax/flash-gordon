@@ -1,0 +1,1030 @@
+{
+  "pairs": 5,
+  "metrics": [
+    {
+      "metric": "solo-4096.prefill_engine_tps",
+      "A": 331.429319,
+      "B": 331.495524,
+      "B_over_A": 1.0001997560149467,
+      "paired_median_ratio": 0.9970556527619694,
+      "bootstrap_ci95": [
+        0.9886007692580913,
+        1.0471351792494143
+      ],
+      "ci95": [
+        0.9790078184655997,
+        1.0471351792494143
+      ],
+      "higher_is_better": true,
+      "operator_pass": true,
+      "strict_noninferior": true,
+      "A_samples": [
+        319.646456,
+        335.31789,
+        335.940013,
+        331.429319,
+        320.927831
+      ],
+      "B_samples": [
+        334.713049,
+        331.495524,
+        333.248238,
+        330.453476,
+        330.301301
+      ]
+    },
+    {
+      "metric": "solo-4096.prefill_wall_tps",
+      "A": 328.69065031114326,
+      "B": 328.87569633503193,
+      "B_over_A": 1.0005629792746265,
+      "paired_median_ratio": 0.9973627239020468,
+      "bootstrap_ci95": [
+        0.9889508140659075,
+        1.0471435300597223
+      ],
+      "ci95": [
+        0.9793946425824774,
+        1.0471435300597223
+      ],
+      "higher_is_better": true,
+      "operator_pass": true,
+      "strict_noninferior": true,
+      "A_samples": [
+        317.07346592205414,
+        332.5501042695076,
+        333.1676267725626,
+        328.69065031114326,
+        318.3067949900348
+      ],
+      "B_samples": [
+        332.02142839389086,
+        328.87569633503193,
+        330.5943613194504,
+        327.823802315457,
+        327.6629210495357
+      ]
+    },
+    {
+      "metric": "solo-4096.decode_engine_tps",
+      "A": 27.991678,
+      "B": 27.860989,
+      "B_over_A": 0.9953311480647927,
+      "paired_median_ratio": 0.9953311480647927,
+      "bootstrap_ci95": [
+        0.9871706399319166,
+        1.007271450264822
+      ],
+      "ci95": [
+        0.9859768760146247,
+        1.0084533856358797
+      ],
+      "higher_is_better": true,
+      "operator_pass": true,
+      "strict_noninferior": true,
+      "A_samples": [
+        27.655556,
+        28.168981,
+        28.323075,
+        27.991678,
+        27.913475
+      ],
+      "B_samples": [
+        27.856652,
+        27.807591,
+        28.048287,
+        27.860989,
+        28.076826
+      ]
+    },
+    {
+      "metric": "solo-4096.decode_client_tps",
+      "A": 27.98207037385635,
+      "B": 27.84798813998045,
+      "B_over_A": 0.9952082804422803,
+      "paired_median_ratio": 0.9952082804422803,
+      "bootstrap_ci95": [
+        0.9872898510536074,
+        1.0072808864058729
+      ],
+      "ci95": [
+        0.9859682103850429,
+        1.0084016105689646
+      ],
+      "higher_is_better": true,
+      "operator_pass": true,
+      "strict_noninferior": true,
+      "A_samples": [
+        27.64147515637358,
+        28.153546405913833,
+        28.3130357242898,
+        27.98207037385635,
+        27.903550628217626
+      ],
+      "B_samples": [
+        27.84272959707789,
+        27.79571063772549,
+        28.035435304346624,
+        27.84798813998045,
+        28.06535008786876
+      ]
+    },
+    {
+      "metric": "solo-32768.prefill_engine_tps",
+      "A": 368.757603,
+      "B": 383.878762,
+      "B_over_A": 1.0410056874135825,
+      "paired_median_ratio": 1.0342309424711553,
+      "bootstrap_ci95": [
+        0.9982123108817554,
+        1.0702269138855747
+      ],
+      "ci95": [
+        0.9943197020974557,
+        1.0702269138855747
+      ],
+      "higher_is_better": true,
+      "operator_pass": true,
+      "strict_noninferior": true,
+      "A_samples": [
+        367.578519,
+        381.775427,
+        382.659934,
+        368.234442,
+        368.757603
+      ],
+      "B_samples": [
+        393.392424,
+        383.878762,
+        381.975857,
+        380.839454,
+        384.469329
+      ]
+    },
+    {
+      "metric": "solo-32768.prefill_wall_tps",
+      "A": 368.17563287220895,
+      "B": 383.24176159847224,
+      "B_over_A": 1.0409210370842021,
+      "paired_median_ratio": 1.0341584518286857,
+      "bootstrap_ci95": [
+        0.9982245212321376,
+        1.0701043874873788
+      ],
+      "ci95": [
+        0.9943058226255538,
+        1.0701043874873788
+      ],
+      "higher_is_better": true,
+      "operator_pass": true,
+      "strict_noninferior": true,
+      "A_samples": [
+        366.99619784420776,
+        381.1667335993421,
+        382.03019514384727,
+        367.6572216740471,
+        368.17563287220895
+      ],
+      "B_samples": [
+        392.7242415042728,
+        383.24176159847224,
+        381.351908643687,
+        380.21582317006846,
+        383.8314484432593
+      ]
+    },
+    {
+      "metric": "solo-32768.decode_engine_tps",
+      "A": 25.641861,
+      "B": 25.714812,
+      "B_over_A": 1.0028449963128652,
+      "paired_median_ratio": 1.0108953037620114,
+      "bootstrap_ci95": [
+        0.9895142094554052,
+        1.0328676350701889
+      ],
+      "ci95": [
+        0.9895142094554052,
+        1.0328676350701889
+      ],
+      "higher_is_better": true,
+      "operator_pass": true,
+      "strict_noninferior": true,
+      "A_samples": [
+        24.784503,
+        26.074715,
+        25.706371,
+        25.641861,
+        25.29365
+      ],
+      "B_samples": [
+        25.599111,
+        25.801301,
+        26.042275,
+        25.714812,
+        25.569232
+      ]
+    },
+    {
+      "metric": "solo-32768.decode_client_tps",
+      "A": 25.613114319218646,
+      "B": 25.676805822446813,
+      "B_over_A": 1.0024866754754762,
+      "paired_median_ratio": 1.0104762320268417,
+      "bootstrap_ci95": [
+        0.9896908711630232,
+        1.0324671976501756
+      ],
+      "ci95": [
+        0.9896908711630232,
+        1.0324671976501756
+      ],
+      "higher_is_better": true,
+      "operator_pass": true,
+      "strict_noninferior": true,
+      "A_samples": [
+        24.75592979888885,
+        26.033267113962587,
+        25.67565968341539,
+        25.613114319218646,
+        25.267628886966655
+      ],
+      "B_samples": [
+        25.559685464683245,
+        25.764886809237318,
+        26.006981886371175,
+        25.676805822446813,
+        25.532338429954645
+      ]
+    },
+    {
+      "metric": "chat.ttft_ms",
+      "A": 1927.3834,
+      "B": 1876.1644,
+      "B_over_A": 0.9734256297942588,
+      "paired_median_ratio": 0.9825042075178192,
+      "bootstrap_ci95": [
+        0.9546859560537946,
+        0.9988413710036735
+      ],
+      "ci95": [
+        0.9546859560537946,
+        1.0025651358417131
+      ],
+      "higher_is_better": false,
+      "operator_pass": true,
+      "strict_noninferior": true,
+      "A_samples": [
+        1950.157,
+        1878.3407,
+        1846.5901,
+        1927.3834,
+        1950.2843
+      ],
+      "B_samples": [
+        1861.7875,
+        1876.1644,
+        1834.9451,
+        1893.6623,
+        1897.0226
+      ]
+    },
+    {
+      "metric": "concurrency.chat-style.tps",
+      "A": 24.63057741866738,
+      "B": 24.399709948447985,
+      "B_over_A": 0.9906267942364835,
+      "paired_median_ratio": 0.9749283348811462,
+      "bootstrap_ci95": [
+        0.7379592318042648,
+        1.020697365176192
+      ],
+      "ci95": [
+        0.7379592318042648,
+        1.1000184000897444
+      ],
+      "higher_is_better": true,
+      "operator_pass": true,
+      "strict_noninferior": false,
+      "A_samples": [
+        24.63057741866738,
+        23.97826145802629,
+        24.82267615850896,
+        24.050019757185176,
+        25.140229203273243
+      ],
+      "B_samples": [
+        24.399709948447985,
+        17.69497940556689,
+        24.200330334509065,
+        24.547791798594268,
+        24.442220881294826
+      ]
+    },
+    {
+      "metric": "concurrency.chat-style.end_to_end_tps",
+      "A": 10.494281219336765,
+      "B": 22.111941982686623,
+      "B_over_A": 2.1070468306055257,
+      "paired_median_ratio": 2.082703667666118,
+      "bootstrap_ci95": [
+        1.5685996170426453,
+        2.1224323302950587
+      ],
+      "ci95": [
+        1.5685996170426453,
+        2.321814656955555
+      ],
+      "higher_is_better": true,
+      "operator_pass": true,
+      "strict_noninferior": true,
+      "A_samples": [
+        10.472449034037052,
+        10.478939650177873,
+        10.641071121905794,
+        10.494281219336765,
+        10.619236114044192
+      ],
+      "B_samples": [
+        22.111941982686623,
+        16.437260722282,
+        21.918790811546998,
+        22.273401743128602,
+        22.11672200253233
+      ]
+    },
+    {
+      "metric": "concurrency.chat-style.ttft_ms",
+      "A": 13753.6157,
+      "B": 1101.1084,
+      "B_over_A": 0.08005955844760153,
+      "paired_median_ratio": 0.07908987738992854,
+      "bootstrap_ci95": [
+        0.0772533688535044,
+        0.08048724961829493
+      ],
+      "ci95": [
+        0.07704084577664484,
+        0.08073632193550978
+      ],
+      "higher_is_better": false,
+      "operator_pass": true,
+      "strict_noninferior": true,
+      "A_samples": [
+        14051.5089,
+        13753.6157,
+        13744.5778,
+        13749.7567,
+        13924.3129
+      ],
+      "B_samples": [
+        1085.5264,
+        1106.9907,
+        1101.1084,
+        1064.8929,
+        1101.2722
+      ]
+    },
+    {
+      "metric": "concurrency.agent-style.tps",
+      "A": 24.82688027274811,
+      "B": 24.215727549379057,
+      "B_over_A": 0.9753834264855299,
+      "paired_median_ratio": 0.9796180694221042,
+      "bootstrap_ci95": [
+        0.7076316921389333,
+        0.9989040869800933
+      ],
+      "ci95": [
+        0.7076316921389333,
+        1.104434980555946
+      ],
+      "higher_is_better": true,
+      "operator_pass": true,
+      "strict_noninferior": false,
+      "A_samples": [
+        24.2422949960977,
+        24.82688027274811,
+        24.88083852080188,
+        24.874248286370765,
+        24.541615586633142
+      ],
+      "B_samples": [
+        24.215727549379057,
+        17.568287297935445,
+        23.97620818384222,
+        24.36726308462061,
+        24.227949419234285
+      ]
+    },
+    {
+      "metric": "concurrency.agent-style.end_to_end_tps",
+      "A": 22.65939753193842,
+      "B": 22.146843747753955,
+      "B_over_A": 0.977380078907128,
+      "paired_median_ratio": 0.9834449016087912,
+      "bootstrap_ci95": [
+        0.7258194897553092,
+        1.0006663375867098
+      ],
+      "ci95": [
+        0.7258194897553092,
+        1.0983106284704538
+      ],
+      "higher_is_better": true,
+      "operator_pass": true,
+      "strict_noninferior": false,
+      "A_samples": [
+        22.138521890280742,
+        22.65939753193842,
+        22.706689951431102,
+        22.710628683341277,
+        22.395791550820206
+      ],
+      "B_samples": [
+        22.153273619530435,
+        16.446632354794257,
+        21.943898349485398,
+        22.334651990962353,
+        22.146843747753955
+      ]
+    },
+    {
+      "metric": "concurrency.agent-style.ttft_ms",
+      "A": 986.3365,
+      "B": 988.8618,
+      "B_over_A": 1.0025602824188298,
+      "paired_median_ratio": 0.9934387431426577,
+      "bootstrap_ci95": [
+        0.9751390839733896,
+        1.007552594880145
+      ],
+      "ci95": [
+        0.9747205090014421,
+        1.0096923444574286
+      ],
+      "higher_is_better": false,
+      "operator_pass": true,
+      "strict_noninferior": true,
+      "A_samples": [
+        1003.498,
+        986.3365,
+        985.1681,
+        980.4868,
+        999.4579
+      ],
+      "B_samples": [
+        984.2123,
+        993.7859,
+        988.8618,
+        956.111,
+        992.9002
+      ]
+    },
+    {
+      "metric": "concurrency.aggregate_tps",
+      "A": 21.865806258578832,
+      "B": 48.324419648731684,
+      "B_over_A": 2.210045176347983,
+      "paired_median_ratio": 2.1835395521862395,
+      "bootstrap_ci95": [
+        1.6077964350162088,
+        2.2217839538817366
+      ],
+      "ci95": [
+        1.6077964350162088,
+        2.451443601862304
+      ],
+      "higher_is_better": true,
+      "operator_pass": true,
+      "strict_noninferior": true,
+      "A_samples": [
+        21.839911351117326,
+        21.838018587096833,
+        22.188945545337322,
+        21.865806258578832,
+        22.155151347896908
+      ],
+      "B_samples": [
+        48.324419648731684,
+        35.111088432151995,
+        47.88511194444923,
+        48.5810974839973,
+        48.37664925280517
+      ]
+    },
+    {
+      "metric": "concurrency.aggregate_wall_tps",
+      "A": 20.979907644889444,
+      "B": 44.202881834508,
+      "B_over_A": 2.1069149866003105,
+      "paired_median_ratio": 2.0828478418422627,
+      "bootstrap_ci95": [
+        1.5684067960135448,
+        2.1224052147418058
+      ],
+      "ci95": [
+        1.5684067960135448,
+        2.321797046537412
+      ],
+      "higher_is_better": true,
+      "operator_pass": true,
+      "strict_noninferior": true,
+      "A_samples": [
+        20.93593928476199,
+        20.95339991278884,
+        21.276839247071504,
+        20.979907644889444,
+        21.228090123325916
+      ],
+      "B_samples": [
+        44.202881834508,
+        32.86345482280763,
+        43.819049611200505,
+        44.52786539031483,
+        44.21488169980244
+      ]
+    },
+    {
+      "metric": "concurrency.chat.gap_p95_ms",
+      "A": 78.50190000000111,
+      "B": 83.6603,
+      "B_over_A": 1.0657105114653125,
+      "paired_median_ratio": 1.0657105114653125,
+      "bootstrap_ci95": [
+        0.9778936850423453,
+        2.4333026962294335
+      ],
+      "ci95": [
+        0.7833004838819407,
+        2.4333026962294335
+      ],
+      "higher_is_better": false,
+      "operator_pass": false,
+      "strict_noninferior": false,
+      "A_samples": [
+        78.30070000000342,
+        81.16519999999946,
+        73.65480000000025,
+        83.26580000000104,
+        78.50190000000111
+      ],
+      "B_samples": [
+        82.68250000000035,
+        197.4994999999999,
+        83.89730000000054,
+        81.42509999999993,
+        83.6603
+      ]
+    },
+    {
+      "metric": "mixed.chat-style.tps",
+      "A": 29.496215243837625,
+      "B": 8.90334659443915,
+      "B_over_A": 0.3018470851543994,
+      "paired_median_ratio": 0.30175624207605933,
+      "bootstrap_ci95": [
+        0.29297038632008654,
+        0.30662216235993
+      ],
+      "ci95": [
+        0.29294968901130564,
+        0.3067284937587405
+      ],
+      "higher_is_better": true,
+      "operator_pass": false,
+      "strict_noninferior": false,
+      "A_samples": [
+        29.452821682136502,
+        30.354814221956154,
+        30.2033171689742,
+        29.127551550759936,
+        29.496215243837625
+      ],
+      "B_samples": [
+        8.90334659443915,
+        8.893061649280952,
+        8.920981749023428,
+        8.931152840744344,
+        8.900667067447017
+      ]
+    },
+    {
+      "metric": "mixed.chat-style.end_to_end_tps",
+      "A": 2.3348372369594146,
+      "B": 8.211476386983877,
+      "B_over_A": 3.516937393750592,
+      "paired_median_ratio": 3.4934438706539948,
+      "bootstrap_ci95": [
+        3.365131018755804,
+        3.5367890557637307
+      ],
+      "ci95": [
+        3.365131018755804,
+        3.557611522728518
+      ],
+      "higher_is_better": true,
+      "operator_pass": true,
+      "strict_noninferior": true,
+      "A_samples": [
+        2.3348372369594146,
+        2.4394290389026745,
+        2.422441974066928,
+        2.329528742441317,
+        2.3341776023328036
+      ],
+      "B_samples": [
+        8.156622834430577,
+        8.208998326865048,
+        8.237923113005081,
+        8.239051761353497,
+        8.211476386983877
+      ]
+    },
+    {
+      "metric": "mixed.chat-style.ttft_ms",
+      "A": 100951.7504,
+      "B": 2407.824,
+      "B_over_A": 0.023851235768171483,
+      "paired_median_ratio": 0.024478776341977867,
+      "bootstrap_ci95": [
+        0.02381519128136259,
+        0.026074886166609752
+      ],
+      "ci95": [
+        0.02351426462809705,
+        0.026074886166609752
+      ],
+      "higher_is_better": false,
+      "operator_pass": true,
+      "strict_noninferior": true,
+      "A_samples": [
+        100951.7504,
+        96509.0013,
+        97202.5957,
+        101104.5417,
+        100995.5226
+      ],
+      "B_samples": [
+        2632.3054,
+        2398.8042,
+        2379.4006,
+        2407.824,
+        2413.9905
+      ]
+    },
+    {
+      "metric": "mixed.agent-style.tps",
+      "A": 25.429625577371695,
+      "B": 25.650847675346846,
+      "B_over_A": 1.0086993847904706,
+      "paired_median_ratio": 1.0124809543773527,
+      "bootstrap_ci95": [
+        0.9929571188967886,
+        1.0359274025982153
+      ],
+      "ci95": [
+        0.99250447073899,
+        1.0359274025982153
+      ],
+      "higher_is_better": true,
+      "operator_pass": true,
+      "strict_noninferior": true,
+      "A_samples": [
+        25.49878055070157,
+        25.832784908018855,
+        25.429625577371695,
+        24.024171695124437,
+        25.36302488866697
+      ],
+      "B_samples": [
+        25.564748257332987,
+        25.650847675346846,
+        25.747011574036033,
+        24.51718926476176,
+        26.274252494950662
+      ]
+    },
+    {
+      "metric": "mixed.agent-style.end_to_end_tps",
+      "A": 2.588329221920654,
+      "B": 2.0643459420220847,
+      "B_over_A": 0.7975592612172608,
+      "paired_median_ratio": 0.7927308077784178,
+      "bootstrap_ci95": [
+        0.7635904465617132,
+        0.798917355115425
+      ],
+      "ci95": [
+        0.7630391163737772,
+        0.8044112266839264
+      ],
+      "higher_is_better": true,
+      "operator_pass": false,
+      "strict_noninferior": false,
+      "A_samples": [
+        2.588329221920654,
+        2.708677358062378,
+        2.689022149217045,
+        2.5846250435331375,
+        2.587814942587728
+      ],
+      "B_samples": [
+        2.0578117948000556,
+        2.0683201534344526,
+        2.0643459420220847,
+        2.048911898564352,
+        2.0674502694603634
+      ]
+    },
+    {
+      "metric": "mixed.agent-style.ttft_ms",
+      "A": 88391.3144,
+      "B": 114080.6393,
+      "B_over_A": 1.2906317784092143,
+      "paired_median_ratio": 1.2954068392041016,
+      "bootstrap_ci95": [
+        1.284233090291294,
+        1.3450374894812789
+      ],
+      "ci95": [
+        1.273928617717413,
+        1.3472611635468918
+      ],
+      "higher_is_better": false,
+      "operator_pass": false,
+      "strict_noninferior": false,
+      "A_samples": [
+        88865.8058,
+        84601.1839,
+        85134.895,
+        88391.3144,
+        88831.7239
+      ],
+      "B_samples": [
+        114390.2018,
+        113791.764,
+        114067.3212,
+        114502.7132,
+        114080.6393
+      ]
+    },
+    {
+      "metric": "mixed.aggregate_tps",
+      "A": 24.403104357035108,
+      "B": 4.2165141125821455,
+      "B_over_A": 0.17278597226367134,
+      "paired_median_ratio": 0.1726044519942548,
+      "bootstrap_ci95": [
+        0.16955372789383782,
+        0.1775426140808123
+      ],
+      "ci95": [
+        0.16907284653743712,
+        0.1775426140808123
+      ],
+      "higher_is_better": true,
+      "operator_pass": false,
+      "strict_noninferior": false,
+      "A_samples": [
+        24.403104357035108,
+        24.921051496067427,
+        24.678605745536103,
+        23.57348182564204,
+        24.327343488396423
+      ],
+      "B_samples": [
+        4.212084454504657,
+        4.225457184192536,
+        4.2165141125821455,
+        4.185297586311007,
+        4.224193586449284
+      ]
+    },
+    {
+      "metric": "mixed.aggregate_wall_tps",
+      "A": 4.660648115662008,
+      "B": 4.128377607244121,
+      "B_over_A": 0.8857947445915938,
+      "paired_median_ratio": 0.8812855409350226,
+      "bootstrap_ci95": [
+        0.8495258046213018,
+        0.887381902240561
+      ],
+      "ci95": [
+        0.8488969651792199,
+        0.8933687416545533
+      ],
+      "higher_is_better": true,
+      "operator_pass": false,
+      "strict_noninferior": false,
+      "A_samples": [
+        4.660648115662008,
+        4.869009322729239,
+        4.83518642829049,
+        4.64949246644234,
+        4.659342416994384
+      ],
+      "B_samples": [
+        4.115197389236472,
+        4.136349062600177,
+        4.128377607244121,
+        4.09753048336195,
+        4.13461613718261
+      ]
+    },
+    {
+      "metric": "mixed.chat.gap_p95_ms",
+      "A": 55.48099999999977,
+      "B": 206.23979999999938,
+      "B_over_A": 3.7173050233413285,
+      "paired_median_ratio": 3.710511706710423,
+      "bootstrap_ci95": [
+        3.301324274952667,
+        4.248232637904591
+      ],
+      "ci95": [
+        3.2416892368970904,
+        4.248232637904591
+      ],
+      "higher_is_better": false,
+      "operator_pass": false,
+      "strict_noninferior": false,
+      "A_samples": [
+        48.63179999998829,
+        61.350600000005215,
+        62.35109999999986,
+        54.11479999999574,
+        55.48099999999977
+      ],
+      "B_samples": [
+        206.59919999999875,
+        207.42399999999907,
+        205.84120000000075,
+        206.23979999999938,
+        205.86290000000008
+      ]
+    }
+  ],
+  "protected_pass": true,
+  "aggregate_median_increases": true,
+  "aggregate_improves": true,
+  "aggregate_clear_win": true,
+  "solo_hashes": [
+    {
+      "pair": 0,
+      "context": 4096,
+      "cold_equal": true,
+      "decode_equal": true
+    },
+    {
+      "pair": 0,
+      "context": 32768,
+      "cold_equal": true,
+      "decode_equal": true
+    },
+    {
+      "pair": 1,
+      "context": 4096,
+      "cold_equal": true,
+      "decode_equal": true
+    },
+    {
+      "pair": 1,
+      "context": 32768,
+      "cold_equal": true,
+      "decode_equal": true
+    },
+    {
+      "pair": 2,
+      "context": 4096,
+      "cold_equal": true,
+      "decode_equal": true
+    },
+    {
+      "pair": 2,
+      "context": 32768,
+      "cold_equal": true,
+      "decode_equal": true
+    },
+    {
+      "pair": 3,
+      "context": 4096,
+      "cold_equal": true,
+      "decode_equal": true
+    },
+    {
+      "pair": 3,
+      "context": 32768,
+      "cold_equal": true,
+      "decode_equal": true
+    },
+    {
+      "pair": 4,
+      "context": 4096,
+      "cold_equal": true,
+      "decode_equal": true
+    },
+    {
+      "pair": 4,
+      "context": 32768,
+      "cold_equal": true,
+      "decode_equal": true
+    }
+  ],
+  "solo_hash_identity": true,
+  "concurrent_hashes": [
+    {
+      "pair": 0,
+      "mode": "concurrency",
+      "stream": "chat-style",
+      "equal": true
+    },
+    {
+      "pair": 0,
+      "mode": "concurrency",
+      "stream": "agent-style",
+      "equal": true
+    },
+    {
+      "pair": 0,
+      "mode": "mixed",
+      "stream": "chat-style",
+      "equal": true
+    },
+    {
+      "pair": 1,
+      "mode": "concurrency",
+      "stream": "chat-style",
+      "equal": true
+    },
+    {
+      "pair": 1,
+      "mode": "concurrency",
+      "stream": "agent-style",
+      "equal": true
+    },
+    {
+      "pair": 1,
+      "mode": "mixed",
+      "stream": "chat-style",
+      "equal": true
+    },
+    {
+      "pair": 2,
+      "mode": "concurrency",
+      "stream": "chat-style",
+      "equal": true
+    },
+    {
+      "pair": 2,
+      "mode": "concurrency",
+      "stream": "agent-style",
+      "equal": true
+    },
+    {
+      "pair": 2,
+      "mode": "mixed",
+      "stream": "chat-style",
+      "equal": true
+    },
+    {
+      "pair": 3,
+      "mode": "concurrency",
+      "stream": "chat-style",
+      "equal": true
+    },
+    {
+      "pair": 3,
+      "mode": "concurrency",
+      "stream": "agent-style",
+      "equal": true
+    },
+    {
+      "pair": 3,
+      "mode": "mixed",
+      "stream": "chat-style",
+      "equal": true
+    },
+    {
+      "pair": 4,
+      "mode": "concurrency",
+      "stream": "chat-style",
+      "equal": true
+    },
+    {
+      "pair": 4,
+      "mode": "concurrency",
+      "stream": "agent-style",
+      "equal": true
+    },
+    {
+      "pair": 4,
+      "mode": "mixed",
+      "stream": "chat-style",
+      "equal": true
+    }
+  ],
+  "concurrent_hash_identity": true,
+  "method": "Paired median log-ratio percentile bootstrap, 20000 fixed-seed resamples; CI expanded by df=4 Student-t 95% interval for mean log-ratio. Operator gate is the user's relaxed median/no-clear-regression rule; strict noninferiority reported separately."
+}

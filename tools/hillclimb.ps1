@@ -20,6 +20,8 @@ param(
     [switch]$ConcurrentGeneration,
     [switch]$MixedPrefill,
     [switch]$CapacityProbe,
+    [switch]$AllowSerializedBaseline,
+    [string]$PromptSalt = '',
     [int]$ChatContextTokens = 64,
     [int]$AgentContextTokens = 32768,
     [int]$ConcurrentTokens = 256,
@@ -68,6 +70,7 @@ $records = [ordered]@{
     errors = @()
 }
 $script:prefillPrompts = @{}
+$script:promptNonce = 0
 
 function Get-HeaderMap {
     param([Net.Http.HttpResponseMessage]$Response)
@@ -100,6 +103,12 @@ function Get-Model {
 }
 
 function New-Nonce {
+    if ($PromptSalt) {
+        $text = "$PromptSalt/$script:promptNonce"
+        $script:promptNonce++
+        return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+            [Text.Encoding]::UTF8.GetBytes($text))).Substring(0,32).ToLowerInvariant()
+    }
     return [Guid]::NewGuid().ToString('N')
 }
 
@@ -172,6 +181,7 @@ function Start-Sse {
         Done = $false
         FirstTokenMs = $null
         Usage = $null
+        Id = $null
         Prefix = $null
         FirstContentTimestamp = $null
         LastContentTimestamp = $null
@@ -185,6 +195,7 @@ function Consume-SseLine {
     $data = $Line.Substring(6)
     if ($data -eq '[DONE]') { $Session.Done = $true; return }
     try { $event = $data | ConvertFrom-Json } catch { return }
+    if ($event.PSObject.Properties['id']) { $Session.Id = [string]$event.id }
     if ($event.PSObject.Properties['error']) { throw "SSE error: $($event.error.message)" }
     if ($event.PSObject.Properties['usage']) { $Session.Usage = $event.usage }
     if ($event.PSObject.Properties['flash_gordon']) { $Session.Prefix = $event.flash_gordon }
@@ -453,6 +464,11 @@ function Invoke-Correctness {
 function Get-GenerationStats {
     param($Session, [string]$Name)
     $sse = Get-SseStats $Session
+    $gaps = @(
+        for ($i = 1; $i -lt $Session.TimesMs.Count; $i++) {
+            $Session.TimesMs[$i] - $Session.TimesMs[$i - 1]
+        }
+    )
     $tokens = if ($null -ne $Session.Usage) { [int]$Session.Usage.completion_tokens } else { $null }
     $decodeSeconds = if ($null -ne $Session.FirstTokenMs) {
         $Session.Watch.Elapsed.TotalSeconds - $Session.FirstTokenMs / 1000.0
@@ -461,6 +477,7 @@ function Get-GenerationStats {
         [Text.Encoding]::UTF8.GetBytes($sse.visible_text))).ToLowerInvariant()
     return [pscustomobject]@{
         name = $Name
+        request_id = $Session.Id
         ttft_ms = $sse.first_content_ms
         wall_seconds = $sse.wall_seconds
         completion_tokens = $tokens
@@ -471,9 +488,10 @@ function Get-GenerationStats {
         client_decode_tps = if ($null -ne $tokens -and $decodeSeconds -gt 0) { $tokens / $decodeSeconds } else { $null }
         client_end_to_end_tps = if ($null -ne $tokens -and $sse.wall_seconds -gt 0) { $tokens / $sse.wall_seconds } else { $null }
         visible_delta_events = $sse.visible_delta_events
-        inter_event_p95_ms = Get-Percentile @(
-            for ($i = 1; $i -lt $Session.TimesMs.Count; $i++) { $Session.TimesMs[$i] - $Session.TimesMs[$i - 1] }
-        ) 0.95
+        inter_event_p50_ms = Get-Percentile $gaps 0.50
+        inter_event_p95_ms = Get-Percentile $gaps 0.95
+        inter_event_max_ms = ($gaps | Measure-Object -Maximum).Maximum
+        visible_event_times_ms = $Session.TimesMs.ToArray()
         finish_received = $sse.finish_received
         sha256 = $hash
         visible_text = $sse.visible_text
@@ -492,7 +510,7 @@ function New-ConcurrentSse {
         Task = $task; AwaitingHeaders = $true; Headers = @{}
         TimesMs = [Collections.Generic.List[double]]::new()
         Text = [Text.StringBuilder]::new(); Done = $false; FirstTokenMs = $null
-        Usage = $null; Prefix = $null; FirstContentTimestamp = $null
+        Usage = $null; Id = $null; Prefix = $null; FirstContentTimestamp = $null
         LastContentTimestamp = $null; CompletedTimestamp = $null
     }
 }
@@ -500,6 +518,7 @@ function New-ConcurrentSse {
 function Invoke-Concurrency {
     param([object[]]$ChatMessages, [object[]]$AgentMessages, [int]$MaxTokens = 32, [int]$ChatDelayMs = 0)
     $sessions = @()
+    $batchStarted = [Diagnostics.Stopwatch]::GetTimestamp()
     try {
         $agent = New-ConcurrentSse $AgentMessages $MaxTokens 'hillclimb-agent'
         $sessions += $agent
@@ -546,6 +565,12 @@ function Invoke-Concurrency {
         return [pscustomobject]@{
             streams = $rows
             aggregate_client_decode_tps = $aggregate
+            aggregate_window_seconds = ($last - $first) / [Diagnostics.Stopwatch]::Frequency
+            batch_wall_seconds = ($last - $batchStarted) / [Diagnostics.Stopwatch]::Frequency
+            aggregate_wall_tps = if ($usageAvailable) {
+                ($chat.Usage.completion_tokens + $agent.Usage.completion_tokens) /
+                    (($last - $batchStarted) / [Diagnostics.Stopwatch]::Frequency)
+            } else { $null }
             overlapping_visible_decode_seconds = [Math]::Max(0.0, [double]$overlap)
             chat_first_token_before_agent_first_token = $chat.FirstContentTimestamp -lt $agent.FirstContentTimestamp
             token_count_source = if ($usageAvailable) { 'usage on these exact SSE streams' } else { 'unavailable; do not substitute delta events' }
@@ -565,18 +590,19 @@ function Invoke-ConcurrentGeneration {
         $AgentContextTokens -lt 0 -or $ChatDelayMilliseconds -lt 0) { throw 'Invalid concurrency parameters.' }
     if ($CapacityProbe -and -not $MixedPrefill) { throw 'CapacityProbe requires MixedPrefill.' }
     $trials = @()
+    $pendingAccounting = $false
     $purpose = 'Print a long numbered list of distinct practical software tasks, one per line. Continue until the token limit.'
     for ($repeat = 0; $repeat -lt $ConcurrentRepeats; $repeat++) {
-        $chat = New-Prompt $ChatContextTokens $purpose
-        $agent = New-Prompt $AgentContextTokens $purpose -Agent
-        $chatPrime = Invoke-NonStream $chat.Messages 1 -User 'hillclimb-chat'
+        $chat = New-Prompt $ChatContextTokens 'Output exactly Ready.'
+        $agent = New-Prompt $AgentContextTokens $(if ($MixedPrefill) { $purpose } else { 'Output exactly Ready.' }) -Agent
+        $chatPrime = Invoke-NonStream $chat.Messages 32 -User 'hillclimb-chat'
         $chatMessages = @($chat.Messages) + @(
             @{ role = 'assistant'; content = $chatPrime.Content }
             @{ role = 'user'; content = "/no_think $purpose" }
         )
         $agentMessages = $agent.Messages
         if (-not $MixedPrefill) {
-            $agentPrime = Invoke-NonStream $agent.Messages 1 -User 'hillclimb-agent'
+            $agentPrime = Invoke-NonStream $agent.Messages 32 -User 'hillclimb-agent'
             $agentMessages = @($agent.Messages) + @(
                 @{ role = 'assistant'; content = $agentPrime.Content }
                 @{ role = 'user'; content = "/no_think $purpose" }
@@ -588,14 +614,26 @@ function Invoke-ConcurrentGeneration {
         } else { $null }
         $baseline = @((Get-GenerationStats $chatIsolated 'chat-style'),
             $(if ($agentIsolated) { Get-GenerationStats $agentIsolated 'agent-style' } else { $null }))
-        $null = Invoke-NonStream $chat.Messages 1 -User 'hillclimb-chat'
-        if (-not $MixedPrefill) { $null = Invoke-NonStream $agent.Messages 1 -User 'hillclimb-agent' }
+        $null = Invoke-NonStream $chat.Messages 32 -User 'hillclimb-chat'
+        if (-not $MixedPrefill) { $null = Invoke-NonStream $agent.Messages 32 -User 'hillclimb-agent' }
         $load = Invoke-Concurrency $chatMessages $agentMessages $ConcurrentTokens `
             -ChatDelayMs $(if ($MixedPrefill) { $ChatDelayMilliseconds } else { 0 })
         $trials += [pscustomobject]@{ repeat = $repeat; isolated = $baseline; load = $load }
         $records.concurrency = [pscustomobject]@{
             mode = if ($MixedPrefill) { 'chat-decode-during-agent-cold-prefill' } else { 'two-warm-prefix-generations' }
             capacity_probe = [bool]$CapacityProbe; complete = $false; trials = $trials
+        }
+        if ($AllowSerializedBaseline -and @($load.streams | Where-Object { $null -eq $_.completion_tokens }).Count) {
+            $pendingAccounting = $true
+            foreach ($index in 0,1) {
+                $load.streams[$index] | Add-Member same_prompt_hash_match (
+                    $(if ($baseline[$index]) {
+                        $load.streams[$index].sha256 -eq $baseline[$index].sha256
+                    } else { $null }))
+                $load.streams[$index] | Add-Member requested_token_ceiling $ConcurrentTokens
+            }
+            Write-Host 'BASELINE requires exact request-ID-matched server log usage; no event-count substitution.'
+            continue
         }
         foreach ($index in 0,1) {
             $row = $load.streams[$index]
@@ -610,16 +648,17 @@ function Invoke-ConcurrentGeneration {
         $load | Add-Member aggregate_speedup_over_mean_isolated $(if (-not $CapacityProbe) {
             $load.aggregate_client_decode_tps / (($baseline[0].client_decode_tps + $baseline[1].client_decode_tps) / 2.0)
         } else { $null })
-        if ($null -eq $load.streams[0].prefix -or $load.streams[0].prefix.reused_tokens -le 0) {
+        if (-not $AllowSerializedBaseline -and
+            ($null -eq $load.streams[0].prefix -or $load.streams[0].prefix.reused_tokens -le 0)) {
             throw 'Chat continuation did not reuse its primed session.'
         }
         if ($MixedPrefill -and $load.streams[1].prefix.reused_tokens -ne 0) {
             throw 'Agent cold prefill unexpectedly reused a prefix.'
         }
-        if (-not $MixedPrefill -and $load.streams[1].prefix.reused_tokens -le 0) {
+        if (-not $AllowSerializedBaseline -and -not $MixedPrefill -and $load.streams[1].prefix.reused_tokens -le 0) {
             throw 'Agent continuation did not reuse its primed session.'
         }
-        if (-not $MixedPrefill -and $load.overlapping_visible_decode_seconds -le 0) {
+        if (-not $AllowSerializedBaseline -and -not $MixedPrefill -and $load.overlapping_visible_decode_seconds -le 0) {
             throw 'The requests did not overlap in generation; this is not a pipeline throughput sample.'
         }
         if ($CapacityProbe) {
@@ -640,11 +679,16 @@ function Invoke-ConcurrentGeneration {
     return [pscustomobject]@{
         mode = if ($MixedPrefill) { 'chat-decode-during-agent-cold-prefill' } else { 'two-warm-prefix-generations' }
         capacity_probe = [bool]$CapacityProbe
-        complete = $true
+        serialized_baseline_allowed = [bool]$AllowSerializedBaseline
+        prompt_salt = $PromptSalt
+        complete = -not $pendingAccounting
+        requires_server_log_accounting = $pendingAccounting
         trials = $trials
         chat_ttft_p50_ms = Get-Percentile @($trials | ForEach-Object { $_.load.streams[0].ttft_ms }) 0.5
         chat_ttft_p95_ms = Get-Percentile @($trials | ForEach-Object { $_.load.streams[0].ttft_ms }) 0.95
-        aggregate_tps_median = Get-Percentile @($trials | ForEach-Object { $_.load.aggregate_client_decode_tps }) 0.5
+        aggregate_tps_median = if ($pendingAccounting) { $null } else {
+            Get-Percentile @($trials | ForEach-Object { $_.load.aggregate_client_decode_tps }) 0.5
+        }
     }
 }
 
@@ -747,7 +791,8 @@ try {
     Write-Host ("HILLCLIMB elapsed_s={0:F1} prefill={1} decode={2} ttft={3} correctness_pass={4}" -f
         $records.metadata.elapsed_seconds, @($records.prefill).Count, @($records.decode).Count,
         @($records.ttft).Count, $records.metadata.correctness_pass)
-    if (-not $records.metadata.correctness_pass) { exit 2 }
+    if (-not $records.metadata.correctness_pass -or
+        ($ConcurrentGeneration -and -not $records.concurrency.complete)) { exit 2 }
 } catch {
     $records.errors += [pscustomobject]@{ message = $_.Exception.Message; script_stack = $_.ScriptStackTrace }
     $records.metadata.elapsed_seconds = ([DateTimeOffset]::Now - $runStarted).TotalSeconds

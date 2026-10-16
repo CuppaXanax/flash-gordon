@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "/proc/209908/exe: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nCLEAN rank=0 pid=209908\nFilesystem                  1B-blocks         Used    Available Use% Mounted on\n/dev/mapper/fedora-root 1021363355648 903850721280 117512634368  89% /",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "/proc/140870/exe: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nCLEAN rank=1 pid=140870\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 211724472320 41489854464  84% /",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "/proc/136856/exe: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nCLEAN rank=2 pid=136856\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 201045291008 52169035776  80% /",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "/proc/136377/exe: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nCLEAN rank=3 pid=136377\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 241548890112 11665436672  96% /",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "/proc/139363/exe: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nCLEAN rank=4 pid=139363\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 189478248448 63736078336  75% /",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "/proc/136363/exe: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nCLEAN rank=5 pid=136363\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 208249876480 44964450304  83% /",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "/proc/136716/exe: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nCLEAN rank=6 pid=136716\nFilesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 206110519296 47103807488  82% /",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "/proc/137880/exe: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nCLEAN rank=7 pid=137880\nFilesystem                 1B-blocks         Used  Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 245812318208 7402008576  98% /",
+    "Stderr": ""
+  }
+]

@@ -1,0 +1,244 @@
+{
+  "pair": 0,
+  "arm": "A",
+  "salt": "multisess-20261016-pair-0",
+  "started": "2026-10-16T00:19:51.1695018-07:00",
+  "complete": false,
+  "solo": [
+    {
+      "decode": {
+        "Payload": {
+          "id": "chatcmpl-fg-1792135205-3",
+          "object": "chat.completion",
+          "created": 1792135205,
+          "model": "Qwen3.8-Flash-Next-Uncensored",
+          "choices": [
+            {
+              "index": 0,
+              "message": {
+                "role": "assistant",
+                "content": "1. Implement a binary search algorithm to find a target value in a sorted array.\n2. Reverse a string in place without using extra memory.\n3. Check if a given string is a palindrome.\n4. Find the maximum subarray sum using Kadane’s algorithm.\n5. Implement a stack data structure using an array.\n6. Implement a queue data structure using two stacks.\n7. Detect a cycle in a linked list using Floyd’s Tortoise and Hare algorithm.\n8. Merge two sorted linked lists into one sorted linked list.\n9. Reverse a linked list iteratively.\n10"
+              },
+              "finish_reason": "length"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 4153,
+            "completion_tokens": 128,
+            "total_tokens": 4281
+          }
+        },
+        "Headers": {
+          "Connection": "keep-alive",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "4153",
+          "X-Flash-Gordon-Prefilled-Tokens": "31",
+          "X-Flash-Gordon-Reused-Tokens": "4122",
+          "X-Flash-Gordon-Prefix-Cache": "hit",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "none",
+          "X-Flash-Gordon-Completion-Tokens": "128",
+          "X-Flash-Gordon-Context-Tokens": "4281",
+          "X-Flash-Gordon-Prefill-Seconds": "0.728793344",
+          "X-Flash-Gordon-Prefill-TPS": "42.536064",
+          "X-Flash-Gordon-Decode-Seconds": "4.527153552",
+          "X-Flash-Gordon-Decode-TPS": "28.273837",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50",
+          "Content-Type": "application/json",
+          "Content-Length": "829"
+        },
+        "WallSeconds": 5.2579002,
+        "PromptTokens": 4153,
+        "CompletionTokens": 128,
+        "Content": "1. Implement a binary search algorithm to find a target value in a sorted array.\n2. Reverse a string in place without using extra memory.\n3. Check if a given string is a palindrome.\n4. Find the maximum subarray sum using Kadane’s algorithm.\n5. Implement a stack data structure using an array.\n6. Implement a queue data structure using two stacks.\n7. Detect a cycle in a linked list using Floyd’s Tortoise and Hare algorithm.\n8. Merge two sorted linked lists into one sorted linked list.\n9. Reverse a linked list iteratively.\n10",
+        "FinishReason": "length"
+      },
+      "target": 4096,
+      "cold": {
+        "Payload": {
+          "id": "chatcmpl-fg-1792135193-2",
+          "object": "chat.completion",
+          "created": 1792135193,
+          "model": "Qwen3.8-Flash-Next-Uncensored",
+          "choices": [
+            {
+              "index": 0,
+              "message": {
+                "role": "assistant",
+                "content": "Ready"
+              },
+              "finish_reason": "length"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 4121,
+            "completion_tokens": 1,
+            "total_tokens": 4122
+          }
+        },
+        "Headers": {
+          "Connection": "keep-alive",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "4121",
+          "X-Flash-Gordon-Prefilled-Tokens": "4121",
+          "X-Flash-Gordon-Reused-Tokens": "0",
+          "X-Flash-Gordon-Prefix-Cache": "miss",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "public-history-mismatch",
+          "X-Flash-Gordon-Completion-Tokens": "1",
+          "X-Flash-Gordon-Context-Tokens": "4122",
+          "X-Flash-Gordon-Prefill-Seconds": "12.407964257",
+          "X-Flash-Gordon-Prefill-TPS": "332.125393",
+          "X-Flash-Gordon-Decode-Seconds": "0.067254054",
+          "X-Flash-Gordon-Decode-TPS": "14.868992",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50",
+          "Content-Type": "application/json",
+          "Content-Length": "292"
+        },
+        "WallSeconds": 12.5120975,
+        "PromptTokens": 4121,
+        "CompletionTokens": 1,
+        "Content": "Ready",
+        "FinishReason": "length"
+      }
+    },
+    {
+      "decode": {
+        "Payload": {
+          "id": "chatcmpl-fg-1792135297-5",
+          "object": "chat.completion",
+          "created": 1792135297,
+          "model": "Qwen3.8-Flash-Next-Uncensored",
+          "choices": [
+            {
+              "index": 0,
+              "message": {
+                "role": "assistant",
+                "content": "1. Implement a binary search algorithm to find a target value in a sorted array.\n2. Reverse a linked list in place without using extra memory.\n3. Detect a cycle in a singly linked list using Floyd’s Tortoise and Hare algorithm.\n4. Merge two sorted arrays into a single sorted array.\n5. Find the maximum subarray sum using Kadane’s algorithm.\n6. Implement a stack data structure using two queues.\n7. Implement a queue data structure using two stacks.\n8. Check if a string is a palindrome ignoring non-alphanumeric characters.\n9. Find the longest common prefix"
+              },
+              "finish_reason": "length"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 32835,
+            "completion_tokens": 128,
+            "total_tokens": 32963
+          }
+        },
+        "Headers": {
+          "Connection": "keep-alive",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "32835",
+          "X-Flash-Gordon-Prefilled-Tokens": "31",
+          "X-Flash-Gordon-Reused-Tokens": "32804",
+          "X-Flash-Gordon-Prefix-Cache": "hit",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "none",
+          "X-Flash-Gordon-Completion-Tokens": "128",
+          "X-Flash-Gordon-Context-Tokens": "32963",
+          "X-Flash-Gordon-Prefill-Seconds": "0.738789769",
+          "X-Flash-Gordon-Prefill-TPS": "41.960516",
+          "X-Flash-Gordon-Decode-Seconds": "5.036831029",
+          "X-Flash-Gordon-Decode-TPS": "25.412804",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50",
+          "Content-Type": "application/json",
+          "Content-Length": "861"
+        },
+        "WallSeconds": 5.7813862,
+        "PromptTokens": 32835,
+        "CompletionTokens": 128,
+        "Content": "1. Implement a binary search algorithm to find a target value in a sorted array.\n2. Reverse a linked list in place without using extra memory.\n3. Detect a cycle in a singly linked list using Floyd’s Tortoise and Hare algorithm.\n4. Merge two sorted arrays into a single sorted array.\n5. Find the maximum subarray sum using Kadane’s algorithm.\n6. Implement a stack data structure using two queues.\n7. Implement a queue data structure using two stacks.\n8. Check if a string is a palindrome ignoring non-alphanumeric characters.\n9. Find the longest common prefix",
+        "FinishReason": "length"
+      },
+      "target": 32768,
+      "cold": {
+        "Payload": {
+          "id": "chatcmpl-fg-1792135211-4",
+          "object": "chat.completion",
+          "created": 1792135211,
+          "model": "Qwen3.8-Flash-Next-Uncensored",
+          "choices": [
+            {
+              "index": 0,
+              "message": {
+                "role": "assistant",
+                "content": "Ready"
+              },
+              "finish_reason": "length"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 32803,
+            "completion_tokens": 1,
+            "total_tokens": 32804
+          }
+        },
+        "Headers": {
+          "Connection": "keep-alive",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "32803",
+          "X-Flash-Gordon-Prefilled-Tokens": "32803",
+          "X-Flash-Gordon-Reused-Tokens": "0",
+          "X-Flash-Gordon-Prefix-Cache": "miss",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "public-history-mismatch",
+          "X-Flash-Gordon-Completion-Tokens": "1",
+          "X-Flash-Gordon-Context-Tokens": "32804",
+          "X-Flash-Gordon-Prefill-Seconds": "85.822067679",
+          "X-Flash-Gordon-Prefill-TPS": "382.221040",
+          "X-Flash-Gordon-Decode-Seconds": "0.063038136",
+          "X-Flash-Gordon-Decode-TPS": "15.863413",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50",
+          "Content-Type": "application/json",
+          "Content-Length": "294"
+        },
+        "WallSeconds": 85.9623404,
+        "PromptTokens": 32803,
+        "CompletionTokens": 1,
+        "Content": "Ready",
+        "FinishReason": "length"
+      }
+    }
+  ],
+  "chat": null,
+  "concurrency": null,
+  "mixed": null,
+  "metrics": {
+    "solo-4096.prefill_engine_tps": {
+      "value": 332.125393,
+      "higher_is_better": true
+    },
+    "solo-4096.prefill_wall_tps": {
+      "value": 329.361244187875,
+      "higher_is_better": true
+    },
+    "solo-4096.decode_engine_tps": {
+      "value": 28.273837,
+      "higher_is_better": true
+    },
+    "solo-4096.decode_client_tps": {
+      "value": 28.26164276306048,
+      "higher_is_better": true
+    },
+    "solo-32768.prefill_engine_tps": {
+      "value": 382.22104,
+      "higher_is_better": true
+    },
+    "solo-32768.prefill_wall_tps": {
+      "value": 381.59733491853603,
+      "higher_is_better": true
+    },
+    "solo-32768.decode_engine_tps": {
+      "value": 25.412804,
+      "higher_is_better": true
+    },
+    "solo-32768.decode_client_tps": {
+      "value": 25.383748581009538,
+      "higher_is_better": true
+    }
+  }
+}

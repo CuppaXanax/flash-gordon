@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261016-abq-multisess.tar.gz: OK\n/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon: OK",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261016-abq-multisess.tar.gz: OK\n/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon: OK",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261016-abq-multisess.tar.gz: OK\n/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon: OK",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261016-abq-multisess.tar.gz: OK\n/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon: OK",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261016-abq-multisess.tar.gz: OK\n/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon: OK",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261016-abq-multisess.tar.gz: OK\n/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon: OK",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261016-abq-multisess.tar.gz: OK\n/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon: OK",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261016-abq-multisess.tar.gz: OK\n/home/xander/flash-gordon-live/20261016-abq-multisess/flash-gordon: OK",
+    "Stderr": ""
+  }
+]
