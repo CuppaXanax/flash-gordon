@@ -1727,11 +1727,20 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
      * dynamically and any recorded run bound to a different session fails
      * closed instead of replaying. */
     bool static_allowed=chained_static_allowed(vk)&&e->active_session==0u;
+    const char *group_flag=getenv("FG_DECODE_SUBMIT_GROUP");
+    bool group=static_allowed&&group_flag&&
+        (!strcmp(group_flag,"1")||!strcmp(group_flag,"2"))&&
+        fg_qsa_session_submit_group_ready(OWNER_QSA(e),first_layer,last_layer,token);
+    bool publish_pending=group&&!strcmp(group_flag,"2");
+    if(group)status=fg_vk_submit_group_begin(vk,err);
     uint32_t layer=first_layer;
     while(status==FG_OK&&layer<=last_layer){
         if((layer&3u)==3u){
-            status=owner_record_layer(e,layer,token,position,hyper_input,
-                ngram_embedding,expert,expert_context,&current,err);
+            if(publish_pending){
+                status=fg_vk_submit_group_publish(vk,err);publish_pending=false;
+            }
+            if(status==FG_OK)status=owner_record_layer(e,layer,token,position,
+                hyper_input,ngram_embedding,expert,expert_context,&current,err);
             if(status==FG_OK&&layer<last_layer)status=fg_vk_flush(vk,err);
             if(status==FG_OK)status=chained_layer_trace(fg_model_rank(e->model),vk,layer,token,current,err);
             layer++;
@@ -1793,6 +1802,10 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
             }
         }
         layer=run_last+1u;
+    }
+    if(group){
+        if(status==FG_OK)status=fg_vk_submit_group_end(vk,err);
+        if(status!=FG_OK)fg_vk_submit_group_abort(vk);
     }
     if(status==FG_OK){
         if(fg_vk_batch_active(vk))status=finish_batch(vk,status,err);

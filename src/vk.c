@@ -28,6 +28,8 @@ typedef struct fg_vk_kernel {const char *file;uint32_t bindings,push_bytes;VkDes
 typedef struct fg_vk_profile_dispatch {const char *scope,*name;uint32_t begin_query,end_query;} fg_vk_profile_dispatch;
 
 #define FG_VK_BATCH_MAX_SETS 4096u
+#define FG_VK_GROUP_BUFFERS 16u
+#define FG_VK_GROUP_COMMANDS (FG_VK_GROUP_BUFFERS+FG_VK_STATIC_SLOTS)
 /* Static runs own a separate descriptor pool: the dynamic epoch counter may
  * sweep the whole batch pool (a single recording span can exceed the old half
  * of it), so sharing one pool let a dynamic tail overwrite static bindings
@@ -57,6 +59,10 @@ struct fg_vk_context {
     VkCommandBuffer held_commands[FG_VK_STATIC_SLOTS];uint32_t held_slots[FG_VK_STATIC_SLOTS],held_count;VkFence static_submit_fence[FG_VK_STATIC_SLOTS];VkFence held_fence;bool held_fence_pending;
     VkCommandBuffer command_swap;bool static_active;uint32_t static_slot_active;uint32_t static_saved_set_count;
     uint32_t batch_set_base;
+    bool group_active,group_ready,group_published;
+    VkCommandBuffer group_buffers[FG_VK_GROUP_BUFFERS],group_barrier,group_saved;
+    VkCommandBuffer group_commands[FG_VK_GROUP_COMMANDS];
+    uint32_t group_count,group_index;
     VkPhysicalDeviceMemoryProperties memory;char device_name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
     bool subgroup_topk;bool integer_dot_product;bool subgroup_expert_q8;
     uint32_t batch_depth;uint32_t batch_set_count;VkDescriptorSet descriptor_sets[FG_VK_BATCH_MAX_SETS];bool batch_has_dispatch;bool barrier_elide_next;
@@ -400,7 +406,7 @@ uint32_t fg_vk_hc_inject_pieces(const fg_vk_context *c){
     return units;
 }
 
-fg_status fg_vk_profile_begin(fg_vk_context *c,fg_error *err){if(!c||c->batch_depth||c->profile_active){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan profile begin");return FG_ERR_ARGUMENT;}fg_status drain=vk_pipeline_drain(c,err);if(drain!=FG_OK)return drain;if(!c->timestamp_valid_bits||c->timestamp_period<=0.0f){fg_error_set(err,FG_ERR_UNAVAILABLE,"Vulkan compute queue has no timestamp support");return FG_ERR_UNAVAILABLE;}if(!c->profile_query_pool){VkQueryPoolCreateInfo create={.sType=VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,.queryType=VK_QUERY_TYPE_TIMESTAMP,.queryCount=FG_VK_PROFILE_QUERY_COUNT};VkResult vr=vkCreateQueryPool(c->device,&create,NULL,&c->profile_query_pool);if(vr!=VK_SUCCESS)return vk_error(err,"create timestamp query pool",vr);vkResetFences(c->device,1,&c->fence);vkResetCommandBuffer(c->command,0);VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};if((vr=vkBeginCommandBuffer(c->command,&begin))!=VK_SUCCESS)return vk_error(err,"begin timestamp query prime",vr);vkCmdResetQueryPool(c->command,c->profile_query_pool,0,FG_VK_PROFILE_QUERY_COUNT);if((vr=vkEndCommandBuffer(c->command))!=VK_SUCCESS)return vk_error(err,"end timestamp query prime",vr);VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&c->command};if((vr=vkQueueSubmit(c->queue,1,&submit,c->fence))!=VK_SUCCESS)return vk_error(err,"submit timestamp query prime",vr);c->counters.submissions++;if((vr=vkWaitForFences(c->device,1,&c->fence,VK_TRUE,UINT64_MAX))!=VK_SUCCESS)return vk_error(err,"wait timestamp query prime",vr);}memset(&c->profile,0,sizeof(c->profile));c->profile_scope="unscoped";c->profile_active=true;return FG_OK;}
+fg_status fg_vk_profile_begin(fg_vk_context *c,fg_error *err){if(!c||c->batch_depth||c->profile_active||c->group_active){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan profile begin");return FG_ERR_ARGUMENT;}fg_status drain=vk_pipeline_drain(c,err);if(drain!=FG_OK)return drain;if(!c->timestamp_valid_bits||c->timestamp_period<=0.0f){fg_error_set(err,FG_ERR_UNAVAILABLE,"Vulkan compute queue has no timestamp support");return FG_ERR_UNAVAILABLE;}if(!c->profile_query_pool){VkQueryPoolCreateInfo create={.sType=VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,.queryType=VK_QUERY_TYPE_TIMESTAMP,.queryCount=FG_VK_PROFILE_QUERY_COUNT};VkResult vr=vkCreateQueryPool(c->device,&create,NULL,&c->profile_query_pool);if(vr!=VK_SUCCESS)return vk_error(err,"create timestamp query pool",vr);vkResetFences(c->device,1,&c->fence);vkResetCommandBuffer(c->command,0);VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};if((vr=vkBeginCommandBuffer(c->command,&begin))!=VK_SUCCESS)return vk_error(err,"begin timestamp query prime",vr);vkCmdResetQueryPool(c->command,c->profile_query_pool,0,FG_VK_PROFILE_QUERY_COUNT);if((vr=vkEndCommandBuffer(c->command))!=VK_SUCCESS)return vk_error(err,"end timestamp query prime",vr);VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&c->command};if((vr=vkQueueSubmit(c->queue,1,&submit,c->fence))!=VK_SUCCESS)return vk_error(err,"submit timestamp query prime",vr);c->counters.submissions++;if((vr=vkWaitForFences(c->device,1,&c->fence,VK_TRUE,UINT64_MAX))!=VK_SUCCESS)return vk_error(err,"wait timestamp query prime",vr);}memset(&c->profile,0,sizeof(c->profile));c->profile_scope="unscoped";c->profile_active=true;return FG_OK;}
 fg_status fg_vk_profile_set_scope(fg_vk_context *c,const char *scope,fg_error *err){if(!c||!c->profile_active||!scope||!*scope){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan profile scope");return FG_ERR_ARGUMENT;}c->profile_scope=scope;return FG_OK;}
 fg_status fg_vk_profile_end(fg_vk_context *c,fg_vk_profile *profile,fg_error *err){if(!c||!profile||c->batch_depth||!c->profile_active){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan profile end");return FG_ERR_ARGUMENT;}*profile=c->profile;c->profile_active=false;return FG_OK;}
 bool fg_vk_profile_active(const fg_vk_context *c){return c&&c->profile_active;}
@@ -497,6 +503,10 @@ fg_status fg_vk_tensor_read(const fg_vk_tensor *t,uint64_t offset,void *data,uin
  * transfer speed instead of a 100+ ms host readback. */
 fg_status fg_vk_copy_tensors(fg_vk_context *c,fg_vk_tensor *const *dst,
                              const fg_vk_tensor *const *src,uint32_t count,fg_error *err){
+    if(c&&c->group_active){
+        fg_error_set(err,FG_ERR_ARGUMENT,"tensor copy cannot bypass a submit group");
+        return FG_ERR_ARGUMENT;
+    }
     if(!c||count>FG_LAYER_COUNT*2u+2u){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan tensor copy");
         return FG_ERR_ARGUMENT;
@@ -564,6 +574,10 @@ fg_status fg_vk_copy_tensors(fg_vk_context *c,fg_vk_tensor *const *dst,
 }
 
 static fg_status dispatch_impl(fg_vk_context *c,fg_vk_kernel *kernel,const fg_vk_tensor *const *tensors,const void *push,uint32_t gx,uint32_t gy,uint32_t gz,bool batch_barrier,fg_error *err){
+    if(c->group_active&&!c->batch_depth){
+        fg_error_set(err,FG_ERR_ARGUMENT,"submit-group dispatch requires an active batch");
+        return FG_ERR_ARGUMENT;
+    }
     if(c->layer_clock_recording){
         fg_vk_layer_sample *sample=&c->layer_samples[c->layer_clock_current];
         if(sample->dispatch_count>=FG_VK_LAYER_DISPATCHES||kernel->push_bytes>128u){
@@ -769,12 +783,159 @@ fg_status fg_vk_moe_shared_gr_write(fg_vk_context *c,fg_vk_tensor *output,
     return dispatch(c,&c->moe_shared_gr_write,t,push,10u,1u,1u,err);
 }
 
+static fg_status submit_group_send(fg_vk_context *c,VkFence fence,bool signal_flush,
+    fg_error *err){
+    VkCommandBuffer commands[FG_VK_GROUP_COMMANDS*2u];uint32_t count=0;
+    for(uint32_t i=0;i<c->group_count;i++){
+        if(i)commands[count++]=c->group_barrier;
+        commands[count++]=c->group_commands[i];
+    }
+    VkResult vr=vkResetFences(c->device,1u,&fence);
+    if(vr!=VK_SUCCESS)return vk_error(err,"reset submit-group fence",vr);
+    VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount=count,.pCommandBuffers=commands};
+    VkSemaphore wait,signal;VkPipelineStageFlags stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    vk_submit_attach(c,signal_flush,&wait,&signal,&stage,&submit);
+    vr=vkQueueSubmit(c->queue,1u,&submit,fence);
+    if(vr!=VK_SUCCESS)return vk_error(err,"submit command group",vr);
+    c->counters.submissions++;
+    vk_fence_track(c,fence);c->group_count=0;
+    return FG_OK;
+}
+
+static fg_status submit_group_flush(fg_vk_context *c,fg_error *err){
+    if(!c->group_count&&!c->group_published)return FG_OK;
+    fg_status status=c->group_count?submit_group_send(c,c->fence,false,err):FG_OK;
+    if(status==FG_OK)status=vk_pipeline_drain(c,err);
+    if(status!=FG_OK)return status;
+    for(uint32_t slot=0;slot<FG_VK_STATIC_SLOTS;slot++)
+        if(c->static_pending[slot]&&!c->static_submit_fence[slot])
+            c->static_pending[slot]=false;
+    c->group_count=0;c->group_index=0;c->batch_set_count=0;c->group_published=false;
+    c->command=c->group_buffers[0];
+    return FG_OK;
+}
+
+static fg_status submit_group_append(fg_vk_context *c,VkCommandBuffer command,
+    fg_error *err){
+    if(c->group_count==FG_VK_GROUP_COMMANDS){
+        fg_status status=submit_group_flush(c,err);
+        if(status!=FG_OK)return status;
+    }
+    c->group_commands[c->group_count++]=command;
+    return FG_OK;
+}
+
+fg_status fg_vk_submit_group_begin(fg_vk_context *c,fg_error *err){
+    if(!c||c->group_active||c->batch_depth||c->profile_active||c->static_active){
+        fg_error_set(err,FG_ERR_ARGUMENT,"submit group requires an idle unprofiled context");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_status status=fg_vk_static_drain(c,err);
+    if(status!=FG_OK)return status;
+    if(!c->group_ready){
+        VkCommandBufferAllocateInfo allocate={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool=c->command_pool,.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount=FG_VK_GROUP_BUFFERS};
+        VkResult vr=vkAllocateCommandBuffers(c->device,&allocate,c->group_buffers);
+        if(vr!=VK_SUCCESS)return vk_error(err,"allocate submit-group commands",vr);
+        allocate.commandBufferCount=1u;
+        vr=vkAllocateCommandBuffers(c->device,&allocate,&c->group_barrier);
+        if(vr!=VK_SUCCESS)return vk_error(err,"allocate submit-group barrier",vr);
+        VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .flags=VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT};
+        vr=vkBeginCommandBuffer(c->group_barrier,&begin);
+        if(vr!=VK_SUCCESS)return vk_error(err,"begin submit-group barrier",vr);
+        /* Submission order alone is not a memory dependency between primaries.
+         * Preserve the visibility previously provided by the semaphore chain. */
+        VkMemoryBarrier memory={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT,
+            .dstAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT};
+        vkCmdPipelineBarrier(c->group_barrier,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,1,&memory,0,NULL,0,NULL);
+        vr=vkEndCommandBuffer(c->group_barrier);
+        if(vr!=VK_SUCCESS)return vk_error(err,"end submit-group barrier",vr);
+        c->group_ready=true;
+    }
+    c->group_saved=c->command;c->command=c->group_buffers[0];
+    c->group_count=0;c->group_index=0;c->batch_set_count=0;c->group_active=true;
+    return FG_OK;
+}
+
+bool fg_vk_submit_group_active(const fg_vk_context *c){return c&&c->group_active;}
+
+fg_status fg_vk_submit_group_publish(fg_vk_context *c,fg_error *err){
+    if(!c||!c->group_active||c->batch_depth||c->group_published){
+        fg_error_set(err,FG_ERR_ARGUMENT,"submit group cannot publish this recording");
+        return FG_ERR_ARGUMENT;
+    }
+    if(!c->group_count)return FG_OK;
+    fg_status status=submit_group_send(c,c->fence_alt,true,err);
+    if(status==FG_OK)c->group_published=true;
+    return status;
+}
+
+fg_status fg_vk_submit_group_end(fg_vk_context *c,fg_error *err){
+    if(!c||!c->group_active||c->static_active){
+        fg_error_set(err,FG_ERR_ARGUMENT,"submit group is not ready to end");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_status status=FG_OK;
+    while(status==FG_OK&&c->batch_depth)status=fg_vk_end(c,err);
+    if(status==FG_OK)status=submit_group_flush(c,err);
+    if(status==FG_OK){c->command=c->group_saved;c->group_active=false;}
+    return status;
+}
+
+void fg_vk_submit_group_abort(fg_vk_context *c){
+    if(!c||!c->group_active)return;
+    vkDeviceWaitIdle(c->device);
+    if(c->batch_depth){fg_error ignored={0};fg_vk_abort(c,&ignored);}
+    for(uint32_t slot=0;slot<FG_VK_STATIC_SLOTS;slot++)
+        if(c->static_pending[slot]&&!c->static_submit_fence[slot])
+            c->static_pending[slot]=false;
+    c->command=c->group_saved;c->group_active=false;c->group_count=0;
+    c->group_index=0;c->batch_set_count=0;c->pending_fence_count=0;c->group_published=false;
+}
+
+fg_status fg_vk_tensor_write_ordered(fg_vk_tensor *t,uint64_t offset,
+    const void *data,uint64_t bytes,fg_error *err){
+    if(!t||!t->context->group_active)return fg_vk_tensor_write(t,offset,data,bytes,err);
+    fg_vk_context *c=t->context;
+    if(!c->batch_depth&&!c->group_count&&!c->group_published)
+        return fg_vk_tensor_write(t,offset,data,bytes,err);
+    if(!data||!tensor_range(t,offset,bytes)||!c->batch_depth||
+       (((t->offset+offset)|bytes)&3u)!=0u||bytes>65536u){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid ordered Vulkan write");
+        return FG_ERR_ARGUMENT;
+    }
+    if(!bytes)return FG_OK;
+    VkMemoryBarrier before={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .srcAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT,
+        .dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT};
+    vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&before,0,NULL,0,NULL);
+    vkCmdUpdateBuffer(c->command,t->allocation->buffer,t->offset+offset,bytes,data);
+    VkMemoryBarrier after={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT|
+            VK_ACCESS_HOST_READ_BIT};
+    vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_HOST_BIT,
+        0,1,&after,0,NULL,0,NULL);
+    return FG_OK;
+}
+
 fg_status fg_vk_begin(fg_vk_context *c,fg_error *err){
     if(!c){fg_error_set(err,FG_ERR_ARGUMENT,"null context");return FG_ERR_ARGUMENT;}
     if(c->batch_depth){c->batch_depth++;return FG_OK;}
     fg_status pending=vk_fence_wait(c,c->fence,err);if(pending!=FG_OK)return pending;
+    if(c->group_active&&c->batch_set_count>=FG_VK_STATIC_SET_BASE){
+        pending=submit_group_flush(c,err);if(pending!=FG_OK)return pending;
+    }
     vk_profile_begin_record(c);
-    VkResult vr;vkResetFences(c->device,1,&c->fence);vkResetCommandBuffer(c->command,0);
+    VkResult vr;if(!c->group_active)vkResetFences(c->device,1,&c->fence);
+    vkResetCommandBuffer(c->command,0);
     VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     if((vr=vkBeginCommandBuffer(c->command,&begin))!=VK_SUCCESS)return vk_error(err,"begin batch command",vr);
     profile_command_begin(c);
@@ -802,6 +963,11 @@ fg_status fg_vk_end(fg_vk_context *c,fg_error *err){
     profile_command_end(c);
     VkResult vr;if((vr=vkEndCommandBuffer(c->command))!=VK_SUCCESS){fg_status status=vk_error(err,"end batch command",vr);fg_error ignored={0};fg_vk_abort(c,&ignored);return status;}
     vk_profile_end_record(c);
+    if(c->group_active){
+        c->batch_depth=0;c->batch_has_dispatch=false;
+        fg_status status=submit_group_append(c,c->command,err);
+        return status==FG_OK?submit_group_flush(c,err):status;
+    }
     VkCommandBuffer commands[FG_VK_STATIC_SLOTS+1u];uint32_t command_count=0u;
     for(uint32_t i=0u;i<c->held_count;i++)commands[command_count++]=c->held_commands[i];
     commands[command_count++]=c->command;
@@ -830,6 +996,14 @@ fg_status fg_vk_flush(fg_vk_context *c,fg_error *err){
     VkMemoryBarrier after={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};
     vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&after,0,NULL,0,NULL);
     VkResult vr;if((vr=vkEndCommandBuffer(c->command))!=VK_SUCCESS){fg_status status=vk_error(err,"end flush command",vr);fg_error ignored={0};fg_vk_abort(c,&ignored);return status;}
+    if(c->group_active){
+        c->batch_depth=0;c->batch_has_dispatch=false;
+        fg_status status=submit_group_append(c,c->command,err);
+        if(status!=FG_OK)return status;
+        if(++c->group_index==FG_VK_GROUP_BUFFERS)return submit_group_flush(c,err);
+        c->command=c->group_buffers[c->group_index];
+        return FG_OK;
+    }
     VkCommandBuffer commands[FG_VK_STATIC_SLOTS+1u];uint32_t command_count=0u;
     for(uint32_t i=0u;i<c->held_count;i++)commands[command_count++]=c->held_commands[i];
     commands[command_count++]=c->command;
@@ -947,6 +1121,11 @@ fg_status fg_vk_static_submit(fg_vk_context *c,uint32_t slot,fg_error *err){
     if(!c->static_recorded[slot]){fg_error_set(err,FG_ERR_MISMATCH,"static batch slot is not recorded");return FG_ERR_MISMATCH;}
     if(c->static_pending[slot]){fg_error_set(err,FG_ERR_MISMATCH,"static batch slot is already pending");return FG_ERR_MISMATCH;}
     if(c->batch_depth){fg_error_set(err,FG_ERR_MISMATCH,"static batch cannot submit inside a dynamic batch");return FG_ERR_MISMATCH;}
+    if(c->group_active){
+        fg_status status=submit_group_append(c,c->static_command[slot],err);
+        if(status==FG_OK){c->static_pending[slot]=true;c->static_submit_fence[slot]=VK_NULL_HANDLE;}
+        return status;
+    }
     VkResult vr=vkResetFences(c->device,1,&c->static_fence[slot]);
     if(vr!=VK_SUCCESS)return vk_error(err,"reset static fence",vr);
     c->static_pending[slot]=true;
@@ -969,6 +1148,10 @@ fg_status fg_vk_static_submit(fg_vk_context *c,uint32_t slot,fg_error *err){
 fg_status fg_vk_static_wait(fg_vk_context *c,uint32_t slot,fg_error *err){
     if(!c||slot>=FG_VK_STATIC_SLOTS){fg_error_set(err,FG_ERR_ARGUMENT,"invalid static batch slot");return FG_ERR_ARGUMENT;}
     if(!c->static_pending[slot])return FG_OK;
+    if(c->group_active){
+        if(c->batch_depth){fg_error_set(err,FG_ERR_MISMATCH,"static wait inside submit-group recording");return FG_ERR_MISMATCH;}
+        return submit_group_flush(c,err);
+    }
     fg_status status=vk_flush_held(c,err);
     if(status!=FG_OK)return status;
     VkResult vr=vkWaitForFences(c->device,1,&c->static_submit_fence[slot],VK_TRUE,UINT64_MAX);
