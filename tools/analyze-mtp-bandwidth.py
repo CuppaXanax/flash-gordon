@@ -111,6 +111,8 @@ def analyze(directory):
                 "compulsory_weight_bytes": weight_bytes,
                 "effective_weight_GBs": {k: v / times[k] / 1000
                                           for k, v in weight_bytes.items() if times[k]}})
+        for rows in profile_groups.values():
+            assert len(rows) == 5 and {r["round"] for r in rows} == set(range(1, 6))
         result["profiles"][kind] = [
             {"n": n, "flags": flags, "samples": rows,
              "gpu_us": {k: summary([r["gpu_us"].get(k, 0) for r in rows])
@@ -201,7 +203,7 @@ def main():
         path.name: hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted(args.input.glob("*.tar.gz"))}
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2) + "\n")
+    args.output.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
 
 
 if __name__ == "__main__":
