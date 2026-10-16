@@ -1,6 +1,67 @@
 # MTP serving foundation on the promoted multisession base
 
-## Corrected real-format candidate — 2026-10-16: READY TO REQUEST LEASE
+## Corrected-Q8 trained-pack lease — 2026-10-16: BLOCKED ON RESIDENCY
+
+Exclusive .42–.49 grant:14:02:38.992Z. Candidate `706d476`, sealed release
+`54be56c2f1188a2847923f4d1ab9c81f39ea8bb95c4bbbe8653fc2eab107d6f5`.
+Pinned production was restored and verified on all eight owners, scratch
+removed and the ring released at **14:12:25.123Z**, under10min /45min cap.
+No promotion, full MTP greedy pass, bracketed speedup or serving-TPS projection.
+
+Completed MTP-off arms:
+
+| Arm | Chat median decode TPS | Code median decode TPS | Sessions2 aggregate wall TPS |
+|---|---:|---:|---:|
+| A0: off, mask0 | 30.37 | 29.82 | 35.47 |
+| B0: off, mask330 | 30.51 | 30.69 | 37.32 |
+
+Both arms passed all eight actual token-ID SHA256/count and public-completion
+comparisons. Each decode category has six requests; sessions2 has three
+concurrent chat/code pairs. These are **unbracketed baselines**, not a mask
+speedup or MTP-on performance result.
+
+The first K1/mask0 request completed55 chat tokens, SHA256
+`0995aa1aa72470655d2badba09736683f8447af26f9e7a8c02b1feaf5a2b8839`,
+exactly matching A0's actual token IDs. Its33 native rounds accepted23/33
+drafts and emitted55 tokens; the final EOS round emitted one token rather
+than two. These are **one cold chat's observations only**, not generalized
+acceptance or an eight-case greedy gate. The first native round took1439ms;
+do not compare this cold request with warm performance medians.
+
+The **second greedy HTTP request** disconnected. The primary rank7/.49 error
+is `native MTP session KV/scratch exceed residency cap`, from the private
+native-session clone check in `src/mtp_head.c:468-473`. Rank7's last startup
+Vulkan ledger reports14,687,617,056 live-requested bytes; the exact manifest
+cap is14,495,514,624 bytes (13.5GiB), already192,102,432 bytes lower.
+The precise live value at the failing check was not logged. This is a
+**software residency-policy rejection**, not a reported physical Vulkan OOM.
+The coordinator then reported non-reusable distributed transport; ranks1–6
+reported closed sockets. The actual cooked-Q8 down path no longer rejects
+the trained tensor; format compatibility is not the blocker.
+
+No K1 performance suite or S1/K2/S2/K3/S3 arm ran. MTP sessions2,
+SSE/stop/cancel, bracketed ratios and full MTP greedy remain unqualified.
+The earlier .51 native-session fixture ran in isolation from the full target
+owner; it did not prove this full owner/native/session/deferred residency mix.
+
+Restoration:31508ee /20261016-abq-stack-adaptive, sealed stack-1/mix-04,
+sessions2/wide1. All eight binary/manifest/shader/argv/full-FG-environment
+checks, API health/models and before/after greedy sanity passed. Watchdogs
+were canceled/exited, owned candidates stopped, scratch absence checked on
+all eight owners. All eight downloaded archives independently match their
+remote SHA256 receipts. Finalization errors: **zero**. No clocks, governors,
+current launchers, weights or production configuration were changed.
+
+**Next gate:** fit owner/native weights plus both private sessions and all
+deferred/lazy allocations within the actual residency policy, reserve/eagerly
+provision them before declaring readiness, and fail admission without
+poisoning transport. Requalify this full memory mix on a spare blade before
+requesting another ring lease. Do not bypass the cap or rerun this candidate
+unchanged. Machine-readable raw metrics, first-request rounds, all K1 owner
+logs, exact error, restoration/cleanup and archive hashes:
+`mtp-serving-q8-lease.json`. No further production access after release.
+
+## Corrected real-format candidate — 2026-10-16: COMPONENTS PASS (pre-lease)
 
 The cooked-Q8 compatibility fix `3c84f62` is qualified on idle **.51**, not
 on the production ring. Public pinned-source GGUF ranges were cooked by the
@@ -48,7 +109,7 @@ Complete inventory, provenance, source/compiled hashes, raw GPU receipts,
 negative tests and cleanup receipt: `mtp-format-audit.json`.
 The previous `419e303` release is retained as history and must not be reused.
 
-**Request only; no new ring lease is assumed.** After an explicit exclusive
+**Historical prepared plan, subsequently executed above.** After an explicit exclusive
 .42–.49 grant, use `Invoke-MTPServingQualification.ps1` with
 `-Artifacts .build\mtp-serving-q8-lease` and a fresh lease ID. Planned arms:
 A0/B0/K1/S1/A1/K2/S2/A2/K3/S3/A3. Both masks must pass all eight same-build

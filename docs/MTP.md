@@ -1,7 +1,21 @@
 # MTP: native head, causal verification and remaining execution gates
 
-**2026-10-16 real-format readiness gate: PASS; serving still unqualified,
-not promoted.** The corrected `3c84f62` engine passed .51 with the exact
+**2026-10-16 serving gate: BLOCKED on native-session residency; not promoted.**
+The corrected candidate's first K1/mask0 chat produced the exact target55-token
+hash, but the second request hit rank7's
+`native MTP session KV/scratch exceed residency cap` guard. Its last startup
+ledger already exceeded the sealed13.5GiB residency policy; this is not a
+Q8 format error or a reported physical Vulkan OOM. Both MTP-off masks passed
+eight greedy cases. No complete MTP-on greedy/performance, mask330 MTP,
+two-session or streaming gate is qualified. All eight owners were restored,
+verified and cleaned; the ring was released at14:12:25Z, under10min.
+See [current lease report](../results/hillclimb/MTP_SERVING.md) and
+[raw receipts](../results/hillclimb/mtp-serving-q8-lease.json).
+The next candidate must actually fit the owner/native weights and both private
+sessions, including deferred allocations, and enforce that budget before
+readiness; do not bypass the residency cap or repeat this candidate unchanged.
+
+**Real-format component gate: PASS.** The corrected `3c84f62` engine passed .51 with the exact
 891,289,600-byte real-pack Q8 down slab:36 byte-exact native-N1 comparisons,
 wide0/1 and small-kernel masks0/330. All1,225 target records /51 family-format
 groups and31 native tensors are accounted for in
@@ -25,8 +39,8 @@ partition and reductions for both the default LDS path and the opt-in
 `FG_EXPERT_Q8_WIDE=1` subgroup path. It deliberately does not share Q8 weights across
 tokens or promote research kernels. Q4_K/Q5_K gate/up and both cooked Q5_1/Q8_0
 down are accepted for complete owner-local 512-expert slabs. Q5_1 is unchanged.
-The trained-pack serving gate remains unqualified until an explicitly granted
-new ring lease. The corrected release and exhaustive audit are hash-sealed
+The trained-pack serving gate remains unqualified after the residency failure
+above. The corrected release and exhaustive format audit are hash-sealed
 together; the controller rejects missing, tampered or mismatched qualification
 before production access. All318 previous SPIRV binaries remain unchanged;
 only the two exact-Q8 down variants are added. No research experiment is bundled.

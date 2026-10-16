@@ -201,3 +201,11 @@ Reproduction entry points:
 This audit qualifies **format coverage and components**. It is not a claim
 of trained-model greedy equivalence, end-to-end MTP speedup, long-context
 acceptance or production promotion.
+
+The subsequent exclusive ring lease reached a real55-token K1 completion
+with the exact target token hash, then failed on lazy native-session residency
+when the next request needed another session. The exhaustive format coverage
+remains valid; it does **not** prove owner+native+all-session memory fits.
+The13.5GiB policy cap must not be bypassed. See
+[the separate serving/memory gate](../results/hillclimb/MTP_SERVING.md).
+That lease restored/verified all eight owners, cleaned and released at14:12:25Z.
