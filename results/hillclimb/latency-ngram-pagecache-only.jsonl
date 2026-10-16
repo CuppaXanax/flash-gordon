@@ -1,0 +1,6 @@
+{"path":"fg_ngram_store_lookup","buffered":false,"token_reuse_percent":0,"samples":1000,"p50_us":815.765,"p99_us":1053.303,"exact_embedding_bytes":true,"forced_os_cache_misses":true,"synthetic":true}
+{"path":"fg_ngram_store_lookup","buffered":true,"token_reuse_percent":0,"samples":1000,"p50_us":803.424,"p99_us":1039.421,"exact_embedding_bytes":true,"forced_os_cache_misses":true,"synthetic":true}
+{"path":"fg_ngram_store_lookup","buffered":false,"token_reuse_percent":50,"samples":1000,"p50_us":335.330,"p99_us":999.089,"exact_embedding_bytes":true,"forced_os_cache_misses":true,"synthetic":true}
+{"path":"fg_ngram_store_lookup","buffered":true,"token_reuse_percent":50,"samples":1000,"p50_us":337.371,"p99_us":956.417,"exact_embedding_bytes":true,"forced_os_cache_misses":true,"synthetic":true}
+{"path":"fg_ngram_store_lookup","buffered":false,"token_reuse_percent":90,"samples":1000,"p50_us":332.275,"p99_us":922.003,"exact_embedding_bytes":true,"forced_os_cache_misses":true,"synthetic":true}
+{"path":"fg_ngram_store_lookup","buffered":true,"token_reuse_percent":90,"samples":1000,"p50_us":332.541,"p99_us":893.212,"exact_embedding_bytes":true,"forced_os_cache_misses":true,"synthetic":true}

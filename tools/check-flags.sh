@@ -48,6 +48,7 @@ expected_code="$(printf '%s\n' \
     FG_GDN_DIAG \
     FG_GENERATE_TRACE \
     FG_NGRAM_LOCALITY_TRACE \
+    FG_NGRAM_LOCAL_CACHE \
     FG_NGRAM_PAGEABLE \
     FG_NGRAM_VERIFY \
     FG_NUMERICS_TRACE \
@@ -80,6 +81,7 @@ expected_code="$(printf '%s\n' \
     FG_WORKER_OWNER | LC_ALL=C sort -u)"
 
 expected_test="$(printf '%s\n' \
+    FG_NGRAM_LOCAL_CACHE \
     FG_BENCH_DENSE_COMPACT \
     FG_BENCH_DENSE_COOKED \
     FG_BENCH_DENSE_GGUF \

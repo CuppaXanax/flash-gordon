@@ -26,6 +26,7 @@ static double ngram_ts(void){struct timespec value;clock_gettime(CLOCK_MONOTONIC
 static bool ngram_trace_enabled(void){const char *enabled=getenv("FG_FRAME_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool ngram_locality_trace_enabled(void){const char *enabled=getenv("FG_NGRAM_LOCALITY_TRACE");return enabled&&*enabled&&strcmp(enabled,"0")!=0;}
 static bool ngram_pageable_enabled(void){const char *disabled=getenv("FG_NGRAM_PAGEABLE");return !(disabled&&*disabled&&strcmp(disabled,"0")==0);}
+bool fg_ngram_local_cache_enabled(void){const char *enabled=getenv("FG_NGRAM_LOCAL_CACHE");return enabled&&strcmp(enabled,"1")==0;}
 fg_status fg_ngram_plan_reads(const uint64_t *addresses,uint32_t count,uint64_t table_bytes,fg_ngram_read *reads,uint32_t cap,uint32_t *out_count,fg_error *err){
     if((count&&!addresses)||!reads||!out_count||!table_bytes){fg_error_set(err,FG_ERR_ARGUMENT,"invalid n-gram read planner arguments");return FG_ERR_ARGUMENT;}if(count>FG_NGRAM_PREFILL_MAX_BLOCKS){fg_error_set(err,FG_ERR_LIMIT,"n-gram read planner input exceeds bounded prefill capacity");return FG_ERR_LIMIT;}
     uint64_t padded_bytes=fg_align_up_u64(table_bytes,FG_NGRAM_BLOCK_BYTES),*blocks=malloc((size_t)count*sizeof(*blocks));if(count&&!blocks){fg_error_set(err,FG_ERR_OOM,"allocate n-gram block planner");return FG_ERR_OOM;}
@@ -301,7 +302,7 @@ fg_status fg_q38_ngram_lookup_range(const int32_t *tokens,size_t history_count,
 fg_status fg_ngram_store_open(fg_ngram_store **out,fg_vk_context *vk,const char *path,
                                uint64_t table_bytes,uint32_t max_tokens,fg_error *err){
     if(!out||!vk||!path||!table_bytes||!max_tokens||
-       max_tokens>FG_NGRAM_PREFILL_MAX_TOKENS){fg_error_set(err,FG_ERR_ARGUMENT,"invalid n-gram store arguments");return FG_ERR_ARGUMENT;}*out=NULL;fg_ngram_store *s=calloc(1,sizeof(*s));if(!s){fg_error_set(err,FG_ERR_OOM,"allocate n-gram store");return FG_ERR_OOM;}s->fd=-1;s->vk=vk;s->table_bytes=table_bytes;s->max_tokens=max_tokens;s->max_rows=max_tokens*FG_NGRAM_HEAD_COUNT;s->max_blocks=s->max_rows*2u;s->io_bytes=FG_NGRAM_PREFILL_IO_BYTES;s->fd=open(path,O_RDONLY|O_DIRECT|O_CLOEXEC);if(s->fd<0){fg_error_set(err,FG_ERR_IO,"open n-gram table: %s",strerror(errno));fg_ngram_store_close(s);return FG_ERR_IO;}struct stat st;if(fstat(s->fd,&st)!=0||(uint64_t)st.st_size!=fg_align_up_u64(table_bytes,FG_ALIGNMENT)){fg_error_set(err,FG_ERR_MISMATCH,"n-gram table size does not match sealed tensor");fg_ngram_store_close(s);return FG_ERR_MISMATCH;}
+       max_tokens>FG_NGRAM_PREFILL_MAX_TOKENS){fg_error_set(err,FG_ERR_ARGUMENT,"invalid n-gram store arguments");return FG_ERR_ARGUMENT;}*out=NULL;fg_ngram_store *s=calloc(1,sizeof(*s));if(!s){fg_error_set(err,FG_ERR_OOM,"allocate n-gram store");return FG_ERR_OOM;}s->fd=-1;s->vk=vk;s->table_bytes=table_bytes;s->max_tokens=max_tokens;s->max_rows=max_tokens*FG_NGRAM_HEAD_COUNT;s->max_blocks=s->max_rows*2u;s->io_bytes=FG_NGRAM_PREFILL_IO_BYTES;s->fd=open(path,O_RDONLY|O_CLOEXEC|(fg_ngram_local_cache_enabled()?0:O_DIRECT));if(s->fd<0){fg_error_set(err,FG_ERR_IO,"open n-gram table: %s",strerror(errno));fg_ngram_store_close(s);return FG_ERR_IO;}struct stat st;if(fstat(s->fd,&st)!=0||(uint64_t)st.st_size!=fg_align_up_u64(table_bytes,FG_ALIGNMENT)){fg_error_set(err,FG_ERR_MISMATCH,"n-gram table size does not match sealed tensor");fg_ngram_store_close(s);return FG_ERR_MISMATCH;}
     fg_status status=fg_uring_create(&s->ring,FG_RING_STORAGE,64u,err);if(status==FG_OK)status=fg_uring_register_file(s->ring,s->fd,&s->slot,err);if(status==FG_OK&&posix_memalign((void **)&s->io_buffer,FG_ALIGNMENT,(size_t)s->io_bytes)!=0){fg_error_set(err,FG_ERR_OOM,"allocate bounded n-gram direct-read buffers");status=FG_ERR_OOM;}if(status==FG_OK)status=fg_uring_register_buffer(s->ring,s->io_buffer,s->io_bytes,err);if(status!=FG_OK){fg_ngram_store_close(s);return status;}*out=s;return FG_OK;
 }
 
@@ -412,6 +413,18 @@ static bool ngram_dequant_host(fg_ngram_store *s,uint32_t row_count){
     const uint8_t *packed=fg_vk_tensor_const_map(s->packed);
     float *embedding=fg_vk_tensor_map(s->embedding);
     if(!packed||!embedding)return false;
+    if(row_count==FG_NGRAM_HEAD_COUNT&&fg_ngram_local_cache_enabled()){
+        /* Scalar reloads from the uncached UMA mapping dominate a warm lookup. */
+        uint8_t host_packed[FG_NGRAM_HEAD_COUNT*FG_NGRAM_ROW_BYTES];
+        float host_embedding[FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH];
+        fg_error error={0};
+        if(fg_vk_tensor_read(s->packed,0,host_packed,sizeof(host_packed),&error)!=FG_OK)
+            return false;
+        fg_dequantize_iq4_nl(host_packed,host_embedding,
+                           FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH);
+        return fg_vk_tensor_write(s->embedding,0,host_embedding,
+                                  sizeof(host_embedding),&error)==FG_OK;
+    }
     fg_dequantize_iq4_nl(packed,embedding,(uint64_t)row_count*FG_NGRAM_EMBED_WIDTH);
     return true;
 }

@@ -1,0 +1,14 @@
+[
+  {
+    "IP": "192.168.42.52",
+    "ExitCode": 0,
+    "Stdout": "hc-lat_absent\nactive\n1235/tcp",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.53",
+    "ExitCode": 0,
+    "Stdout": "hc-lat_absent\nactive\n1235/tcp 8080/tcp 50052/tcp\nhc-q4_preserved",
+    "Stderr": ""
+  }
+]

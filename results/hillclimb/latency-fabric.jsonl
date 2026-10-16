@@ -1,0 +1,5 @@
+{"payload_bytes":64,"frame_bytes":96,"samples":1000,"rtt_p50_us":64.620,"rtt_p99_us":71.775,"hop_rtt_over_2_p50_us":32.310,"hop_rtt_over_2_p99_us":35.887,"exact":true}
+{"payload_bytes":20480,"frame_bytes":20512,"samples":1000,"rtt_p50_us":549.767,"rtt_p99_us":583.894,"hop_rtt_over_2_p50_us":274.884,"hop_rtt_over_2_p99_us":291.947,"exact":true}
+{"payload_bytes":40960,"frame_bytes":40992,"samples":1000,"rtt_p50_us":883.389,"rtt_p99_us":950.913,"hop_rtt_over_2_p50_us":441.694,"hop_rtt_over_2_p99_us":475.457,"exact":true}
+{"payload_bytes":40984,"frame_bytes":41016,"samples":1000,"rtt_p50_us":945.271,"rtt_p99_us":1001.178,"hop_rtt_over_2_p50_us":472.635,"hop_rtt_over_2_p99_us":500.589,"exact":true}
+{"payload_bytes":51224,"frame_bytes":51256,"samples":1000,"rtt_p50_us":1074.110,"rtt_p99_us":1120.154,"hop_rtt_over_2_p50_us":537.055,"hop_rtt_over_2_p99_us":560.077,"exact":true}
