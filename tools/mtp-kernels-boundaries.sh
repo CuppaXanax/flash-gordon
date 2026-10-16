@@ -31,6 +31,10 @@ for service in bc250-embed bc250-rerank; do
 done
 for service in "${active[@]}"; do systemctl stop "$service"; done
 cd src
+for flags in 0 64 330 1024; do
+    FG_SMALL_KERNELS=$flags DS4_REMOTE_TEST_FILTER=expert_small_component \
+        ./tests/test_fg_vk > "../boundaries/component-f$flags.txt" 2>&1
+done
 for n in 1 2 3 4; do
     FG_ROOFLINE=0 FG_SMALL_KERNELS=0 FG_SHADER_DIR=../baseline/vulkan ../baseline/bench \
         --q4 --small-n --no-clocks --batch "$n" --warmup 3 --iterations 1 --windows 1 \
@@ -40,7 +44,7 @@ for n in 1 2 3 4; do
         > "../boundaries/default-new-n$n.jsonl" 2> "../boundaries/default-new-n$n.stderr"
 done
 for prefix in 3 255 256 2047 2048 2049 2050 2051 2052; do
-    FG_SMALL_KERNELS=10 ./tools/bench-decode-fusion --q4 --small-n --no-clocks \
+    FG_SMALL_KERNELS=330 ./tools/bench-decode-fusion --q4 --small-n --no-clocks \
         --batch 1 --warmup "$((prefix-1))" --iterations 1 --windows 1 \
         --small-test --allow-reassociation \
         > "../boundaries/prefix-$prefix.jsonl" 2> "../boundaries/prefix-$prefix.stderr"

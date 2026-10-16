@@ -2349,7 +2349,11 @@ static int run_expert_small_component(uint32_t gt,uint32_t ut){
             gates[p]=0.05f+0.01f*(float)(p%7u);
         }
         for(uint32_t n=2u;n<=4u;n++){
-            int dispatched=fg_vk_tensor_write(x,0,activation,sizeof(activation),&error)==FG_OK&&
+            for(uint32_t i=0;i<PAIRS*MID;i++)got[i]=NAN;
+            for(uint32_t i=0;i<4u*ROWS;i++)reduced[i]=NAN;
+            int dispatched=fg_vk_tensor_write(m,0,got,sizeof(got),&error)==FG_OK&&
+                fg_vk_tensor_write(out,0,reduced,sizeof(reduced),&error)==FG_OK&&
+                fg_vk_tensor_write(x,0,activation,sizeof(activation),&error)==FG_OK&&
                 fg_vk_tensor_write(s,0,ids,sizeof(ids),&error)==FG_OK&&
                 fg_vk_tensor_write(w,0,gates,sizeof(gates),&error)==FG_OK&&
                 fg_vk_small_n_schedule(context,t,s,n,&error)==FG_OK&&
@@ -2368,7 +2372,7 @@ static int run_expert_small_component(uint32_t gt,uint32_t ut){
                 float expected=(a/(1.0f+expf(-a)))*b,actual=got[p*MID+row];
                 double relative=fabs((double)actual-expected)/fmax(1.0,fabs(expected));
                 if(relative>maximum)maximum=relative;
-                if(!isfinite(actual)||relative>1e-4){
+                if(!isfinite(expected)||!isfinite(actual)||relative>1e-4){
                     if(passed)fprintf(stderr,"small expert CPU mismatch gt=%u ut=%u pattern=%u n=%u pair=%u row=%u gpu=%g cpu=%g\n",
                         gt,ut,pattern,n,p,row,actual,expected);
                     passed=0;
