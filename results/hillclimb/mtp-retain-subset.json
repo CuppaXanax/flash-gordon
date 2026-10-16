@@ -1,0 +1,146 @@
+{
+  "scope": "Offline .51 only, default off, no promotion, no active production lease",
+  "availability": "Authentic MTP/full-Q8 head available; FGDVOC1 subset now implemented",
+  "source_parent": "4ce396b5880a789961ca71b46412532004b330af",
+  "retain_reproduction": {
+    "error": "MTP retained QSA frontier mismatch",
+    "executor": "replicated coordinator",
+    "prefix": 22,
+    "first_verify_columns": 4,
+    "warmup_columns": 1,
+    "fixed_scope": "journal.first_layer..last_layer"
+  },
+  "validation": {
+    "python_tests": 29,
+    "coordinator_gpu_cases": 24,
+    "tcp_cases": 8,
+    "strict_c17_werror": true,
+    "environment_registry": true,
+    "mapped_vocab_replay": true,
+    "wrong_parent_rejected": true,
+    "duplicate_ids_rejected": true,
+    "unselected_corruption_rejected": true,
+    "truncation_rejected": true,
+    "max_abs_state": 0.000205993652,
+    "max_abs_continuation": 1.03116035e-05
+  },
+  "measurements": [
+    {
+      "kind": "draft_vocab_parent",
+      "cooked_sha256": "fa90643ca673bf032655f6c645c2a5718bc1eac3b1b29bd3ff90eb13d14e19af"
+    },
+    {
+      "kind": "draft_vocab_bench",
+      "rows": 248320,
+      "reported_cus": 24,
+      "mean_ms": 2.238927,
+      "median_ms": 2.241487,
+      "p95_ms": 2.252524,
+      "resident_bytes": 676920320,
+      "saved_bytes": 0,
+      "three_call_saving_proxy_ms": 0.0,
+      "independent_loader_ids_scores_exact": true,
+      "subset_kind": "contiguous-low-IDs smoke test, not curated or acceptance-qualified"
+    },
+    {
+      "kind": "draft_vocab_bench",
+      "rows": 40525,
+      "reported_cus": 24,
+      "mean_ms": 0.430886,
+      "median_ms": 0.438086,
+      "p95_ms": 0.44221,
+      "resident_bytes": 110479316,
+      "saved_bytes": 566441004,
+      "three_call_saving_proxy_ms": 5.424124,
+      "independent_loader_ids_scores_exact": true,
+      "subset_kind": "contiguous-low-IDs smoke test, not curated or acceptance-qualified"
+    },
+    {
+      "kind": "draft_vocab_bench",
+      "rows": 106299,
+      "reported_cus": 24,
+      "mean_ms": 1.018502,
+      "median_ms": 1.019804,
+      "p95_ms": 1.027259,
+      "resident_bytes": 289784684,
+      "saved_bytes": 387135636,
+      "three_call_saving_proxy_ms": 3.661277,
+      "independent_loader_ids_scores_exact": true,
+      "subset_kind": "contiguous-low-IDs smoke test, not curated or acceptance-qualified"
+    }
+  ],
+  "measurement_scope": {
+    "blade": "192.168.42.51",
+    "reported_cus": 24,
+    "warmups": 8,
+    "timings_per_shape": 100,
+    "synthetic_hidden_vectors": 8,
+    "subset_ids": "Contiguous low IDs, not curated/language/acceptance qualified",
+    "three_head_saving": "Proxy only, not measured full-chain or round savings"
+  },
+  "transport": {
+    "prior_measured_n4_pair_to_ring_model_ms": 14.2156938796,
+    "optional_fp16_scale_model_ms": 7.1,
+    "optional_saving_ms": 7.1156938796,
+    "conditional": true,
+    "requires": "sol-roofline quality plus actual N4 codec/framing",
+    "older_allhop_relative_kl": 0.00987737,
+    "older_allhop_relative_top1": 0.9875,
+    "older_allhop_pass": false,
+    "destination_mask224_relative_kl": 0.000678952,
+    "destination_mask224_relative_top1": 1.0,
+    "destination_mask224_is_not_n4_or_original_q8_qualification": true
+  },
+  "projected": {
+    "unchanged_offline_round_ms": 95.789182,
+    "code_yield_offline": 3.240506,
+    "chat_yield_offline": 2.392523,
+    "measured_new_on_tps": null,
+    "measured_subset_acceptance": null,
+    "complete_dual_session_fit": false
+  },
+  "prepared": {
+    "base": "4ce396b5880a789961ca71b46412532004b330af",
+    "releaseSha256": "309f906513dfb19098e1382317771e7fe0df0ba457262da71786e25fc85e3f3f",
+    "formatAuditSha256": "7a2b2263c630c7a5107054aa20e11d2ad41096aec60f0a07eb177616d589e268",
+    "binarySha256": "6c23c7b5e0b0510d9154cc8c61639efa1f7449e7461d5be41b30d0cc60c57868",
+    "diagnosticOnly": true
+  },
+  "offline_evidence": {
+    "after-evidence.tar.gz": "e3dec5155f3dd2a9a813c0049cff5b268d0a09cf49094a2fe85123b19dd4abc3",
+    "head-evidence.tar.gz": "51c7476618c0fe37f3866243785403299f0619918dda9c10e359d6ef56e13f64",
+    "final-evidence.tar.gz": "2491672dc08eea6e165991952d6a0a0d85d611949a8dc1537a8b35bb2617f091"
+  },
+  "cleanup": {
+    "IP": "192.168.42.51",
+    "ExitCode": 0,
+    "Stdout": "GOVERNOR_BASELINE_EMPTY_AND_STILL_NO_EXPOSED_GOVERNORS\nOFFLINE_51_RELEASED 2026-10-16T20:57:43Z root_absent_twice=1 owned_processes=0 test_ports_closed=1 governors_unchanged=1",
+    "Stderr": ""
+  },
+  "next_lease": {
+    "request_only": true,
+    "active": false,
+    "minutes": 45,
+    "work_minutes": 30,
+    "profile": "SingleSessionPerf",
+    "arms": [
+      "A0",
+      "F3",
+      "A1"
+    ],
+    "sessions": 1,
+    "mask": 330,
+    "draft": 3,
+    "worker_qsa_mib": 440,
+    "full_head_first": true,
+    "typed_subset_controller_support": false,
+    "restore": "Exact pinned current sessions2/wide1, no promotion"
+  },
+  "pending": [
+    "Authentic full-ring retain confirmation and completed warm ledger",
+    "Paired on/off chat/code TPS and actual yield",
+    "Same-geometry original-Q8/N4 quality and full serving receipts",
+    "Curated subset IDs, language/tool coverage and acceptance",
+    "Explicit typed-subset controller staging; complete dual-session peaks"
+  ]
+}

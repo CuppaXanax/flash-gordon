@@ -189,9 +189,7 @@ fg_status fg_mtp_native_run(fg_mtp_native *n,uint32_t slot,
             for(uint32_t i=0;i<n->manifest->tensor_count;i++)
                 if(!strcmp(n->manifest->tensors[i].name,"output.weight"))
                     record=&n->manifest->tensors[i];
-            status=fg_mtp_vocab_open(&n->local_vocab,n->vk,w->overlay,NULL,
-                FG_Q38_VOCAB_SIZE,err);
-            if(status==FG_OK)status=fg_mtp_vocab_check(n->local_vocab,record,err);
+            status=fg_mtp_vocab_open_draft(&n->local_vocab,n->vk,w->overlay,record,err);
             if(status!=FG_OK){fg_mtp_vocab_close(n->local_vocab);n->local_vocab=NULL;}
             else snprintf(n->local_head,sizeof(n->local_head),"%s",w->overlay);
             break;

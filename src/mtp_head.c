@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #define MTP_LAYER (FG_LAYER_COUNT-1u)
@@ -150,8 +151,8 @@ void fg_mtp_vocab_close(fg_mtp_vocab *v){
         }
         return FG_OK;
     }
-    fg_status fg_mtp_vocab_open(fg_mtp_vocab **out,fg_vk_context *vk,const char *path,
-        const uint32_t *ids,uint32_t rows,fg_error *err){
+    static fg_status vocab_open_at(fg_mtp_vocab **out,fg_vk_context *vk,const char *path,
+        const uint32_t *ids,uint32_t rows,uint64_t offset,fg_error *err){
         if(!out||!vk||!path||!rows||rows>FG_Q38_VOCAB_SIZE||(!ids&&rows!=FG_Q38_VOCAB_SIZE)){
             fg_error_set(err,FG_ERR_ARGUMENT,"invalid explicit MTP vocabulary");return FG_ERR_ARGUMENT;
         }
@@ -184,7 +185,7 @@ void fg_mtp_vocab_close(fg_mtp_vocab *v){
             uint32_t live=rows-row<16u?rows-row:16u;
             for(uint32_t i=0;status==FG_OK&&i<live;i++){
                 uint32_t id=ids?ids[row+i]:row+i;
-                status=read_exact(fd,(uint64_t)id*row_bytes,raw+i*row_bytes,row_bytes,err);
+                status=read_exact(fd,offset+(uint64_t)id*row_bytes,raw+i*row_bytes,row_bytes,err);
             }
             if(status==FG_OK&&!fg_cook_q8_0_rows(raw,(uint8_t *)fg_vk_tensor_map(v->weights)+
                 (uint64_t)(row/16u)*tile_bytes,tile_bytes,2560u,live)){
@@ -201,6 +202,96 @@ void fg_mtp_vocab_close(fg_mtp_vocab *v){
         }
         if(status!=FG_OK){fg_mtp_vocab_close(v);return status;}
         *out=v;return FG_OK;
+    }
+    fg_status fg_mtp_vocab_open(fg_mtp_vocab **out,fg_vk_context *vk,const char *path,
+        const uint32_t *ids,uint32_t rows,fg_error *err){
+        return vocab_open_at(out,vk,path,ids,rows,0u,err);
+    }
+    static uint32_t vocab_le32(const uint8_t *p){
+        return (uint32_t)p[0]|(uint32_t)p[1]<<8u|(uint32_t)p[2]<<16u|(uint32_t)p[3]<<24u;
+    }
+    fg_status fg_mtp_vocab_open_draft(fg_mtp_vocab **out,fg_vk_context *vk,
+        const char *path,const fg_tensor_record *r,fg_error *err){
+        if(!out||!vk||!path||!r||r->ggml_type!=8u||
+           r->layout!=FG_TENSOR_LAYOUT_Q8_0_COOKED||r->shape[0]!=FG_HIDDEN_SIZE||
+           r->shape[1]!=FG_Q38_VOCAB_SIZE||
+           r->bytes!=fg_q8_0_cooked_matrix_bytes(FG_HIDDEN_SIZE,FG_Q38_VOCAB_SIZE)){
+            fg_error_set(err,FG_ERR_FORMAT,"draft vocabulary requires sealed target Q8 output.weight");
+            return FG_ERR_FORMAT;
+        }
+        *out=NULL;
+        int fd=open(path,O_RDONLY|O_CLOEXEC);
+        if(fd<0){fg_error_set(err,FG_ERR_IO,"open draft vocabulary: %s",strerror(errno));return FG_ERR_IO;}
+        uint8_t header[44];fg_status status=read_exact(fd,0u,header,8u,err);
+        if(status==FG_OK&&memcmp(header,"FGDVOC1\0",8u)){
+            close(fd);
+            status=fg_mtp_vocab_open(out,vk,path,NULL,FG_Q38_VOCAB_SIZE,err);
+            if(status==FG_OK)status=fg_mtp_vocab_check(*out,r,err);
+            if(status!=FG_OK){fg_mtp_vocab_close(*out);*out=NULL;}
+            return status;
+        }
+        if(status==FG_OK)status=read_exact(fd,8u,header+8u,sizeof(header)-8u,err);
+        uint32_t rows=status==FG_OK?vocab_le32(header+8u):0u;
+        struct stat info;
+        uint64_t offset=sizeof(header)+(uint64_t)rows*4u;
+        uint64_t raw_bytes=(uint64_t)FG_Q38_VOCAB_SIZE*(FG_HIDDEN_SIZE/32u*34u);
+        if(status==FG_OK&&(!rows||rows>FG_Q38_VOCAB_SIZE||
+           memcmp(header+12u,r->sha256,32u)||fstat(fd,&info)||info.st_size<0||
+           (uint64_t)info.st_size!=offset+raw_bytes)){
+            fg_error_set(err,FG_ERR_FORMAT,"invalid draft subset parent, rows or length");
+            status=FG_ERR_FORMAT;
+        }
+        uint32_t *ids=status==FG_OK?malloc((size_t)rows*4u):NULL;
+        if(status==FG_OK&&!ids){fg_error_set(err,FG_ERR_OOM,"draft subset IDs");status=FG_ERR_OOM;}
+        if(status==FG_OK)status=read_exact(fd,sizeof(header),ids,(uint64_t)rows*4u,err);
+        for(uint32_t i=0;status==FG_OK&&i<rows;i++){
+            ids[i]=vocab_le32((const uint8_t *)(ids+i));
+            if(ids[i]>=FG_Q38_VOCAB_SIZE||(i&&ids[i]<=ids[i-1u])){
+                fg_error_set(err,FG_ERR_FORMAT,"draft subset IDs must be strictly increasing");
+                status=FG_ERR_FORMAT;
+            }
+        }
+        if(status==FG_OK)status=vocab_open_at(out,vk,path,ids,rows,offset,err);
+        const uint32_t row_bytes=FG_HIDDEN_SIZE/32u*34u;
+        const uint64_t tile_bytes=fg_q8_0_cooked_tile_bytes(FG_HIDDEN_SIZE);
+        uint8_t raw[16u*FG_HIDDEN_SIZE/32u*34u],cooked[sizeof(raw)];
+        uint8_t selected[sizeof(raw)],selected_cooked[sizeof(raw)];
+        fg_sha256 hash;uint8_t digest[32];fg_sha256_init(&hash);
+        uint32_t picked=0u,live=0u,packed=0u;
+        for(uint32_t row=0u;status==FG_OK&&row<FG_Q38_VOCAB_SIZE;row+=16u){
+            status=read_exact(fd,offset+(uint64_t)row*row_bytes,raw,sizeof(raw),err);
+            if(status==FG_OK&&!fg_cook_q8_0_rows(raw,cooked,tile_bytes,FG_HIDDEN_SIZE,16u)){
+                fg_error_set(err,FG_ERR_FORMAT,"cook sealed draft source");status=FG_ERR_FORMAT;
+            }
+            if(status!=FG_OK)break;
+            fg_sha256_update(&hash,cooked,(size_t)tile_bytes);
+            while(picked<rows&&ids[picked]<row+16u){
+                memcpy(selected+(uint64_t)live*row_bytes,raw+(uint64_t)(ids[picked]-row)*row_bytes,row_bytes);
+                picked++;live++;
+                if(live==16u||picked==rows){
+                    bool ok=fg_cook_q8_0_rows(selected,selected_cooked,tile_bytes,FG_HIDDEN_SIZE,live);
+                    if(!ok||memcmp(selected_cooked,
+                       (const uint8_t *)fg_vk_tensor_map((*out)->weights)+(uint64_t)packed*tile_bytes,
+                       (size_t)tile_bytes)){
+                        fg_error_set(err,FG_ERR_MISMATCH,"draft subset differs from authenticated source");
+                        status=FG_ERR_MISMATCH;break;
+                    }
+                    packed++;live=0u;
+                }
+            }
+        }
+        if(status==FG_OK){
+            fg_sha256_final(&hash,digest);
+            if(picked!=rows||memcmp(digest,r->sha256,sizeof(digest))){
+                fg_error_set(err,FG_ERR_MISMATCH,"draft source does not match sealed output.weight");
+                status=FG_ERR_MISMATCH;
+            }
+        }
+        close(fd);free(ids);
+        if(status!=FG_OK){fg_mtp_vocab_close(*out);*out=NULL;}
+        else fprintf(stderr,"MTP_DRAFT_VOCAB rows=%u full_rows=%u packed_bytes=%llu target_head_unchanged=1\n",
+            rows,FG_Q38_VOCAB_SIZE,(unsigned long long)fg_vk_tensor_bytes((*out)->weights));
+        return status;
     }
     static fg_status record_vocab(fg_mtp_vocab *v,fg_error *err){
         fg_vk_device_write_visible(v->vk);

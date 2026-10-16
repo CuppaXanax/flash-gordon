@@ -1,0 +1,40 @@
+{
+  "source_parent": "4ce396b5880a789961ca71b46412532004b330af",
+  "binary_sha256": "6c23c7b5e0b0510d9154cc8c61639efa1f7449e7461d5be41b30d0cc60c57868",
+  "diagnostic_release_sha256": "309f906513dfb19098e1382317771e7fe0df0ba457262da71786e25fc85e3f3f",
+  "report_sha256": "75e70dc29034d8cfbf3bef945dfe2617ee888fb2e4ca88ba6cb4431bae0a19a0",
+  "archive_sha256": "2acf9aebb77dc62d8b3e65f1c62db766dad713820e8e1cf6631c371db3ee8f25",
+  "archive_bytes": 20411840,
+  "source_sha256": {
+    "Makefile": "3303da0b4eef90504c1ba08be0c234e310b9aef89117388164da88a1c7b41754",
+    "docs/MTP.md": "9c0cffc127aeb583c9796f3c9c26f561152377f79e3e0b24eddc0baf416945cc",
+    "docs/MTP_TO_PROD.md": "12aea0ecaa48d1580015baf57617436202736a42ba785ed7b9c83cb1200da51b",
+    "include/fg_mtp_head.h": "b220da03c82e4022c218c9bc0da97c38c80be3ea7a4175b3f2a0562433c9afc9",
+    "src/owner.c": "b1f2e5ffb5e366eda58d03310e49a6d23fd1a592f04c0e6cd99d12758ac8979f",
+    "src/mtp_head.c": "e286e8b7a7b84accb89bfccadf5556325d7dfdba07c95a5625d434016fb2cab0",
+    "src/mtp_native.c": "688196ada91ad21e0dedb6d3e563e113426f060bb9071f3ee8fad79e35f7b8f8",
+    "src/main.c": "bb5ad4ab8fdb3dc39cabb3839df8f0a461570fab3233fa91203f3ddece619cba",
+    "tests/test_mtp_vocab.c": "43e6571f513ef929ac3c680d25cb50ff3d7ca9c1d6bf16db82b0ad69d2741a54",
+    "tests/test_mtp_vocab_pack.py": "d86bdffd230742a4c88e597100bb6c754d4e93b859ec431bf8eb4071acd821c8",
+    "tests/test_mtp_native.c": "77d56c246baa477d5e5c47e29cd907218a596d83f732e7778691152d12fc3eb6",
+    "tests/test_mtp_ring.c": "00da2c1109865d92cf7fb7842c78197b565826fa4a8f5660f404dc70559f76e4",
+    "tools/bench_decode_fusion.c": "3946ccdcff6a3bf95c7ba01c03db6ebdea9f3603f06e12730b0d7344a27e6f24",
+    "tools/bench_mtp_vocab.c": "0c1541a578ab067232ea713be3c4b238cbb82e8e0339a6a1b8a6e25ba497fadd",
+    "tools/mtp_vocab_pack.py": "aa0dc9220d3e1043ca5884a2eaebaf8d69764ed58ab592aa92e6ed53a800a0cc"
+  },
+  "validation": {
+    "python_tests": 29,
+    "coordinator_gpu_cases": 24,
+    "tcp_cases": 8,
+    "strict_c17_werror": true,
+    "environment_registry": true,
+    "mapped_vocab_replay": true,
+    "wrong_parent_rejected": true,
+    "duplicate_ids_rejected": true,
+    "unselected_corruption_rejected": true,
+    "truncation_rejected": true,
+    "max_abs_state": 0.000205993652,
+    "max_abs_continuation": 1.03116035e-05
+  },
+  "cleanup_sha256": "7ea812e3ba702feb5876b5e7f3627e432f58749be497c12cb77edbe5dea7265c"
+}

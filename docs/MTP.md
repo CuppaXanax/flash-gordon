@@ -44,8 +44,9 @@ to waive the new model-quality gate. Full N4/Q8 quality and complete pass-local
 capture remain pending; no production lease is implied by unit-test success.
 The existing component/rollback exactness checks remain in force.
 
-`--mtp-local-head FILE` (requires `--experimental-mtp`) loads the full Q8
-vocabulary on the native MTP owner. It validates all cooked matrix bytes
+`--mtp-local-head FILE` (requires `--experimental-mtp`) loads a full raw Q8
+head or an authenticated `FGDVOC1` draft-only subset on the native MTP owner.
+It validates all original cooked matrix bytes
 against the sealed manifest's full `output.weight`, rather than accepting
 an arbitrary draft head. One typed RPC returns a k1–3 local draft chain;
 contracted hidden states stay on GPU and the coordinator no longer rendezvous
@@ -68,6 +69,54 @@ The new option adds no environment flag. `MTP_STAGE` records `overlap_ms`;
 its disjoint sum subtracts this from draft+prepare before adding the other
 components. Timing-mode `MTP_CHOICE` records the request namespace, pass-local
 token and argmax.
+
+### Restricted draft vocabulary and coordinator-retain regression
+
+The optional subset changes **only draft proposals**. Target verification,
+token IDs, target full-vocabulary argmax and target weight precision are
+unchanged. A subset argmax maps its result back to the original global ID.
+There is no new environment flag; the existing local-head option accepts
+the typed container instead of a raw head.
+
+Create a container with:
+
+```powershell
+python tools\mtp_vocab_pack.py head.q8 head.fgdv --ids ids.json --parent-sha256 COOKED_OUTPUT_WEIGHT_SHA256
+```
+
+The parent is the sealed **cooked `output.weight` tensor SHA256**, not the
+manifest SHA or row-major raw-file SHA. IDs must be unique valid global IDs;
+the packer sorts them and refuses overwriting an existing file.
+Format:8-byte `FGDVOC1\0`, LEu32 count,32-byte cooked-parent SHA,
+count strictly ascending LEu32 IDs, then the entire original
+675,430,400-byte raw Q8_0 head. The full source stays on disk intentionally:
+runtime streams and hashes every cooked source tile against the sealed
+parent and compares every selected GPU tile with that same stream.
+An untrusted subset plus a claimed parent SHA would not authenticate its
+rows. Corruption in even an unselected source row fails closed.
+Only selected/padded rows and their ID map become GPU resident; this is
+**not an artifact/disk-size optimization**.
+
+`make test-mtp-vocab` exercises real-GPU mapped argmax/static replay and
+rejects parent mismatch, duplicate IDs, unselected-source corruption and
+truncation. `tools/bench-mtp-vocab MANIFEST FULL_RAW_HEAD_Q8` measures
+full/40,525/106,299-row heads using synthetic hidden vectors and compares
+subset results with the independent existing raw-row loader. Its contiguous
+low-ID sets are reproducibility/performance examples, **not curated language
+sets, measured draft acceptance or full-chain speedups**.
+
+The cold-retain fix validates QSA frontiers only inside the verified
+journal's layer interval. A replicated coordinator intentionally reports
+ownership of every layer; requiring foreign, untouched QSA frontiers to
+advance caused `MTP retained QSA frontier mismatch`. Worker ownership is
+rank-local, explaining why previous worker-only state tests missed it.
+`bench-decode-fusion --q4 --mixed-experts --coordinator-state-test --no-clocks`
+adds replicated-coordinator coverage: N1-only prefix warmup, first cold N4
+at frontier22, later frontier127, both private slots and all proper retained
+prefixes for N2–4. It checks full retention, saved-GDN state reconstruction,
+continuation tolerance, exact rollback, unchanged HCs, stale rejection and
+retained replay graphs. Run with the recorded roofline flags, unlimited
+memlock and the full-shape fixture's≈10 GB GPU-memory allowance.
 
 ### Local-chain measurements and prelease model
 
@@ -106,7 +155,8 @@ lease, sealed release artifacts and eager admission. Diagnostic runs never
 qualify: complete actual serving receipts and same-geometry N4/original-Q8
 model quality remain pending. The historical80 Q8 captures show a
 geometry/cohort-confounded baseline discrepancy and cannot establish N4
-attribution; a same-geometry original-Q8 reference is being reconstructed.
+attribution. The precision sibling has now retained all80 same-geometry
+original-Q8 control vectors; the N4 candidate comparison remains pending.
 See [local-chain evidence and model](../results/hillclimb/MTP_LOCAL_CHAIN.md).
 
 **Historical 2026-10-16 serving gate: FAILED_GREEDY under the superseded

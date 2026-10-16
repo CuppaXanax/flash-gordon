@@ -14,6 +14,10 @@ fg_status fg_mtp_vocab_open(fg_mtp_vocab **out,fg_vk_context *vk,const char *pat
     *out=calloc(1,sizeof(**out));return *out?FG_OK:FG_ERR_OOM;
 }
 void fg_mtp_vocab_close(fg_mtp_vocab *v){free(v);}
+fg_status fg_mtp_vocab_open_draft(fg_mtp_vocab **out,fg_vk_context *vk,
+    const char *path,const fg_tensor_record *record,fg_error *err){
+    (void)record;return fg_mtp_vocab_open(out,vk,path,NULL,FG_Q38_VOCAB_SIZE,err);
+}
 fg_status fg_mtp_vocab_check(fg_mtp_vocab *v,const fg_tensor_record *r,fg_error *err){
     (void)v;(void)r;(void)err;return FG_OK;
 }

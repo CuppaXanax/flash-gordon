@@ -1946,7 +1946,9 @@ fg_status fg_owner_mtp_retain(fg_owner_executor *e,
     if(snapshot->qsa_valid){
         fg_status q=fg_owner_qsa_frontier(e,snapshot->session,frontier);
         if(q!=FG_OK)return q;
-        for(uint32_t l=0;l<FG_LAYER_COUNT;l++)if(owns_layer(e,l)&&(l&3u)==3u){
+        /* Replicated coordinators can address foreign layers, but this journal
+         * advances only the verified block. Preserve every other frontier. */
+        for(uint32_t l=j->first_layer;l<=j->last_layer;l++)if((l&3u)==3u){
             if(snapshot->qsa_tokens[l]!=first||frontier[l]!=first+verified){
                 fg_error_set(err,FG_ERR_MISMATCH,"MTP retained QSA frontier mismatch");
                 return FG_ERR_MISMATCH;

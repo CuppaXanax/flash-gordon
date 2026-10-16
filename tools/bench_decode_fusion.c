@@ -569,7 +569,7 @@ static fg_vk_tensor *commit_fixture_run(fg_owner_executor *owner,fg_expert_execu
 }
 
 static void test_state_commit(fg_owner_executor *owner,fg_expert_executor *expert,
-    fg_vk_context *vk,fg_error *error){
+    fg_vk_context *vk,bool coordinator,fg_error *error){
     float hidden[2][4u*FG_HYPER_WIDTH],ng[4u*FG_HIDDEN_SIZE];
     float gold[2][FG_HYPER_WIDTH],actual[4u*FG_HYPER_WIDTH],saved[4u*FG_HYPER_WIDTH];
     for(uint32_t s=0;s<2u;s++)for(uint32_t i=0;i<4u*FG_HYPER_WIDTH;i++)
@@ -591,17 +591,19 @@ static void test_state_commit(fg_owner_executor *owner,fg_expert_executor *exper
         (unsigned long long)(after.requested_live_bytes-before.requested_live_bytes),eager?"true":"false");
     if(!eager)exit(1);
     for(uint32_t warm=0u;warm<2u;warm++){
-        uint32_t first=warm?127u:0u;
+        uint32_t first=warm?127u:coordinator?22u:0u;
         fg_owner_session_checkpoint initial[2]={{0},{0}};
         for(uint32_t s=0;s<2u;s++){
+            check(fg_owner_reset_session(owner,s,error),error);
             check(fg_owner_set_active_session(owner,s,error),error);
             for(uint32_t p=0;p<first;){
-                uint32_t n=first-p<4u?first-p:4u;
+                uint32_t n=coordinator?1u:first-p<4u?first-p:4u;
                 (void)commit_fixture_run(owner,expert,p,n,hidden[s],ngram,error);p+=n;
             }
             check(fg_owner_session_snapshot(owner,s,&initial[s],error),error);
         }
-        for(uint32_t n=2u;n<=4u;n++)for(uint32_t keep=1u;keep<n;keep++){
+        for(uint32_t ni=0u;ni<3u;ni++)for(uint32_t keep=1u,n=coordinator?
+            (ni==0u?4u:ni+1u):ni+2u;keep<n;keep++){
             fg_owner_session_checkpoint expected[2]={{0},{0}},continued[2]={{0},{0}};
             fg_owner_session_checkpoint device[2]={{0},{0}},full[2]={{0},{0}};
             bool journal_exact[2]={false,false};
@@ -690,7 +692,7 @@ static void test_state_commit(fg_owner_executor *owner,fg_expert_executor *exper
 }
 
 int main(int argc,char **argv){
-    bool q4=false,intrusive=false,clocks=true,rollback_test=false,small_n=false,small_test=false,dense_bench=false,dense_only=false,session_test=false,mixed_experts=false,state_test=false;
+    bool q4=false,intrusive=false,clocks=true,rollback_test=false,small_n=false,small_test=false,dense_bench=false,dense_only=false,session_test=false,mixed_experts=false,state_test=false,coordinator_state_test=false;
     uint32_t warmup=256u,iterations=64u,windows=9u,batch=1u;
     uint32_t small_wg=0u,small_rows=0u;
     const char *dump=NULL,*routing_trace=NULL;
@@ -706,6 +708,7 @@ int main(int argc,char **argv){
         else if(strcmp(argv[i],"--small-n")==0)small_n=true;
         else if(strcmp(argv[i],"--session-test")==0)session_test=true;
         else if(strcmp(argv[i],"--state-commit-test")==0)state_test=true;
+        else if(strcmp(argv[i],"--coordinator-state-test")==0){state_test=true;coordinator_state_test=true;}
         else if(strcmp(argv[i],"--small-test")==0)small_test=true;
         else if(strcmp(argv[i],"--dense-bench")==0)dense_bench=true;
         else if(strcmp(argv[i],"--dense-only")==0){dense_only=true;dense_bench=true;}
@@ -827,7 +830,9 @@ int main(int argc,char **argv){
     }
     check(build_tensor_lookup(model,&error),&error);
     fg_owner_executor *owner=NULL;fg_expert_executor *expert=NULL;
-    check(fg_owner_executor_create_worker_slots(&owner,model,(session_test||state_test)?2u:1u,&error),&error);
+    check(coordinator_state_test?
+        fg_owner_executor_create_slots(&owner,model,2u,&error):
+        fg_owner_executor_create_worker_slots(&owner,model,(session_test||state_test)?2u:1u,&error),&error);
     check(fg_expert_executor_create(&expert,model,&error),&error);
     if(routing_trace)check(fg_expert_route_trace_enable(expert,&error),&error);
     bench_prefill prefill={.expert=expert};
@@ -847,7 +852,7 @@ int main(int argc,char **argv){
         if(session_test&&!state_test)test_small_sessions(owner,expert,model->vk,&error);
     }
     if(state_test){
-        test_state_commit(owner,expert,model->vk,&error);
+        test_state_commit(owner,expert,model->vk,coordinator_state_test,&error);
         fg_expert_executor_destroy(expert);fg_owner_executor_destroy(owner);
         fg_model_close(model);free(manifest);
         unlink(state_path);unlink(second_state_path);

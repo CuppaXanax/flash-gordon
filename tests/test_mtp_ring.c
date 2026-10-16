@@ -33,6 +33,10 @@ fg_status __wrap_fg_mtp_vocab_open(fg_mtp_vocab **out,fg_vk_context *vk,const ch
     *out=(fg_mtp_vocab *)(uintptr_t)1u;return FG_OK;
 }
 void __wrap_fg_mtp_vocab_close(fg_mtp_vocab *v){(void)v;}
+fg_status __wrap_fg_mtp_vocab_open_draft(fg_mtp_vocab **out,fg_vk_context *vk,
+    const char *path,const fg_tensor_record *record,fg_error *err){
+    (void)record;return __wrap_fg_mtp_vocab_open(out,vk,path,NULL,FG_Q38_VOCAB_SIZE,err);
+}
 fg_status __wrap_fg_mtp_vocab_check(fg_mtp_vocab *v,const fg_tensor_record *r,fg_error *err){
     (void)v;(void)r;(void)err;return FG_OK;
 }

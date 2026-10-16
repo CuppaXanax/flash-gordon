@@ -35,7 +35,7 @@ MTP_RING_WRAPS = fg_vk_tensor_create fg_vk_tensor_destroy fg_vk_tensor_write fg_
  fg_mtp_head_check_residency \
  fg_expert_prepare_small_n_scratch fg_vk_get_memory_stats \
  fg_mtp_head_frontier fg_mtp_head_reset fg_mtp_head_truncate fg_mtp_head_warm_replay \
- fg_mtp_head_step_replay fg_mtp_vocab_open fg_mtp_vocab_close fg_mtp_vocab_check fg_mtp_vocab_argmax
+ fg_mtp_head_step_replay fg_mtp_vocab_open fg_mtp_vocab_open_draft fg_mtp_vocab_close fg_mtp_vocab_check fg_mtp_vocab_argmax
 comma := ,
 
 .PHONY: all clean test test-sampler test-mtp test-mtp-capture test-ngram-deployment test-vulkan test-qsa-fleet test-gdn-fleet test-fg-profile-analysis test-tower test-decode-batch shaders
@@ -49,6 +49,15 @@ tests/test_mtp_ring: tests/test_mtp_ring.c src/runtime.c src/runtime_mtp_coordin
 	 $(addprefix -Wl$(comma)--wrap=,$(MTP_RING_WRAPS)) $(LDLIBS)
 
 -include tests/test_mtp_ring.d
+-include tests/test_mtp_vocab.d
+
+tests/test_mtp_vocab: tests/test_mtp_vocab.c $(filter-out src/main.o,$(OBJ)) | shaders
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(filter %.o,$^) $(LDLIBS)
+
+.PHONY: test-mtp-vocab
+test-mtp-vocab: tests/test_mtp_vocab
+	mkdir -p .build
+	./tests/test_mtp_vocab
 
 .PHONY: test-mtp-ring
 test-mtp-ring: tests/test_mtp_ring
@@ -143,6 +152,11 @@ tools/bench-mtp-chain: tools/bench_mtp_chain.c $(filter-out src/main.o,$(OBJ)) |
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
 
 -include tools/bench-mtp-chain.d
+
+tools/bench-mtp-vocab: tools/bench_mtp_vocab.c $(filter-out src/main.o,$(OBJ)) | shaders
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(filter %.o,$^) $(LDLIBS)
+
+-include tools/bench-mtp-vocab.d
 
 tools/bench-mtp-transport: tools/bench_mtp_transport.c src/protocol.c src/util.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ $^ -lm
@@ -357,6 +371,8 @@ test-gdn-fleet: tests/test_fg_vk
 	done
 
 clean:
+	rm -f tools/bench-mtp-vocab tools/bench-mtp-vocab.d
+	rm -f tests/test_mtp_vocab tests/test_mtp_vocab.d
 	rm -f tools/bench-mtp-transport tools/bench-mtp-transport.d
 	rm -f tools/bench-mtp-chain tools/bench-mtp-chain.d
 	rm -f tools/mtp-offline tools/mtp-offline.d

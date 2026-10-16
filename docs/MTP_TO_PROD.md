@@ -22,6 +22,48 @@ Ranking also incorporates the user's uncommitted
 (2026-10-16; Strata9259cad4, FG serving bc75b750). Its blanket prohibition
 on Q2 draft experts predates the user ruling above and is superseded.
 
+## Offline follow-up: retain repair and restricted vocabulary
+
+The retain failure is **reproduced and fixed offline on .51**. Replicated
+coordinator executors intentionally own all48 layers, but a ring pass
+advances only the coordinator's actual block. Retention incorrectly required
+every QSA layer, including untouched foreign layers, to reach the verified
+frontier. It now validates only the journal's executed layer interval.
+The old code fails with `MTP retained QSA frontier mismatch` when N1-only
+warmup is followed by the first cold N4 at prefix22. The fixed GPU regression
+passes24 cases over frontiers22/127, both private slots, all proper retained
+prefixes for N2–4, full-state reconstruction, exact rollback and continuation
+tolerance. Foreign frontiers remain unchanged. This fixes the originating
+local condition; it does **not** add ACK-draining/network-error recovery.
+Authentic full-ring confirmation still needs a new serialized lease.
+
+Selected item2 before further dense-kernel tuning on expected ms/effort:
+`--mtp-local-head` now accepts an authenticated `FGDVOC1` draft-only subset.
+Full target weights/vocabulary are unchanged. Runtime authenticates every
+original cooked source byte against sealed `output.weight`; corrupting an
+unselected row also fails. Only selected rows become GPU resident, while
+the full raw source remains in the container on disk. See the packer,
+container layout and regression commands in [MTP.md](MTP.md).
+
+Paired-process, replay-warmed measurements on **.51, reported24 CUs**
+(8 warmups/100 timings;8 synthetic hidden vectors):
+
+| Draft rows | Mean/head | Requested-live bytes | Saving vs full | Three-head-call saving proxy |
+|---|---:|---:|---:|---:|
+|248,320 |2.238927 ms |676,920,320 |0 |0 |
+|40,525 |0.430886 ms |110,479,316 |566,441,004 |5.424124 ms |
+|106,299 |1.018502 ms |289,784,684 |387,135,636 |3.661277 ms |
+
+All IDs/scores match the independent existing raw-row loader exactly.
+These are **contiguous low-ID smoke/performance sets, not curated
+English/CJK sets or acceptance-qualified drafts**. The three-call difference
+is not a measured full-chain or serving-round improvement; do not subtract
+it directly from the older40-CU chain's8.989 ms. Both memory savings exceed
+the historical0.24 GiB overrun, but complete new dual-session/deferred fit
+still requires eager measurement. Subset language/tool coverage, acceptance
+and live TPS remain unmeasured. See
+[retained follow-up evidence](../results/hillclimb/MTP_RETAIN_SUBSET.md).
+
 ## What the lease actually established
 
 | Observation | Measured result | Limitation |
@@ -51,7 +93,8 @@ successful loading/readiness. Its first N4 target pass reached all eight
 owners; remote retained-prefix handlers reported success, then the coordinator
 failed in the retain/rollback transaction. The visible restore status5
 does not establish the original failure: queued replies can obscure it.
-**Preserve and reproduce the original error before requesting another lease.**
+The matching original owner error has since been reproduced and repaired
+offline above; retain the failed lease's evidence unchanged.
 Do not describe either failed attempt as a completed serving comparison.
 
 ## Gate status and blockers
@@ -61,9 +104,9 @@ Do not describe either failed attempt as a completed serving comparison.
 | Target quantization floor |Unchanged: target≥Q4; draft-only exception above |
 | Pass-local self-consistency |Runtime checks every emitted token against that pass's target argmax;2,709 prior TCP-double checks pass. Retry emitted no completed MTP result; full actual-serving receipts pending |
 | N1/N4 divergence |No bitwise alignment requirement. At identical prefixes, differing winners must exchange the same top2 with **both raw margins<0.10**; complete serving capture pending |
-| Full-model N4 quality |Pending same-geometry original-Q8 reference: mean full-vocabulary `KL(P_Q8||P_N4)≤0.005`, top1≥0.985, hence≥79/80 pinned contexts |
-| Reference provenance |Historical80 forced-frontier captures have a baseline geometry discrepancy; do not attribute it to N4. Separate480-natural-context/p99 gate is not interchangeable |
-| State correctness |Prior24 GPU journal/rollback fixtures and16 TCP combinations pass; authentic full-ring retain failure is a new blocker |
+| Full-model N4 quality |Same-geometry original-Q880-vector control now retained by the precision sibling; N4 candidate comparison still pending: `KL(P_Q8||P_N4)≤0.005`, top1≥0.985, hence≥79/80 |
+| Reference provenance |New Q8-control archive SHA `d4ca5b1351204674082c580e3623e90bb97fb518cd0c577efbf81b3b67fd48c3`; historical80 geometry discrepancy is not N4 attribution. Separate480-natural-context/p99 gate is not interchangeable |
+| State correctness |Cold coordinator failure reproduced/fixed offline;24 strengthened GPU fixtures and8 current TCP cases pass; authentic full-ring confirmation pending |
 | Residency |Single-session eager admission observed; only36.31 MiB requested-live headroom. Dual sessions, extra speculative banks and long-context/deferred peaks remain unqualified |
 | Performance |Warm native-only chain measured; actual N4 frames measured. No warm completed local-chain serving round or on/off TPS comparison |
 | Temperature sampling |Standard rejection-sampling primitive exists; production path/gates here are greedy, not temperature qualification |
@@ -73,8 +116,9 @@ Do not describe either failed attempt as a completed serving comparison.
 
 Savings below are **conditional planning budgets, not measured improvements**.
 Correctness/retain reproduction is a prerequisite, not a throughput experiment.
-First reproduce authentic rank0 retained-prefix execution offline, retain the
-first error as well as any restore error, and exercise all keep1..4 frontiers.
+The offline coordinator reproduction/fix above closes that local prerequisite,
+not full-ring qualification. Preserve the first error as well as any restore
+error and exercise all keep1..4 frontiers.
 Warm every N1..4 graph/pipeline before timing, without publishing dummy tokens;
 prove state restoration after warmup. No further production access is implied.
 
@@ -92,8 +136,8 @@ prove state restoration after warmup. No further production access is implied.
    Keep a locally resident authenticated subset of target Q8 rows, mapping
    selected IDs back to full vocabulary. The audit's40,525-ID English/code
    and106,299-ID CJK-inclusive examples are≈110.5/289.8 MB instead of676.9 MB.
-   Lower-level FG vocabulary loading already accepts IDs/row counts; integrate
-   explicit subset authentication rather than weakening full-head validation.
+   Default-off subset loading/authentication is now implemented and measured
+   above, without weakening full-head source authentication.
    **The full target vocabulary is unchanged.** Measure multilingual/tool/code
    coverage and acceptance; English-only subsets can damage CJK acceptance.
    The saving exceeds0.24 GiB as a raw same-baseline comparison, so it can
@@ -141,6 +185,19 @@ prove state restoration after warmup. No further production access is implied.
   11 ms is an aggressive application budget, not achieved bandwidth.
    Reduced-precision transport receives no credit: the sibling's full-hop
    scaled-FP16 result provisionally fails KL and must be separately qualified.
+   **MTP + FP16-with-scale hops is now a separate conditional lever:**
+   sol-roofline is qualifying that transport. If its model-quality result
+   passes and the codec covers the actual N4 payload, budget roughly
+   **14.2→7.1 ms/round (≈7 ms saved)** for wire-dominated work frames.
+   Measure N4 framing, scale/codec CPU cost and initial-ngram scope explicitly;
+   passing an N1 quality run alone is not an N4 end-to-end gate. The older
+   failed precision policy does not decide this new candidate's result.
+   This replaces, rather than adds to, the11 ms F32 transport milestone.
+   Latest sibling evidence: all-hop scaled FP16 fails versus frozen F32
+   (KL0.00987737/top1 98.75%); destination5–7-only mask224 passes that relative
+   comparison (KL0.000678952/top1 100%). Neither result qualifies all-hop N4
+   transport or cumulative N4/original-Q8 quality, so the≈7 ms credit remains
+   conditional rather than an available saving.
 8. **Control/head-message/host amortization: target4.98 ms total saving.**
    Replace the conservative3.365 ms extra-head-RPC budget with1 ms;
    local-chain RPC1.122→0.5 ms, snapshot/retain controls2.243→1 ms,
@@ -230,6 +287,7 @@ repair; no unexplained residual saving is assumed.
 | N4 work transport budget11 ms |64.935 |49.90 |36.84 |
 | Extra target-head RPC budget1 ms |62.571 |51.79 |38.24 |
 | Local RPC/control/host budgets0.5/1/0.75 ms |**59.956** |**54.05** |**39.90** |
+| Optional qualified FP16+scale transport≈7.1 ms instead of11 ms |≈56.1 |≈57.8 |≈42.6 |
 
 TPS=`1000×tokens_per_verify/round_ms`, using **offline simulated**
 code3.240506/chat2.392523 throughout; lower-bit drafting/approximate lookahead
@@ -241,9 +299,23 @@ measured speedup or confidence interval.
 actually met and qualified, the remaining path is another≈6 ms reduction or
 better draft acceptance (e.g. head quality/calibration/adaptive windows), with
 the same target gates. Chat needs a larger acceptance improvement.
+If qualified half-precision hops reach≈7.1 ms, the conditional56.1 ms budget
+would leave roughly another2.1 ms reduction to60 code TPS at unchanged yield;
+it is not a measured MTP/transport combination.
 
-Before another lease: reproduce/fix authentic retain, prove warmed N1..4
-state/cost behavior, complete same-geometry Q8/N4 quality and emission capture,
-then request a new bounded diagnostic window. Measure actual warm stages and
-paired off/on chat/code; test full two-session eager/deferred/cancel/restore
-peaks separately. No serving ref, launcher or default is promoted by this plan.
+Next request: a new exclusive≤45-minute **diagnostic-only A0/F3/A1** window,
+single session, mask330, fixed k3,440 MiB worker cache, mandatory eager
+admission, watchdogs and exact current sessions2/wide1 restoration. The
+offline retain fix and regression close the local prerequisite; the existing
+controller already supplies paired chat/code, SSE/stop/cancel and warm-stage
+logs. Use the authenticated **full Q8 head first** to isolate that fix.
+The controller deliberately still pins the raw full-head SHA; subset serving
+needs explicit typed-artifact staging validation and a curated ID set first,
+not bypassing that check or silently substituting the smoke-test IDs.
+Request authority approval; do not treat preparation as an active lease.
+
+Measure completed warm stages, actual yield and paired off/on chat/code.
+Complete same-geometry Q8/N4 quality and emission capture before any
+qualification/promotion; an explicitly unqualified diagnostic may precede
+that separate gate. Test full two-session eager/deferred/cancel/restore peaks
+separately. No serving ref, launcher or default is promoted by this plan.
