@@ -26,10 +26,19 @@ struct fg_mtp_head {
     uint64_t weight_bytes;
     fg_mtp_head_trace_fn trace;
     void *trace_context;
+    bool replay_claimed;
+    fg_vk_tensor *replay_input,*replay_embedding,*replay_hc;
     fg_vk_tensor *en,*ep,*hn,*hp,*stream_in[4],*stream_out[4];
     fg_vk_tensor *raw_q,*raw_k,*raw_v,*q,*gate,*key,*attention,*attn_out;
-    fg_vk_tensor *keys,*values,*position;
-    fg_vk_tensor *norm,*down,*active,*up,*hidden;
+    fg_vk_tensor *keys,*values,*position,*attention_partials;
+    fg_vk_tensor *norm,*down,*active,*up,*hidden,*output_partials;
+};
+
+struct fg_mtp_vocab {
+    fg_vk_context *vk;
+    fg_vk_tensor *weights,*tokens,*hidden,*scores[2],*ids[2];
+    uint32_t rows,final_bank;
+    bool claimed;
 };
 
 typedef struct mtp_alias {
@@ -103,6 +112,118 @@ static fg_status read_exact(int fd,uint64_t offset,void *out,uint64_t bytes,fg_e
     return FG_OK;
 }
 
+void fg_mtp_vocab_close(fg_mtp_vocab *v){
+        if(!v)return;
+        if(v->claimed){fg_error ignored={0};fg_vk_static_release(v->vk,FG_VK_MTP_VOCAB_STATIC_SLOT,&ignored);}
+        fg_vk_tensor_destroy(v->weights);fg_vk_tensor_destroy(v->tokens);fg_vk_tensor_destroy(v->hidden);
+        for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(v->scores[i]);fg_vk_tensor_destroy(v->ids[i]);}
+        free(v);
+    }
+    fg_status fg_mtp_vocab_open(fg_mtp_vocab **out,fg_vk_context *vk,const char *path,
+        const uint32_t *ids,uint32_t rows,fg_error *err){
+        if(!out||!vk||!path||!rows||rows>FG_Q38_VOCAB_SIZE||(!ids&&rows!=FG_Q38_VOCAB_SIZE)){
+            fg_error_set(err,FG_ERR_ARGUMENT,"invalid explicit MTP vocabulary");return FG_ERR_ARGUMENT;
+        }
+        *out=NULL;
+        bool seen[FG_Q38_VOCAB_SIZE]={false};
+        for(uint32_t i=0;i<rows;i++){
+            uint32_t id=ids?ids[i]:i;
+            if(id>=FG_Q38_VOCAB_SIZE||seen[id]){
+                fg_error_set(err,FG_ERR_ARGUMENT,"invalid or duplicate MTP token ID");return FG_ERR_ARGUMENT;
+            }
+            seen[id]=true;
+        }
+        fg_mtp_vocab *v=calloc(1,sizeof(*v));
+        if(!v){fg_error_set(err,FG_ERR_OOM,"MTP vocabulary");return FG_ERR_OOM;}
+        v->vk=vk;v->rows=rows;
+        uint64_t bytes=fg_q8_0_cooked_matrix_bytes(2560u,rows);
+        uint32_t partials=(rows+7u)/8u;
+        fg_status status=fg_vk_tensor_create(vk,bytes,&v->weights,err);
+        if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)rows*4u,&v->tokens,err);
+        for(uint32_t i=0;status==FG_OK&&i<2u;i++){
+            status=fg_vk_tensor_create(vk,(uint64_t)partials*4u,&v->scores[i],err);
+            if(status==FG_OK)status=fg_vk_tensor_create(vk,(uint64_t)partials*4u,&v->ids[i],err);
+        }
+        int fd=status==FG_OK?open(path,O_RDONLY|O_CLOEXEC):-1;
+        if(status==FG_OK&&fd<0){status=FG_ERR_IO;fg_error_set(err,status,"open shared MTP vocabulary: %s",strerror(errno));}
+        const uint32_t row_bytes=2560u/32u*34u;
+        uint8_t raw[16u*2560u/32u*34u];
+        uint64_t tile_bytes=fg_q8_0_cooked_tile_bytes(2560u);
+        for(uint32_t row=0;status==FG_OK&&row<rows;row+=16u){
+            uint32_t live=rows-row<16u?rows-row:16u;
+            for(uint32_t i=0;status==FG_OK&&i<live;i++){
+                uint32_t id=ids?ids[row+i]:row+i;
+                status=read_exact(fd,(uint64_t)id*row_bytes,raw+i*row_bytes,row_bytes,err);
+            }
+            if(status==FG_OK&&!fg_cook_q8_0_rows(raw,(uint8_t *)fg_vk_tensor_map(v->weights)+
+                (uint64_t)(row/16u)*tile_bytes,tile_bytes,2560u,live)){
+                status=FG_ERR_FORMAT;fg_error_set(err,status,"cook MTP vocabulary tile");
+            }
+        }
+        if(fd>=0)close(fd);
+        if(status==FG_OK){
+            uint32_t *map=fg_vk_tensor_map(v->tokens);
+            for(uint32_t i=0;i<rows;i++)map[i]=ids?ids[i]:i;
+            fg_vk_tensor_set_format(v->weights,FG_VK_TENSOR_FORMAT_Q8_0_COOKED);
+            status=fg_vk_static_claim(vk,FG_VK_MTP_VOCAB_STATIC_SLOT,err);
+            if(status==FG_OK)v->claimed=true;
+        }
+        if(status!=FG_OK){fg_mtp_vocab_close(v);return status;}
+        *out=v;return FG_OK;
+    }
+    static fg_status record_vocab(fg_mtp_vocab *v,fg_error *err){
+        fg_vk_device_write_visible(v->vk);
+        fg_status status=fg_vk_mtp_vocab_q8(v->vk,v->scores[0],v->ids[0],v->weights,
+            v->hidden,v->tokens,2560u,v->rows,err);
+        uint32_t count=(v->rows+7u)/8u,bank=0;
+        while(status==FG_OK&&count>1u){
+            uint32_t next=0;
+            status=fg_vk_argmax_reduce(v->vk,v->scores[bank^1u],v->ids[bank^1u],
+                v->scores[bank],v->ids[bank],count,&next,err);
+            count=next;bank^=1u;
+        }
+        v->final_bank=bank;return status;
+    }
+    fg_status fg_mtp_vocab_argmax(fg_mtp_vocab *v,const fg_vk_tensor *hidden,
+        uint32_t *token,float *score,fg_error *err){
+        if(!v||!hidden||!token||!score||fg_vk_batch_active(v->vk)){
+            fg_error_set(err,FG_ERR_ARGUMENT,"invalid MTP vocabulary input");return FG_ERR_ARGUMENT;
+        }
+        fg_status status=FG_OK;
+        if(fg_vk_tensor_bytes(hidden)<2560u*4u){
+            fg_error_set(err,FG_ERR_ARGUMENT,"short MTP vocabulary hidden");return FG_ERR_ARGUMENT;
+        }
+        if(!v->hidden||fg_vk_tensor_const_map(v->hidden)!=fg_vk_tensor_const_map(hidden)){
+            fg_vk_tensor *source=NULL;
+            status=fg_vk_tensor_view((fg_vk_tensor *)hidden,0,2560u*4u,&source,err);
+            if(status==FG_OK)status=fg_vk_static_reset(v->vk,FG_VK_MTP_VOCAB_STATIC_SLOT,err);
+            if(status==FG_OK){fg_vk_tensor_destroy(v->hidden);v->hidden=source;source=NULL;}
+            fg_vk_tensor_destroy(source);
+        }
+        if(status==FG_OK&&fg_vk_profile_active(v->vk)){
+            status=fg_vk_begin(v->vk,err);
+            if(status==FG_OK)status=record_vocab(v,err);
+            if(status==FG_OK)status=fg_vk_end(v->vk,err);
+        }else if(status==FG_OK){
+            if(!fg_vk_static_recorded(v->vk,FG_VK_MTP_VOCAB_STATIC_SLOT)){
+                status=fg_vk_static_begin(v->vk,FG_VK_MTP_VOCAB_STATIC_SLOT,err);
+                if(status==FG_OK)status=record_vocab(v,err);
+                if(status==FG_OK)status=fg_vk_static_end(v->vk,FG_VK_MTP_VOCAB_STATIC_SLOT,err);
+            }
+            if(status==FG_OK)status=fg_vk_static_submit(v->vk,FG_VK_MTP_VOCAB_STATIC_SLOT,err);
+            if(status==FG_OK)status=fg_vk_static_wait(v->vk,FG_VK_MTP_VOCAB_STATIC_SLOT,err);
+        }
+        if(status==FG_OK)status=fg_vk_tensor_read(v->scores[v->final_bank],0,score,4u,err);
+        if(status==FG_OK)status=fg_vk_tensor_read(v->ids[v->final_bank],0,token,4u,err);
+        if(status==FG_OK&&(!isfinite(*score)||*token>=FG_Q38_VOCAB_SIZE)){
+            status=FG_ERR_FORMAT;fg_error_set(err,status,"nonfinite MTP vocabulary reduction");
+        }
+        if(status!=FG_OK){
+            fg_error ignored={0};if(fg_vk_batch_active(v->vk))fg_vk_abort(v->vk,&ignored);
+            fg_vk_static_drain(v->vk,&ignored);fg_vk_static_reset(v->vk,FG_VK_MTP_VOCAB_STATIC_SLOT,&ignored);
+        }
+        return status;
+    }
 static const fg_gguf_tensor *find_source(const fg_gguf *g,const mtp_alias *a){
     char name[160];snprintf(name,sizeof(name),"mtp.%s",a->source);
     for(uint64_t i=0;i<g->tensor_count;i++)
@@ -116,16 +237,36 @@ static fg_status load_binding(fg_mtp_head *h,const fg_gguf *g,int fd,
     bool fused=a->experts>1u&&strstr(a->source,"gate_up_proj");
     uint32_t rows=a->rows*(fused?2u:1u);
     uint32_t dims=a->experts>1u?3u:a->norm?1u:2u;
+    bool quant=t&&!a->f32&&(t->type==12u||t->type==13u||
+        (a->experts==1u&&t->type==20u)||(a->experts>1u&&t->type==7u));
     if(!t||t->dims!=dims||t->shape[0]!=a->input||
        (dims>=2u&&t->shape[1]!=rows)||(dims==3u&&t->shape[2]!=a->experts)||
-       t->type!=(a->norm?0u:8u)){
+       (t->type!=(a->norm?0u:8u)&&!quant)){
         fg_error_set(err,FG_ERR_FORMAT,"native MTP source shape/type: %s",a->source);
         return FG_ERR_FORMAT;
     }
     uint64_t matrix=(uint64_t)a->input*a->rows;
-    uint64_t raw_bytes=a->norm?matrix*4u:matrix/32u*34u;
-    uint64_t cooked=a->f32?matrix*4u:
-        fg_q8_0_cooked_matrix_bytes(a->input,a->rows);
+    uint32_t block=t->type==0u?1u:(t->type==12u||t->type==13u)?256u:32u;
+    uint32_t block_bytes=t->type==0u?4u:t->type==12u?144u:t->type==13u?176u:
+        t->type==20u?18u:t->type==7u?24u:34u;
+    uint64_t raw_bytes=matrix/block*block_bytes;
+    uint32_t layout=a->f32?FG_TENSOR_LAYOUT_GGML:a->experts>1u?
+        FG_TENSOR_LAYOUT_Q8_0_EXPERT_COOKED:FG_TENSOR_LAYOUT_Q8_0_COOKED;
+    uint64_t cooked=a->f32?matrix*4u:fg_q8_0_cooked_matrix_bytes(a->input,a->rows);
+    if(quant&&a->experts>1u){
+        if(t->type==7u){
+            layout=FG_TENSOR_LAYOUT_Q5_1_EXPERT_COOKED;
+            cooked=fg_q5_1_cooked_matrix_bytes(a->input,a->rows);
+        }else{
+            layout=FG_TENSOR_LAYOUT_K_QUANT_EXPERT_COOKED;
+            cooked=fg_k_quant_cooked_matrix_bytes(a->input,a->rows,t->type);
+        }
+    }else if(quant){
+        bool compact=fg_dense_prefer_compact(a->input,a->rows,t->type);
+        layout=compact?FG_TENSOR_LAYOUT_DENSE_COMPACT:FG_TENSOR_LAYOUT_DENSE_SOA;
+        cooked=compact?fg_dense_compact_bytes(a->input,a->rows,t->type):
+            fg_dense_soa_bytes(a->input,a->rows,t->type);
+    }
     if(!cooked||h->count>=MTP_BINDINGS||h->weight_bytes>FG_PERSISTENT_CAP_BYTES||
        cooked*a->experts>FG_PERSISTENT_CAP_BYTES-h->weight_bytes){
         fg_error_set(err,FG_ERR_LIMIT,"native MTP weight capacity");return FG_ERR_LIMIT;
@@ -147,6 +288,16 @@ static fg_status load_binding(fg_mtp_head *h,const fg_gguf *g,int fd,
                 if(a->norm)f[j]+=1.0f;
                 if(!isfinite(f[j])){fg_error_set(err,FG_ERR_FORMAT,"nonfinite native MTP weight");status=FG_ERR_FORMAT;break;}
             }
+        }else if(quant){
+            void *out=dst+(uint64_t)e*cooked;
+            bool ok=layout==FG_TENSOR_LAYOUT_Q5_1_EXPERT_COOKED?
+                fg_cook_q5_1_rows(raw,out,cooked,a->input,a->rows):
+                layout==FG_TENSOR_LAYOUT_K_QUANT_EXPERT_COOKED?
+                fg_cook_k_quant_rows(raw,out,cooked,a->input,a->rows,t->type):
+                layout==FG_TENSOR_LAYOUT_DENSE_COMPACT?
+                fg_cook_dense_compact(raw,out,cooked,a->input,a->rows,t->type):
+                fg_cook_dense_soa(raw,out,cooked,a->input,a->rows,t->type);
+            if(!ok){fg_error_set(err,FG_ERR_FORMAT,"native MTP Q4-class cooking");status=FG_ERR_FORMAT;}
         }else if(!fg_cook_q8_0_rows(raw,dst+(uint64_t)e*cooked,cooked,a->input,a->rows)){
             fg_error_set(err,FG_ERR_FORMAT,"native MTP Q8 cooking");status=FG_ERR_FORMAT;
         }
@@ -157,13 +308,15 @@ static fg_status load_binding(fg_mtp_head *h,const fg_gguf *g,int fd,
     if(!strncmp(a->alias,"mtp.",4u))snprintf(r->name,sizeof(r->name),"%s",a->alias);
     else if(a->experts>1u)snprintf(r->name,sizeof(r->name),"blk.%u.%s.weight.rank%u",MTP_LAYER,a->alias,rank);
     else snprintf(r->name,sizeof(r->name),"blk.%u.%s",MTP_LAYER,a->alias);
-    r->rank=(uint16_t)rank;r->layer=MTP_LAYER;r->ggml_type=a->f32?0u:8u;
+    r->rank=(uint16_t)rank;r->layer=MTP_LAYER;r->ggml_type=a->f32?0u:t->type;
     r->dims=a->experts>1u?3u:2u;r->shape[0]=a->input;r->shape[1]=a->rows;
     if(a->experts>1u)r->shape[2]=a->experts;
     r->bytes=cooked*a->experts;r->kind=a->experts>1u?FG_TENSOR_ROUTED_EXPERT:FG_TENSOR_COMMON;
-    r->layout=a->f32?FG_TENSOR_LAYOUT_GGML:a->experts>1u?
-        FG_TENSOR_LAYOUT_Q8_0_EXPERT_COOKED:FG_TENSOR_LAYOUT_Q8_0_COOKED;
+    r->layout=layout;
     fg_vk_tensor_set_format(h->weights[index],a->f32?FG_VK_TENSOR_FORMAT_DEFAULT:
+        quant&&a->experts>1u?(t->type==7u?FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED:
+            FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED):
+        quant?fg_vk_dense_saved_format(t->type,layout):
         a->experts>1u?FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED:FG_VK_TENSOR_FORMAT_Q8_0_COOKED);
     h->weight_bytes+=r->bytes;h->manifest->tensor_count=h->count;
     return FG_OK;
@@ -175,9 +328,10 @@ static fg_status scratch(fg_mtp_head *h,uint64_t values,fg_vk_tensor **out,fg_er
 static fg_status allocate_scratch(fg_mtp_head *h,fg_error *err){
     fg_vk_tensor **fields[]={&h->en,&h->ep,&h->hn,&h->hp,
         &h->raw_q,&h->raw_k,&h->raw_v,&h->q,&h->gate,&h->key,
-        &h->attention,&h->attn_out,&h->position,&h->norm,&h->down,&h->active,&h->up,&h->hidden};
+        &h->attention,&h->attn_out,&h->position,&h->norm,&h->down,&h->active,&h->up,&h->hidden,
+        &h->output_partials};
     uint32_t counts[]={2560,2560,10240,10240,12288,512,512,6144,6144,512,
-        6144,2560,3,10240,320,320,10240,2560};
+        6144,2560,3,10240,320,320,10240,2560,320u*8u};
     fg_status status=FG_OK;
     for(uint32_t i=0;status==FG_OK&&i<sizeof(counts)/sizeof(counts[0]);i++)
         status=scratch(h,counts[i],fields[i],err);
@@ -187,6 +341,9 @@ static fg_status allocate_scratch(fg_mtp_head *h,fg_error *err){
     }
     if(status==FG_OK)status=scratch(h,(uint64_t)h->capacity*512u,&h->keys,err);
     if(status==FG_OK)status=scratch(h,(uint64_t)h->capacity*512u,&h->values,err);
+    if(status==FG_OK)status=scratch(h,10240u,&h->replay_input,err);
+    if(status==FG_OK)status=scratch(h,2560u,&h->replay_embedding,err);
+    if(status==FG_OK)status=scratch(h,24u*8u*258u,&h->attention_partials,err);
     return status;
 }
 
@@ -200,23 +357,37 @@ fg_status fg_mtp_head_open(fg_mtp_head **out,fg_vk_context *vk,
         return FG_ERR_ARGUMENT;
     }
     *out=NULL;
+    fg_gguf g={0};const char *paths[]={overlay};
+    fg_status status=fg_gguf_open(paths,1u,&g,err);
+    if(status!=FG_OK)return status;
     uint64_t needed=(uint64_t)context_tokens*512u*4u*2u+(16u<<20u);
     for(uint32_t i=0;i<sizeof(aliases)/sizeof(aliases[0]);i++){
         const mtp_alias *a=&aliases[i];
+        const fg_gguf_tensor *t=find_source(&g,a);
         uint64_t matrix=a->f32?(uint64_t)a->input*a->rows*4u:
             fg_q8_0_cooked_matrix_bytes(a->input,a->rows);
+        if(t&&!a->f32&&t->type!=8u){
+            matrix=a->experts>1u?(t->type==7u?
+                fg_q5_1_cooked_matrix_bytes(a->input,a->rows):
+                fg_k_quant_cooked_matrix_bytes(a->input,a->rows,t->type)):
+                fg_dense_prefer_compact(a->input,a->rows,t->type)?
+                fg_dense_compact_bytes(a->input,a->rows,t->type):
+                fg_dense_soa_bytes(a->input,a->rows,t->type);
+        }
+        if(!t||!matrix){
+            fg_gguf_close(&g);fg_error_set(err,FG_ERR_FORMAT,"native MTP source storage: %s",a->source);
+            return FG_ERR_FORMAT;
+        }
         needed+=matrix*a->experts;
     }
     fg_vk_memory_stats memory={0};fg_vk_get_memory_stats(vk,&memory);
     uint64_t cap=target->residency_cap_bytes;
     if(!cap||cap>FG_RESIDENCY_CAP_BYTES)cap=FG_RESIDENCY_CAP_BYTES;
     if(memory.requested_live_bytes>cap||needed>cap-memory.requested_live_bytes){
+        fg_gguf_close(&g);
         fg_error_set(err,FG_ERR_LIMIT,"native MTP weights/KV exceed remaining rank residency cap");
         return FG_ERR_LIMIT;
     }
-    fg_gguf g={0};const char *paths[]={overlay};
-    fg_status status=fg_gguf_open(paths,1u,&g,err);
-    if(status!=FG_OK)return status;
     fg_mtp_head *h=calloc(1,sizeof(*h));
     if(!h){fg_gguf_close(&g);fg_error_set(err,FG_ERR_OOM,"native MTP head");return FG_ERR_OOM;}
     h->vk=vk;h->capacity=context_tokens;
@@ -249,14 +420,20 @@ fg_status fg_mtp_head_open(fg_mtp_head **out,fg_vk_context *vk,
 
 void fg_mtp_head_close(fg_mtp_head *h){
     if(!h)return;
+    if(h->replay_claimed){
+        fg_error ignored={0};
+        fg_vk_static_release(h->vk,FG_VK_MTP_STATIC_SLOT,&ignored);
+    }
     fg_expert_executor_destroy(h->experts);fg_owner_executor_destroy(h->owner);
     fg_model_close(h->model);
     fg_vk_tensor *fields[]={h->en,h->ep,h->hn,h->hp,h->raw_q,h->raw_k,
         h->raw_v,h->q,h->gate,h->key,h->attention,h->attn_out,h->position,h->norm,
-        h->down,h->active,h->up,h->hidden,h->keys,h->values};
+        h->down,h->active,h->up,h->hidden,h->keys,h->values,h->output_partials};
     for(uint32_t i=0;i<sizeof(fields)/sizeof(fields[0]);i++)fg_vk_tensor_destroy(fields[i]);
     for(uint32_t i=0;i<4u;i++){fg_vk_tensor_destroy(h->stream_in[i]);fg_vk_tensor_destroy(h->stream_out[i]);}
     for(uint32_t i=0;i<h->count;i++)fg_vk_tensor_destroy(h->weights[i]);
+    fg_vk_tensor_destroy(h->replay_input);fg_vk_tensor_destroy(h->replay_embedding);
+    fg_vk_tensor_destroy(h->attention_partials);
     free(h->manifest);free(h);
 }
 uint32_t fg_mtp_head_frontier(const fg_mtp_head *h){return h?h->frontier:0u;}
@@ -272,6 +449,97 @@ fg_status fg_mtp_head_truncate(fg_mtp_head *h,uint32_t cells,fg_error *err){
 static fg_status dense(fg_mtp_head *h,fg_vk_tensor *out,const char *name,
     const fg_vk_tensor *in,uint32_t k,uint32_t m,fg_error *err){
     return fg_vk_dense_q8_0_f32(h->vk,out,binding(h,name),in,k,m,1u,1.0f,err);
+}
+static fg_status replay_experts(void *context,uint32_t layer,
+    const fg_vk_tensor *activation,const fg_vk_tensor *router,
+    fg_vk_tensor **output,fg_error *err){
+    fg_mtp_head *h=context;
+    return fg_expert_decode_chain(h->experts,layer,activation,router,output,err);
+}
+static fg_status record_replay(fg_mtp_head *h,fg_error *err){
+    fg_status status=fg_vk_group_rms_norm(h->vk,h->en,h->replay_embedding,
+        binding(h,"mtp.embedding_norm"),2560u,1u,1u,1e-6f,err);
+    if(status==FG_OK)status=dense(h,h->ep,"mtp.fc_embedding",h->en,2560u,2560u,err);
+    if(status==FG_OK)status=fg_vk_mtp_hc_norm(h->vk,h->hn,h->replay_input,
+        binding(h,"mtp.hidden_norm"),err);
+    if(status==FG_OK&&fg_vk_tensor_get_format(binding(h,"mtp.fc_hidden"))==FG_VK_TENSOR_FORMAT_Q8_0_COOKED)
+        status=fg_vk_mtp_fc_hidden(h->vk,h->hp,binding(h,"mtp.fc_hidden"),h->hn,err);
+    else for(uint32_t i=0;status==FG_OK&&i<4u;i++)
+        status=dense(h,h->stream_out[i],"mtp.fc_hidden",h->stream_in[i],2560u,2560u,err);
+    for(uint32_t i=0;status==FG_OK&&i<4u;i++)
+        status=fg_vk_add_f32(h->vk,h->stream_in[i],h->stream_out[i],h->ep,2560u,err);
+    fg_vk_tensor *mixed=NULL,*injection=NULL,*after=NULL,*block=NULL;
+    const fg_vk_tensor *residual=NULL;
+    if(status==FG_OK)status=fg_owner_gr_read(h->owner,MTP_LAYER,false,h->hn,&mixed,&residual,&injection,err);
+    if(status==FG_OK)status=dense(h,h->raw_q,"blk.47.attn_q.weight",mixed,2560u,12288u,err);
+    if(status==FG_OK)status=dense(h,h->raw_k,"blk.47.attn_k.weight",mixed,2560u,512u,err);
+    if(status==FG_OK)status=dense(h,h->raw_v,"blk.47.attn_v.weight",mixed,2560u,512u,err);
+    if(status==FG_OK)status=fg_vk_qsa_prepare(h->vk,h->q,h->gate,h->key,h->raw_q,h->raw_k,
+        binding(h,"blk.47.attn_q_norm.weight"),binding(h,"blk.47.attn_k_norm.weight"),h->position,err);
+    if(status==FG_OK)status=fg_vk_mtp_attention_split(h->vk,h->attention,h->attention_partials,
+        h->keys,h->values,h->q,h->gate,h->key,h->raw_v,h->position,h->capacity,8u,err);
+    if(status==FG_OK)status=dense(h,h->attn_out,"blk.47.attn_output.weight",h->attention,6144u,2560u,err);
+    if(status==FG_OK)status=fg_owner_gr_write(h->owner,residual,h->attn_out,injection,&after,err);
+    if(status==FG_OK)status=fg_owner_gr_read(h->owner,MTP_LAYER,true,after,&mixed,&residual,&injection,err);
+    if(status==FG_OK)status=fg_owner_moe_record(h->owner,MTP_LAYER,mixed,replay_experts,h,&block,err);
+    if(status==FG_OK)status=fg_owner_gr_write(h->owner,residual,block,injection,&h->replay_hc,err);
+    if(status==FG_OK)status=fg_vk_group_rms_norm(h->vk,h->norm,h->replay_hc,
+        binding(h,"mtp.output_norm"),2560u,4u,1u,1e-6f,err);
+    fg_vk_tensor *output_down=binding(h,"mtp.output_down");
+    if(status==FG_OK&&fg_vk_tensor_get_format(output_down)==FG_VK_TENSOR_FORMAT_Q8_0_COOKED){
+        status=fg_vk_dense_q8_0_cooked_split_silu(h->vk,h->down,h->active,h->output_partials,
+            output_down,h->norm,10240u,320u,1u,8u,1.0f,0.25f,err);
+    }else{
+        if(status==FG_OK)status=dense(h,h->down,"mtp.output_down",h->norm,10240u,320u,err);
+        if(status==FG_OK)status=fg_vk_silu_scaled(h->vk,h->active,h->down,320u,0.25f,err);
+    }
+    if(status==FG_OK)status=dense(h,h->up,"mtp.output_up",h->active,320u,10240u,err);
+    if(status==FG_OK)status=fg_vk_hc_finalize(h->vk,h->hidden,h->norm,h->up,2560u,4u,1u,err);
+    return status;
+}
+fg_status fg_mtp_head_step_replay(fg_mtp_head *h,const fg_vk_tensor *hyper,
+    const fg_vk_tensor *embedding,uint32_t cell,fg_vk_tensor **next_hyper,
+    fg_vk_tensor **contracted,fg_error *err){
+    if(!h||!hyper||!embedding||!next_hyper||!contracted||cell!=h->frontier||
+       cell>=h->capacity||h->trace||fg_vk_batch_active(h->vk)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid native replay input/frontier");return FG_ERR_ARGUMENT;
+    }
+    *next_hyper=NULL;*contracted=NULL;
+    fg_status status=FG_OK;
+    if(!h->replay_claimed){
+        status=fg_vk_static_claim(h->vk,FG_VK_MTP_STATIC_SLOT,err);
+        if(status==FG_OK)h->replay_claimed=true;
+    }
+    fg_vk_tensor *source[2]={NULL,NULL};
+    if(status==FG_OK)status=fg_vk_tensor_view((fg_vk_tensor *)hyper,0,10240u*4u,&source[0],err);
+    if(status==FG_OK)status=fg_vk_tensor_view((fg_vk_tensor *)embedding,0,2560u*4u,&source[1],err);
+    fg_vk_tensor *dest[]={h->replay_input,h->replay_embedding};
+    const fg_vk_tensor *inputs[]={source[0],source[1]};
+    bool profile=fg_vk_profile_active(h->vk);
+    if(status==FG_OK&&profile)status=fg_vk_copy_tensors(h->vk,dest,inputs,2u,err);
+    uint32_t position[3]={cell,cell,cell};
+    if(status==FG_OK)status=fg_vk_tensor_write(h->position,0,position,sizeof(position),err);
+    if(status==FG_OK&&profile){
+        status=fg_vk_begin(h->vk,err);
+        if(status==FG_OK)status=record_replay(h,err);
+        if(status==FG_OK)status=fg_vk_end(h->vk,err);
+    }else if(status==FG_OK){
+        if(!fg_vk_static_recorded(h->vk,FG_VK_MTP_STATIC_SLOT)){
+            status=fg_vk_static_begin(h->vk,FG_VK_MTP_STATIC_SLOT,err);
+            if(status==FG_OK)status=record_replay(h,err);
+            if(status==FG_OK)status=fg_vk_static_end(h->vk,FG_VK_MTP_STATIC_SLOT,err);
+        }
+        if(status==FG_OK)status=fg_vk_static_copy_run(h->vk,FG_VK_MTP_STATIC_SLOT,dest,inputs,2u,err);
+    }
+    fg_vk_tensor_destroy(source[0]);fg_vk_tensor_destroy(source[1]);
+    if(status!=FG_OK){
+        fg_error ignored={0};
+        if(fg_vk_batch_active(h->vk))fg_vk_abort(h->vk,&ignored);
+        fg_vk_static_drain(h->vk,&ignored);
+        if(h->replay_claimed)fg_vk_static_reset(h->vk,FG_VK_MTP_STATIC_SLOT,&ignored);
+        return status;
+    }
+    h->frontier=cell+1u;*next_hyper=h->replay_hc;*contracted=h->hidden;return FG_OK;
 }
 
 fg_status fg_mtp_head_step(fg_mtp_head *h,const fg_vk_tensor *hyper,

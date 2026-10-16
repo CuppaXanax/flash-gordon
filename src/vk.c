@@ -47,7 +47,8 @@ typedef struct fg_vk_descriptor_cache {
 } fg_vk_descriptor_cache;
 
 struct fg_vk_context {
-    fg_vk_kernel mtp_attention;
+    fg_vk_kernel mtp_attention,mtp_attention_indirect,mtp_attention_split;
+    bool static_claimed[FG_VK_STATIC_SLOTS];
     VkInstance instance;VkPhysicalDevice physical;VkDevice device;VkQueue queue;uint32_t queue_family;
     VkCommandPool command_pool;VkCommandBuffer command;VkFence fence;VkFence expert_fence;bool expert_fence_pending;VkDescriptorPool descriptor_pool;VkDescriptorPool static_descriptor_pool;VkDescriptorSetLayout descriptor_set_layout;VkPipelineCache pipeline_cache;
     VkCommandPool copy_pool;VkCommandBuffer copy_command;VkFence copy_fence;
@@ -70,7 +71,7 @@ struct fg_vk_context {
     fg_vk_memory_stats memory_stats;
     fg_vk_profile_dispatch profile_dispatches[FG_VK_PROFILE_MAX_DISPATCHES];fg_vk_profile profile;
     fg_vk_kernel quant_q8k,quant_q8,quant_q4,dequant_iq4nl,embedding,embedding_batch,swiglu,silu_scaled,dense,dense_f32,dense_bf16,rms,gr,hc_inject_partial,gr_partial,hc_finalize,gr_write,ple_gate,ple_gate_prefill,ple_conv,ple_conv_prefill,ple_conv_add,add,apply_penalties,gdn_conv,gdn_conv_prefill,gdn_recurrent,gdn_recurrent_algebraic,gdn_recurrent_prefill,gdn_prefill_qk_norm,gdn_prefill_recurrence,gdn_prefill_output,qsa_prepare,qsa_prepare_prefill,qsa_index_prepare,qsa_index_prepare_prefill,qsa_record_commit,qsa_record_gather,qsa_score,qsa_attention,qsa_attention_split,qsa_decode_attention_split,qsa_attention_merge,qsa_attention_split_batch,qsa_attention_merge_batch,qsa_record_gather_batch,qsa_select_resolve,qsa_resident_commit,qsa_resident_select,qsa_resident_merge,qsa_resident_attention,topk_v2,topk_select,topk_select_fallback,moe_q5_1,moe_q5_1_cooked,moe_q8_0,moe_q8_0_cooked,moe_reduce,kquant,kquant_cooked;
-    fg_vk_kernel argmax,dense_subgroup,dense_cooked,dense_cooked_r8,dense_quant[37];
+    fg_vk_kernel argmax,dense_subgroup,dense_cooked,dense_cooked_r8,mtp_vocab,mtp_fc,mtp_norm,dense_quant[37];
     bool small_n;
     fg_vk_kernel small_dense[75],small_gate_up[8],small_down,small_down_reduce,small_shared,small_union,small_gdn;
     fg_vk_kernel small_plain[9];
@@ -158,7 +159,11 @@ static fg_status read_shader(const char *file,uint32_t **words,size_t *bytes,fg_
 }
 
 static void destroy_kernel(fg_vk_context *context,fg_vk_kernel *kernel){
-    if(kernel==&context->qsa_attention)destroy_kernel(context,&context->mtp_attention);
+    if(kernel==&context->qsa_attention){
+        destroy_kernel(context,&context->mtp_attention);
+        destroy_kernel(context,&context->mtp_attention_indirect);
+        destroy_kernel(context,&context->mtp_attention_split);
+    }
     if(kernel==&context->dense){
         for(uint32_t i=0;i<75u;i++)destroy_kernel(context,&context->small_dense[i]);
         for(uint32_t i=0;i<9u;i++)destroy_kernel(context,&context->small_plain[i]);
@@ -174,7 +179,12 @@ static void destroy_kernel(fg_vk_context *context,fg_vk_kernel *kernel){
     if(kernel==&context->moe_decode_down_reduce)destroy_kernel(context,&context->moe_decode_down_q8);
     if(kernel==&context->moe_q5_1)destroy_kernel(context,&context->moe_q5_1_cooked);
     if(kernel==&context->kquant)destroy_kernel(context,&context->kquant_cooked);
-    if(kernel==&context->dense_cooked)destroy_kernel(context,&context->dense_cooked_r8);
+    if(kernel==&context->dense_cooked){
+        destroy_kernel(context,&context->dense_cooked_r8);
+        destroy_kernel(context,&context->mtp_vocab);
+        destroy_kernel(context,&context->mtp_fc);
+        destroy_kernel(context,&context->mtp_norm);
+    }
     if(kernel->pipeline)vkDestroyPipeline(context->device,kernel->pipeline,NULL);
     if(kernel->layout)vkDestroyPipelineLayout(context->device,kernel->layout,NULL);
     kernel->pipeline=VK_NULL_HANDLE;kernel->layout=VK_NULL_HANDLE;kernel->set_layout=VK_NULL_HANDLE;
@@ -262,6 +272,9 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
     c->argmax=(fg_vk_kernel){.file="fg_argmax_reduce.spv",.bindings=4,.push_bytes=4};
     c->dense_subgroup=(fg_vk_kernel){.file="fg_dense_q8_0_subgroup.spv",.bindings=3,.push_bytes=20};
     c->dense_cooked=(fg_vk_kernel){.file="fg_dense_q8_0_cooked.spv",.bindings=3,.push_bytes=20};
+    c->mtp_vocab=(fg_vk_kernel){.file="fg_mtp_vocab_q8.spv",.bindings=5,.push_bytes=20};
+    c->mtp_fc=(fg_vk_kernel){.file="fg_mtp_fc_hidden.spv",.bindings=3,.push_bytes=20};
+    c->mtp_norm=(fg_vk_kernel){.file="fg_mtp_hc_norm.spv",.bindings=3,.push_bytes=4};
     c->dense_cooked_r8=(fg_vk_kernel){.file="fg_dense_q8_0_cooked_r8.spv",.bindings=3,.push_bytes=20};
     c->dense_cooked_split=(fg_vk_kernel){.file="fg_dense_q8_0_cooked_split.spv",.bindings=3,.push_bytes=24};
     c->dense_cooked_split_reduce=(fg_vk_kernel){.file="fg_dense_q8_0_cooked_split_reduce.spv",.bindings=2,.push_bytes=8};
@@ -286,6 +299,8 @@ fg_status fg_vk_open(fg_vk_context **out,fg_error *err){
     c->qsa_prepare=(fg_vk_kernel){.file="fg_qsa_prepare.spv",.bindings=8,.push_bytes=0};c->qsa_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_prepare_prefill.spv",.bindings=8,.push_bytes=4};c->qsa_index_prepare=(fg_vk_kernel){.file="fg_qsa_index_prepare.spv",.bindings=4,.push_bytes=0};c->qsa_index_prepare_prefill=(fg_vk_kernel){.file="fg_qsa_index_prepare_prefill.spv",.bindings=4,.push_bytes=4};c->qsa_record_commit=(fg_vk_kernel){.file="fg_qsa_record_commit.spv",.bindings=6,.push_bytes=24};c->qsa_record_gather=(fg_vk_kernel){.file="fg_qsa_record_gather.spv",.bindings=3,.push_bytes=20};c->qsa_score=(fg_vk_kernel){.file="fg_qsa_index_score.spv",.bindings=6,.push_bytes=28};c->qsa_attention=(fg_vk_kernel){.file="fg_qsa_attention.spv",.bindings=4,.push_bytes=4};c->qsa_attention_split=(fg_vk_kernel){.file="fg_qsa_attention_split.spv",.bindings=3,.push_bytes=12};c->qsa_decode_attention_split=(fg_vk_kernel){.file="fg_qsa_decode_attention_split.spv",.bindings=3,.push_bytes=8};c->qsa_attention_merge=(fg_vk_kernel){.file="fg_qsa_attention_merge.spv",.bindings=3,.push_bytes=4};c->qsa_attention_split_batch=(fg_vk_kernel){.file="fg_qsa_attention_split_batch.spv",.bindings=4,.push_bytes=16};c->qsa_attention_merge_batch=(fg_vk_kernel){.file="fg_qsa_attention_merge_batch.spv",.bindings=3,.push_bytes=12};c->qsa_record_gather_batch=(fg_vk_kernel){.file="fg_qsa_record_gather_batch.spv",.bindings=3,.push_bytes=20};c->qsa_select_resolve=(fg_vk_kernel){.file="fg_qsa_select_resolve.spv",.bindings=4,.push_bytes=12};c->qsa_resident_commit=(fg_vk_kernel){.file="fg_qsa_resident_record_commit.spv",.bindings=8,.push_bytes=16};c->qsa_resident_select=(fg_vk_kernel){.file="fg_qsa_resident_select.spv",.bindings=7,.push_bytes=20};c->qsa_resident_merge=(fg_vk_kernel){.file="fg_qsa_resident_topk_merge.spv",.bindings=4,.push_bytes=16};c->qsa_resident_attention=(fg_vk_kernel){.file="fg_qsa_resident_attention.spv",.bindings=6,.push_bytes=20};
     c->topk_v2=(fg_vk_kernel){.file="fg_topk_reduce_v2.spv",.bindings=4,.push_bytes=8};
     c->mtp_attention=(fg_vk_kernel){.file="fg_mtp_attention.spv",.bindings=7,.push_bytes=4};
+    c->mtp_attention_indirect=(fg_vk_kernel){.file="fg_mtp_attention_indirect.spv",.bindings=8,.push_bytes=4};
+    c->mtp_attention_split=(fg_vk_kernel){.file="fg_mtp_attention_split.spv",.bindings=8,.push_bytes=8};
     c->topk_select=(fg_vk_kernel){.file="fg_topk_select.spv",.bindings=4,.push_bytes=8};
     c->topk_select_fallback=(fg_vk_kernel){.file="fg_topk_select_fallback.spv",.bindings=4,.push_bytes=8};
     *out=c;return FG_OK;
@@ -397,9 +412,9 @@ fg_status fg_vk_tensor_read(const fg_vk_tensor *t,uint64_t offset,void *data,uin
  * state tensors live in device-local coherent memory whose host reads run at
  * uncached bandwidth; copying them with the GPU keeps a per-step snapshot at
  * transfer speed instead of a 100+ ms host readback. */
-fg_status fg_vk_copy_tensors(fg_vk_context *c,fg_vk_tensor *const *dst,
+static fg_status record_tensor_copies(fg_vk_context *c,fg_vk_tensor *const *dst,
                              const fg_vk_tensor *const *src,uint32_t count,fg_error *err){
-    if(!c||count>FG_LAYER_COUNT*2u+2u){
+    if(!c||c->batch_depth||count>FG_LAYER_COUNT*2u+2u){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid Vulkan tensor copy");
         return FG_ERR_ARGUMENT;
     }
@@ -409,16 +424,18 @@ fg_status fg_vk_copy_tensors(fg_vk_context *c,fg_vk_tensor *const *dst,
         return FG_ERR_ARGUMENT;
     }
     for(uint32_t i=0;i<count;i++)
-        if(!dst[i]||!src[i]||dst[i]->bytes!=src[i]->bytes||dst[i]->bytes==0u){
+        if(!tensor_on_context(c,dst[i])||!tensor_on_context(c,src[i])||
+           dst[i]->bytes!=src[i]->bytes||dst[i]->bytes==0u){
             fg_error_set(err,FG_ERR_ARGUMENT,"Vulkan tensor copy pair %u is not size-matched",i);
             return FG_ERR_ARGUMENT;
         }
-    fg_status status=vk_pipeline_drain(c,err);
+    fg_status status=fg_vk_static_drain(c,err);
     if(status!=FG_OK)return status;
     VkResult vr;
     if(!c->copy_pool){
         VkCommandPoolCreateInfo pool={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-            .flags=VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,.queueFamilyIndex=c->queue_family};
+            .flags=VK_COMMAND_POOL_CREATE_TRANSIENT_BIT|VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+            .queueFamilyIndex=c->queue_family};
         if((vr=vkCreateCommandPool(c->device,&pool,NULL,&c->copy_pool))!=VK_SUCCESS)
             return vk_error(err,"create tensor copy command pool",vr);
         VkCommandBufferAllocateInfo allocate={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -454,6 +471,13 @@ fg_status fg_vk_copy_tensors(fg_vk_context *c,fg_vk_tensor *const *dst,
         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,1,&post,0,NULL,0,NULL);
     if((vr=vkEndCommandBuffer(c->copy_command))!=VK_SUCCESS)
         return vk_error(err,"end tensor copy command",vr);
+    return FG_OK;
+}
+fg_status fg_vk_copy_tensors(fg_vk_context *c,fg_vk_tensor *const *dst,
+    const fg_vk_tensor *const *src,uint32_t count,fg_error *err){
+    fg_status status=record_tensor_copies(c,dst,src,count,err);
+    if(status!=FG_OK||!count)return status;
+    VkResult vr;
     vkResetFences(c->device,1,&c->copy_fence);
     VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,
         .pCommandBuffers=&c->copy_command};
@@ -466,7 +490,13 @@ fg_status fg_vk_copy_tensors(fg_vk_context *c,fg_vk_tensor *const *dst,
 }
 
 static fg_status dispatch_impl(fg_vk_context *c,fg_vk_kernel *kernel,const fg_vk_tensor *const *tensors,const void *push,uint32_t gx,uint32_t gy,uint32_t gz,bool batch_barrier,fg_error *err){
-    fg_status status=create_kernel(c,kernel,err);if(status!=FG_OK)return status;double op_begin=0.0;if(c->profile_active)op_begin=vk_wall_seconds();if(c->batch_depth&&c->batch_set_base+c->batch_set_count>=FG_VK_BATCH_MAX_SETS){fg_error_set(err,FG_ERR_LIMIT,"Vulkan batch exceeded %u descriptor sets",FG_VK_BATCH_MAX_SETS);return FG_ERR_LIMIT;}uint32_t set_index=c->batch_depth?c->batch_set_base+c->batch_set_count:0u;VkDescriptorSet set;fg_vk_descriptor_cache *cache;bool *cache_valid;if(c->batch_depth&&c->batch_set_base!=0u){uint32_t slot=(c->batch_set_base-FG_VK_STATIC_SET_BASE)/FG_VK_STATIC_SET_STRIDE;if(slot>=FG_VK_STATIC_SLOTS||c->batch_set_count>=FG_VK_STATIC_SET_STRIDE){fg_error_set(err,FG_ERR_LIMIT,"static recording crossed its descriptor window");return FG_ERR_LIMIT;}uint32_t static_index=slot*FG_VK_STATIC_SET_STRIDE+c->batch_set_count;set=c->static_descriptor_sets[static_index];cache=&c->static_descriptor_cache[static_index];cache_valid=&c->static_descriptor_cache_valid[static_index];}else{set=c->descriptor_sets[set_index];cache=&c->descriptor_cache[set_index];cache_valid=&c->descriptor_cache_valid[set_index];if(set_index>=FG_VK_STATIC_SET_BASE){const char *trace=getenv("FG_SET_TRACE");static bool crossed=false;if(trace&&*trace&&strcmp(trace,"0")!=0&&!crossed){crossed=true;fprintf(stderr,"FG_SET_CROSS dynamic descriptor epoch reached set %u\n",set_index);}}}VkResult vr;bool cached=*cache_valid&&cache->bindings==kernel->bindings;for(uint32_t i=0;cached&&i<kernel->bindings;i++)cached=cache->buffer[i]==tensors[i]->allocation->buffer&&cache->offset[i]==tensors[i]->offset&&cache->range[i]==tensors[i]->bytes;if(!cached){VkDescriptorBufferInfo info[16];VkWriteDescriptorSet write[16];for(uint32_t i=0;i<kernel->bindings;i++){info[i]=(VkDescriptorBufferInfo){.buffer=tensors[i]->allocation->buffer,.offset=tensors[i]->offset,.range=tensors[i]->bytes};write[i]=(VkWriteDescriptorSet){.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=set,.dstBinding=i,.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.pBufferInfo=&info[i]};}vkUpdateDescriptorSets(c->device,kernel->bindings,write,0,NULL);cache->bindings=kernel->bindings;for(uint32_t i=0;i<kernel->bindings;i++){cache->buffer[i]=tensors[i]->allocation->buffer;cache->offset[i]=tensors[i]->offset;cache->range[i]=tensors[i]->bytes;}*cache_valid=true;}
+    fg_status status=create_kernel(c,kernel,err);if(status!=FG_OK)return status;
+    double op_begin=0.0;if(c->profile_active)op_begin=vk_wall_seconds();
+    if(c->batch_depth&&!c->batch_set_base&&c->batch_set_count>=FG_VK_BATCH_MAX_SETS){
+        fg_error_set(err,FG_ERR_LIMIT,"Vulkan batch exceeded %u descriptor sets",FG_VK_BATCH_MAX_SETS);
+        return FG_ERR_LIMIT;
+    }
+    uint32_t set_index=c->batch_depth?c->batch_set_base+c->batch_set_count:0u;VkDescriptorSet set;fg_vk_descriptor_cache *cache;bool *cache_valid;if(c->batch_depth&&c->batch_set_base!=0u){uint32_t slot=(c->batch_set_base-FG_VK_STATIC_SET_BASE)/FG_VK_STATIC_SET_STRIDE;if(slot>=FG_VK_STATIC_SLOTS||c->batch_set_count>=FG_VK_STATIC_SET_STRIDE){fg_error_set(err,FG_ERR_LIMIT,"static recording crossed its descriptor window");return FG_ERR_LIMIT;}uint32_t static_index=slot*FG_VK_STATIC_SET_STRIDE+c->batch_set_count;set=c->static_descriptor_sets[static_index];cache=&c->static_descriptor_cache[static_index];cache_valid=&c->static_descriptor_cache_valid[static_index];}else{set=c->descriptor_sets[set_index];cache=&c->descriptor_cache[set_index];cache_valid=&c->descriptor_cache_valid[set_index];if(set_index>=FG_VK_STATIC_SET_BASE){const char *trace=getenv("FG_SET_TRACE");static bool crossed=false;if(trace&&*trace&&strcmp(trace,"0")!=0&&!crossed){crossed=true;fprintf(stderr,"FG_SET_CROSS dynamic descriptor epoch reached set %u\n",set_index);}}}VkResult vr;bool cached=*cache_valid&&cache->bindings==kernel->bindings;for(uint32_t i=0;cached&&i<kernel->bindings;i++)cached=cache->buffer[i]==tensors[i]->allocation->buffer&&cache->offset[i]==tensors[i]->offset&&cache->range[i]==tensors[i]->bytes;if(!cached){VkDescriptorBufferInfo info[16];VkWriteDescriptorSet write[16];for(uint32_t i=0;i<kernel->bindings;i++){info[i]=(VkDescriptorBufferInfo){.buffer=tensors[i]->allocation->buffer,.offset=tensors[i]->offset,.range=tensors[i]->bytes};write[i]=(VkWriteDescriptorSet){.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=set,.dstBinding=i,.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.pBufferInfo=&info[i]};}vkUpdateDescriptorSets(c->device,kernel->bindings,write,0,NULL);cache->bindings=kernel->bindings;for(uint32_t i=0;i<kernel->bindings;i++){cache->buffer[i]=tensors[i]->allocation->buffer;cache->offset[i]=tensors[i]->offset;cache->range[i]=tensors[i]->bytes;}*cache_valid=true;}
     bool elide=c->barrier_elide_next;c->barrier_elide_next=false;
     if(c->batch_depth){if(batch_barrier&&c->batch_has_dispatch&&!elide){VkMemoryBarrier bar={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT};if(c->profile_active){double barrier_begin=vk_wall_seconds();vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&bar,0,NULL,0,NULL);c->profile.barrier_ms+=(vk_wall_seconds()-barrier_begin)*1000.0;}else vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&bar,0,NULL,0,NULL);}vkCmdBindPipeline(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->pipeline);vkCmdBindDescriptorSets(c->command,VK_PIPELINE_BIND_POINT_COMPUTE,kernel->layout,0,1,&set,0,NULL);if(kernel->push_bytes)vkCmdPushConstants(c->command,kernel->layout,VK_SHADER_STAGE_COMPUTE_BIT,0,kernel->push_bytes,push);bool profiled=profile_dispatch_begin(c,kernel);vkCmdDispatch(c->command,gx,gy,gz);c->counters.dispatches++;c->batch_has_dispatch=true;profile_dispatch_end(c,profiled);c->batch_set_count++;if(c->profile_active)c->profile.op_ms+=(vk_wall_seconds()-op_begin)*1000.0;return FG_OK;}
     status=vk_pipeline_drain(c,err);if(status!=FG_OK)return status;
@@ -570,6 +600,14 @@ void fg_vk_host_write_visible(fg_vk_context *c){
     vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_HOST_BIT,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&host,0,NULL,0,NULL);
 }
+void fg_vk_device_write_visible(fg_vk_context *c){
+    if(!c||!c->batch_depth)return;
+    VkMemoryBarrier dependency={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT};
+    vkCmdPipelineBarrier(c->command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&dependency,0,NULL,0,NULL);
+}
 bool fg_vk_static_recorded(const fg_vk_context *c,uint32_t slot){
     return c&&slot<FG_VK_STATIC_SLOTS&&c->static_recorded[slot];
 }
@@ -587,6 +625,24 @@ static fg_status static_slot_ready(fg_vk_context *c,uint32_t slot,fg_error *err)
 /* Record a token-invariant run into a private command buffer.  The buffer is
  * submitted with the same semaphore chain as the dynamic batches, so it can be
  * replayed for later tokens without any host recording on their critical path. */
+fg_status fg_vk_static_claim(fg_vk_context *c,uint32_t slot,fg_error *err){
+    if(!c||slot<FG_VK_OWNER_STATIC_SLOTS||slot>=FG_VK_STATIC_SLOTS){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid private replay slot");return FG_ERR_ARGUMENT;
+    }
+    if(c->static_claimed[slot]){
+        fg_error_set(err,FG_ERR_MISMATCH,"private replay slot is already owned");return FG_ERR_MISMATCH;
+    }
+    c->static_claimed[slot]=true;return FG_OK;
+}
+fg_status fg_vk_static_release(fg_vk_context *c,uint32_t slot,fg_error *err){
+    if(!c||slot<FG_VK_OWNER_STATIC_SLOTS||slot>=FG_VK_STATIC_SLOTS||!c->static_claimed[slot]){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid private replay release");return FG_ERR_ARGUMENT;
+    }
+    fg_status status=fg_vk_static_wait(c,slot,err);
+    if(status==FG_OK)status=fg_vk_static_reset(c,slot,err);
+    if(status==FG_OK)c->static_claimed[slot]=false;
+    return status;
+}
 fg_status fg_vk_static_begin(fg_vk_context *c,uint32_t slot,fg_error *err){
     if(!c||slot>=FG_VK_STATIC_SLOTS){fg_error_set(err,FG_ERR_ARGUMENT,"invalid static batch slot");return FG_ERR_ARGUMENT;}
     if(c->batch_depth||c->static_active){fg_error_set(err,FG_ERR_ARGUMENT,"static batch requires an idle recording");return FG_ERR_ARGUMENT;}
@@ -672,6 +728,26 @@ fg_status fg_vk_static_submit(fg_vk_context *c,uint32_t slot,fg_error *err){
     c->counters.submissions++;
     c->static_submit_fence[slot]=c->static_fence[slot];
     return FG_OK;
+}
+fg_status fg_vk_static_copy_run(fg_vk_context *c,uint32_t slot,
+    fg_vk_tensor *const *dst,const fg_vk_tensor *const *src,uint32_t count,fg_error *err){
+    if(!c||slot>=FG_VK_STATIC_SLOTS||!count||c->batch_depth||
+       !c->static_recorded[slot]||c->static_pending[slot]){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid copied static execution");return FG_ERR_ARGUMENT;
+    }
+    fg_status status=record_tensor_copies(c,dst,src,count,err);
+    if(status!=FG_OK)return status;
+    VkResult vr=vkResetFences(c->device,1,&c->static_fence[slot]);
+    if(vr!=VK_SUCCESS)return vk_error(err,"reset copied static fence",vr);
+    VkCommandBuffer commands[]={c->copy_command,c->static_command[slot]};
+    VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=2u,.pCommandBuffers=commands};
+    VkSemaphore wait,signal;VkPipelineStageFlags stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    vk_submit_attach(c,true,&wait,&signal,&stage,&submit);
+    if((vr=vkQueueSubmit(c->queue,1,&submit,c->static_fence[slot]))!=VK_SUCCESS)
+        return vk_error(err,"submit copied static graph",vr);
+    c->counters.submissions++;c->static_pending[slot]=true;
+    c->static_submit_fence[slot]=c->static_fence[slot];
+    return fg_vk_static_wait(c,slot,err);
 }
 fg_status fg_vk_static_wait(fg_vk_context *c,uint32_t slot,fg_error *err){
     if(!c||slot>=FG_VK_STATIC_SLOTS){fg_error_set(err,FG_ERR_ARGUMENT,"invalid static batch slot");return FG_ERR_ARGUMENT;}
@@ -908,6 +984,37 @@ fg_status fg_vk_dense_quant(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tenso
 fg_status fg_vk_dense_q8_0_f32(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *w,const fg_vk_tensor *x,uint32_t in,uint32_t rows,uint32_t tokens,float scale,fg_error *err){if(w&&w->format>=FG_VK_TENSOR_FORMAT_Q4_K)return fg_vk_dense_quant(c,out,w,x,in,rows,tokens,scale,err);if(w&&w->format==FG_VK_TENSOR_FORMAT_Q8_0_COOKED)return fg_vk_dense_q8_0_cooked(c,out,w,x,in,rows,tokens,scale,err);uint64_t row_bytes=(uint64_t)(in/32u)*34u;if(!c||in==0||in%32u||!tensor_range(w,0,row_bytes*rows)||!tensor_range(x,0,(uint64_t)in*tokens*4u)||!tensor_range(out,0,(uint64_t)rows*tokens*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid Q8_0 dense dispatch");return FG_ERR_ARGUMENT;}struct {uint32_t out_dim,n_tok,blocks,row_bytes;float scale;} push={rows,tokens,in/32u,(uint32_t)row_bytes,scale};const fg_vk_tensor *bindings[]={w,x,out};return dispatch(c,&c->dense,bindings,&push,rows,tokens,1,err);}
 fg_status fg_vk_dense_q8_0_subgroup(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *w,const fg_vk_tensor *x,uint32_t in,uint32_t rows,uint32_t tokens,float scale,fg_error *err){uint64_t row_bytes=(uint64_t)(in/32u)*34u;if(!c||!w||w->format!=FG_VK_TENSOR_FORMAT_DEFAULT||in==0||in%32u||!tensor_range(w,0,row_bytes*rows)||!tensor_range(x,0,(uint64_t)in*tokens*4u)||!tensor_range(out,0,(uint64_t)rows*tokens*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid subgroup Q8_0 dense dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t out_dim,n_tok,blocks,row_bytes;float scale;}push={rows,tokens,in/32u,(uint32_t)row_bytes,scale};const fg_vk_tensor *bindings[]={w,x,out};return dispatch(c,&c->dense_subgroup,bindings,&push,rows,tokens,1,err);}
 fg_status fg_vk_dense_q8_0_cooked(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *w,const fg_vk_tensor *x,uint32_t in,uint32_t rows,uint32_t tokens,float scale,fg_error *err){if(tokens>1u)return fg_vk_dense_q8_0_cooked_prefill(c,out,w,x,in,rows,tokens,scale,err);uint32_t blocks=in/FG_QK8_0;uint64_t quant_offset=fg_align_up_u64(FG_Q8_0_COOK_ROWS*(uint64_t)blocks*sizeof(uint16_t),FG_Q8_0_COOK_ALIGNMENT),tile_bytes=fg_align_up_u64(quant_offset+FG_Q8_0_COOK_ROWS*(uint64_t)blocks*FG_QK8_0,FG_Q8_0_COOK_ALIGNMENT),tiles=((uint64_t)rows+FG_Q8_0_COOK_ROWS-1u)/FG_Q8_0_COOK_ROWS;if(!c||!in||in%FG_QK8_0||tile_bytes>UINT32_MAX||tiles>UINT64_MAX/tile_bytes||!tensor_range(w,0,tile_bytes*tiles)||!tensor_range(x,0,(uint64_t)in*tokens*4u)||!tensor_range(out,0,(uint64_t)rows*tokens*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid cooked Q8_0 dense dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t out_dim,n_tok,blocks,tile_bytes;float scale;}push={rows,tokens,blocks,(uint32_t)tile_bytes,scale};const fg_vk_tensor *bindings[]={w,x,out};return dispatch(c,&c->dense_cooked,bindings,&push,(rows+3u)/4u,tokens,1,err);}
+fg_status fg_vk_mtp_vocab_q8(fg_vk_context *c,fg_vk_tensor *scores,fg_vk_tensor *ids,
+    const fg_vk_tensor *w,const fg_vk_tensor *x,const fg_vk_tensor *token_ids,
+    uint32_t in,uint32_t rows,fg_error *err){
+    uint64_t tile=fg_q8_0_cooked_tile_bytes(in),bytes=fg_q8_0_cooked_matrix_bytes(in,rows);
+    uint32_t groups=(rows+7u)/8u;
+    if(!c||!in||in%32u||!rows||tile>UINT32_MAX||!bytes||
+       !tensor_on_context(c,w)||!tensor_on_context(c,x)||!tensor_on_context(c,token_ids)||
+       !tensor_on_context(c,scores)||!tensor_on_context(c,ids)||
+       fg_vk_tensor_get_format(w)!=FG_VK_TENSOR_FORMAT_Q8_0_COOKED||
+       !tensor_range(w,0,bytes)||!tensor_range(x,0,(uint64_t)in*4u)||
+       !tensor_range(token_ids,0,(uint64_t)rows*4u)||
+       !tensor_range(scores,0,(uint64_t)groups*4u)||!tensor_range(ids,0,(uint64_t)groups*4u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid MTP Q8 vocabulary dispatch");return FG_ERR_ARGUMENT;
+    }
+    struct{uint32_t rows,tokens,blocks,tile;float scale;} push={rows,1u,in/32u,(uint32_t)tile,1.0f};
+    const fg_vk_tensor *bindings[]={w,x,scores,token_ids,ids};
+    return dispatch(c,&c->mtp_vocab,bindings,&push,groups,1u,1u,err);
+}
+fg_status fg_vk_mtp_fc_hidden(fg_vk_context *c,fg_vk_tensor *out,
+    const fg_vk_tensor *w,const fg_vk_tensor *x,fg_error *err){
+    uint64_t bytes=fg_q8_0_cooked_matrix_bytes(2560u,2560u);
+    if(!c||!tensor_on_context(c,w)||!tensor_on_context(c,x)||!tensor_on_context(c,out)||
+       fg_vk_tensor_get_format(w)!=FG_VK_TENSOR_FORMAT_Q8_0_COOKED||
+       !tensor_range(w,0,bytes)||!tensor_range(x,0,10240u*4u)||!tensor_range(out,0,10240u*4u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid native four-stream FC");return FG_ERR_ARGUMENT;
+    }
+    struct{uint32_t rows,tokens,blocks,tile;float scale;}push={
+        2560u,4u,80u,(uint32_t)fg_q8_0_cooked_tile_bytes(2560u),1.0f};
+    const fg_vk_tensor *bindings[]={w,x,out};
+    return dispatch(c,&c->mtp_fc,bindings,&push,2560u/8u*4u,1u,1u,err);
+}
 fg_status fg_vk_dense_q8_0_cooked_prefill(fg_vk_context *c,fg_vk_tensor *out,
     const fg_vk_tensor *w,const fg_vk_tensor *x,uint32_t in,uint32_t rows,
     uint32_t tokens,float scale,fg_error *err){
@@ -955,6 +1062,57 @@ fg_status fg_vk_embedding_q8_0(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_te
     struct{uint32_t token,width,rows,copies;}push={token,width,rows,copies};const fg_vk_tensor *bindings[]={weights,out};return dispatch(c,&c->embedding,bindings,&push,(width*copies+255u)/256u,1,1,err);
 }
 fg_status fg_vk_embedding_q8_0_batch(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tensor *weights,const fg_vk_tensor *token_ids,uint32_t token_count,uint32_t width,uint32_t rows,uint32_t copies,fg_error *err){uint64_t row_bytes=(uint64_t)(width/32u)*34u,total=(uint64_t)token_count*width*copies;if(!c||!weights||weights->format!=FG_VK_TENSOR_FORMAT_DEFAULT||!token_count||!width||width%32u||!rows||!copies||!tensor_range(weights,0,row_bytes*rows)||!tensor_range(token_ids,0,(uint64_t)token_count*4u)||!tensor_range(out,0,total*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid batched Q8_0 embedding dispatch");return FG_ERR_ARGUMENT;}const uint32_t *ids=fg_vk_tensor_map((fg_vk_tensor *)token_ids);for(uint32_t i=0;i<token_count;i++)if(ids[i]>=rows){fg_error_set(err,FG_ERR_FORMAT,"embedding token %u is outside vocabulary",i);return FG_ERR_FORMAT;}struct{uint32_t token_count,width,rows,copies;}push={token_count,width,rows,copies};const fg_vk_tensor *bindings[]={weights,token_ids,out};return dispatch(c,&c->embedding_batch,bindings,&push,(uint32_t)((total+255u)/256u),1,1,err);}
+fg_status fg_vk_mtp_hc_norm(fg_vk_context *c,fg_vk_tensor *out,
+    const fg_vk_tensor *x,const fg_vk_tensor *w,fg_error *err){
+    if(!c||!tensor_on_context(c,out)||!tensor_on_context(c,x)||!tensor_on_context(c,w)||
+       !tensor_range(out,0,10240u*4u)||!tensor_range(x,0,10240u*4u)||!tensor_range(w,0,10240u*4u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid native HC normalization");return FG_ERR_ARGUMENT;
+    }
+    float epsilon=1e-6f;
+    const fg_vk_tensor *bindings[]={x,w,out};
+    return dispatch(c,&c->mtp_norm,bindings,&epsilon,1u,1u,1u,err);
+}
+fg_status fg_vk_mtp_attention_split(fg_vk_context *c,fg_vk_tensor *out,
+    fg_vk_tensor *partials,fg_vk_tensor *keys,fg_vk_tensor *values,
+    const fg_vk_tensor *q,const fg_vk_tensor *gate,const fg_vk_tensor *key,
+    const fg_vk_tensor *value,const fg_vk_tensor *position,uint32_t capacity,
+    uint32_t splits,fg_error *err){
+    const fg_vk_tensor *tensors[]={q,gate,key,value,keys,values,partials,position,out};
+    if(!c||!capacity||capacity>UINT32_MAX/128u||!splits||splits>64u){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid split draft attention");return FG_ERR_ARGUMENT;
+    }
+    if(fg_vk_subgroup_size(c)!=64u){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"split MTP attention requires wave64");return FG_ERR_UNAVAILABLE;
+    }
+    uint64_t sizes[]={6144u*4u,6144u*4u,512u*4u,512u*4u,
+        (uint64_t)capacity*512u*4u,(uint64_t)capacity*512u*4u,
+        (uint64_t)24u*splits*258u*4u,4u,6144u*4u};
+    for(uint32_t i=0;i<9u;i++)if(!tensor_on_context(c,tensors[i])||!tensor_range(tensors[i],0,sizes[i])){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid split draft attention storage");return FG_ERR_ARGUMENT;
+    }
+    struct{uint32_t capacity,splits;}push={capacity,splits};
+    fg_status status=dispatch(c,&c->mtp_attention_split,tensors,&push,24u,splits,1u,err);
+    const fg_vk_tensor *merge[]={partials,gate,out};
+    if(status==FG_OK)status=dispatch(c,&c->qsa_attention_merge,merge,&splits,24u,1u,1u,err);
+    return status;
+}
+fg_status fg_vk_mtp_attention_indirect(fg_vk_context *c,fg_vk_tensor *out,
+    fg_vk_tensor *keys,fg_vk_tensor *values,const fg_vk_tensor *query,
+    const fg_vk_tensor *gate,const fg_vk_tensor *key,const fg_vk_tensor *value,
+    const fg_vk_tensor *position,uint32_t capacity,fg_error *err){
+    uint64_t bytes=(uint64_t)capacity*512u*4u;
+    if(!c||!capacity||!tensor_range(out,0,6144u*4u)||!tensor_range(query,0,6144u*4u)||
+       !tensor_range(gate,0,6144u*4u)||!tensor_range(key,0,512u*4u)||
+       !tensor_range(value,0,512u*4u)||!tensor_range(keys,0,bytes)||
+       !tensor_range(values,0,bytes)||!tensor_range(position,0,4u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid indirect MTP attention");return FG_ERR_ARGUMENT;
+    }
+    if(fg_vk_subgroup_size(c)!=64u){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"dense MTP attention requires wave64");return FG_ERR_UNAVAILABLE;
+    }
+    const fg_vk_tensor *bindings[]={query,gate,key,value,keys,values,out,position};
+    return dispatch(c,&c->mtp_attention_indirect,bindings,&capacity,24u,1u,1u,err);
+}
 fg_status fg_vk_mtp_attention(fg_vk_context *c,fg_vk_tensor *out,
     fg_vk_tensor *keys,fg_vk_tensor *values,const fg_vk_tensor *query,
     const fg_vk_tensor *gate,const fg_vk_tensor *key,const fg_vk_tensor *value,

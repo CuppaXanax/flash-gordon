@@ -102,6 +102,7 @@ vulkan/fg_dense_q4_k.spv vulkan/fg_dense_q5_k.spv vulkan/fg_dense_q6_k.spv vulka
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_small_q4*.comp shaders/fg_small_q5*.comp shaders/fg_small_iq4*.comp)): shaders/fg_small_dense.glsl shaders/fg_dense_soa_impl.glsl
 vulkan/fg_small_gate_up.spv vulkan/fg_small_gate_up_pairs.spv: shaders/fg_small_gate_up.glsl
 vulkan/fg_gdn_recurrent_algebraic.spv vulkan/fg_gdn_small.spv: shaders/fg_gdn_algebraic.glsl
+vulkan/fg_dense_q8_0_cooked_r8.spv vulkan/fg_mtp_vocab_q8.spv vulkan/fg_mtp_fc_hidden.spv: shaders/fg_dense_q8_0_cooked_r8.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_small_f32*.comp shaders/fg_small_router_bf16*.comp shaders/fg_small_index_bf16*.comp)): shaders/fg_small_plain.glsl
 vulkan/fg_dense_q8_0_cooked.spv $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_small_q8*.comp)): shaders/fg_small_q8_parallel.glsl
 vulkan/fg_moe_decode_down_reduce.spv vulkan/fg_small_down.spv: shaders/fg_moe_decode_down_reduce.glsl

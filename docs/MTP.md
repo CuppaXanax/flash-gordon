@@ -8,6 +8,8 @@ greedy cycle, residual rejection sampling, dedicated owner-local small-N
 verification kernels, durable QSA truncation and single-blade rollback tests. The actual
 hyperconnection head now executes on Vulkan using the actual abliterated Q8
 weights, with a separate causal draft KV cache and an independent CPU oracle.
+The replayed GPU-routed core and fused vocabulary-shard argmax are described
+in section 7; experimental native requantization remains a separate quality gate.
 Batched ring orchestration and serving head/fanout integration remain unlinked.
 The existing `--experimental-mtp` CLI gate stays off by default and fails closed;
 it must not advertise MTP capability or execute a fake echo proposer.
@@ -501,7 +503,7 @@ The oracle exposed two tightly coupled defects:
   dequantization/dot/SwiGLU, in addition to fused/legacy parity. Before the
   fix, native expert-mid scaled error was 15.7 and final-HC error 1.65.
 
-No competing N=1 GEMV performance rewrite was made. The roofline report at
+At this execution milestone, no competing N=1 GEMV performance rewrite was made. The roofline report at
 `fg-wt/roofline/results/hillclimb/ROOFLINE.md` was read; the only existing
 arithmetic-kernel edits here are the Q8 expert correctness fix above.
 The previous Q4 six-layer small-N ratios remain **1 / 1.519 / 2.199 / 2.505**;
@@ -563,6 +565,123 @@ measure k=1..3 conditional prefix survival, stop on first mismatch, and
 truncate/repair from true target rows. Published Strata E=2.4–3.2 remains only
 the labeled external estimate. End-to-end greedy identity still requires the
 causal ring integration; the synthetic head oracle does not satisfy it.
+
+## 7. Removing the draft's host-sync and monolithic-head regressions
+
+The old 8.786-ms result above is historical, not the proposer that should be
+integrated. `fg_mtp_head_step_replay` records GPU router/top-10, shared and routed
+experts, their reduction, HC writes and the final mixer into one static graph.
+Its private slot 4 is separate from the four owner replay slots; vocabulary
+slot 5 is separately claimed. A persistent position tensor drives causal
+attention and RoPE without re-recording. The first call records; warmed calls
+record **zero** new dispatches and submit **once**, including the HC/embedding
+staging copies and the graph in the same queue submission/fence. The profiled
+dynamic path is diagnostic, not the static-replay latency measurement.
+Staging first drains deferred static producers as well as dynamic work;
+otherwise a held target-owner graph could leave the copied HC stale. The
+private-slot test explicitly queues that dependency.
+
+The original core spent about 0.85–0.90 ms on the GPU but made ten submissions,
+CPU routing/readback and CPU shared/expert combination. Additional fixes:
+
+* Four HC `fc_hidden` streams reuse the production Q8 R8 arithmetic with
+  interleaved workgroups for weight-cache locality. A true N-column variant
+  crossed activation quantization thresholds and failed the unchanged 1e-4
+  head-parity gate; it was rejected. The retained four-stream component is
+  byte-identical to four N=1 projections.
+* The 10240-wide pre-FC norm's generic loop was a roughly 50-us latency bubble.
+  Fixed-shape unrolling retains its FMA/tree order, is byte-identical in the
+  component test and takes about 7 us in the diagnostic profile.
+* The final 10240→320 contraction reuses production's eight-way split Q8
+  projection plus fused scaled-SiLU reduction, rather than the slow generic
+  narrow-output projection. Whole-head reference tolerance is unchanged.
+* Native dense attention now partitions the causal prefix over up to eight
+  splits, selected on-device from the current position, and reuses production's
+  softmax-state merge/output gate. It writes current KV once and never reads
+  future cells. A serial per-head loop was an increasing context-latency
+  bubble; the split component is compared through 8192 cells. Fixed 64-way
+  splitting was rejected because its mostly-empty workgroups and 64-way
+  dynamic merge cost more than the useful work at short prefixes.
+* Private-slot descriptor windows no longer collide with the unrelated
+  dynamic descriptor-set limit. Owner arrays/loops still use four slots.
+  The shared copy command pool now explicitly permits command-buffer reset.
+
+`fg_mtp_vocab_open/argmax` cooks an **explicit global token map** from the
+shared Q8 head. Its R8 GEMV emits per-workgroup argmax, followed by GPU reductions
+and an eight-byte final readback, not a full-logits CPU scan. It retains the
+producer's hidden-buffer view, adds a device-write visibility barrier and
+re-records only if that storage changes. Negative-only tails, global-ID ties,
+nonfinite propagation, two reduction stages and 2560-wide scalar dot oracles
+are tested. The ordinary R8 kernel, native FC and fused head share one GLSL
+body; this does not fork roofline's Q4/Q5 N=1 GEMV work.
+When integrating roofline, carry both Q8 activation-address corrections into
+its shared `fg_moe_decode_gate_up.glsl`, not only the `.comp` wrapper; retain
+the generic staged correction in `fg_moe_kquant_cooked.comp` too.
+
+Four disjoint 62080-row shards cover **all 248320 tokens** and can map to
+production logical ranks 4/0/1/2. Each shard was measured separately on .51;
+this is **not** a four-physical-rank head/fanout wall-time measurement.
+Native placement still requires the final target owner. Its embedding lookup/
+delivery and the contracted-hidden handoff to production head shards are not
+implemented. A colocated plain embedding copy would add about 675 MB of Q8
+weights; do not count that residency or network transport as free.
+
+Strata `src/core/mtp.cpp:389–405` optionally gathers `draft_vocab.bin` rows
+from the shared head. The read-only local subset has 106299 unique IDs,
+SHA256 `b1e1d3a7a9e4bf862dcd5923ce661fb59bbd07907e594df5cf86a62ac235cb91`.
+Its `tools/draft_vocab.py` warns that an English/code-only subset destroyed
+Chinese acceptance. **No subset was copied or used here.** Tied input/output
+weights do not eliminate the output GEMV. The fused argmax API is a greedy
+proposal primitive; it does not supply the complete q needed for stochastic
+rejection sampling. A successor draft needs its predecessor's token/embedding,
+so no unsupported whole-core/head overlap speedup is claimed.
+
+### Native precision candidates
+
+`q4_quantize.py --mtp` is experimental; `--mtp-experts-only` preserves every
+common Q8 projection/router/injection and changes only routed experts.
+`--q5-dense` selects Q5_K gate/up; the 640-wide down projection uses Q5_1
+(**24 bytes per 32 weights**, not 20). GGML row-size ABI validation precedes
+output allocation. The importer accounts for each actual resident format.
+
+| Candidate | Synthetic full-vocab KL(Q8 || candidate) | First top-1 | Disposition |
+|---|---:|---|---|
+| All eligible common/expert Q4/IQ4 + Q5_1 down | 0.283014 | changed | rejected |
+| Routed Q4_K gate/up + Q5_1 down, common Q8 | 0.00539410 | equal | rejected at unchanged 0.005 gate |
+| Routed Q5_K gate/up + Q5_1 down, common Q8 | 0.00495952 | equal | synthetic gate only |
+
+The last result is **one synthetic HC fixture, barely below the gate**, not
+real-text KL or acceptance qualification. Its cooked residency is 1,881,294,848
+bytes versus 2,772,584,448 for Q8. It is not a new deployed/default pack.
+Independent same-pack NumPy/GPU vocabulary KL is about 3e-12 for Q8 and 4e-12
+for the Q5 candidate. Forty-eight-cell slow/replayed comparisons retain the
+unchanged 1e-4 scaled-error gate; last-cell KV truncate/rebuild remains byte-exact.
+Neither comparison replaces the complete-target MTP-on/off greedy gate.
+
+For measured costs, three-window evidence, source hashes and remaining gates,
+see `results/hillclimb/MTP_FAST_HEAD.md`, `mtp-fast-head.json` and its evidence
+archive. The Q5 candidate averages **0.868-ms core + 0.620-ms quarter = 1.488 ms**
+over short positions 16..47 (window range 1.475–1.504 ms); Q8 totals 1.566 ms.
+Candidate local sums after 512/2048/8192 warmup cells are **1.515/1.674/2.202 ms**.
+Thus the <=1.5-ms goal is not qualified at longer contexts or with distributed
+fanout/embedding delivery. Long-prefix attention/GQA reuse is still a performance
+gate; do not report the short-prefix mean as a production draft cost.
+Bench CLI example:
+
+```
+./tools/bench-mtp-head --overlay native-q8.gguf --embedding-f32 embedding.f32 \
+  --head-q8 shared-head.q8 --replay --head-gpu --head-ways 4 --head-shard 0 \
+  --warmup 16 --iterations 32
+./tools/bench-mtp-head --overlay native-q8.gguf --embedding-f32 embedding.f32 \
+  --replay --compare-reference --warmup 8 --iterations 40
+```
+
+`mtp-fast-build.sh`, `mtp-fast-final-probe.sh` and `mtp-fast-measure.sh` reproduce
+the tests, rejected/retained candidate gates and final measurements under the
+allowlisted fleet wrapper. No new environment flags or hardware settings
+are required. Serving stays default-off/fail-closed pending real-text precision/
+acceptance, embedding/head fanout, causal ring transactions and same-kernel
+greedy equivalence. The verifier ratios remain 1 / 1.519 / 2.199 / 2.505.
 
 ## 7. What is tested and what remains
 

@@ -4,6 +4,14 @@
 #include "fg_model.h"
 
 typedef struct fg_mtp_head fg_mtp_head;
+typedef struct fg_mtp_vocab fg_mtp_vocab;
+/* Explicit global token map: a production shard, or a separately qualified
+ * draft-only vocabulary. NULL selects the entire shared vocabulary. */
+fg_status fg_mtp_vocab_open(fg_mtp_vocab **out,fg_vk_context *vk,const char *head_q8,
+    const uint32_t *token_ids,uint32_t rows,fg_error *err);
+void fg_mtp_vocab_close(fg_mtp_vocab *vocab);
+fg_status fg_mtp_vocab_argmax(fg_mtp_vocab *vocab,const fg_vk_tensor *hidden,
+    uint32_t *token,float *score,fg_error *err);
 /* Optional read-only diagnostics. Tensor contents are valid only in the
  * callback; enabling this hook adds synchronous readbacks in the caller. */
 typedef fg_status (*fg_mtp_head_trace_fn)(void *context,const char *stage,
@@ -23,6 +31,11 @@ fg_status fg_mtp_head_truncate(fg_mtp_head *head,uint32_t cells,fg_error *err);
  * Warmfill and repair must use authoritative target HC, not rejected drafts.
  * Output tensors are head-owned scratch, valid until the next step. */
 fg_status fg_mtp_head_step(fg_mtp_head *head,const fg_vk_tensor *hyper,
+    const fg_vk_tensor *embedding,uint32_t cell,fg_vk_tensor **next_hyper,
+    fg_vk_tensor **contracted,fg_error *err);
+/* GPU-routed single-submission core, replayed with indirect KV/RoPE position.
+ * The first call records; subsequent cells reuse the same command buffer. */
+fg_status fg_mtp_head_step_replay(fg_mtp_head *head,const fg_vk_tensor *hyper,
     const fg_vk_tensor *embedding,uint32_t cell,fg_vk_tensor **next_hyper,
     fg_vk_tensor **contracted,fg_error *err);
 

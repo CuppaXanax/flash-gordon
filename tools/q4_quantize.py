@@ -16,8 +16,21 @@ import sys
 from q4_source import header, string, SIZES
 
 
-def target(t, protected, bf16_routers=False):
+def target(t, protected, bf16_routers=False, mtp=False, mtp_experts_only=False):
     name, shape = t["name"], t["shape"]
+    if mtp:
+        if not name.startswith("mtp."):
+            raise ValueError(f"non-MTP tensor in native overlay: {name}")
+        if len(shape) < 2:
+            return 0
+        if mtp_experts_only and ".mlp.experts." not in name:
+            return 8
+        if ("block_inject_weight" in name or name.endswith(".mlp.gate.weight")
+                or name.endswith(".shared_expert_gate.weight")):
+            return 8
+        if ".experts.down_proj" in name:
+            return 7  # Q5_1 supports the native 640-wide rows.
+        return 12 if shape[0] % 256 == 0 else 20
     if name == "token_embd.weight":
         return 8
     if name == "output.weight":
@@ -59,6 +72,10 @@ def main():
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--ggml-library", type=Path, required=True)
     p.add_argument("--protected", action="store_true")
+    p.add_argument("--mtp", action="store_true",
+                   help="experimental native MTP: Q4_K/IQ4_NL, Q5_1 expert down; preserve Q8 routers/injection")
+    p.add_argument("--mtp-experts-only", action="store_true",
+                   help="with --mtp, preserve every common projection and quantize only native routed experts")
     dense_precision = p.add_mutually_exclusive_group()
     dense_precision.add_argument("--q5-dense", action="store_true",
                    help="use Q5_K for all Q4_K-eligible matrices; non-256 rows remain IQ4_NL")
@@ -77,6 +94,11 @@ def main():
     p.add_argument("--bf16-routers", action="store_true", default=True, help="default: narrow only if every stored F32 value is BF16-exact")
     p.add_argument("--keep-f32-routers", action="store_false", dest="bf16_routers")
     args = p.parse_args()
+    if args.mtp_experts_only and not args.mtp:
+        p.error("--mtp-experts-only requires --mtp")
+    if args.mtp and (args.q6_dense or args.protected or args.bf16_routers is False
+                     or args.q8_overrides or args.deployed_dense_only):
+        p.error("--mtp is a separate native-overlay mode; use --q5-dense for protected native matrices")
     if bool(args.q8_overrides) != bool(args.override_map):
         p.error("--q8-overrides and --override-map are required together")
     if args.deployed_dense_only and not args.q8_overrides:
@@ -84,6 +106,12 @@ def main():
     if args.threads < 1:
         p.error("--threads must be positive")
     lib = ctypes.CDLL(str(args.ggml_library.resolve()))
+    row_size = lib.ggml_row_size
+    row_size.argtypes = [ctypes.c_int, ctypes.c_int64]
+    row_size.restype = ctypes.c_size_t
+    for kind, (block, size) in SIZES.items():
+        if row_size(kind, 256) != 256 // block * size:
+            raise ValueError(f"GGML ABI block-size mismatch: type {kind}")
     if sys.byteorder != "little":
         raise ValueError("quantizer requires a little-endian host")
     converters = {1: lib.ggml_fp16_to_fp32_row, 30: lib.ggml_bf16_to_fp32_row,
@@ -133,7 +161,7 @@ def main():
         entries = {t["name"]: t for t in entries}
         with args.imatrix.open("rb") as file:
             for t in ts:
-                if target(t, args.protected) not in (12, 13, 14, 20):
+                if target(t, args.protected, mtp=args.mtp, mtp_experts_only=args.mtp_experts_only) not in (12, 13, 14, 20):
                     continue
                 sums = entries.get(t["name"]+".in_sum2")
                 counts = entries.get(t["name"]+".counts")
@@ -160,7 +188,7 @@ def main():
             sha256=hashlib.sha256(args.imatrix.read_bytes()).hexdigest(),
             mapped=len(importance),
             missing=[t["name"] for t in ts
-                     if target(t, args.protected) in (12, 13, 14, 20)
+                     if target(t, args.protected, mtp=args.mtp, mtp_experts_only=args.mtp_experts_only) in (12, 13, 14, 20)
                      and t["name"] not in importance])
     keys = (string("general.file_type"), string("general.quantization_version"))
     metadata = [item for item in metadata if not item.startswith(keys)]
@@ -176,12 +204,12 @@ def main():
             t["bf16_source_type"] = t["source_type"]
             t["source_type"], t["source_offset"] = 8, ref["offset"]
             t["source_reference_sha256"] = ref["sha256"]
-        t["type"] = target(t, args.protected, args.bf16_routers)
+        t["type"] = target(t, args.protected, args.bf16_routers, args.mtp, args.mtp_experts_only)
         if args.q5_dense and t["type"] == 12:
             t["type"] = 13
         if args.q6_dense and t["type"] in (12, 13):
             t["type"] = 14
-        if args.q8_control and t["type"] in (12, 13, 14, 20):
+        if args.q8_control and (t["type"] in (12, 13, 14, 20) or args.mtp and t["type"] == 7):
             t["type"] = 8
         if t["type"] == 30 and t["source_type"] == 0:
             with args.source.open("rb") as file:
@@ -208,6 +236,8 @@ def main():
     h += bytes((-len(h)) % align)
     partial = args.output.with_suffix(".partial")
     def encode(raw, n, width, source_type, kind, weights):
+        if args.mtp and source_type == kind:
+            return raw
         if source_type in converters:
             converted = ctypes.create_string_buffer(n*width*4)
             converters[source_type](ctypes.create_string_buffer(raw), converted, n*width)
@@ -276,12 +306,13 @@ def main():
     partial.replace(args.output)
     args.output.with_suffix(".json").write_text(json.dumps(dict(
         source=str(args.source), protected=args.protected, q5_dense=args.q5_dense,
-        q6_dense=args.q6_dense,
+        q6_dense=args.q6_dense, mtp=args.mtp, mtp_experts_only=args.mtp_experts_only,
         q8_control=args.q8_control, threads=args.threads,
         imatrix=imatrix_report,
         q8_source_overrides=str(args.q8_overrides) if args.q8_overrides else None,
         q8_source_override_count=len(overrides),
-        router="BF16 only when F32 round-trip is exact; otherwise F32", tensors=ts), indent=2)+"\n")
+        router=("unchanged native source Q8_0" if args.mtp else
+                "BF16 only when F32 round-trip is exact; otherwise F32"), tensors=ts), indent=2)+"\n")
     lib.ggml_quantize_free()
 
 

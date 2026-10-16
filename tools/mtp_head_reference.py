@@ -6,6 +6,7 @@ architecture/import check on synthetic HC, not real-text model qualification.
 """
 
 import argparse
+import ctypes
 import json
 import mmap
 from pathlib import Path
@@ -15,7 +16,15 @@ import numpy as np
 
 
 class Overlay:
-    def __init__(self, path):
+    def __init__(self, path, library=None):
+        self.dequantizers = {}
+        if library:
+            self.library = ctypes.CDLL(str(Path(library).resolve()))
+            for kind, name in ((7, "q5_1"), (12, "q4_K"), (13, "q5_K"), (20, "iq4_nl")):
+                fn = getattr(self.library, "dequantize_row_" + name)
+                fn.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int64]
+                fn.restype = None
+                self.dequantizers[kind] = fn
         self.file = open(path, "rb")
         self.data = mmap.mmap(self.file.fileno(), 0, access=mmap.ACCESS_READ)
         self.pos = 0
@@ -28,9 +37,12 @@ class Overlay:
         for _ in range(nk):
             self.string()
             kind = self.read("<I")[0]
-            if kind != 8:
+            if kind == 4:
+                self.read("<I")
+            elif kind == 8:
+                self.string()
+            else:
                 raise ValueError("unexpected overlay metadata")
-            self.string()
         self.tensors = {}
         for _ in range(nt):
             name = self.string()
@@ -53,15 +65,23 @@ class Overlay:
 
     def get(self, name, expert=None):
         kind, shape, offset = self.tensors["mtp." + name]
+        block, byte_count = {0: (1, 4), 7: (32, 24), 8: (32, 34),
+                             12: (256, 144), 13: (256, 176), 20: (32, 18)}[kind]
         if expert is not None:
             elements = int(np.prod(shape[1:]))
-            offset += expert * elements // 32 * 34
+            offset += expert * elements // block * byte_count
             shape = shape[1:]
         count = int(np.prod(shape))
         if kind == 0:
             return np.frombuffer(self.data, "<f4", count, self.base + offset).reshape(shape).copy()
+        if kind in self.dequantizers:
+            raw = ctypes.create_string_buffer(
+                self.data[self.base + offset:self.base + offset + count // block * byte_count])
+            output = np.empty(count, np.float32)
+            self.dequantizers[kind](raw, ctypes.c_void_p(output.ctypes.data), count)
+            return output.reshape(shape)
         if kind != 8:
-            raise ValueError("expected Q8")
+            raise ValueError("quantized oracle requires --ggml-library")
         blocks = np.frombuffer(self.data, np.uint8, count // 32 * 34,
                                self.base + offset).reshape(-1, 34)
         scales = blocks[:, :2].copy().view("<f2").astype(np.float32)
@@ -82,9 +102,10 @@ def main():
     p.add_argument("--overlay", required=True)
     p.add_argument("--dump", required=True)
     p.add_argument("--head-q8")
+    p.add_argument("--ggml-library")
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
-    source = Overlay(a.overlay)
+    source = Overlay(a.overlay, a.ggml_library)
     dump = np.fromfile(a.dump, "<f4")
     hc, emb = dump[:10240], dump[10240:12800]
     actual_hc, actual_hidden = dump[12800:23040], dump[23040:25600]

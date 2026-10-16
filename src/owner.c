@@ -151,9 +151,9 @@ struct fg_owner_executor {
     fg_owner_pending_write pending_write;
     fg_owner_decode_slot decode_slots[FG_OWNER_SLOT_COUNT];
     fg_owner_prefill_slot prefill_slots[FG_OWNER_SLOT_COUNT];
-    fg_vk_tensor *static_run_output[FG_VK_STATIC_SLOTS];
-    uint32_t static_run_session[FG_VK_STATIC_SLOTS];
-    bool static_run_session_valid[FG_VK_STATIC_SLOTS];
+    fg_vk_tensor *static_run_output[FG_VK_OWNER_STATIC_SLOTS];
+    uint32_t static_run_session[FG_VK_OWNER_STATIC_SLOTS];
+    bool static_run_session_valid[FG_VK_OWNER_STATIC_SLOTS];
     uint32_t small_tokens,small_first,small_last,small_session;
     const fg_vk_tensor *small_input,*small_ngram;
     fg_owner_expert_small_fn small_expert;
@@ -506,7 +506,7 @@ fg_status fg_owner_reset_state(fg_owner_executor *e,fg_error *err){
     e->active_session=0;
     memset(&e->pending_write,0,sizeof(e->pending_write));
     for(uint32_t slot=0;slot<FG_OWNER_SLOT_COUNT;slot++){memset(&e->decode_slots[slot].pending_write,0,sizeof(e->decode_slots[slot].pending_write));e->decode_slots[slot].active=false;e->prefill_slots[slot].active=false;}
-    for(uint32_t static_slot=0;static_slot<FG_VK_STATIC_SLOTS;static_slot++)
+    for(uint32_t static_slot=0;static_slot<FG_VK_OWNER_STATIC_SLOTS;static_slot++)
         e->static_run_session_valid[static_slot]=false;
     fg_status status=FG_OK;
     for(uint32_t session=0;status==FG_OK&&session<e->session_count;session++)
@@ -641,6 +641,30 @@ static fg_status owner_shared_expert(void *opaque,fg_error *err){
     if(status==FG_OK)status=fg_vk_dense_f32(vk,work->scalar,scalar,
         hidden,FG_HIDDEN_SIZE,1u,tokens,err);
     return finish_batch(vk,status,err);
+}
+
+fg_status fg_owner_moe_record(fg_owner_executor *e,uint32_t layer,
+    const fg_vk_tensor *hidden,fg_owner_expert_inline_fn expert,void *context,
+    fg_vk_tensor **output,fg_error *err){
+    if(!e||!hidden||!expert||!output||!owns_layer(e,layer)||
+       !fg_vk_batch_active(fg_model_vk(e->model))){
+        fg_error_set(err,FG_ERR_ARGUMENT,"GPU MoE recording requires an active owner batch");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_vk_context *vk=fg_model_vk(e->model);
+    fg_vk_tensor *router=weight(e,layer,"ffn_gate_inp.weight",err),*routed=NULL;
+    if(!router)return FG_ERR_MISMATCH;
+    fg_status status=fg_vk_dense_f32(vk,e->router_logits,router,hidden,
+        FG_HIDDEN_SIZE,FG_EXPERT_COUNT,1u,err);
+    if(status==FG_OK)status=fg_vk_quantize_q8_k(vk,e->activation_q8k,hidden,
+        FG_HIDDEN_SIZE,1u,err);
+    shared_expert_work shared={e,hidden,e->shared_output,e->shared_scalar,layer,1u};
+    if(status==FG_OK)status=owner_shared_expert(&shared,err);
+    if(status==FG_OK)status=expert(context,layer,e->activation_q8k,e->router_logits,&routed,err);
+    if(status==FG_OK)status=fg_vk_moe_decode_shared_add(vk,e->reduced,routed,
+        e->shared_output,e->shared_scalar,FG_HIDDEN_SIZE,err);
+    if(status==FG_OK)*output=e->reduced;
+    return status;
 }
 
 fg_status fg_owner_moe_prepare_batch(fg_owner_executor *e,uint32_t layer,
@@ -1695,7 +1719,7 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
     fg_vk_tensor *current=(fg_vk_tensor *)hyper_input;
     fg_status status=FG_OK;
     if(e->small_tokens){
-        for(uint32_t s=0u;status==FG_OK&&s<FG_VK_STATIC_SLOTS;s++)
+        for(uint32_t s=0u;status==FG_OK&&s<FG_VK_OWNER_STATIC_SLOTS;s++)
             status=fg_vk_static_reset(vk,s,err);
         e->small_tokens=0u;
         if(status!=FG_OK)return status;
@@ -1721,10 +1745,10 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
         uint32_t slot=0u;
         for(uint32_t l=first_layer;l<layer;l++)if((l&3u)==3u)slot++;
         uint32_t rerecord=static_rerecord_period();
-        if(status==FG_OK&&static_allowed&&slot<FG_VK_STATIC_SLOTS&&rerecord&&
+        if(status==FG_OK&&static_allowed&&slot<FG_VK_OWNER_STATIC_SLOTS&&rerecord&&
            (token%rerecord)==0u)
             status=fg_vk_static_reset(vk,slot,err);
-        if(status==FG_OK&&static_allowed&&slot<FG_VK_STATIC_SLOTS&&fg_vk_static_recorded(vk,slot)){
+        if(status==FG_OK&&static_allowed&&slot<FG_VK_OWNER_STATIC_SLOTS&&fg_vk_static_recorded(vk,slot)){
             if(e->static_run_session_valid[slot]&&
                e->static_run_session[slot]!=e->active_session){
                 fg_error_set(err,FG_ERR_MISMATCH,
@@ -1748,7 +1772,7 @@ fg_status fg_owner_decode_block_chained(fg_owner_executor *e,uint32_t first_laye
             status=fg_vk_static_submit(vk,slot,err);
             if(status==FG_OK&&static_check_enabled())
                 status=static_run_check(e,vk,slot,token,err);
-        }else if(status==FG_OK&&static_allowed&&slot<FG_VK_STATIC_SLOTS){
+        }else if(status==FG_OK&&static_allowed&&slot<FG_VK_OWNER_STATIC_SLOTS){
             status=fg_vk_static_begin(vk,slot,err);
             for(uint32_t l=layer;status==FG_OK&&l<=run_last;l++)
                 status=owner_record_layer(e,l,token,position,hyper_input,
@@ -1844,7 +1868,7 @@ fg_status fg_owner_decode_small_n(fg_owner_executor *e,uint32_t first_layer,
     if(e->small_tokens!=n||e->small_first!=first_layer||e->small_last!=last_layer||
        e->small_session!=e->active_session||e->small_input!=input||
        e->small_ngram!=ngram||e->small_expert!=expert||e->small_context!=context){
-        for(uint32_t s=0u;status==FG_OK&&s<FG_VK_STATIC_SLOTS;s++)
+        for(uint32_t s=0u;status==FG_OK&&s<FG_VK_OWNER_STATIC_SLOTS;s++)
             status=fg_vk_static_reset(vk,s,err);
         if(status!=FG_OK)return status;
         e->small_tokens=n;e->small_first=first_layer;e->small_last=last_layer;
@@ -1864,15 +1888,15 @@ fg_status fg_owner_decode_small_n(fg_owner_executor *e,uint32_t first_layer,
         }
         uint32_t last=layer;
         while(last+1u<=last_layer&&((last+1u)&3u)!=3u)last++;
-        if(replay&&slot<FG_VK_STATIC_SLOTS&&fg_vk_static_recorded(vk,slot)){
+        if(replay&&slot<FG_VK_OWNER_STATIC_SLOTS&&fg_vk_static_recorded(vk,slot)){
             current=e->static_run_output[slot];
             status=fg_vk_static_submit(vk,slot,err);
         }else{
-            if(replay&&slot<FG_VK_STATIC_SLOTS)status=fg_vk_static_begin(vk,slot,err);
+            if(replay&&slot<FG_VK_OWNER_STATIC_SLOTS)status=fg_vk_static_begin(vk,slot,err);
             for(uint32_t l=layer;status==FG_OK&&l<=last;l++)
                 status=small_record_layer(e,l,first_token,positions,n,ngram,
                     expert,context,&current,err);
-            if(status==FG_OK&&replay&&slot<FG_VK_STATIC_SLOTS){
+            if(status==FG_OK&&replay&&slot<FG_VK_OWNER_STATIC_SLOTS){
                 status=fg_vk_static_end(vk,slot,err);
                 if(status==FG_OK)status=fg_vk_static_submit(vk,slot,err);
                 if(status==FG_OK)e->static_run_output[slot]=current;
@@ -1886,7 +1910,7 @@ fg_status fg_owner_decode_small_n(fg_owner_executor *e,uint32_t first_layer,
         fg_error ignored={0};
         if(fg_vk_batch_active(vk))fg_vk_abort(vk,&ignored);
         fg_vk_static_drain(vk,&ignored);
-        for(uint32_t s=0u;s<FG_VK_STATIC_SLOTS;s++)fg_vk_static_reset(vk,s,&ignored);
+        for(uint32_t s=0u;s<FG_VK_OWNER_STATIC_SLOTS;s++)fg_vk_static_reset(vk,s,&ignored);
         e->small_tokens=0u;
     }
     fg_vk_small_n_mode(vk,false);

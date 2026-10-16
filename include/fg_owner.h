@@ -257,6 +257,11 @@ fg_status fg_owner_decode_block(fg_owner_executor *executor,uint32_t first_layer
 typedef fg_status (*fg_owner_expert_inline_fn)(void *context,uint32_t layer,
     const fg_vk_tensor *activation_q8k,const fg_vk_tensor *router_logits,
     fg_vk_tensor **expert_output,fg_error *err);
+/* Record GPU routing, shared/routed experts and their combine in an active
+ * batch; no host routing or expert readback. */
+fg_status fg_owner_moe_record(fg_owner_executor *executor,uint32_t layer,
+    const fg_vk_tensor *hidden,fg_owner_expert_inline_fn expert,void *context,
+    fg_vk_tensor **output,fg_error *err);
 typedef fg_status (*fg_owner_expert_small_fn)(void *context,uint32_t layer,
     const fg_vk_tensor *activation_q8k,const fg_vk_tensor *router_logits,
     uint32_t tokens,fg_vk_tensor **expert_output,fg_error *err);

@@ -1,0 +1,4 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define FG_DENSE_ARGMAX
+#include "fg_dense_q8_0_cooked_r8.glsl"

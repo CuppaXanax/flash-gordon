@@ -40,11 +40,26 @@ fg_status fg_vk_dense_quant(fg_vk_context *context,fg_vk_tensor *out,
                             const fg_vk_tensor *weights,const fg_vk_tensor *input,
                             uint32_t input_width,uint32_t output_width,
                             uint32_t tokens,float scale,fg_error *err);
+fg_status fg_vk_mtp_vocab_q8(fg_vk_context *context,fg_vk_tensor *scores,
+    fg_vk_tensor *best_ids,const fg_vk_tensor *weights,const fg_vk_tensor *hidden,
+    const fg_vk_tensor *token_ids,uint32_t input_width,uint32_t rows,fg_error *err);
+fg_status fg_vk_mtp_fc_hidden(fg_vk_context *context,fg_vk_tensor *output,
+    const fg_vk_tensor *weights,const fg_vk_tensor *input,fg_error *err);
+fg_status fg_vk_mtp_hc_norm(fg_vk_context *context,fg_vk_tensor *output,
+    const fg_vk_tensor *input,const fg_vk_tensor *weights,fg_error *err);
+fg_status fg_vk_mtp_attention_split(fg_vk_context *context,fg_vk_tensor *output,
+    fg_vk_tensor *partials,fg_vk_tensor *keys,fg_vk_tensor *values,
+    const fg_vk_tensor *query,const fg_vk_tensor *gate,const fg_vk_tensor *key,
+    const fg_vk_tensor *value,const fg_vk_tensor *position,uint32_t capacity,
+    uint32_t splits,fg_error *err);
 
 #define FG_VK_PROFILE_MAX_KERNELS 64u
 /* Pre-recorded token-invariant runs; each slot owns a private descriptor set
  * window so a dynamic epoch reset can never rewrite its bindings. */
-#define FG_VK_STATIC_SLOTS 4u
+#define FG_VK_OWNER_STATIC_SLOTS 4u
+#define FG_VK_MTP_STATIC_SLOT FG_VK_OWNER_STATIC_SLOTS
+#define FG_VK_MTP_VOCAB_STATIC_SLOT (FG_VK_OWNER_STATIC_SLOTS+1u)
+#define FG_VK_STATIC_SLOTS (FG_VK_OWNER_STATIC_SLOTS+2u)
 /* Explicit research path; ordinary decode and prefill remain unchanged. */
 void fg_vk_small_n_mode(fg_vk_context *context,bool enabled);
 bool fg_vk_small_n_active(const fg_vk_context *context);
@@ -120,9 +135,14 @@ fg_status fg_vk_begin(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_end(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_flush(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_static_begin(fg_vk_context *context,uint32_t slot,fg_error *err);
+fg_status fg_vk_static_claim(fg_vk_context *context,uint32_t slot,fg_error *err);
+fg_status fg_vk_static_release(fg_vk_context *context,uint32_t slot,fg_error *err);
 fg_status fg_vk_static_end(fg_vk_context *context,uint32_t slot,fg_error *err);
 fg_status fg_vk_static_reset(fg_vk_context *context,uint32_t slot,fg_error *err);
 fg_status fg_vk_static_submit(fg_vk_context *context,uint32_t slot,fg_error *err);
+/* Stage stable graph inputs and execute the graph with one submission/fence. */
+fg_status fg_vk_static_copy_run(fg_vk_context *context,uint32_t slot,
+    fg_vk_tensor *const *dst,const fg_vk_tensor *const *src,uint32_t count,fg_error *err);
 fg_status fg_vk_static_wait(fg_vk_context *context,uint32_t slot,fg_error *err);
 fg_status fg_vk_static_drain(fg_vk_context *context,fg_error *err);
 bool fg_vk_static_recorded(const fg_vk_context *context,uint32_t slot);
@@ -130,6 +150,7 @@ fg_status fg_vk_abort(fg_vk_context *context,fg_error *err);
 bool fg_vk_batch_active(const fg_vk_context *context);
 void fg_vk_next_dispatch_independent(fg_vk_context *context);
 void fg_vk_host_write_visible(fg_vk_context *context);
+void fg_vk_device_write_visible(fg_vk_context *context);
 
 fg_status fg_vk_expert_graph_create(fg_vk_context *context,fg_vk_expert_graph **out,
                                      fg_vk_tensor *activation,fg_vk_tensor *tiles,
@@ -352,6 +373,10 @@ fg_status fg_vk_mtp_attention(fg_vk_context *context,fg_vk_tensor *output,
     fg_vk_tensor *keys,fg_vk_tensor *values,const fg_vk_tensor *query,
     const fg_vk_tensor *gate,const fg_vk_tensor *key,const fg_vk_tensor *value,
     uint32_t cell,fg_error *err);
+fg_status fg_vk_mtp_attention_indirect(fg_vk_context *context,fg_vk_tensor *output,
+    fg_vk_tensor *keys,fg_vk_tensor *values,const fg_vk_tensor *query,
+    const fg_vk_tensor *gate,const fg_vk_tensor *key,const fg_vk_tensor *value,
+    const fg_vk_tensor *position,uint32_t capacity,fg_error *err);
 fg_status fg_vk_qsa_prepare_prefill(fg_vk_context *context,fg_vk_tensor *query,
                                     fg_vk_tensor *gate,fg_vk_tensor *key,
                                     const fg_vk_tensor *raw_query_gate,
