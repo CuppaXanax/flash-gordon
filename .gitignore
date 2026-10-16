@@ -1,6 +1,7 @@
 # Flash Gordon build products
 /flash-gordon
 /results/
+/.build/
 *.a
 
 # Object files and dependency files

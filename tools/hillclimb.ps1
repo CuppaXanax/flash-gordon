@@ -16,6 +16,10 @@ param(
     [string]$BaseUrl = $(if ($env:FG_BASE_URL) { $env:FG_BASE_URL.TrimEnd('/') } else { "http://192.168.42.42:8080/v1" }),
     [switch]$Quick,
     [switch]$WriteReference,
+    [string]$ABConfig = '',
+    [ValidateRange(3,30)][int]$ABRounds = 3,
+    [ValidateSet('ABAB','ABBA')][string]$ABOrder = 'ABBA',
+    [string]$ABOutput = '',
     [int]$RequestTimeoutSeconds = 900
 )
 
@@ -420,7 +424,7 @@ function Invoke-Correctness {
         }
         $reference | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $referencePath -Encoding utf8
         $records.metadata.reference_file = 'results/hillclimb/reference.json'
-    } elseif (-not (Test-Path -LiteralPath $referencePath)) {
+    } elseif (-not $ABConfig -and -not (Test-Path -LiteralPath $referencePath)) {
         throw "Reference file is missing. Run once with -WriteReference against the intended production model."
     }
     return @($current)
@@ -428,62 +432,15 @@ function Invoke-Correctness {
 
 function Invoke-Concurrency {
     param([object[]]$ChatMessages, [object[]]$AgentMessages)
-    $started = [Diagnostics.Stopwatch]::StartNew()
-    $chat = Start-Sse $ChatMessages 32
-    $agent = Start-Sse $AgentMessages 32
-    $active = @($chat, $agent)
-    $lines = @{}
-    foreach ($session in $active) { $lines[[Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($session)] = $session.Reader.ReadLineAsync() }
-    while ($active.Count -gt 0) {
-        $tasks = @($active | ForEach-Object { $lines[[Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($_)] })
-        $index = [Threading.Tasks.Task]::WaitAny([Threading.Tasks.Task[]]$tasks)
-        $session = $active[$index]
-        $key = [Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($session)
-        $line = $lines[$key].GetAwaiter().GetResult()
-        if ($null -eq $line) {
-            $session.Done = $true
-        } else {
-            Consume-SseLine $session $line
-        }
-        if ($session.Done) {
-            $active = @($active | Where-Object { [Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($_) -ne $key })
-            $lines.Remove($key)
-        } else {
-            $lines[$key] = $session.Reader.ReadLineAsync()
-        }
-    }
-    $started.Stop()
-    $rows = @()
-    foreach ($session in @($chat, $agent)) {
-        $session.Watch.Stop()
-        $stats = Get-SseStats $session
-        $rows += [pscustomobject]@{
-            name = if ([object]::ReferenceEquals($session, $chat)) { 'chat-style' } else { 'agent-style' }
-            first_content_ms = $stats.first_content_ms
-            wall_seconds = $stats.wall_seconds
-            visible_delta_events = $stats.visible_delta_events
-            client_end_to_end_delta_events_per_second = if ($stats.wall_seconds -gt 0) {
-                $stats.visible_delta_events / $stats.wall_seconds
-            } else { 0 }
-            event_interval_tps_excluding_first = $stats.sse_inter_event_tps_excluding_first
-            output_count_note = 'SSE delta events are a client-visible proxy, not usage token counts.'
-            finish_received = $stats.finish_received
-            engine_capacity = $null
-            capacity_headers = @($session.Headers.Keys | Where-Object { $_ -match '(?i)capacity|concurr|slot' } | ForEach-Object { "$_=$($session.Headers[$_])" })
-        }
-        $session.Reader.Dispose()
-        $session.Response.Dispose()
-        $session.Request.Dispose()
-    }
-    $aggregateDuration = ($rows | Measure-Object -Property wall_seconds -Maximum).Maximum
-    $totalEvents = ($rows | Measure-Object -Property visible_delta_events -Sum).Sum
-    $records.metadata.concurrency_wall_seconds = $started.Elapsed.TotalSeconds
-    return [pscustomobject]@{
-        streams = $rows
-        aggregate_end_to_end_delta_events_per_second = if ($aggregateDuration -gt 0) { $totalEvents / $aggregateDuration } else { 0 }
-        capacity = $null
-        capacity_note = 'No capacity field/header is exposed by the current API.'
-    }
+    Invoke-ABNonStreamPair $ChatMessages $AgentMessages 32
+}
+
+. (Join-Path $PSScriptRoot 'hillclimb-ab.ps1')
+if ($ABConfig) {
+    try {
+        Invoke-PairedQualification
+    } finally { $client.Dispose() }
+    return
 }
 
 try {
