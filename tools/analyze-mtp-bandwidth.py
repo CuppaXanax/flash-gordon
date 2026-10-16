@@ -203,7 +203,7 @@ def analyze(directory):
                     "last_lines": text.splitlines()[-4:]}
     result["build_receipts"] = {
         path.relative_to(directory).as_posix(): path.read_text()
-        for path in directory.glob("**/*-sha256.txt")}
+        for path in sorted(directory.glob("**/*-sha256.txt"))}
     return result
 
 
