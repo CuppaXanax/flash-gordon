@@ -608,7 +608,7 @@ fg_status fg_vk_small_dense_prepare(fg_vk_tensor *w,uint32_t in,uint32_t rows,
     uint32_t *dst=fg_vk_tensor_map(shadow);
     memcpy(dst,src,(size_t)bytes);
     uint32_t groups=in/32u;
-    for(uint32_t tile=0;tile<rows/8u;tile++){
+    for(uint32_t tile=0;tile<1u+(rows-1u)/8u;tile++){
         uint64_t base=(uint64_t)tile*groups*37u+groups*5u;
         for(uint32_t g=0;g<groups;g++)for(uint32_t lane=0;lane<4u;lane++)
             for(uint32_t row=0;row<8u;row++)

@@ -35,6 +35,9 @@ make -s -B -j8 tools/bench-decode-fusion tests/test_fg_vk > ../round7/build.txt 
 sha256sum tools/bench-decode-fusion tests/test_fg_vk > ../round7/binary-sha256.txt
 FG_SMALL_KERNELS=2097482 DS4_REMOTE_TEST_FILTER=small_dense_vector_layout \
     ./tests/test_fg_vk > ../round7/vector-residency.txt 2>&1
+FG_SMALL_KERNELS=2097482 ./tools/bench-decode-fusion --q4 --no-clocks --dense-only \
+    --dense-type 12 --dense-shape 1024 1025 --allow-reassociation \
+    > ../round7/vector-tail.jsonl 2> ../round7/vector-tail.stderr
 FG_SMALL_KERNELS=8388608 DS4_REMOTE_TEST_FILTER=small_qsa_select \
     ./tests/test_fg_vk > ../round7/wave-topk-cpu.txt 2>&1
 RADV_DEBUG=shaderstats MESA_SHADER_CACHE_DISABLE=true FG_SMALL_KERNELS=8388608 \
