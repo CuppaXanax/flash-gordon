@@ -235,19 +235,49 @@ function Invoke-PairedQualification {
         }
     }
     $destination = if ($ABOutput) { $ABOutput } else { Join-Path $runRoot ("ab-" + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
-    if ((Test-Path -LiteralPath $destination) -and @(Get-ChildItem -LiteralPath $destination -Force).Count) {
+    if (-not $ABResume -and (Test-Path -LiteralPath $destination) -and @(Get-ChildItem -LiteralPath $destination -Force).Count) {
         throw 'A/B output directory must be fresh.'
     }
     $null = New-Item -ItemType Directory -Path $destination -Force
+    $method = 'Paired round percentile bootstrap, median log B/A, 20000 fixed-seed resamples; expand CI with conservative df=2 Student-t log-ratio interval. Marginal 95% intersection-union noninferiority. Bonferroni win CI across metrics and four predeclared candidates. Guard assumes independent normal log ratios; bootstrap alone is exploratory at small n.'
     $result = [ordered]@{
         schema = 1; started = [DateTimeOffset]::Now.ToString('o'); config = $config
-        method = 'Paired round percentile bootstrap, median log B/A, 20000 fixed-seed resamples; expand CI with conservative df=2 Student-t log-ratio interval. Marginal 95% intersection-union noninferiority. Bonferroni win CI across metrics and four predeclared candidates. Guard assumes independent normal log ratios; bootstrap alone is exploratory at small n.'
+        method = $method
         rounds = $ABRounds; order = $ABOrder; pairs = @(); metrics = @(); complete = $false; eligible = $false
         warning = 'Three paired rounds are low power. Inconclusive is not noninferior. Repeated tokens are not independent replicates.'
     }
     $path = Join-Path $destination 'ab-result.json'
+    $firstRound = 0
+    if ($ABResume) {
+        $previous = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json -AsHashtable
+        if ($previous.complete -or $previous.rounds -ne $ABRounds -or $previous.order -ne $ABOrder -or
+            $previous.config.change_kind -ne $config.change_kind) { throw 'Cannot change or repeat a completed A/B design.' }
+        foreach ($arm in @('A','B')) {
+            foreach ($field in @('binary_sha256','manifest_sha256','release','manifest','sessions','wide')) {
+                if ($previous.config[$arm][$field] -ne $config[$arm][$field]) { throw "Resume changed $arm.$field" }
+            }
+        }
+        if (($previous.config['contexts'] -join ',') -ne ($config['contexts'] -join ',')) { throw 'Resume changed contexts.' }
+        $firstRound = @($previous.pairs).Count
+        if ($firstRound -ge $ABRounds) { throw 'All round samples already exist; analyze them without resampling.' }
+        for ($i = 0; $i -lt $firstRound; $i++) {
+            if ($previous.pairs[$i].round -ne $i -or -not $previous.pairs[$i].A -or -not $previous.pairs[$i].B) {
+                throw 'Incomplete committed pair in resume record.'
+            }
+        }
+        $previous.resume_attempts = @($previous['resume_attempts'] | Where-Object { $null -ne $_ }) + @(@{
+            timestamp = [DateTimeOffset]::Now.ToString('o'); first_round = $firstRound
+            prior_error = $previous['error']; prior_restore_error = $previous['restore_error']
+        })
+        $previous.Remove('error'); $previous.Remove('restore_error'); $previous.Remove('finished')
+        $previous.method = $method; $previous.config = $config; $previous.restored_original = $false
+        $result = $previous
+        foreach ($partial in @(Get-ChildItem -LiteralPath $destination -Filter "round-$firstRound-*.json")) {
+            Move-Item -LiteralPath $partial.FullName -Destination ($partial.FullName + '.interrupted-' + (Get-Date -Format 'HHmmss'))
+        }
+    }
     try {
-        for ($round = 0; $round -lt $ABRounds; $round++) {
+        for ($round = $firstRound; $round -lt $ABRounds; $round++) {
             $salt = [Guid]::NewGuid().ToString('N')
             $pair = [ordered]@{ round = $round; salt = $salt; A = $null; B = $null }
             $order = if ($ABOrder -eq 'ABBA' -and $round % 2) { @('B','A') } else { @('A','B') }

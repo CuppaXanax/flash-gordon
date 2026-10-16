@@ -91,10 +91,13 @@ class PairedHarness(unittest.TestCase):
         deploy = output / "deploy.ps1"
         restore = output / "restore.ps1"
         events = output / "events.txt"
+        failure = (
+            f"if (@(Get-Content -LiteralPath '{events}').Count -eq 3) {{ throw 'fixture deployment failed' }}\n"
+            if fail == "after-pair" else "if ($Arm -eq 'B') { throw 'fixture deployment failed' }\n"
+        ) if fail else ""
         deploy.write_text(
             "param($Deployment,$Arm)\n"
-            f"Add-Content -LiteralPath '{events}' -Value $Arm\n" +
-            ("if ($Arm -eq 'B') { throw 'fixture deployment failed' }\n" if fail else ""),
+            f"Add-Content -LiteralPath '{events}' -Value $Arm\n" + failure,
             encoding="utf-8")
         restore.write_text(f"Add-Content -LiteralPath '{events}' -Value restore\n", encoding="utf-8")
         config = output / "config.json"
@@ -107,11 +110,12 @@ class PairedHarness(unittest.TestCase):
         thread.start()
         Handler.bodies = []
         try:
-            result = subprocess.run([
+            command = [
                 "pwsh", "-NoProfile", "-File", str(root / "tools" / "hillclimb.ps1"),
                 "-BaseUrl", f"http://127.0.0.1:{server.server_port}/v1",
                 "-ABConfig", str(config), "-ABOutput", str(output / "result"), "-ABRounds", "3"
-            ], capture_output=True, text=True, timeout=180)
+            ]
+            result = subprocess.run(command, capture_output=True, text=True, timeout=180)
             data = json.loads((output / "result" / "ab-result.json").read_text(encoding="utf-8-sig"))
             self.assertTrue(data["restored_original"])
             if fail:
@@ -119,12 +123,23 @@ class PairedHarness(unittest.TestCase):
                 self.assertFalse(data["complete"])
                 self.assertFalse(data["eligible"])
                 self.assertIn("fixture deployment failed", data["error"])
-                self.assertEqual(events.read_text().splitlines(), ["A", "B", "restore"])
-                return
+                if fail != "after-pair":
+                    self.assertEqual(events.read_text().splitlines(), ["A", "B", "restore"])
+                    return
+                self.assertEqual(len(data["pairs"]), 1)
+                first_salt = data["pairs"][0]["salt"]
+                deploy.write_text(
+                    "param($Deployment,$Arm)\n"
+                    f"Add-Content -LiteralPath '{events}' -Value $Arm\n", encoding="utf-8")
+                result = subprocess.run(command + ["-ABResume"], capture_output=True, text=True, timeout=180)
+                data = json.loads((output / "result" / "ab-result.json").read_text(encoding="utf-8-sig"))
+                self.assertEqual(data["pairs"][0]["salt"], first_salt)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertTrue(data["complete"])
             self.assertTrue(data["hash_identity"])
-            self.assertEqual(events.read_text().splitlines(), ["A", "B", "B", "A", "A", "B", "restore"])
+            expected = ["A", "B", "B", "restore", "B", "A", "A", "B", "restore"] if fail else [
+                "A", "B", "B", "A", "A", "B", "restore"]
+            self.assertEqual(events.read_text().splitlines(), expected)
             self.assertEqual(len(data["pairs"]), 3)
             for pair in data["pairs"]:
                 self.assertEqual(pair["A"]["prefill"][0]["request_sha256"],
@@ -144,6 +159,9 @@ class PairedHarness(unittest.TestCase):
 
     def test_failed_deploy_restores_original(self):
         self.run_mode(fail=True)
+
+    def test_resume_keeps_complete_pairs(self):
+        self.run_mode(fail="after-pair")
 
 
 if __name__ == "__main__":

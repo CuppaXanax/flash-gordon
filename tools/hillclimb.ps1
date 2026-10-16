@@ -20,6 +20,7 @@ param(
     [ValidateRange(3,30)][int]$ABRounds = 3,
     [ValidateSet('ABAB','ABBA')][string]$ABOrder = 'ABBA',
     [string]$ABOutput = '',
+    [switch]$ABResume,
     [int]$RequestTimeoutSeconds = 900
 )
 

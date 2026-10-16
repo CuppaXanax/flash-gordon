@@ -8,6 +8,8 @@ pwsh -NoProfile -File tools\hillclimb.ps1 -ABConfig .build\abq\main-config.json 
 
 `ABConfig` is a JSON object with `A`, `B`, `deploy_script`, `restore_script`, `change_kind` (`exact` or `weight-format`), and optional `contexts` (default 4096,32768,131072). Deployment hooks receive `-Deployment <hashtable> -Arm A|B`; they must block until the same model is healthy. The restore hook runs even after benchmark or deployment failure. There is no automatic promotion. Never use `-WriteReference` in A/B mode.
 
+`-ABResume` can continue an **incomplete** output directory after an operational failure. It retains every complete paired round, repeats only an uncommitted interrupted pair with a new salt, and rejects changes to arm identities/flags, context set, order or total rounds. Partial arm files are retained with an interrupted suffix. It refuses completed runs: resuming is not permission to add favorable observations or repeat until pass. An unsupported optional sensor read is recorded as unavailable, not a serving/deployment failure.
+
 The included `ab-deploy.ps1`/`ab-instance.sh` operator accepts only the eight production owners, original/mix-04 manifests, and isolated `YYYYMMDD-abq*` releases. It verifies executable/manifest hashes, stops only owned numeric PIDs with exact executable and manifest arguments, waits after TERM, and refuses force/name kills. Original logs/PIDs remain outside the immutable original release. `.build\abq\live.json` records the last attempted deployment before launch so partial starts can be rolled back. The fleet runner receives an explicit target array. Do not run two operators concurrently.
 
 ## Workload and accounting
