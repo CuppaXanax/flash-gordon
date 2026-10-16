@@ -988,8 +988,8 @@ static fg_status pipeline_roundtrip(fg_fabric *fabric,uint32_t rank,fg_error *er
     for(uint32_t slot=0;status==FG_OK&&slot<2u;slot++)
         status=fg_pipeline_start(&pipeline,slot,pipeline_probe_job,&probes[slot],err);
     while(status==FG_OK&&(pipeline.slots[0].active||pipeline.slots[1].active)){
-        bool progress=false;
-        for(uint32_t slot=0;slot<2u;slot++)progress|=fg_pipeline_turn(&pipeline,slot);
+        uint32_t selected=fg_pipeline_pick(&pipeline);
+        bool progress=fg_pipeline_turn(&pipeline,selected);
         if(!progress)usleep(100u);
         for(uint32_t slot=0;slot<2u;slot++)
             if(probes[slot].status!=FG_OK){status=probes[slot].status;*err=probes[slot].error;}

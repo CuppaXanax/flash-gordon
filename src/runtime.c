@@ -9,6 +9,7 @@
 #include "fg_ngram.h"
 #include "fg_owner.h"
 #include "fg_output.h"
+#include "fg_pipeline.h"
 #include "fg_q38_schema.h"
 #include "fg_qsa.h"
 #include "fg_qsa_cache.h"
@@ -3016,7 +3017,7 @@ static fg_status qsa_page_transport_ensure(qsa_page_transport *transport,fg_erro
 }
 
 #define FG_PREFILL_FRAMES 8u
-typedef struct fg_coordinator {const fg_manifest *manifest;fg_runtime_options options;fg_session_identity identity;fg_model *model;fg_expert_executor *expert;fg_owner_executor *owner;fg_fabric *fabric;fg_ngram_store *ngram;fg_tokenizer *tokenizer;prefill_worker_buffers prefill_expert[FG_PREFILL_FRAMES];prefill_layer_buffers prefill_layer[FG_PREFILL_FRAMES];qsa_page_transport qsa_pages;uint64_t session_id;uint8_t *async_recv_payloads[FG_GROUP_SIZE];const char *directory;atomic_uint transport_state;fg_sampler_config sampler;fg_sampler_state sampler_state;bool ring_prefill;fg_vk_tensor *ring_output[FG_PREFILL_FRAMES];bool ring_decode;uint8_t *decode_work_wire,*decode_result_wire;fg_layer_work decode_work;fg_layer_result decode_result;fg_output_slice *output_slice;depthb_owner_runtime depthb;layer_work_context depthb_work;uint32_t depthb_generation;uint32_t output_session;bool depthb_restore_pending;bool multi_session;char ledger[FG_LEDGER_LINE_MAX];} fg_coordinator;
+typedef struct fg_coordinator {const fg_manifest *manifest;fg_runtime_options options;fg_session_identity identity;fg_model *model;fg_expert_executor *expert;fg_owner_executor *owner;fg_fabric *fabric;fg_ngram_store *ngram;fg_tokenizer *tokenizer;prefill_worker_buffers prefill_expert[FG_PREFILL_FRAMES];prefill_layer_buffers prefill_layer[FG_PREFILL_FRAMES];qsa_page_transport qsa_pages;uint64_t session_id;uint8_t *async_recv_payloads[FG_GROUP_SIZE];const char *directory;atomic_uint transport_state;fg_sampler_config sampler;fg_sampler_state sampler_state;bool ring_prefill;fg_vk_tensor *ring_output[FG_PREFILL_FRAMES];bool ring_decode;uint8_t *decode_work_wire,*decode_result_wire;fg_layer_work decode_work;fg_layer_result decode_result;fg_output_slice *output_slice;depthb_owner_runtime depthb;layer_work_context depthb_work;uint32_t depthb_generation;uint32_t output_session;bool depthb_restore_pending;bool multi_session;uint32_t prefill_output_tokens;char ledger[FG_LEDGER_LINE_MAX];} fg_coordinator;
 
 static uint64_t coordinator_prefill_host_bytes(const prefill_worker_buffers *buffers){
     if(!buffers)return 0;
@@ -4039,6 +4040,20 @@ typedef struct ring_slot {
     fg_vk_tensor *output;
 } ring_slot;
 
+static ring_slot *ring_slot_find(ring_slot slots[FG_PREFILL_FRAMES],
+    uint32_t first,uint32_t count){
+    for(uint32_t i=0;i<FG_PREFILL_FRAMES;i++)
+        if(slots[i].active&&slots[i].first_token==first&&slots[i].token_count==count)
+            return &slots[i];
+    return NULL;
+}
+
+static bool ring_slot_finish(ring_slot *slot,uint32_t first,uint32_t *prefilled){
+    if(!slot||!slot->active||slot->first_token!=first+*prefilled)return false;
+    *prefilled+=slot->token_count;slot->active=false;
+    return true;
+}
+
 static fg_status ring_send_block_work(fg_fabric *fabric,const fg_manifest *manifest,
     uint32_t self,uint64_t session_id,uint32_t destination,uint32_t layer,
     uint32_t first_token,uint16_t token_count,const uint32_t *positions,
@@ -4166,7 +4181,6 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
         return FG_ERR_MISMATCH;
     }
     uint32_t microbatch=manifest->prefill_microbatch;
-    if(coordinator->multi_session&&microbatch>32u)microbatch=32u;
     fg_vk_context *vk=fg_model_vk(coordinator->model);
     fg_vk_tensor *embedding=fg_model_tensor(coordinator->model,"token_embd.weight");
     if(!embedding){fg_error_set(err,FG_ERR_MISMATCH,"coordinator is missing token_embd.weight");return FG_ERR_MISMATCH;}
@@ -4206,14 +4220,14 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
             status=FG_ERR_UNAVAILABLE;
         }
     }
-    uint32_t total_chunks=(token_count+microbatch-1u)/microbatch;
-    uint32_t next_chunk=0,in_flight=0,completed=0,prefilled=0;
+    uint32_t next_chunk=0,issued_tokens=0,in_flight=0,completed=0,prefilled=0;
     fg_vk_tensor *last_output=NULL;
     bool ring_trace=getenv("FG_RING_TRACE")!=NULL;
     bool aborted=false;
     double ring_t0=dispatch_ts();
-    while(status==FG_OK&&completed<total_chunks){
-        if(next_chunk<total_chunks&&in_flight<(coordinator->multi_session?1u:FG_PREFILL_FRAMES)){
+    while(status==FG_OK&&prefilled<token_count){
+        fg_pipeline_budget budget=fg_pipeline_prefill_budget(microbatch,FG_PREFILL_FRAMES);
+        if(issued_tokens<token_count&&in_flight<budget.frames){
             if(!aborted&&interrupted&&interrupted(interrupt_context))aborted=true;
             if(aborted&&!in_flight)break;
             if(aborted)goto receive;
@@ -4226,14 +4240,14 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
             }
             struct timespec issue_start={0};
             if(ring_trace)clock_gettime(CLOCK_MONOTONIC,&issue_start);
-            uint32_t chunk_first=first_token+chunk*microbatch;
-            uint32_t chunk_tokens=token_count-chunk*microbatch;
-            if(chunk_tokens>microbatch)chunk_tokens=microbatch;
+            uint32_t chunk_first=first_token+issued_tokens;
+            uint32_t chunk_tokens=token_count-issued_tokens;
+            if(chunk_tokens>budget.tokens)chunk_tokens=budget.tokens;
             slot->active=true;slot->block_done=false;
             slot->first_token=chunk_first;slot->chunk_index=chunk;
             slot->token_count=(uint16_t)chunk_tokens;
             prefill_layer_buffers *layer=&coordinator->prefill_layer[f];
-            status=fg_vk_tensor_write(layer->token_tensor,0,token_ids+chunk*microbatch,
+            status=fg_vk_tensor_write(layer->token_tensor,0,token_ids+issued_tokens,
                 (uint64_t)chunk_tokens*4u,err);
             if(status==FG_OK)vision_fill_positions(vision,chunk_first,chunk_tokens,
                                                    position_bias,slot->positions);
@@ -4259,12 +4273,13 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
                 (uint16_t)chunk_tokens,slot->positions,hyper_host,
                 ngram_view?ngram_host:NULL,work_wire,work_capacity,err);
             if(status==FG_OK){
-                next_chunk++;in_flight++;
+                next_chunk++;in_flight++;issued_tokens+=chunk_tokens;
                 if(ring_trace){struct timespec issue_end;clock_gettime(CLOCK_MONOTONIC,&issue_end);
                     fprintf(stderr,
                     "RING_ISSUE chunk=%u first=%u in_flight=%u issue_ms=%.1f t=%.3f\n",
                     chunk,chunk_first,in_flight,
                     elapsed_seconds(&issue_start,&issue_end)*1000.0,dispatch_ts()-ring_t0);}
+                fg_pipeline_checkpoint();
             }
             continue;
         }
@@ -4293,19 +4308,19 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
             }
             numerics_trace_host("RECV_WORK",0u,work.layer,work.first_token,
                 work.token_count,hyper_host);
-            uint32_t chunk=(work.first_token-first_token)/microbatch,f=chunk%FG_PREFILL_FRAMES;
-            ring_slot *slot=&slots[f];
-            if(!slot->active||slot->chunk_index!=chunk||
-               slot->first_token!=work.first_token||slot->token_count!=work.token_count){
+            ring_slot *slot=ring_slot_find(slots,work.first_token,work.token_count);
+            if(!slot){
                 fg_error_set(err,FG_ERR_MISMATCH,"ring work does not match an in-flight chunk");
                 status=FG_ERR_MISMATCH;
                 break;
             }
+            uint32_t chunk=slot->chunk_index;
             if(ring_trace)fprintf(stderr,
                 "RING_STAGE chunk=%u layer=%u in_flight=%u t=%.3f\n",
                 chunk,work.layer,in_flight,dispatch_ts()-ring_t0);
             struct timespec own_start={0};
-            if(ring_trace)clock_gettime(CLOCK_MONOTONIC,&own_start);
+            if(ring_trace||coordinator->multi_session)
+                clock_gettime(CLOCK_MONOTONIC,&own_start);
             memcpy(slot->positions,positions_scratch,(size_t)work.token_count*3u*4u);
             /* The coordinator executes its own block inline, one chunk at a
              * time, so every frame shares the base owner slot. */
@@ -4333,20 +4348,30 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
                         work.first_token,(uint16_t)work.token_count,slot->positions,
                         hyper_host,NULL,work_wire,work_capacity,err);
                 }else{
-                    bool final=completed+1u==total_chunks;
+                    bool final=work.first_token+work.token_count==first_token+token_count;
                     if(final)status=fg_vk_tensor_write(slot->output,0,hyper_host,
                         (uint64_t)work.token_count*FG_HYPER_WIDTH*4u,err);
-                    slot->active=false;in_flight--;completed++;
-                    if(final)last_output=slot->output;
+                    if(!ring_slot_finish(slot,first_token,&prefilled)){
+                        fg_error_set(err,FG_ERR_MISMATCH,"out-of-order ring completion");
+                        status=FG_ERR_MISMATCH;break;
+                    }
+                    in_flight--;completed++;
+                    if(final){last_output=slot->output;
+                        coordinator->prefill_output_tokens=work.token_count;}
                     if(status==FG_OK)status=coordinator_publish_qsa_pages(coordinator,
                         work.first_token,(uint16_t)work.token_count,err);
                     if(status==FG_OK)status=coordinator_warm_qsa_issue(coordinator,
                         work.first_token,(uint16_t)work.token_count,err);
                 }
             }
-            if(ring_trace){struct timespec own_end;clock_gettime(CLOCK_MONOTONIC,&own_end);
-                fprintf(stderr,"RING_OWN_BLOCK chunk=%u layers=%u..%u ms=%.1f\n",
-                    chunk,work.layer,last,elapsed_seconds(&own_start,&own_end)*1000.0);}
+            if(ring_trace||coordinator->multi_session){
+                struct timespec own_end;clock_gettime(CLOCK_MONOTONIC,&own_end);
+                double seconds=elapsed_seconds(&own_start,&own_end);
+                if(status==FG_OK)fg_pipeline_observe_prefill(work.token_count,
+                    (uint64_t)(seconds*1e9));
+                if(ring_trace)fprintf(stderr,"RING_OWN_BLOCK chunk=%u layers=%u..%u ms=%.1f\n",
+                    chunk,work.layer,last,seconds*1000.0);
+            }
         }else if(type==FG_MSG_PREFILL_LAYER_RESULT){
             fg_prefill_layer_result result={0};
             fg_status decode_status=fg_prefill_layer_result_decode(&result,hyper_host,
@@ -4363,21 +4388,25 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
             }
             numerics_trace_host("RECV_RESULT",0u,FG_LAYER_COUNT-1u,result.first_token,
                 result.token_count,hyper_host);
-            uint32_t chunk=(result.first_token-first_token)/microbatch,f=chunk%FG_PREFILL_FRAMES;
-            ring_slot *slot=&slots[f];
-            if(!slot->active||slot->chunk_index!=chunk||
-               slot->first_token!=result.first_token||slot->token_count!=result.token_count){
+            ring_slot *slot=ring_slot_find(slots,result.first_token,result.token_count);
+            if(!slot){
                 fg_error_set(err,FG_ERR_MISMATCH,"ring result does not match an in-flight chunk");
                 status=FG_ERR_MISMATCH;
                 break;
             }
+            uint32_t chunk=slot->chunk_index;
             struct timespec result_start={0};
             if(ring_trace)clock_gettime(CLOCK_MONOTONIC,&result_start);
-            bool final=completed+1u==total_chunks;
+            bool final=result.first_token+result.token_count==first_token+token_count;
             if(final)status=fg_vk_tensor_write(slot->output,0,result.hyper,
                 (uint64_t)result.token_count*FG_HYPER_WIDTH*4u,err);
-            slot->active=false;in_flight--;completed++;
-            if(final)last_output=slot->output;
+            if(!ring_slot_finish(slot,first_token,&prefilled)){
+                fg_error_set(err,FG_ERR_MISMATCH,"out-of-order ring completion");
+                status=FG_ERR_MISMATCH;break;
+            }
+            in_flight--;completed++;
+            if(final){last_output=slot->output;
+                coordinator->prefill_output_tokens=result.token_count;}
             if(status==FG_OK)status=coordinator_publish_qsa_pages(coordinator,
                 result.first_token,result.token_count,err);
             if(status==FG_OK)status=coordinator_warm_qsa_issue(coordinator,
@@ -4396,8 +4425,6 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
         }
     }
     if(status==FG_OK&&aborted){
-        prefilled=completed*microbatch;
-        if(prefilled>token_count)prefilled=token_count;
         fg_error_set(err,FG_ERR_INTERRUPTED,"prefill interrupted after %u of %u tokens",
                      prefilled,token_count);
         status=FG_ERR_INTERRUPTED;
@@ -5983,6 +6010,7 @@ static fg_status runtime_generate_tokens(
     float logit=runtime->next_logit;
     fg_vk_tensor *prefill_output=NULL;
     uint32_t prefilled_pipeline=0;
+    fg_pipeline_set_phase(FG_PIPELINE_PREFILL);
     if(prefill_offset<prompt->count){
         state_mutated=true;
         clock_gettime(CLOCK_MONOTONIC,&prefill_start);
@@ -6001,12 +6029,13 @@ static fg_status runtime_generate_tokens(
     if(status==FG_OK&&prefill_offset<prompt->count){
         uint32_t prefilled=(uint32_t)(prompt->count-prefill_offset);
         uint32_t quantum=runtime->manifest->prefill_microbatch;
-        if(runtime->coordinator.multi_session&&quantum>32u)quantum=32u;
-        uint32_t final_count=prefilled%quantum;
+        uint32_t final_count=runtime->coordinator.ring_prefill?
+            runtime->coordinator.prefill_output_tokens:prefilled%quantum;
         if(!final_count)final_count=quantum;
         status=fg_vk_tensor_view(prefill_output,(uint64_t)(final_count-1u)*FG_HYPER_WIDTH*4u,
                                  FG_HYPER_WIDTH*4u,&last_hyper,err);
     }
+    if(status==FG_OK)fg_pipeline_set_phase(FG_PIPELINE_DECODE);
     if(status==FG_OK&&last_hyper)
         status=coordinator_output(&runtime->coordinator,(uint32_t)runtime->history_count-1u,
                                   last_hyper,&next,&logit,err);

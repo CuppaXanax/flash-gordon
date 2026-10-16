@@ -1,6 +1,9 @@
 # Independent sessions through the ring
 
 Status: **fleet-qualified NO-GO; do not promote this configuration**.
+The adaptive scheduler repair below has local regression coverage only; the
+qualification numbers in this introduction describe the previous fixed-32
+scheduler, not new performance measurements.
 The main-based integration was tested on .42–.49 against immutable original
 production with three fresh-salt paired rounds. The repaired `79b0efc` native
 build and mix-04 pack pass all 15 same-pack single-session canonical hashes,
@@ -62,8 +65,11 @@ MTP and multimodal concurrency are not qualified by this text-serving change.
 Two stackful cooperative jobs run on the existing engine thread. They execute
 the normal generation loop, yielding **before** a fabric receive submits an
 io_uring operation. The dispatcher peeks headers, then resumes the job whose
-session/peer/channel is ready. One turn resumes at most one job; turns alternate
-between slots. This permits A at rank k while B is at rank j, unlike running
+session/peer/channel is ready. One turn resumes at most one job. Ready streamed
+decode has priority over other decode, which has priority over prefill;
+equal-priority jobs alternate. Sleeping jobs are polled without selecting their
+GPU state, and only a switch to a ready job drains/selects owner state. This
+permits A at rank k while B is at rank j, unlike running
 two complete generations serially or batching two tokens at the same position.
 
 The high byte of frame flags carries the slot; request ID remains the
@@ -92,19 +98,94 @@ payloads are copied before yielding; shared transient tensors must never be
 retained as live inputs across a receive. Ring output is consumed into the
 output request before another job can overwrite it.
 
-In two-session mode prefill has a maximum **32-token quantum** and **one chunk
-in flight per session**. Thus an agent cannot queue an entire long prefill
-ahead of chat decode. Decode tokens and prefill chunks advance independently
-around the ring. A stage is not preempted in the middle of a GPU dispatch.
+With only one active request, prefill uses the **full sealed microbatch and all
+eight frames**, exactly as the single-session issue pipeline. An idle resident
+conversation does not throttle another request. With two active requests, the
+default is a maximum **128-token quantum and one frame per session**. While
+another session decodes, a **15 ms soft rank-service budget** can shrink that
+cap further, down to one token. It uses the worst observed coordinator
+prefill-block wall cost per token (including its outgoing send), learned also
+during idle/full-depth prefill. Without a sample it starts at one token rather
+than assuming a 128-token chunk is cheap. Smaller chunks' fixed overhead can
+raise the estimate on subsequent observations. This conservative estimate is
+shared by the two slots and is reset on API restart.
+
+The live policy is checked before every issue, not just at prompt start. Each
+completed issue also yields to admit newly queued requests and run ready
+streamed decode before issuing another quantum. When the other request finishes, full depth
+and microbatch are restored without restarting prefill.
+
+Already-issued frames are not canceled on the idle-to-contended transition:
+the old window drains while no new frame is issued above the new cap. A quantum
+change uses actual token offsets/counts, not a fixed microbatch divisor, for
+return matching, final output-row selection and interrupted-prefix frontiers.
+Decode tokens and prefill chunks advance independently around the ring.
+A stage is not preempted in the middle of a GPU dispatch.
 Tokenization, media preprocessing, filesystem stalls and a TCP frame transfer
 are not preemptible either: this is bounded text-prefill scheduling, not a
 hard real-time TTFT guarantee. The two sessions still share stage bandwidth,
 page cache, output-head helpers and TCP channels.
 
+The old 32-token one-frame policy averaged about 0.83 s/chunk in the first
+4K qualification trial; blindly raising that quantum to 128 is not a latency
+fix. Service-time sizing, rather than the token cap alone, targets the ~1.5x
+gap objective: 15 ms is below half the measured 37.437 ms solo decode interval.
+For example, an observed 2.5 ms/token rank cost selects six tokens, not 128.
+This is still **not a measured gap guarantee**: other ranks, fixed dispatch
+costs, filesystem stalls and the old in-flight window can exceed the estimate.
+
+Fleet retesting must measure loaded token gaps and TTFT as well as throughput;
+if a rank's quantum service time exceeds half the solo decode interval, the
+~1.5x gap objective cannot be claimed. Keep window 1 and tune the service budget
+against the loaded gap gate; `FG_MULTI_PREFILL_SLICE_US=0` is a fixed-cap
+bisection, not the latency-protecting default. See `docs/FLAGS.md` for accepted
+ranges. Coordinator launch examples (workers need no tuning flags):
+
+```sh
+# Defaults; prepend to the existing API launcher command below.
+FG_MULTI_PREFILL_TOKENS=128 FG_MULTI_PREFILL_WINDOW=1 FG_MULTI_PREFILL_SLICE_US=15000 FG_MULTI_DECODE_PRIORITY=1 \
+  ./flash-gordon api --manifest pack/manifest.fgm --sessions 2 --port 8080
+# Priority-only bisection; keep the same binary, pack, cap and window.
+FG_MULTI_PREFILL_TOKENS=128 FG_MULTI_PREFILL_WINDOW=1 FG_MULTI_PREFILL_SLICE_US=15000 FG_MULTI_DECODE_PRIORITY=0 \
+  ./flash-gordon api --manifest pack/manifest.fgm --sessions 2 --port 8080
+```
+
 Client cancellation is observed at existing completed token/chunk boundaries;
 already-issued work is drained before retaining the exact frontier. A transport,
 GPU or protocol failure is fail-closed for the serving process, not an attempt
 to continue the other session on a potentially corrupt ring. Restart all ranks.
+
+### Decode diagnosis and ring prediction
+
+The previous **0.81x chat metric is wall TPS**, not decode-only TPS. The three
+paired qualification rounds contain the following chat measurements (seconds
+outside decode include prefill/queue/HTTP work; they are not pure prefill):
+
+| Round | Original engine TPS | Fixed-32 engine TPS | Original outside decode (s) | Fixed-32 outside decode (s) |
+|---|---:|---:|---:|---:|
+| 0 | 27.35 | 24.38 | 2.02 | 3.07 |
+| 1 | 26.07 | 23.82 | 2.09 | 3.04 |
+| 2 | 27.40 | 23.60 | 2.07 | 3.07 |
+
+Thus decode-only retention was approximately 0.86–0.91x; about another second
+of non-decode delay also depressed wall TPS. Source inspection found no
+generation-long mutex: the admission mutex covers queue operations, the send
+mutex one frame, and rank-local GPU execution is intentionally serialized.
+There was unnecessary owner activation/static draining on every attempted
+turn, including sleeping jobs; the ready-first picker removes that work.
+This is not evidence that it explains the entire measured decode regression.
+Shared head/GPU service, TCP head-of-line blocking and dispatch gaps remain
+possible contributors and need profiling under the new binary.
+
+From `DECODE_PROFILE.md`, normal solo latency is L=37.437 ms, with rank service
+3.45–4.32 ms and roughly 0.8 ms per participating head shard. For N independent
+circulating tokens, the ideal closed-ring bound is
+`T_stream >= max(L, N * max_rank_service)`; include head service in a rank's
+demand. At N=2, even `2*(4.32+0.8)=10.24 ms` is well below L. With tokens spaced
+around the ring, the expected ideal rate is therefore **~26–27 TPS per stream,
+~53 TPS aggregate**, not half solo per stream. Actual contention and scheduling
+can lower it; this model is a prediction, not a new fleet result. Profiling
+that disables static replay must not be compared with normal replay timings.
 
 ## Memory admission at 262K
 
@@ -160,6 +241,14 @@ terminal usage, a delayed cold agent and independent completion times.
 The QSA test opens real state files for both slots, resets one nonce, checks
 inode identity, writes through a retained owner handle, verifies the page-service
 view sees it, and checks the other slot's records/nonce are unchanged.
+Deterministic coroutine tests additionally cover full-depth idle policy and
+restoration, contended caps, conservative uncalibrated service sizing, measured
+service-budget shrinking, fixed-cap bisection, streamed/nonstream decode
+priority and decoder fairness. Variable 128/32/1/6/256/19-token chunks verify
+exact return matching and interrupted-prefix accounting. Invalid tuning values
+fail parsing; the registered flag gate passes. The native Windows Python run
+executes all four PowerShell fixtures (WSL Python alone skips them without
+PowerShell on PATH).
 
 Known baseline failures must not be reported as passes: ordinary
 `tests/test_fabric` has an output-config protocol assertion failure;

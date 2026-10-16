@@ -46,8 +46,23 @@ owner-state frontier) is the default. Disable it per run with
 session-level cold reset (`fg_runtime_reset`) is unchanged.
 
 `flash-gordon api --sessions 2` enables two independent ring sessions with
-32-token prefill quanta; omitted/`--sessions 1` retains FIFO execution. This is
+adaptive prefill quanta; omitted/`--sessions 1` retains FIFO execution. This is
 a CLI capacity option, not an environment variant. See [MULTI_SESSION.md](MULTI_SESSION.md).
+
+### Experimental two-session scheduler tuning
+
+The scheduler repair is **not fleet-qualified**. These overrides tune/bisect
+the opt-in `--sessions 2` path; none is needed for its default policy. They are
+read once by the coordinator when creating the scheduler and ignored by
+`--sessions 1`. Invalid values fail initialization rather than silently falling
+back. Idle resident slots do not count as contenders.
+
+| Flag | Default | Effect | Status |
+|---|---|---|---|
+| `FG_MULTI_PREFILL_TOKENS` | `128` | Contended prefill quantum, integer 32–256, capped by the sealed microbatch. With no other active request, use the full sealed microbatch instead. | variant (opt-in) |
+| `FG_MULTI_PREFILL_WINDOW` | `1` | Contended frames in flight, integer 1–8, capped by the full frame window. With no other active request, restore all eight frames. Raising this increases decode head-of-line blocking. | variant (opt-in) |
+| `FG_MULTI_PREFILL_SLICE_US` | `15000` | Soft rank-service budget while another session decodes, integer 0–1000000 microseconds. Shrinks the token cap using the worst observed coordinator prefill-block cost per token, including its outgoing send. Starts conservatively at one token without a sample; never below one. `0` disables service-time sizing for fixed-cap bisection. Other ranks, fixed costs and already-issued frames can exceed the estimate; this is not a deadline guarantee. | variant (opt-in) |
+| `FG_MULTI_DECODE_PRIORITY` | `1` | Ready streamed decode, then other ready decode, then prefill; round-robin ties. `0` bisects to ready round-robin scheduling. Only `0` and `1` are accepted. | variant (opt-in) |
 
 ## Output split (4-way head handoff)
 

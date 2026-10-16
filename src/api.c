@@ -3755,6 +3755,9 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
     fg_status status =
         parse_chat_request(root, fg_runtime_model_name(runtime), &request, err);
     json_free(root);
+#ifndef FG_API_TEST_BUILD
+    if(status==FG_OK)fg_pipeline_set_streaming(request.stream);
+#endif
     if (status == FG_OK && request.media_count) {
         bool needs_video = false;
         bool needs_frames = false;
@@ -4170,15 +4173,22 @@ static fg_status api_pipeline_engine(fg_runtime *runtime,api_engine_queue *queue
     fg_pipeline pipeline;
     status=fg_pipeline_init(&pipeline,fg_runtime_fabric(runtime),err);
     if(status!=FG_OK){fg_runtime_close(jobs[1].runtime);return status;}
-    fprintf(stderr,"FG_MULTI_SESSION sessions=2 prefill_quantum=32 in_flight_per_session=1\n");
+    fprintf(stderr,"FG_MULTI_SESSION sessions=2 idle_prefill=full quantum=%u "
+        "window=%u slice_us=%u decode_priority=%u\n",pipeline.options.prefill_tokens,
+        pipeline.options.prefill_frames,pipeline.options.prefill_slice_us,
+        pipeline.options.decode_priority?1u:0u);
+    uint32_t active_slot=FG_PIPELINE_SESSIONS;
     while(status==FG_OK){
-        bool active=false,progress=false;
-        for(uint32_t slot=0;slot<FG_PIPELINE_SESSIONS;slot++){
-            if(!pipeline.slots[slot].active)continue;
-            active=true;
-            status=fg_runtime_activate(jobs[slot].runtime,err);
-            if(status!=FG_OK)break;
-            progress|=fg_pipeline_turn(&pipeline,slot);
+        bool active=pipeline.slots[0].active||pipeline.slots[1].active;
+        bool progress=false;
+        uint32_t slot=fg_pipeline_pick(&pipeline);
+        if(slot<FG_PIPELINE_SESSIONS){
+            if(active_slot!=slot){
+                status=fg_runtime_activate(jobs[slot].runtime,err);
+                if(status!=FG_OK)break;
+                active_slot=slot;
+            }
+            progress=fg_pipeline_turn(&pipeline,slot);
             if(!pipeline.slots[slot].active&&jobs[slot].status!=FG_OK){
                 status=jobs[slot].status;*err=jobs[slot].error;break;
             }

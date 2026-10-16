@@ -8,7 +8,136 @@
     } \
 } while(0)
 
+typedef struct scheduler_job {
+    fg_pipeline_phase phase;
+    bool streaming;
+    uint32_t steps,completed;
+    uint32_t service_tokens;
+    uint64_t service_ns;
+    fg_pipeline_budget budgets[5];
+} scheduler_job;
+
+static void scheduler_run(void *argument){
+    scheduler_job *job=argument;
+    fg_pipeline_set_phase(job->phase);
+    fg_pipeline_set_streaming(job->streaming);
+    while(job->completed<job->steps){
+        if(job->service_ns)fg_pipeline_observe_prefill(
+            job->service_tokens?job->service_tokens:128u,job->service_ns);
+        job->budgets[job->completed++]=fg_pipeline_prefill_budget(512u,FG_PREFILL_FRAMES);
+        fg_pipeline_checkpoint();
+    }
+}
+
+static int test_scheduler(void){
+    int result=0;fg_error error={0};
+    fg_pipeline pipeline={0};bool initialized=false;
+    fg_pipeline_options options;
+    unsetenv("FG_MULTI_PREFILL_TOKENS");unsetenv("FG_MULTI_PREFILL_WINDOW");
+    unsetenv("FG_MULTI_DECODE_PRIORITY");
+    unsetenv("FG_MULTI_PREFILL_SLICE_US");
+    REQUIRE(fg_pipeline_options_load(&options,&error)==FG_OK);
+    REQUIRE(options.prefill_tokens==128u&&options.prefill_frames==1u&&options.decode_priority);
+    REQUIRE(options.prefill_slice_us==15000u);
+    setenv("FG_MULTI_PREFILL_TOKENS","256",1);
+    setenv("FG_MULTI_PREFILL_WINDOW","2",1);setenv("FG_MULTI_DECODE_PRIORITY","0",1);
+    REQUIRE(fg_pipeline_options_load(&options,&error)==FG_OK);
+    REQUIRE(options.prefill_tokens==256u&&options.prefill_frames==2u&&!options.decode_priority);
+    const char *invalid[]={"","31","257","garbage","128x","-1","999999999999999999999"};
+    for(size_t i=0;i<sizeof(invalid)/sizeof(invalid[0]);i++){
+        setenv("FG_MULTI_PREFILL_TOKENS",invalid[i],1);
+        REQUIRE(fg_pipeline_options_load(&options,&error)==FG_ERR_ARGUMENT);
+    }
+    unsetenv("FG_MULTI_PREFILL_TOKENS");
+    setenv("FG_MULTI_PREFILL_WINDOW","9",1);
+    REQUIRE(fg_pipeline_options_load(&options,&error)==FG_ERR_ARGUMENT);
+    setenv("FG_MULTI_PREFILL_WINDOW","0",1);
+    REQUIRE(fg_pipeline_options_load(&options,&error)==FG_ERR_ARGUMENT);
+    unsetenv("FG_MULTI_PREFILL_WINDOW");setenv("FG_MULTI_DECODE_PRIORITY","2",1);
+    REQUIRE(fg_pipeline_options_load(&options,&error)==FG_ERR_ARGUMENT);
+    unsetenv("FG_MULTI_DECODE_PRIORITY");
+    setenv("FG_MULTI_PREFILL_SLICE_US","1000001",1);
+    REQUIRE(fg_pipeline_options_load(&options,&error)==FG_ERR_ARGUMENT);
+    setenv("FG_MULTI_PREFILL_SLICE_US","0",1);
+    REQUIRE(fg_pipeline_options_load(&options,&error)==FG_OK&&options.prefill_slice_us==0u);
+    unsetenv("FG_MULTI_PREFILL_SLICE_US");
+    REQUIRE(fg_pipeline_init(&pipeline,NULL,&error)==FG_OK);initialized=true;
+    scheduler_job prefill={.phase=FG_PIPELINE_PREFILL,.steps=5u};
+    scheduler_job decode={.phase=FG_PIPELINE_DECODE,.streaming=true,.steps=2u};
+    REQUIRE(fg_pipeline_start(&pipeline,0u,scheduler_run,&prefill,&error)==FG_OK);
+    REQUIRE(fg_pipeline_pick(&pipeline)==0u&&fg_pipeline_turn(&pipeline,0u));
+    REQUIRE(prefill.budgets[0].tokens==512u&&prefill.budgets[0].frames==FG_PREFILL_FRAMES);
+    REQUIRE(fg_pipeline_start(&pipeline,1u,scheduler_run,&decode,&error)==FG_OK);
+    REQUIRE(fg_pipeline_turn(&pipeline,0u));
+    REQUIRE(prefill.budgets[1].tokens==128u&&prefill.budgets[1].frames==1u);
+    REQUIRE(fg_pipeline_turn(&pipeline,1u));
+    REQUIRE(pipeline.slots[1].streaming&&pipeline.slots[1].phase==FG_PIPELINE_DECODE);
+    REQUIRE(fg_pipeline_turn(&pipeline,0u));
+    REQUIRE(prefill.budgets[2].tokens==1u); /* No service sample: fail conservative. */
+    prefill.service_ns=320000000u;
+    REQUIRE(fg_pipeline_turn(&pipeline,0u));
+    REQUIRE(prefill.budgets[3].tokens==6u&&prefill.budgets[3].frames==1u);
+    pipeline.next=0u;
+    REQUIRE(fg_pipeline_pick(&pipeline)==1u);
+    pipeline.options.decode_priority=false;
+    REQUIRE(fg_pipeline_pick(&pipeline)==0u);
+    pipeline.options.decode_priority=true;
+    REQUIRE(fg_pipeline_turn(&pipeline,fg_pipeline_pick(&pipeline)));
+    REQUIRE(decode.completed==2u&&prefill.completed==4u);
+    REQUIRE(fg_pipeline_turn(&pipeline,fg_pipeline_pick(&pipeline)));
+    REQUIRE(!pipeline.slots[1].active);
+    prefill.service_tokens=6u;prefill.service_ns=60000000u;
+    REQUIRE(fg_pipeline_turn(&pipeline,fg_pipeline_pick(&pipeline)));
+    REQUIRE(prefill.budgets[4].tokens==512u&&prefill.budgets[4].frames==FG_PREFILL_FRAMES);
+    REQUIRE(pipeline.prefill_ns_per_token==10000000u);
+    REQUIRE(fg_pipeline_turn(&pipeline,0u));
+    REQUIRE(fg_pipeline_pick(&pipeline)==FG_PIPELINE_SESSIONS);
+    scheduler_job a={.phase=FG_PIPELINE_DECODE,.streaming=true,.steps=2u},b=a;
+    REQUIRE(fg_pipeline_start(&pipeline,0u,scheduler_run,&a,&error)==FG_OK);
+    REQUIRE(fg_pipeline_start(&pipeline,1u,scheduler_run,&b,&error)==FG_OK);
+    REQUIRE(fg_pipeline_turn(&pipeline,0u)&&fg_pipeline_turn(&pipeline,1u));
+    pipeline.options.prefill_tokens=256u;pipeline.options.prefill_frames=2u;
+    pipeline.options.prefill_slice_us=0u;
+    REQUIRE(fg_pipeline_pick(&pipeline)==0u&&fg_pipeline_turn(&pipeline,0u));
+    REQUIRE(fg_pipeline_pick(&pipeline)==1u&&fg_pipeline_turn(&pipeline,1u));
+    REQUIRE(a.completed==2u&&b.completed==2u);
+    REQUIRE(a.budgets[1].tokens==256u&&a.budgets[1].frames==2u);
+    pipeline.next=1u;pipeline.slots[1].streaming=false;
+    REQUIRE(fg_pipeline_pick(&pipeline)==0u); /* Streamed decode beats nonstream decode. */
+    pipeline.slots[0].phase=FG_PIPELINE_PREFILL;
+    REQUIRE(fg_pipeline_pick(&pipeline)==1u); /* Nonstream decode still beats prefill. */
+    REQUIRE(fg_pipeline_turn(&pipeline,0u)&&fg_pipeline_turn(&pipeline,1u));
+    fg_pipeline_budget outside=fg_pipeline_prefill_budget(64u,FG_PREFILL_FRAMES);
+    REQUIRE(outside.tokens==64u&&outside.frames==FG_PREFILL_FRAMES);
+    fg_pipeline_observe_prefill(1u,UINT64_MAX);
+    REQUIRE(pipeline.prefill_ns_per_token==10000000u);
+    ring_slot slots[FG_PREFILL_FRAMES]={0};
+    uint32_t frontier=0u,first=17u;
+    const uint16_t counts[]={128u,32u,1u,6u,256u,19u};
+    for(uint32_t i=0,offset=0;i<6u;i++){
+        slots[i]=(ring_slot){.active=true,.first_token=first+offset,.token_count=counts[i]};
+        REQUIRE(ring_slot_find(slots,first+offset,counts[i])==&slots[i]);
+        REQUIRE(!ring_slot_find(slots,first+offset,counts[i]+1u));
+        offset+=counts[i];
+    }
+    REQUIRE(!ring_slot_finish(&slots[1],first,&frontier)&&frontier==0u);
+    for(uint32_t i=0;i<6u;i++){
+        REQUIRE(ring_slot_finish(&slots[i],first,&frontier));
+        REQUIRE(!ring_slot_find(slots,slots[i].first_token,counts[i]));
+        if(i==1u)REQUIRE(frontier==160u); /* Interrupted prefix, not chunks * quantum. */
+    }
+    REQUIRE(frontier==442u&&!ring_slot_finish(&slots[5],first,&frontier));
+cleanup:
+    if(initialized)fg_pipeline_destroy(&pipeline);
+    unsetenv("FG_MULTI_PREFILL_TOKENS");unsetenv("FG_MULTI_PREFILL_WINDOW");
+    unsetenv("FG_MULTI_DECODE_PRIORITY");
+    unsetenv("FG_MULTI_PREFILL_SLICE_US");
+    if(!result)puts("Adaptive prefill, streamed decode priority, fair turns and variable chunks: PASS");
+    return result;
+}
+
 int main(void){
+    if(test_scheduler())return 1;
     int result=0;
     fg_error error={0};
     fg_manifest *manifest=malloc(sizeof(*manifest));
