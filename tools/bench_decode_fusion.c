@@ -70,10 +70,14 @@ static void add_weight(fg_model *model,fg_manifest *manifest,uint32_t layer,
     uint64_t cooked_bytes=raw_bytes;
     fg_vk_tensor_format format=FG_VK_TENSOR_FORMAT_DEFAULT;
     if(expert){
-        if(type==12u){
+        if(type==12u||type==13u){
             layout=FG_TENSOR_LAYOUT_K_QUANT_EXPERT_COOKED;
             format=FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED;
             cooked_bytes=fg_k_quant_cooked_matrix_bytes(k,m,type);
+        }else if(type==8u){
+            layout=FG_TENSOR_LAYOUT_Q8_0_EXPERT_COOKED;
+            format=FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED;
+            cooked_bytes=fg_q8_0_cooked_matrix_bytes(k,m);
         }else{
             layout=FG_TENSOR_LAYOUT_Q5_1_EXPERT_COOKED;
             format=FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED;
@@ -119,7 +123,8 @@ static void add_weight(fg_model *model,fg_manifest *manifest,uint32_t layer,
         for(uint32_t i=0;i<48u;i++)((float *)raw)[i]=-1.0f;
     bool ok=true;
     if(expand)ok=fg_expand_iq4_q8_cooked(raw,cooked,cooked_bytes,k,m,false);
-    else if(layout==FG_TENSOR_LAYOUT_Q8_0_COOKED)ok=fg_cook_q8_0_rows(raw,cooked,cooked_bytes,k,m);
+    else if(layout==FG_TENSOR_LAYOUT_Q8_0_COOKED||layout==FG_TENSOR_LAYOUT_Q8_0_EXPERT_COOKED)
+        ok=fg_cook_q8_0_rows(raw,cooked,cooked_bytes,k,m);
     else if(layout==FG_TENSOR_LAYOUT_K_QUANT_EXPERT_COOKED)ok=fg_cook_k_quant_rows(raw,cooked,cooked_bytes,k,m,type);
     else if(layout==FG_TENSOR_LAYOUT_Q5_1_EXPERT_COOKED)ok=fg_cook_q5_1_rows(raw,cooked,cooked_bytes,k,m);
     else if(layout==FG_TENSOR_LAYOUT_DENSE_COMPACT)ok=fg_cook_dense_compact(raw,cooked,cooked_bytes,k,m,type);
@@ -537,12 +542,13 @@ static void test_small_sessions(fg_owner_executor *owner,fg_expert_executor *exp
 }
 
 int main(int argc,char **argv){
-    bool q4=false,intrusive=false,clocks=true,rollback_test=false,small_n=false,small_test=false,dense_bench=false,dense_only=false,session_test=false;
+    bool q4=false,intrusive=false,clocks=true,rollback_test=false,small_n=false,small_test=false,dense_bench=false,dense_only=false,session_test=false,mixed_experts=false;
     uint32_t warmup=256u,iterations=64u,windows=9u,batch=1u;
     uint32_t small_wg=0u,small_rows=0u;
     const char *dump=NULL,*routing_trace=NULL;
     for(int i=1;i<argc;i++){
         if(strcmp(argv[i],"--q4")==0)q4=true;
+        else if(strcmp(argv[i],"--mixed-experts")==0)mixed_experts=true;
         else if(strcmp(argv[i],"--ledger-only")==0)bench_ledger_only=true;
         else if(strcmp(argv[i],"--allow-reassociation")==0)bench_allow_reassociation=true;
         else if(strcmp(argv[i],"--profile")==0)intrusive=true;
@@ -644,7 +650,14 @@ int main(int argc,char **argv){
         {"indexer.q_norm.weight",128,1,0},{"indexer.q_proj.weight",2560,512,30}
     };
     for(uint32_t l=6;l<=11;l++){
-        for(size_t j=0;j<sizeof(common)/sizeof(*common);j++)add_weight(model,manifest,l,common[j],q4,&error);
+        for(size_t j=0;j<sizeof(common)/sizeof(*common);j++){
+            bench_spec weight=common[j];
+            if(mixed_experts&&(l==8u||l==10u)){
+                if(j==0u)weight.type=8u;
+                if(l==8u&&(j==1u||j==2u))weight.type=13u;
+            }
+            add_weight(model,manifest,l,weight,q4,&error);
+        }
         const bench_spec *spec=(l&3u)==3u?qsa:gdn;
         size_t count=(l&3u)==3u?sizeof(qsa)/sizeof(*qsa):sizeof(gdn)/sizeof(*gdn);
         for(size_t j=0;j<count;j++)add_weight(model,manifest,l,spec[j],q4,&error);
@@ -679,10 +692,10 @@ int main(int argc,char **argv){
     if(clocks&&!intrusive)check(fg_vk_layer_clock_enable(model->vk,&error),&error);
     const char *small_flags=getenv("FG_SMALL_KERNELS");
     unsigned long small_mask=small_flags?strtoul(small_flags,NULL,0):0u;
-    printf("{\"kind\":\"config\",\"weights\":\"synthetic-%s\",\"first_layer\":6,"
+    printf("{\"kind\":\"config\",\"weights\":\"synthetic-%s\",\"mixed_experts\":%s,\"first_layer\":6,"
            "\"last_layer\":11,\"resident_bytes\":%llu,\"warmup\":%u,\"iterations\":%u,"
            "\"windows\":%u,\"seed\":%u,\"batch\":%u,\"small_n\":%s,\"small_kernels\":%lu,\"fusion_mask\":%u,\"clocks\":%s,\"intrusive\":%s,\"routing_trace\":%s,\"device\":\"%s\"}\n",
-           q4?"q4-compact":"q8-cooked",(unsigned long long)model->weight_bytes,
+           q4?"q4-compact":"q8-cooked",mixed_experts?"true":"false",(unsigned long long)model->weight_bytes,
            warmup,iterations,windows,bench_seed,batch,
            small_n?"true":"false",small_mask,fg_vk_decode_fusion_mask(),clocks?"true":"false",intrusive?"true":"false",routing_trace?"true":"false",
            fg_vk_device_name(model->vk));

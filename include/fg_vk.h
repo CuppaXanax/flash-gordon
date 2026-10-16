@@ -85,6 +85,10 @@ fg_status fg_vk_small_n_experts(fg_vk_context *context,fg_vk_tensor *mid,fg_vk_t
     uint32_t gate_stride,uint32_t up_stride,uint32_t down_stride,
     uint32_t gate_type,uint32_t up_type,uint32_t down_type,
     uint32_t tokens,fg_error *err);
+fg_status fg_vk_small_n_q8_down(fg_vk_context *context,fg_vk_tensor *output,
+    const fg_vk_tensor *weights,const fg_vk_tensor *selected,
+    const fg_vk_tensor *input,const fg_vk_tensor *gates,uint32_t expert_stride,
+    uint32_t tokens,fg_error *err);
 fg_status fg_vk_small_n_shared(fg_vk_context *context,fg_vk_tensor *output,
     const fg_vk_tensor *experts,const fg_vk_tensor *shared,
     const fg_vk_tensor *scalar,uint32_t tokens,fg_error *err);

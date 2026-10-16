@@ -8,6 +8,35 @@ Production was restored and verified on all eight owners, and the ring was
 released after11m15s. Actual baseline numbers and evidence are in
 [MTP_SERVING.md](../results/hillclimb/MTP_SERVING.md).
 
+Cooked-Q8 down compatibility now has a conservative small-N path: one dispatch
+contains N independent native-N1 walks, preserving routing-slot order, block
+partition and reductions for both the default LDS path and the opt-in
+`FG_EXPERT_Q8_WIDE=1` subgroup path. It deliberately does not share Q8 weights across
+tokens or promote research kernels. Q4_K/Q5_K gate/up and both cooked Q5_1/Q8_0
+down are accepted for complete owner-local 512-expert slabs. Q5_1 is unchanged.
+The trained-pack serving gate above remains unqualified until rerun.
+
+Targeted component verification on an idle blade:
+
+```sh
+FG_SMALL_KERNELS=0 DS4_REMOTE_TEST_FILTER=expert_small_component ./tests/test_fg_vk
+DS4_REMOTE_TEST_FILTER=small_q8_down_native ./tests/test_fg_vk
+FG_TEST_Q8_DOWN_TENSOR=/path/to/authenticated-cooked-slab.bin \
+  DS4_REMOTE_TEST_FILTER=small_q8_down_native ./tests/test_fg_vk
+```
+
+The last test requires the exact complete 891289600-byte cooked slab; verify
+its SHA256 against the sealed manifest before running. It checks N2..4 bytewise
+against native N1 with synthetic dense, cancellation and sparse-basis inputs,
+plus an independent CPU basis oracle. This is a real-weight component gate,
+not a trained-model greedy or serving qualification. `bench-decode-fusion
+--q4 --mixed-experts` adds synthetic Q5_K/Q5_K/Q8_0 and Q4_K/Q4_K/Q8_0 layers
+to the six-layer fixture for causal/session/rollback coverage.
+The stock .50 synthetic compatibility receipts pass both native down modes,
+strict mask0 N2..4 output/state identity, mask330 reassociation tolerance,
+causal prefixes, two sessions and rollback; see
+[component receipt](../results/hillclimb/mtp-q8-down-compat.json).
+
 The offline-prepared acceptance lease and current-production restore procedure
 are documented in [MTP_CAPTURE.md](MTP_CAPTURE.md). This diagnostic gate uses
 replayed native proposals and the causal N=1 ring oracle, not MTP serving.

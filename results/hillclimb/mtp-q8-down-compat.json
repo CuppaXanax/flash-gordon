@@ -1,0 +1,61 @@
+{
+  "scope": "Cooked-Q8 small-N compatibility; no research-kernel or serving promotion",
+  "base": "5ce9b4dad08f8feee49cb022fb6a358d952030cc",
+  "blade": "192.168.42.50",
+  "device": "AMD BC-250 (RADV GFX1013)",
+  "hardware_policy": "Stock configuration; governor configuration compared unchanged; no clock/CU changes",
+  "source": "Synthetic weights, not the authenticated trained-pack tensor",
+  "raw_receipt_sha256": "aa07f35333a9b3b7c1402d7ef6ac681c1aaa8a2f49bcab4474505c15763635b5",
+  "raw_receipt_local": ".build/q8-stock-50.tar.gz",
+  "native_down": {
+    "input_width": 640,
+    "output_width": 2560,
+    "experts": 512,
+    "expert_stride": 1740800,
+    "slab_bytes": 891289600,
+    "selected_experts": "16 nonconsecutive experts at e*31+7; shared and changing selections",
+    "patterns": ["dense", "alternating +/-4096 cancellation", "sparse signed basis"],
+    "batch_sizes": [2, 3, 4],
+    "FG_EXPERT_Q8_WIDE": [0, 1],
+    "all_18_native_comparisons_bit_exact": true,
+    "independent_cpu_basis_max_relative_error": 3.98752276e-9,
+    "relative_tolerance": 1e-4,
+    "poison_outputs_each_dispatch": true,
+    "invalid_stride_format_and_partial_slab_rejected": true
+  },
+  "gate_up_cpu": {
+    "FG_SMALL_KERNELS": [0, 330],
+    "cases_per_mask": 36,
+    "gate_up_down_types": [[12,13,7],[13,12,7],[12,12,8],[13,13,8]],
+    "max_relative_error_both_masks": 8.61312131e-6,
+    "pass": true
+  },
+  "mixed_six_layer": {
+    "fixture": "Synthetic Q4_K/Q5_K gate-up, Q5_1/Q8_0 down; not a trained-pack fixture",
+    "mask_0": {
+      "N2_N3_N4_output_and_GDN_state_byte_identical_to_sequential_N1": true,
+      "max_absolute_output_error": 0,
+      "max_absolute_state_error": 0
+    },
+    "mask_330": {
+      "N2_N3_N4_component_tolerance_pass": true,
+      "max_absolute_output_error": 4.76837158e-7,
+      "max_absolute_state_error": 9.53674316e-6
+    },
+    "both_masks": {
+      "causal_prefix_bit_exact": true,
+      "two_session_isolation_bit_exact": true,
+      "rollback_kept_inputs_1_through_4_bit_exact": true
+    }
+  },
+  "restoration": {
+    "bc250_embed_health": "ok",
+    "bc250_rerank_health": "ok",
+    "governor_configuration_unchanged": true
+  },
+  "remaining_gates": [
+    "Authenticated real-pack Q8 slab on .51, both native modes and full production recipe",
+    "Exhaustive real-manifest family/format audit",
+    "Separately leased trained-model greedy and MTP serving qualification"
+  ]
+}

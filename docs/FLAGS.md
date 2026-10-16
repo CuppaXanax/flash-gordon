@@ -174,6 +174,7 @@ slice ranks (the foreign loader names the exact missing span at startup).
 | `FG_QSA_PREFETCH_TRACE` | unset (off) | QSA read-ahead staging trace (pages staged/served/dropped). | profiling |
 | `FG_BLOCK_BENCH` | unset (off) | Offline block-service bench; exits after printing per-layer wall times. | test/bench |
 | `FG_SHADER_DIR` | `vulkan` | Directory containing the SPIR-V files. | test/ops |
+| `FG_TEST_Q8_DOWN_TENSOR` | unset (synthetic fixture) | `small_q8_down_native` component test: read an authenticated, already-cooked 512-expert Q8_0 down slab (640 inputs, 2560 outputs, exactly 891289600 bytes). Compare N2..4 bytewise against native N1 on dense/cancellation/basis inputs and check the basis against an independent CPU decoder. Does not enable serving or assert whole-model quality. | test/bench |
 
 ## Vision tower
 

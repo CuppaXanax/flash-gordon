@@ -165,7 +165,7 @@ vulkan/fg_shared_swiglu_q4.spv: shaders/fg_dense_soa_impl.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_gdn_gate_controls*.comp)): shaders/fg_dense_soa_impl.glsl shaders/fg_dense_compact_gemv.glsl
 vulkan/fg_moe_decode_gate_up.spv vulkan/fg_roof_expert.spv: shaders/fg_moe_decode_gate_up.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_expert*.comp)): shaders/fg_moe_decode_gate_up.glsl
-vulkan/fg_moe_decode_down_reduce.spv vulkan/fg_roof_down_w32.spv vulkan/fg_roof_down_w64.spv: shaders/fg_moe_decode_down_reduce.glsl
+vulkan/fg_moe_decode_down_reduce.spv vulkan/fg_roof_down_w32.spv vulkan/fg_roof_down_w64.spv vulkan/fg_small_down_q8_exact.spv: shaders/fg_moe_decode_down_reduce.glsl
 vulkan/fg_roof_down_split.spv vulkan/fg_roof_down_split_w64.spv: shaders/fg_moe_decode_down_reduce.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_down_slots*.comp)): shaders/fg_moe_decode_down_reduce.glsl
 vulkan/fg_roof_down_rows1.spv vulkan/fg_roof_down_rows2.spv: shaders/fg_roof_down_rows.glsl

@@ -1,0 +1,47 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+layout(local_size_x=64) in;
+layout(set=0,binding=0) readonly buffer Weights{uint wb[];};
+layout(set=0,binding=1) readonly buffer Selected{uint selected[];};
+layout(set=0,binding=2) readonly buffer Input{vec4 x4[];};
+layout(set=0,binding=3) readonly buffer Gates{float gates[];};
+layout(set=0,binding=4) writeonly buffer Output{float y[];};
+layout(push_constant) uniform Push{
+    uint out_dim,in_dim,blocks,tile_bytes,expert_stride,slots,down_type;
+}pc;
+void main(){
+    // Preserve native N1's slot order, four block walks and five shuffles.
+    uint lane=gl_LocalInvocationID.x&7u;
+    uint parity=(gl_LocalInvocationID.x>>3u)&3u,token=gl_WorkGroupID.y;
+    uint row=gl_WorkGroupID.x*2u+(gl_LocalInvocationID.x>>5u);
+    bool live=row<pc.out_dim;
+    uint quant_offset=(pc.blocks*32u+63u)&~63u;
+    float accumulator=0.0;
+    if(live){
+        for(uint slot=0u;slot<pc.slots;slot++){
+            uint pair=token*pc.slots+slot,expert=selected[pair];
+            if(expert==0xffffffffu)continue;
+            uint row_base=expert*pc.expert_stride+(row>>4u)*pc.tile_bytes;
+            uint scale_word=((row_base+(row&15u)*2u)>>2u)+parity*8u;
+            uint quant_word=(row_base+quant_offset+(row&15u)*pc.blocks*32u)/4u+
+                lane+parity*8u;
+            uint in_vec=pair*(pc.in_dim>>2u)+lane+parity*8u;
+            float slot_acc=0.0;
+            for(uint block=parity;block<pc.blocks;block+=4u){
+                vec2 scale=unpackHalf2x16(wb[scale_word]);
+                float delta=(row&1u)!=0u?scale.y:scale.x;
+                slot_acc=fma(delta,dot(vec4(unpack8(int(wb[quant_word]))),
+                    x4[in_vec]),slot_acc);
+                scale_word+=32u;quant_word+=32u;in_vec+=32u;
+            }
+            accumulator=fma(gates[pair],slot_acc,accumulator);
+        }
+    }
+    accumulator+=subgroupShuffleXor(accumulator,4u);
+    accumulator+=subgroupShuffleXor(accumulator,2u);
+    accumulator+=subgroupShuffleXor(accumulator,1u);
+    accumulator+=subgroupShuffleXor(accumulator,8u);
+    accumulator+=subgroupShuffleXor(accumulator,16u);
+    if(live&&lane==0u&&parity==0u)y[token*pc.out_dim+row]=accumulator;
+}

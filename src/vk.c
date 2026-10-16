@@ -84,7 +84,7 @@ struct fg_vk_context {
     fg_vk_kernel argmax,dense_subgroup,dense_cooked,dense_cooked_r8,mtp_vocab,mtp_fc,mtp_norm,dense_quant[37];
     bool small_n;
     uint32_t small_workgroup,small_rows;
-    fg_vk_kernel small_dense[300],small_gate_up[8],small_down,small_down_reduce,small_shared,small_union,small_gdn;
+    fg_vk_kernel small_dense[300],small_gate_up[8],small_down,small_down_q8,small_down_reduce,small_shared,small_union,small_gdn;
     fg_vk_kernel small_plain[9];
     /* Decomposition benchmark kernels */
     fg_vk_kernel bench_stream,bench_dequant,bench_dot_nored;
@@ -273,6 +273,7 @@ static void destroy_kernel(fg_vk_context *context,fg_vk_kernel *kernel){
         for(uint32_t i=0;i<9u;i++)destroy_kernel(context,&context->small_plain[i]);
         for(uint32_t i=0;i<8u;i++)destroy_kernel(context,&context->small_gate_up[i]);
         destroy_kernel(context,&context->small_down);
+        destroy_kernel(context,&context->small_down_q8);
         destroy_kernel(context,&context->small_down_reduce);
         destroy_kernel(context,&context->small_shared);
         destroy_kernel(context,&context->small_union);
@@ -2659,16 +2660,44 @@ fg_status fg_vk_topk_select(fg_vk_context *c,fg_vk_tensor *out_scores,fg_vk_tens
     return status;
 }
 fg_status fg_vk_router_top10(fg_vk_context *c,fg_vk_tensor *selected,fg_vk_tensor *gates,const fg_vk_tensor *logits,uint32_t experts,uint32_t tokens,fg_error *err){uint64_t pairs=(uint64_t)tokens*FG_TOP_K;if(!c||experts!=FG_EXPERT_COUNT||!tokens||!tensor_range(logits,0,(uint64_t)tokens*experts*4u)||!tensor_range(selected,0,pairs*4u)||!tensor_range(gates,0,pairs*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid GPU top-10 router dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t experts,tokens;}push={experts,tokens};const fg_vk_tensor *bindings[]={logits,selected,gates};return dispatch(c,&c->router_top10,bindings,&push,tokens,1u,1u,err);}
+fg_status fg_vk_small_n_q8_down(fg_vk_context *c,fg_vk_tensor *output,
+    const fg_vk_tensor *weights,const fg_vk_tensor *selected,
+    const fg_vk_tensor *input,const fg_vk_tensor *gates,uint32_t stride,
+    uint32_t tokens,fg_error *err){
+    uint32_t rows=FG_HIDDEN_SIZE,in=640u;
+    if(!c||tokens<2u||tokens>4u||
+       stride!=fg_q8_0_cooked_matrix_bytes(in,rows)||
+       fg_vk_tensor_get_format(weights)!=FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED||
+       !tensor_range(weights,0,(uint64_t)stride*FG_EXPERT_COUNT)||
+       !tensor_range(selected,0,(uint64_t)tokens*FG_TOP_K*4u)||
+       !tensor_range(input,0,(uint64_t)tokens*FG_TOP_K*in*4u)||
+       !tensor_range(gates,0,(uint64_t)tokens*FG_TOP_K*4u)||
+       !tensor_range(output,0,(uint64_t)tokens*rows*4u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid owned cooked-Q8 small-N down dispatch");
+        return FG_ERR_ARGUMENT;
+    }
+    if(!c->small_down_q8.file)c->small_down_q8=(fg_vk_kernel){
+        .file=c->subgroup_expert_q8?"fg_small_down_q8_wide.spv":
+            "fg_small_down_q8_exact.spv",.bindings=5u,.push_bytes=28u};
+    struct{uint32_t rows,in,blocks,tile,stride,slots,type;}p={
+        rows,in,in/32u,(uint32_t)fg_q8_0_cooked_tile_bytes(in),stride,FG_TOP_K,8u};
+    const fg_vk_tensor *b[]={weights,selected,input,gates,output};
+    return dispatch(c,&c->small_down_q8,b,&p,rows/(c->subgroup_expert_q8?2u:8u),
+        tokens,1u,err);
+}
 fg_status fg_vk_small_n_experts(fg_vk_context *c,fg_vk_tensor *mid,fg_vk_tensor *down_parts,
     fg_vk_tensor *reduced,const fg_vk_tensor *gate,const fg_vk_tensor *up,
     const fg_vk_tensor *down,const fg_vk_tensor *activation,
     const fg_vk_tensor *tiles,const fg_vk_tensor *selected,const fg_vk_tensor *gates,
     uint32_t gs,uint32_t us,uint32_t ds,uint32_t gt,uint32_t ut,uint32_t dt,
     uint32_t tokens,fg_error *err){
+    bool q8_down=dt==8u&&fg_vk_tensor_get_format(down)==FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED;
+    bool q5_down=dt==7u&&fg_vk_tensor_get_format(down)==FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED;
     if(!c||tokens<2u||tokens>4u||
        (gt!=12u&&gt!=13u)||(ut!=12u&&ut!=13u)||
-       fg_vk_tensor_get_format(down)!=FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED||
-       dt!=7u||!tensor_range(gate,0,(uint64_t)gs*FG_EXPERT_COUNT)||
+       (!q5_down&&!q8_down)||
+       (q8_down&&ds!=fg_q8_0_cooked_matrix_bytes(640u,FG_HIDDEN_SIZE))||
+       !tensor_range(gate,0,(uint64_t)gs*FG_EXPERT_COUNT)||
        !tensor_range(up,0,(uint64_t)us*FG_EXPERT_COUNT)||
        !tensor_range(down,0,(uint64_t)ds*FG_EXPERT_COUNT)||
        !tensor_range(activation,0,(uint64_t)tokens*(FG_HIDDEN_SIZE/FG_QK8_K)*FG_Q8_K_BLOCK_BYTES)||
@@ -2678,7 +2707,7 @@ fg_status fg_vk_small_n_experts(fg_vk_context *c,fg_vk_tensor *mid,fg_vk_tensor 
        !tensor_range(mid,0,(uint64_t)tokens*FG_TOP_K*640u*4u)||
        !tensor_range(down_parts,0,(uint64_t)tokens*FG_TOP_K*FG_HIDDEN_SIZE*4u*4u)||
        !tensor_range(reduced,0,(uint64_t)tokens*FG_HIDDEN_SIZE*4u)){
-        fg_error_set(err,FG_ERR_ARGUMENT,"small-N expert path requires owned cooked K/Q5_1 tensors");
+        fg_error_set(err,FG_ERR_ARGUMENT,"small-N experts require owned cooked K gate/up and Q5_1/Q8_0 down tensors");
         return FG_ERR_ARGUMENT;
     }
     fg_vk_kernel *gate_up=&c->small_gate_up[((gt==13u?2u:0u)+(ut==13u?1u:0u))*2u+(tokens>2u)];
@@ -2709,6 +2738,11 @@ fg_status fg_vk_small_n_experts(fg_vk_context *c,fg_vk_tensor *mid,fg_vk_tensor 
         (uint32_t)fg_k_quant_cooked_tile_bytes(2560u,ut),gs,us,gt,ut};
     const fg_vk_tensor *gb[]={gate,up,activation,tiles,mid};
     fg_status status=dispatch(c,gate_up,gb,&gp,80u,tokens*FG_TOP_K,1u,err);
+    if(q8_down){
+        if(status==FG_OK)status=fg_vk_small_n_q8_down(c,reduced,down,selected,mid,
+            gates,ds,tokens,err);
+        return status;
+    }
     if(union_down){
         struct{uint32_t rows,in,tile,stride,tokens;}up={
             FG_HIDDEN_SIZE,640u,(uint32_t)fg_q5_1_cooked_tile_bytes(640u),ds,tokens};

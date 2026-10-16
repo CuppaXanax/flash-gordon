@@ -120,7 +120,8 @@ expected_test="$(printf '%s\n' \
     FG_ROOFLINE \
     FG_ROOF_DENSE \
     FG_ROOF_HC \
-    FG_ROOF_QSA | LC_ALL=C sort -u)"
+    FG_ROOF_QSA \
+    FG_TEST_Q8_DOWN_TENSOR | LC_ALL=C sort -u)"
 
 actual_code="$(extract src include)"
 actual_test="$(extract tests)"
