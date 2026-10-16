@@ -4,6 +4,8 @@
 /results/
 tools/bench-decode-fusion
 tools/bench-decode-fusion.d
+tools/q4-eval-batch
+tools/q4-eval-batch.d
 *.a
 
 # Object files and dependency files
