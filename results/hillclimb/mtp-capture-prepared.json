@@ -1,0 +1,42 @@
+{
+  "kind": "mtp-acceptance-prebuild",
+  "blade": "192.168.42.51",
+  "production_fleet_accessed": false,
+  "files": {
+    "source.tar": "9a99f4a07280e9c77ae2990b91088998a082229ac8cb6642c6315f64dab08eba",
+    "release.tar.gz": "ae739c6cfc75238818d61d9536d0a7b7380c3364916cac987068bacce76a02e2",
+    "native-q8.gguf": "536bab54b0a1bdea23b65871c4cdc38deee5803771501a0c770a0510bcd3283b",
+    "source/flash-gordon": "a32bc670e95b7bf8abc28b1e205985c6c71a30278b14bc4f57d6c3f4ed31dca9",
+    "source/tools/mtp-acceptance": "ca1de094f5d1dd6e2f658dae0c8aaace7420d7909df9f1d1736235d129e46736"
+  },
+  "corpus_minimum": {
+    "chat": 20,
+    "code": 20
+  },
+  "tokens": 259,
+  "anchors": 256,
+  "greedy": {
+    "chat": 4,
+    "code": 4,
+    "k": [
+      1,
+      2,
+      3
+    ],
+    "tokens": 256,
+    "verifier": "causal-N1-reference"
+  },
+  "wall_budget_minutes": 45,
+  "serving_small_n_linked": false,
+  "corpus_sha256": "11b338e29e9f7b5c80d1b631ddb810a9949491aa37c5356c55b8090ae1e5c787",
+  "validation": {
+    "production_access": false,
+    "flag_registry": "pass",
+    "host_mtp_sampler_decode_batch": "pass",
+    "analysis_tests": 7,
+    "native_gpu_self_tests": "pass",
+    "local_orchestration_tests": 4,
+    "capture_io": "pass",
+    "host_core": "pass"
+  }
+}

@@ -1,4 +1,7 @@
 #include "fg_runtime.h"
+#include "fg_mtp.h"
+#include "fg_mtp_capture.h"
+#include "fg_quant.h"
 #include "fg_chat.h"
 #include "fg_decode_batch.h"
 #include "fg_ledger.h"
@@ -709,6 +712,9 @@ static fg_status handle_prefill_layer_work(fg_fabric *fabric,fg_owner_executor *
         work.first_token,work.token_count,0u,err);
     if(status==FG_OK)status=fg_vk_tensor_read(current,0,context->hyper_out,
         (uint64_t)work.token_count*FG_HYPER_WIDTH*4u,err);
+    if(status==FG_OK&&last+1u==FG_LAYER_COUNT)
+        status=fg_mtp_capture_hyper(session_id,work.first_token,work.token_count,
+                                    context->hyper_out,err);
     if(status==FG_OK)numerics_trace_host(last+1u<FG_LAYER_COUNT?"SEND_NEXT":"SEND_RESULT",
         self,last,work.first_token,work.token_count,context->hyper_out);
     if(status==FG_OK&&last+1u<FG_LAYER_COUNT){
@@ -874,6 +880,9 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
         (uint64_t)FG_HYPER_WIDTH*4u,err);
     if(status==FG_OK)status=validate_block_hidden(self,work->token_index,last,
         context->hyper_out,err);
+    if(status==FG_OK&&last+1u==FG_LAYER_COUNT)
+        status=fg_mtp_capture_hyper(session_id,work->token_index,1u,
+                                    context->hyper_out,err);
     struct timespec t_read={0};if(trace)clock_gettime(CLOCK_MONOTONIC,&t_read);
     numerics_trace_host("FB_OUT",self,last,work->token_index,1u,context->hyper_out);
     if(status==FG_OK)status=worker_publish_qsa_pages(context->qsa_owner,owner,self,
@@ -1893,6 +1902,14 @@ static fg_status depthb_owner_restore(depthb_owner_runtime *depthb,uint32_t slot
         status=fg_owner_session_rollback(depthb->owner,&depthb->checkpoint[slot],err);
         fg_owner_session_snapshot_release(&depthb->checkpoint[slot]);
         depthb->checkpoint_valid[slot]=false;
+        if(status==FG_OK&&slot==0u&&depthb->qsa&&depthb->qsa->enabled){
+            uint32_t frontier[FG_LAYER_COUNT];
+            status=fg_owner_qsa_frontier(depthb->owner,slot,frontier);
+            if(status==FG_OK)for(uint32_t i=0;i<depthb->qsa->layer_count;i++){
+                uint32_t layer=depthb->qsa->layers[i];
+                depthb->qsa->guard.next_token[layer]=frontier[layer];
+            }
+        }
     }
     fg_status active=fg_owner_set_active_session(depthb->owner,0u,err);
     return status==FG_OK?active:status;
@@ -7214,6 +7231,8 @@ uint32_t fg_runtime_context_tokens(const fg_runtime *runtime){return runtime?(ui
 uint32_t fg_runtime_context_limit(const fg_runtime *runtime){return runtime?runtime->context_limit:0u;}
 const char *fg_runtime_ledger(const fg_runtime *runtime){return runtime?runtime->coordinator.ledger:NULL;}
 const char *fg_runtime_model_name(const fg_runtime *runtime){return runtime?fg_runtime_model_name_resolve(&runtime->options):NULL;}
+#include "runtime_mtp_qualify.inc"
+
 fg_mtp_capability fg_runtime_mtp_capability(const fg_runtime *runtime){
     return runtime?runtime->mtp_capability:FG_MTP_CAPABILITY_UNSUPPORTED;
 }

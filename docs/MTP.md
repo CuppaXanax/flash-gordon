@@ -1,5 +1,9 @@
 # MTP: native head, causal verification and remaining execution gates
 
+The offline-prepared acceptance lease and current-production restore procedure
+are documented in [MTP_CAPTURE.md](MTP_CAPTURE.md). This diagnostic gate uses
+replayed native proposals and the causal N=1 ring oracle, not MTP serving.: native head, causal verification and remaining execution gates
+
 2026-10-15. Branch `cuppaxanax/mtp`, based on `origin/main a63a166`.
 
 **Not a serving MTP implementation and not a 60 TPS result.** The trained head

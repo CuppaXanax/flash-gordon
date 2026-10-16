@@ -2,6 +2,7 @@
 #include "fg_api.h"
 #include "fg_chat.h"
 #include "fg_manifest.h"
+#include "fg_mtp_capture.h"
 #include "fg_pack.h"
 #include "fg_runtime.h"
 
@@ -24,6 +25,8 @@ static void usage(FILE *file) {
             "[--source FILE ...]\n"
             "  flash-gordon schema --source FILE [--source FILE ...]\n"
             "  flash-gordon rank --manifest FILE --rank N\n"
+            "  flash-gordon mtp-qualify --manifest FILE --cases FILE --directory DIR "
+            "[--budget-seconds N]\n"
             "  flash-gordon serve --manifest FILE\n"
             "  flash-gordon bench --manifest FILE\n"
             "  flash-gordon eval --manifest FILE --prompt TEXT [--generate N]\n"
@@ -434,6 +437,10 @@ static fg_status manifest_cmd(const char *command, int argc, char **argv, fg_err
             if (text &&
                 parse_u32(text, "--generate", 0u, UINT32_MAX, &generate, err) != FG_OK)
                 return err->code;
+        } else if (!strcmp(command,"rank")&&!strcmp(argv[i],"--mtp-capture-dir")) {
+            const char *directory=arg_value(&i,argc,argv,argv[i],err);
+            if(!directory||fg_mtp_capture_configure(directory,err)!=FG_OK)
+                return err->code;
         } else if (!strcmp(command,"bench")&&
                    (!strcmp(argv[i],"--microbatch")||
                     !strcmp(argv[i],"--prefill-microbatch")||
@@ -475,6 +482,29 @@ static fg_status manifest_cmd(const char *command, int argc, char **argv, fg_err
     return FG_ERR_ARGUMENT;
 }
 
+static fg_status mtp_qualify_cmd(int argc,char **argv,fg_error *err){
+    const char *manifest=NULL,*cases=NULL,*directory=NULL;
+    uint32_t budget=2100u;
+    for(int i=2;i<argc;i++){
+        const char *flag=argv[i],*value=arg_value(&i,argc,argv,flag,err);
+        if(!value)return err->code;
+        if(!strcmp(flag,"--manifest"))manifest=value;
+        else if(!strcmp(flag,"--cases"))cases=value;
+        else if(!strcmp(flag,"--directory"))directory=value;
+        else if(!strcmp(flag,"--budget-seconds")){
+            if(parse_u32(value,flag,60u,2400u,&budget,err)!=FG_OK)return err->code;
+        }else{
+            fg_error_set(err,FG_ERR_ARGUMENT,"unknown mtp-qualify option: %s",flag);
+            return FG_ERR_ARGUMENT;
+        }
+    }
+    if(!manifest||!cases||!directory){
+        fg_error_set(err,FG_ERR_ARGUMENT,"mtp-qualify requires manifest, cases and directory");
+        return FG_ERR_ARGUMENT;
+    }
+    return fg_mtp_qualify_main(manifest,cases,directory,budget,err);
+}
+
 int main(int argc, char **argv) {
     setvbuf(stderr, NULL, _IONBF, 0);
     /* A closed fabric or HTTP peer must surface as EPIPE from the send call,
@@ -502,6 +532,8 @@ int main(int argc, char **argv) {
         status = api_cmd(argc, argv, &err);
     else if (!strcmp(argv[1], "depth-b-selftest"))
         status = depthb_selftest_cmd(argc, argv, &err);
+    else if (!strcmp(argv[1], "mtp-qualify"))
+        status = mtp_qualify_cmd(argc, argv, &err);
     else if (!strcmp(argv[1], "rank") || !strcmp(argv[1], "serve") ||
              !strcmp(argv[1], "bench") || !strcmp(argv[1], "eval") ||
              !strcmp(argv[1], "inspect"))
