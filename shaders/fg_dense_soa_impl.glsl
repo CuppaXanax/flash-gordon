@@ -516,6 +516,7 @@ void main(){
         }
 #endif
     }
+#endif
 #ifdef FG_SHARED_SWIGLU
     barrier();
     }
