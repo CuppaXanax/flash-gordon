@@ -32,6 +32,10 @@ function Get-ABSummary {
             throw "Missing, zero or invalid metric: $name"
         }
         $logs = [double[]]@(for ($i = 0; $i -lt $a.Count; $i++) { [Math]::Log($b[$i] / $a[$i]) })
+        $meanLog = ($logs | Measure-Object -Average).Average
+        $sumSquares = 0.0
+        foreach ($value in $logs) { $sumSquares += ($value - $meanLog) * ($value - $meanLog) }
+        $standardError = [Math]::Sqrt($sumSquares / ($logs.Count - 1) / $logs.Count)
         $samples = [double[]]::new($Replicates)
         for ($j = 0; $j -lt $Replicates; $j++) {
             $draw = [double[]]@(for ($i = 0; $i -lt $a.Count; $i++) { $logs[$rng.Next($a.Count)] })
@@ -39,11 +43,21 @@ function Get-ABSummary {
         }
         $low = Get-ABQuantile $samples 0.025
         $high = Get-ABQuantile $samples 0.975
+        $bootstrapCI = @($low, $high)
+        # df=2 is conservative for every admitted n>=3 under the normal log-ratio model.
+        $u = 0.95
+        $critical = $u * [Math]::Sqrt(2 / (1 - $u * $u))
+        $low = [Math]::Min($low, [Math]::Exp($meanLog - $critical * $standardError))
+        $high = [Math]::Max($high, [Math]::Exp($meanLog + $critical * $standardError))
         $higher = $Pairs[0].A.metrics[$name].higher_is_better
         # Noninferiority requires excluding the regression margin, not a nonsignificant test.
         $pass = if ($higher) { $low -ge 0.97 } else { $high -le 1.03 }
         $winLow = Get-ABQuantile $samples (0.025 / ($names.Count * 4))
         $winHigh = Get-ABQuantile $samples (1 - 0.025 / ($names.Count * 4))
+        $winU = 1 - 0.05 / ($names.Count * 4)
+        $winCritical = $winU * [Math]::Sqrt(2 / (1 - $winU * $winU))
+        $winLow = [Math]::Min($winLow, [Math]::Exp($meanLog - $winCritical * $standardError))
+        $winHigh = [Math]::Max($winHigh, [Math]::Exp($meanLog + $winCritical * $standardError))
         $win = if ($higher) { $winLow -gt 1 } else { $winHigh -lt 1 }
         $regression = if ($higher) { $high -lt 0.97 } else { $low -gt 1.03 }
         $rows += [ordered]@{
@@ -54,6 +68,7 @@ function Get-ABSummary {
             A_iqr = (Get-ABQuantile $a 0.75) - (Get-ABQuantile $a 0.25)
             B_iqr = (Get-ABQuantile $b 0.75) - (Get-ABQuantile $b 0.25)
             B_over_A = [Math]::Exp((Get-ABMedian $logs))
+            bootstrap_ci95 = $bootstrapCI
             ci95 = @($low, $high); noninferior = $pass; win = ($pass -and $win)
             win_family_ci = @($winLow, $winHigh)
             status = if ($pass) { if ($win) { 'win' } else { 'noninferior' } } elseif ($regression) { 'regression' } else { 'inconclusive' }
@@ -209,7 +224,7 @@ function Invoke-PairedQualification {
     $null = New-Item -ItemType Directory -Path $destination -Force
     $result = [ordered]@{
         schema = 1; started = [DateTimeOffset]::Now.ToString('o'); config = $config
-        method = 'Paired round percentile bootstrap, median log B/A, 20000 fixed-seed resamples, marginal 95% CI for intersection-union noninferiority. Bonferroni win CI across metrics and four predeclared candidates. Small-n exploratory interval, not distribution-free coverage.'
+        method = 'Paired round percentile bootstrap, median log B/A, 20000 fixed-seed resamples; expand CI with conservative df=2 Student-t log-ratio interval. Marginal 95% intersection-union noninferiority. Bonferroni win CI across metrics and four predeclared candidates. Guard assumes independent normal log ratios; bootstrap alone is exploratory at small n.'
         rounds = $ABRounds; order = $ABOrder; pairs = @(); metrics = @(); complete = $false; eligible = $false
         warning = 'Three paired rounds are low power. Inconclusive is not noninferior. Repeated tokens are not independent replicates.'
     }
