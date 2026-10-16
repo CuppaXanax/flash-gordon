@@ -1,4 +1,5 @@
 # Retain exact collected bytes so evidence checksums survive checkout.
+.gitattributes -text
 AB_QUALIFY.* -text
 ab-*.json -text
 ab-*/** -text
