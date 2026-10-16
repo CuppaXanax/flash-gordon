@@ -1,0 +1,47 @@
+{
+  "date": "2026-10-16",
+  "base": "7381f93",
+  "blade": "192.168.42.51",
+  "script": "tools/mtp-serving-validate.sh",
+  "clocks_governor_services_changed": false,
+  "source_archive_sha256": "7cef3cb37d972e617400b46bf9049338ac5347545aa897d4bcf49cbf70f6e429",
+  "retained_evidence_archive_sha256": "509ade8218075fea342b880ad54df1f343cbdffda3ab389b048c9a1b15d875aa",
+  "native_overlay_sha256": "536bab54b0a1bdea23b65871c4cdc38deee5803771501a0c770a0510bcd3283b",
+  "release_build": "PASS",
+  "flag_registry": "PASS",
+  "mtp_cycle_wire_native_fixtures": "PASS",
+  "existing_multisession_fabric_api_session_tests": "PASS",
+  "mtp_shard_reduction_and_private_policies": "PASS",
+  "sidecar": {
+    "layouts": ["raw_q8_0", "cooked_q8_0"],
+    "rows": 16,
+    "width": 2560,
+    "gpu_hc_copies": 4,
+    "gpu_embedding_bit_exact": true,
+    "reconstructed_sealed_source_hash_checked": true,
+    "changed_payload_with_replaced_raw_digest_rejected": true
+  },
+  "small_n": {
+    "shapes": [2, 3, 4],
+    "output_max_abs": 0,
+    "gdn_state_max_abs": 0,
+    "causal_prefix_bit_exact": true,
+    "rollback_kept_inputs": [1, 2, 3, 4],
+    "independent_sessions": 2
+  },
+  "native_sessions": {
+    "slots": 2,
+    "interleaved_rows": 18,
+    "rollback_cycles": 8,
+    "windows": [0, 4],
+    "bit_exact": true,
+    "parent_closed_first": true,
+    "warm_prefix_bit_exact": true,
+    "private_session_bytes": [5200432, 5167664],
+    "warm_kv_mean_us": [270.083728, 261.955998]
+  },
+  "python": {"run": 25, "optional_skipped": 4},
+  "full_blade_pair_serving_qualified": false,
+  "production_lease_requested": false,
+  "serving_tps_claimed": false
+}

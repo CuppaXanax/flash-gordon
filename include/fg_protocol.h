@@ -165,7 +165,16 @@ typedef enum fg_message_type {
      * hyper vector, optional layer-1 n-gram embedding, per-slot state slot),
      * and the result is the matching slot array of final-block hyper states. */
     FG_MSG_DECODE_BATCH_WORK = 51,
-    FG_MSG_DECODE_BATCH_RESULT = 52
+    FG_MSG_DECODE_BATCH_RESULT = 52,
+    /* A single causal sequence, never independent depth-B slots. Work/result
+     * reuse the prefill-layer encoding but execute decode-small-N kernels. */
+    FG_MSG_MTP_VERIFY_WORK = 53,
+    FG_MSG_MTP_VERIFY_RESULT = 54,
+    FG_MSG_MTP_NATIVE_WORK = 55,
+    FG_MSG_MTP_NATIVE_ACK = 56,
+    FG_MSG_MTP_HEAD_WORK = 57,
+    FG_MSG_MTP_HEAD_PARTIAL = 58,
+    FG_MSG_MTP_PREFILL_WORK = 59
 } fg_message_type;
 
 typedef struct fg_gdn_state_fetch {

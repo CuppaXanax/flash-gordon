@@ -9,19 +9,72 @@ measured k=3 policy E **2.3899 / 3.2422**, and all **24 paired 256-token ring
 greedy checks passed**. This is the causal N=1 reference gate, not optimized
 small-N serving. See [measured acceptance and restoration evidence](../results/hillclimb/MTP_ACCEPTANCE.md).
 
-2026-10-15. Branch `cuppaxanax/mtp`, based on `origin/main a63a166`.
+2026-10-16. Branch `cuppaxanax/mtp-serving`, rebased onto promoted main `7381f93`.
 
-**Not a serving MTP implementation and not a 60 TPS result.** The trained head
-exists. This branch implements a Q8-only overlay exporter, a transactional
+**Experimental serving is linked, but not fleet-qualified or a 60 TPS result.**
+The trained head exists. This branch implements a Q8-only overlay exporter, a transactional
 greedy cycle, residual rejection sampling, dedicated owner-local small-N
 verification kernels, durable QSA truncation and single-blade rollback tests. The actual
 hyperconnection head now executes on Vulkan using the actual abliterated Q8
 weights, with a separate causal draft KV cache and an independent CPU oracle.
 The replayed GPU-routed core and fused vocabulary-shard argmax are described
 in section 7; experimental native requantization remains a separate quality gate.
-Batched ring orchestration and serving head/fanout integration remain unlinked.
-The existing `--experimental-mtp` CLI gate stays off by default and fails closed;
-it must not advertise MTP capability or execute a fake echo proposer.
+Batched causal ring orchestration and native contracted-hidden head fanout are
+now linked behind the default-off `--experimental-mtp` gate. Startup requires
+explicit, validated native-overlay and production-embedding sidecar paths.
+Component tests are not an end-to-end serving qualification; the new path must
+pass the blade-pair gate before requesting a production-ring lease.
+
+### Experimental serving contract
+
+Export the *sealed target pack's* Q8 embedding without requantization:
+
+```sh
+make tools/mtp-embedding
+./tools/mtp-embedding /path/to/pack/manifest.fgm /path/to/embedding.fgme
+```
+
+The sidecar binds the source tensor SHA256, layout, row count and width, and
+independently authenticates its raw-Q8 payload. Raw and cooked Q8 inputs produce
+bit-identical dequantized rows. Put this sidecar and the native overlay on the
+last-layer owner at the same paths supplied to rank 0:
+
+```text
+--experimental-mtp --mtp-overlay /path/to/native-q8.gguf
+--mtp-embedding /path/to/embedding.fgme --mtp-window 8192 --mtp-max-draft 3
+```
+
+The window defaults to min(context,8192), maximum draft length to 3. No MTP
+options are admitted without the explicit gate. The target manifest need not
+contain MTP tensors because the overlay is independently loaded. Startup also
+requires protocol 6, text positions, complete owner-local expert slabs,
+ring prefill/decode and the four-way output head.
+
+The final owner runs the native draft head and fans out its **already
+contracted** hidden vector directly to the vocabulary shards, without applying
+the target HC head a second time. Prefill next-token IDs travel with their
+ordinary work frames; native warmfill completes before each final-owner prefill
+result. This avoids an extra embedding hop and a bidirectional warm-ACK
+deadlock. Native weights are shared between sessions, but draft KV, scratch,
+target-HC history, sequence namespaces and adaptive policies remain private.
+
+Verification consumes pending input plus 1–3 drafts causally through every
+owner block. Rejection restores device state **and host ingress frontiers**,
+then causally replays only retained inputs. QSA service guards publish only
+the committed frontier. A partially failed distributed transaction poisons
+the transport instead of pretending released peer checkpoints can be restored.
+Tokens are published only after target commit; a final pending token is flushed
+normally at the output limit. Rolling per-stream acceptance and measured round
+cost select k. Sampling/penalty and vision requests use the ordinary decoder;
+the residual rejection-sampling primitive is not wired into serving yet.
+
+An 8192-cell draft window is a draft-cache approximation, never a target-state
+approximation. Existing real-text acceptance figures above do not qualify this
+new warmfill/window/orchestration path. No distributed draft latency, new serving
+TPS or sessions-2 memory capacity is claimed. Production-width raw/cooked
+sidecar rows match the actual target GPU embedding kernel bit-for-bit on .51.
+Pending gates include blade-pair full serving, cancellation/EOS/continuation
+coverage, current-kernel MTP-on/off greedy identity and eight-rank qualification.
 
 ## 1. Source facts, not the old feasibility assumptions
 
@@ -753,29 +806,30 @@ was fixed immediately; no production deployment or service was changed.
 
 Remaining work before even an eight-rank correctness qualification:
 
-1. Integrate the now-executable native head with the final target owner,
+1. Qualify the linked native head integration with the final target owner,
    actual next-token embedding, distributed shared head and prompt KV warmfill/
    repair. Qualify real-context Q8 quality, not only synthetic import parity.
 2. Finish tuning and qualifying the dedicated small-N verifier, including
    every rank's service and output-head costs. Replace rejected-prefix
    whole-block replay with cached-projection recurrence/conv commit or
    per-position state checkpoints before treating commit overhead as cheap.
-3. Connect causal wire work/results, deferred page publication, all-rank
+3. Qualify causal wire work/results, deferred page publication, all-rank
    prefix transactions, history/ngram cursors, cancellation/EOS and logits.
-4. Connect stochastic distributions and per-prefix penalty histories, or keep
-   temperature requests explicitly unavailable.
+4. Connect stochastic distributions and per-prefix penalty histories before
+   speculating on temperature requests; until then they use the exact serial path.
 5. Real chat/code native acceptance and causal-N1 reference greedy identity
    have passed (see the capture report at the top). Repeat greedy identity on
    the linked small-N serving path, then fleet A/B and long-context gates in
    a separately granted exclusive lease. The offline integration below does
    not extend the completed capture lease.
 
-## 8. Multisession serving foundation (base `2d0f8a7`)
+## 8. Multisession serving foundation (original base `2d0f8a7`)
 
 `cuppaxanax/mtp-serving` retains the published capture branch unchanged and
-integrates its foundations onto the promoted two-session runtime. This is
-**not yet a linked serving implementation**: `--experimental-mtp` still fails
-closed, and no ring lease is requested on the strength of component tests.
+integrates its foundations onto the promoted two-session runtime. The foundation
+was originally default-off/fail-closed; the linked orchestration now described
+at the top is rebased onto `7381f93`. No ring lease is requested on the
+strength of component tests.
 
 * Owner static slots 0..3 and 4..7 belong to separate sessions. Small-N cache
   keys, shape changes, failures and N=1 transitions invalidate only that
@@ -804,7 +858,8 @@ closed, and no ring lease is requested on the strength of component tests.
   other lengths periodically and never observes positions after the first
   rejection. Real measured chat/code priors in the unit test choose k=2/k=3
   under the stated target cost estimates; no prompt-text classifier is used.
-  Runtime selection/publication is not wired yet.
+  Runtime selection now uses a private policy per stream; publishing a burst
+  follows target commit rather than the draft execution.
 * The QSA page-service guard is now tied to its actual session namespace,
   rather than assuming slot zero. Restore drains that namespace's pending
   writes before truncation and repairs only its guard frontier.
@@ -838,14 +893,14 @@ in expert down, and shader-local GDN state across causal N updates.
 The global recurrent buffer is loaded/stored at round edges, but the compiler
 spills the local cache: physical state traffic still needs improvement.
 Recurrence arithmetic is sequential. Component and rollback
-identity do **not** qualify the still-unlinked native serving/ring path.
-`--experimental-mtp` remains default-off and fail-closed; no production
+identity do **not** qualify the newly linked native serving/ring path.
+`--experimental-mtp` remains default-off and requires explicit sidecars; no production
 lease is requested until actual serving passes a blade-pair test.
 
 The restore/watchdog guard is pinned to the subsequently promoted
 stack-1/adaptive runtime `31508ee`, release `20261016-abq-stack-adaptive`,
 sessions 2/wide 1, its binary and shader-tree hashes, and the complete explicit
 roofline/local-ngram/submit-group recipe in `DEPLOY_CURRENT.md`.
-`2d0f8a7` is the development base and historical qualification restore target,
+`2d0f8a7` is the old development base and historical qualification restore target,
 **not current production**. No current launcher or production process was
 changed while preparing these offline guards; a new lease remains required.

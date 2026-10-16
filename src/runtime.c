@@ -1,6 +1,7 @@
 #include "fg_runtime.h"
 #include "fg_mtp.h"
 #include "fg_mtp_capture.h"
+#include "fg_mtp_native.h"
 #include "fg_quant.h"
 #include "fg_chat.h"
 #include "fg_decode_batch.h"
@@ -560,6 +561,10 @@ typedef struct layer_work_context {
     fg_layer_result decode_result;
     void *qsa_owner;
     fg_output_hc *output_hc;
+    fg_output_slice *output_slice;
+    fg_mtp_native *mtp_native;
+    float *mtp_embeddings;
+    uint32_t mtp_tokens[FG_PREFILL_MAX_TOKENS];
     uint32_t output_split_ways;
     /* Depth-B batch step storage: decoded per-slot hyper/ngram inputs and the
      * per-slot final-block results. */
@@ -572,6 +577,7 @@ typedef struct layer_work_context {
 static void layer_work_context_destroy(layer_work_context *context){
     if(!context)return;
     fg_vk_tensor_destroy(context->ngram_tensor);
+    free(context->mtp_embeddings);
     free(context->batch_ngram);free(context->batch_hyper);
     free(context->ngram);free(context->hyper_out);free(context->hyper_in);
     free(context->positions);free(context->result_wire);free(context->work_wire);
@@ -585,7 +591,7 @@ static fg_status layer_work_context_create(layer_work_context *context,fg_model 
     uint32_t tokens=manifest->prefill_microbatch;
     context->tokens=tokens;
     context->work_capacity=FG_PREFILL_LAYER_HEADER_BYTES+tokens*4u*4u+
-        tokens*FG_HYPER_WIDTH*4u+tokens*FG_NGRAM_EMBED_VALUES*4u;
+        tokens*FG_HYPER_WIDTH*4u+tokens*FG_NGRAM_EMBED_VALUES*4u+tokens*4u;
     context->result_capacity=FG_PREFILL_LAYER_RESULT_MAX_BYTES;
     context->work_wire=malloc(context->work_capacity);
     context->result_wire=malloc(context->result_capacity);
@@ -594,11 +600,12 @@ static fg_status layer_work_context_create(layer_work_context *context,fg_model 
     context->hyper_out=malloc((size_t)tokens*FG_HYPER_WIDTH*sizeof(float));
     context->batch_hyper=malloc((size_t)FG_DECODE_BATCH_MAX_SLOTS*FG_HYPER_WIDTH*sizeof(float));
     context->batch_ngram=malloc((size_t)FG_DECODE_BATCH_MAX_SLOTS*FG_NGRAM_EMBED_VALUES*sizeof(float));
+    context->mtp_embeddings=malloc((size_t)FG_MTP_MAX_VERIFY*FG_HIDDEN_SIZE*sizeof(float));
     if(manifest->layer_owner[1u]==(uint8_t)fg_model_rank(model))
         context->ngram=malloc((size_t)tokens*FG_NGRAM_EMBED_VALUES*sizeof(float));
     if(!context->work_wire||!context->result_wire||!context->positions||
        !context->hyper_in||!context->hyper_out||!context->batch_hyper||
-       !context->batch_ngram||
+       !context->batch_ngram||!context->mtp_embeddings||
        (manifest->layer_owner[1u]==(uint8_t)fg_model_rank(model)&&!context->ngram)){
         layer_work_context_destroy(context);
         fg_error_set(err,FG_ERR_OOM,"allocate worker layer-work buffers");
@@ -650,10 +657,19 @@ static fg_status handle_prefill_layer_work(fg_fabric *fabric,fg_owner_executor *
         return FG_ERR_UNAVAILABLE;
     }
     fg_prefill_layer_work work={0};
-    fg_status status=fg_prefill_layer_work_decode(&work,manifest->protocol_version,
+    bool mtp=fg_frame_type(header)==FG_MSG_MTP_PREFILL_WORK;
+    uint32_t body_bytes=bytes;
+    fg_status status=FG_OK;
+    if(mtp&&!fg_mtp_native_enabled(context->mtp_native)){
+        fg_error_set(err,FG_ERR_MISMATCH,"MTP prefill reached an unconfigured owner");
+        status=FG_ERR_MISMATCH;
+    }
+    if(status==FG_OK&&mtp)status=fg_mtp_prefill_tokens_decode(context->mtp_tokens,
+        context->tokens,&body_bytes,payload,bytes,err);
+    if(status==FG_OK)status=fg_prefill_layer_work_decode(&work,manifest->protocol_version,
         context->positions,context->tokens*3u,context->hyper_in,
         (uint64_t)context->tokens*FG_HYPER_WIDTH,context->ngram,
-        (uint64_t)context->tokens*FG_NGRAM_EMBED_VALUES,payload,bytes,err);
+        (uint64_t)context->tokens*FG_NGRAM_EMBED_VALUES,payload,body_bytes,err);
     uint64_t request=fg_frame_request_id(header);
     if(status==FG_OK&&(!session_id||request!=session_id||peer!=work.source_rank||
        work.destination_rank!=self||!work.token_count||
@@ -730,6 +746,10 @@ static fg_status handle_prefill_layer_work(fg_fabric *fabric,fg_owner_executor *
     if(status==FG_OK&&last+1u==FG_LAYER_COUNT)
         status=fg_mtp_capture_hyper(session_id,work.first_token,work.token_count,
                                     context->hyper_out,err);
+    if(status==FG_OK&&mtp&&last+1u==FG_LAYER_COUNT)
+        status=fg_mtp_native_observe_prefill(context->mtp_native,
+            fg_owner_active_session(owner),work.first_token,work.token_count,
+            context->hyper_out,context->mtp_tokens,err);
     if(status==FG_OK)numerics_trace_host(last+1u<FG_LAYER_COUNT?"SEND_NEXT":"SEND_RESULT",
         self,last,work.first_token,work.token_count,context->hyper_out);
     if(status==FG_OK&&last+1u<FG_LAYER_COUNT){
@@ -741,8 +761,10 @@ static fg_status handle_prefill_layer_work(fg_fabric *fabric,fg_owner_executor *
         uint32_t wire_bytes=0;
         status=fg_prefill_layer_work_encode(context->work_wire,context->work_capacity,
             &wire_bytes,manifest->protocol_version,&next,err);
+        if(status==FG_OK&&mtp)status=fg_mtp_prefill_tokens_encode(context->work_wire,
+            context->work_capacity,&wire_bytes,context->mtp_tokens,work.token_count,err);
         if(status==FG_OK)status=fg_fabric_send(fabric,next_rank,FG_FABRIC_BULK,
-            FG_MSG_PREFILL_LAYER_WORK,request,
+            mtp?FG_MSG_MTP_PREFILL_WORK:FG_MSG_PREFILL_LAYER_WORK,request,
             next_layer+work.first_token*FG_LAYER_COUNT,0,context->work_wire,wire_bytes,err);
     }else if(status==FG_OK){
         fg_prefill_layer_result result={.layer=(uint8_t)last,.source_rank=(uint8_t)self,
@@ -900,6 +922,9 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
     if(status==FG_OK&&last+1u==FG_LAYER_COUNT)
         status=fg_mtp_capture_hyper(session_id,work->token_index,1u,
                                     context->hyper_out,err);
+    if(status==FG_OK&&last+1u==FG_LAYER_COUNT)
+        status=fg_mtp_native_observe_decode(context->mtp_native,
+            fg_owner_active_session(owner),work->token_index,context->hyper_out,err);
     struct timespec t_read={0};if(trace)clock_gettime(CLOCK_MONOTONIC,&t_read);
     numerics_trace_host("FB_OUT",self,last,work->token_index,1u,context->hyper_out);
     if(status==FG_OK)status=worker_publish_qsa_pages(context->qsa_owner,owner,self,
@@ -1540,6 +1565,8 @@ typedef struct depthb_owner_runtime {
     qsa_owner_runtime *qsa;
     fg_owner_session_checkpoint checkpoint[FG_OWNER_SESSION_MAX];
     bool checkpoint_valid[FG_OWNER_SESSION_MAX];
+    uint32_t (*wire_frontiers)[FG_LAYER_COUNT];
+    uint32_t saved_wire_frontiers[FG_OWNER_SESSION_MAX][FG_LAYER_COUNT];
 } depthb_owner_runtime;
 
 static int qsa_owner_layer_slot(const qsa_owner_runtime *runtime,uint32_t layer);
@@ -1909,7 +1936,12 @@ static fg_status depthb_owner_prepare(depthb_owner_runtime *depthb,uint32_t slot
     }
     if(status==FG_OK)status=fg_owner_session_device_snapshot(depthb->owner,slot,
                                                              &depthb->checkpoint[slot],err);
-    if(status==FG_OK)depthb->checkpoint_valid[slot]=true;
+    if(status==FG_OK){
+        depthb->checkpoint_valid[slot]=true;
+        if(depthb->wire_frontiers)
+            memcpy(depthb->saved_wire_frontiers[slot],depthb->wire_frontiers[slot],
+                   sizeof(depthb->saved_wire_frontiers[slot]));
+    }
     return status;
 }
 
@@ -1920,6 +1952,15 @@ static fg_status depthb_owner_commit(depthb_owner_runtime *depthb,uint32_t slot,
         return FG_ERR_MISMATCH;
     }
     if(depthb->checkpoint_valid[slot]){
+        if(depthb->qsa&&depthb->qsa->enabled&&depthb->qsa->state_slot==slot){
+            uint32_t frontier[FG_LAYER_COUNT];
+            fg_status status=fg_owner_qsa_frontier(depthb->owner,slot,frontier);
+            if(status!=FG_OK)return status;
+            for(uint32_t i=0;i<depthb->qsa->layer_count;i++){
+                uint32_t layer=depthb->qsa->layers[i];
+                depthb->qsa->guard.next_token[layer]=frontier[layer];
+            }
+        }
         fg_owner_session_snapshot_release(&depthb->checkpoint[slot]);
         depthb->checkpoint_valid[slot]=false;
     }
@@ -1938,8 +1979,9 @@ static fg_status depthb_owner_restore(depthb_owner_runtime *depthb,uint32_t slot
             status=qsa_owner_writer_drain(depthb->qsa,err);
         if(status==FG_OK)
             status=fg_owner_session_rollback(depthb->owner,&depthb->checkpoint[slot],err);
-        fg_owner_session_snapshot_release(&depthb->checkpoint[slot]);
-        depthb->checkpoint_valid[slot]=false;
+        if(status==FG_OK&&depthb->wire_frontiers)
+            memcpy(depthb->wire_frontiers[slot],depthb->saved_wire_frontiers[slot],
+                   sizeof(depthb->saved_wire_frontiers[slot]));
         if(status==FG_OK&&depthb->qsa&&depthb->qsa->enabled&&
            depthb->qsa->state_slot==slot){
             uint32_t frontier[FG_LAYER_COUNT];
@@ -2734,6 +2776,8 @@ static fg_status handle_output_history(fg_fabric *fabric,fg_output_executor *out
     free(tokens);return status;
 }
 
+#include "runtime_mtp_worker.inc"
+
 static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_expert_executor *expert,fg_output_executor *output,fg_output_slice *output_slice,fg_output_hc *output_hc,uint32_t output_split_ways,const fg_ngram_resident *ngram,fg_model *model,const fg_manifest *manifest,const char *directory,uint32_t self,fg_error *err){
     uint32_t control_capacity=FG_OUTPUT_HISTORY_MAX_BYTES;
     if(control_capacity<FG_QSA_BLOCK_WORK_MAX_BYTES)control_capacity=FG_QSA_BLOCK_WORK_MAX_BYTES;
@@ -2746,7 +2790,9 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_
     layer_work_context layer_work={0};
     depthb_owner_runtime depthb={.owner=owner,.manifest=manifest,.directory=directory,
         .self=self,.qsa_layers=owned_qsa_layers(manifest,self),
-        .logical_context=manifest->session.logical_context_tokens};
+        .logical_context=manifest->session.logical_context_tokens,
+        .wire_frontiers=frontiers};
+    fg_mtp_native *mtp_native=NULL;
     fg_vk_tensor *hyper=NULL;
     fg_output_handoff *handoffs=output?calloc(FG_OWNER_SESSION_MAX,sizeof(*handoffs)):NULL;
     fg_expert_result *ew_result=malloc(sizeof(*ew_result));
@@ -2760,6 +2806,8 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_
     bool qsa_created[FG_OWNER_SESSION_MAX]={true,false};
     if(status==FG_OK&&owner)
         status=layer_work_context_create(&layer_work,model,owner,manifest,expert,&prefill,err);
+    if(status==FG_OK)status=fg_mtp_native_create(&mtp_native,fg_model_vk(model),manifest,self,err);
+    layer_work.mtp_native=mtp_native;layer_work.output_slice=output_slice;
     layer_work.output_hc=output_hc;layer_work.output_split_ways=output_split_ways;
     if(status==FG_OK&&output)status=fg_vk_tensor_create(fg_model_vk(model),FG_HYPER_WIDTH*4u,&hyper,err);
     if(status==FG_OK)status=token_profile_prepare(fg_model_vk(model),err);
@@ -2795,6 +2843,8 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_
             type==FG_MSG_QSA_PAGE_APPEND||type==FG_MSG_QSA_PAGE_BARRIER||
             type==FG_MSG_QSA_PAGE_FETCH||type==FG_MSG_GDN_STATE_FETCH||
             type==FG_MSG_DECODE_LAYER_WORK||type==FG_MSG_DECODE_BATCH_WORK||
+            type==FG_MSG_MTP_VERIFY_WORK||type==FG_MSG_MTP_NATIVE_WORK||
+            type==FG_MSG_MTP_HEAD_WORK||type==FG_MSG_MTP_PREFILL_WORK||
             type==FG_MSG_OUTPUT_HIDDEN||type==FG_MSG_OUTPUT_SLICE_HIDDEN;
         if(bulk_message!=(cls==FG_FABRIC_BULK)){
             fg_error_set(err,FG_ERR_MISMATCH,"rank %u received message %u on wrong channel",self,type);
@@ -2816,14 +2866,16 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_
         layer_work.qsa_owner=&qsa[slot];depthb.qsa=&qsa[slot];
         fg_output_handoff *handoff=handoffs?&handoffs[slot]:NULL;
         uint64_t session_id=sessions[slot];
-        bool layer_message=type==FG_MSG_PREFILL_LAYER_WORK||type==FG_MSG_DECODE_LAYER_WORK;
+        bool layer_message=type==FG_MSG_PREFILL_LAYER_WORK||type==FG_MSG_DECODE_LAYER_WORK||
+            type==FG_MSG_MTP_VERIFY_WORK||type==FG_MSG_MTP_PREFILL_WORK;
         uint32_t first=0,count=1u,layer=0;
         if(layer_message){
             if(bytes<12u){status=FG_ERR_FORMAT;break;}
             layer=payload[0];
             first=((uint32_t)payload[4]<<24u)|((uint32_t)payload[5]<<16u)|
                 ((uint32_t)payload[6]<<8u)|payload[7];
-            if(type==FG_MSG_PREFILL_LAYER_WORK)
+            if(type==FG_MSG_PREFILL_LAYER_WORK||type==FG_MSG_MTP_VERIFY_WORK||
+               type==FG_MSG_MTP_PREFILL_WORK)
                 count=((uint32_t)payload[8]<<8u)|payload[9];
             if(layer>=FG_LAYER_COUNT||
                (fg_fabric_multiplexed(fabric)&&first!=frontiers[slot][layer])){
@@ -2836,7 +2888,8 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_
             status=begin_session(fabric,manifest,directory,&qsa[slot],owner,self,peer,
                 &header,payload,bytes,&sessions[slot],output,&depthb,err);
             if(status==FG_OK)memset(frontiers[slot],0,sizeof(frontiers[slot]));
-        }else if(type==FG_MSG_PREFILL_LAYER_WORK)
+            if(status==FG_OK)status=fg_mtp_native_reset(mtp_native,slot,err);
+        }else if(type==FG_MSG_PREFILL_LAYER_WORK||type==FG_MSG_MTP_PREFILL_WORK)
             status=handle_prefill_layer_work(fabric,owner,manifest,self,session_id,peer,&header,payload,bytes,&layer_work,err);
         else if(type==FG_MSG_PREFILL_WORK)
             status=handle_prefill_expert_work(fabric,expert,manifest,self,session_id,peer,&header,payload,bytes,&prefill,err);
@@ -2852,6 +2905,15 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_
             status=handle_decode_layer_work(fabric,owner,manifest,self,session_id,peer,&header,payload,bytes,&layer_work,err);
         else if(type==FG_MSG_DECODE_BATCH_WORK)
             status=handle_decode_batch_work(fabric,manifest,self,session_id,peer,&header,payload,bytes,&layer_work,&depthb,err);
+        else if(type==FG_MSG_MTP_VERIFY_WORK)
+            status=handle_mtp_verify_work(fabric,owner,manifest,self,session_id,peer,
+                &header,payload,bytes,&layer_work,&depthb,err);
+        else if(type==FG_MSG_MTP_NATIVE_WORK)
+            status=handle_mtp_native_work(fabric,manifest,self,session_id,peer,
+                &header,payload,bytes,&layer_work,err);
+        else if(type==FG_MSG_MTP_HEAD_WORK)
+            status=handle_mtp_head_work(fabric,manifest,self,session_id,peer,
+                &header,payload,bytes,&layer_work,err);
         else if(type==FG_MSG_OUTPUT_HIDDEN)
             status=handle_output_hidden(fabric,output,output_slice,fg_model_vk(model),manifest,self,session_id,peer,&header,payload,bytes,hyper,handoff,err);
         else if(type==FG_MSG_OUTPUT_SLICE_HIDDEN)
@@ -2879,6 +2941,7 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_
         if(status==FG_OK&&layer_message)frontiers[slot][layer]=first+count;
     }
     fg_vk_tensor_destroy(hyper);free(handoffs);
+    fg_mtp_native_close(mtp_native);
     for(uint32_t slot=0;slot<FG_OWNER_SESSION_MAX;slot++){
         if(depthb.checkpoint_valid[slot])fg_owner_session_snapshot_release(&depthb.checkpoint[slot]);
         qsa_owner_runtime_destroy(&qsa[slot]);
@@ -3055,7 +3118,16 @@ static fg_status qsa_page_transport_ensure(qsa_page_transport *transport,fg_erro
 }
 
 #define FG_PREFILL_FRAMES 8u
-typedef struct fg_coordinator {const fg_manifest *manifest;fg_runtime_options options;fg_session_identity identity;fg_model *model;fg_expert_executor *expert;fg_owner_executor *owner;fg_fabric *fabric;fg_ngram_store *ngram;fg_tokenizer *tokenizer;prefill_worker_buffers prefill_expert[FG_PREFILL_FRAMES];prefill_layer_buffers prefill_layer[FG_PREFILL_FRAMES];qsa_page_transport qsa_pages;uint64_t session_id;uint8_t *async_recv_payloads[FG_GROUP_SIZE];const char *directory;atomic_uint transport_state;fg_sampler_config sampler;fg_sampler_state sampler_state;bool ring_prefill;fg_vk_tensor *ring_output[FG_PREFILL_FRAMES];bool ring_decode;uint8_t *decode_work_wire,*decode_result_wire;fg_layer_work decode_work;fg_layer_result decode_result;fg_output_slice *output_slice;depthb_owner_runtime depthb;layer_work_context depthb_work;uint32_t depthb_generation;uint32_t output_session;bool depthb_restore_pending;bool multi_session;uint32_t prefill_output_tokens;char ledger[FG_LEDGER_LINE_MAX];} fg_coordinator;
+typedef struct fg_mtp_serving fg_mtp_serving;
+typedef struct fg_coordinator {const fg_manifest *manifest;fg_runtime_options options;fg_session_identity identity;fg_model *model;fg_expert_executor *expert;fg_owner_executor *owner;fg_fabric *fabric;fg_ngram_store *ngram;fg_tokenizer *tokenizer;prefill_worker_buffers prefill_expert[FG_PREFILL_FRAMES];prefill_layer_buffers prefill_layer[FG_PREFILL_FRAMES];qsa_page_transport qsa_pages;uint64_t session_id;uint8_t *async_recv_payloads[FG_GROUP_SIZE];const char *directory;atomic_uint transport_state;fg_sampler_config sampler;fg_sampler_state sampler_state;bool ring_prefill;fg_vk_tensor *ring_output[FG_PREFILL_FRAMES];bool ring_decode;uint8_t *decode_work_wire,*decode_result_wire;fg_layer_work decode_work;fg_layer_result decode_result;fg_output_slice *output_slice;depthb_owner_runtime depthb;layer_work_context depthb_work;uint32_t depthb_generation;uint32_t output_session;bool depthb_restore_pending;bool multi_session;uint32_t prefill_output_tokens;fg_mtp_serving *mtp;char ledger[FG_LEDGER_LINE_MAX];} fg_coordinator;
+
+static fg_status coordinator_mtp_create(fg_coordinator *coordinator,bool configure,
+                                        fg_error *err);
+static void coordinator_mtp_close(fg_mtp_serving *mtp);
+static fg_status coordinator_mtp_prefix(fg_coordinator *coordinator,
+    const int32_t *history,uint32_t offset,uint32_t end,bool warm,fg_error *err);
+static fg_status coordinator_mtp_advance(fg_coordinator *coordinator,
+    uint32_t token,uint32_t index,fg_error *err);
 
 static uint64_t coordinator_prefill_host_bytes(const prefill_worker_buffers *buffers){
     if(!buffers)return 0;
@@ -3869,6 +3941,7 @@ struct fg_runtime {
     char directory[1024];
     fg_sampler_config sampler;
     fg_mtp_capability mtp_capability;
+    fg_mtp_policy mtp_policy;
     /* Ring prefix continuation: resume owner state across sequential requests
      * on an exact token-prefix extension. */
     bool prefix_continuation;
@@ -3876,6 +3949,11 @@ struct fg_runtime {
 };
 
 static fg_status coordinator_begin_session(fg_coordinator *coordinator,fg_error *err){
+    if(!coordinator->mtp&&
+       (coordinator->options.experimental_flags&FG_RUNTIME_EXPERIMENTAL_MTP)){
+        fg_status setup=coordinator_mtp_create(coordinator,true,err);
+        if(setup!=FG_OK)return setup;
+    }
     fg_status barrier_status=coordinator_qsa_barrier(coordinator,err);
     if(barrier_status!=FG_OK)return barrier_status;
     struct timespec now;if(clock_gettime(CLOCK_REALTIME,&now)!=0){fg_error_set(err,FG_ERR_IO,"read session clock");return FG_ERR_IO;}
@@ -4095,7 +4173,8 @@ static bool ring_slot_finish(ring_slot *slot,uint32_t first,uint32_t *prefilled)
 static fg_status ring_send_block_work(fg_fabric *fabric,const fg_manifest *manifest,
     uint32_t self,uint64_t session_id,uint32_t destination,uint32_t layer,
     uint32_t first_token,uint16_t token_count,const uint32_t *positions,
-    const float *hyper,const float *ngram,uint8_t *wire,uint32_t capacity,fg_error *err){
+    const float *hyper,const float *ngram,const uint32_t *next_tokens,
+    uint8_t *wire,uint32_t capacity,fg_error *err){
     fg_prefill_layer_work work={.layer=(uint8_t)layer,.source_rank=(uint8_t)self,
         .destination_rank=(uint8_t)destination,
         .flags=ngram?FG_LAYER_WORK_HAS_NGRAM:0u,.first_token=first_token,
@@ -4104,8 +4183,11 @@ static fg_status ring_send_block_work(fg_fabric *fabric,const fg_manifest *manif
     uint32_t bytes=0;
     fg_status status=fg_prefill_layer_work_encode(wire,capacity,&bytes,
         manifest->protocol_version,&work,err);
+    if(status==FG_OK&&next_tokens)
+        status=fg_mtp_prefill_tokens_encode(wire,capacity,&bytes,next_tokens,token_count,err);
     if(status==FG_OK)status=fg_fabric_send(fabric,destination,FG_FABRIC_BULK,
-        FG_MSG_PREFILL_LAYER_WORK,session_id,first_token*FG_LAYER_COUNT+layer,0,
+        next_tokens?FG_MSG_MTP_PREFILL_WORK:FG_MSG_PREFILL_LAYER_WORK,
+        session_id,first_token*FG_LAYER_COUNT+layer,0,
         wire,bytes,err);
     return status;
 }
@@ -4224,6 +4306,7 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
     if(!embedding){fg_error_set(err,FG_ERR_MISMATCH,"coordinator is missing token_embd.weight");return FG_ERR_MISMATCH;}
     uint32_t work_capacity=FG_PREFILL_LAYER_HEADER_BYTES+microbatch*4u*4u+
         microbatch*FG_HYPER_WIDTH*4u+microbatch*FG_NGRAM_EMBED_VALUES*4u;
+    if(coordinator->mtp)work_capacity+=microbatch*4u;
     uint32_t result_capacity=FG_PREFILL_LAYER_RESULT_MAX_BYTES;
     uint32_t receive_capacity=work_capacity>result_capacity?work_capacity:result_capacity;
     uint8_t *receive_wire=malloc(receive_capacity);
@@ -4233,6 +4316,7 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
     float *ngram_host=malloc((size_t)microbatch*FG_NGRAM_EMBED_VALUES*sizeof(float));
     uint32_t *positions=calloc((size_t)FG_PREFILL_FRAMES*microbatch*3u,sizeof(uint32_t));
     uint32_t *positions_scratch=malloc((size_t)microbatch*3u*sizeof(uint32_t));
+    uint32_t mtp_next_tokens[FG_PREFILL_MAX_TOKENS];
     fg_status status=FG_OK;
     if(!receive_wire||!work_wire||!result_wire||!hyper_host||!ngram_host||
        !positions||!positions_scratch){
@@ -4306,10 +4390,15 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
             if(status==FG_OK)numerics_trace_host("ISSUE",0u,0u,chunk_first,chunk_tokens,hyper_host);
             if(status==FG_OK&&ngram_view)status=fg_vk_tensor_read(ngram_view,0,ngram_host,
                 (uint64_t)chunk_tokens*FG_NGRAM_EMBED_VALUES*4u,err);
+            if(coordinator->mtp)for(uint32_t i=0;i<chunk_tokens;i++){
+                uint32_t next_index=chunk_first+i+1u;
+                mtp_next_tokens[i]=next_index<history_count?(uint32_t)history[next_index]:UINT32_MAX;
+            }
             if(status==FG_OK)status=ring_send_block_work(coordinator->fabric,manifest,0u,
                 coordinator->session_id,manifest->layer_owner[0u],0u,chunk_first,
                 (uint16_t)chunk_tokens,slot->positions,hyper_host,
-                ngram_view?ngram_host:NULL,work_wire,work_capacity,err);
+                ngram_view?ngram_host:NULL,coordinator->mtp?mtp_next_tokens:NULL,
+                work_wire,work_capacity,err);
             if(status==FG_OK){
                 next_chunk++;in_flight++;issued_tokens+=chunk_tokens;
                 if(ring_trace){struct timespec issue_end;clock_gettime(CLOCK_MONOTONIC,&issue_end);
@@ -4327,12 +4416,17 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
             receive_wire,receive_capacity,&bytes,err);
         if(status!=FG_OK)break;
         fg_message_type type=fg_frame_type(&header);
-        if(type==FG_MSG_PREFILL_LAYER_WORK){
+        if(type==FG_MSG_PREFILL_LAYER_WORK||type==FG_MSG_MTP_PREFILL_WORK){
             fg_prefill_layer_work work={0};
-            fg_status decode_status=fg_prefill_layer_work_decode(&work,
+            uint32_t body_bytes=bytes;bool mtp=type==FG_MSG_MTP_PREFILL_WORK;
+            fg_status decode_status=mtp==!!coordinator->mtp?FG_OK:FG_ERR_MISMATCH;
+            if(decode_status==FG_OK&&mtp)
+                decode_status=fg_mtp_prefill_tokens_decode(mtp_next_tokens,microbatch,
+                    &body_bytes,receive_wire,bytes,err);
+            if(decode_status==FG_OK)decode_status=fg_prefill_layer_work_decode(&work,
                 manifest->protocol_version,positions_scratch,microbatch*3u,hyper_host,
                 (uint64_t)microbatch*FG_HYPER_WIDTH,ngram_host,
-                (uint64_t)microbatch*FG_NGRAM_EMBED_VALUES,receive_wire,bytes,err);
+                (uint64_t)microbatch*FG_NGRAM_EMBED_VALUES,receive_wire,body_bytes,err);
             if(decode_status!=FG_OK){status=decode_status;break;}
             if(work.destination_rank!=0u||manifest->layer_owner[work.layer]!=0u||
                (work.layer>0u&&peer!=manifest->layer_owner[work.layer-1u])||
@@ -4384,7 +4478,7 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
                     status=ring_send_block_work(coordinator->fabric,manifest,0u,
                         coordinator->session_id,manifest->layer_owner[last+1u],last+1u,
                         work.first_token,(uint16_t)work.token_count,slot->positions,
-                        hyper_host,NULL,work_wire,work_capacity,err);
+                        hyper_host,NULL,mtp?mtp_next_tokens:NULL,work_wire,work_capacity,err);
                 }else{
                     bool final=work.first_token+work.token_count==first_token+token_count;
                     if(final)status=fg_vk_tensor_write(slot->output,0,hyper_host,
@@ -5029,12 +5123,19 @@ static fg_status coordinator_owner_transaction(fg_coordinator *coordinator,uint8
         fprintf(stderr,"OWNER_TXN_MS op=%u slot=%u local_ms=%.3f send_ms=%.3f recv_ms=%.3f total_ms=%.3f status=%d\n",
                 operation,slot,t_local,t_sent-t_local,t_recv-t_sent,t_recv,(int)status);
     }
-    if(status!=FG_OK&&operation==FG_OWNER_SESSION_PREPARE){
+    if(status!=FG_OK&&coordinator->mtp){
+        /* Peer ACKs can remain queued after a partial send/receive failure.
+         * COMMIT may also have released peer checkpoints: never reuse this
+         * transport or claim a distributed rollback succeeded. */
+        transport_poison(&coordinator->transport_state);
+    }else if(status!=FG_OK&&operation==FG_OWNER_SESSION_PREPARE){
         fg_error ignored={0};
         coordinator_owner_transaction(coordinator,FG_OWNER_SESSION_RESTORE,slot,&ignored);
     }
     return status;
 }
+
+#include "runtime_mtp_coordinator.inc"
 
 typedef struct depthb_batch_context {
     fg_coordinator *coordinator;
@@ -5616,14 +5717,19 @@ static fg_status coordinator_decode_token_local(fg_coordinator *coordinator,cons
 static fg_status coordinator_decode_token(fg_coordinator *coordinator,const int32_t *history,
     size_t history_count,uint32_t token_index,uint32_t position,uint32_t *next_token,
     float *logit,fg_error *err){
-    if(coordinator->ring_decode)
-        return coordinator_decode_token_ring(coordinator,history,history_count,token_index,
+    fg_status status=coordinator->ring_decode?
+        coordinator_decode_token_ring(coordinator,history,history_count,token_index,
+            position,next_token,logit,err):
+        coordinator_decode_token_local(coordinator,history,history_count,token_index,
             position,next_token,logit,err);
-    return coordinator_decode_token_local(coordinator,history,history_count,token_index,
-        position,next_token,logit,err);
+    if(status==FG_OK&&coordinator->mtp)
+        status=coordinator_mtp_advance(coordinator,(uint32_t)history[history_count-1u],
+                                       token_index,err);
+    return status;
 }
 
 static void coordinator_close(fg_coordinator *coordinator){if(!coordinator)return;
+    coordinator_mtp_close(coordinator->mtp);coordinator->mtp=NULL;
     for(uint32_t slot=0;slot<FG_OWNER_SESSION_MAX;slot++)
         if(coordinator->depthb.checkpoint_valid[slot])
             fg_owner_session_snapshot_release(&coordinator->depthb.checkpoint[slot]);
@@ -5770,12 +5876,7 @@ fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
         bool sealed_mtp=(runtime->manifest->flags&FG_MANIFEST_HAS_MTP)!=0;
         runtime->mtp_capability=sealed_mtp?FG_MTP_CAPABILITY_WEIGHTS_SEALED:
             FG_MTP_CAPABILITY_UNSUPPORTED;
-        if(requested_mtp){
-            fg_error_set(err,FG_ERR_UNAVAILABLE,
-                         "MTP native-head serving integration and an exact batched ring "
-                         "verifier are not linked; see docs/MTP.md; unset --experimental-mtp");
-            status=FG_ERR_UNAVAILABLE;
-        }
+        if(requested_mtp)runtime->mtp_capability=FG_MTP_CAPABILITY_ENABLED;
     }
     if(status==FG_OK)runtime->context_limit=runtime->options.logical_context_tokens;
     if(status==FG_OK)runtime->prefix_continuation=!runtime->options.no_prefix_continuation;
@@ -5786,6 +5887,8 @@ fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
     if(status==FG_OK&&fg_mtp_capture_enabled())
         status=fg_expert_route_trace_enable(runtime->coordinator.expert,err);
     if(status==FG_OK)status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
+    if(status==FG_OK&&runtime->coordinator.mtp)
+        status=runtime_mtp_policy_init(runtime,err);
     if(status!=FG_OK){fg_runtime_close(runtime);return status;}*out=runtime;return FG_OK;
 }
 
@@ -5828,6 +5931,7 @@ fg_status fg_runtime_set_sampler(fg_runtime *runtime,const fg_sampler_config *co
 void fg_runtime_close(fg_runtime *runtime){
     if(!runtime)return;
     if(runtime->shared_coordinator){
+        coordinator_mtp_close(runtime->coordinator.mtp);
         free(runtime->coordinator.decode_work_wire);
         free(runtime->coordinator.decode_result_wire);
         for(uint32_t i=0;i<FG_PREFILL_FRAMES;i++)
@@ -5873,6 +5977,7 @@ fg_status fg_runtime_enable_pipeline(fg_runtime *runtime,fg_runtime **second,fg_
     if(!copy){fg_error_set(err,FG_ERR_OOM,"allocate second session");return FG_ERR_OOM;}
     base->multi_session=true;
     memcpy(&copy->coordinator,base,sizeof(*base));
+    copy->coordinator.mtp=NULL;
     for(uint32_t i=0;i<FG_PREFILL_FRAMES;i++)
         copy->coordinator.prefill_expert[i].result_wire=NULL;
     copy->shared_coordinator=true;copy->manifest=runtime->manifest;
@@ -5888,6 +5993,8 @@ fg_status fg_runtime_enable_pipeline(fg_runtime *runtime,fg_runtime **second,fg_
     if(!copy->coordinator.decode_work_wire||!copy->coordinator.decode_result_wire){
         fg_error_set(err,FG_ERR_OOM,"allocate second session wire buffers");status=FG_ERR_OOM;
     }
+    if(status==FG_OK)status=coordinator_mtp_create(&copy->coordinator,false,err);
+    if(status==FG_OK&&copy->coordinator.mtp)status=runtime_mtp_policy_init(copy,err);
     if(status==FG_OK)status=fg_runtime_activate(copy,err);
     if(status==FG_OK)status=pipeline_memory_admit(0u,copy->context_limit,
         owned_qsa_layers(copy->manifest,0u),
@@ -6061,6 +6168,9 @@ static fg_status runtime_generate_tokens(
         clock_gettime(CLOCK_MONOTONIC,&prefill_start);
     }
     if(status==FG_OK&&prefill_offset<prompt->count)
+        status=coordinator_mtp_prefix(&runtime->coordinator,runtime->history,
+            (uint32_t)prefill_offset,(uint32_t)prompt->count,!vision&&!position_bias,err);
+    if(status==FG_OK&&prefill_offset<prompt->count)
         status=coordinator_prefill_pipeline(&runtime->coordinator,runtime->history,
             runtime->history_count,prompt->data+(size_t)prefill_offset,
             (uint32_t)prefill_offset,(uint32_t)(prompt->count-prefill_offset),vision,
@@ -6102,9 +6212,19 @@ static fg_status runtime_generate_tokens(
     bool generate_trace=getenv("FG_GENERATE_TRACE")!=NULL;
     double gt_interrupt=0.0,gt_tokenizer=0.0,gt_callback=0.0,gt_render=0.0,gt_decode=0.0;
     double gt_loop=generate_trace?dispatch_ts():0.0;
+    bool mtp_eligible=runtime->coordinator.mtp&&runtime->sampler.temperature==0.0f&&
+        !fg_sampler_penalties_active(&runtime->sampler)&&!vision&&!position_bias&&
+        runtime->state_position==runtime->history_count;
+    fg_mtp_result mtp_ready={0};
+    float mtp_logits[FG_MTP_MAX_VERIFY]={0};
+    uint32_t mtp_index=0u;
     while(status==FG_OK&&generated<max_tokens){
         double t_mark=generate_trace?dispatch_ts():0.0;
-        if(interrupted&&interrupted(interrupt_context))break;
+        bool stop=interrupted&&interrupted(interrupt_context);
+        /* A committed burst can be ahead of the public history. Publish only
+         * its already-consumed prefix before honoring cancellation; leave its
+         * final, unconsumed token cached, just like the serial path. */
+        if(stop&&(!mtp_eligible||runtime->state_position==runtime->history_count))break;
         if(generate_trace){gt_interrupt+=dispatch_ts()-t_mark;t_mark=dispatch_ts();}
         if(next==fg_tokenizer_eos(runtime->coordinator.tokenizer)){
             const char *eos_text=NULL;size_t eos_bytes=0;
@@ -6134,16 +6254,32 @@ static fg_status runtime_generate_tokens(
         state_mutated=true;
         if(generate_trace)fprintf(stderr,"GENERATE_TOKEN n=%u id=%u logit=%.6g\n",
             generated,next,logit);
-        status=coordinator_decode_token(&runtime->coordinator,runtime->history,
-            runtime->history_count,(uint32_t)runtime->history_count-1u,
-            runtime->state_position,&next,&logit,err);
+        if(mtp_eligible&&mtp_ready.count&&mtp_index+1u<mtp_ready.count){
+            mtp_index++;next=mtp_ready.tokens[mtp_index];logit=mtp_logits[mtp_index];
+        }else if(mtp_eligible&&generated<max_tokens&&!stop){
+            uint32_t first=(uint32_t)runtime->history_count-1u;
+            status=runtime_mtp_round(runtime,next,max_tokens-generated,&mtp_ready,mtp_logits,err);
+            if(status==FG_OK){
+                runtime->state_position=first+mtp_ready.consumed;
+                mtp_index=0u;next=mtp_ready.tokens[0];logit=mtp_logits[0];
+            }
+        }else{
+            status=coordinator_decode_token(&runtime->coordinator,runtime->history,
+                runtime->history_count,(uint32_t)runtime->history_count-1u,
+                runtime->state_position,&next,&logit,err);
+            if(status==FG_OK)runtime->state_position++;
+            mtp_ready.count=0u;
+        }
         if(generate_trace)gt_decode+=dispatch_ts()-t_mark;
         if(status==FG_OK){
             runtime->next_token=next;
             runtime->next_logit=logit;
             runtime->next_token_valid=true;
-            runtime->state_position++;
         }
+    }
+    if(status==FG_OK&&mtp_eligible&&runtime->state_position!=runtime->history_count){
+        fg_error_set(err,FG_ERR_MISMATCH,"MTP committed frontier does not match public history");
+        status=FG_ERR_MISMATCH;
     }
     if(status==FG_OK){
         clock_gettime(CLOCK_MONOTONIC,&decode_end);

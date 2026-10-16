@@ -467,15 +467,26 @@ static void test_runtime_option_contract(void){
         CHECK(fg_runtime_options_resolve(&resolved,current,&requested,&error)==FG_ERR_UNAVAILABLE);
         fg_runtime_options_init(&requested);
         requested.experimental_flags=FG_RUNTIME_EXPERIMENTAL_MTP;
-        CHECK(fg_runtime_options_resolve(&resolved,current,&requested,&error)==FG_ERR_UNAVAILABLE);
+        CHECK(fg_runtime_options_resolve(&resolved,current,&requested,&error)==FG_ERR_ARGUMENT);
     }
     fg_manifest *mtp=write_read_budget_manifest_flags(mtp_path,8192u,8192u,8192u,0u,
         FG_MANIFEST_COMPONENTS_TEXT_REQUIRED|FG_MANIFEST_HAS_MTP);
     if(mtp){
         fg_runtime_options_init(&requested);
         requested.experimental_flags=FG_RUNTIME_EXPERIMENTAL_MTP;
+        CHECK(fg_runtime_options_resolve(&resolved,mtp,&requested,&error)==FG_ERR_ARGUMENT);
+        requested.mtp_overlay="native-q8.gguf";requested.mtp_embedding="embedding.fgme";
+        requested.sessions=2u;
         CHECK(fg_runtime_options_resolve(&resolved,mtp,&requested,&error)==FG_OK);
         CHECK((resolved.experimental_flags&FG_RUNTIME_EXPERIMENTAL_MTP)!=0);
+        CHECK(resolved.mtp_window_tokens==8192u&&resolved.mtp_max_draft==3u&&resolved.sessions==2u);
+        if(current)CHECK(fg_runtime_options_resolve(&resolved,current,&requested,&error)==FG_OK);
+        requested.mtp_max_draft=4u;
+        CHECK(fg_runtime_options_resolve(&resolved,mtp,&requested,&error)==FG_ERR_ARGUMENT);
+        requested.mtp_max_draft=1u;requested.mtp_window_tokens=8193u;
+        CHECK(fg_runtime_options_resolve(&resolved,mtp,&requested,&error)==FG_ERR_ARGUMENT);
+        requested.mtp_window_tokens=8192u;requested.experimental_flags=0u;
+        CHECK(fg_runtime_options_resolve(&resolved,mtp,&requested,&error)==FG_ERR_ARGUMENT);
     }
     if(large){
         CHECK(fg_manifest_validate_deployment(large,&error)==FG_ERR_UNAVAILABLE);

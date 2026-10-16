@@ -157,9 +157,52 @@ cleanup:
     return result;
 }
 
+static int test_mtp_head_streams(void){
+    int result=0;fg_error error={0};
+    mtp_head_reduction reductions[2]={{0}};
+    fg_mtp_head_partial partial={.kind=FG_MTP_HEAD_VERIFY,.destination_rank=0u,
+        .first_token=31u,.count=FG_MTP_MAX_VERIFY};
+    for(uint32_t slot=0;slot<2u;slot++){
+        for(uint32_t way=0;way<FG_OUTPUT_SPLIT_WAYS_MAX;way++){
+            uint32_t first=0u,rows=0u;
+            uint32_t peer=fg_output_split_rank(FG_OUTPUT_SPLIT_WAYS_MAX,way);
+            fg_output_split_span(FG_OUTPUT_SPLIT_WAYS_MAX,way,&first,&rows);
+            REQUIRE(rows>=FG_MTP_MAX_VERIFY);
+            partial.source_rank=(uint8_t)peer;
+            for(uint32_t i=0;i<FG_MTP_MAX_VERIFY;i++){
+                partial.values[i]=1.0f;partial.ids[i]=first+i;
+            }
+            REQUIRE(mtp_accept_partial(&reductions[slot],&partial,peer,FG_MTP_HEAD_VERIFY,
+                31u,FG_MTP_MAX_VERIFY,&error)==FG_OK);
+            REQUIRE(mtp_accept_partial(&reductions[slot],&partial,peer,FG_MTP_HEAD_VERIFY,
+                31u,FG_MTP_MAX_VERIFY,&error)==FG_ERR_MISMATCH);
+        }
+        REQUIRE(reductions[slot].received==mtp_head_rank_mask());
+        for(uint32_t i=0;i<FG_MTP_MAX_VERIFY;i++)REQUIRE(reductions[slot].ids[i]==i);
+    }
+    mtp_head_reduction invalid={0};
+    partial.source_rank=4u;partial.ids[0]=FG_Q38_VOCAB_SIZE;
+    REQUIRE(mtp_accept_partial(&invalid,&partial,4u,FG_MTP_HEAD_VERIFY,31u,
+        FG_MTP_MAX_VERIFY,&error)==FG_ERR_MISMATCH);
+    REQUIRE(invalid.received==0u);
+    fg_runtime *a=calloc(1,sizeof(*a)),*b=calloc(1,sizeof(*b));
+    if(!a||!b){free(a);free(b);result=1;goto cleanup;}
+    fg_status sa=runtime_mtp_policy_init(a,&error),sb=runtime_mtp_policy_init(b,&error);
+    if(sa!=FG_OK||sb!=FG_OK){free(a);free(b);result=1;goto cleanup;}
+    fg_mtp_policy untouched=b->mtp_policy;
+    fg_status observed=fg_mtp_policy_observe(&a->mtp_policy,3u,3u,40.0,&error);
+    bool independent=observed==FG_OK&&a->mtp_policy.rounds==1u&&
+        !memcmp(&untouched,&b->mtp_policy,sizeof(untouched));
+    free(a);free(b);REQUIRE(independent);
+cleanup:
+    if(!result)puts("MTP four-shard ties, shard bounds, duplicate rejection and per-stream policies: PASS");
+    return result;
+}
+
 int main(void){
     if(test_scheduler())return 1;
     if(test_service_guards())return 1;
+    if(test_mtp_head_streams())return 1;
     int result=0;
     fg_error error={0};
     fg_manifest *manifest=malloc(sizeof(*manifest));

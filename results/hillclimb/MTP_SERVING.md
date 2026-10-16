@@ -1,5 +1,43 @@
 # MTP serving foundation on the promoted multisession base
 
+## Linked orchestration update — 2026-10-16
+
+The branch is now rebased onto promoted main `7381f93`. Default-off native
+head fanout, causal small-N ring verification, authoritative native KV repair,
+all-owner state transactions and independent per-stream adaptive policies are
+linked. Explicit overlay and exact production-Q8 embedding sidecar paths are
+required. This supersedes the historical “unlinked” status below, **not** its
+qualification limits: no blade-pair end-to-end serving or serving speedup is
+claimed, and no production lease has been requested.
+
+Latest .51 gates, stock clocks/governor, `tools/mtp-serving-validate.sh`:
+
+* C17 `-Werror` release/shader build; flag registry; existing session, API and
+  two-session eight-rank coroutine-pipeline regressions: PASS.
+* Greedy transactional cycle, rejection-sampling primitive, typed wire,
+  malformed native arguments, causal prefix warmfill, authoritative rejection
+  repair and independent native-session fixtures: PASS. Native manager
+  state-machine fixtures use mocked compute; do not mistake these for serving.
+* Exact raw/cooked sidecar export, independently reconstructed sealed source
+  SHA256, corrupt-payload rejection even after replacing its raw digest: PASS.
+  All 16 production-width (2560) Q8 rows and all four HC copies match the actual
+  target batched GPU embedding kernel bit-for-bit.
+* Current baseline N=2/3/4 six-layer output and GDN state: byte-identical to
+  sequential N=1; causal prefix, retained 1/2/3/4-input rollback, session shape
+  changes and the other session's retained replay: PASS.
+* Real retained Q8 native overlay SHA256
+  `536bab54b0a1bdea23b65871c4cdc38deee5803771501a0c770a0510bcd3283b`:
+  two interleaved sessions, 18 rows, eight rollback cycles, original-parent
+  close first and KV-only warmfill equivalence: byte-exact, both full KV and
+  window 4. These are short-prefix component tests, not 8192-window capacity
+  or acceptance qualification.
+* Python: 25 fixtures run, four optional numerical tests skipped.
+
+Distributed draft latency, current-kernel greedy serving identity, EOS/output
+limits/cancellation/callback failures under actual burst publication, true
+blade-pair serving and long-context sessions-2 residency remain execution gates.
+Historical acceptance and N ratios below are not new linked-serving evidence.
+
 Branch: `cuppaxanax/mtp-serving`, based directly on `2d0f8a7`. The published
 `cuppaxanax/mtp` capture history remains unchanged.
 

@@ -307,6 +307,10 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
     }
     resolved->no_prefix_continuation=input.no_prefix_continuation;
     resolved->model_name=input.model_name;
+    resolved->mtp_overlay=input.mtp_overlay;
+    resolved->mtp_embedding=input.mtp_embedding;
+    resolved->mtp_window_tokens=input.mtp_window_tokens;
+    resolved->mtp_max_draft=input.mtp_max_draft;
     resolved->specified=mask;
     if(resolved->prefill_microbatch!=manifest->prefill_microbatch||
        resolved->prefill_window!=manifest->prefill_window){
@@ -321,12 +325,28 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
                      "experimental context and vision are not enabled in this runtime");
         return FG_ERR_UNAVAILABLE;
     }
-    if((resolved->experimental_flags&FG_RUNTIME_EXPERIMENTAL_MTP)&&
-       !(manifest->flags&FG_MANIFEST_HAS_MTP)){
-        fg_error_set(err,FG_ERR_UNAVAILABLE,
-                     "manifest has no sealed MTP component; MTP requires a repack with the "
-                     "trained MTP tensors in the pack");
-        return FG_ERR_UNAVAILABLE;
+    if(resolved->experimental_flags&FG_RUNTIME_EXPERIMENTAL_MTP){
+        if(!resolved->mtp_window_tokens)resolved->mtp_window_tokens=
+            resolved->logical_context_tokens<8192u?resolved->logical_context_tokens:8192u;
+        if(!resolved->mtp_max_draft)resolved->mtp_max_draft=FG_MTP_MAX_DRAFT_TOKENS;
+        if(!resolved->mtp_overlay||!resolved->mtp_overlay[0]||
+           !resolved->mtp_embedding||!resolved->mtp_embedding[0]||
+           strlen(resolved->mtp_embedding)>1023u||
+           strlen(resolved->mtp_overlay)>1023u||
+           !resolved->mtp_window_tokens||
+           resolved->mtp_window_tokens>resolved->logical_context_tokens||
+           resolved->mtp_max_draft>FG_MTP_MAX_DRAFT_TOKENS||
+           resolved->prefill_microbatch<FG_MTP_MAX_DRAFT_TOKENS+1u||
+           manifest->session.position_mode!=FG_POSITION_TEXT||
+           !manifest->layer_owner[FG_LAYER_COUNT-1u]||manifest->protocol_version<6u){
+            fg_error_set(err,FG_ERR_ARGUMENT,
+                "MTP requires --mtp-overlay, --mtp-embedding, window <= context, draft 1..3 and a protocol-6 "
+                "text ring with a remote final block");
+            return FG_ERR_ARGUMENT;
+        }
+    }else if(input.mtp_overlay||input.mtp_embedding||input.mtp_window_tokens||input.mtp_max_draft){
+        fg_error_set(err,FG_ERR_ARGUMENT,"MTP options require --experimental-mtp");
+        return FG_ERR_ARGUMENT;
     }
     if(legacy&&(resolved->logical_context_tokens!=boot_context||
        resolved->gpu_index_tokens!=boot_context||resolved->qsa_hot_tokens!=boot_context||

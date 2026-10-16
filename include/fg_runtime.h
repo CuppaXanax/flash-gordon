@@ -29,7 +29,7 @@ struct fg_fabric *fg_runtime_fabric(fg_runtime *runtime);
 /* The full 262K two-layer record set is ~618 MiB, so the staged window cap
  * must sit above it for the worker default and a full-context rank-0 request. */
 #define FG_RUNTIME_QSA_CACHE_MAX_BYTES (UINT64_C(1024) << 20u)
-#define FG_MTP_MAX_DRAFT_TOKENS 2u
+#define FG_MTP_MAX_DRAFT_TOKENS 3u
 
 enum {
     FG_RUNTIME_EXPERIMENTAL_CONTEXT = 1u << 0,
@@ -72,6 +72,10 @@ typedef struct fg_runtime_options {
      * driven so a second sealed pack can be served under its own name without
      * an environment flag or a binary change. */
     const char *model_name;
+    const char *mtp_overlay;
+    const char *mtp_embedding;
+    uint32_t mtp_window_tokens;
+    uint32_t mtp_max_draft;
 } fg_runtime_options;
 
 typedef struct fg_runtime_profile_definition {
