@@ -23,6 +23,8 @@
 typedef struct fg_ngram_read {uint64_t offset;uint32_t bytes;} fg_ngram_read;
 typedef struct fg_ngram_cache fg_ngram_cache;
 typedef struct fg_ngram_store fg_ngram_store;
+/* Startup-only local page-cache/cacheable-host staging experiment, default off. */
+bool fg_ngram_local_cache_enabled(void);
 
 /* Validate and hash a suffix plus its two-token dependency window. Earlier
  * history belongs to the runtime's already-validated prefix; no state is cached. */

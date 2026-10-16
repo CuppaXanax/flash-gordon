@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "Filesystem                  1B-blocks         Used    Available Use% Mounted on\n/dev/mapper/fedora-root 1021363355648 901690605568 119672750080  89% /\nNAME            TYPE   SIZE ROTA MODEL\nzram0           disk     8G    0 \nnvme0n1         disk 953.9G    0 TEAM TM8FP6001T\n├─nvme0n1p1     part   600M    0 \n├─nvme0n1p2     part     2G    0 \n└─nvme0n1p3     part 951.3G    0 \n  └─fedora-root lvm  951.3G    0 ",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "Filesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 211173273600 42041053184  84% /\nNAME            TYPE   SIZE ROTA MODEL\nzram0           disk     8G    0 \nnvme0n1         disk 238.5G    0 Patriot M.2 P300 256GB\n├─nvme0n1p1     part   600M    0 \n├─nvme0n1p2     part     2G    0 \n└─nvme0n1p3     part 235.9G    0 \n  └─fedora-root lvm  235.9G    0 ",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "Filesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 201035763712 52178563072  80% /\nNAME            TYPE   SIZE ROTA MODEL\nzram0           disk     8G    0 \nnvme0n1         disk 238.5G    0 Patriot M.2 P300 256GB\n├─nvme0n1p1     part   600M    0 \n├─nvme0n1p2     part     2G    0 \n└─nvme0n1p3     part 235.9G    0 \n  └─fedora-root lvm  235.9G    0 ",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "Filesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 240458534912 12755791872  95% /\nNAME            TYPE   SIZE ROTA MODEL\nzram0           disk     8G    0 \nnvme0n1         disk 238.5G    0 Patriot M.2 P300 256GB\n├─nvme0n1p1     part   600M    0 \n├─nvme0n1p2     part     2G    0 \n└─nvme0n1p3     part 235.9G    0 \n  └─fedora-root lvm  235.9G    0 ",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "Filesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 188923887616 64290439168  75% /\nNAME            TYPE   SIZE ROTA MODEL\nzram0           disk     8G    0 \nnvme0n1         disk 238.5G    0 Patriot M.2 P300 256GB\n├─nvme0n1p1     part   600M    0 \n├─nvme0n1p2     part     2G    0 \n└─nvme0n1p3     part 235.9G    0 \n  └─fedora-root lvm  235.9G    0 ",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "Filesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 208241004544 44973322240  83% /\nNAME            TYPE   SIZE ROTA MODEL\nzram0           disk     8G    0 \nnvme0n1         disk 238.5G    0 Patriot M.2 P300 256GB\n├─nvme0n1p1     part   600M    0 \n├─nvme0n1p2     part     2G    0 \n└─nvme0n1p3     part 235.9G    0 \n  └─fedora-root lvm  235.9G    0 ",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "Filesystem                 1B-blocks         Used   Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 205557121024 47657205760  82% /\nNAME            TYPE   SIZE ROTA MODEL\nzram0           disk     8G    0 \nnvme0n1         disk 238.5G    0 Patriot M.2 P300 256GB\n├─nvme0n1p1     part   600M    0 \n├─nvme0n1p2     part     2G    0 \n└─nvme0n1p3     part 235.9G    0 \n  └─fedora-root lvm  235.9G    0 ",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "Filesystem                 1B-blocks         Used  Available Use% Mounted on\n/dev/mapper/fedora-root 253214326784 244749426688 8464900096  97% /\nNAME            TYPE   SIZE ROTA MODEL\nzram0           disk     8G    0 \nnvme0n1         disk 238.5G    0 Patriot M.2 P300 256GB\n├─nvme0n1p1     part   600M    0 \n├─nvme0n1p2     part     2G    0 \n└─nvme0n1p3     part 235.9G    0 \n  └─fedora-root lvm  235.9G    0 ",
+    "Stderr": ""
+  }
+]

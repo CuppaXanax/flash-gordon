@@ -3424,7 +3424,50 @@ static int test_iq4_nl_dequant(void){
 }
 
 static int test_ngram_direct_lookup(void){
-    const uint64_t table_bytes=UINT64_C(320001536)*FG_NGRAM_ROW_BYTES;char path[128];snprintf(path,sizeof(path),"/tmp/fg-ngram-%ld.iq4nl",(long)getpid());unlink(path);int fd=open(path,O_CREAT|O_EXCL|O_RDWR|O_CLOEXEC,0600);if(fd<0)return 0;int ok=ftruncate(fd,(off_t)fg_align_up_u64(table_bytes,FG_ALIGNMENT))==0;const int32_t history[]={10,20,30};uint64_t rows[FG_NGRAM_HEAD_COUNT],addresses[FG_NGRAM_HEAD_COUNT];uint8_t packed[FG_NGRAM_HEAD_COUNT*FG_NGRAM_ROW_BYTES];float expected[FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH],got[FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH];if(ok)ok=fg_q38_ngram_lookup(history,3,rows,addresses,&error)==FG_OK;for(uint32_t row=0;ok&&row<FG_NGRAM_HEAD_COUNT;row++){uint8_t *p=packed+row*FG_NGRAM_ROW_BYTES;for(uint32_t block=0;block<FG_NGRAM_EMBED_WIDTH/32u;block++){uint8_t *b=p+block*18u;uint16_t d=fg_f32_to_f16((float)(row+1u)*0.001953125f);memcpy(b,&d,2u);for(uint32_t i=0;i<16u;i++)b[2u+i]=(uint8_t)(((i+row)&15u)|(((i+block+3u)&15u)<<4u));}ok=pwrite(fd,p,FG_NGRAM_ROW_BYTES,(off_t)addresses[row])==FG_NGRAM_ROW_BYTES;}close(fd);fg_dequantize_iq4_nl(packed,expected,FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH);fg_ngram_store *store=NULL;fg_vk_tensor *embedding=NULL;if(ok)ok=fg_ngram_store_open(&store,context,path,table_bytes,1u,&error)==FG_OK;if(ok)ok=fg_ngram_store_lookup(store,history,3,&embedding,&error)==FG_OK;if(ok)ok=fg_vk_tensor_read(embedding,0,got,sizeof(got),&error)==FG_OK;for(uint32_t i=0;ok&&i<FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH;i++)if(got[i]!=expected[i]){fprintf(stderr,"n-gram lookup %u GPU=%g CPU=%g\n",i,got[i],expected[i]);ok=0;}fg_ngram_store_close(store);unlink(path);return ok;
+    const uint64_t table_bytes=UINT64_C(320001536)*FG_NGRAM_ROW_BYTES;
+    char path[128];snprintf(path,sizeof(path),".fg-ngram-%ld.iq4nl",(long)getpid());
+    int fd=open(path,O_CREAT|O_EXCL|O_RDWR|O_CLOEXEC,0600);
+    if(fd<0)return 0;
+    int ok=ftruncate(fd,(off_t)fg_align_up_u64(table_bytes,FG_ALIGNMENT))==0;
+    const int32_t history[]={10,20,30};
+    uint64_t rows[FG_NGRAM_HEAD_COUNT],addresses[FG_NGRAM_HEAD_COUNT];
+    uint8_t packed[FG_NGRAM_HEAD_COUNT*FG_NGRAM_ROW_BYTES];
+    float expected[FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH],got[FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH];
+    if(ok)ok=fg_q38_ngram_lookup(history,3,rows,addresses,&error)==FG_OK;
+    for(uint32_t row=0;ok&&row<FG_NGRAM_HEAD_COUNT;row++){
+        uint8_t *p=packed+row*FG_NGRAM_ROW_BYTES;
+        for(uint32_t block=0;block<FG_NGRAM_EMBED_WIDTH/32u;block++){
+            uint8_t *b=p+block*18u;
+            uint16_t d=fg_f32_to_f16((float)(row+1u)*0.001953125f);
+            memcpy(b,&d,2u);
+            for(uint32_t i=0;i<16u;i++)b[2u+i]=(uint8_t)(((i+row)&15u)|(((i+block+3u)&15u)<<4u));
+        }
+        ok=pwrite(fd,p,FG_NGRAM_ROW_BYTES,(off_t)addresses[row])==FG_NGRAM_ROW_BYTES;
+    }
+    if(ok)ok=fsync(fd)==0;
+    close(fd);
+    fg_dequantize_iq4_nl(packed,expected,FG_NGRAM_HEAD_COUNT*FG_NGRAM_EMBED_WIDTH);
+    const char *previous=getenv("FG_NGRAM_LOCAL_CACHE");
+    char *saved=previous?strdup(previous):NULL;
+    if(previous&&!saved)ok=0;
+    for(unsigned variant=0;ok&&variant<4;variant++){
+        ok=setenv("FG_NGRAM_LOCAL_CACHE",(variant&1u)?"1":"0",1)==0;
+        fg_ngram_store *store=NULL;fg_vk_tensor *embedding=NULL;
+        if(ok)ok=fg_ngram_store_open(&store,context,path,table_bytes,
+                                     variant<2u?1u:3u,&error)==FG_OK;
+        for(unsigned repeat=0;ok&&repeat<3;repeat++){
+            ok=fg_ngram_store_lookup(store,history,3,&embedding,&error)==FG_OK;
+            if(ok)ok=fg_vk_tensor_bytes(embedding)==sizeof(got);
+            if(ok)ok=fg_vk_tensor_read(embedding,0,got,sizeof(got),&error)==FG_OK;
+            if(ok)ok=memcmp(got,expected,sizeof(got))==0;
+        }
+        if(ok)ok=fg_ngram_store_verify_packed(store,addresses,FG_NGRAM_HEAD_COUNT,
+                                             packed,NULL,&error)==FG_OK;
+        fg_ngram_store_close(store);
+    }
+    if(saved){setenv("FG_NGRAM_LOCAL_CACHE",saved,1);free(saved);}
+    else unsetenv("FG_NGRAM_LOCAL_CACHE");
+    unlink(path);return ok;
 }
 
 static int test_ngram_resident(void){

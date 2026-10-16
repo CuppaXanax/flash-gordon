@@ -1,0 +1,6 @@
+Flash Gordon Vulkan device: AMD BC-250 (RADV GFX1013)
+  [ngram_direct_lookup] ... ok
+Flash Gordon native Vulkan production-dimension oracles: PASS
+Flash Gordon Vulkan device: AMD BC-250 (RADV GFX1013)
+  [iq4_nl_dequant] ... ok
+Flash Gordon native Vulkan production-dimension oracles: PASS

@@ -100,6 +100,12 @@ test-fg-dense-rates:
 tools/q4-repack: tools/q4_repack.c $(TEST_COMMON)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
 
+tools/bench-ngram-latency: tools/bench_ngram_latency.c $(TEST_COMMON) | shaders
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
+tools/bench-fabric-latency: tools/bench_fabric_latency.c src/fabric.o $(TEST_COMMON)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
 tools/q4-extract-pack: tools/q4_extract_pack.c $(TEST_COMMON)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
 
