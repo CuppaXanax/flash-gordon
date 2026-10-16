@@ -158,14 +158,14 @@ def analyze(directory):
                 times = collections.defaultdict(float)
                 for r in kernels:
                     times[family(r["name"])] += r["gpu_us"]
-                result["pilots"][str(path.relative_to(directory))] = {
+                result["pilots"][path.relative_to(directory).as_posix()] = {
                     "scope": "single intrusive/unpaired diagnostic, not wall qualification",
                     "config": next((r for r in rows if r["kind"] == "config"), None),
                     "median_wall_us": median(path), "family_gpu_us": dict(times)}
             dense = [r for r in rows if r.get("kind") == "dense_small_test"]
             gates = [r for r in rows if r.get("kind", "").startswith("small_") or r.get("kind") == "rollback"]
             if dense or gates:
-                result["oracles"][str(path.relative_to(directory))] = {
+                result["oracles"][path.relative_to(directory).as_posix()] = {
                     "dense_cases": len(dense),
                     "dense_max_abs": max((r["max_abs"] for r in dense), default=None),
                     "dense_tolerance_ok": all(r["tolerance_ok"] for r in dense),
@@ -174,12 +174,12 @@ def analyze(directory):
             if any(s in path.name for s in ("cpu", "residency", "exact-q8")):
                 text = path.read_text()
                 errors = [float(v) for v in re.findall(r"max_rel=([0-9.eE+-]+)", text)]
-                result["oracles"][str(path.relative_to(directory))] = {
+                result["oracles"][path.relative_to(directory).as_posix()] = {
                     "passed": text.rstrip().endswith("PASS"),
                     "max_rel": max(errors, default=None),
                     "last_lines": text.splitlines()[-4:]}
     result["build_receipts"] = {
-        str(path.relative_to(directory)): path.read_text()
+        path.relative_to(directory).as_posix(): path.read_text()
         for path in directory.glob("**/*-sha256.txt")}
     return result
 

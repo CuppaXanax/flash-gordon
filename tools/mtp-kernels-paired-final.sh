@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd /home/xander/hc-mtpk
-mkdir -p paired-layout paired-mixed paired-combined-long
+mkdir -p paired-layout paired-mixed paired-combined-long round7b
 export TMPDIR=$PWD/.build XDG_CACHE_HOME=$PWD/cache
 active=()
 for service in bc250-embed bc250-rerank; do
@@ -25,7 +25,7 @@ finish(){
             if [ -s "$f" ]; then echo "=== $f"; tail -3 "$f"; fi
         done
     fi
-    tar -czf paired-final.tar.gz paired-layout paired-mixed paired-combined-long evidence round7/binary-sha256.txt
+    tar -czf paired-final.tar.gz paired-layout paired-mixed paired-combined-long evidence round7 round7b
     exit "$rc"
 }
 trap finish EXIT
@@ -33,7 +33,9 @@ for service in "${active[@]}"; do systemctl stop "$service"; done
 cd src
 export TMPDIR=$PWD/.build FG_SHADER_DIR=$PWD/vulkan FG_EXPERT_Q8_WIDE=1
 sha256sum tools/bench-decode-fusion tests/test_fg_vk > ../paired-layout/binary-sha256.txt
-cmp ../round7/binary-sha256.txt ../paired-layout/binary-sha256.txt
+expected=../round7/binary-sha256.txt
+if [ -f ../round7b/binary-sha256.txt ]; then expected=../round7b/binary-sha256.txt; fi
+cmp "$expected" ../paired-layout/binary-sha256.txt
 run(){
     local flags=$1 n=$2 prefix=$3 seed=$4 path=$5
     FG_SMALL_KERNELS=$flags ./tools/bench-decode-fusion --q4 "${mix[@]}" --small-n --no-clocks \
