@@ -19,6 +19,7 @@ param(
     [switch]$WriteReference,
     [switch]$ConcurrentGeneration,
     [switch]$MixedPrefill,
+    [switch]$CapacityProbe,
     [int]$ChatContextTokens = 64,
     [int]$AgentContextTokens = 32768,
     [int]$ConcurrentTokens = 256,
@@ -562,6 +563,7 @@ function Invoke-Concurrency {
 function Invoke-ConcurrentGeneration {
     if ($ConcurrentTokens -lt 2 -or $ConcurrentRepeats -lt 1 -or $ChatContextTokens -lt 0 -or
         $AgentContextTokens -lt 0 -or $ChatDelayMilliseconds -lt 0) { throw 'Invalid concurrency parameters.' }
+    if ($CapacityProbe -and -not $MixedPrefill) { throw 'CapacityProbe requires MixedPrefill.' }
     $trials = @()
     $purpose = 'Print a long numbered list of distinct practical software tasks, one per line. Continue until the token limit.'
     for ($repeat = 0; $repeat -lt $ConcurrentRepeats; $repeat++) {
@@ -581,8 +583,11 @@ function Invoke-ConcurrentGeneration {
             )
         }
         $chatIsolated = Finish-Sse (Start-Sse $chatMessages $ConcurrentTokens -User 'hillclimb-chat')
-        $agentIsolated = Finish-Sse (Start-Sse $agentMessages $ConcurrentTokens -User 'hillclimb-agent')
-        $baseline = @((Get-GenerationStats $chatIsolated 'chat-style'), (Get-GenerationStats $agentIsolated 'agent-style'))
+        $agentIsolated = if (-not $CapacityProbe) {
+            Finish-Sse (Start-Sse $agentMessages $ConcurrentTokens -User 'hillclimb-agent')
+        } else { $null }
+        $baseline = @((Get-GenerationStats $chatIsolated 'chat-style'),
+            $(if ($agentIsolated) { Get-GenerationStats $agentIsolated 'agent-style' } else { $null }))
         $null = Invoke-NonStream $chat.Messages 1 -User 'hillclimb-chat'
         if (-not $MixedPrefill) { $null = Invoke-NonStream $agent.Messages 1 -User 'hillclimb-agent' }
         $load = Invoke-Concurrency $chatMessages $agentMessages $ConcurrentTokens `
@@ -591,14 +596,15 @@ function Invoke-ConcurrentGeneration {
             $row = $load.streams[$index]
             if ($null -eq $row.completion_tokens) { throw 'ConcurrentGeneration requires SSE usage from this branch.' }
             if ($row.completion_tokens -lt 32) { throw "Insufficient sustained generation: $($row.name) emitted $($row.completion_tokens) tokens." }
-            $row | Add-Member isolated_decode_tps $baseline[$index].client_decode_tps
-            $row | Add-Member decode_retention ($row.client_decode_tps / $baseline[$index].client_decode_tps)
-            $row | Add-Member isolated_ttft_ms $baseline[$index].ttft_ms
-            $row | Add-Member same_prompt_hash_match ($row.sha256 -eq $baseline[$index].sha256)
+            $row | Add-Member isolated_decode_tps $(if ($baseline[$index]) { $baseline[$index].client_decode_tps } else { $null })
+            $row | Add-Member decode_retention $(if ($baseline[$index]) { $row.client_decode_tps / $baseline[$index].client_decode_tps } else { $null })
+            $row | Add-Member isolated_ttft_ms $(if ($baseline[$index]) { $baseline[$index].ttft_ms } else { $null })
+            $row | Add-Member same_prompt_hash_match $(if ($baseline[$index]) { $row.sha256 -eq $baseline[$index].sha256 } else { $null })
             $row | Add-Member requested_token_ceiling $ConcurrentTokens
         }
-        $load | Add-Member aggregate_speedup_over_mean_isolated (
-            $load.aggregate_client_decode_tps / (($baseline[0].client_decode_tps + $baseline[1].client_decode_tps) / 2.0))
+        $load | Add-Member aggregate_speedup_over_mean_isolated $(if (-not $CapacityProbe) {
+            $load.aggregate_client_decode_tps / (($baseline[0].client_decode_tps + $baseline[1].client_decode_tps) / 2.0)
+        } else { $null })
         if ($null -eq $load.streams[0].prefix -or $load.streams[0].prefix.reused_tokens -le 0) {
             throw 'Chat continuation did not reuse its primed session.'
         }
@@ -618,6 +624,7 @@ function Invoke-ConcurrentGeneration {
     }
     return [pscustomobject]@{
         mode = if ($MixedPrefill) { 'chat-decode-during-agent-cold-prefill' } else { 'two-warm-prefix-generations' }
+        capacity_probe = [bool]$CapacityProbe
         trials = $trials
         chat_ttft_p50_ms = Get-Percentile @($trials | ForEach-Object { $_.load.streams[0].ttft_ms }) 0.5
         chat_ttft_p95_ms = Get-Percentile @($trials | ForEach-Object { $_.load.streams[0].ttft_ms }) 0.95
@@ -639,7 +646,8 @@ try {
     if ($ConcurrentGeneration) {
         $records.concurrency = Invoke-ConcurrentGeneration
         $records.metadata.correctness_pass = @($records.concurrency.trials | Where-Object {
-            -not $_.load.streams[0].same_prompt_hash_match -or -not $_.load.streams[1].same_prompt_hash_match
+            -not $_.load.streams[0].same_prompt_hash_match -or
+                (-not $CapacityProbe -and -not $_.load.streams[1].same_prompt_hash_match)
         }).Count -eq 0
     } else {
     $records.metadata.capacity_headers = @($headerProbe.Headers.Keys | Where-Object { $_ -match '(?i)capacity|concurr|slot' } | ForEach-Object { "$_=$($headerProbe.Headers[$_])" })

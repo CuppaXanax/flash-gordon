@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 class Handler(BaseHTTPRequestHandler):
     active = 0
     peak = 0
+    agent_sse = 0
     lock = threading.Lock()
 
     def log_message(self, *args):
@@ -28,6 +29,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if body.get("stream") and body.get("user") == "hillclimb-agent":
+            with self.lock:
+                Handler.agent_sse += 1
         count = min(body["max_tokens"], 64)
         reused = 32 if len(body["messages"]) > 2 else 0
         usage = {"prompt_tokens": 96, "completion_tokens": count, "total_tokens": 96 + count}
@@ -70,8 +74,9 @@ class Handler(BaseHTTPRequestHandler):
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell 7 is required")
 class ConcurrentHarness(unittest.TestCase):
-    def run_mode(self, mixed):
+    def run_mode(self, mixed, capacity=False):
         Handler.peak = 0
+        Handler.agent_sse = 0
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -87,6 +92,8 @@ class ConcurrentHarness(unittest.TestCase):
         ]
         if mixed:
             command.append("-MixedPrefill")
+        if capacity:
+            command.append("-CapacityProbe")
         artifact = None
         try:
             result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=45)
@@ -100,7 +107,14 @@ class ConcurrentHarness(unittest.TestCase):
             self.assertEqual(Handler.peak, 2)
             self.assertTrue(data["metadata"]["correctness_pass"])
             self.assertEqual([row["completion_tokens"] for row in load["streams"]], [64, 64])
-            self.assertTrue(all(row["same_prompt_hash_match"] for row in load["streams"]))
+            if capacity:
+                self.assertTrue(load["streams"][0]["same_prompt_hash_match"])
+                self.assertIsNone(load["streams"][1]["same_prompt_hash_match"])
+                self.assertIsNone(load["aggregate_speedup_over_mean_isolated"])
+                self.assertEqual(Handler.agent_sse, 1)
+            else:
+                self.assertTrue(all(row["same_prompt_hash_match"] for row in load["streams"]))
+                self.assertEqual(Handler.agent_sse, 2)
             if mixed:
                 self.assertTrue(load["chat_first_token_before_agent_first_token"])
                 self.assertGreater(load["streams"][1]["ttft_ms"], 250)
@@ -121,6 +135,9 @@ class ConcurrentHarness(unittest.TestCase):
 
     def test_chat_during_prefill(self):
         self.run_mode(True)
+
+    def test_single_cold_capacity_probe(self):
+        self.run_mode(True, capacity=True)
 
 
 if __name__ == "__main__":

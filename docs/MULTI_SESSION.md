@@ -227,6 +227,15 @@ Also run warm two-long-session tests with both context hints 260000, and
 repeated cached suffixes of 32/128/256 tokens. Keep a second live stream during
 agent abort, retry, divergence, identity eviction and queue-full tests.
 
+For the requested one-near-262K-plus-chat **capacity** run, add `-CapacityProbe`
+to `-ConcurrentGeneration -MixedPrefill`. It skips the isolated long-agent
+generation, so the long context is cold-prefilled only once while chat is live.
+It retains exact SSE usage, prefix counters, loaded TTFT/TPS, overlap, and the
+isolated-versus-loaded chat hash. The long agent's isolated TPS, retention,
+same-prompt hash comparison and aggregate speedup are explicitly null, not
+invented from another request. This is a memory/load probe, not an independent
+long-context throughput or greedy-parity qualification.
+
 `-ConcurrentGeneration` warms separate identities, measures each isolated,
 re-primes the identical prefixes, and submits **both** generation requests
 asynchronously before waiting for response headers. `-MixedPrefill` leaves the
