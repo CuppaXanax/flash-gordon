@@ -168,10 +168,25 @@ def verify(args):
                 current_hashes[current["id"]] != baseline_hashes[expected["id"]]):
             failures.append(current["case"])
         assert current_hashes[current["id"]][0] == current["tokens"], "hash count differs"
+    events_path = getattr(args, "correctness_events", None)
+    quality_path = getattr(args, "quality", None)
+    if events_path or quality_path:
+        from mtp_correctness import evaluate
+        assert events_path and quality_path and args.report_output, "new MTP gate needs events, Q8 quality and report"
+        events = json.loads(pathlib.Path(events_path).read_text())
+        assert {r["id"] for r in events["requests"]} == {r["id"] for r in candidate["rows"]}
+        for row in events["requests"]:
+            assert (row["tokens"], row["tokens_sha256"]) == current_hashes[row["id"]]
+        gate = evaluate(events, json.loads(pathlib.Path(quality_path).read_text()))
+        gate["historical_identity_mismatch_cases"] = failures
+        pathlib.Path(args.report_output).write_text(json.dumps(gate, indent=2)+"\n")
+        assert gate["passed"], gate
+        print("Pass-local argmax, small same-prefix margins and original-Q8 KL/top1: PASS")
+        return
     if getattr(args, "diagnostic", False):
         assert args.report_output, "diagnostic comparison requires a persistent report"
         pathlib.Path(args.report_output).write_text(json.dumps({
-            "diagnostic_only": True, "qualified": not failures,
+            "diagnostic_only": True, "qualified": False, "identity_passed": not failures,
             "passed": 8-len(failures), "failed_cases": failures}, indent=2) + "\n")
         print(f"DIAGNOSTIC greedy identity: {8-len(failures)}/8; not a qualification")
     else:
@@ -262,6 +277,8 @@ def main():
         check.add_argument("--" + name, required=True)
     check.add_argument("--diagnostic", action="store_true")
     check.add_argument("--report-output")
+    check.add_argument("--correctness-events", help="receipt-complete pass-local choices and same-prefix top2 comparisons")
+    check.add_argument("--quality", help="full-vocabulary original-Q8 model-quality result")
     summary = commands.add_parser("summarize")
     summary.add_argument("--directory", required=True)
     args = parser.parse_args()

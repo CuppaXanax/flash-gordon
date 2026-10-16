@@ -10,6 +10,8 @@ typedef struct fg_mtp_vocab fg_mtp_vocab;
 fg_status fg_mtp_vocab_open(fg_mtp_vocab **out,fg_vk_context *vk,const char *head_q8,
     const uint32_t *token_ids,uint32_t rows,fg_error *err);
 void fg_mtp_vocab_close(fg_mtp_vocab *vocab);
+fg_status fg_mtp_vocab_check(fg_mtp_vocab *vocab,const fg_tensor_record *record,
+    fg_error *err);
 fg_status fg_mtp_vocab_argmax(fg_mtp_vocab *vocab,const fg_vk_tensor *hidden,
     uint32_t *token,float *score,fg_error *err);
 /* Optional read-only diagnostics. Tensor contents are valid only in the

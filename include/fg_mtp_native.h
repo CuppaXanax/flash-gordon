@@ -5,6 +5,8 @@
 #include "fg_mtp_wire.h"
 
 typedef struct fg_mtp_native fg_mtp_native;
+fg_status fg_mtp_native_chain(fg_mtp_native *native,uint32_t slot,uint32_t first,
+    uint32_t pending,uint32_t count,fg_mtp_chain_result *result,fg_error *err);
 
 fg_status fg_mtp_native_create(fg_mtp_native **out,fg_vk_context *vk,
     const fg_manifest *manifest,uint32_t rank,fg_error *err);

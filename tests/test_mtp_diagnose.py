@@ -53,6 +53,13 @@ class DiagnosisTests(unittest.TestCase):
                  "target_repair_ms=2 native_repair_ms=3 commit_ms=1 host_ms=4 "
                  "total_ms=101 target_replay=0\n")
         self.assertEqual(validate_stage_ledgers(trace), 1)
+        overlapped = trace.replace("prepare_ms=1", "prepare_ms=1 overlap_ms=0.5").replace(
+            "total_ms=101", "total_ms=100.5")
+        self.assertEqual(validate_stage_ledgers(overlapped), 1)
+        with self.assertRaises(AssertionError):
+            validate_stage_ledgers(overlapped.replace("overlap_ms=0.5", "overlap_ms=2"))
+        with self.assertRaises(AssertionError):
+            validate_stage_ledgers(overlapped.replace("overlap_ms=0.5", "overlap_ms=-0.5"))
         with self.assertRaises(AssertionError):
             validate_stage_ledgers(trace.replace("total_ms=101", "total_ms=120"))
         with self.assertRaises(AssertionError):

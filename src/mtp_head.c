@@ -4,6 +4,7 @@
 #include "fg_owner.h"
 #include "fg_quant.h"
 #include "fg_q38_schema.h"
+#include "fg_sha256.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -14,6 +15,8 @@
 #include <unistd.h>
 
 #define MTP_LAYER (FG_LAYER_COUNT-1u)
+_Static_assert(FG_VK_MTP_VOCAB_STATIC_SLOT>=FG_VK_MTP_STATIC_SLOT+2u*FG_OWNER_SESSION_MAX,
+    "local vocabulary replay overlaps native core/warm sessions");
 #define MTP_BINDINGS 40u
 
 typedef struct mtp_shared_weights {
@@ -43,6 +46,7 @@ struct fg_mtp_head {
     fg_vk_tensor *keys,*values,*position,*attention_partials;
     fg_vk_tensor *norm,*down,*active,*up,*hidden,*output_partials;
 };
+
 
 struct fg_mtp_vocab {
     fg_vk_context *vk;
@@ -128,6 +132,23 @@ void fg_mtp_vocab_close(fg_mtp_vocab *v){
         fg_vk_tensor_destroy(v->weights);fg_vk_tensor_destroy(v->tokens);fg_vk_tensor_destroy(v->hidden);
         for(uint32_t i=0;i<2u;i++){fg_vk_tensor_destroy(v->scores[i]);fg_vk_tensor_destroy(v->ids[i]);}
         free(v);
+    }
+    fg_status fg_mtp_vocab_check(fg_mtp_vocab *v,const fg_tensor_record *r,fg_error *err){
+        if(!v||!r||v->rows!=FG_Q38_VOCAB_SIZE||r->ggml_type!=8u||
+           r->layout!=FG_TENSOR_LAYOUT_Q8_0_COOKED||r->shape[0]!=FG_HIDDEN_SIZE||
+           r->shape[1]!=FG_Q38_VOCAB_SIZE||
+           r->bytes!=fg_q8_0_cooked_matrix_bytes(FG_HIDDEN_SIZE,v->rows)){
+            fg_error_set(err,FG_ERR_FORMAT,"local MTP head requires the sealed full cooked-Q8 vocabulary");
+            return FG_ERR_FORMAT;
+        }
+        fg_sha256 hash;uint8_t digest[32];fg_sha256_init(&hash);
+        fg_sha256_update(&hash,fg_vk_tensor_map(v->weights),(size_t)r->bytes);
+        fg_sha256_final(&hash,digest);
+        if(memcmp(digest,r->sha256,sizeof(digest))){
+            fg_error_set(err,FG_ERR_MISMATCH,"local MTP vocabulary does not match output.weight");
+            return FG_ERR_MISMATCH;
+        }
+        return FG_OK;
     }
     fg_status fg_mtp_vocab_open(fg_mtp_vocab **out,fg_vk_context *vk,const char *path,
         const uint32_t *ids,uint32_t rows,fg_error *err){

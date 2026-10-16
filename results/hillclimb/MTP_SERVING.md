@@ -1,5 +1,15 @@
 # MTP serving foundation on the promoted multisession base
 
+## Revised gate and local-chain successor
+
+The user superseded the historical bitwise greedy-identity gate below:
+pass-local target argmax, same-prefix low-margin divergence and full-model
+N4/original-Q8 KL/top1 now apply. Historical failures are not rewritten as
+passes. The default-off local-head successor measures8.989ms code drafting
+and models99.816ms code rounds (104.565ms with10% higher target service),
+not a measured serving speedup. Complete new-gate qualification is pending.
+See [MTP_LOCAL_CHAIN](MTP_LOCAL_CHAIN.md) and [current policy](../../docs/MTP.md).
+
 ## Offline diagnosis and state-only commit — 2026-10-16
 
 **Default off; no promotion or new production lease.** All new numerical work
@@ -13,8 +23,9 @@ logits. Off margins are0.008607864–0.07532501; on margins0.007888794–0.09817
 The per-case IDs, indices and both margins are in [MTP design](../../docs/MTP.md).
 Python independently checks all248320 raw logits per vector and derives
 KL(off||on)0.001014–0.004841. These are selected failure prefixes, **not** an
-unbiased KL/top1 quality gate. Component1e-4 tolerance cannot waive greedy
-identity. Native wrapper/reference conditioning is bit-exact over43,080
+unbiased KL/top1 quality gate. Under the then-active historical rule,
+component1e-4 tolerance could not waive greedy identity; that rule is now
+superseded as described above. Native wrapper/reference conditioning is bit-exact over43,080
 contracted steps on40 retained contexts, including private slots/keep1..4.
 All72 trained owner/failure-prefix oracles pass full-journal reconstruction
 and repeated-rollback HC/state equality bit-exact. Changing later columns

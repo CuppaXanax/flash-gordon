@@ -1,8 +1,12 @@
 import importlib.util
+import hashlib
 import json
 import os
 import pathlib
 import shutil
+import struct
+import subprocess
+import sys
 import types
 import unittest
 from unittest import mock
@@ -11,6 +15,8 @@ SPEC = importlib.util.spec_from_file_location(
     "mtp_serving_qualify", pathlib.Path(__file__).parents[1] / "tools" / "mtp_serving_qualify.py")
 CLIENT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CLIENT)
+sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "tools"))
+from mtp_correctness import Q8_MANIFEST, MIX04_MANIFEST, CORPUS80
 
 
 class ServingClientTest(unittest.TestCase):
@@ -20,6 +26,25 @@ class ServingClientTest(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.root)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell unavailable")
+    def test_local_head_plan_and_prelease_gate(self):
+        script = pathlib.Path(__file__).parents[1]/"tools"/"Invoke-MTPServingQualification.ps1"
+        command = ["pwsh", "-NoProfile", "-File", str(script)]
+        result = subprocess.run(command+["-Action", "Plan", "-Profile", "SingleSessionPerf",
+            "-LocalHead", "not-read-by-plan", "-DiagnosticGreedy"],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        plan = json.loads(result.stdout)
+        self.assertFalse(plan["productionAccess"])
+        self.assertTrue(plan["localDraftHead"])
+        self.assertTrue(plan["diagnosticOnly"])
+        self.assertEqual(plan["candidateSessions"], 1)
+        self.assertEqual(plan["candidateQsaPageCacheMiB"], 440)
+        result = subprocess.run(command+["-Action", "Run", "-LeaseConfirmed",
+            "-LeaseId", "mock-new-policy"], capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("MTP qualification requires complete pass-local/Q8 artifacts", result.stderr)
 
     def test_incremental_sse(self):
         deltas = [{"role": "assistant"}, {"content": "α"}, {"content": "β"}, {}]
@@ -57,6 +82,46 @@ class ServingClientTest(unittest.TestCase):
         self.assertFalse(report["qualified"])
         self.assertEqual(report["failed_cases"], ["0"])
         args.report_output = None
+        with self.assertRaises(AssertionError):
+            CLIENT.verify(args)
+
+    def test_pass_local_gate_binds_all_http_receipts(self):
+        paths = {k: self.root/k for k in ("candidate", "baseline", "trace", "baseline_trace",
+                                         "correctness_events", "quality", "report_output")}
+        digest = hashlib.sha256(struct.pack("<I", 9)).hexdigest()
+        rows = [dict(case=str(i), semantic={"message": {"content": "new"}},
+                     id=f"request-{i}", tokens=1) for i in range(8)]
+        paths["candidate"].write_text(json.dumps(dict(rows=rows)))
+        paths["baseline"].write_text(json.dumps(dict(rows=[
+            dict(row, semantic={"message": {"content": "old"}}) for row in rows])))
+        trace = "".join(f"API_TOKEN_HASH id={r['id']} count=1 sha256={digest}\n" for r in rows)
+        paths["trace"].write_text(trace)
+        paths["baseline_trace"].write_text(trace.replace(digest, "b"*64))
+        events = dict(requests=[dict(id=r["id"], tokens=1, tokens_sha256=digest) for r in rows],
+            rows=[dict(id=r["id"], position=0, emitted=9, target_top1=9, off_top1=7,
+                       off_top2=9, target_top2=7, off_margin=.05, target_margin=.04,
+                       target_prefix_sha256="a"*64, off_prefix_sha256="a"*64) for r in rows])
+        quality = dict(full_vocab=248320, samples=80, mean_kld=.004,
+                       top1_agreement=.9875, reference_kind="original-Q8",
+                       same_prefix_geometry=True, frozen_corpus_matched=True, candidate_columns=4,
+                       reference_manifest_sha256=Q8_MANIFEST, candidate_manifest_sha256=MIX04_MANIFEST,
+                       corpus_sha256=CORPUS80)
+        paths["correctness_events"].write_text(json.dumps(events))
+        paths["quality"].write_text(json.dumps(quality))
+        args = types.SimpleNamespace(**{k: str(v) for k, v in paths.items()})
+        CLIENT.verify(args)
+        report = json.loads(paths["report_output"].read_text())
+        self.assertTrue(report["passed"])
+        self.assertEqual(len(report["historical_identity_mismatch_cases"]), 8)
+        quality["mean_kld"] = .01
+        paths["quality"].write_text(json.dumps(quality))
+        with self.assertRaises(AssertionError):
+            CLIENT.verify(args)
+        events["requests"][0]["tokens_sha256"] = "0"*64
+        paths["correctness_events"].write_text(json.dumps(events))
+        with self.assertRaises(AssertionError):
+            CLIENT.verify(args)
+        args.quality = None
         with self.assertRaises(AssertionError):
             CLIENT.verify(args)
 

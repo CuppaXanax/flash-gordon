@@ -30,7 +30,9 @@ typedef enum fg_mtp_native_operation {
     FG_MTP_NATIVE_FINISH = 4,
     FG_MTP_NATIVE_ADVANCE = 5,
     FG_MTP_NATIVE_PREPARE = 6,
-    FG_MTP_NATIVE_TARGET_KEEP = 7
+    FG_MTP_NATIVE_TARGET_KEEP = 7,
+    FG_MTP_NATIVE_LOCAL_HEAD = 8,
+    FG_MTP_NATIVE_CHAIN = 9
 } fg_mtp_native_operation;
 
 /* FINISH has count-1 token IDs; CONFIG has overlay and target-embedding paths.
@@ -50,6 +52,17 @@ typedef struct fg_mtp_native_ack {
     uint32_t first_token,count,frontier;
     fg_status status;
 } fg_mtp_native_ack;
+
+#define FG_MTP_CHAIN_RESULT_BYTES (16u+FG_MTP_MAX_DRAFT*8u)
+typedef struct fg_mtp_chain_result {
+    uint32_t first_token,count,frontier;
+    uint32_t tokens[FG_MTP_MAX_DRAFT];
+    float scores[FG_MTP_MAX_DRAFT];
+} fg_mtp_chain_result;
+fg_status fg_mtp_chain_encode(uint8_t output[FG_MTP_CHAIN_RESULT_BYTES],
+    const fg_mtp_chain_result *result,fg_error *err);
+fg_status fg_mtp_chain_decode(fg_mtp_chain_result *result,const uint8_t *payload,
+    uint32_t bytes,fg_error *err);
 
 typedef enum fg_mtp_head_kind {
     FG_MTP_HEAD_DRAFT = 1,

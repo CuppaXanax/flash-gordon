@@ -26,6 +26,20 @@ struct fg_mtp_embedding {int unused;};
 struct fg_mtp_head {uint32_t frontier,step;fg_vk_tensor *next,*hidden;};
 static uint32_t rejection=FG_MTP_MAX_DRAFT;
 static uint32_t fixture_eos=FG_Q38_VOCAB_SIZE-1u;
+static bool local_chain;
+fg_status __wrap_fg_mtp_vocab_open(fg_mtp_vocab **out,fg_vk_context *vk,const char *path,
+    const uint32_t *ids,uint32_t rows,fg_error *err){
+    (void)vk;(void)path;(void)ids;(void)rows;(void)err;
+    *out=(fg_mtp_vocab *)(uintptr_t)1u;return FG_OK;
+}
+void __wrap_fg_mtp_vocab_close(fg_mtp_vocab *v){(void)v;}
+fg_status __wrap_fg_mtp_vocab_check(fg_mtp_vocab *v,const fg_tensor_record *r,fg_error *err){
+    (void)v;(void)r;(void)err;return FG_OK;
+}
+fg_status __wrap_fg_mtp_vocab_argmax(fg_mtp_vocab *v,const fg_vk_tensor *h,
+    uint32_t *token,float *score,fg_error *err){
+    (void)v;(void)err;*token=(uint32_t)h->data[0];*score=1.0f;return FG_OK;
+}
 static fg_vk_tensor *zero_ngram;
 static void require(fg_status status,fg_error *e){
     if(status!=FG_OK){fprintf(stderr,"MTP_RING_FAIL %d %s\n",status,e->message);exit(1);}
@@ -406,6 +420,7 @@ static int run_rank(fg_manifest *m,uint32_t rank,uint32_t native_owner){
         c->options=(fg_runtime_options){.experimental_flags=FG_RUNTIME_EXPERIMENTAL_MTP,
             .logical_context_tokens=8192u,.gpu_index_tokens=8192u,.qsa_hot_tokens=8192u,
             .mtp_overlay="fixture.gguf",.mtp_embedding="fixture.fgme",
+            .mtp_local_head=local_chain?"head.q8":NULL,
             .mtp_native_rank_plus_one=native_owner==7u?0u:native_owner+1u,
             .mtp_window_tokens=64u,.mtp_max_draft=3u};
         memset(c->identity.identity_sha256,1,32u);
@@ -542,11 +557,12 @@ static void stop_children(int signal){
     for(sig_atomic_t i=0;i<child_count;i++)if(children[i]>0)kill(children[i],SIGTERM);
 }
 int main(int argc,char **argv){
-    if(argc!=6&&argc!=7){fprintf(stderr,"usage: test_mtp_ring HOST0 HOST1 BASEPORT REJECT(0..3) PARITY(0..1|2=local) [NATIVE_OWNER]\n");return 2;}
+    if(argc<6||argc>8){fprintf(stderr,"usage: test_mtp_ring HOST0 HOST1 BASEPORT REJECT(0..3) PARITY(0..1|2=local) [NATIVE_OWNER [LOCAL_CHAIN]]\n");return 2;}
     uint32_t base=(uint32_t)strtoul(argv[3],NULL,10);
     rejection=(uint32_t)strtoul(argv[4],NULL,10);
     uint32_t parity=(uint32_t)strtoul(argv[5],NULL,10);
-    uint32_t native_owner=argc==7?(uint32_t)strtoul(argv[6],NULL,10):7u;
+    uint32_t native_owner=argc>=7?(uint32_t)strtoul(argv[6],NULL,10):7u;
+    local_chain=argc==8&&strcmp(argv[7],"0");
     VERIFY(native_owner==7u||native_owner==6u);
     VERIFY(base>1024u&&base<65000u&&rejection<=3u&&parity<=2u);
     fg_manifest *m=malloc(sizeof(*m));VERIFY(m);fg_manifest_init(m);

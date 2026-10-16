@@ -311,6 +311,7 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
     resolved->model_name=input.model_name;
     resolved->mtp_overlay=input.mtp_overlay;
     resolved->mtp_embedding=input.mtp_embedding;
+    resolved->mtp_local_head=input.mtp_local_head;
     resolved->mtp_window_tokens=input.mtp_window_tokens;
     resolved->mtp_max_draft=input.mtp_max_draft;
     resolved->mtp_fixed_draft=input.mtp_fixed_draft;
@@ -347,6 +348,8 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
            !resolved->mtp_embedding||!resolved->mtp_embedding[0]||
            strlen(resolved->mtp_embedding)>1023u||
            strlen(resolved->mtp_overlay)>1023u||
+           (resolved->mtp_local_head&&(!resolved->mtp_local_head[0]||
+             strlen(resolved->mtp_local_head)>1023u))||
            !resolved->mtp_window_tokens||
            resolved->mtp_window_tokens>resolved->logical_context_tokens||
            resolved->mtp_max_draft>FG_MTP_MAX_DRAFT_TOKENS||
@@ -359,7 +362,7 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
                 "text ring with a remote final block");
             return FG_ERR_ARGUMENT;
         }
-    }else if(input.mtp_overlay||input.mtp_embedding||input.mtp_window_tokens||
+    }else if(input.mtp_overlay||input.mtp_embedding||input.mtp_local_head||input.mtp_window_tokens||
              input.mtp_max_draft||input.mtp_fixed_draft||input.mtp_native_rank_plus_one){
         fg_error_set(err,FG_ERR_ARGUMENT,"MTP options require --experimental-mtp");
         return FG_ERR_ARGUMENT;

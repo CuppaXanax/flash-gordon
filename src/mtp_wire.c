@@ -21,7 +21,7 @@ static fg_status malformed(fg_error *err,const char *what){
     fg_error_set(err,FG_ERR_FORMAT,"invalid MTP %s",what);return FG_ERR_FORMAT;
 }
 static bool operation_valid(fg_mtp_native_operation op){
-    return op>=FG_MTP_NATIVE_CONFIG&&op<=FG_MTP_NATIVE_TARGET_KEEP;
+    return op>=FG_MTP_NATIVE_CONFIG&&op<=FG_MTP_NATIVE_CHAIN;
 }
 static bool target_shape(const fg_mtp_target_work *w){
     return w&&w->source_rank<FG_RANK_COUNT&&w->destination_rank<FG_RANK_COUNT&&
@@ -149,6 +149,18 @@ static fg_status native_shape(const fg_mtp_native_work *w,uint32_t *rows,
        (w->operation!=FG_MTP_NATIVE_CONFIG&&w->owner_rank_plus_one))
         return malformed(err,"native operation");
     switch(w->operation){
+        case FG_MTP_NATIVE_LOCAL_HEAD:
+            if(w->first_token||w->argument||w->limit||!w->overlay||!w->overlay[0])
+                return malformed(err,"local head configuration");
+            *path_bytes=(uint32_t)strnlen(w->overlay,FG_MTP_OVERLAY_PATH_MAX+1u);
+            if(!*path_bytes||*path_bytes>FG_MTP_OVERLAY_PATH_MAX||w->count!=*path_bytes)
+                return malformed(err,"local head path");
+            return FG_OK;
+        case FG_MTP_NATIVE_CHAIN:
+            if(!w->first_token||!w->count||w->count>FG_MTP_MAX_DRAFT||
+               w->first_token>FG_NATIVE_CONTEXT-w->count||w->argument||w->limit)
+                return malformed(err,"local draft chain");
+            *rows=1u;break;
         case FG_MTP_NATIVE_CONFIG:
             if(w->first_token||!w->overlay||!w->overlay[0]||
                !w->embedding_file||!w->embedding_file[0]||
@@ -233,7 +245,14 @@ fg_status fg_mtp_native_work_decode(fg_mtp_native_work *w,uint32_t *tokens,
         .first_token=get32(p+4u),.count=get32(p+8u),.argument=get32(p+12u),
         .limit=get32(p+16u),.tokens=tokens};
     uint32_t second=get32(p+20u);
-    if(w->operation==FG_MTP_NATIVE_CONFIG){
+    if(w->operation==FG_MTP_NATIVE_LOCAL_HEAD){
+        if(!overlay||!w->count||w->count>FG_MTP_OVERLAY_PATH_MAX||second||
+           bytes!=FG_MTP_NATIVE_HEADER_BYTES+w->count||
+           memchr(p+FG_MTP_NATIVE_HEADER_BYTES,0,w->count))
+            return malformed(err,"local head path length");
+        memcpy(overlay,p+FG_MTP_NATIVE_HEADER_BYTES,w->count);
+        overlay[w->count]=0;w->overlay=overlay;
+    }else if(w->operation==FG_MTP_NATIVE_CONFIG){
         if(!overlay||!embedding_file||!w->count||w->count>FG_MTP_OVERLAY_PATH_MAX||
            !second||second>FG_MTP_OVERLAY_PATH_MAX||
            bytes!=FG_MTP_NATIVE_HEADER_BYTES+w->count+second||
@@ -254,9 +273,42 @@ fg_status fg_mtp_native_work_decode(fg_mtp_native_work *w,uint32_t *tokens,
         tokens[i]=get32(p+FG_MTP_NATIVE_HEADER_BYTES+i*4u);
         if(tokens[i]>=FG_Q38_VOCAB_SIZE)return malformed(err,"embedding token ID");
     }
+
     return FG_OK;
 }
 
+fg_status fg_mtp_chain_encode(uint8_t out[FG_MTP_CHAIN_RESULT_BYTES],
+    const fg_mtp_chain_result *r,fg_error *err){
+    if(!out||!r||!r->first_token||!r->count||r->count>FG_MTP_MAX_DRAFT||
+       r->first_token>FG_NATIVE_CONTEXT-r->count||
+       r->frontier!=r->first_token+r->count-1u)
+        return malformed(err,"chain result range");
+    memset(out,0,FG_MTP_CHAIN_RESULT_BYTES);
+    out[0]=FG_MTP_WIRE_VERSION;out[1]=FG_MTP_NATIVE_CHAIN;
+    put32(out+4u,r->first_token);put32(out+8u,r->count);put32(out+12u,r->frontier);
+    for(uint32_t i=0;i<r->count;i++){
+        if(r->tokens[i]>=FG_Q38_VOCAB_SIZE||!isfinite(r->scores[i]))
+            return malformed(err,"chain result token");
+        put32(out+16u+i*8u,r->tokens[i]);put_float(out+20u+i*8u,r->scores[i]);
+    }
+    return FG_OK;
+}
+fg_status fg_mtp_chain_decode(fg_mtp_chain_result *r,const uint8_t *p,
+    uint32_t bytes,fg_error *err){
+    if(!r||!p||bytes!=FG_MTP_CHAIN_RESULT_BYTES||p[0]!=FG_MTP_WIRE_VERSION||
+       p[1]!=FG_MTP_NATIVE_CHAIN||p[2]||p[3])
+        return malformed(err,"chain result header");
+    *r=(fg_mtp_chain_result){.first_token=get32(p+4u),.count=get32(p+8u),
+        .frontier=get32(p+12u)};
+    if(!r->count||r->count>FG_MTP_MAX_DRAFT)return malformed(err,"chain result count");
+    for(uint32_t i=0;i<FG_MTP_MAX_DRAFT;i++){
+        r->tokens[i]=get32(p+16u+i*8u);r->scores[i]=get_float(p+20u+i*8u);
+        if(i>=r->count&&(r->tokens[i]||get32(p+20u+i*8u)))
+            return malformed(err,"chain result padding");
+    }
+    uint8_t check[FG_MTP_CHAIN_RESULT_BYTES];
+    return fg_mtp_chain_encode(check,r,err);
+}
 static bool ack_status_valid(fg_mtp_native_operation operation,fg_status status){
     return status==FG_OK||(operation==FG_MTP_NATIVE_PREPARE&&
         (status==FG_ERR_LIMIT||status==FG_ERR_OOM));

@@ -244,6 +244,7 @@ static fg_status handle_mtp_native_work(fg_fabric *fabric,fg_owner_executor *own
         FG_PREFILL_MAX_TOKENS,overlay,embedding_file,payload,bytes,err);
     uint64_t request=fg_frame_request_id(header);
     bool config=status==FG_OK&&work.operation==FG_MTP_NATIVE_CONFIG;
+    bool local_head=status==FG_OK&&work.operation==FG_MTP_NATIVE_LOCAL_HEAD;
     bool prepare=status==FG_OK&&work.operation==FG_MTP_NATIVE_PREPARE;
     bool retain=status==FG_OK&&work.operation==FG_MTP_NATIVE_TARGET_KEEP;
     if(status==FG_OK&&config&&(!context->vk||context->tokens<FG_MTP_MAX_VERIFY)){
@@ -259,9 +260,11 @@ static fg_status handle_mtp_native_work(fg_fabric *fabric,fg_owner_executor *own
             status=FG_ERR_ARGUMENT;
         }
     }
-    if(status==FG_OK&&(peer!=0u||(!config&&(!session||request!=session))||
+    if(status==FG_OK&&(peer!=0u||(!config&&!local_head&&(!session||request!=session))||
        (!config&&!prepare&&!retain&&self!=fg_mtp_native_owner(context->mtp_native)))){
-        fg_error_set(err,FG_ERR_MISMATCH,"stale or misrouted native MTP work");
+        fg_error_set(err,FG_ERR_MISMATCH,
+            "stale or misrouted native MTP work op=%u peer=%u self=%u session=%llu request=%llu",
+            work.operation,peer,self,(unsigned long long)session,(unsigned long long)request);
         status=FG_ERR_MISMATCH;
     }
     float hidden[FG_HIDDEN_SIZE];fg_mtp_native_ack ack;
@@ -273,6 +276,19 @@ static fg_status handle_mtp_native_work(fg_fabric *fabric,fg_owner_executor *own
             work.argument,context->vk,manifest->residency_cap_bytes,err);
     }
     double run_start=dispatch_ts();
+    if(status==FG_OK&&work.operation==FG_MTP_NATIVE_CHAIN){
+        fg_mtp_chain_result result;uint8_t wire[FG_MTP_CHAIN_RESULT_BYTES];
+        status=fg_mtp_native_chain(context->mtp_native,fg_frame_session_slot(header),
+            work.first_token,work.tokens[0],work.count,&result,err);
+        if(status==FG_OK)status=fg_mtp_chain_encode(wire,&result,err);
+        if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,
+            FG_MSG_MTP_NATIVE_ACK,request,fg_frame_sequence(header),0u,
+            wire,sizeof(wire),err);
+        if(decode_ms_enabled())fprintf(stderr,
+            "MTP_LOCAL_CHAIN rank=%u first=%u k=%u total_ms=%.3f status=%u\n",
+            self,work.first_token,work.count,dispatch_ts()-run_start,status);
+        return status;
+    }
     if(status==FG_OK&&retain){
         if(!fg_mtp_native_enabled(context->mtp_native)){
             fg_error_set(err,FG_ERR_MISMATCH,"MTP retained prefix before configuration");

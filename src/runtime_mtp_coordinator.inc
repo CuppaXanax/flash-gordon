@@ -57,7 +57,8 @@ static fg_status coordinator_mtp_rpc(fg_coordinator *c,const fg_mtp_native_work 
     uint32_t peer=c->mtp->native_owner,sequence=0u;
     fg_status status=coordinator_mtp_send_native(c,peer,work,&sequence,err);
     fg_mtp_native_ack ack;
-    if(status==FG_OK)status=coordinator_mtp_ack(c,peer,c->session_id,sequence,work,&ack,err);
+    uint64_t request=c->session_id?c->session_id:UINT64_C(1);
+    if(status==FG_OK)status=coordinator_mtp_ack(c,peer,request,sequence,work,&ack,err);
     if(status==FG_OK&&ack.status!=FG_OK){
         fg_error_set(err,ack.status,"native MTP rank %u failed startup memory admission",peer);
         return ack.status;
@@ -151,6 +152,12 @@ static fg_status coordinator_mtp_create(fg_coordinator *c,bool configure,fg_erro
                 status=FG_ERR_MISMATCH;
             }
         }
+    }
+    if(status==FG_OK&&configure&&c->options.mtp_local_head){
+        fg_mtp_native_work local={.operation=FG_MTP_NATIVE_LOCAL_HEAD,
+            .overlay=c->options.mtp_local_head,
+            .count=(uint32_t)strlen(c->options.mtp_local_head)};
+        status=coordinator_mtp_rpc(c,&local,0u,err);
     }
     if(status==FG_OK)c->depthb_work.mtp_native=m->native;
     return status;
@@ -311,6 +318,8 @@ typedef struct mtp_round_context {
     uint32_t first,count,consumed;
     const uint32_t *inputs;
     float logits[FG_MTP_MAX_VERIFY];
+    uint32_t target[FG_MTP_MAX_VERIFY];
+    bool prepared;
     double prepare_ms,verify_ms,target_repair_ms,native_repair_ms,commit_ms;
 } mtp_round_context;
 
@@ -370,15 +379,19 @@ static fg_status coordinator_mtp_verify(mtp_round_context *round,const uint32_t 
 
 static fg_status mtp_round_checkpoint(void *opaque,fg_error *err){
     mtp_round_context *r=opaque;fg_coordinator *c=&r->runtime->coordinator;
+    if(r->prepared)return FG_OK;
     double start=dispatch_ts();
     fg_status status=coordinator_owner_transaction(c,FG_OWNER_SESSION_PREPARE,
                                                    (uint8_t)c->output_session,err);
-    r->prepare_ms+=dispatch_ts()-start;return status;
+    r->prepare_ms+=dispatch_ts()-start;
+    if(status==FG_OK)r->prepared=true;
+    return status;
 }
 static fg_status mtp_round_verify(void *opaque,const uint32_t *inputs,uint32_t count,
     uint32_t *tokens,fg_error *err){
     mtp_round_context *r=opaque;double start=dispatch_ts();
     fg_status status=coordinator_mtp_verify(r,inputs,count,false,tokens,err);
+    if(status==FG_OK)memcpy(r->target,tokens,count*sizeof(*tokens));
     r->verify_ms+=dispatch_ts()-start;return status;
 }
 static fg_status mtp_round_restore(void *opaque,fg_error *err){
@@ -389,13 +402,14 @@ static fg_status mtp_round_restore(void *opaque,fg_error *err){
 static fg_status mtp_round_retain(void *opaque,uint32_t keep,fg_error *err){
     mtp_round_context *r=opaque;fg_coordinator *c=&r->runtime->coordinator;
     double start=dispatch_ts();
-    fg_status status=depthb_owner_retain(&c->depthb,c->output_session,
-        r->first,r->count,keep,err);
+    fg_status status=FG_OK;
     fg_mtp_native_work work={.operation=FG_MTP_NATIVE_TARGET_KEEP,
         .first_token=r->first,.count=keep,.argument=r->count};
     uint32_t sequences[FG_RANK_COUNT]={0};
     for(uint32_t peer=1u;status==FG_OK&&peer<FG_RANK_COUNT;peer++)
         status=coordinator_mtp_send_native(c,peer,&work,&sequences[peer],err);
+    if(status==FG_OK)status=depthb_owner_retain(&c->depthb,c->output_session,
+        r->first,r->count,keep,err);
     for(uint32_t peer=1u;status==FG_OK&&peer<FG_RANK_COUNT;peer++){
         fg_mtp_native_ack ack;
         status=coordinator_mtp_ack(c,peer,c->session_id,sequences[peer],&work,&ack,err);
@@ -431,7 +445,30 @@ static fg_status runtime_mtp_round(fg_runtime *runtime,uint32_t pending,uint32_t
     uint32_t first=(uint32_t)runtime->history_count-1u;
     uint32_t drafts[FG_MTP_MAX_DRAFT],input=pending;
     fg_status status=FG_OK;double start=dispatch_ts();
-    for(uint32_t j=0;status==FG_OK&&j<k;j++){
+    mtp_round_context round={.runtime=runtime,.first=first,.count=k+1u};
+    double overlap_ms=0.0;
+    if(c->options.mtp_local_head){
+        fg_mtp_native_work work={.operation=FG_MTP_NATIVE_CHAIN,.first_token=first,
+            .count=k,.tokens=&pending};
+        uint32_t sequence=0u;
+        status=coordinator_mtp_send_native(c,c->mtp->native_owner,&work,&sequence,err);
+        double prep_start=dispatch_ts();
+        if(status==FG_OK)status=mtp_round_checkpoint(&round,err);
+        if(status==FG_OK)overlap_ms=dispatch_ts()-prep_start;
+        uint8_t wire[FG_MTP_CHAIN_RESULT_BYTES];fg_frame_header header;uint32_t bytes=0u;
+        if(status==FG_OK)status=fg_fabric_recv(c->fabric,c->mtp->native_owner,
+            FG_FABRIC_BULK,&header,wire,sizeof(wire),&bytes,err);
+        fg_mtp_chain_result chain;
+        if(status==FG_OK)status=fg_mtp_chain_decode(&chain,wire,bytes,err);
+        if(status==FG_OK&&(fg_frame_type(&header)!=FG_MSG_MTP_NATIVE_ACK||
+           fg_frame_request_id(&header)!=c->session_id||
+           fg_frame_session_slot(&header)!=c->output_session||
+           fg_frame_sequence(&header)!=sequence||chain.first_token!=first||chain.count!=k)){
+            fg_error_set(err,FG_ERR_MISMATCH,"stale local MTP chain result");
+            status=FG_ERR_MISMATCH;
+        }
+        if(status==FG_OK)memcpy(drafts,chain.tokens,k*sizeof(*drafts));
+    }else for(uint32_t j=0;status==FG_OK&&j<k;j++){
         fg_mtp_native_work work={.operation=FG_MTP_NATIVE_DRAFT,.first_token=first+j,
             .count=1u,.argument=j,.tokens=&input};
         uint32_t sequence=0u;
@@ -442,12 +479,23 @@ static fg_status runtime_mtp_round(fg_runtime *runtime,uint32_t pending,uint32_t
         if(status==FG_OK)input=drafts[j];
     }
     double draft_ms=dispatch_ts()-start;
-    mtp_round_context round={.runtime=runtime,.first=first,.count=k+1u};
     const fg_mtp_ops ops={.checkpoint=mtp_round_checkpoint,.verify=mtp_round_verify,
         .restore=mtp_round_restore,.commit=mtp_round_commit,
         .context=&round,.retain=mtp_round_retain};
     if(status==FG_OK)status=fg_mtp_cycle_greedy(&ops,pending,drafts,k,limit,
         fg_tokenizer_eos(c->tokenizer),result,err);
+    if(status==FG_OK){
+        for(uint32_t i=0;i<result->count;i++){
+            if(result->tokens[i]!=round.target[i]){
+                fg_error_set(err,FG_ERR_MISMATCH,"MTP emission is not this pass's target argmax");
+                status=FG_ERR_MISMATCH;break;
+            }
+            if(decode_ms_enabled())fprintf(stderr,
+                "MTP_CHOICE slot=%u request=%llu first=%u row=%u emitted=%u target_argmax=%u\n",
+                c->output_session,(unsigned long long)c->session_id,first,i,
+                result->tokens[i],round.target[i]);
+        }
+    }
     if(status==FG_OK){
         memcpy(logits,round.logits,result->count*sizeof(*logits));
         status=fg_mtp_policy_observe(&runtime->mtp_policy,k,result->accepted,
@@ -458,13 +506,13 @@ static fg_status runtime_mtp_round(fg_runtime *runtime,uint32_t pending,uint32_t
             dispatch_ts()-start,c->options.mtp_fixed_draft?"fixed":"adaptive");
         if(status==FG_OK){
             double total=dispatch_ts()-start;
-            double host=total-draft_ms-round.prepare_ms-round.verify_ms-
+            double host=total-draft_ms-round.prepare_ms-round.verify_ms+overlap_ms-
                 round.target_repair_ms-round.native_repair_ms-round.commit_ms;
             fprintf(stderr,"MTP_STAGE slot=%u first=%u k=%u draft_ms=%.3f prepare_ms=%.3f "
                 "verify_ms=%.3f target_repair_ms=%.3f native_repair_ms=%.3f "
-                "commit_ms=%.3f host_ms=%.3f total_ms=%.3f target_replay=0\n",
+                "commit_ms=%.3f host_ms=%.3f total_ms=%.3f overlap_ms=%.3f target_replay=0\n",
                 c->output_session,first,k,draft_ms,round.prepare_ms,round.verify_ms,
-                round.target_repair_ms,round.native_repair_ms,round.commit_ms,host,total);
+                round.target_repair_ms,round.native_repair_ms,round.commit_ms,host,total,overlap_ms);
         }
     }
     if(status!=FG_OK)transport_poison(&c->transport_state);

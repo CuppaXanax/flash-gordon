@@ -1,6 +1,107 @@
 # MTP: native head, causal verification and remaining execution gates
 
-**2026-10-16 serving gate: FAILED_GREEDY; not promoted.**
+## Revised numerical gate and local-chain candidate
+
+**Policy update: N1/N4 arithmetic alignment is not required.** This supersedes
+the bitwise greedy-identity requirement in the historical entries below; their
+measurements and immutable receipts are unchanged. MTP remains default-off and
+unqualified, not a numerical failure solely because a low-margin winner changed.
+The current gates are:
+
+1. Every emitted token must be the argmax of the target logits computed in
+   that pass. The serving cycle checks this before publishing its result.
+2. Compare N1/off and N4/on at the **same token prefix**, not later positions
+   of diverged free-running trajectories. A differing winner must exchange
+   the same top two tokens, with **both raw-logit top2 margins strictly below
+   0.10**. All declared emissions and token-ID SHA/count receipts are required;
+   selecting only the nine historical first differences is not qualification.
+3. N4 full-model logits versus authentic original-Q8, on the frozen matched
+   corpus and same prefix geometry: mean full-vocabulary
+   `KL(P_Q8 || P_N4) <= 0.005`, top1 agreement `>= 0.985`
+   (at least79/80 on the80-context corpus). The480-natural-context qualification
+   and its cohort/p99 gate are separate and must not be conflated with these80.
+
+`tools/mtp_correctness.py` enforces the combined gates, failing closed on
+missing coverage, receipt mismatches, nonfinite metrics or unmatched geometry.
+Quality artifacts pin the original-Q8 and mix04 manifest SHA256 values and
+the `ad99ce71...` corpus SHA, exactly80 samples and `candidate_columns=4`.
+They require `reference_kind="original-Q8"`, `same_prefix_geometry=true` and
+`frozen_corpus_matched=true`; a480-context artifact is not interchangeable.
+`mtp_serving_qualify.py verify --correctness-events FILE --quality FILE
+--report-output FILE` additionally binds the event receipts to actual HTTP
+request IDs and runtime token hashes. Without these artifacts its legacy
+identity check is only the historical stronger check, not an alternate way
+to waive the new model-quality gate. Full N4/Q8 quality and complete pass-local
+capture remain pending; no production lease is implied by unit-test success.
+The existing component/rollback exactness checks remain in force.
+
+`--mtp-local-head FILE` (requires `--experimental-mtp`) loads the full Q8
+vocabulary on the native MTP owner. It validates all cooked matrix bytes
+against the sealed manifest's full `output.weight`, rather than accepting
+an arbitrary draft head. One typed RPC returns a k1–3 local draft chain;
+contracted hidden states stay on GPU and the coordinator no longer rendezvous
+with every distributed vocabulary slice after each draft token.
+The coordinator overlaps the chain with target **checkpoint preparation**,
+not with target transformer execution. Verification still uses the existing
+causal N-column target path. Rejection uses the state-only saved-GDN/PLE commit
+already implemented; private native KV reconstruction remains explicit.
+Retain fanout starts all remote owners before coordinator-local retention,
+then collects their acknowledgments, avoiding a serialized local/remote bubble.
+
+Two native sessions require replay slots8/9 and10/11. The shared vocabulary
+therefore owns slot12, not slot9: using9 collides with the first session's
+warm graph. Total replay slots increase12→13, including command/fence and
+descriptor-pool reservation, even when this option is off. The full-head
+allocation is additional residency; native-only short-window benchmark fit
+does not establish full-target8192/32768-context or dual-session admission.
+Existing eager requested-live cap checks must still pass before readiness.
+The new option adds no environment flag. `MTP_STAGE` records `overlap_ms`;
+its disjoint sum subtracts this from draft+prepare before adding the other
+components. Timing-mode `MTP_CHOICE` records the request namespace, pass-local
+token and argmax.
+
+### Local-chain measurements and prelease model
+
+The authenticated40-context local-chain benchmark checks **33,960/33,960**
+draft IDs against an independent current direct GPU reference, including all
+256 teacher-forced prefixes and a keep1..4 repair schedule. Seven differ from
+the historical frozen draft IDs; those differences are retained, not aligned
+away. Steady k3 drafting averages **8.989ms code /9.017ms chat**.
+
+Simulating fixed-k3 frontiers over captured N1-teacher prefixes gives code
+5120/1580=**3.240506 tokens/verification** and chat5120/2140=**2.392523**.
+The all-prefix arithmetic average overweights skipped frontiers and is not
+the online yield. These are offline estimates, not measured N4 acceptance.
+
+The conservative code-round model is **99.816ms**; increasing target service
+by10% gives **104.565ms**. It projects **32.46TPS** using simulated acceptance,
+or33.93TPS using the different historical code-ring yield. It is not60TPS,
+live-ring timing or a measured158→99.8ms repair improvement. It includes the
+existing47.493ms trained owner proxy, an unmeasured proportional N4 transport
+model, measured local draft/head and state-fixture costs, calibrated residual
+and explicit control/host budgets. Only checkpoint preparation overlaps
+drafting; no target-transformer or reduced-precision transport credit is taken.
+
+The full head adds676,920,320 requested-live bytes. Adding it and the new
+single-session journal to the authentic rank7 warm ledger projects
+**14,660,611,624B**, above the13.5GiB cap with700MiB QSA cache. The diagnostic
+single-session plan therefore uses **440MiB for both off/on arms**, projecting
+14,387,981,864B with107,532,760B headroom. This excludes extra driver-pool
+reservation and is **not measured full-target admission**. Original service
+settings are restored; no dual-session or long-context fit is asserted.
+
+The local-only plan is:
+`Invoke-MTPServingQualification.ps1 -Action Plan -Profile SingleSessionPerf
+-LocalHead FILE -DiagnosticGreedy`. A run still requires an explicit serialized
+lease, sealed release artifacts and eager admission. Diagnostic runs never
+qualify: complete actual serving receipts and same-geometry N4/original-Q8
+model quality remain pending. The historical80 Q8 captures show a
+geometry/cohort-confounded baseline discrepancy and cannot establish N4
+attribution; a same-geometry original-Q8 reference is being reconstructed.
+See [local-chain evidence and model](../results/hillclimb/MTP_LOCAL_CHAIN.md).
+
+**Historical 2026-10-16 serving gate: FAILED_GREEDY under the superseded
+identity rule; not promoted.**
 The frozen sessions1/mask330 sweep completed adaptive and fixed k1/2/3
 measurements without the dual-session residency blocker. Greedy identity passed
 only6/8,6/8,5/8,6/8 respectively; every failed case was chat. All four code

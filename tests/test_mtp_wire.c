@@ -56,6 +56,20 @@ static void target_codec(void){
 int main(void){
     target_codec();
     fg_error err={0};uint32_t bytes=0u;
+    fg_mtp_chain_result chain={.first_token=10u,.count=3u,.frontier=12u,
+        .tokens={2u,9u,11u},.scores={1.0f,2.0f,3.0f}},got_chain;
+    uint8_t chain_wire[FG_MTP_CHAIN_RESULT_BYTES];
+    CHECK(fg_mtp_chain_encode(chain_wire,&chain,&err)==FG_OK);
+    CHECK(fg_mtp_chain_decode(&got_chain,chain_wire,sizeof(chain_wire),&err)==FG_OK);
+    CHECK(!memcmp(chain.tokens,got_chain.tokens,sizeof(chain.tokens)));
+    chain_wire[2]=1u;
+    CHECK(fg_mtp_chain_decode(&got_chain,chain_wire,sizeof(chain_wire),&err)!=FG_OK);
+    chain_wire[2]=0u;chain.count=1u;chain.frontier=10u;
+    CHECK(fg_mtp_chain_encode(chain_wire,&chain,&err)==FG_OK);
+    chain_wire[24]=1u;
+    CHECK(fg_mtp_chain_decode(&got_chain,chain_wire,sizeof(chain_wire),&err)!=FG_OK);
+    chain.scores[0]=NAN;
+    CHECK(fg_mtp_chain_encode(chain_wire,&chain,&err)!=FG_OK);
     uint32_t capacity=FG_MTP_HEAD_WORK_MAX_BYTES;
     uint8_t *wire=malloc(capacity);
     float *input=malloc((size_t)FG_MTP_MAX_VERIFY*FG_HIDDEN_SIZE*sizeof(float));
@@ -86,6 +100,8 @@ int main(void){
     CHECK(fg_mtp_native_work_decode(&decoded,decoded_ids,4u,
         path,embedding_path,wire,bytes,&err)!=FG_OK);
     const fg_mtp_native_work cases[]={
+        {.operation=FG_MTP_NATIVE_LOCAL_HEAD,.overlay="head.q8",.count=7u},
+        {.operation=FG_MTP_NATIVE_CHAIN,.first_token=20u,.count=3u,.tokens=ids},
         {.operation=FG_MTP_NATIVE_PREFIX,.first_token=10u,.count=1u,.argument=5u,
          .limit=20u,.tokens=ids},
         {.operation=FG_MTP_NATIVE_DRAFT,.first_token=20u,.count=1u,.argument=2u,
@@ -101,7 +117,9 @@ int main(void){
             path,embedding_path,wire,bytes,&err)==FG_OK);
         CHECK(decoded.operation==work.operation&&decoded.first_token==work.first_token&&
               decoded.count==work.count&&decoded.argument==work.argument&&decoded.limit==work.limit);
-        uint32_t rows=work.operation==FG_MTP_NATIVE_FINISH?work.count-1u:work.count;
+        uint32_t rows=work.operation==FG_MTP_NATIVE_LOCAL_HEAD?0u:
+            work.operation==FG_MTP_NATIVE_CHAIN?1u:
+            work.operation==FG_MTP_NATIVE_FINISH?work.count-1u:work.count;
         CHECK(!memcmp(ids,decoded_ids,(size_t)rows*sizeof(uint32_t)));
         CHECK(fg_mtp_native_work_decode(&decoded,decoded_ids,4u,
             path,embedding_path,wire,bytes-1u,&err)!=FG_OK);

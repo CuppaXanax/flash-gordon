@@ -162,10 +162,13 @@ start)
 start-serving)
     phase="${2:?phase name}"; cap="${3:?maximum draft (0=off)}"
     small="${4:-0}"
-    sessions="${5:-2}"; fixed="${6:-0}"
+    sessions="${5:-2}"; fixed="${6:-0}"; local_head="${7:-0}"
+    qsa_cache="${8:-700}"
     [[ "$phase" =~ ^[A-Za-z0-9_-]{1,32}$ && "$cap" =~ ^[0-3]$ ]]
     [[ "$small" == 0 || "$small" == 330 ]]
     [[ "$sessions" =~ ^[12]$ && "$fixed" =~ ^[0-3]$ && "$fixed" -le "$cap" ]]
+    [[ "$local_head" =~ ^[01]$ ]]
+    [[ "$qsa_cache" == 440 || "$qsa_cache" == 700 ]]
     [[ ! -e "$root/candidate.pid" && ! -e "$root/watchdog.cancel" ]]
     [[ "$(( $(date +%s)+30 ))" -lt "$(cat "$root/lease.deadline")" ]]
     command=(rank --manifest "$root/pack/manifest.fgm" --rank "$rank")
@@ -174,12 +177,13 @@ start-serving)
         command=(api --manifest "$root/pack/manifest.fgm"
             --model-name Qwen3.8-Flash-Next-Uncensored --host 0.0.0.0 --port 8080
             --context-tokens 262144 --gpu-index-tokens 262144
-            --qsa-hot-tokens 0 --qsa-page-cache-mib 700 --sessions "$sessions")
+            --qsa-hot-tokens 0 --qsa-page-cache-mib "$qsa_cache" --sessions "$sessions")
         trace=(FG_RING_TRACE=1)
         if [[ "$cap" != 0 ]]; then
             command+=(--experimental-mtp --mtp-overlay "$root/native-q8.gguf"
                 --mtp-embedding "$root/embedding.fgme" --mtp-window 8192 --mtp-max-draft "$cap")
             if [[ "$fixed" != 0 ]]; then command+=(--mtp-fixed-draft "$fixed"); fi
+            if [[ "$local_head" == 1 ]]; then command+=(--mtp-local-head "$root/local-head.q8"); fi
         fi
     fi
     (
@@ -190,7 +194,7 @@ start-serving)
             FG_ROOFLINE=2047 FG_ROOF_DENSE=19 FG_ROOF_QSA=3 FG_ROOF_EXPERT=33024 \
             FG_ROOF_HC=96 FG_ROOF_RECURRENT=3 FG_ROOF_GDN=1 \
             FG_NGRAM_LOCAL_CACHE=1 FG_DECODE_SUBMIT_GROUP=2 "${trace[@]}" \
-            FG_SMALL_KERNELS="$small" \
+            FG_SMALL_KERNELS="$small" FG_DECODE_MS=1 \
             "$root/release/flash-gordon" "${command[@]}"
     ) >"$root/serving-$phase-rank-$rank.log" 2>&1 </dev/null &
     echo "$!" > "$root/candidate.pid"

@@ -605,6 +605,7 @@ static void test_state_commit(fg_owner_executor *owner,fg_expert_executor *exper
             fg_owner_session_checkpoint expected[2]={{0},{0}},continued[2]={{0},{0}};
             fg_owner_session_checkpoint device[2]={{0},{0}},full[2]={{0},{0}};
             bool journal_exact[2]={false,false};
+            double snapshot_us[2]={0},full_retain_us[2]={0};
             fg_vk_tensor *last_output=NULL;
             for(uint32_t s=0;s<2u;s++){
                 check(fg_owner_session_rollback(owner,&initial[s],error),error);
@@ -616,10 +617,14 @@ static void test_state_commit(fg_owner_executor *owner,fg_expert_executor *exper
                 check(fg_vk_tensor_read(out,0,gold[s],sizeof(gold[s]),error),error);
                 check(fg_owner_session_snapshot(owner,s,&continued[s],error),error);
                 check(fg_owner_session_rollback(owner,&initial[s],error),error);
+                double begin=now_us();
                 check(fg_owner_session_device_snapshot(owner,s,&device[s],error),error);
+                snapshot_us[s]=now_us()-begin;
                 last_output=commit_fixture_run(owner,expert,first,n,hidden[s],ngram,error);
                 check(fg_owner_session_snapshot(owner,s,&full[s],error),error);
+                begin=now_us();
                 check(fg_owner_mtp_retain(owner,&device[s],first,n,n,error),error);
+                full_retain_us[s]=now_us()-begin;
                 fg_owner_session_checkpoint rebuilt={0};
                 check(fg_owner_session_snapshot(owner,s,&rebuilt,error),error);
                 journal_exact[s]=same_state(&full[s],&rebuilt);
@@ -631,7 +636,9 @@ static void test_state_commit(fg_owner_executor *owner,fg_expert_executor *exper
                 check(fg_vk_tensor_read(last_output,0,saved,n*FG_HYPER_WIDTH*4u,error),error);
                 uint32_t replay_slot=s*(FG_VK_OWNER_STATIC_SLOTS/FG_OWNER_SESSION_MAX);
                 bool cached=fg_vk_static_recorded(vk,replay_slot);
+                double begin=now_us();
                 check(fg_owner_mtp_retain(owner,&device[s],first,n,keep,error),error);
+                double retain_us=now_us()-begin;
                 cached=cached&&fg_vk_static_recorded(vk,replay_slot);
                 check(fg_vk_tensor_read(last_output,0,actual,n*FG_HYPER_WIDTH*4u,error),error);
                 bool untouched=!memcmp(saved,actual,n*FG_HYPER_WIDTH*4u);
@@ -662,10 +669,12 @@ static void test_state_commit(fg_owner_executor *owner,fg_expert_executor *exper
                     "\"keep\":%u,\"slot\":%u,\"max_abs_state\":%.9g,"
                     "\"max_abs_continuation\":%.9g,\"hc_untouched\":%s,"
                     "\"stale_rejected\":%s,\"rollback_exact\":%s,"
-                    "\"journal_full_state_exact\":%s,\"static_replay_retained\":%s,\"tolerance_ok\":%s}\n",
+                    "\"journal_full_state_exact\":%s,\"static_replay_retained\":%s,\"tolerance_ok\":%s,"
+                    "\"snapshot_us\":%.6f,\"full_retain_us\":%.6f,\"retain_us\":%.6f}\n",
                     first,n,keep,s,max_state,max_output,untouched?"true":"false",
                     stale?"true":"false",restored?"true":"false",
-                    journal_exact[s]?"true":"false",cached?"true":"false",ok?"true":"false");
+                    journal_exact[s]?"true":"false",cached?"true":"false",ok?"true":"false",
+                    snapshot_us[s],full_retain_us[s],retain_us);
                 if(!ok||!untouched||!stale||!restored||!journal_exact[s]||!cached)exit(1);
             }
             for(uint32_t s=0;s<2u;s++){

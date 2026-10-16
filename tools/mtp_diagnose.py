@@ -116,7 +116,9 @@ def validate_stage_ledgers(text):
         assert fields["target_replay"] == "0"
         values = [float(fields[key]) for key in keys]
         assert min(values) >= -0.001
-        assert abs(sum(values)-float(fields["total_ms"])) <= 0.005
+        overlap = float(fields.get("overlap_ms", 0))
+        assert 0 <= overlap <= min(values[0], values[1])+0.002
+        assert abs(sum(values)-overlap-float(fields["total_ms"])) <= 0.006
         count += 1
     for match in re.finditer(r"MTP_VERIFY_RANK ([^\n]+)", text):
         fields = dict(part.split("=", 1) for part in match[1].split())

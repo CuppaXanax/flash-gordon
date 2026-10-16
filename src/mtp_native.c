@@ -8,7 +8,7 @@
 typedef struct native_session {
     fg_mtp_head *head;
     fg_vk_tensor *input,*embedding;
-    const fg_vk_tensor *draft_hyper;
+    const fg_vk_tensor *draft_hyper,*draft_contracted;
     uint32_t last_token,previous_token,verify_first,verify_count,draft_first,drafted;
     uint32_t warm_start,prefix_end;
     bool last_valid,previous_valid;
@@ -24,6 +24,8 @@ struct fg_mtp_native {
     char overlay[FG_MTP_OVERLAY_PATH_MAX+1u];
     char embedding_file[FG_MTP_OVERLAY_PATH_MAX+1u];
     fg_mtp_embedding *embedding;
+    fg_mtp_vocab *local_vocab;
+    char local_head[FG_MTP_OVERLAY_PATH_MAX+1u];
     native_session session[2];
 };
 
@@ -67,6 +69,7 @@ void fg_mtp_native_close(fg_mtp_native *n){
         fg_mtp_head_close(s->head);fg_vk_tensor_destroy(s->input);
         fg_vk_tensor_destroy(s->embedding);
     }
+    fg_mtp_vocab_close(n->local_vocab);
     fg_mtp_embedding_close(n->embedding);free(n);
 }
 bool fg_mtp_native_enabled(const fg_mtp_native *n){return n&&n->enabled;}
@@ -164,7 +167,7 @@ fg_status fg_mtp_native_run(fg_mtp_native *n,uint32_t slot,
     uint8_t validated[FG_MTP_NATIVE_WORK_MAX_BYTES];uint32_t bytes=0u;
     fg_status status=fg_mtp_native_work_encode(validated,sizeof(validated),&bytes,w,err);
     if(status!=FG_OK)return status;
-    if(w->operation!=FG_MTP_NATIVE_CONFIG&&
+    if(w->operation!=FG_MTP_NATIVE_CONFIG&&w->operation!=FG_MTP_NATIVE_LOCAL_HEAD&&
        (w->first_token>=n->context_tokens||
         (w->operation==FG_MTP_NATIVE_PREFIX&&w->limit>n->context_tokens)||
         (w->operation==FG_MTP_NATIVE_FINISH&&w->count>n->context_tokens-w->first_token)))
@@ -176,6 +179,23 @@ fg_status fg_mtp_native_run(fg_mtp_native *n,uint32_t slot,
     if(status!=FG_OK)return status;
     switch(w->operation){
         case FG_MTP_NATIVE_CONFIG:break;
+        case FG_MTP_NATIVE_LOCAL_HEAD:{
+            if(n->local_vocab){
+                if(strcmp(n->local_head,w->overlay))return mismatch(err,"local head changed");
+                break;
+            }
+            if(s->last_valid||s->drafted)return mismatch(err,"late local head configuration");
+            const fg_tensor_record *record=NULL;
+            for(uint32_t i=0;i<n->manifest->tensor_count;i++)
+                if(!strcmp(n->manifest->tensors[i].name,"output.weight"))
+                    record=&n->manifest->tensors[i];
+            status=fg_mtp_vocab_open(&n->local_vocab,n->vk,w->overlay,NULL,
+                FG_Q38_VOCAB_SIZE,err);
+            if(status==FG_OK)status=fg_mtp_vocab_check(n->local_vocab,record,err);
+            if(status!=FG_OK){fg_mtp_vocab_close(n->local_vocab);n->local_vocab=NULL;}
+            else snprintf(n->local_head,sizeof(n->local_head),"%s",w->overlay);
+            break;
+        }
         case FG_MTP_NATIVE_PREPARE:
             for(uint32_t i=0;status==FG_OK&&i<w->argument;i++)
                 status=ensure_session(n,i,err);
@@ -195,7 +215,7 @@ fg_status fg_mtp_native_run(fg_mtp_native *n,uint32_t slot,
             break;
         }
         case FG_MTP_NATIVE_DRAFT:{
-            if(!hidden)return mismatch(err,"draft output storage");
+            if(!hidden&&!n->local_vocab)return mismatch(err,"draft output storage");
             if(w->argument==0u){
                 if(!s->last_valid||s->last_token+1u!=w->first_token)
                     return mismatch(err,"draft target frontier");
@@ -212,10 +232,11 @@ fg_status fg_mtp_native_run(fg_mtp_native *n,uint32_t slot,
             if(status==FG_OK)status=fg_vk_tensor_write(s->embedding,0u,embedding,sizeof(embedding),err);
             if(status==FG_OK)status=fg_mtp_head_step_replay(s->head,s->draft_hyper,
                 s->embedding,w->first_token-1u,&next,&contracted,err);
-            if(status==FG_OK)status=fg_vk_tensor_read(contracted,0u,hidden,FG_HIDDEN_SIZE*4u,err);
-            if(status==FG_OK){s->draft_hyper=next;s->drafted++;}
+            if(status==FG_OK&&hidden)status=fg_vk_tensor_read(contracted,0u,hidden,FG_HIDDEN_SIZE*4u,err);
+            if(status==FG_OK){s->draft_hyper=next;s->draft_contracted=contracted;s->drafted++;}
             break;
         }
+
         case FG_MTP_NATIVE_FINISH:{
             if(s->verify_first!=w->first_token||s->verify_count<w->count||
                !s->drafted||s->draft_first!=w->first_token)
@@ -245,5 +266,26 @@ fg_status fg_mtp_native_run(fg_mtp_native *n,uint32_t slot,
     if(status==FG_OK)*ack=(fg_mtp_native_ack){.operation=w->operation,
         .first_token=w->first_token,.count=w->count,
         .frontier=s->head?fg_mtp_head_frontier(s->head):0u};
+    return status;
+}
+
+fg_status fg_mtp_native_chain(fg_mtp_native *n,uint32_t slot,uint32_t first,
+    uint32_t pending,uint32_t count,fg_mtp_chain_result *result,fg_error *err){
+    if(!n||!n->local_vocab||!result||slot>=2u||!count||count>FG_MTP_MAX_DRAFT||
+       count>n->context_tokens||!first||first>n->context_tokens-count||
+       pending>=FG_Q38_VOCAB_SIZE)
+        return mismatch(err,"local chain arguments");
+    *result=(fg_mtp_chain_result){.first_token=first,.count=count};
+    fg_status status=FG_OK;
+    for(uint32_t i=0;status==FG_OK&&i<count;i++){
+        fg_mtp_native_work work={.operation=FG_MTP_NATIVE_DRAFT,
+            .first_token=first+i,.count=1u,.argument=i,.tokens=&pending};
+        fg_mtp_native_ack ack;
+        status=fg_mtp_native_run(n,slot,&work,NULL,&ack,err);
+        if(status==FG_OK)status=fg_mtp_vocab_argmax(n->local_vocab,
+            n->session[slot].draft_contracted,&pending,&result->scores[i],err);
+        if(status==FG_OK)result->tokens[i]=pending;
+    }
+    result->frontier=first+count-1u;
     return status;
 }

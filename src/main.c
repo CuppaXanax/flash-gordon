@@ -41,6 +41,7 @@ static void usage(FILE *file) {
             "  --mtp-overlay FILE --mtp-embedding FILE --mtp-window N --mtp-max-draft 1..3\n"
             "  --mtp-fixed-draft 1..3 (disable adaptive width; clamp at generation limit)\n"
             "  --mtp-native-rank N (opt-in final-block predecessor placement)\n"
+            "  --mtp-local-head FILE (opt-in sealed full-Q8 local draft chain)\n"
             "  --no-prefix-cont (force a cold reset instead of resuming an exact prefix)\n"
             "Deployment profiles:\n"
             "  --profile " FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_128_NAME
@@ -129,6 +130,10 @@ static fg_status parse_runtime_option(int *index, int argc, char **argv,
     if (!strcmp(flag, "--mtp-embedding")) {
         options->mtp_embedding=arg_value(index,argc,argv,flag,err);
         return options->mtp_embedding?FG_OK:err->code;
+    }
+    if (!strcmp(flag, "--mtp-local-head")) {
+        options->mtp_local_head=arg_value(index,argc,argv,flag,err);
+        return options->mtp_local_head?FG_OK:err->code;
     }
     if (!strcmp(flag, "--mtp-window"))
         return parse_u32(arg_value(index,argc,argv,flag,err),flag,1u,

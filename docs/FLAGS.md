@@ -159,7 +159,7 @@ slice ranks (the foreign loader names the exact missing span at startup).
 | `FG_EVAL_LOGITS_DIR` | unset (off) | Write numbered greedy evaluation logits (`%04u.fgl`) in this directory. | profiling |
 | `FG_NUMERICS_TRACE` | unset (off) | Hyper-state digests per layer/phase. Forces static replay off. | profiling |
 | `FG_GDN_DIAG` | unset (off) | GDN state diagnostics. | profiling |
-| `FG_DECODE_MS` | unset (off) | Per-token decode timings; experimental MTP also emits per-owner verification, native draft/repair, and serial vocabulary-slice timings. Successful MTP rounds always emit a disjoint `MTP_STAGE` ledger for draft, checkpoint, verify, state-only target repair, native repair, commit and residual host time. | profiling |
+| `FG_DECODE_MS` | unset (off) | Per-token decode timings; experimental MTP also emits per-owner verification, native draft/repair, local-chain and vocabulary timings, plus pass-local `MTP_CHOICE` token/argmax records. Successful MTP rounds always emit a disjoint `MTP_STAGE` ledger for draft, checkpoint, verify, state-only target repair, native repair, commit and residual host time; `overlap_ms` is subtracted from draft+checkpoint, not counted twice. | profiling |
 | `FG_TRACE_ROUTES` | unset (off) | Router/expert route traces. | profiling |
 | `FG_PREFIX_TRACE` | unset (off) | Prefix reuse diagnostics (counts, mismatch positions and reasons only). | profiling |
 | `FG_GENERATE_TRACE` | unset (off) | Generation loop breakdown (interrupt/tokenizer/callback/render/decode). | profiling |

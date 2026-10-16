@@ -8,6 +8,8 @@ param(
     [ValidateRange(1,35)][int]$WorkMinutes=35,
     [ValidateSet('DualSession','SingleSessionPerf')][string]$Profile='DualSession',
     [switch]$DiagnosticGreedy,
+    [string]$CorrectnessArtifacts='',
+    [string]$LocalHead='',
     [string]$Artifacts='',
     [string]$NativeOverlay='',
     [string]$ProductionRunner='D:\looking-glass-labs\fg-wt\ab-harness\tools\ab-fleet.ps1',
@@ -23,6 +25,10 @@ $phases=@(@('A0',0,0),@('B0',0,330),
     @('K2',2,0),@('S2',2,330),@('A2',0,0),
     @('K3',3,0),@('S3',3,330),@('A3',0,0))
 $candidateSessions=2
+$candidateQsaCacheMiB=if($LocalHead){440}else{700}
+if($LocalHead -and $Profile -ne 'SingleSessionPerf'){
+    throw 'The local-head performance lease requires the single-session profile; dual-session residency is unqualified.'
+}
 if($Profile -eq 'SingleSessionPerf'){
     $candidateSessions=1
     $phases=@(@('A0',0,330,0),@('D3',3,330,0),@('A1',0,330,0),
@@ -34,13 +40,16 @@ if($Action -eq 'Plan'){
         productionAccess=$false; ring='192.168.42.42-.49'; phases=$phases
         profile=$Profile;candidateSessions=$candidateSessions
         smallKernelMasks=$(if($candidateSessions -eq 1){@(330)}else{@(0,330)})
-        greedy='eight prompts, same binary/pack/kernels, exact token-ID SHA256/count and completion identity'
+        greedy='off arms retain exact identity; MTP requires receipt-complete pass-local argmax, same-prefix top2 margins <0.10 and original-Q8 KL<=0.005/top1>=0.985'
+        diagnosticOnly=[bool]$DiagnosticGreedy
+        localDraftHead=[bool]$LocalHead
+        candidateQsaPageCacheMiB=$candidateQsaCacheMiB
         perf='three repeats of two chat/two code prompts, 128 output tokens, bracketed paired ratios'
         coexist=$(if($candidateSessions -eq 1){'none; sequential single-session chat/code; SSE/stop/cancel on D3/F3'}else{'three two-session chat/code overlaps per phase; SSE/stop/cancel on K3/S3'})
         workDeadlineMinutes=$WorkMinutes; watchdogWorkerMinute=38; watchdogCoordinatorMinute=39
         wallBudgetMinutes=45
         restore='31508ee / 20261016-abq-stack-adaptive + sealed mix-04, sessions2 wide1; exact pinned launcher/env'
-        exclusions='no clocks/governors/weights/launch-current changes; both masks require greedy identity; no promotion or long-context claim'
+        exclusions='no clocks/governors/serving-ref changes; model quality is not waived by low-margin drift; no promotion or long-context claim'
     } | ConvertTo-Json -Depth 8
     return
 }
@@ -49,6 +58,13 @@ if(-not $LeaseConfirmed -or -not $LeaseId){
 }
 $release=Join-Path $Artifacts 'release.tar.gz'
 if($Action -eq 'Run'){
+    if(-not $DiagnosticGreedy -and -not $CorrectnessArtifacts){
+        throw 'MTP qualification requires complete pass-local/Q8 artifacts; use explicit DiagnosticGreedy only for an unqualified performance lease.'
+    }
+    if($LocalHead -and (Get-FileHash $LocalHead -Algorithm SHA256).Hash.ToLowerInvariant() -ne
+       '2801d79db74bcae38b47fd5051f03136d8ca7715abeba7d92b49ba46c696bc33'){
+        throw 'Local head differs from the authenticated full Q8 output vocabulary.'
+    }
     $prepared=Get-Content (Join-Path $Artifacts 'prepared.json') -Raw | ConvertFrom-Json
     if((Get-FileHash $release -Algorithm SHA256).Hash.ToLowerInvariant() -ne $prepared.releaseSha256){
         throw 'Candidate release differs from the prevalidated artifact.'
@@ -197,6 +213,10 @@ try {
     $embedding=Join-Path $run 'embedding.fgme'
     $null=Remote 'fetch-exact-embedding' ':' @('192.168.42.42') -Download "$root/embedding.fgme" -Local $embedding
     $null=Remote 'stage-exact-embedding-final-owner' ':' @('192.168.42.49') -Upload $embedding -Destination "$root/embedding.fgme"
+    if($LocalHead){
+        $null=Remote 'stage-local-head-final-owner' "echo '2801d79db74bcae38b47fd5051f03136d8ca7715abeba7d92b49ba46c696bc33  $root/local-head.q8' | sha256sum -c -" `
+            @('192.168.42.49') -Upload $LocalHead -Destination "$root/local-head.q8" -Timeout 240
+    }
     $armed=$true
     $null=Guard 'arm-worker-watchdogs' "arm $($started.AddMinutes(38).ToUnixTimeSeconds())" $workers
     $null=Guard 'arm-coordinator-watchdog' "arm $($started.AddMinutes(39).ToUnixTimeSeconds())" @('192.168.42.42')
@@ -205,8 +225,9 @@ try {
         $fixed=if($phase.Count -gt 3){[int]$phase[3]}else{0}
         if(-not $mutated){$mutated=$true;$null=Guard 'stop-production' 'stop-prod' $all}
         else {$null=Guard "stop-before-$name" 'stop-candidate' $all}
-        $null=Guard "start-workers-$name" "start-serving $name $cap $small $candidateSessions $fixed" $workers
-        $null=Guard "start-coordinator-$name" "start-serving $name $cap $small $candidateSessions $fixed" @('192.168.42.42')
+        $localHeadEnabled=[int][bool]$LocalHead
+        $null=Guard "start-workers-$name" "start-serving $name $cap $small $candidateSessions $fixed $localHeadEnabled $candidateQsaCacheMiB" $workers
+        $null=Guard "start-coordinator-$name" "start-serving $name $cap $small $candidateSessions $fixed $localHeadEnabled $candidateQsaCacheMiB" @('192.168.42.42')
         $null=WaitApi
         $greedyFile=Join-Path $run "$name-greedy.json"
         Client @('run','--phase',$name,'--suite','greedy','--base',$ApiBaseUrl,'--output',$greedyFile)
@@ -216,6 +237,10 @@ try {
             '--trace',$trace,'--baseline-trace',(Join-Path $run 'A0-rank-0.log'))
         if($DiagnosticGreedy -and $cap){
             $verification+=@('--diagnostic','--report-output',(Join-Path $run "$name-greedy-report.json"))
+        }elseif($cap){
+            $verification+=@('--correctness-events',(Join-Path $CorrectnessArtifacts "$name-correctness-events.json"),
+                '--quality',(Join-Path $CorrectnessArtifacts "$name-quality.json"),
+                '--report-output',(Join-Path $run "$name-correctness-report.json"))
         }
         Client $verification
         $single=if($candidateSessions -eq 1){@('--single-session')}else{@()}

@@ -35,7 +35,7 @@ MTP_RING_WRAPS = fg_vk_tensor_create fg_vk_tensor_destroy fg_vk_tensor_write fg_
  fg_mtp_head_check_residency \
  fg_expert_prepare_small_n_scratch fg_vk_get_memory_stats \
  fg_mtp_head_frontier fg_mtp_head_reset fg_mtp_head_truncate fg_mtp_head_warm_replay \
- fg_mtp_head_step_replay
+ fg_mtp_head_step_replay fg_mtp_vocab_open fg_mtp_vocab_close fg_mtp_vocab_check fg_mtp_vocab_argmax
 comma := ,
 
 .PHONY: all clean test test-sampler test-mtp test-mtp-capture test-ngram-deployment test-vulkan test-qsa-fleet test-gdn-fleet test-fg-profile-analysis test-tower test-decode-batch shaders
@@ -44,9 +44,11 @@ all: flash-gordon shaders
 flash-gordon: $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
-tests/test_mtp_ring: tests/test_mtp_ring.c tests/mtp_ring_sse.o $(filter-out src/main.o src/runtime.o src/api.o,$(OBJ))
+tests/test_mtp_ring: tests/test_mtp_ring.c src/runtime.c src/runtime_mtp_coordinator.inc src/runtime_mtp_worker.inc tests/mtp_ring_sse.o $(filter-out src/main.o src/runtime.o src/api.o,$(OBJ))
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(filter %.o,$^) \
 	 $(addprefix -Wl$(comma)--wrap=,$(MTP_RING_WRAPS)) $(LDLIBS)
+
+-include tests/test_mtp_ring.d
 
 .PHONY: test-mtp-ring
 test-mtp-ring: tests/test_mtp_ring
@@ -136,6 +138,11 @@ tools/mtp-residency: tools/mtp_residency.c $(filter-out src/main.o,$(OBJ)) | sha
 
 tools/mtp-native-replay: tools/mtp_native_replay.c $(filter-out src/main.o,$(OBJ)) | shaders
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
+tools/bench-mtp-chain: tools/bench_mtp_chain.c $(filter-out src/main.o,$(OBJ)) | shaders
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
+-include tools/bench-mtp-chain.d
 
 tools/mtp-tokens: tools/mtp_tokens.c $(TEST_COMMON)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
@@ -345,6 +352,7 @@ test-gdn-fleet: tests/test_fg_vk
 	done
 
 clean:
+	rm -f tools/bench-mtp-chain tools/bench-mtp-chain.d
 	rm -f tools/mtp-offline tools/mtp-offline.d
 	rm -f tools/mtp-native-replay tools/mtp-native-replay.d
 	rm -f tools/mtp-tokens tools/mtp-tokens.d

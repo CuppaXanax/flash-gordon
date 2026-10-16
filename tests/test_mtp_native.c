@@ -7,6 +7,20 @@
 
 struct fg_vk_tensor {uint64_t bytes;float *values;};
 struct fg_mtp_embedding {int unused;};
+struct fg_mtp_vocab {int unused;};
+fg_status fg_mtp_vocab_open(fg_mtp_vocab **out,fg_vk_context *vk,const char *path,
+    const uint32_t *ids,uint32_t rows,fg_error *err){
+    (void)vk;(void)path;(void)ids;(void)rows;(void)err;
+    *out=calloc(1,sizeof(**out));return *out?FG_OK:FG_ERR_OOM;
+}
+void fg_mtp_vocab_close(fg_mtp_vocab *v){free(v);}
+fg_status fg_mtp_vocab_check(fg_mtp_vocab *v,const fg_tensor_record *r,fg_error *err){
+    (void)v;(void)r;(void)err;return FG_OK;
+}
+fg_status fg_mtp_vocab_argmax(fg_mtp_vocab *v,const fg_vk_tensor *hidden,
+    uint32_t *token,float *score,fg_error *err){
+    (void)v;(void)err;*token=(uint32_t)hidden->values[0];*score=hidden->values[0];return FG_OK;
+}
 struct fg_mtp_head {
     uint32_t slot,frontier,first;
     fg_vk_tensor *next,*hidden;
@@ -136,6 +150,8 @@ int main(int argc,char **argv){
         .embedding_file="embedding.fgme",.count=11u,.argument=8192u,.limit=3u};
     CHECK(fg_mtp_native_run(other,0u,&cfg,hidden,&ack,&err)==FG_OK&&opens==0u);
     CHECK(fg_mtp_native_run(n,0u,&cfg,hidden,&ack,&err)==FG_OK&&opens==1u);
+    fg_mtp_native_work local={.operation=FG_MTP_NATIVE_LOCAL_HEAD,.overlay="head.q8",.count=7u};
+    CHECK(fg_mtp_native_run(n,0u,&local,NULL,&ack,&err)==FG_OK);
     CHECK(fg_mtp_native_owner(n)==selected&&fg_mtp_native_owner(other)==selected);
     cfg.owner_rank_plus_one=selected==6u?8u:7u;
     CHECK(fg_mtp_native_run(n,0u,&cfg,hidden,&ack,&err)!=FG_OK);
@@ -204,6 +220,16 @@ int main(int argc,char **argv){
     embeddings(embed,1005u,1u,0u);
     CHECK(run(n,1u,FG_MTP_NATIVE_DRAFT,5u,1u,0u,0u,embed,hidden,&ack,&err)==FG_OK);
     CHECK(hidden[0]==1004.0f);
+    CHECK(fg_mtp_native_reset(n,0u,&err)==FG_OK);
+    CHECK(run(n,0u,FG_MTP_NATIVE_PREFIX,0u,0u,0u,4u,NULL,NULL,&ack,&err)==FG_OK);
+    hyper(hc,0u,4u,0u);embeddings(next_tokens,1u,4u,0u);
+    CHECK(fg_mtp_native_observe_prefill(n,0u,0u,4u,hc,next_tokens,&err)==FG_OK);
+    fg_mtp_chain_result chain;
+    CHECK(fg_mtp_native_chain(n,0u,4u,8u,3u,&chain,&err)==FG_OK);
+    CHECK(chain.tokens[0]==3u&&chain.tokens[1]==10003u&&chain.tokens[2]==20003u&&
+        chain.frontier==6u);
+    CHECK(fg_mtp_native_chain(n,0u,4u,8u,4u,&chain,&err)!=FG_OK);
+    CHECK(fg_mtp_native_chain(n,2u,4u,8u,3u,&chain,&err)!=FG_OK);
     fg_mtp_native_close(other);fg_mtp_native_close(n);free(m);
     if(!failures)puts("MTP causal warmfill, authoritative repair, continuation and independent sessions: PASS");
     return failures?1:0;

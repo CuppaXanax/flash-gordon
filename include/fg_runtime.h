@@ -74,6 +74,7 @@ typedef struct fg_runtime_options {
     const char *model_name;
     const char *mtp_overlay;
     const char *mtp_embedding;
+    const char *mtp_local_head;
     uint32_t mtp_window_tokens;
     uint32_t mtp_max_draft;
     uint32_t mtp_fixed_draft;

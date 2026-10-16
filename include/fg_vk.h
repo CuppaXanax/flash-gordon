@@ -67,8 +67,8 @@ fg_status fg_vk_mtp_cache_kv(fg_vk_context *context,fg_vk_tensor *keys,
  * window so a dynamic epoch reset can never rewrite its bindings. */
 #define FG_VK_OWNER_STATIC_SLOTS 8u
 #define FG_VK_MTP_STATIC_SLOT FG_VK_OWNER_STATIC_SLOTS
-#define FG_VK_MTP_VOCAB_STATIC_SLOT (FG_VK_OWNER_STATIC_SLOTS+1u)
-#define FG_VK_STATIC_SLOTS (FG_VK_OWNER_STATIC_SLOTS+4u)
+#define FG_VK_MTP_VOCAB_STATIC_SLOT (FG_VK_OWNER_STATIC_SLOTS+4u)
+#define FG_VK_STATIC_SLOTS (FG_VK_OWNER_STATIC_SLOTS+5u)
 /* Explicit research path; ordinary decode and prefill remain unchanged. */
 void fg_vk_small_n_mode(fg_vk_context *context,bool enabled);
 /* Diagnostic geometry override, before creating any small-N pipeline.
