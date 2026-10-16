@@ -28,6 +28,18 @@ The unit of resampling is a complete paired round, not a token, layer, SSE event
 
 A win requires the interval to show improvement. To avoid selecting a spurious win among metrics/candidates, the win interval uses a Bonferroni tail adjustment across all protected metrics and the four predeclared candidates. The ordinary 95% intervals remain visible. Three rounds are a minimum, not evidence of reliable asymptotic coverage: a small-n bootstrap is exploratory and can be unstable, especially if samples are identical or correlated.
 
+The win family reserves at least 19 metrics per candidate even for a smaller
+battery. A time-bounded hierarchical two-session qualification first runs three
+pairs at 4K plus short decode, chat/cached TTFT and concurrency. If any protected
+screen metric is not noninferior, the configuration cannot promote and the
+unmeasured long-context performance is not claimed. If the screen passes, a
+separate fixed three-pair `long_only` battery at 32K/128K must also pass before
+promotion. Long-only runs retain canonical greedy hashes but do not repeat the
+screen's metrics. This is a predeclared rejection screen, not selective
+resampling of a favorable metric. A separate one-cold near-262K-plus-chat probe
+records capacity and loaded TTFT without doubling its long prefill for an
+isolated throughput control.
+
 The acceptance interval is expanded to contain a Student-t interval for the mean paired log ratio, using the conservative **two-degree-of-freedom** critical value for every admitted sample count >=3. The same guard uses the Bonferroni tail for win selection. At n=3 this is the ordinary paired-t interval; at larger n it is wider than the corresponding t interval. This avoids declaring a tightly clustered bootstrap support to be the full uncertainty of three observations. The guard's finite-sample interpretation assumes independent normally distributed log ratios, for which the population mean and median log ratio coincide. It is not distribution-free evidence; correlations, outliers or nonnormal drift can violate the model. Both raw bootstrap intervals and expanded acceptance intervals are reported. Thermal drift/order effects and salt-dependent routing are not eliminated by pairing. Predeclare the number of rounds/metric subset; do not repeat until a desired result appears.
 
 Exact-math changes require every paired canonical greedy text hash to match. Weight-format changes report hash differences, but use the existing `q4_quality.py` full-vocabulary gate: >=400 frozen frontiers, 248320 logits, mean KL <=.01, p99 KL <=.05, top-1 >=97%. A quality receipt binds `manifest_sha256`, `quality_path`, and `quality_sha256`; the raw record and its digest are checked before deployment. The receipt is a provenance assertion based on the prior capture, not a new quality measurement. Existing pack quality does not excuse an unqualified new arithmetic change: `required_exact_control` points to the completed original-pack binary control, which must have identical hashes. `exact_hash_reference` additionally requires B to match a completed quality-approved same-pack run (used for the wide expert flag and two-session scheduler).

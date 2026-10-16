@@ -58,6 +58,14 @@ stop)
     done
     ;;
 start)
+    for proc in /proc/[0-9]*; do
+        test -O "$proc" || continue
+        exe=$(readlink "$proc/exe" 2>/dev/null) || continue
+        if [[ $exe == /home/xander/flash-gordon-live/*/flash-gordon ]]; then
+            echo "Serving PID ${proc##*/} already exists; stop its exact manifest first" >&2
+            exit 1
+        fi
+    done
     mkdir -p "$run"
     cd "$release"
     args=(rank --manifest "$manifest" --rank "$rank")

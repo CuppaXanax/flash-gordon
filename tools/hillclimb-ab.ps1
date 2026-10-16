@@ -52,9 +52,10 @@ function Get-ABSummary {
         $higher = $Pairs[0].A.metrics[$name].higher_is_better
         # Noninferiority requires excluding the regression margin, not a nonsignificant test.
         $pass = if ($higher) { $low -ge 0.97 } else { $high -le 1.03 }
-        $winLow = Get-ABQuantile $samples (0.025 / ($names.Count * 4))
-        $winHigh = Get-ABQuantile $samples (1 - 0.025 / ($names.Count * 4))
-        $winU = 1 - 0.05 / ($names.Count * 4)
+        $familySize = [Math]::Max(19, $names.Count) * 4
+        $winLow = Get-ABQuantile $samples (0.025 / $familySize)
+        $winHigh = Get-ABQuantile $samples (1 - 0.025 / $familySize)
+        $winU = 1 - 0.05 / $familySize
         $winCritical = $winU * [Math]::Sqrt(2 / (1 - $winU * $winU))
         $winLow = [Math]::Min($winLow, [Math]::Exp($meanLog - $winCritical * $standardError))
         $winHigh = [Math]::Max($winHigh, [Math]::Exp($meanLog + $winCritical * $standardError))
@@ -71,6 +72,7 @@ function Get-ABSummary {
             bootstrap_ci95 = $bootstrapCI
             ci95 = @($low, $high); noninferior = $pass; win = ($pass -and $win)
             win_family_ci = @($winLow, $winHigh)
+            win_family_comparisons = $familySize
             status = if ($pass) { if ($win) { 'win' } else { 'noninferior' } } elseif ($regression) { 'regression' } else { 'inconclusive' }
         }
     }
@@ -145,7 +147,7 @@ function Invoke-ABNonStreamPair {
 }
 
 function Invoke-ABBattery {
-    param([string]$Salt, [int[]]$Contexts = @(4096,32768,131072), [int]$DecodeTokens = 128)
+    param([string]$Salt, [int[]]$Contexts = @(4096,32768,131072), [int]$DecodeTokens = 128, [switch]$LongOnly)
     $battery = [ordered]@{ metrics = [ordered]@{}; prefill = @(); decode = @(); hashes = @(); requests = @() }
     $purpose = 'Write a long numbered list of distinct practical software tasks. Continue until the token limit.'
     foreach ($context in $Contexts) {
@@ -174,6 +176,10 @@ function Invoke-ABBattery {
         Add-ABMetric $battery "decode-$context.engine_tps" (Get-HeaderNumber $decode.Headers 'X-Flash-Gordon-Decode-TPS')
         Add-ABMetric $battery "decode-$context.client_tps" ($decode.CompletionTokens / $decodeSeconds)
         Write-Host "AB context=$context prompt_tokens=$($cold.PromptTokens) cold_wall_s=$($cold.WallSeconds) decode_tokens=$($decode.CompletionTokens)"
+    }
+    if ($LongOnly) {
+        $battery.hashes = @(Invoke-Correctness | ForEach-Object { @{ name = $_.name; sha256 = $_.sha256; tokens = $_.actual_tokens } })
+        return $battery
     }
     $short = New-ABPrompt 64 "$Salt/short" $purpose
     $decode = Invoke-NonStream $short $DecodeTokens
@@ -258,6 +264,9 @@ function Invoke-PairedQualification {
             }
         }
         if (($previous.config['contexts'] -join ',') -ne ($config['contexts'] -join ',')) { throw 'Resume changed contexts.' }
+        foreach ($field in @('long_only','requires_long_qualification')) {
+            if ([bool]$previous.config[$field] -ne [bool]$config[$field]) { throw "Resume changed $field" }
+        }
         $firstRound = @($previous.pairs).Count
         if ($firstRound -ge $ABRounds) { throw 'All round samples already exist; analyze them without resampling.' }
         for ($i = 0; $i -lt $firstRound; $i++) {
@@ -287,7 +296,7 @@ function Invoke-PairedQualification {
                 if (-not $?) { throw "Deployment $arm failed." }
                 $records.metadata.model = Get-Model
                 $contexts = if ($config.ContainsKey('contexts')) { [int[]]$config.contexts } else { @(4096,32768,131072) }
-                $pair[$arm] = Invoke-ABBattery $salt $contexts
+                $pair[$arm] = Invoke-ABBattery $salt $contexts -LongOnly:($config.ContainsKey('long_only') -and $config.long_only)
                 $pair[$arm] | ConvertTo-Json -Depth 45 | Set-Content (Join-Path $destination "round-$round-$arm.json")
                 if ($config.ContainsKey('snapshot_script')) {
                     & $config.snapshot_script -Deployment $config[$arm] -Arm $arm -SnapshotOnly
@@ -320,7 +329,14 @@ function Invoke-PairedQualification {
             $result.quality_pass = $result.quality_pass -and $samePackPass
         }
         $result.complete = $true
-        $result.eligible = $result.quality_pass -and @($result.metrics | Where-Object { -not $_.noninferior }).Count -eq 0 -and @($result.metrics | Where-Object win).Count -gt 0
+        $result.all_protected_metrics_noninferior = @($result.metrics | Where-Object { -not $_.noninferior }).Count -eq 0
+        $result.corrected_win = @($result.metrics | Where-Object win).Count -gt 0
+        $result.eligible = $result.quality_pass -and $result.all_protected_metrics_noninferior -and $result.corrected_win
+        if (($config.ContainsKey('requires_long_qualification') -and $config.requires_long_qualification) -or
+            ($config.ContainsKey('long_only') -and $config.long_only)) {
+            $result.partial_qualification = $true
+            $result.eligible = $false
+        }
         Write-Host "AB result=$path eligible=$($result.eligible)"
     } catch {
         $result.error = $_.Exception.Message

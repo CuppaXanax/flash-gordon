@@ -84,7 +84,7 @@ class PairedHarness(unittest.TestCase):
         self.assertLess(rows["noise"]["ci95"][0], 0.97)
         self.assertFalse(rows["noise"]["noninferior"])
 
-    def run_mode(self, fail=False):
+    def run_mode(self, fail=False, long_only=False):
         root = Path(__file__).resolve().parents[1]
         output = root / ".build" / ("ab-fixture-" + uuid.uuid4().hex)
         output.mkdir(parents=True)
@@ -103,7 +103,7 @@ class PairedHarness(unittest.TestCase):
         config = output / "config.json"
         config.write_text(json.dumps({
             "A": {}, "B": {}, "deploy_script": str(deploy), "restore_script": str(restore),
-            "change_kind": "exact", "contexts": [4096]
+            "change_kind": "exact", "contexts": [4096], "long_only": long_only
         }), encoding="utf-8")
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -144,7 +144,12 @@ class PairedHarness(unittest.TestCase):
             for pair in data["pairs"]:
                 self.assertEqual(pair["A"]["prefill"][0]["request_sha256"],
                                  pair["B"]["prefill"][0]["request_sha256"])
-                self.assertEqual(pair["A"]["concurrency"]["common_tokens"], 64)
+                if not long_only:
+                    self.assertEqual(pair["A"]["concurrency"]["common_tokens"], 64)
+            if long_only:
+                self.assertTrue(data["partial_qualification"])
+                self.assertFalse(data["eligible"])
+                self.assertEqual(len(data["metrics"]), 4)
             half = len(Handler.bodies) // 6
             self.assertGreater(half, 0)
             self.assertEqual(sorted(Handler.bodies[:half]), sorted(Handler.bodies[half:2 * half]))
@@ -162,6 +167,9 @@ class PairedHarness(unittest.TestCase):
 
     def test_resume_keeps_complete_pairs(self):
         self.run_mode(fail="after-pair")
+
+    def test_long_only_is_partial_qualification(self):
+        self.run_mode(long_only=True)
 
 
 if __name__ == "__main__":
