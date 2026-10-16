@@ -1,4 +1,69 @@
 #version 460
-#extension GL_GOOGLE_include_directive : require
-#define SMALL_N
-#include "fg_gdn_algebraic.glsl"
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x=128) in;
+layout(set=0,binding=0) readonly buffer QKV{float qkv[];};
+layout(set=0,binding=1) readonly buffer ZGate{float z[];};
+layout(set=0,binding=2) readonly buffer Alpha{float alpha[];};
+layout(set=0,binding=3) readonly buffer Beta{float beta[];};
+layout(set=0,binding=4) readonly buffer ADecay{float a_decay[];};
+layout(set=0,binding=5) readonly buffer DtBias{float dt_bias[];};
+layout(set=0,binding=6) readonly buffer NormWeight{float norm_weight[];};
+layout(set=0,binding=7) buffer RecurrentState{float recurrent[];};
+layout(set=0,binding=8) writeonly buffer Output{float output_value[];};
+layout(push_constant) uniform Push{
+    uint value_heads,key_heads,head_dim,tokens;
+    float epsilon;
+}pc;
+shared float query[128],key[128],dot_qk[128],sum_q[128],sum_k[128],sum_out[128];
+float softplus(float v){return max(v,0.0)+log(1.0+exp(-abs(v)));}
+void main(){
+    uint lane=gl_LocalInvocationID.x,head=gl_WorkGroupID.x;
+    if(head>=pc.value_heads||pc.head_dim!=128u)return;
+    uint key_head=head%pc.key_heads,key_width=pc.key_heads*128u;
+    uint value_width=pc.value_heads*128u,qkv_width=2u*key_width+value_width;
+    uint state_base=head*128u*128u;
+    // Keep each lane's state column across the complete causal verification batch.
+    float cached[128];
+    [[unroll]] for(uint k=0u;k<128u;k++)
+        cached[k]=recurrent[state_base+k*128u+lane];
+    for(uint token=0u;token<pc.tokens;token++){
+        uint qb=token*qkv_width,zb=token*value_width,hb=token*pc.value_heads;
+        query[lane]=qkv[qb+key_head*128u+lane];
+        key[lane]=qkv[qb+key_width+key_head*128u+lane];
+        float value=qkv[qb+2u*key_width+head*128u+lane];
+        sum_q[lane]=query[lane]*query[lane];sum_k[lane]=key[lane]*key[lane];
+        barrier();
+        for(uint stride=64u;stride>0u;stride>>=1u){
+            if(lane<stride){sum_q[lane]+=sum_q[lane+stride];sum_k[lane]+=sum_k[lane+stride];}
+            barrier();
+        }
+        query[lane]*=inversesqrt(sum_q[0]+pc.epsilon)/sqrt(float(pc.head_dim));
+        key[lane]*=inversesqrt(sum_k[0]+pc.epsilon);
+        dot_qk[lane]=query[lane]*key[lane];barrier();
+        for(uint stride=64u;stride>0u;stride>>=1u){
+            if(lane<stride)dot_qk[lane]+=dot_qk[lane+stride];
+            barrier();
+        }
+        float decay=exp(a_decay[head]*softplus(alpha[hb+head]+dt_bias[head]));
+        float mix=1.0/(1.0+exp(-beta[hb+head])),memory=0.0,prior=0.0;
+        [[unroll]] for(uint k=0u;k<128u;k++){
+            float old=cached[k]*decay;
+            memory=fma(old,key[k],memory);prior=fma(old,query[k],prior);
+        }
+        float delta=(value-memory)*mix;
+        [[unroll]] for(uint k=0u;k<128u;k++)
+            cached[k]=cached[k]*decay+key[k]*delta;
+        float result=fma(delta,dot_qk[0],prior);
+        sum_out[lane]=result*result;barrier();
+        for(uint stride=64u;stride>0u;stride>>=1u){
+            if(lane<stride)sum_out[lane]+=sum_out[lane+stride];
+            barrier();
+        }
+        float normalized=result*inversesqrt(sum_out[0]/float(pc.head_dim)+pc.epsilon)
+            *norm_weight[lane],gate=z[zb+head*128u+lane];
+        output_value[zb+head*128u+lane]=normalized*(1.0/(1.0+exp(-gate)));
+        barrier();
+    }
+    [[unroll]] for(uint k=0u;k<128u;k++)
+        recurrent[state_base+k*128u+lane]=cached[k];
+}

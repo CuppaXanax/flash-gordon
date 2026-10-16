@@ -6,14 +6,6 @@
 #ifndef SMALL_ROWS
 #define SMALL_ROWS 4
 #endif
-#if SMALL_N == 2
-#define SMALL_INTERLEAVED 1
-#define SMALL_COLS 2
-#else
-#define SMALL_PAIR_COUNT 2
-#undef SMALL_N
-#define SMALL_N 2
-#endif
 #define WG 64u
 #define ROWS SMALL_ROWS
 #define COMPACT 1

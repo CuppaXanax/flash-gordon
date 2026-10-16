@@ -1,0 +1,681 @@
+{
+  "status": "component improvements; serving unlinked; verify targets unmet",
+  "development_base": "2d0f8a7",
+  "foundation": "8aaa70f",
+  "device": "192.168.42.51 40-CU GFX1013",
+  "production_untouched": true,
+  "production_restore": {
+    "source": "31508ee",
+    "release": "20261016-abq-stack-adaptive",
+    "sessions": 2,
+    "wide": 1,
+    "binary_sha256": "02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0",
+    "shader_tree_sha256": "5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633"
+  },
+  "physics": {
+    "status": "optimistic byte lower bounds, not a performance prediction",
+    "real_target_union_available": false,
+    "routing_origin": "synthetic",
+    "dense_shared_bytes": 302110208,
+    "expert_gate_up_bytes_per_union_expert": 11059200,
+    "expert_down_bytes_per_union_expert": 7372800,
+    "recurrent_state_bytes": 12582912,
+    "assumptions": {
+      "theoretical_gbps": 448,
+      "sensitivity_gbps": 340,
+      "sensitivity_is_not_a_measured_bandwidth": true,
+      "logical_prefix_tokens": 256,
+      "excludes": "activation/intermediate traffic, dispatch/submit, dequantization, synchronization and disk/network"
+    },
+    "routing": [
+      {
+        "n": 1,
+        "category": "synthetic",
+        "layer": 6,
+        "windows": 192,
+        "mean_unique": 10,
+        "min_unique": 10,
+        "max_unique": 10
+      },
+      {
+        "n": 1,
+        "category": "synthetic",
+        "layer": 7,
+        "windows": 192,
+        "mean_unique": 10,
+        "min_unique": 10,
+        "max_unique": 10
+      },
+      {
+        "n": 1,
+        "category": "synthetic",
+        "layer": 8,
+        "windows": 192,
+        "mean_unique": 10,
+        "min_unique": 10,
+        "max_unique": 10
+      },
+      {
+        "n": 1,
+        "category": "synthetic",
+        "layer": 9,
+        "windows": 192,
+        "mean_unique": 10,
+        "min_unique": 10,
+        "max_unique": 10
+      },
+      {
+        "n": 1,
+        "category": "synthetic",
+        "layer": 10,
+        "windows": 192,
+        "mean_unique": 10,
+        "min_unique": 10,
+        "max_unique": 10
+      },
+      {
+        "n": 1,
+        "category": "synthetic",
+        "layer": 11,
+        "windows": 192,
+        "mean_unique": 10,
+        "min_unique": 10,
+        "max_unique": 10
+      },
+      {
+        "n": 2,
+        "category": "synthetic",
+        "layer": 6,
+        "windows": 191,
+        "mean_unique": 10.303664921465968,
+        "min_unique": 10,
+        "max_unique": 12
+      },
+      {
+        "n": 2,
+        "category": "synthetic",
+        "layer": 7,
+        "windows": 191,
+        "mean_unique": 10.863874345549739,
+        "min_unique": 10,
+        "max_unique": 20
+      },
+      {
+        "n": 2,
+        "category": "synthetic",
+        "layer": 8,
+        "windows": 191,
+        "mean_unique": 10.842931937172775,
+        "min_unique": 10,
+        "max_unique": 20
+      },
+      {
+        "n": 2,
+        "category": "synthetic",
+        "layer": 9,
+        "windows": 191,
+        "mean_unique": 10.895287958115183,
+        "min_unique": 10,
+        "max_unique": 20
+      },
+      {
+        "n": 2,
+        "category": "synthetic",
+        "layer": 10,
+        "windows": 191,
+        "mean_unique": 10.86910994764398,
+        "min_unique": 10,
+        "max_unique": 20
+      },
+      {
+        "n": 2,
+        "category": "synthetic",
+        "layer": 11,
+        "windows": 191,
+        "mean_unique": 10.93193717277487,
+        "min_unique": 10,
+        "max_unique": 19
+      },
+      {
+        "n": 3,
+        "category": "synthetic",
+        "layer": 6,
+        "windows": 190,
+        "mean_unique": 10.589473684210526,
+        "min_unique": 10,
+        "max_unique": 13
+      },
+      {
+        "n": 3,
+        "category": "synthetic",
+        "layer": 7,
+        "windows": 190,
+        "mean_unique": 11.689473684210526,
+        "min_unique": 10,
+        "max_unique": 29
+      },
+      {
+        "n": 3,
+        "category": "synthetic",
+        "layer": 8,
+        "windows": 190,
+        "mean_unique": 11.647368421052631,
+        "min_unique": 10,
+        "max_unique": 27
+      },
+      {
+        "n": 3,
+        "category": "synthetic",
+        "layer": 9,
+        "windows": 190,
+        "mean_unique": 11.74736842105263,
+        "min_unique": 10,
+        "max_unique": 30
+      },
+      {
+        "n": 3,
+        "category": "synthetic",
+        "layer": 10,
+        "windows": 190,
+        "mean_unique": 11.710526315789474,
+        "min_unique": 10,
+        "max_unique": 29
+      },
+      {
+        "n": 3,
+        "category": "synthetic",
+        "layer": 11,
+        "windows": 190,
+        "mean_unique": 11.836842105263157,
+        "min_unique": 10,
+        "max_unique": 28
+      },
+      {
+        "n": 4,
+        "category": "synthetic",
+        "layer": 6,
+        "windows": 189,
+        "mean_unique": 10.878306878306878,
+        "min_unique": 10,
+        "max_unique": 13
+      },
+      {
+        "n": 4,
+        "category": "synthetic",
+        "layer": 7,
+        "windows": 189,
+        "mean_unique": 12.43915343915344,
+        "min_unique": 10,
+        "max_unique": 33
+      },
+      {
+        "n": 4,
+        "category": "synthetic",
+        "layer": 8,
+        "windows": 189,
+        "mean_unique": 12.386243386243386,
+        "min_unique": 10,
+        "max_unique": 30
+      },
+      {
+        "n": 4,
+        "category": "synthetic",
+        "layer": 9,
+        "windows": 189,
+        "mean_unique": 12.518518518518519,
+        "min_unique": 10,
+        "max_unique": 32
+      },
+      {
+        "n": 4,
+        "category": "synthetic",
+        "layer": 10,
+        "windows": 189,
+        "mean_unique": 12.486772486772487,
+        "min_unique": 10,
+        "max_unique": 33
+      },
+      {
+        "n": 4,
+        "category": "synthetic",
+        "layer": 11,
+        "windows": 189,
+        "mean_unique": 12.671957671957673,
+        "min_unique": 10,
+        "max_unique": 31
+      }
+    ],
+    "shapes": [
+      {
+        "n": 1,
+        "bounds": [
+          {
+            "label": "perfect_overlap",
+            "unique_per_layer": 10,
+            "bytes": 511596032,
+            "per_token_read_write_bound_bytes": 511596032,
+            "theoretical_us": 1141.9554285714287,
+            "sensitivity_us": 1504.6942117647059
+          },
+          {
+            "label": "disjoint",
+            "unique_per_layer": 10,
+            "bytes": 511596032,
+            "per_token_read_write_bound_bytes": 511596032,
+            "theoretical_us": 1141.9554285714287,
+            "sensitivity_us": 1504.6942117647059
+          }
+        ],
+        "recurrent_read_write_bytes": 25165824,
+        "cached_recurrent_minimum_bytes": 25165824,
+        "unretained_shader_logical_state_bytes": 37748736,
+        "observed_routing_bounds": [
+          {
+            "category": "synthetic",
+            "bytes": 511596032,
+            "theoretical_us": 1141.9554285714287,
+            "sensitivity_us": 1504.6942117647059
+          }
+        ],
+        "qsa_logical_record_read_bytes": 635304,
+        "qsa_note": "sequential query work; not added to DRAM bound because cross-query/head cache reuse is not measured",
+        "families": {
+          "other": {
+            "gpu_us": 537.2,
+            "dispatches": 96
+          },
+          "dense": {
+            "gpu_us": 1611.2,
+            "dispatches": 86
+          },
+          "gdn_sequential": {
+            "gpu_us": 155.92000000000002,
+            "dispatches": 8
+          },
+          "expert_gate_up": {
+            "gpu_us": 505.76,
+            "dispatches": 6
+          },
+          "expert_down": {
+            "gpu_us": 346.4,
+            "dispatches": 6
+          },
+          "qsa_sequential": {
+            "gpu_us": 226.07999999999998,
+            "dispatches": 12
+          }
+        }
+      },
+      {
+        "n": 2,
+        "bounds": [
+          {
+            "label": "perfect_overlap",
+            "unique_per_layer": 10,
+            "bytes": 511596032,
+            "per_token_read_write_bound_bytes": 536761856,
+            "theoretical_us": 1141.9554285714287,
+            "sensitivity_us": 1504.6942117647059
+          },
+          {
+            "label": "disjoint",
+            "unique_per_layer": 20,
+            "bytes": 695916032,
+            "per_token_read_write_bound_bytes": 721081856,
+            "theoretical_us": 1553.384,
+            "sensitivity_us": 2046.8118588235295
+          }
+        ],
+        "recurrent_read_write_bytes": 50331648,
+        "cached_recurrent_minimum_bytes": 25165824,
+        "unretained_shader_logical_state_bytes": 75497472,
+        "observed_routing_bounds": [
+          {
+            "category": "synthetic",
+            "bytes": 526055340.90052354,
+            "theoretical_us": 1174.2306716529542,
+            "sensitivity_us": 1547.2215908838928
+          }
+        ],
+        "qsa_logical_record_read_bytes": 1273080,
+        "qsa_note": "sequential query work; not added to DRAM bound because cross-query/head cache reuse is not measured",
+        "families": {
+          "other": {
+            "gpu_us": 480.2,
+            "dispatches": 96
+          },
+          "dense": {
+            "gpu_us": 2201.9600000000005,
+            "dispatches": 86
+          },
+          "gdn_sequential": {
+            "gpu_us": 248.92000000000002,
+            "dispatches": 8
+          },
+          "expert_gate_up": {
+            "gpu_us": 689.84,
+            "dispatches": 6
+          },
+          "expert_down": {
+            "gpu_us": 480.23999999999995,
+            "dispatches": 12
+          },
+          "qsa_sequential": {
+            "gpu_us": 330.4,
+            "dispatches": 20
+          }
+        }
+      },
+      {
+        "n": 3,
+        "bounds": [
+          {
+            "label": "perfect_overlap",
+            "unique_per_layer": 10,
+            "bytes": 511596032,
+            "per_token_read_write_bound_bytes": 561927680,
+            "theoretical_us": 1141.9554285714287,
+            "sensitivity_us": 1504.6942117647059
+          },
+          {
+            "label": "disjoint",
+            "unique_per_layer": 30,
+            "bytes": 880236032,
+            "per_token_read_write_bound_bytes": 930567680,
+            "theoretical_us": 1964.8125714285713,
+            "sensitivity_us": 2588.9295058823527
+          }
+        ],
+        "recurrent_read_write_bytes": 75497472,
+        "cached_recurrent_minimum_bytes": 25165824,
+        "unretained_shader_logical_state_bytes": 113246208,
+        "observed_routing_bounds": [
+          {
+            "category": "synthetic",
+            "bytes": 539923105.6842105,
+            "theoretical_us": 1205.1855037593984,
+            "sensitivity_us": 1588.009134365325
+          }
+        ],
+        "qsa_logical_record_read_bytes": 1913328,
+        "qsa_note": "sequential query work; not added to DRAM bound because cross-query/head cache reuse is not measured",
+        "families": {
+          "other": {
+            "gpu_us": 463.4,
+            "dispatches": 96
+          },
+          "dense": {
+            "gpu_us": 2996.6,
+            "dispatches": 86
+          },
+          "gdn_sequential": {
+            "gpu_us": 353.36,
+            "dispatches": 8
+          },
+          "expert_gate_up": {
+            "gpu_us": 873.96,
+            "dispatches": 6
+          },
+          "expert_down": {
+            "gpu_us": 466.24,
+            "dispatches": 12
+          },
+          "qsa_sequential": {
+            "gpu_us": 762.44,
+            "dispatches": 26
+          }
+        }
+      },
+      {
+        "n": 4,
+        "bounds": [
+          {
+            "label": "perfect_overlap",
+            "unique_per_layer": 10,
+            "bytes": 511596032,
+            "per_token_read_write_bound_bytes": 587093504,
+            "theoretical_us": 1141.9554285714287,
+            "sensitivity_us": 1504.6942117647059
+          },
+          {
+            "label": "disjoint",
+            "unique_per_layer": 40,
+            "bytes": 1064556032,
+            "per_token_read_write_bound_bytes": 1140053504,
+            "theoretical_us": 2376.2411428571427,
+            "sensitivity_us": 3131.0471529411766
+          }
+        ],
+        "recurrent_read_write_bytes": 100663296,
+        "cached_recurrent_minimum_bytes": 25165824,
+        "unretained_shader_logical_state_bytes": 150994944,
+        "observed_routing_bounds": [
+          {
+            "category": "synthetic",
+            "bytes": 552702317.7142857,
+            "theoretical_us": 1233.7105306122448,
+            "sensitivity_us": 1625.5950521008403
+          }
+        ],
+        "qsa_logical_record_read_bytes": 2556048,
+        "qsa_note": "sequential query work; not added to DRAM bound because cross-query/head cache reuse is not measured",
+        "families": {
+          "other": {
+            "gpu_us": 587.12,
+            "dispatches": 96
+          },
+          "dense": {
+            "gpu_us": 3781.7999999999997,
+            "dispatches": 86
+          },
+          "gdn_sequential": {
+            "gpu_us": 517.64,
+            "dispatches": 8
+          },
+          "expert_gate_up": {
+            "gpu_us": 1277.44,
+            "dispatches": 6
+          },
+          "expert_down": {
+            "gpu_us": 724.9599999999999,
+            "dispatches": 12
+          },
+          "qsa_sequential": {
+            "gpu_us": 718.0400000000001,
+            "dispatches": 36
+          }
+        }
+      }
+    ]
+  },
+  "brackets": [
+    {
+      "seed": 0,
+      "n": 1,
+      "a1": 2670.5560364583334,
+      "b": 2665.9265052083333,
+      "a2": 2661.484828125,
+      "output_state_hashes_equal": true,
+      "candidate_vs_bracket": 0.9999647688058966,
+      "candidate_ratio": 1.0
+    },
+    {
+      "seed": 0,
+      "n": 2,
+      "a1": 4013.6413125,
+      "b": 3740.4923229166666,
+      "a2": 4155.9455520833335,
+      "output_state_hashes_equal": true,
+      "candidate_vs_bracket": 0.915711500451116,
+      "candidate_ratio": 1.403074059096899
+    },
+    {
+      "seed": 0,
+      "n": 3,
+      "a1": 5615.61746031746,
+      "b": 4775.681238095238,
+      "a2": 5736.129285714285,
+      "output_state_hashes_equal": true,
+      "candidate_vs_bracket": 0.8414002434937483,
+      "candidate_ratio": 1.7913776800542498
+    },
+    {
+      "seed": 0,
+      "n": 4,
+      "a1": 6733.706395833334,
+      "b": 6435.801229166666,
+      "a2": 6595.272354166666,
+      "output_state_hashes_equal": true,
+      "candidate_vs_bracket": 0.9656855712470344,
+      "candidate_ratio": 2.414095518609854
+    },
+    {
+      "seed": 7,
+      "n": 1,
+      "a1": 2659.198984375,
+      "b": 2662.540375,
+      "a2": 2658.571947916667,
+      "output_state_hashes_equal": true,
+      "candidate_vs_bracket": 1.00137460184002,
+      "candidate_ratio": 1.0
+    },
+    {
+      "seed": 7,
+      "n": 2,
+      "a1": 4019.523708333333,
+      "b": 3745.7964895833334,
+      "a2": 4162.511625,
+      "output_state_hashes_equal": true,
+      "candidate_vs_bracket": 0.91561484080204,
+      "candidate_ratio": 1.4068505870388288
+    },
+    {
+      "seed": 7,
+      "n": 3,
+      "a1": 5635.465428571429,
+      "b": 4787.084222222222,
+      "a2": 5739.104301587302,
+      "output_state_hashes_equal": true,
+      "candidate_vs_bracket": 0.8417169766922548,
+      "candidate_ratio": 1.7979386405444544
+    },
+    {
+      "seed": 7,
+      "n": 4,
+      "a1": 6401.599375,
+      "b": 6474.4775625,
+      "a2": 6641.763520833333,
+      "output_state_hashes_equal": true,
+      "candidate_vs_bracket": 0.992762006885242,
+      "candidate_ratio": 2.4316917870212578
+    },
+    {
+      "seed": 17,
+      "n": 1,
+      "a1": 2660.4431666666665,
+      "b": 2657.037979166667,
+      "a2": 2655.554234375,
+      "output_state_hashes_equal": true,
+      "candidate_vs_bracket": 0.999638554618564,
+      "candidate_ratio": 1.0
+    },
+    {
+      "seed": 17,
+      "n": 2,
+      "a1": 4060.3250208333334,
+      "b": 3800.9039895833334,
+      "a2": 4190.88684375,
+      "output_state_hashes_equal": true,
+      "candidate_vs_bracket": 0.9212959385755077,
+      "candidate_ratio": 1.4305042003108364
+    },
+    {
+      "seed": 17,
+      "n": 3,
+      "a1": 5403.882142857143,
+      "b": 4992.338746031746,
+      "a2": 5460.430777777778,
+      "output_state_hashes_equal": true,
+      "candidate_vs_bracket": 0.9190344170867253,
+      "candidate_ratio": 1.878911323502235
+    },
+    {
+      "seed": 17,
+      "n": 4,
+      "a1": 6839.243083333333,
+      "b": 6227.107916666667,
+      "a2": 6477.744375,
+      "output_state_hashes_equal": true,
+      "candidate_vs_bracket": 0.9352127027453115,
+      "candidate_ratio": 2.343627740925137
+    }
+  ],
+  "validation": {
+    "local_python_passed": 25,
+    "local_python_skipped": 0,
+    "remote_python_run": 25,
+    "remote_python_skipped": 4,
+    "release_werror": true,
+    "flags_passed": true,
+    "two_qsa_namespaces": true,
+    "small_n_output_state_byte_exact": true,
+    "causal_prefix": true,
+    "rollback_kept_inputs": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "complete_output_state_hash_pairs": 12,
+    "native_real_weight_overlay_rerun": false,
+    "full_serving_greedy_gate": false
+  },
+  "cleanup": {
+    "blade51": "verified absent after evidence download",
+    "blade52": "verified absent after evidence download"
+  },
+  "ratios": [
+    {
+      "n": 1,
+      "median": 1.0,
+      "minimum": 1.0,
+      "maximum": 1.0,
+      "median_vs_bracket": 0.9999647688058966
+    },
+    {
+      "n": 2,
+      "median": 1.4068505870388288,
+      "minimum": 1.403074059096899,
+      "maximum": 1.4305042003108364,
+      "median_vs_bracket": 0.915711500451116
+    },
+    {
+      "n": 3,
+      "median": 1.7979386405444544,
+      "minimum": 1.7913776800542498,
+      "maximum": 1.878911323502235,
+      "median_vs_bracket": 0.8417169766922548
+    },
+    {
+      "n": 4,
+      "median": 2.414095518609854,
+      "minimum": 2.343627740925137,
+      "maximum": 2.4316917870212578,
+      "median_vs_bracket": 0.9656855712470344
+    }
+  ],
+  "raw_evidence_sha256": {
+    "mtp-block-cache-evidence.tar.gz": "4ab236d0a9c19d5583d75241eb808d7b548a1339f6ed7e363108c53438b48362",
+    "mtp-dense-tune-evidence.tar.gz": "0aa9dbbbcc3a24e9306812fdb45db1503b963896d78672425d865190c249952f",
+    "mtp-physics-evidence.tar.gz": "18ef3ba26ec46b912d6452d79dbf13f6cc215d541bc607bb5e9c6b2496e8399a",
+    "mtp-rowpair-final-evidence.tar.gz": "85a5e03ae0184b0fdf7407fea81699a0763f5834687e427d3fc719a0f48b6d6f",
+    "mtp-verify-ab-evidence.tar.gz": "000745b98d8a68b2d9f56ce4744408596621ca19e62d83db586999a4733ad784",
+    "mtp-verify-final-evidence.tar.gz": "d1061557af3d4e40d16e789f0cd60d41e23448867d45a875d2933049630059cd"
+  },
+  "persistent_evidence": {
+    "file": "mtp-verify-physics-evidence.tar.gz",
+    "bytes": 219358,
+    "sha256": "ec00c0f31e074caeaa90e9451960ecd68dc5f496a995dbb5b3cea26dc7858361",
+    "records": 274
+  }
+}

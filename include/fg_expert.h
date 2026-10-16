@@ -24,6 +24,12 @@ fg_status fg_expert_decode_small_n(fg_expert_executor *executor,uint32_t layer,
 /* Diagnostic readback after draining the block; never part of timed decode. */
 fg_status fg_expert_selected_readback(fg_expert_executor *executor,
     uint32_t tokens,uint32_t *selected,fg_error *err);
+/* Opt-in diagnostic: retain each owned layer's chained router output instead
+ * of overwriting one scratch buffer. Enable before recording static graphs.
+ * Read only after the block drains; never use traced runs for timing. */
+fg_status fg_expert_route_trace_enable(fg_expert_executor *executor,fg_error *err);
+fg_status fg_expert_route_trace_read(fg_expert_executor *executor,uint32_t layer,
+    uint32_t tokens,uint32_t *selected,fg_error *err);
 fg_status fg_expert_mid_readback(fg_expert_executor *executor,uint32_t pairs,
     float *values,fg_error *err);
 fg_status fg_expert_decode_chain(fg_expert_executor *executor,uint32_t layer,

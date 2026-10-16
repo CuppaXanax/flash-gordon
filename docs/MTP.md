@@ -821,3 +821,31 @@ wrapper. The script raises only its own process's pinned-memory limit so
 both QSA io_uring namespaces execute rather than skip. It does not change
 governors, services, launchers or production ranks. Timing and exact receipts:
 `results/hillclimb/MTP_SERVING.md`.
+
+### Verification physics and the next candidate
+
+`results/hillclimb/MTP_VERIFY_PHYSICS.md` records exact six-layer packed
+bytes, equal-prefix kernel attribution, synthetic per-layer expert unions,
+and reproducible geometry/A/B experiments. The saved real-text HC capture
+does not contain per-layer target routing; those unions cannot be recovered
+from final HC. Opt-in `--mtp-capture-dir` now records global top-10 target
+IDs per layer and position, with coverage, on every owning rank. Aggregate
+all rank archives before `tools/mtp_physics.py --captured-routes DIRECTORY`.
+No new production environment flag is introduced.
+
+The candidate uses true N-column compact projections, four-pair weight reuse
+in expert down, and shader-local GDN state across causal N updates.
+The global recurrent buffer is loaded/stored at round edges, but the compiler
+spills the local cache: physical state traffic still needs improvement.
+Recurrence arithmetic is sequential. Component and rollback
+identity do **not** qualify the still-unlinked native serving/ring path.
+`--experimental-mtp` remains default-off and fail-closed; no production
+lease is requested until actual serving passes a blade-pair test.
+
+The restore/watchdog guard is pinned to the subsequently promoted
+stack-1/adaptive runtime `31508ee`, release `20261016-abq-stack-adaptive`,
+sessions 2/wide 1, its binary and shader-tree hashes, and the complete explicit
+roofline/local-ngram/submit-group recipe in `DEPLOY_CURRENT.md`.
+`2d0f8a7` is the development base and historical qualification restore target,
+**not current production**. No current launcher or production process was
+changed while preparing these offline guards; a new lease remains required.

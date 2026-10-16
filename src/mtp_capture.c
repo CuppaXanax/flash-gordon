@@ -9,6 +9,8 @@
 
 static const char *capture_directory;
 
+bool fg_mtp_capture_enabled(void){return capture_directory!=NULL;}
+
 fg_status fg_mtp_capture_configure(const char *directory,fg_error *err){
     struct stat st;
     if(directory&&(!*directory||strlen(directory)>900u||stat(directory,&st)||
@@ -57,5 +59,32 @@ fg_status fg_mtp_capture_hyper(uint64_t session,uint32_t first,uint32_t count,
     uint8_t present[FG_PREFILL_MAX_TOKENS];memset(present,1u,count);
     snprintf(path,sizeof(path),"%s/hc-%llu.coverage",capture_directory,
              (unsigned long long)session);
+    return write_at(path,first,present,count,err);
+}
+
+fg_status fg_mtp_capture_routes(uint64_t session,uint32_t layer,uint32_t first,
+    uint32_t count,const uint32_t *experts,fg_error *err){
+    if(!capture_directory)return FG_OK;
+    if(!session||layer>=FG_LAYER_COUNT||!count||count>FG_PREFILL_MAX_TOKENS||
+       !experts||first>FG_NATIVE_CONTEXT-count){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid routing capture range");return FG_ERR_ARGUMENT;
+    }
+    for(uint32_t t=0;t<count;t++)for(uint32_t k=0;k<FG_TOP_K;k++){
+        if(experts[t*FG_TOP_K+k]>=FG_EXPERT_COUNT){
+            fg_error_set(err,FG_ERR_ARGUMENT,"invalid captured expert");return FG_ERR_ARGUMENT;
+        }
+        for(uint32_t j=0;j<k;j++)if(experts[t*FG_TOP_K+k]==experts[t*FG_TOP_K+j]){
+            fg_error_set(err,FG_ERR_ARGUMENT,"duplicate captured expert");return FG_ERR_ARGUMENT;
+        }
+    }
+    char path[1024];
+    snprintf(path,sizeof(path),"%s/routes-%llu-%u.u32",capture_directory,
+        (unsigned long long)session,layer);
+    fg_status s=write_at(path,(uint64_t)first*FG_TOP_K*4u,experts,
+        (uint64_t)count*FG_TOP_K*4u,err);
+    if(s!=FG_OK)return s;
+    uint8_t present[FG_PREFILL_MAX_TOKENS];memset(present,1u,count);
+    snprintf(path,sizeof(path),"%s/routes-%llu-%u.coverage",capture_directory,
+        (unsigned long long)session,layer);
     return write_at(path,first,present,count,err);
 }

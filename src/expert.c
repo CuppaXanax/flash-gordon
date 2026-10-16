@@ -16,6 +16,8 @@ _Static_assert(FG_Q38_DECODE_TILE_WORDS==9u,
 struct fg_expert_executor {
     fg_model *model;
     fg_vk_tensor *activation,*tiles,*gates,*selected;
+    fg_vk_tensor *route_trace[FG_LAYER_COUNT],*last_selected;
+    uint32_t route_tokens[FG_LAYER_COUNT];
     fg_vk_tensor *gate,*up,*mid,*down,*small_down_parts,*reduced,*result_readback;
     fg_vk_expert_graph *decode_graph[FG_LAYER_COUNT];
     uint32_t max_tokens,max_pairs;
@@ -66,7 +68,48 @@ static fg_status create_scratch(fg_expert_executor *executor,fg_error *err){
 }
 
 fg_status fg_expert_executor_create(fg_expert_executor **out,fg_model *model,fg_error *err){if(!out||!model){fg_error_set(err,FG_ERR_ARGUMENT,"invalid expert executor arguments");return FG_ERR_ARGUMENT;}*out=NULL;fg_expert_executor *executor=calloc(1,sizeof(*executor));if(!executor){fg_error_set(err,FG_ERR_OOM,"allocate expert executor");return FG_ERR_OOM;}executor->model=model;fg_status status=create_scratch(executor,err);if(status==FG_OK)status=create_decode_graphs(executor,err);if(status!=FG_OK){fg_expert_executor_destroy(executor);return status;}*out=executor;return FG_OK;}
-void fg_expert_executor_destroy(fg_expert_executor *executor){if(!executor)return;for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++)fg_vk_expert_graph_destroy(executor->decode_graph[layer]);free(executor->schedule);free(executor->locals);fg_vk_tensor_destroy(executor->result_readback);fg_vk_tensor_destroy(executor->reduced);fg_vk_tensor_destroy(executor->small_down_parts);fg_vk_tensor_destroy(executor->down);fg_vk_tensor_destroy(executor->mid);fg_vk_tensor_destroy(executor->up);fg_vk_tensor_destroy(executor->gate);fg_vk_tensor_destroy(executor->selected);fg_vk_tensor_destroy(executor->gates);fg_vk_tensor_destroy(executor->tiles);fg_vk_tensor_destroy(executor->activation);free(executor);}
+void fg_expert_executor_destroy(fg_expert_executor *executor){if(!executor)return;for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){fg_vk_expert_graph_destroy(executor->decode_graph[layer]);fg_vk_tensor_destroy(executor->route_trace[layer]);}free(executor->schedule);free(executor->locals);fg_vk_tensor_destroy(executor->result_readback);fg_vk_tensor_destroy(executor->reduced);fg_vk_tensor_destroy(executor->small_down_parts);fg_vk_tensor_destroy(executor->down);fg_vk_tensor_destroy(executor->mid);fg_vk_tensor_destroy(executor->up);fg_vk_tensor_destroy(executor->gate);fg_vk_tensor_destroy(executor->selected);fg_vk_tensor_destroy(executor->gates);fg_vk_tensor_destroy(executor->tiles);fg_vk_tensor_destroy(executor->activation);free(executor);}
+
+fg_status fg_expert_route_trace_enable(fg_expert_executor *executor,fg_error *err){
+    if(!executor){fg_error_set(err,FG_ERR_ARGUMENT,"missing routing trace executor");return FG_ERR_ARGUMENT;}
+    fg_vk_context *vk=fg_model_vk(executor->model);
+    bool busy=fg_vk_batch_active(vk);
+    for(uint32_t slot=0;slot<FG_VK_STATIC_SLOTS;slot++)
+        busy=busy||fg_vk_static_recorded(vk,slot);
+    if(busy){fg_error_set(err,FG_ERR_ARGUMENT,"enable routing trace before recording");return FG_ERR_ARGUMENT;}
+    const fg_manifest *manifest=fg_model_manifest(executor->model);
+    for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++){
+        if(executor->route_trace[layer]||!fg_expert_local_count(manifest,layer,
+            fg_model_rank(executor->model)))continue;
+        if(fg_expert_local_count(manifest,layer,fg_model_rank(executor->model))!=FG_EXPERT_COUNT){
+            fg_error_set(err,FG_ERR_UNAVAILABLE,"routing trace requires complete local experts");
+            return FG_ERR_UNAVAILABLE;
+        }
+        fg_status status=fg_vk_tensor_create(vk,(uint64_t)executor->max_pairs*4u,
+            &executor->route_trace[layer],err);
+        if(status!=FG_OK)return status;
+    }
+    return FG_OK;
+}
+
+fg_status fg_expert_route_trace_read(fg_expert_executor *executor,uint32_t layer,
+    uint32_t tokens,uint32_t *selected,fg_error *err){
+    if(!executor||!selected||layer>=FG_LAYER_COUNT||!tokens||
+       tokens!=executor->route_tokens[layer]||!executor->route_trace[layer]){
+        fg_error_set(err,FG_ERR_ARGUMENT,"routing trace layer/shape is unavailable");
+        return FG_ERR_ARGUMENT;
+    }
+    return fg_vk_tensor_read(executor->route_trace[layer],0,selected,
+        (uint64_t)tokens*FG_TOP_K*4u,err);
+}
+
+static fg_vk_tensor *selected_for_layer(fg_expert_executor *executor,uint32_t layer,
+    uint32_t tokens){
+    fg_vk_tensor *selected=executor->route_trace[layer];
+    if(selected)executor->route_tokens[layer]=tokens;
+    executor->last_selected=selected?selected:executor->selected;
+    return executor->last_selected;
+}
 
 uint32_t fg_expert_local_count(const fg_manifest *manifest,uint32_t layer,
                                uint32_t rank){
@@ -235,6 +278,14 @@ fg_status fg_expert_decode_submit(fg_expert_executor *executor,const fg_decode_w
         slots[slot]=true;experts[global]=true;
     }
     fg_vk_context *vk=fg_model_vk(executor->model);
+    if(executor->route_trace[work->layer]&&work->selected_count==FG_TOP_K){
+        uint32_t ids[FG_TOP_K];
+        for(uint32_t i=0;i<FG_TOP_K;i++)ids[i]=work->expert_ids[i];
+        fg_status trace_status=fg_vk_tensor_write(executor->route_trace[work->layer],0,
+            ids,sizeof(ids),err);
+        if(trace_status!=FG_OK)return trace_status;
+        executor->route_tokens[work->layer]=1u;
+    }
     fg_status status=fg_vk_tensor_write(executor->activation,0,
         work->activation_q8k,FG_Q8K_ACTIVATION_BYTES,err);
     if(status==FG_OK)status=fg_vk_tensor_write(executor->tiles,0,
@@ -403,12 +454,13 @@ fg_status fg_expert_decode_small_n(fg_expert_executor *executor,uint32_t layer,
         status=fg_vk_tensor_create(vk,(uint64_t)capacity*FG_TOP_K*FG_HIDDEN_SIZE*4u*4u,
             &executor->small_down_parts,err);
     }
-    if(status==FG_OK)status=fg_vk_router_top10(vk,executor->selected,executor->gates,
+    fg_vk_tensor *selected=status==FG_OK?selected_for_layer(executor,layer,tokens):NULL;
+    if(status==FG_OK)status=fg_vk_router_top10(vk,selected,executor->gates,
         router_logits,FG_EXPERT_COUNT,tokens,err);
     if(status==FG_OK)status=fg_vk_small_n_schedule(vk,executor->tiles,
-        executor->selected,tokens,err);
+        selected,tokens,err);
     if(status==FG_OK)status=fg_vk_small_n_experts(vk,executor->mid,executor->small_down_parts,executor->reduced,
-        gate,up,down,activation,executor->tiles,executor->selected,executor->gates,
+        gate,up,down,activation,executor->tiles,selected,executor->gates,
         gs,us,ds,gt,ut,dt,tokens,err);
     if(status==FG_OK)*reduced=executor->reduced;
     return status;
@@ -419,7 +471,7 @@ fg_status fg_expert_selected_readback(fg_expert_executor *executor,
     if(!executor||!selected||!tokens||tokens>4u||tokens>executor->max_tokens){
         fg_error_set(err,FG_ERR_ARGUMENT,"invalid expert routing readback");return FG_ERR_ARGUMENT;
     }
-    return fg_vk_tensor_read(executor->selected,0,selected,
+    return fg_vk_tensor_read(executor->last_selected?executor->last_selected:executor->selected,0,selected,
         (uint64_t)tokens*FG_TOP_K*sizeof(*selected),err);
 }
 fg_status fg_expert_mid_readback(fg_expert_executor *executor,uint32_t pairs,
@@ -445,14 +497,15 @@ fg_status fg_expert_decode_chain(fg_expert_executor *executor,uint32_t layer,
         &down_type,err);
     if(status!=FG_OK)return status;
     fg_vk_context *vk=fg_model_vk(executor->model);
+    fg_vk_tensor *selected=selected_for_layer(executor,layer,1u);
     if(fg_vk_decode_fusion_mask()&1u)
-        status=fg_vk_router_top10_tiles(vk,executor->selected,executor->gates,
+        status=fg_vk_router_top10_tiles(vk,selected,executor->gates,
             executor->tiles,router_logits,err);
     else{
-        status=fg_vk_router_top10(vk,executor->selected,executor->gates,router_logits,
+        status=fg_vk_router_top10(vk,selected,executor->gates,router_logits,
             FG_EXPERT_COUNT,1u,err);
         if(status==FG_OK)status=fg_vk_decode_tile_schedule(vk,executor->tiles,
-            executor->selected,err);
+            selected,err);
     }
     if(status==FG_OK)status=fg_vk_moe_decode_gate_up(vk,executor->mid,gate_weight,
         up_weight,activation,executor->tiles,640u,FG_HIDDEN_SIZE,gate_stride,

@@ -12,6 +12,9 @@ typedef struct bench_spec {
 } bench_spec;
 static uint32_t bench_seed=1u;
 static uint32_t bench_dense_type=UINT32_MAX;
+static bool bench_ledger_only=false;
+static uint32_t bench_dense_in,bench_dense_rows;
+static bool bench_allow_reassociation=false;
 
 static void check(fg_status status,fg_error *error){
     if(status!=FG_OK){fprintf(stderr,"fusion bench: %s\n",error->message);exit(1);}
@@ -98,6 +101,14 @@ static void add_weight(fg_model *model,fg_manifest *manifest,uint32_t layer,
     record.shape[0]=k;record.shape[1]=m;record.shape[2]=count;
     record.bytes=cooked_bytes*count;record.offset=fg_align_up_u64(model->weight_bytes,FG_ALIGNMENT);
     check(fg_manifest_add_tensor(manifest,&record,error),error);
+    if(bench_ledger_only){
+        printf("{\"kind\":\"weight_bytes\",\"layer\":%u,\"name\":\"%s\","
+            "\"type\":%u,\"input\":%u,\"output\":%u,\"copies\":%u,"
+            "\"bytes_per_copy\":%llu}\n",layer,spec.name,type,k,m,count,
+            (unsigned long long)cooked_bytes);
+        model->weight_bytes=record.offset+record.bytes;
+        return;
+    }
     check(fg_vk_tensor_create(model->vk,record.bytes,&model->tensor[index],error),error);
     fg_vk_tensor_set_format(model->tensor[index],format);
     uint8_t *raw=malloc(raw_bytes),*cooked=malloc(cooked_bytes);
@@ -261,7 +272,7 @@ static bool close_values(const float *a,const float *b,uint64_t count,float *max
     for(uint64_t i=0;i<count;i++){
         float delta=fabsf(a[i]-b[i]);
         if(delta>*maximum)*maximum=delta;
-        if(!isfinite(b[i])||delta>2e-5f+1e-3f*fabsf(a[i]))ok=false;
+        if(!isfinite(b[i])||delta>2e-5f+1e-4f*fabsf(a[i]))ok=false;
     }
     return ok;
 }
@@ -276,11 +287,12 @@ static fg_status test_dense_dispatch(fg_vk_context *vk,fg_vk_tensor *out,
 
 static void test_dense_small(fg_vk_context *vk,bool measure,fg_error *error){
     const uint32_t types[]={12u,13u,20u,8u,0u,30u,31u};
-    for(uint32_t j=0;j<7u;j++)for(uint32_t geometry=0u;geometry<3u;geometry++)
+    for(uint32_t j=0;j<7u;j++)for(uint32_t geometry=0u;geometry<(bench_dense_in?1u:3u);geometry++)
     for(uint32_t compact=0u;compact<((types[j]==12u||types[j]==13u||types[j]==20u)?2u:1u);compact++){
         if(bench_dense_type!=UINT32_MAX&&types[j]!=bench_dense_type)continue;
         uint32_t in=geometry==1u?10240u:geometry==2u?2560u:512u,
             rows=geometry==2u?6144u:16u;
+        if(bench_dense_in){in=bench_dense_in;rows=bench_dense_rows;}
         uint32_t type=types[j];
         uint64_t raw_bytes=0u,shape[FG_GGUF_MAX_DIMS]={in,rows,1u,1u};
         uint32_t source_type=type==31u?30u:type;
@@ -325,14 +337,15 @@ static void test_dense_small(fg_vk_context *vk,bool measure,fg_error *error){
             check(fg_vk_tensor_read(y,0,actual,n*rows*4u,error),error);
             float maximum=0.0f;
             bool bit_exact=!memcmp(reference,actual,n*rows*4u);
-            ok=close_values(reference,actual,n*rows,&maximum)&&bit_exact;
+            ok=close_values(reference,actual,n*rows,&maximum)&&
+                (bit_exact||bench_allow_reassociation);
             printf("{\"kind\":\"dense_small_test\",\"type\":%u,\"in\":%u,"
                 "\"rows\":%u,\"compact\":%u,\"n\":%u,"
                 "\"max_abs\":%.9g,\"bit_exact\":%s,\"tolerance_ok\":%s}\n",
                 type,in,rows,compact,n,maximum,bit_exact?"true":"false",ok?"true":"false");
             if(!ok)exit(1);
         }
-        if(measure&&geometry==2u&&(compact||plain||type==8u)){
+        if(measure&&(geometry==2u||bench_dense_in)&&(compact||plain||type==8u)){
             double baseline=0.0;
             for(uint32_t n=1u;n<=4u;n++){
                 check(fg_vk_static_reset(vk,3u,error),error);
@@ -354,7 +367,8 @@ static void test_dense_small(fg_vk_context *vk,bool measure,fg_error *error){
                 double us=(now_us()-begin)/(16.0*32.0);
                 if(n==1u)baseline=us;
                 printf("{\"kind\":\"dense_cost\",\"type\":%u,\"in\":%u,\"rows\":%u,"
-                    "\"n\":%u,\"us\":%.3f,\"ratio\":%.4f}\n",type,in,rows,n,us,us/baseline);
+                    "\"compact\":%u,\"n\":%u,\"us\":%.3f,\"ratio\":%.4f}\n",
+                    type,in,rows,compact,n,us,us/baseline);
             }
             check(fg_vk_static_reset(vk,3u,error),error);
         }
@@ -521,9 +535,12 @@ static void test_small_sessions(fg_owner_executor *owner,fg_expert_executor *exp
 int main(int argc,char **argv){
     bool q4=false,intrusive=false,clocks=true,rollback_test=false,small_n=false,small_test=false,dense_bench=false,dense_only=false,session_test=false;
     uint32_t warmup=256u,iterations=64u,windows=9u,batch=1u;
-    const char *dump=NULL;
+    uint32_t small_wg=0u,small_rows=0u;
+    const char *dump=NULL,*routing_trace=NULL;
     for(int i=1;i<argc;i++){
         if(strcmp(argv[i],"--q4")==0)q4=true;
+        else if(strcmp(argv[i],"--ledger-only")==0)bench_ledger_only=true;
+        else if(strcmp(argv[i],"--allow-reassociation")==0)bench_allow_reassociation=true;
         else if(strcmp(argv[i],"--profile")==0)intrusive=true;
         else if(strcmp(argv[i],"--no-clocks")==0)clocks=false;
         else if(strcmp(argv[i],"--batch")==0&&i+1<argc)batch=(uint32_t)atoi(argv[++i]);
@@ -542,7 +559,15 @@ int main(int argc,char **argv){
             }
             bench_dense_type=(uint32_t)type;
         }
+        else if(strcmp(argv[i],"--dense-shape")==0&&i+2<argc){
+            bench_dense_in=(uint32_t)atoi(argv[++i]);
+            bench_dense_rows=(uint32_t)atoi(argv[++i]);
+            if(!bench_dense_in||!bench_dense_rows)return 1;
+        }
+        else if(strcmp(argv[i],"--small-dense-wg")==0&&i+1<argc)small_wg=(uint32_t)atoi(argv[++i]);
+        else if(strcmp(argv[i],"--small-dense-rows")==0&&i+1<argc)small_rows=(uint32_t)atoi(argv[++i]);
         else if(strcmp(argv[i],"--dump")==0&&i+1<argc)dump=argv[++i];
+        else if(strcmp(argv[i],"--routing-trace")==0&&i+1<argc)routing_trace=argv[++i];
         else if(strcmp(argv[i],"--warmup")==0&&i+1<argc)warmup=(uint32_t)atoi(argv[++i]);
         else if(strcmp(argv[i],"--iterations")==0&&i+1<argc)iterations=(uint32_t)atoi(argv[++i]);
         else if(strcmp(argv[i],"--windows")==0&&i+1<argc)windows=(uint32_t)atoi(argv[++i]);
@@ -552,6 +577,8 @@ int main(int argc,char **argv){
     if(!batch||batch>FG_MTP_MAX_VERIFY||!warmup||!iterations||!windows||
        (uint64_t)batch*(warmup+(uint64_t)iterations*windows)>8192u)return 1;
     if(batch>1u)clocks=false;
+    if(bench_ledger_only&&(dense_bench||small_test||session_test||rollback_test||intrusive||
+        routing_trace||dump))return 1;
     fg_error error={0};fg_manifest *manifest=malloc(sizeof(*manifest));
     fg_model *model=calloc(1,sizeof(*model));
     if(!manifest||!model)return 1;
@@ -561,8 +588,8 @@ int main(int argc,char **argv){
     model->manifest=manifest;model->rank=1u;
     model->tensor=calloc(256u,sizeof(*model->tensor));
     if(!model->tensor)return 1;
-    check(fg_vk_open(&model->vk,&error),&error);
-    printf("{\"kind\":\"roofline\",\"mask\":\"%s\",\"dense_variant\":\"%s\","
+    if(!bench_ledger_only)check(fg_vk_open(&model->vk,&error),&error);
+    if(!bench_ledger_only)printf("{\"kind\":\"roofline\",\"mask\":\"%s\",\"dense_variant\":\"%s\","
            "\"qsa_variant\":\"%s\",\"expert_variant\":\"%s\",\"hc_variant\":\"%s\",\"recurrent_variant\":\"%s\",\"gdn_variant\":\"%s\","
            "\"reported_cus\":%u,\"subgroup_size\":%u}\n",
            getenv("FG_ROOFLINE")?getenv("FG_ROOFLINE"):"0",
@@ -573,6 +600,8 @@ int main(int argc,char **argv){
            getenv("FG_ROOF_RECURRENT")?getenv("FG_ROOF_RECURRENT"):"0",
            getenv("FG_ROOF_GDN")?getenv("FG_ROOF_GDN"):"8",
            fg_vk_active_compute_units(model->vk),fg_vk_subgroup_size(model->vk));
+    if(!bench_ledger_only&&(small_wg||small_rows))
+        check(fg_vk_small_n_tune(model->vk,small_wg,small_rows,&error),&error);
     if(dense_only||small_test||dense_bench)
         test_dense_small(model->vk,dense_only||dense_bench,&error);
     if(dense_only){
@@ -616,10 +645,15 @@ int main(int argc,char **argv){
         size_t count=(l&3u)==3u?sizeof(qsa)/sizeof(*qsa):sizeof(gdn)/sizeof(*gdn);
         for(size_t j=0;j<count;j++)add_weight(model,manifest,l,spec[j],q4,&error);
     }
+    if(bench_ledger_only){
+        fg_model_close(model);free(manifest);
+        return 0;
+    }
     check(build_tensor_lookup(model,&error),&error);
     fg_owner_executor *owner=NULL;fg_expert_executor *expert=NULL;
     check(fg_owner_executor_create_worker_slots(&owner,model,session_test?2u:1u,&error),&error);
     check(fg_expert_executor_create(&expert,model,&error),&error);
+    if(routing_trace)check(fg_expert_route_trace_enable(expert,&error),&error);
     bench_prefill prefill={.expert=expert};
     const uint8_t layers[]={7u,11u};fg_qsa_state *state=NULL;
     const char *state_path=".build/mtp-qsa.fgqs";
@@ -641,14 +675,16 @@ int main(int argc,char **argv){
     if(clocks&&!intrusive)check(fg_vk_layer_clock_enable(model->vk,&error),&error);
     printf("{\"kind\":\"config\",\"weights\":\"synthetic-%s\",\"first_layer\":6,"
            "\"last_layer\":11,\"resident_bytes\":%llu,\"warmup\":%u,\"iterations\":%u,"
-           "\"windows\":%u,\"seed\":%u,\"batch\":%u,\"small_n\":%s,\"fusion_mask\":%u,\"clocks\":%s,\"intrusive\":%s,\"device\":\"%s\"}\n",
+           "\"windows\":%u,\"seed\":%u,\"batch\":%u,\"small_n\":%s,\"fusion_mask\":%u,\"clocks\":%s,\"intrusive\":%s,\"routing_trace\":%s,\"device\":\"%s\"}\n",
            q4?"q4-compact":"q8-cooked",(unsigned long long)model->weight_bytes,
            warmup,iterations,windows,bench_seed,batch,
-           small_n?"true":"false",fg_vk_decode_fusion_mask(),clocks?"true":"false",intrusive?"true":"false",
+           small_n?"true":"false",fg_vk_decode_fusion_mask(),clocks?"true":"false",intrusive?"true":"false",routing_trace?"true":"false",
            fg_vk_device_name(model->vk));
     uint64_t hash=UINT64_C(1469598103934665603);
     FILE *raw=dump?fopen(dump,"wb"):NULL;
     if(dump&&!raw)return 1;
+    FILE *routes=routing_trace?fopen(routing_trace,"w"):NULL;
+    if(routing_trace&&!routes)return 1;
     for(uint32_t t=0;t<warmup+iterations*windows;t++){
         uint32_t position[FG_MTP_MAX_VERIFY*3u];fg_vk_profile profile={0};
         for(uint32_t b=0;b<batch;b++){
@@ -700,9 +736,22 @@ int main(int argc,char **argv){
                 uint32_t bits;memcpy(&bits,&values[i],4u);hash^=bits;hash*=UINT64_C(1099511628211);
             }
             if(raw&&fwrite(values,1,value_bytes,raw)!=value_bytes)return 1;
+            if(routes)for(uint32_t layer=6u;layer<=11u;layer++){
+                uint32_t ids[FG_MTP_MAX_VERIFY*FG_TOP_K];
+                check(fg_expert_route_trace_read(expert,layer,batch,ids,&error),&error);
+                for(uint32_t b=0;b<batch;b++){
+                    fprintf(routes,"{\"category\":\"synthetic\",\"case\":\"seed-%u\","
+                        "\"layer\":%u,\"token\":%u,\"experts\":[",
+                        bench_seed,layer,t*batch+b);
+                    for(uint32_t k=0;k<FG_TOP_K;k++)
+                        fprintf(routes,"%s%u",k?",":"",ids[b*FG_TOP_K+k]);
+                    if(fputs("]}\n",routes)==EOF)return 1;
+                }
+            }
         }
     }
     if(raw&&fclose(raw))return 1;
+    if(routes&&fclose(routes))return 1;
     if(small_n){
         uint32_t selected[4u*FG_TOP_K],unique=0u;
         check(fg_expert_selected_readback(expert,batch,selected,&error),&error);

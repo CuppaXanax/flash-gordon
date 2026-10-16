@@ -3,7 +3,11 @@ set -euo pipefail
 ulimit -c 0
 cd /home/xander/hc-mtp/source
 export TMPDIR="$PWD/.build" XDG_CACHE_HOME="$PWD/.build/cache"
-identity=$(sha256sum src/vk.c shaders/fg_small_gate_up.glsl | sha256sum | cut -c1-12)
+identity=$(sha256sum src/vk.c shaders/fg_small_gate_up.glsl \
+    shaders/fg_small_down.comp shaders/fg_small_dense.glsl \
+    shaders/fg_dense_soa_impl.glsl shaders/fg_gdn_small.comp \
+    shaders/fg_small_gate_up.comp shaders/fg_small_gate_up_four.comp \
+    | sha256sum | cut -c1-12)
 directory="../serving-bench-$identity"
 mkdir -p "$directory"
 for n in 1 2 3 4; do

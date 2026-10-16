@@ -3,6 +3,7 @@ set -euo pipefail
 ulimit -c 0
 cd /home/xander/hc-mtp/source
 export XDG_CACHE_HOME="$PWD/.build/cache"
+make -j8 tools/bench-decode-fusion > .build/small-isa-build.log 2>&1
 RADV_DEBUG=shaderstats MESA_SHADER_CACHE_DISABLE=true \
     ./tools/bench-decode-fusion --q4 --small-n --batch 4 \
     --warmup 2 --iterations 1 --windows 1 \
@@ -20,7 +21,8 @@ for line in open('.build/small-isa.stderr'):
             current[key]=value.strip()
 if current: records.append(current)
 for record in records:
-    if 'fg_small_' in record['pipeline']: print(json.dumps(record))
+    if 'fg_small_' in record['pipeline'] or 'fg_gdn_small.' in record['pipeline']:
+        print(json.dumps(record))
 with open('.build/small-isa-summary.json','w') as output:
     json.dump(records,output,indent=2); output.write('\n')
 PY

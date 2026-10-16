@@ -627,6 +627,18 @@ static fg_status worker_publish_qsa_pages(void *opaque,fg_owner_executor *owner,
     uint32_t self,uint32_t first_token,uint16_t token_count,uint32_t state_slot,
     fg_error *err);
 
+static fg_status capture_block_routes(fg_expert_executor *expert,uint64_t session,
+    uint32_t first_layer,uint32_t last_layer,uint32_t first_token,fg_error *err){
+    if(!fg_mtp_capture_enabled())return FG_OK;
+    for(uint32_t layer=first_layer;layer<=last_layer;layer++){
+        uint32_t ids[FG_TOP_K];
+        fg_status status=fg_expert_route_trace_read(expert,layer,1u,ids,err);
+        if(status==FG_OK)status=fg_mtp_capture_routes(session,layer,first_token,1u,ids,err);
+        if(status!=FG_OK)return status;
+    }
+    return FG_OK;
+}
+
 /* Execute this rank's whole layer block for one chunk and hand the hyper state
  * to the next block owner (or back to rank 0 as the final result). */
 static fg_status handle_prefill_layer_work(fg_fabric *fabric,fg_owner_executor *owner,
@@ -883,6 +895,8 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
         (uint64_t)FG_HYPER_WIDTH*4u,err);
     if(status==FG_OK)status=validate_block_hidden(self,work->token_index,last,
         context->hyper_out,err);
+    if(status==FG_OK)status=capture_block_routes(context->decode_dispatch.expert,
+        session_id,work->layer,last,work->token_index,err);
     if(status==FG_OK&&last+1u==FG_LAYER_COUNT)
         status=fg_mtp_capture_hyper(session_id,work->token_index,1u,
                                     context->hyper_out,err);
@@ -2893,6 +2907,8 @@ fg_status fg_rank_main(const char *path,uint32_t rank,fg_error *err){
         bool bench=block_bench_requested();
         status=fg_model_open(&model,manifest,directory,rank,err);
         if(status==FG_OK)status=fg_expert_executor_create(&expert,model,err);
+        if(status==FG_OK&&fg_mtp_capture_enabled())
+            status=fg_expert_route_trace_enable(expert,err);
         if(status==FG_OK&&(bench||worker_owner_enabled()))
             status=fg_owner_executor_create_worker_slots(&owner,model,FG_OWNER_SESSION_MAX,err);
         if(status==FG_OK&&bench){
@@ -5447,6 +5463,8 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
                 (uint64_t)FG_HYPER_WIDTH*4u,err);
             if(status==FG_OK)status=validate_block_hidden(0u,work->token_index,last,
                 work->hyper,err);
+            if(status==FG_OK)status=capture_block_routes(coordinator->expert,
+                coordinator->session_id,own_first,last,work->token_index,err);
             if(trace)t_own_read=dispatch_ts();
             numerics_trace_host("FB_OUT",0u,last,work->token_index,1u,work->hyper);
             if(trace)t_own_end=dispatch_ts();
@@ -5765,6 +5783,8 @@ fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
     if(status==FG_OK)
         status=coordinator_open(&runtime->coordinator,runtime->manifest,
                                 runtime->directory,&runtime->options,err);
+    if(status==FG_OK&&fg_mtp_capture_enabled())
+        status=fg_expert_route_trace_enable(runtime->coordinator.expert,err);
     if(status==FG_OK)status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
     if(status!=FG_OK){fg_runtime_close(runtime);return status;}*out=runtime;return FG_OK;
 }

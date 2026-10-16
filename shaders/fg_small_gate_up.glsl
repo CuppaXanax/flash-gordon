@@ -17,6 +17,9 @@ layout(push_constant) uniform Push{
     uint rows,blocks,gtile,utile,gs,us,gt,ut;
 }pc;
 shared float gsum[64*PAIR_LANES],usum[64*PAIR_LANES];
+#ifdef FG_SMALL_ACT_CACHE
+shared vec4 activation_cache[PAIR_COUNT*PAIR_LANES*64];
+#endif
 vec2 scale_min(uint a,uint b,uint c,uint group){
     if(group<4u){
         uint s=group*8u;
@@ -46,6 +49,16 @@ void main(){
     uint rt=row&7u;
     bool g5=gate_q5!=0u,u5=up_q5!=0u;
     for(uint block=0u;block<pc.blocks;block++){
+#ifdef FG_SMALL_ACT_CACHE
+        // Convert each packed activation word once, rather than once per row.
+        for(uint i=gl_LocalInvocationID.x;i<PAIR_COUNT*PAIR_LANES*64u;
+            i+=64u*PAIR_LANES){
+            uint pair=tiles[base+1u+i/64u];
+            activation_cache[i]=pair==0xffffffffu?vec4(0.0):
+                vec4(unpack8(int(q8[((pair/10u)*pc.blocks+block)*74u+2u+i%64u])));
+        }
+        barrier();
+#endif
         uint gb=expert*pc.gs+(row>>3u)*pc.gtile+block*(g5?1408u:1152u);
         uint ub=expert*pc.us+(row>>3u)*pc.utile+block*(u5?1408u:1152u);
         vec2 gd=unpackHalf2x16(gw[(gb+rt*4u)>>2u]);
@@ -74,9 +87,15 @@ void main(){
                 ul=vec4(unpack8(int(c))),ur=vec4(unpack8(int(d)));
             [[unroll]] for(uint p=0u;p<PAIR_COUNT;p++){
                 if(pairs[p]==0xffffffffu)continue;
+#ifdef FG_SMALL_ACT_CACHE
+                uint ab=(pair_column*PAIR_COUNT+p)*64u;
+                vec4 x=activation_cache[ab+group_a*8u+sub*4u+w];
+                vec4 y=activation_cache[ab+group_b*8u+sub*4u+w];
+#else
                 uint ab=((pairs[p]/10u)*pc.blocks+block)*74u;
                 vec4 x=vec4(unpack8(int(q8[ab+2u+group_a*8u+sub*4u+w])));
                 vec4 y=vec4(unpack8(int(q8[ab+2u+group_b*8u+sub*4u+w])));
+#endif
                 gia[p]+=dot(gl,x);gib[p]+=dot(gr,y);
                 uia[p]+=dot(ul,x);uib[p]+=dot(ur,y);
             }
@@ -93,6 +112,9 @@ void main(){
                 um[p]=fma(-ud.y*delta,float(int(uma.y)*a+int(umb.y)*b),um[p]);
             }
         }
+#ifdef FG_SMALL_ACT_CACHE
+        barrier();
+#endif
     }
     [[unroll]] for(uint p=0u;p<PAIR_COUNT;p++){
         gsum[gl_LocalInvocationID.x]=ga[p]+gm[p];

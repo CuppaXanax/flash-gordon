@@ -166,7 +166,8 @@ fg_status fg_mtp_qualify_main(const char *manifest,const char *cases,
     options.specified=FG_RUNTIME_OPTION_LOGICAL_CONTEXT|FG_RUNTIME_OPTION_GPU_INDEX|
         FG_RUNTIME_OPTION_QSA_HOT|FG_RUNTIME_OPTION_PAGE_CACHE|FG_RUNTIME_OPTION_PREFIX_CONT;
     fg_runtime *r=NULL;
-    fg_status s=fg_runtime_open_with_options(&r,manifest,&options,err);
+    fg_status s=fg_mtp_capture_configure(directory,err);
+    if(s==FG_OK)s=fg_runtime_open_with_options(&r,manifest,&options,err);
     if(s==FG_OK&&r->manifest->layer_owner[FG_LAYER_COUNT-1u]==0u)
         s=mtpq_fail(err,"capture currently requires a remote final owner");
     if(s==FG_OK)s=mtpq_shared(r,directory,err);
@@ -237,5 +238,6 @@ fg_status fg_mtp_qualify_main(const char *manifest,const char *cases,
     FILE *done=fopen(path,"w");
     if(done){fprintf(done,"%s\n",s==FG_OK?"24 paired 256-token greedy checks passed":err->message);fclose(done);}
     fg_runtime_close(r);
+    fg_mtp_capture_configure(NULL,NULL);
     return s;
 }

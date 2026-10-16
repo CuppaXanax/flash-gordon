@@ -12,6 +12,8 @@ make -j8 all test-mtp test-multi-session tools/bench-mtp-head \
     tools/bench-decode-fusion > ../serving-build.log 2>&1 \
     || { tail -80 ../serving-build.log; exit 1; }
 bash tools/check-flags.sh
+python3 -m unittest discover -s tests -p 'test_mtp_*.py'
+bash -n tools/mtp-lease-guard.sh
 ./tools/bench-mtp-head --self-test > ../serving-head-selftest.jsonl
 ./tools/bench-decode-fusion --q4 --small-n --batch 2 --session-test \
     --small-test --rollback-test --warmup 1 --iterations 1 --windows 1 \

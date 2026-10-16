@@ -71,6 +71,10 @@ fg_status fg_vk_mtp_cache_kv(fg_vk_context *context,fg_vk_tensor *keys,
 #define FG_VK_STATIC_SLOTS (FG_VK_OWNER_STATIC_SLOTS+4u)
 /* Explicit research path; ordinary decode and prefill remain unchanged. */
 void fg_vk_small_n_mode(fg_vk_context *context,bool enabled);
+/* Diagnostic geometry override, before creating any small-N pipeline.
+ * Zero preserves the shape-selected default; IQ4 retains four output rows. */
+fg_status fg_vk_small_n_tune(fg_vk_context *context,uint32_t workgroup,
+    uint32_t rows,fg_error *err);
 bool fg_vk_small_n_active(const fg_vk_context *context);
 fg_status fg_vk_small_n_schedule(fg_vk_context *context,fg_vk_tensor *tiles,
     const fg_vk_tensor *selected,uint32_t tokens,fg_error *err);

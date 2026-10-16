@@ -83,6 +83,7 @@ struct fg_vk_context {
     fg_vk_kernel quant_q8k,quant_q8,quant_q4,dequant_iq4nl,embedding,embedding_batch,swiglu,silu_scaled,dense,dense_f32,dense_bf16,rms,gr,hc_inject_partial,gr_partial,hc_finalize,gr_write,ple_gate,ple_gate_prefill,ple_conv,ple_conv_prefill,ple_conv_add,add,apply_penalties,gdn_conv,gdn_conv_prefill,gdn_recurrent,gdn_recurrent_algebraic,gdn_recurrent_prefill,gdn_prefill_qk_norm,gdn_prefill_recurrence,gdn_prefill_output,qsa_prepare,qsa_prepare_prefill,qsa_index_prepare,qsa_index_prepare_prefill,qsa_record_commit,qsa_record_gather,qsa_score,qsa_attention,qsa_attention_split,qsa_decode_attention_split,qsa_attention_merge,qsa_attention_split_batch,qsa_attention_merge_batch,qsa_record_gather_batch,qsa_select_resolve,qsa_resident_commit,qsa_resident_select,qsa_resident_merge,qsa_resident_attention,topk_v2,topk_select,topk_select_fallback,moe_q5_1,moe_q5_1_cooked,moe_q8_0,moe_q8_0_cooked,moe_reduce,kquant,kquant_cooked;
     fg_vk_kernel argmax,dense_subgroup,dense_cooked,dense_cooked_r8,mtp_vocab,mtp_fc,mtp_norm,dense_quant[37];
     bool small_n;
+    uint32_t small_workgroup,small_rows;
     fg_vk_kernel small_dense[75],small_gate_up[8],small_down,small_down_reduce,small_shared,small_union,small_gdn;
     fg_vk_kernel small_plain[9];
     /* Decomposition benchmark kernels */
@@ -123,6 +124,16 @@ struct fg_vk_expert_graph {
 
 static fg_status vk_error(fg_error *err,const char *operation,VkResult result){fg_error_set(err,FG_ERR_UNAVAILABLE,"%s: Vulkan result %d",operation,(int)result);return FG_ERR_UNAVAILABLE;}
 void fg_vk_small_n_mode(fg_vk_context *c,bool enabled){if(c)c->small_n=enabled;}
+fg_status fg_vk_small_n_tune(fg_vk_context *c,uint32_t workgroup,uint32_t rows,fg_error *err){
+    if(!c||(workgroup&&(workgroup<32u||workgroup>256u||
+       (workgroup&(workgroup-1u))))||(rows&&rows!=4u&&rows!=8u)||c->batch_depth){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid small-N diagnostic geometry");return FG_ERR_ARGUMENT;
+    }
+    for(uint32_t i=0;i<75u;i++)if(c->small_dense[i].pipeline){
+        fg_error_set(err,FG_ERR_ARGUMENT,"small-N geometry requires fresh pipelines");return FG_ERR_ARGUMENT;
+    }
+    c->small_workgroup=workgroup;c->small_rows=rows;return FG_OK;
+}
 bool fg_vk_small_n_active(const fg_vk_context *c){return c&&c->small_n;}
 static double vk_wall_seconds(void){struct timespec value;clock_gettime(CLOCK_MONOTONIC,&value);return (double)value.tv_sec+(double)value.tv_nsec/1000000000.0;}
 static void vk_profile_begin_record(fg_vk_context *c){if(c->profile_active)c->record_start_s=vk_wall_seconds();}
@@ -1430,11 +1441,12 @@ fg_status fg_vk_dense_quant(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tenso
         uint32_t geometry=type==12u&&rows<=1024u&&in>=8192u?2u:
             type==12u&&in==2560u&&rows==6144u?1u:
             type!=20u&&rows>1024u?3u:0u;
-        bool wide=type!=20u&&rows>1024u;
+        bool wide=type!=20u&&(c->small_rows?c->small_rows==8u:rows>1024u);
         fg_vk_kernel *kernel=&c->small_dense[(compact?0u:36u)+i*4u+geometry];
         if(!kernel->file)*kernel=(fg_vk_kernel){.file=wide?wide_files[i]:small_files[i],.bindings=3,
             .push_bytes=24,.specialization_count=2,
-            .specialization_values={(geometry==3u?64u:64u<<geometry)*2u,compact?1u:0u}};
+            .specialization_values={c->small_workgroup?c->small_workgroup:
+                geometry==3u?64u:64u<<geometry,compact?1u:0u}};
         struct{uint32_t in,rows,tokens,type,row_bytes;float scale;}
             p={in,rows,tokens,type,(uint32_t)row_bytes,scale};
         const fg_vk_tensor *b[]={w,x,out};
