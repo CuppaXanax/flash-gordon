@@ -2,3 +2,7 @@ bench-ngram-latency
 bench-ngram-latency.d
 bench-fabric-latency
 bench-fabric-latency.d
+bench-bf16-hops
+bench-bf16-hops.d
+bf16-offline
+bf16-offline.d

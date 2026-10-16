@@ -19,6 +19,7 @@ DEP += tests/test_multi_session.d
 DEP += tests/test_mtp_wire.d tests/test_mtp_native.d tests/test_mtp_embedding.d tools/mtp-embedding.d
 DEP += tests/test_mtp_ring.d
 DEP += tests/mtp_ring_sse.d
+DEP += tests/test_bf16_hops.d tools/bench-bf16-hops.d tools/bf16-offline.d
 
 MTP_RING_WRAPS = fg_vk_tensor_create fg_vk_tensor_destroy fg_vk_tensor_write fg_vk_tensor_read \
  fg_model_vk fg_model_rank fg_model_tensor fg_vk_embedding_q8_0_batch \
@@ -53,6 +54,22 @@ test-mtp-ring: tests/test_mtp_ring
 
 tests/test_core: tests/test_core.o $(TEST_COMMON)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
+
+tests/test_bf16_hops: tests/test_bf16_hops.c $(TEST_COMMON)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
+.PHONY: test-bf16-hops
+test-bf16-hops: tests/test_bf16_hops
+	./tests/test_bf16_hops
+	python3 -m unittest discover -s tests -p test_bf16_hops.py
+
+test: test-bf16-hops
+
+tools/bench-bf16-hops: tools/bench_bf16_hops.c src/fabric.o $(TEST_COMMON)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
+tools/bf16-offline: tools/bf16_offline.c src/model.o src/owner.o src/expert.o src/output.o src/qsa.o $(TEST_COMMON) | shaders
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
 
 tests/test_tower: tests/test_tower.o src/tower.o src/tower_vk.o src/video.o vendor/stb_image_impl.o $(TEST_COMMON) | shaders
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
@@ -331,6 +348,7 @@ test-gdn-fleet: tests/test_fg_vk
 	done
 
 clean:
+	rm -f tests/test_bf16_hops tools/bench-bf16-hops tools/bf16-offline
 	rm -f tools/mtp-residency tools/mtp-residency.d
 	rm -f tools/mtp-real-place tools/mtp-real-place.d
 	rm -f tools/mtp-real-cook tools/mtp-real-cook.d

@@ -1,4 +1,5 @@
 #include "fg_runtime.h"
+#include "fg_protocol.h"
 #include "fg_q38_schema.h"
 #include "fg_topology.h"
 
@@ -327,6 +328,11 @@ fg_status fg_runtime_options_resolve(fg_runtime_options *resolved,
         return FG_ERR_UNAVAILABLE;
     }
     if(resolved->experimental_flags&FG_RUNTIME_EXPERIMENTAL_MTP){
+        if(fg_bf16_hops_enabled()){
+            fg_error_set(err,FG_ERR_UNAVAILABLE,
+                "BF16 decode hops cannot combine with f32 MTP verification; disable FG_BF16_HOPS");
+            return FG_ERR_UNAVAILABLE;
+        }
         if(!resolved->mtp_window_tokens)resolved->mtp_window_tokens=
             resolved->logical_context_tokens<8192u?resolved->logical_context_tokens:8192u;
         if(!resolved->mtp_max_draft)resolved->mtp_max_draft=FG_MTP_MAX_DRAFT_TOKENS;

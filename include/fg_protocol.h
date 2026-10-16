@@ -47,6 +47,7 @@
 #define FG_OUTPUT_HISTORY_HEADER_BYTES 8u
 #define FG_OUTPUT_HISTORY_MAX_BYTES (FG_OUTPUT_HISTORY_HEADER_BYTES+FG_NATIVE_CONTEXT*4u)
 #define FG_LAYER_WORK_HAS_NGRAM 1u
+#define FG_LAYER_WORK_WIRE_BF16 128u
 #define FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY 2u
 #define FG_PREFILL_MAX_TOKENS 512u
 #define FG_PREFILL_MAX_PAIRS (FG_PREFILL_MAX_TOKENS*FG_TOP_K)
@@ -677,6 +678,9 @@ fg_status fg_layer_result_decode(fg_layer_result *result,const uint8_t *payload,
 fg_status fg_decode_layer_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
                                       uint16_t protocol_version,const fg_layer_work *work,
                                       fg_error *err);
+/* Wire-only RNE conversion. Decoders always restore f32 before computation. */
+bool fg_bf16_hops_enabled(void);
+float fg_bf16_hop_round(float value);
 fg_status fg_decode_layer_work_decode(fg_layer_work *work,uint16_t protocol_version,
                                       const uint8_t *payload,uint32_t bytes,fg_error *err);
 fg_status fg_decode_layer_result_encode(uint8_t output[FG_DECODE_LAYER_RESULT_BYTES],

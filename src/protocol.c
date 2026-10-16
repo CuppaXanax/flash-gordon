@@ -375,17 +375,80 @@ fg_status fg_layer_result_encode(uint8_t output[FG_LAYER_RESULT_BYTES],const fg_
 
 fg_status fg_layer_result_decode(fg_layer_result *result,const uint8_t *payload,uint32_t bytes,fg_error *err){if(!result||!payload){fg_error_set(err,FG_ERR_ARGUMENT,"invalid layer result input");return FG_ERR_ARGUMENT;}if(payload[3]||bytes!=FG_LAYER_RESULT_BYTES){fg_error_set(err,FG_ERR_FORMAT,"invalid layer result payload size or reserved byte");return FG_ERR_FORMAT;}memset(result,0,sizeof(*result));result->layer=payload[0];result->source_rank=payload[1];result->destination_rank=payload[2];result->token_index=get_u32_be(payload+4u);uint32_t offset=8u;for(uint32_t i=0;i<FG_HYPER_WIDTH;i++,offset+=4u)result->hyper[i]=get_f32_be(payload+offset);return validate_layer_result(result,err);}
 
-/* Ring decode rides on the proven single-token layer work contract so the
- * chain never invents a second hyper-state encoding. */
+bool fg_bf16_hops_enabled(void){
+    const char *value=getenv("FG_BF16_HOPS");
+    return value&&strcmp(value,"1")==0;
+}
+
+float fg_bf16_hop_round(float value){
+    uint32_t bits;memcpy(&bits,&value,sizeof(bits));
+    if((bits&UINT32_C(0x7f800000))==UINT32_C(0x7f800000)){
+        if(bits&UINT32_C(0x007fffff))bits|=UINT32_C(0x00400000);
+    }else bits+=UINT32_C(0x7fff)+((bits>>16u)&1u);
+    bits&=UINT32_C(0xffff0000);memcpy(&value,&bits,sizeof(value));
+    return value;
+}
+
+static bool put_hop_bf16(uint8_t *out,float value){
+    value=fg_bf16_hop_round(value);
+    if(!isfinite(value))return false;
+    uint32_t bits;memcpy(&bits,&value,sizeof(bits));
+    put_u16_be(out,(uint16_t)(bits>>16u));return true;
+}
+
+static float get_hop_bf16(const uint8_t *in){
+    uint32_t bits=(uint32_t)get_u16_be(in)<<16u;float value;
+    memcpy(&value,&bits,sizeof(value));return value;
+}
+
 fg_status fg_decode_layer_work_encode(uint8_t *output,uint32_t capacity,uint32_t *bytes,
                                       uint16_t protocol_version,const fg_layer_work *work,
                                       fg_error *err){
-    return fg_layer_work_encode(output,capacity,bytes,protocol_version,work,err);
+    if(!fg_bf16_hops_enabled())
+        return fg_layer_work_encode(output,capacity,bytes,protocol_version,work,err);
+    if(!output||!bytes||!work||protocol_version!=FG_PROTOCOL_VERSION){
+        fg_error_set(err,FG_ERR_ARGUMENT,"bf16 decode work requires protocol 6 and storage");
+        return FG_ERR_ARGUMENT;
+    }
+    uint8_t canonical[FG_LAYER_WORK_MAX_BYTES];uint32_t full=0u;
+    fg_status status=fg_layer_work_encode(canonical,sizeof(canonical),&full,
+                                          protocol_version,work,err);
+    if(status!=FG_OK)return status;
+    uint32_t header=12u+(work->position_mode==FG_POSITION_FOUR_AXIS?4u:3u)*4u;
+    uint32_t required=header+(full-header)/2u;
+    if(capacity<required){
+        fg_error_set(err,FG_ERR_LIMIT,"bf16 decode work buffer is too small");
+        return FG_ERR_LIMIT;
+    }
+    memcpy(output,canonical,header);output[3]|=FG_LAYER_WORK_WIRE_BF16;
+    for(uint32_t i=header,j=header;i<full;i+=4u,j+=2u)
+        if(!put_hop_bf16(output+j,get_f32_be(canonical+i))){
+            fg_error_set(err,FG_ERR_FORMAT,"bf16 decode work rounding overflow");
+            return FG_ERR_FORMAT;
+        }
+    *bytes=required;return FG_OK;
 }
 
 fg_status fg_decode_layer_work_decode(fg_layer_work *work,uint16_t protocol_version,
                                       const uint8_t *payload,uint32_t bytes,fg_error *err){
-    return fg_layer_work_decode(work,protocol_version,payload,bytes,err);
+    if(!payload||bytes<4u||!(payload[3]&FG_LAYER_WORK_WIRE_BF16))
+        return fg_layer_work_decode(work,protocol_version,payload,bytes,err);
+    if(protocol_version!=FG_PROTOCOL_VERSION||bytes<FG_LAYER_WORK_TEXT_HEADER_BYTES){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid bf16 decode work protocol/header");
+        return FG_ERR_FORMAT;
+    }
+    uint32_t axes=payload[9],header=12u+axes*4u;
+    uint32_t values=FG_HYPER_WIDTH+
+        ((payload[3]&FG_LAYER_WORK_HAS_NGRAM)?FG_NGRAM_EMBED_VALUES:0u);
+    if((axes!=3u&&axes!=4u)||bytes!=header+values*2u){
+        fg_error_set(err,FG_ERR_FORMAT,"invalid bf16 decode work size");
+        return FG_ERR_FORMAT;
+    }
+    uint8_t canonical[FG_LAYER_WORK_MAX_BYTES];
+    memcpy(canonical,payload,header);canonical[3]&=(uint8_t)~FG_LAYER_WORK_WIRE_BF16;
+    for(uint32_t i=0;i<values;i++)
+        put_f32_be(canonical+header+i*4u,get_hop_bf16(payload+header+i*2u));
+    return fg_layer_work_decode(work,protocol_version,canonical,header+values*4u,err);
 }
 
 fg_status fg_decode_layer_result_encode(uint8_t output[FG_DECODE_LAYER_RESULT_BYTES],
@@ -482,9 +545,10 @@ fg_status fg_decode_batch_work_encode(uint8_t *output,uint32_t capacity,uint32_t
     }
     fg_status status=validate_decode_batch_work(work,err);
     if(status!=FG_OK)return status;
+    bool bf16=fg_bf16_hops_enabled();uint32_t width=bf16?2u:4u;
     uint32_t axes=decode_batch_axes(work->position_mode);
-    uint64_t slot_bytes=FG_DECODE_BATCH_SLOT_HEADER_BYTES+axes*4u+FG_HYPER_WIDTH*4u+
-        ((work->flags&FG_LAYER_WORK_HAS_NGRAM)?FG_NGRAM_EMBED_VALUES*4u:0u);
+    uint64_t slot_bytes=FG_DECODE_BATCH_SLOT_HEADER_BYTES+axes*4u+FG_HYPER_WIDTH*width+
+        ((work->flags&FG_LAYER_WORK_HAS_NGRAM)?FG_NGRAM_EMBED_VALUES*width:0u);
     uint64_t required=FG_DECODE_BATCH_HEADER_BYTES+(uint64_t)work->slot_count*slot_bytes;
     if(required>FG_MAX_FRAME_BYTES||required>capacity){
         fg_error_set(err,FG_ERR_LIMIT,"decode batch work buffer is too small");
@@ -492,7 +556,8 @@ fg_status fg_decode_batch_work_encode(uint8_t *output,uint32_t capacity,uint32_t
     }
     memset(output,0,FG_DECODE_BATCH_HEADER_BYTES);
     output[0]=work->layer;output[1]=work->source_rank;output[2]=work->destination_rank;
-    output[3]=work->flags;put_u16_be(output+8u,work->slot_count);
+    output[3]=work->flags|(bf16?FG_LAYER_WORK_WIRE_BF16:0u);
+    put_u16_be(output+8u,work->slot_count);
     output[10]=(uint8_t)work->position_mode;output[11]=(uint8_t)axes;
     uint32_t offset=FG_DECODE_BATCH_HEADER_BYTES;
     for(uint32_t slot=0;slot<work->slot_count;slot++){
@@ -501,11 +566,21 @@ fg_status fg_decode_batch_work_encode(uint8_t *output,uint32_t capacity,uint32_t
         put_u32_be(output+offset,entry->state_slot);offset+=4u;
         for(uint32_t axis=0;axis<axes;axis++,offset+=4u)
             put_u32_be(output+offset,entry->position[axis]);
-        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++,offset+=4u)
-            put_f32_be(output+offset,entry->hyper[i]);
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++,offset+=width){
+            if(!bf16)put_f32_be(output+offset,entry->hyper[i]);
+            else if(!put_hop_bf16(output+offset,entry->hyper[i])){
+                fg_error_set(err,FG_ERR_FORMAT,"bf16 decode batch hyper overflow");
+                return FG_ERR_FORMAT;
+            }
+        }
         if(work->flags&FG_LAYER_WORK_HAS_NGRAM)
-            for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++,offset+=4u)
-                put_f32_be(output+offset,entry->ngram_embedding[i]);
+            for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++,offset+=width){
+                if(!bf16)put_f32_be(output+offset,entry->ngram_embedding[i]);
+                else if(!put_hop_bf16(output+offset,entry->ngram_embedding[i])){
+                    fg_error_set(err,FG_ERR_FORMAT,"bf16 decode batch ngram overflow");
+                    return FG_ERR_FORMAT;
+                }
+            }
     }
     *bytes=(uint32_t)required;
     return FG_OK;
@@ -523,12 +598,14 @@ fg_status fg_decode_batch_work_decode(fg_decode_batch_work *work,uint16_t protoc
         fg_error_set(err,FG_ERR_FORMAT,"batched decode work is shorter than protocol 6 minimum");
         return FG_ERR_FORMAT;
     }
-    uint8_t flags=payload[3];
+    bool bf16=(payload[3]&FG_LAYER_WORK_WIRE_BF16)!=0u;
+    uint32_t width=bf16?2u:4u;
+    uint8_t flags=payload[3]&(uint8_t)~FG_LAYER_WORK_WIRE_BF16;
     uint16_t slot_count=get_u16_be(payload+8u);
     fg_position_mode mode=(fg_position_mode)payload[10];
     uint32_t axes=payload[11];
-    uint32_t slot_bytes=FG_DECODE_BATCH_SLOT_HEADER_BYTES+axes*4u+FG_HYPER_WIDTH*4u+
-        ((flags&FG_LAYER_WORK_HAS_NGRAM)?FG_NGRAM_EMBED_VALUES*4u:0u);
+    uint32_t slot_bytes=FG_DECODE_BATCH_SLOT_HEADER_BYTES+axes*4u+FG_HYPER_WIDTH*width+
+        ((flags&FG_LAYER_WORK_HAS_NGRAM)?FG_NGRAM_EMBED_VALUES*width:0u);
     uint64_t required=FG_DECODE_BATCH_HEADER_BYTES+(uint64_t)slot_count*slot_bytes;
     uint64_t hyper_values=(uint64_t)slot_count*FG_HYPER_WIDTH;
     uint64_t ngram_values=(flags&FG_LAYER_WORK_HAS_NGRAM)?
@@ -553,13 +630,14 @@ fg_status fg_decode_batch_work_decode(fg_decode_batch_work *work,uint16_t protoc
         for(uint32_t axis=0;axis<axes;axis++,offset+=4u)
             entry->position[axis]=get_u32_be(payload+offset);
         entry->hyper=hyper_storage+(uint64_t)slot*FG_HYPER_WIDTH;
-        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++,offset+=4u)
-            hyper_storage[(uint64_t)slot*FG_HYPER_WIDTH+i]=get_f32_be(payload+offset);
+        for(uint32_t i=0;i<FG_HYPER_WIDTH;i++,offset+=width)
+            hyper_storage[(uint64_t)slot*FG_HYPER_WIDTH+i]=
+                bf16?get_hop_bf16(payload+offset):get_f32_be(payload+offset);
         if(flags&FG_LAYER_WORK_HAS_NGRAM){
             entry->ngram_embedding=ngram_storage+(uint64_t)slot*FG_NGRAM_EMBED_VALUES;
-            for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++,offset+=4u)
+            for(uint32_t i=0;i<FG_NGRAM_EMBED_VALUES;i++,offset+=width)
                 ngram_storage[(uint64_t)slot*FG_NGRAM_EMBED_VALUES+i]=
-                    get_f32_be(payload+offset);
+                    bf16?get_hop_bf16(payload+offset):get_f32_be(payload+offset);
         }
     }
     return validate_decode_batch_work(work,err);
