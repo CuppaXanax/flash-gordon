@@ -1,0 +1,4 @@
+#version 460
+#define FG_QSA_TILE16
+#extension GL_GOOGLE_include_directive : require
+#include "fg_small_qsa_union.glsl"

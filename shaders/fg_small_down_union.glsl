@@ -1,0 +1,77 @@
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_GOOGLE_include_directive : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x=32*UNION_COHORTS) in;
+layout(set=0,binding=0) readonly buffer Weights{uvec2 w[];};
+layout(set=0,binding=1) readonly buffer Tiles{uint tiles[];};
+layout(set=0,binding=2) readonly buffer Input{vec4 x[];};
+layout(set=0,binding=3) readonly buffer Gates{float gates[];};
+layout(set=0,binding=4) writeonly buffer Output{float output_values[];};
+layout(push_constant) uniform Push{uint rows,in_dim,tile_bytes,stride,tokens;}pc;
+#include "fg_small_down_decode.glsl"
+#if UNION_COHORTS > 1
+shared float cohort_values[UNION_COHORTS*4*16];
+#endif
+void main(){
+    uint cohort=gl_LocalInvocationID.x/32u,lid=gl_LocalInvocationID.x&31u;
+    uint part=lid&3u,seg=part&1u,parity=part>>1u;
+    uint row=gl_WorkGroupID.x*16u+(lid>>2u)*2u,tile_row=row&15u;
+    vec2 total[4];
+    [[unroll]] for(uint t=0u;t<4u;t++)total[t]=vec2(0.0);
+    for(uint slot=cohort;slot<pc.tokens*10u;slot+=UNION_COHORTS){
+        uint base=slot*5u,expert=tiles[base];
+        if(expert==0xffffffffu)continue;
+        uint pairs[4];
+        vec2 acc[4];
+        [[unroll]] for(uint p=0u;p<4u;p++){pairs[p]=tiles[base+1u+p];acc[p]=vec2(0.0);}
+        uint row_base=expert*pc.stride+(row>>4u)*pc.tile_bytes;
+        uint sm_base=(row_base+tile_row*4u)>>3u;
+        uint qt_base=((row_base+128u+tile_row*16u)>>3u)+seg,bit_base=seg*8u;
+        for(uint block=parity;block<pc.in_dim/32u;block+=2u){
+            uvec2 sm=w[sm_base+block*48u],hw=w[sm_base+block*48u+8u];
+            uvec2 q0=w[qt_base+block*48u],q1=w[qt_base+block*48u+2u];
+            vec2 s0=unpackHalf2x16(sm.x),s1=unpackHalf2x16(sm.y);
+            vec4 w0=decode(q0.x&0x0f0f0f0fu,hw.x>>bit_base,s0);
+            vec4 w1=decode((q0.x>>4u)&0x0f0f0f0fu,hw.x>>(16u+bit_base),s0);
+            vec4 w2=decode(q0.y&0x0f0f0f0fu,hw.x>>(bit_base+4u),s0);
+            vec4 w3=decode((q0.y>>4u)&0x0f0f0f0fu,hw.x>>(20u+bit_base),s0);
+            vec4 p0=decode(q1.x&0x0f0f0f0fu,hw.y>>bit_base,s1);
+            vec4 p1=decode((q1.x>>4u)&0x0f0f0f0fu,hw.y>>(16u+bit_base),s1);
+            vec4 p2=decode(q1.y&0x0f0f0f0fu,hw.y>>(bit_base+4u),s1);
+            vec4 p3=decode((q1.y>>4u)&0x0f0f0f0fu,hw.y>>(20u+bit_base),s1);
+            [[unroll]] for(uint p=0u;p<4u;p++)if(pairs[p]!=0xffffffffu)
+                apply_pair(pairs[p],block,seg,w0,w1,w2,w3,p0,p1,p2,p3,acc[p]);
+        }
+        [[unroll]] for(uint p=0u;p<4u;p++)if(pairs[p]!=0xffffffffu){
+            uint token=pairs[p]/10u;
+            total[token]=fma(vec2(gates[pairs[p]]),acc[p],total[token]);
+        }
+    }
+    for(uint t=0u;t<pc.tokens;t++){
+        vec2 v=total[t];
+        v+=subgroupShuffleXor(v,1u);
+        v+=subgroupShuffleXor(v,2u);
+        if(part==0u){
+#if UNION_COHORTS == 1
+            output_values[t*pc.rows+row]=v.x;
+            output_values[t*pc.rows+row+1u]=v.y;
+#else
+            cohort_values[(cohort*4u+t)*16u+(row&15u)]=v.x;
+            cohort_values[(cohort*4u+t)*16u+(row&15u)+1u]=v.y;
+#endif
+        }
+    }
+#if UNION_COHORTS > 1
+    barrier();
+    if(cohort==0u&&part==0u)for(uint t=0u;t<pc.tokens;t++){
+        vec2 value=vec2(0.0);
+        [[unroll]] for(uint c=0u;c<UNION_COHORTS;c++){
+            uint at=(c*4u+t)*16u+(row&15u);
+            value+=vec2(cohort_values[at],cohort_values[at+1u]);
+        }
+        output_values[t*pc.rows+row]=value.x;
+        output_values[t*pc.rows+row+1u]=value.y;
+    }
+#endif
+}

@@ -64,8 +64,30 @@ Exact integer operands do not make FP16 accumulation exact. Bit `1024` instead
 tests exact software-packed integer GU products: two signed 16-bit lanes,
 at most eight Q5-by-Q8 products per partial, with the low-lane borrow restored.
 It uses the existing lossless weights and FP32 scale/minimum accumulation,
-requires the subgroup capabilities above, and takes precedence over the other
+requires the subgroup capabilities above, and takes precedence over the earlier
 GU variants. Its four-pair activation cache stores packed words, not FP32 vectors.
+Bit `2048` takes precedence over `1024`: ordinary int32 GU products and sums
+are exact until the existing FP32 scale/minimum accumulation, without packed
+arithmetic or FP16 accumulators. Bit `4096` tests long-context resident QSA:
+deduplicate the selected K/V blocks across queries, decode each block once into
+LDS, and apply independent four-record causal masks. Absolute block IDs fix
+the 32-way partition, so future-only blocks cannot reassociate earlier queries;
+missing cache pages retain the already-committed per-query fallback. Native
+wave64 is required; bit `8` retains its cheaper prefix path through 2051 tokens.
+Bit `8192` requests actual wave32 for the dense reuse
+pipelines when subgroup-size control is available. Bit `16384` replaces bit
+`4`'s serial union-down with eight parallel 32-lane expert cohorts, per-token
+gates in registers and a 2-KiB LDS epilogue; no global partials or second
+dispatch. All four additions remain experimental/default-off.
+Bits `32768`/`65536` test two/four-way K-split on large R4/R8 dense
+reuse kernels (four-way takes precedence), reserving a 1-MiB context-local
+partial arena before recording and adding a merge dispatch; rows above 16384
+retain the unsplit path. Bit `131072` selects a six-head QSA union workgroup
+with four 16-lane record reductions, cached queries in LDS and shared K/V
+across N; it also enables the long-context union path without bit `4096`.
+Bit `262144` takes precedence over `16384`, testing sixteen expert cohorts
+in WG512 with a 4-KiB LDS epilogue. These are default-off research variants,
+not serving or model-quality qualifications.
 The production-shape `expert_small_component` CPU oracle is enabled only when
 `FG_SMALL_KERNELS` is explicitly present (including `0`); it allocates full
 512-expert-addressable GPU slabs, so run it as a targeted test on an idle device.

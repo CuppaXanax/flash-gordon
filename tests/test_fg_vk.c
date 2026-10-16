@@ -1348,6 +1348,98 @@ static int test_qsa_prefill_prepare(void){
     fg_vk_tensor_destroy(bi);fg_vk_tensor_destroy(bk);fg_vk_tensor_destroy(bg);fg_vk_tensor_destroy(bq);fg_vk_tensor_destroy(pos);fg_vk_tensor_destroy(in);fg_vk_tensor_destroy(kn);fg_vk_tensor_destroy(qn);fg_vk_tensor_destroy(ri);fg_vk_tensor_destroy(rk);fg_vk_tensor_destroy(rq);free(batch_iq);free(batch_k);free(batch_gate);free(batch_q);free(raw_iq);free(raw_k);free(raw_qg);return ok;
 }
 
+static int test_qsa_attention_union(void){
+    if(fg_vk_subgroup_size(context)!=64u)return 1;
+    enum{BLOCKS=17,RECORDS=BLOCKS*4,Q=6144,K=512};
+    uint8_t *raw=calloc(RECORDS,FG_Q38_QSA_TOKEN_RECORD_BYTES);
+    float *keys=calloc(RECORDS*K,4u),*values=calloc(RECORDS*K,4u),
+        *query=calloc(4u*Q,4u),*gate=calloc(4u*Q,4u),*got=calloc(4u*Q,4u),
+        *prior=calloc(3u*Q,4u),*poison=malloc(4u*24u*32u*258u*4u);
+    uint32_t descriptors[BLOCKS][4];
+    fg_vk_tensor *r=NULL,*q=NULL,*g=NULL,*o=NULL,*p=NULL,*d=NULL;
+    int ok=raw&&keys&&values&&query&&gate&&got&&prior&&poison;
+    if(!ok)goto done;
+    for(uint32_t token=0;token<RECORDS;token++){
+        float key[K],value[K];
+        for(uint32_t i=0;i<K;i++){
+            key[i]=sinf((token+1u)*(i+3u)*0.0019f)*0.3f;
+            value[i]=cosf((token+7u)*(i+1u)*0.0013f)*2.0f;
+        }
+        uint8_t *record=raw+(uint64_t)token*FG_Q38_QSA_TOKEN_RECORD_BYTES;
+        fg_quantize_q8_0(key,record,K);
+        fg_quantize_q8_0(value,record+FG_Q38_QSA_KEY_BYTES,K);
+        fg_dequantize_q8_0(record,keys+token*K,K);
+        fg_dequantize_q8_0(record+FG_Q38_QSA_KEY_BYTES,values+token*K,K);
+    }
+    for(uint32_t b=0;b<BLOCKS;b++){
+        descriptors[b][0]=(b*7u)%BLOCKS;descriptors[b][1]=0;
+        descriptors[b][2]=1000u+b*5u;descriptors[b][3]=0;
+        for(uint32_t t=0;t<4u;t++){
+            uint32_t mask=b%(t+3u)==0u?0u:15u;
+            if(b==BLOCKS-2u)mask=(1u<<(t%3u+1u))-1u;
+            if(b==BLOCKS-1u)mask=t==3u?15u:0u;
+            descriptors[b][1]|=mask<<(t*4u);
+        }
+    }
+    for(uint32_t t=0;t<4u;t++)for(uint32_t i=0;i<Q;i++){
+        query[t*Q+i]=sinf(i*.013f+t*.3f)*.4f;
+        gate[t*Q+i]=cosf(i*.017f-t*.2f)*3.0f;
+        got[t*Q+i]=NAN;
+    }
+    r=tensor(raw,RECORDS*FG_Q38_QSA_TOKEN_RECORD_BYTES);
+    q=tensor(query,4u*Q*4u);g=tensor(gate,4u*Q*4u);o=tensor(got,4u*Q*4u);
+    p=tensor(NULL,4u*24u*32u*258u*4u);d=tensor(descriptors,sizeof(descriptors));
+    ok=r&&q&&g&&o&&p&&d;
+    for(uint32_t i=0;i<4u*24u*32u*258u;i++)poison[i]=NAN;
+    for(uint32_t n=2;ok&&n<=4u;n++){
+        for(uint32_t i=0;i<4u*Q;i++)got[i]=NAN;
+        ok=fg_vk_tensor_write(o,0,got,4u*Q*4u,&error)==FG_OK&&
+            fg_vk_tensor_write(p,0,poison,4u*24u*32u*258u*4u,&error)==FG_OK&&
+            fg_vk_qsa_attention_union(context,p,r,q,d,n,BLOCKS,RECORDS,32u,&error)==FG_OK&&
+            fg_vk_qsa_attention_merge_batch(context,o,p,g,n,Q,32u,&error)==FG_OK&&
+            fg_vk_tensor_read(o,0,got,n*Q*4u,&error)==FG_OK;
+        double maximum_error=0;
+        for(uint32_t t=0;ok&&t<n;t++)for(uint32_t head=0;ok&&head<24u;head++){
+            double scores[RECORDS],maximum=-INFINITY,denominator=0;
+            for(uint32_t b=0;b<BLOCKS;b++)for(uint32_t j=0;j<4u;j++){
+                uint32_t at=b*4u+j,token=descriptors[b][0]*4u+j;
+                scores[at]=-INFINITY;
+                if((descriptors[b][1]&(1u<<(t*4u+j)))==0u)continue;
+                scores[at]=0;
+                for(uint32_t i=0;i<256u;i++)
+                    scores[at]+=(double)query[t*Q+head*256u+i]*
+                        keys[token*K+(head/12u)*256u+i]*0.0625;
+                maximum=fmax(maximum,scores[at]);
+            }
+            for(uint32_t i=0;i<RECORDS;i++)denominator+=exp(scores[i]-maximum);
+            for(uint32_t i=0;i<256u;i++){
+                double numerator=0;
+                for(uint32_t b=0;b<BLOCKS;b++)for(uint32_t j=0;j<4u;j++)
+                    numerator+=exp(scores[b*4u+j]-maximum)*
+                        values[(descriptors[b][0]*4u+j)*K+(head/12u)*256u+i];
+                uint32_t at=t*Q+head*256u+i;
+                double expected=numerator/denominator/(1.0+exp(-gate[at]));
+                double relative=fabs(got[at]-expected)/fmax(1.0,fabs(expected));
+                maximum_error=fmax(maximum_error,relative);
+                if(!isfinite(got[at])||relative>1e-4)ok=0;
+            }
+        }
+        fprintf(stderr,"QSA_UNION_CPU n=%u max_rel=%.9g pass=%d\n",n,maximum_error,ok);
+    }
+    if(ok){
+        memcpy(prior,got,3u*Q*4u);
+        ok=fg_vk_qsa_attention_union(context,p,r,q,d,4u,BLOCKS-1u,RECORDS,32u,&error)==FG_OK&&
+            fg_vk_qsa_attention_merge_batch(context,o,p,g,4u,Q,32u,&error)==FG_OK&&
+            fg_vk_tensor_read(o,0,got,3u*Q*4u,&error)==FG_OK&&
+            !memcmp(prior,got,3u*Q*4u);
+    }
+done:
+    fg_vk_tensor_destroy(d);fg_vk_tensor_destroy(p);fg_vk_tensor_destroy(o);
+    fg_vk_tensor_destroy(g);fg_vk_tensor_destroy(q);fg_vk_tensor_destroy(r);
+    free(poison);free(prior);free(got);free(gate);free(query);free(values);free(keys);free(raw);
+    return ok;
+}
+
 static int test_qsa_attention(void){
     enum{QG=12288,Q=6144,K=512,SELECTED=17};float *raw_qg=malloc(QG*4u),raw_k[K],qnorm[256],knorm[256],expected_q[Q],expected_gate[Q],expected_k[K],got_q[Q],got_gate[Q],got_k[K],raw_iq[512],inorm[128],expected_iq[512],got_iq[512];if(!raw_qg)return 0;for(uint32_t i=0;i<QG;i++)raw_qg[i]=sinf((float)i*0.0041f)+0.1f*cosf((float)i*0.013f);for(uint32_t i=0;i<K;i++)raw_k[i]=cosf((float)i*0.009f)-0.05f*sinf((float)i*0.021f);for(uint32_t i=0;i<256u;i++){qnorm[i]=0.03f*sinf((float)i*0.017f);knorm[i]=0.02f*cosf((float)i*0.023f);}uint32_t position[3]={19,7,11};for(uint32_t head=0;head<24u;head++){for(uint32_t i=0;i<256u;i++){expected_q[head*256u+i]=raw_qg[head*512u+i];expected_gate[head*256u+i]=raw_qg[head*512u+256u+i];}if(fg_q38_rms_mrope(expected_q+head*256u,1u,256u,qnorm,position,&error)!=FG_OK){free(raw_qg);return 0;}}memcpy(expected_k,raw_k,sizeof(raw_k));for(uint32_t head=0;head<2u;head++)if(fg_q38_rms_mrope(expected_k+head*256u,1u,256u,knorm,position,&error)!=FG_OK){free(raw_qg);return 0;}for(uint32_t i=0;i<512u;i++)raw_iq[i]=sinf((float)i*0.012f);for(uint32_t i=0;i<128u;i++)inorm[i]=0.04f*cosf((float)i*0.031f);memcpy(expected_iq,raw_iq,sizeof(raw_iq));if(fg_q38_rms_mrope(expected_iq,4u,128u,inorm,position,&error)!=FG_OK){free(raw_qg);return 0;}
     fg_vk_tensor *grq=tensor(raw_qg,QG*4u),*grk=tensor(raw_k,sizeof(raw_k)),*gqn=tensor(qnorm,sizeof(qnorm)),*gkn=tensor(knorm,sizeof(knorm)),*gpos=tensor(position,sizeof(position)),*gq=tensor(NULL,Q*4u),*gg=tensor(NULL,Q*4u),*gk=tensor(NULL,K*4u),*griq=tensor(raw_iq,sizeof(raw_iq)),*gin=tensor(inorm,sizeof(inorm)),*giq=tensor(NULL,sizeof(got_iq));int ok=grq&&grk&&gqn&&gkn&&gpos&&gq&&gg&&gk&&griq&&gin&&giq&&fg_vk_qsa_prepare(context,gq,gg,gk,grq,grk,gqn,gkn,gpos,&error)==FG_OK&&fg_vk_qsa_index_prepare(context,giq,griq,gin,gpos,&error)==FG_OK&&fg_vk_tensor_read(gq,0,got_q,sizeof(got_q),&error)==FG_OK&&fg_vk_tensor_read(gg,0,got_gate,sizeof(got_gate),&error)==FG_OK&&fg_vk_tensor_read(gk,0,got_k,sizeof(got_k),&error)==FG_OK&&fg_vk_tensor_read(giq,0,got_iq,sizeof(got_iq),&error)==FG_OK;for(uint32_t i=0;ok&&i<Q;i++)if(fabsf(got_q[i]-expected_q[i])>4e-5f||got_gate[i]!=expected_gate[i])ok=0;for(uint32_t i=0;ok&&i<K;i++)if(fabsf(got_k[i]-expected_k[i])>4e-5f||fabsf(got_iq[i]-expected_iq[i])>4e-5f)ok=0;
@@ -2292,12 +2384,12 @@ static int run_expert_small_component(uint32_t gt,uint32_t ut,uint32_t dt){
             fg_q5_1_cooked_matrix_bytes(MID,ROWS));
     uint32_t gr=BLOCKS*(gt==13u?176u:144u),ur=BLOCKS*(ut==13u?176u:144u);
     uint8_t *graw=calloc(EXPERTS,gs),*uraw=calloc(EXPERTS,us),
-        *cooked=malloc(gs>us?gs:us),*zeros=calloc(1,ds);
+        *cooked=malloc(ds>gs?(ds>us?ds:us):(gs>us?gs:us)),*down_raw=calloc(1,ds);
     fg_vk_tensor *g=NULL,*u=NULL,*d=NULL,*x=NULL,*s=NULL,*t=NULL,*w=NULL,
-        *m=NULL,*parts=NULL,*out=NULL;
+        *m=NULL,*parts=NULL,*out=NULL,*native=NULL,*native_tiles=NULL;
     uint8_t activation[4u*BLOCKS*FG_Q8_K_BLOCK_BYTES];
     uint32_t ids[PAIRS];float gates[PAIRS],got[PAIRS*MID],reduced[4u*ROWS];
-    int ok=graw&&uraw&&cooked&&zeros;
+    int ok=graw&&uraw&&cooked&&down_raw;
     if(!ok)goto done;
     g=tensor(NULL,(uint64_t)gs*FG_EXPERT_COUNT);
     u=tensor(NULL,(uint64_t)us*FG_EXPERT_COUNT);
@@ -2306,7 +2398,8 @@ static int run_expert_small_component(uint32_t gt,uint32_t ut,uint32_t dt){
     t=tensor(NULL,PAIRS*5u*4u);w=tensor(NULL,sizeof(gates));
     m=tensor(NULL,sizeof(got));parts=tensor(NULL,PAIRS*ROWS*4u*4u);
     out=tensor(NULL,sizeof(reduced));
-    ok=g&&u&&d&&x&&s&&t&&w&&m&&parts&&out;
+    native=tensor(NULL,ROWS*4u);native_tiles=tensor(NULL,10u*9u*4u);
+    ok=g&&u&&d&&x&&s&&t&&w&&m&&parts&&out&&native&&native_tiles;
     if(!ok)goto done;
     fg_vk_tensor_set_format(g,FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED);
     fg_vk_tensor_set_format(u,FG_VK_TENSOR_FORMAT_K_QUANT_EXPERT_COOKED);
@@ -2322,11 +2415,28 @@ static int run_expert_small_component(uint32_t gt,uint32_t ut,uint32_t dt){
             memcpy(gp,&scale,2u);memcpy(up,&scale,2u);
             memcpy(gp+2u,&minimum,2u);memcpy(up+2u,&minimum,2u);
         }
+        memset(down_raw,0,ds);
+        for(uint32_t row=0;row<ROWS;row++)for(uint32_t block=0;block<MID/32u;block++){
+            uint8_t *p=down_raw+((uint64_t)row*(MID/32u)+block)*(dt==8u?34u:24u);
+            uint16_t delta=fg_f32_to_f16(ldexpf((float)(1u+(row+expert)%4u),-6)),
+                minimum=delta|0x8000u;
+            memcpy(p,&delta,2u);
+            uint32_t col=(row*7u+block*13u+expert*3u)&31u,
+                quant=1u+(row+block+expert)%31u,high=(quant>>4u)<<col;
+            if(dt==8u){
+                memset(p+2u,255,32u);p[2u+col]=(uint8_t)(quant-1u);
+            }else{
+                memcpy(p+2u,&minimum,2u);memcpy(p+4u,&high,4u);
+                p[8u+(col&15u)]=(uint8_t)((quant&15u)<<(col>=16u?4u:0u));
+            }
+        }
         ok=fg_cook_k_quant_rows(graw+(uint64_t)expert*gs,cooked,gs,INPUT,MID,gt)&&
             fg_vk_tensor_write(g,(uint64_t)expert*gs,cooked,gs,&error)==FG_OK&&
             fg_cook_k_quant_rows(uraw+(uint64_t)expert*us,cooked,us,INPUT,MID,ut)&&
             fg_vk_tensor_write(u,(uint64_t)expert*us,cooked,us,&error)==FG_OK&&
-            fg_vk_tensor_write(d,(uint64_t)expert*ds,zeros,ds,&error)==FG_OK;
+            (dt==8u?fg_cook_q8_0_rows(down_raw,cooked,ds,MID,ROWS):
+                fg_cook_q5_1_rows(down_raw,cooked,ds,MID,ROWS))&&
+            fg_vk_tensor_write(d,(uint64_t)expert*ds,cooked,ds,&error)==FG_OK;
         if(!ok)goto done;
     }
     for(uint32_t pattern=0;pattern<3u;pattern++){
@@ -2380,17 +2490,62 @@ static int run_expert_small_component(uint32_t gt,uint32_t ut,uint32_t dt){
                     passed=0;
                 }
             }
-            for(uint32_t i=0;i<n*ROWS;i++)if(reduced[i]!=0.0f)passed=0;
-            fprintf(stderr,"SMALL_EXPERT_CPU gt=%u ut=%u dt=%u pattern=%u n=%u max_rel=%.9g pass=%d\n",
-                gt,ut,dt,pattern,n,maximum,passed);
+            double input_sums[PAIRS]={0};
+            for(uint32_t p=0;p<n*10u;p++)for(uint32_t j=0;j<MID;j++)
+                input_sums[p]+=got[p*MID+j];
+            double down_maximum=0.0;
+            for(uint32_t token=0;token<n;token++)for(uint32_t row=0;row<ROWS;row++){
+                double expected=0.0;
+                for(uint32_t k=0;k<10u;k++){
+                    uint32_t p=token*10u+k,expert=ids[p];
+                    double sum=-input_sums[p];
+                    for(uint32_t block=0;block<MID/32u;block++){
+                        uint32_t col=(row*7u+block*13u+expert*3u)&31u,
+                            quant=1u+(row+block+expert)%31u;
+                        sum+=(double)quant*got[p*MID+block*32u+col];
+                    }
+                    expected+=ldexp((double)(1u+(row+expert)%4u),-6)*gates[p]*sum;
+                }
+                double actual=reduced[token*ROWS+row],
+                    relative=fabs(actual-expected)/fmax(1.0,fabs(expected));
+                if(relative>down_maximum)down_maximum=relative;
+                if(!isfinite(actual)||!isfinite(expected)||relative>1e-4){
+                    if(passed)fprintf(stderr,"small down CPU mismatch gt=%u ut=%u pattern=%u n=%u token=%u row=%u gpu=%g cpu=%g\n",
+                        gt,ut,pattern,n,token,row,actual,expected);
+                    passed=0;
+                }
+            }
+            fprintf(stderr,"SMALL_EXPERT_CPU gt=%u ut=%u pattern=%u n=%u max_rel=%.9g pass=%d\n",
+                gt,ut,pattern,n,maximum,passed);
+            if(dt==8u)for(uint32_t token=0;passed&&token<n;token++){
+                uint32_t schedule[90];float native_output[ROWS];
+                for(uint32_t i=0;i<90u;i++)schedule[i]=UINT32_MAX;
+                for(uint32_t k=0;k<10u;k++){
+                    schedule[k*9u]=ids[token*10u+k];schedule[k*9u+1u]=k;
+                }
+                fg_vk_tensor *mid_view=NULL,*gate_view=NULL;
+                passed=fg_vk_tensor_view(m,(uint64_t)token*10u*MID*4u,
+                        10u*MID*4u,&mid_view,&error)==FG_OK&&
+                    fg_vk_tensor_view(w,(uint64_t)token*10u*4u,
+                        10u*4u,&gate_view,&error)==FG_OK&&
+                    fg_vk_tensor_write(native_tiles,0,schedule,sizeof(schedule),&error)==FG_OK&&
+                    fg_vk_moe_decode_down_reduce(context,native,d,native_tiles,mid_view,
+                        gate_view,ROWS,MID,ds,10u,8u,&error)==FG_OK&&
+                    fg_vk_tensor_read(native,0,native_output,sizeof(native_output),&error)==FG_OK&&
+                    !memcmp(native_output,reduced+token*ROWS,sizeof(native_output));
+                fg_vk_tensor_destroy(gate_view);fg_vk_tensor_destroy(mid_view);
+            }
+            fprintf(stderr,"SMALL_DOWN_CPU gt=%u ut=%u dt=%u pattern=%u n=%u max_rel=%.9g pass=%d\n",
+                gt,ut,dt,pattern,n,down_maximum,passed);
             ok=passed&&ok;
         }
     }
 done:
+    fg_vk_tensor_destroy(native_tiles);fg_vk_tensor_destroy(native);
     fg_vk_tensor_destroy(out);fg_vk_tensor_destroy(parts);fg_vk_tensor_destroy(m);
     fg_vk_tensor_destroy(w);fg_vk_tensor_destroy(t);fg_vk_tensor_destroy(s);
     fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(d);fg_vk_tensor_destroy(u);fg_vk_tensor_destroy(g);
-    free(zeros);free(cooked);free(uraw);free(graw);return ok;
+    free(down_raw);free(cooked);free(uraw);free(graw);return ok;
 }
 
 static int test_expert_small_component(void){
@@ -2398,7 +2553,9 @@ static int test_expert_small_component(void){
     int ok=run_expert_small_component(12u,13u,7u);
     ok=run_expert_small_component(13u,12u,7u)&&ok;
     ok=run_expert_small_component(12u,12u,8u)&&ok;
-    return run_expert_small_component(13u,13u,8u)&&ok;
+    ok=run_expert_small_component(13u,13u,8u)&&ok;
+    ok=run_expert_small_component(12u,13u,8u)&&ok;
+    return run_expert_small_component(13u,12u,8u)&&ok;
 }
 
 /* Ten random selections from a 512-expert slab at production decode shapes.
@@ -5100,4 +5257,5 @@ ok=run_test("q8_cooked_view_slice_quad",test_q8_cooked_view_slice_quad)&&ok;
 ok=run_test("qsa_prefill_prepare",test_qsa_prefill_prepare)&&ok;
 ok=run_test("qsa_attention_single",test_qsa_attention_single)&&ok;
 ok=run_test("qsa_attention",test_qsa_attention)&&ok;
+ok=run_test("qsa_attention_union",test_qsa_attention_union)&&ok;
 fg_vk_close(context);if(!selected_test_count){fprintf(stderr,"no Vulkan test matched DS4_REMOTE_TEST_FILTER\n");return 2;}if(!ok){fprintf(stderr,"native Vulkan oracle failed: %s\n",error.message);return 1;}puts("Flash Gordon native Vulkan production-dimension oracles: PASS");return 0;}

@@ -1,0 +1,4 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define UNION_COHORTS 8
+#include "fg_small_down_union.glsl"

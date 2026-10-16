@@ -1,4 +1,5 @@
 #include "fg_small_reuse_decode.glsl"
+layout(constant_id=2) const uint SMALL_SPLITS=1u;
 #define ROW_INPUT(T,A,B) \
     vec4 A=x[T*(pc.input_width/4u)+group*8u+lane],B=x[T*(pc.input_width/4u)+group*8u+lane+4u];
 #define ROW_ACC(A,C,X,Y) \
@@ -18,13 +19,15 @@
     ROW_ACC(A0,C,x0,y0) ROW_ACC(A1,C,x1,y1) ROW_ACC2(A2,C) ROW_ACC3(A3,C) }
 #define ROW_REDUCE(A) for(uint offset=1u;offset<32u;offset*=2u)A+=subgroupShuffleXor(A,offset);
 #define ROW_STORE(T,R,A) \
-    for(uint i=0u;i<4u;i++)if(row+R+i<pc.output_width)y[T*pc.output_width+row+R+i]=A[i]*pc.scale;
+    for(uint i=0u;i<4u;i++)if(row+R+i<pc.output_width) \
+        y[(T*pc.output_width+row+R+i)*SMALL_SPLITS+split]=A[i]*pc.scale;
 void main(){
 #if TYPE == 20
     if(gl_LocalInvocationID.x<16u)table[gl_LocalInvocationID.x]=float(grid(gl_LocalInvocationID.x));
     barrier();
 #endif
     uint lid=gl_LocalInvocationID.x,cohort=lid&31u,lane=cohort&3u;
+    uint split=SMALL_SPLITS==1u?0u:gl_WorkGroupID.y;
     uint row=gl_WorkGroupID.x*(WG/32u*FG_SMALL_REUSE_ROWS)+(lid/32u)*FG_SMALL_REUSE_ROWS;
     if(row>=pc.output_width)return;
     uint groups=pc.input_width/32u,tile_row=row&7u;
@@ -46,7 +49,7 @@ void main(){
     vec4 b3=vec4(0.0);
 #endif
 #endif
-    for(uint group=cohort/4u;group<groups;group+=8u){
+    for(uint group=cohort/4u+split*8u;group<groups;group+=8u*SMALL_SPLITS){
         ROW_INPUT(0u,x0,y0) ROW_INPUT(1u,x1,y1)
 #if SMALL_N >= 3
         ROW_INPUT(2u,x2,y2)

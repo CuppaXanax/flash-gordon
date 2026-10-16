@@ -205,6 +205,9 @@ $(foreach rows,4 8,$(foreach type,q4 q5 iq4,$(foreach n,2 3 4,vulkan/fg_small_re
 $(foreach type,q4 q5 iq4,$(foreach n,2 3 4,vulkan/fg_small_reuse_$(type)_n$(n).spv)): shaders/fg_small_reuse_decode.glsl
 vulkan/fg_small_gate_up_half.spv vulkan/fg_small_gate_up_four_half.spv: shaders/fg_small_gate_up.glsl
 vulkan/fg_small_gate_up_packed.spv vulkan/fg_small_gate_up_four_packed.spv: shaders/fg_small_gate_up.glsl shaders/fg_small_packed_dot.glsl
+vulkan/fg_small_gate_up_int.spv vulkan/fg_small_gate_up_four_int.spv: shaders/fg_small_gate_up.glsl
+vulkan/fg_small_down_union.spv vulkan/fg_small_down_union_parallel.spv vulkan/fg_small_down_union_wide.spv: shaders/fg_small_down_union.glsl shaders/fg_small_down_decode.glsl
+vulkan/fg_small_qsa_union.spv vulkan/fg_small_qsa_union_tile16.spv: shaders/fg_small_qsa_union.glsl
 vulkan/fg_gdn_recurrent_algebraic.spv vulkan/fg_gdn_small.spv: shaders/fg_gdn_algebraic.glsl
 vulkan/fg_dense_q8_0_cooked_r8.spv vulkan/fg_mtp_vocab_q8.spv vulkan/fg_mtp_fc_hidden.spv: shaders/fg_dense_q8_0_cooked_r8.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_small_f32*.comp shaders/fg_small_router_bf16*.comp shaders/fg_small_index_bf16*.comp)): shaders/fg_small_plain.glsl

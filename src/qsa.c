@@ -1885,6 +1885,85 @@ static fg_status small_prefix_attention(fg_qsa_session *s,uint32_t slot,
     return status;
 }
 
+static bool small_union_enabled(void){
+    const char *value=getenv("FG_SMALL_KERNELS");
+    return value&&((uint32_t)strtoul(value,NULL,0)&(4096u|131072u))!=0u;
+}
+
+static int small_union_order(const void *a,const void *b){
+    uint64_t x=*(const uint64_t *)a,y=*(const uint64_t *)b;
+    return x<y?-1:x>y?1:0;
+}
+
+static fg_status small_union_attention(fg_qsa_session *s,uint32_t slot,
+    uint32_t first,uint32_t count,bool *done,fg_error *err){
+    fg_vk_context *vk=fg_model_vk(s->model);
+    *done=false;
+    if(fg_vk_subgroup_size(vk)!=64u)return FG_OK;
+    fg_status status=fg_vk_begin(vk,err);
+    for(uint32_t i=0;status==FG_OK&&i<count;i++){
+        status=fg_vk_tensor_view_rebind(s->key_q8_view,s->key_q8,
+            (uint64_t)i*FG_Q38_QSA_KEY_BYTES,FG_Q38_QSA_KEY_BYTES,err);
+        if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->value_q4_view,s->value_q4,
+            (uint64_t)i*FG_Q38_QSA_VALUE_BYTES,FG_Q38_QSA_VALUE_BYTES,err);
+        if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->index_key_q8_view,s->index_key_q8,
+            (uint64_t)i*FG_Q38_QSA_INDEX_KEY_BYTES,FG_Q38_QSA_INDEX_KEY_BYTES,err);
+        if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->token_position_view,s->positions,
+            (uint64_t)(first+i)*FG_Q38_QSA_POSITION_BYTES,FG_Q38_QSA_POSITION_BYTES,err);
+        if(status==FG_OK)status=commit_cache(s,slot,first+i,s->key_q8_view,
+            s->value_q4_view,s->index_key_q8_view,s->token_position_view,err);
+    }
+    *done=true;
+    uint32_t counts[4]={0};
+    if(status==FG_OK)status=select_prefill_batch(s,slot,first+1u,0u,count,
+        s->select_ids,512u,counts,err);
+    if(status!=FG_OK)return status;
+    uint64_t requests[4u*513u];uint32_t descriptors[4u*513u][4],entries=0u;
+    for(uint32_t q=0;q<count;q++){
+        for(uint32_t i=0;i<counts[q];i++)
+            requests[entries++]=((uint64_t)s->select_ids[q*512u+i]<<32u)|
+                (UINT64_C(15)<<(q*4u));
+        uint32_t visible=first+q+1u,tail=visible%4u;
+        if(tail)requests[entries++]=((uint64_t)(visible/4u)<<32u)|
+            ((uint64_t)((1u<<tail)-1u)<<(q*4u));
+    }
+    qsort(requests,entries,sizeof(requests[0]),small_union_order);
+    bool resident=true;uint32_t blocks=0u;
+    for(uint32_t i=0;i<entries;){
+        uint32_t block=(uint32_t)(requests[i]>>32u),mask=0u,cache_slot=0u;
+        do{mask|=(uint32_t)requests[i++];}while(i<entries&&(uint32_t)(requests[i]>>32u)==block);
+        if(!fg_qsa_page_cache_lookup(s->cache,s->layers[slot],block,&cache_slot))
+            resident=false;
+        descriptors[blocks][0]=cache_slot;descriptors[blocks][1]=mask;
+        descriptors[blocks][2]=block;descriptors[blocks++][3]=0u;
+    }
+    if(!fg_vk_batch_active(vk))status=fg_vk_begin(vk,err);
+    if(!resident){
+        for(uint32_t q=0;status==FG_OK&&q<count;q++){
+            status=fg_vk_tensor_view_rebind(s->index_query_view,s->index_query,
+                (uint64_t)q*512u*4u,512u*4u,err);
+            if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->query_view,s->query,
+                (uint64_t)q*6144u*4u,6144u*4u,err);
+            if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->gate_view,s->gate,
+                (uint64_t)q*6144u*4u,6144u*4u,err);
+            if(status==FG_OK)status=fg_vk_tensor_view_rebind(s->attention_view,s->attention,
+                (uint64_t)q*6144u*4u,6144u*4u,err);
+            if(status==FG_OK)status=attend_cache(s,slot,first+q+1u,s->index_query_view,
+                s->query_view,s->gate_view,s->attention_view,s->tile_ids[q][0],err);
+        }
+        return status;
+    }
+    /* Swap the existing scratch arenas: the record arena holds 32-way
+     * partials; the smaller partial arena holds the deduplicated descriptors. */
+    if(status==FG_OK)status=fg_vk_tensor_write_ordered(s->batch_partials,0,descriptors,
+        (uint64_t)blocks*16u,err);
+    if(status==FG_OK)status=fg_vk_qsa_attention_union(vk,s->batch_records,
+        s->cache_records,s->query,s->batch_partials,count,blocks,s->cache_pages*4u,32u,err);
+    if(status==FG_OK)status=fg_vk_qsa_attention_merge_batch(vk,s->attention,
+        s->batch_records,s->gate,count,6144u,32u,err);
+    return status;
+}
+
 static fg_status qsa_batch_impl(fg_qsa_session *s,uint32_t layer,uint32_t first_token,const uint32_t *positions,uint32_t token_count,const fg_vk_tensor *hidden,fg_vk_tensor **output,bool small,fg_error *err){
     int signed_slot=s?layer_slot(s,layer):-1;if(!s||signed_slot<0||!positions||!hidden||!output||!token_count||token_count>s->max_tokens||token_count>s->max_context||first_token>s->max_context-token_count){fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA prefill arguments");return FG_ERR_ARGUMENT;}uint32_t slot=(uint32_t)signed_slot;if(first_token!=s->committed[slot]){fg_error_set(err,FG_ERR_MISMATCH,"QSA prefill range does not start at committed state");return FG_ERR_MISMATCH;}
     fg_vk_tensor *qw=layer_weight(s,layer,"attn_q.weight",err),*kw=layer_weight(s,layer,"attn_k.weight",err),*vw=layer_weight(s,layer,"attn_v.weight",err),*qn=layer_weight(s,layer,"attn_q_norm.weight",err),*kn=layer_weight(s,layer,"attn_k_norm.weight",err),*ow=layer_weight(s,layer,"attn_output.weight",err),*iqw=layer_weight(s,layer,"indexer.q_proj.weight",err),*ikw=layer_weight(s,layer,"indexer.k_proj.weight",err),*iqn=layer_weight(s,layer,"indexer.q_norm.weight",err);if(!qw||!kw||!vw||!qn||!kn||!ow||!iqw||!ikw||!iqn)return FG_ERR_MISMATCH;
@@ -1892,6 +1971,8 @@ static fg_status qsa_batch_impl(fg_qsa_session *s,uint32_t layer,uint32_t first_
         fg_error_set(err,FG_ERR_ARGUMENT,"small-N QSA requires a cache-backed batch of 2..4");
         return FG_ERR_ARGUMENT;
     }
+    bool union_attention=small&&small_union_enabled()&&
+        (!small_prefix_enabled()||first_token+token_count>FG_QSA_SELECTED_TOKENS);
     if(small&&!s->tile_ids[3][0]){
         fg_status st=fg_qsa_submit_host_reads(fg_model_vk(s->model),err);
         for(uint32_t t=0u;st==FG_OK&&t<4u;t++)if(!s->tile_ids[t][0])
@@ -1899,10 +1980,17 @@ static fg_status qsa_batch_impl(fg_qsa_session *s,uint32_t layer,uint32_t first_
                 &s->tile_ids[t][0],err);
         if(st!=FG_OK)return st;
     }
-    if(small&&small_prefix_enabled()&&first_token+token_count<=FG_QSA_SELECTED_TOKENS&&
+    if(small&&(union_attention||(small_prefix_enabled()&&
+       first_token+token_count<=FG_QSA_SELECTED_TOKENS))&&
        (!s->batch_partials||!s->batch_counts)){
         fg_status st=fg_qsa_submit_host_reads(fg_model_vk(s->model),err);
         if(st==FG_OK)st=ensure_prefill_batch(s,err);
+        if(st!=FG_OK)return st;
+    }
+    if(union_attention){
+        fg_status st=FG_OK;
+        if(!s->sel_scores[0])st=fg_qsa_submit_host_reads(fg_model_vk(s->model),err);
+        if(st==FG_OK)st=ensure_select_scratch(s,err);
         if(st!=FG_OK)return st;
     }
     /* Materialize every index segment the range will touch before the first
@@ -1930,7 +2018,9 @@ static fg_status qsa_batch_impl(fg_qsa_session *s,uint32_t layer,uint32_t first_
     if(status!=FG_OK)return status;
     if(small){
         bool done=false;
-        if(small_prefix_enabled())status=small_prefix_attention(s,slot,first_token,
+        if(union_attention)status=small_union_attention(s,slot,first_token,
+            token_count,&done,err);
+        if(status==FG_OK&&!done&&small_prefix_enabled())status=small_prefix_attention(s,slot,first_token,
             token_count,&done,err);
         if(status==FG_OK&&!done)status=fg_vk_begin(vk,err);
         for(uint32_t i=0u;status==FG_OK&&!done&&i<token_count;i++){

@@ -514,6 +514,9 @@ fg_status fg_vk_qsa_attention_merge_batch(fg_vk_context *context,fg_vk_tensor *o
                                           const fg_vk_tensor *partials,
                                           const fg_vk_tensor *gate,uint32_t query_count,
                                           uint32_t query_stride,uint32_t splits,fg_error *err);
+fg_status fg_vk_qsa_attention_union(fg_vk_context *context,fg_vk_tensor *partials,
+    const fg_vk_tensor *records,const fg_vk_tensor *query,const fg_vk_tensor *descriptors,
+    uint32_t query_count,uint32_t union_blocks,uint32_t capacity,uint32_t splits,fg_error *err);
 fg_status fg_vk_qsa_record_gather_batch(fg_vk_context *context,fg_vk_tensor *output,
                                         const fg_vk_tensor *records,
                                         const fg_vk_tensor *slots,uint32_t query_count,

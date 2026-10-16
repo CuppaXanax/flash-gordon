@@ -2,6 +2,8 @@
 #extension GL_EXT_control_flow_attributes : require
 #ifdef FG_SMALL_PACKED
 #define FG_ACT_TYPE uint
+#elif defined(FG_SMALL_INT)
+#define FG_ACT_TYPE ivec4
 #elif defined(FG_SMALL_HALF)
 #extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
 #define FG_ACT_TYPE f16vec4
@@ -19,6 +21,12 @@
 #endif
 #ifdef FG_SMALL_PACKED
 #include "fg_small_packed_dot.glsl"
+#endif
+#ifdef FG_SMALL_INT
+int small_idot4(ivec4 w,ivec4 x,int acc){
+    acc+=w.x*x.x;acc+=w.y*x.y;acc+=w.z*x.z;
+    return acc+w.w*x.w;
+}
 #endif
 #ifdef FG_SMALL_HALF
 f16vec2 half_pair_dot(f16vec4 g,f16vec4 u,f16vec4 x,f16vec2 acc){
@@ -128,9 +136,13 @@ void main(){
             half_a[p]=f16vec2(0.0);half_b[p]=f16vec2(0.0);
         }
 #else
+#ifdef FG_SMALL_INT
+        int gia[PAIR_COUNT],gib[PAIR_COUNT],uia[PAIR_COUNT],uib[PAIR_COUNT];
+#else
         float gia[PAIR_COUNT],gib[PAIR_COUNT],uia[PAIR_COUNT],uib[PAIR_COUNT];
+#endif
         [[unroll]] for(uint p=0u;p<PAIR_COUNT;p++){
-            gia[p]=0.0;gib[p]=0.0;uia[p]=0.0;uib[p]=0.0;
+            gia[p]=0;gib[p]=0;uia[p]=0;uib[p]=0;
         }
 #endif
         [[unroll]] for(uint w=0u;w<4u;w++){
@@ -164,6 +176,9 @@ void main(){
 #elif defined(FG_SMALL_HALF)
                 half_a[p]=half_pair_dot(gl,ul,x,half_a[p]);
                 half_b[p]=half_pair_dot(gr,ur,y,half_b[p]);
+#elif defined(FG_SMALL_INT)
+                gia[p]=small_idot4(gl,x,gia[p]);gib[p]=small_idot4(gr,y,gib[p]);
+                uia[p]=small_idot4(ul,x,uia[p]);uib[p]=small_idot4(ur,y,uib[p]);
 #elif defined(FG_SMALL_FMA)
                 gia[p]=small_fma4(gl,x,gia[p]);gib[p]=small_fma4(gr,y,gib[p]);
                 uia[p]=small_fma4(ul,x,uia[p]);uib[p]=small_fma4(ur,y,uib[p]);
