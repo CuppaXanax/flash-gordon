@@ -2,7 +2,19 @@
 
 ## Status and binding policy
 
-**Default off; no promotion.** The authorized 2026-10-16 diagnostic lease
+**Default off; no promotion.** The latest user-granted a038dec diagnostic
+completed A0/F3/A1 and released all eight owners after independent verification
+at **21:15:32Z**, within its conservative21:03:03Z–21:48:03Z lease envelope.
+Current production is restored to the pinned **sessions2 / wide1** stack.
+The cold retain fix is confirmed on the authentic ring. Median paired
+off/on decode TPS: **chat31.063/22.378, code31.200/33.409**; median
+per-request paired ratios0.736×/1.074×. Mean warm round stages total
+101.401/101.280 ms. Chat regresses; this is diagnostic, not qualification.
+See [paired receipts and stage ledger](../results/hillclimb/MTP_RETAIN_SERVING.md).
+Future lease requests go directly to the user/delegated authority, not
+sol-abqual.
+
+The earlier authorized 2026-10-16 diagnostic lease
 ended with all eight original services restored, pinned and verified, and
 owned scratch/processes removed. Final independent release verification was
 **20:23:07Z**, before the original **20:41:06Z** absolute deadline. Restored
@@ -35,7 +47,8 @@ passes24 cases over frontiers22/127, both private slots, all proper retained
 prefixes for N2–4, full-state reconstruction, exact rollback and continuation
 tolerance. Foreign frontiers remain unchanged. This fixes the originating
 local condition; it does **not** add ACK-draining/network-error recovery.
-Authentic full-ring confirmation still needs a new serialized lease.
+That offline prerequisite has since received authentic full-ring confirmation
+in the completed a038dec lease above.
 
 Selected item2 before further dense-kernel tuning on expected ms/effort:
 `--mtp-local-head` now accepts an authenticated `FGDVOC1` draft-only subset.
@@ -64,7 +77,7 @@ still requires eager measurement. Subset language/tool coverage, acceptance
 and live TPS remain unmeasured. See
 [retained follow-up evidence](../results/hillclimb/MTP_RETAIN_SUBSET.md).
 
-## What the lease actually established
+## Earlier failed lease: historical measurements
 
 | Observation | Measured result | Limitation |
 |---|---:|---|
@@ -102,15 +115,56 @@ Do not describe either failed attempt as a completed serving comparison.
 | Gate | Status / required next evidence |
 |---|---|
 | Target quantization floor |Unchanged: target≥Q4; draft-only exception above |
-| Pass-local self-consistency |Runtime checks every emitted token against that pass's target argmax;2,709 prior TCP-double checks pass. Retry emitted no completed MTP result; full actual-serving receipts pending |
+| Pass-local self-consistency |2,167 actual a038dec MTP choices all match the pass-local target argmax;775 stage ledgers align across all eight owners; complete qualification capture still pending |
 | N1/N4 divergence |No bitwise alignment requirement. At identical prefixes, differing winners must exchange the same top2 with **both raw margins<0.10**; complete serving capture pending |
 | Full-model N4 quality |Same-geometry original-Q880-vector control now retained by the precision sibling; N4 candidate comparison still pending: `KL(P_Q8||P_N4)≤0.005`, top1≥0.985, hence≥79/80 |
 | Reference provenance |New Q8-control archive SHA `d4ca5b1351204674082c580e3623e90bb97fb518cd0c577efbf81b3b67fd48c3`; historical80 geometry discrepancy is not N4 attribution. Separate480-natural-context/p99 gate is not interchangeable |
-| State correctness |Cold coordinator failure reproduced/fixed offline;24 strengthened GPU fixtures and8 current TCP cases pass; authentic full-ring confirmation pending |
+| N1 target prerequisite |**Reported FAIL** on matched80 forced-frontier contexts: current-Q8→current-mix04 mean KL0.051191953/top1 85%; this is already an N1 target/profile gap, not evidence against N4 |
+| State correctness |Cold coordinator failure fixed offline and confirmed on authentic a038dec ring:775 completed aligned rounds;24 GPU fixtures/8 TCP cases also pass |
 | Residency |Single-session eager admission observed; only36.31 MiB requested-live headroom. Dual sessions, extra speculative banks and long-context/deferred peaks remain unqualified |
-| Performance |Warm native-only chain measured; actual N4 frames measured. No warm completed local-chain serving round or on/off TPS comparison |
+| Performance |Paired A0/F3/A1 completed: code1.074×, chat0.736× median paired decode ratio; warm≈101.3 ms rounds, not60 ms |
 | Temperature sampling |Standard rejection-sampling primitive exists; production path/gates here are greedy, not temperature qualification |
-| Lease hygiene |PASS: both attempts restored/verified/cleaned; final all-eight verification20:23:07Z, no promotion |
+| Lease hygiene |PASS: latest a038dec A0/F3/A1 restored/verified/cleaned; independent all-eight verification21:15:32Z, no promotion |
+
+### Matched-Q8 update: N1 target baseline fails
+
+The precision sibling reports the final same-geometry control comparison:
+
+| Reference → candidate, same current frozen N1 profile |Mean full-vocabulary KL |Top1 |Original-Q8 gate |
+|---|---:|---:|---|
+| Original Q8 → F32-hop mix04 |0.051191953 |85% |**FAIL** |
+| Original Q8 → all-hop scaled-FP16 mix04 |0.056666349 |85% |**FAIL** |
+| Original Q8 → mask224 scaled-FP16 mix04 |0.054000836 |85% |**FAIL** |
+
+Source: precision branch `cuppaxanax/bf16-hops`,
+`9531f7e4130c582cb52bef1f4e14c7f4cff6ad5a`,
+`results/hillclimb/FP16_HOPS.md` and `fp16-hops.json`; its canonical report was
+read here. No new quality run or artifact copy was performed here. The sibling reports
+all1,223 original-Q8 trained spans authenticated/read back and80 logits
+validated against the already shared corpus/prepared frames.
+Historical-r3 Q8 versus current-profile Q8 also differs
+(KL0.010931423/top1 92.5%), so historical geometry/profile/conditioning is a
+real confound, **but does not explain away the matched cumulative failure**.
+The control does not yet separate dense quantization from dtype-dependent
+kernel arithmetic.
+Do not subtract KLs or attribute this existing N1 gap to speculative verify.
+The80 forced-first frontiers and the older480-natural-context Q4 gate remain
+different cohorts; neither replaces the other.
+The sibling's subsequent raw480 reconciliation reproduces mix04/Q8
+KL0.003128578/top1 98.9583% and direct original-Q8/stack
+KL0.003084267/top1 98.75%, both passing. The often-cited stack
+KL0.000246435/top1 99.7917% is **incremental versus mix04**, not versus Q8.
+Native-prefill/current-N1 cross-running and conditioning reconciliation are
+still in progress; do not revoke the older cohort's pass or relabel an
+incremental statistic as cumulative.
+
+Promotion is blocked on diagnosing the N1 target gap as well as the N4 gates.
+Prioritize offline target-format/kernel/profile attribution using matched
+prefixes; do not resume bitwise arithmetic alignment or weaken thresholds.
+The≈7 ms all-hop half-precision lever remains conditional, and mask224's
+relative-to-F32 success is **not** an original-Q8 quality pass.
+Any requested performance-only lease must explicitly acknowledge this known
+baseline failure; no active lease or production access follows from this update.
 
 ## Ranked experiments
 
@@ -123,8 +177,9 @@ Warm every N1..4 graph/pipeline before timing, without publishing dummy tokens;
 prove state restoration after warmup. No further production access is implied.
 
 1. **Dense verify weight reuse: target5–15 ms/round research range;
-   whole target-service bundle15.49 ms.**
-   Reduce the existing47.493 ms warmed owner-sum proxy to32 ms using dense
+   combined owner-compute research budget≈25 ms.**
+   The authentic code N4 owner compute sum is65.160 ms, not the old47.493 ms
+   proxy; all-shape code mean is64.979 ms. Aim for40 ms using dense
    N-column weight reuse, expert-union/per-token gates, persistent replay and
    dispatch amortization. Preserve causal GDN recurrence and QSA masking.
    Reuse the unpacked weight fragment across columns, not just coalesced
@@ -145,7 +200,7 @@ prove state restoration after warmup. No further production access is implied.
    local-head dual-session configuration fits**. Include any additional full
    head/private banks, alignment, deferred peaks and driver reservations.
 3. **Confidence/suffix drafting with actual serial fallback: recover chat
-   toward measured≈31.98 TPS before seeking a speculative win.**
+   toward paired serial≈31.06 TPS before seeking a speculative win.**
    Existing adaptive widths choose k≥1; add a real k=0/no-draft alternative
    using complete-round goodput versus a recent serial baseline. Use bounded
    probes, calibrated confidence stops and exact token-history suffix lookup
@@ -153,9 +208,9 @@ prove state restoration after warmup. No further production access is implied.
    native KV catch-up when switching proposal sources. A subset-normalized
    probability or raw margin is not automatically measured acceptance.
    The audit's0–15% repetitive-code opportunity is an estimate, not credited
-   in the cumulative table. At current chat yield2.392523 and31.9783 serial
-   TPS, speculation must beat≈74.82 ms/round merely to break even; do not
-   force the projected95.79 ms path onto novel chat.
+   in the cumulative table. At measured chat yield2.219512 and31.063 serial
+   TPS, speculation must beat≈71.45 ms/round merely to break even; do not
+   force the observed101.40 ms fixed-k3 path onto novel chat.
 4. **Partition GDN recurrent state across cooperating threads: target2–8
    ms/round research range, included in the target-service bundle.**
    Replace each lane's128-float private column with four cooperating groups
@@ -164,27 +219,29 @@ prove state restoration after warmup. No further production access is implied.
    register retention. Requalify reassociated reductions. Saved-input
    state-only retention and remote-first fanout already exist; do not count
    their implementation again or regress to whole-transformer repair.
-   This overlaps item1's15.49 ms bundle and is **not an extra2–8 ms credit**.
-5. **Batch target vocabulary: target5.66 ms saving.**
-   The current verify head performs four serial calls/slice. Reduce the old
-  6.656 ms extra-three-call proxy to1 ms by loading each Q8 weight tile once
-   for N columns and performing batched argmax. Draft-chain heads remain
-   sequential because each proposal conditions the next.
-6. **Lower-bit draft head, with Q2 draft experts for fit: target4.49 ms saving.**
-   Aim for warmed k3 chain8.989→4.5 ms, subject to measured acceptance.
+   This overlaps item1's≈25 ms bundle and is **not an extra2–8 ms credit**.
+5. **Batch target vocabulary: target≈2 ms critical-path saving.**
+   The current verify head performs four serial calls/slice. Reduce the
+   measured≈3.10 ms maximum per-head-rank compute to≈1.1 ms by loading each
+   Q8 weight tile once for N columns and performing batched argmax.
+   Head ranks0/1/2/4 overlap: their≈12.20 ms compute **sum is not wall time**.
+   Do not retain the old5.66 ms proxy saving as a measured critical-path gain.
+   Draft-chain heads remain sequential because each conditions the next.
+6. **Lower-bit draft head, with Q2 draft experts for fit: target5.35 ms saving.**
+   Aim for observed coordinator chain span9.853→4.5 ms, subject to acceptance.
    The repeated full-vocabulary head reads dominate more than selected expert
    reads; expert-only Q2 is primarily a residency lever. Native packed storage
    and kernels are required—dequantizing whole weights back to Q8 would erase
    the residency benefit. See the format/acceptance requirements below.
    Restricted vocabulary is the lower-integration-risk alternative in item2;
-   **do not add its1–7 ms to the same head's4.49 ms low-bit saving**.
+   **do not add its1–7 ms to the same head's5.35 ms low-bit saving**.
 7. **Actual N4 framing/amortization: target3.22 ms saving.**
    Improve the measured pair-transfer model14.216→11 ms with frame/header
    coalescing, sendmsg/batching and fewer host/CRC passes. The N4 payload
    serialization term at negotiated1 Gb/s is about10.83 ms/eight work hops;
   11 ms is an aggressive application budget, not achieved bandwidth.
-   Reduced-precision transport receives no credit: the sibling's full-hop
-   scaled-FP16 result provisionally fails KL and must be separately qualified.
+   Reduced-precision transport receives no credit: the published sibling's
+   full-hop scaled-FP16 result fails KL and must be separately qualified.
    **MTP + FP16-with-scale hops is now a separate conditional lever:**
    sol-roofline is qualifying that transport. If its model-quality result
    passes and the codec covers the actual N4 payload, budget roughly
@@ -198,12 +255,19 @@ prove state restoration after warmup. No further production access is implied.
    comparison (KL0.000678952/top1 100%). Neither result qualifies all-hop N4
    transport or cumulative N4/original-Q8 quality, so the≈7 ms credit remains
    conditional rather than an available saving.
-8. **Control/head-message/host amortization: target4.98 ms total saving.**
-   Replace the conservative3.365 ms extra-head-RPC budget with1 ms;
-   local-chain RPC1.122→0.5 ms, snapshot/retain controls2.243→1 ms,
-   host/lookup1.5→0.75 ms. Actual batched head framing may already avoid some
-   modeled per-row overhead: measure rather than declare this a real saving.
-   These are distinct budgets; do not count them again as target-head compute.
+   The published precision branch deliberately excludes MTP verification and
+   rejects either low-precision codec with experimental MTP before readiness.
+   Combining them requires an explicit batched-codec/native-owner validation
+   change and fresh quality tests, not merely enabling its flags.
+8. **Input/read/head-control/host amortization: target3.8 ms total saving.**
+   Budget3.6 ms inside verify, distinct from owner compute, wire and the
+   parallel-head compute saving, plus0.2 ms from measured post-verify
+   retain/native-repair/commit/host≈1.46 ms. These are hypotheses requiring
+   new disjoint timing, not inherited old RPC proxies. Current N4 verify
+   residual after owner input/compute/read is22.63 ms for code and includes
+   head, transfer and control; it is not independently measured wire latency.
+   Checkpoint span≈9.83 ms includes waiting behind rank7's draft chain and is
+   overlapped almost completely; do not count it again as9.83 ms saved.
 9. **Rank7 future-window drafting during ranks0–6 verify: target2 ms
    average critical-path saving after low-bit drafting.**
    Rank7 is idle until its target block arrives. Extend the native draft
@@ -271,50 +335,60 @@ select the format. Throughput improves only if
 
 ## Conditional path to ≤60 ms/round
 
-Replace only the old transport term in99.815711 ms with measured N4 frames:
-the revised **offline** baseline is95.789182 ms, not a live result.
-The following cumulative budget retains the old8.694701 ms cross-cohort
-calibration allowance,0.328 ms snapshot,0.583 ms retain and0.601 ms native
-repair; no unexplained residual saving is assumed.
+**Rebase on measured a038dec code rounds:101.280018 ms.** This supersedes the
+95.789182 ms transport-adjusted offline proxy and its cross-cohort calibration
+allowance. All-shape owner compute averages64.978676 ms; N4-only compute is
+65.159553 ms. The tiny N2/N3 generation tails explain the population difference.
+Below, owner compute, head critical-path compute, draft span, new future-window
+overlap, wire model, remaining verify overhead and post-verify control are
+separate proposed reductions. Head compute is parallel, not its12.20 ms sum.
+The14.215694 ms transport anchor is the **prior** measured-frame pair→ring model,
+not newly isolated wire timing. Reduction attribution needs new measurements;
+the table is an aggressive research budget, not a demonstrated path.
 
 | Conditional milestone |Round ms |Code TPS |Chat TPS |
 |---|---:|---:|---:|
-| Revised transport model only |95.789 |33.83 |24.98 |
-| Target owner sum32 ms |80.296 |40.36 |29.80 |
-| Extra target vocabulary budget1 ms |74.640 |43.42 |32.05 |
-| Restricted-vocab **or** low-bit draft chain4.5 ms |70.151 |46.19 |34.11 |
-| Useful future-window overlap2 ms average |68.151 |47.55 |35.11 |
-| N4 work transport budget11 ms |64.935 |49.90 |36.84 |
-| Extra target-head RPC budget1 ms |62.571 |51.79 |38.24 |
-| Local RPC/control/host budgets0.5/1/0.75 ms |**59.956** |**54.05** |**39.90** |
-| Optional qualified FP16+scale transport≈7.1 ms instead of11 ms |≈56.1 |≈57.8 |≈42.6 |
+| Measured code round; yield/round TPS model |101.280 |33.44 |21.91 |
+| Combined owner compute64.979→40 ms |76.301 |44.39 |29.09 |
+| Parallel target-head critical compute−2 ms |74.301 |45.58 |29.87 |
+| Restricted-vocab **or** low-bit draft span9.853→4.5 ms |68.948 |49.12 |32.19 |
+| Useful future-window overlap2 ms average |66.948 |50.59 |33.15 |
+| N4 work transport budget11 ms |63.733 |53.14 |34.83 |
+| Other verify input/read/control−3.6 ms |60.133 |56.32 |36.91 |
+| Post-verify retain/native/control−0.2 ms |**59.933** |**56.51** |**37.03** |
+| Optional qualified FP16+scale transport≈7.1 ms instead of11 ms |≈56.033 |≈60.44 |≈39.61 |
 
-TPS=`1000×tokens_per_verify/round_ms`, using **offline simulated**
-code3.240506/chat2.392523 throughout; lower-bit drafting/approximate lookahead
-can change these yields. The table is an experiment plan, not an additive
-measured speedup or confidence interval.
+TPS=`1000×tokens_per_verify/round_ms`, using **observed**
+code3.386667/chat2.219512 throughout, assuming each prospective round budget
+for both categories. This yield/mean-round model differs from the actual
+per-request median TPS, code33.409/chat22.378. Draft restriction/quantization,
+lookahead or a serial-fallback policy can change yield. This is not an additive
+measured speedup or confidence interval; chat should first recover its serial
+baseline rather than be forced onto fixed k3.
 
-**60 ms rounds do not imply60 TPS.** At code yield3.240506,60 TPS requires
-≤54.008 ms/round; at60 ms it requires yield≥3.6. After the≤60 ms budget is
-actually met and qualified, the remaining path is another≈6 ms reduction or
+**60 ms rounds do not imply60 TPS.** At code yield3.386667,60 TPS requires
+≤56.444 ms/round; at60 ms it requires yield≥3.6. After the≤60 ms budget is
+actually met and qualified, the remaining path is another≈3.5 ms reduction or
 better draft acceptance (e.g. head quality/calibration/adaptive windows), with
 the same target gates. Chat needs a larger acceptance improvement.
-If qualified half-precision hops reach≈7.1 ms, the conditional56.1 ms budget
-would leave roughly another2.1 ms reduction to60 code TPS at unchanged yield;
-it is not a measured MTP/transport combination.
+If qualified half-precision hops reach≈7.1 ms, the conditional56.033 ms budget
+would narrowly exceed60 code TPS at unchanged yield. Neither those wire
+savings nor that MTP/transport combination is implemented/qualified here.
 
-Next request: a new exclusive≤45-minute **diagnostic-only A0/F3/A1** window,
+The user directly granted the exclusive≤45-minute **diagnostic-only A0/F3/A1** window,
 single session, mask330, fixed k3,440 MiB worker cache, mandatory eager
 admission, watchdogs and exact current sessions2/wide1 restoration. The
-offline retain fix and regression close the local prerequisite; the existing
-controller already supplies paired chat/code, SSE/stop/cancel and warm-stage
-logs. Use the authenticated **full Q8 head first** to isolate that fix.
+offline retain fix was confirmed in the completed authentic run, including
+paired chat/code, SSE/stop/cancel and warm-stage logs, using the authenticated
+**full Q8 head** to isolate that fix. All eight owners were independently
+restored/verified/cleaned and released21:15:32Z. No lease remains active.
 The controller deliberately still pins the raw full-head SHA; subset serving
 needs explicit typed-artifact staging validation and a curated ID set first,
 not bypassing that check or silently substituting the smoke-test IDs.
-Request authority approval; do not treat preparation as an active lease.
+Future requests must go directly to the user/delegated authority, not sol-abqual;
+do not treat prepared artifacts as an active lease.
 
-Measure completed warm stages, actual yield and paired off/on chat/code.
+Next address owner compute and real serial fallback using this completed ledger.
 Complete same-geometry Q8/N4 quality and emission capture before any
 qualification/promotion; an explicitly unqualified diagnostic may precede
 that separate gate. Test full two-session eager/deferred/cancel/restore peaks

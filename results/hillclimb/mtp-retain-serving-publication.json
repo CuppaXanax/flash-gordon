@@ -1,0 +1,25 @@
+{
+  "tested_candidate": "a038dec46287439a2b2f63d725fe13aab815b661",
+  "binary_sha256": "6c23c7b5e0b0510d9154cc8c61639efa1f7449e7461d5be41b30d0cc60c57868",
+  "report_sha256": "f0cb26cb85794dec3e4c6e10a44e3252541c3fa0b726be1dc273392036c78f02",
+  "report_md_sha256": "098c5fc8fff88db03ab69fe013be80f049a143a52ae03cf519cafc759fd1e710",
+  "archive_sha256": "9202760b5d1eb1efa770567dc275cfb881535a88fdd83adb92d1cd2a5684f8a3",
+  "archive_bytes": 8512519,
+  "source_sha256": {
+    "docs/MTP.md": "35ba784436a6e363d546a15b38a55793e8d8918fe7906fd05bf86f02355e982b",
+    "docs/MTP_TO_PROD.md": "63b84a83de5fa5007b1e224e63bcfc65e422b5684701900c824c8d80eff8109f",
+    "tools/Invoke-MTPServingQualification.ps1": "e2ad48121dc7912d241f48b69e2172f3c65891b1843a8e7afed1bc09e4444b39",
+    "tools/mtp-lease-guard.sh": "4225e119fe47188b9db7cea66c23bf91661221ae2ca046ec306d228009e92651",
+    "tools/mtp_live_analyze.py": "d166533dde55318a01df0ed48d9faabe074960f87b55c6d70c72f2f715ffd408",
+    "tools/mtp_diagnose.py": "e00550c51dc7d2b8262e562b89f43371d81cf7cb9eb2c2b33e0963e5f6e547e2",
+    "tools/mtp_serving_qualify.py": "79f7266fc2e262ed17eef7385da38da24ab4f1fb29848eccda10f6fcd9dd27e8"
+  },
+  "released_verified": "2026-10-16T21:15:32Z",
+  "release_verification_sha256": "7da73a12e754d7001071a617dff48d840652e13e9598b8f03965b3346673fbb9",
+  "validation": {
+    "stage_ledgers": 775,
+    "pass_local_argmax_checks": 2167,
+    "owner_round_alignment": true
+  },
+  "promotion": false
+}

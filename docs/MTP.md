@@ -1,7 +1,18 @@
 # MTP: native head, causal verification and remaining execution gates
 
 Latest: [production roadmap and authorized diagnostic](MTP_TO_PROD.md).
-The 2026-10-16 lease measured actual N4 application frames, but its local-head
+The subsequent user-granted **a038dec A0/F3/A1** diagnostic completed:
+paired off/on decode TPS **chat31.063/22.378, code31.200/33.409**,
+mean round stages101.401/101.280 ms and observed tokens/verify2.220/3.387.
+The cold coordinator-retain fix is confirmed on the authentic ring;
+775 completed stage ledgers align across all eight ranks and2,167 actual
+MTP choices equal their target argmax. SSE/stop/cancel passed.
+All eight pinned sessions2/wide1 services were restored/verified/cleaned,
+with independent final release verification **21:15:32Z**. No promotion;
+chat regresses and complete same-prefix/N4-Q8 qualification remains pending.
+See [paired results and measured ledger](../results/hillclimb/MTP_RETAIN_SERVING.md).
+
+The earlier 2026-10-16 lease measured actual N4 application frames, but its local-head
 retry failed before a completed MTP round; no new on/off TPS claim is made.
 All eight original sessions2/wide1 services were restored/verified and scratch
 removed; final release verification20:23:07Z. User policy now permits
@@ -157,6 +168,12 @@ model quality remain pending. The historical80 Q8 captures show a
 geometry/cohort-confounded baseline discrepancy and cannot establish N4
 attribution. The precision sibling has now retained all80 same-geometry
 original-Q8 control vectors; the N4 candidate comparison remains pending.
+Its final matched N1 comparison reports current-Q8 versus current-mix04
+KL0.051191953/top1 85%, already failing the original-Q8 bar before N4.
+All-hop FP16 and mask224 cumulative comparisons also fail. Historical-profile
+differences are real but do not remove this same-geometry N1 target gap;
+KLs cannot be subtracted. See the roadmap's matched-Q8 update. Attribution and
+full N4 qualification remain blocked; no promotion or threshold waiver.
 See [local-chain evidence and model](../results/hillclimb/MTP_LOCAL_CHAIN.md).
 
 **Historical 2026-10-16 serving gate: FAILED_GREEDY under the superseded
