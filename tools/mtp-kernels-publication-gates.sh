@@ -28,6 +28,9 @@ finish(){
 }
 trap finish EXIT
 for service in "${active[@]}"; do systemctl stop "$service"; done
+cd src
+sha256sum vulkan/*.spv > ../round8/spirv-before-sha256.txt
+cd ..
 tar -xf candidate.tar -C src
 cd src
 export TMPDIR=$PWD/.build FG_SHADER_DIR=$PWD/vulkan FG_EXPERT_Q8_WIDE=1
@@ -37,6 +40,7 @@ unset FG_TEST_Q8_DOWN_TENSOR
 make -s -j8 tools/bench-decode-fusion tests/test_fg_vk > ../round8/build.txt 2>&1
 sha256sum tools/bench-decode-fusion tests/test_fg_vk > ../round8/binary-sha256.txt
 sha256sum vulkan/*.spv > ../round8/spirv-sha256.txt
+cmp ../round8/spirv-before-sha256.txt ../round8/spirv-sha256.txt
 FG_SMALL_KERNELS=2097482 DS4_REMOTE_TEST_FILTER=small_dense_vector_layout \
     ./tests/test_fg_vk > ../round8/vector-residency.txt 2>&1
 FG_SMALL_KERNELS=8388608 DS4_REMOTE_TEST_FILTER=small_qsa_select \

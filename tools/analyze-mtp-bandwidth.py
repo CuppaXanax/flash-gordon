@@ -82,13 +82,19 @@ def analyze(directory):
             round_, n, flags = map(int, match.groups())
             times = collections.defaultdict(float)
             kernels = {}
+            counts = {}
+            q8_us = 0
             for row in records(path):
                 if row["kind"] == "kernel":
                     times[family(row["name"])] += row["gpu_us"]
                     kernels[row["scope"] + "/" + row["name"]] = row["gpu_us"]
+                    counts[row["scope"] + "/" + row["name"]] = row.get("count")
+                    if "down_q8" in row["name"]:
+                        q8_us += row["gpu_us"]
             routes = root / f"routes-r{round_}-n{n}-f{flags}.jsonl"
+            route_rows = records(routes)
             ids = collections.defaultdict(set)
-            for row in records(routes):
+            for row in route_rows:
                 ids[row["layer"]].update(row["experts"])
             union = sum(len(value) for value in ids.values())
             ledger = root / "ledger.jsonl"
@@ -105,8 +111,20 @@ def analyze(directory):
                 weight_bytes = {"dense": 302110208,
                                 "expert_gate_up": union * 2 * 921600,
                                 "expert_down": union * 1228800}
+            q8 = {}
+            if ledger.exists() and q8_us:
+                q8_layers = {r["layer"]: r["bytes_per_copy"] for r in weights
+                             if r.get("type") == 8 and r.get("copies") == 512
+                             and "down_exps" in r["name"]}
+                unique_bytes = sum(len(ids[layer]) * size for layer, size in q8_layers.items())
+                slot_bytes = sum(len(r["experts"]) * q8_layers[r["layer"]]
+                                 for r in route_rows if r["layer"] in q8_layers)
+                q8 = {"gpu_us": q8_us, "unique_bytes": unique_bytes,
+                      "slot_bytes_without_cross_query_reuse": slot_bytes,
+                      "unique_weight_GBs": unique_bytes / q8_us / 1000}
             profile_groups[(n, flags)].append({
                 "round": round_, "gpu_us": dict(times), "kernels": kernels,
+                "kernel_dispatches": counts, "q8_down": q8,
                 "expert_union_per_layer": {str(k): len(v) for k, v in ids.items()},
                 "compulsory_weight_bytes": weight_bytes,
                 "effective_weight_GBs": {k: v / times[k] / 1000
