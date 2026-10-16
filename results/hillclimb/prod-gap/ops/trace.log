@@ -1,0 +1,18 @@
+actual_tokens 128 engine_tps 27.161641
+actual_tokens 128 engine_tps 27.391491
+actual_tokens 128 engine_tps 26.942701
+actual_tokens 128 engine_tps 24.288064
+PHASE normal complete
+actual_tokens 128 engine_tps 27.144062
+actual_tokens 128 engine_tps 26.580667
+actual_tokens 128 engine_tps 26.912223
+actual_tokens 128 engine_tps 24.208326
+PHASE trace complete
+actual_tokens 128 engine_tps 25.567665
+actual_tokens 128 engine_tps 26.323090
+actual_tokens 128 engine_tps 24.951886
+actual_tokens 128 engine_tps 23.566659
+PHASE wall complete
+actual_tokens 128 engine_tps 27.361158
+PHASE post complete
+All trace phases completed; mix-04 restarted without diagnostic environment.

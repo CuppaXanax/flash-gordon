@@ -1,0 +1,4 @@
+{
+  "declared": "2026-10-15T23:31:12.8784934-07:00",
+  "purpose": "Add one independent diagnostic phase with read-only DRM engine counter intervals around existing submit/wait calls. No GPU commands or extra fences; isolate per-block GPU busy time from cached-prefix prefill/head accounting. Not a performance qualification."
+}

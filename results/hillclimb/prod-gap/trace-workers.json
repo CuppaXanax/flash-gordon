@@ -1,0 +1,44 @@
+[
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nSTARTED rank=1 pid=134110",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nSTARTED rank=2 pid=130109",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nSTARTED rank=3 pid=129629",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nSTARTED rank=4 pid=132609",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nSTARTED rank=5 pid=129583",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nSTARTED rank=6 pid=129921",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-main/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nSTARTED rank=7 pid=131097",
+    "Stderr": ""
+  }
+]

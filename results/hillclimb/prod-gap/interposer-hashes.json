@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "b6c8e56fef66a7044457547d3bd76161bb5d084701736490584affea0783f426  /home/xander/hc-abq-gap/prod-vk-wall.so",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "b6c8e56fef66a7044457547d3bd76161bb5d084701736490584affea0783f426  /home/xander/hc-abq-gap/prod-vk-wall.so",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "b6c8e56fef66a7044457547d3bd76161bb5d084701736490584affea0783f426  /home/xander/hc-abq-gap/prod-vk-wall.so",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "b6c8e56fef66a7044457547d3bd76161bb5d084701736490584affea0783f426  /home/xander/hc-abq-gap/prod-vk-wall.so",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "b6c8e56fef66a7044457547d3bd76161bb5d084701736490584affea0783f426  /home/xander/hc-abq-gap/prod-vk-wall.so",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "b6c8e56fef66a7044457547d3bd76161bb5d084701736490584affea0783f426  /home/xander/hc-abq-gap/prod-vk-wall.so",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "b6c8e56fef66a7044457547d3bd76161bb5d084701736490584affea0783f426  /home/xander/hc-abq-gap/prod-vk-wall.so",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "b6c8e56fef66a7044457547d3bd76161bb5d084701736490584affea0783f426  /home/xander/hc-abq-gap/prod-vk-wall.so",
+    "Stderr": ""
+  }
+]

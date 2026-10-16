@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 0, \"pid\": 204260, \"monotonic_ns\": 1987824222642761, \"drm_clients\": {\"1508\": 19476610299}, \"gpu_engine_ns\": 19476610299, \"cpu_user_ticks\": 1117, \"cpu_system_ticks\": 1124, \"clock_ticks_per_second\": 100, \"config\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}, \"clock_snapshots\": {\"/sys/class/drm/card0/device/pp_dpm_sclk\": \"0: 1000Mhz *\\n1: 1500Mhz \\n2: 2000Mhz \\n\", \"/sys/class/drm/card0/device/pp_dpm_mclk\": \"0: 450Mhz *\\n\", \"/sys/class/drm/card0/device/power_dpm_force_performance_level\": \"auto\\n\"}}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 1, \"pid\": 135946, \"monotonic_ns\": 1987826770606353, \"drm_clients\": {\"1216\": 19628267034}, \"gpu_engine_ns\": 19628267034, \"cpu_user_ticks\": 5226, \"cpu_system_ticks\": 866, \"clock_ticks_per_second\": 100, \"config\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}, \"clock_snapshots\": {\"/sys/class/drm/card0/device/pp_dpm_sclk\": \"0: 1000Mhz *\\n1: 1500Mhz \\n2: 2000Mhz \\n\", \"/sys/class/drm/card0/device/pp_dpm_mclk\": \"0: 450Mhz *\\n\", \"/sys/class/drm/card0/device/power_dpm_force_performance_level\": \"auto\\n\"}}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 2, \"pid\": 131943, \"monotonic_ns\": 1987826873078828, \"drm_clients\": {\"1208\": 18472515395}, \"gpu_engine_ns\": 18472515395, \"cpu_user_ticks\": 4903, \"cpu_system_ticks\": 834, \"clock_ticks_per_second\": 100, \"config\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}, \"clock_snapshots\": {\"/sys/class/drm/card0/device/pp_dpm_sclk\": \"0: 1000Mhz *\\n1: 1500Mhz \\n2: 2000Mhz \\n\", \"/sys/class/drm/card0/device/pp_dpm_mclk\": \"0: 450Mhz *\\n\", \"/sys/class/drm/card0/device/power_dpm_force_performance_level\": \"auto\\n\"}}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 3, \"pid\": 131461, \"monotonic_ns\": 1987826834968061, \"drm_clients\": {\"1208\": 19386454619}, \"gpu_engine_ns\": 19386454619, \"cpu_user_ticks\": 4942, \"cpu_system_ticks\": 926, \"clock_ticks_per_second\": 100, \"config\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}, \"clock_snapshots\": {\"/sys/class/drm/card0/device/pp_dpm_sclk\": \"0: 1000Mhz *\\n1: 1500Mhz \\n2: 2000Mhz \\n\", \"/sys/class/drm/card0/device/pp_dpm_mclk\": \"0: 450Mhz *\\n\", \"/sys/class/drm/card0/device/power_dpm_force_performance_level\": \"auto\\n\"}}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 4, \"pid\": 134441, \"monotonic_ns\": 1987825797312965, \"drm_clients\": {\"1216\": 18357829999}, \"gpu_engine_ns\": 18357829999, \"cpu_user_ticks\": 5251, \"cpu_system_ticks\": 885, \"clock_ticks_per_second\": 100, \"config\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}, \"clock_snapshots\": {\"/sys/class/drm/card0/device/pp_dpm_sclk\": \"0: 1000Mhz *\\n1: 1500Mhz \\n2: 2000Mhz \\n\", \"/sys/class/drm/card0/device/pp_dpm_mclk\": \"0: 450Mhz *\\n\", \"/sys/class/drm/card0/device/power_dpm_force_performance_level\": \"auto\\n\"}}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 5, \"pid\": 131448, \"monotonic_ns\": 1987825822677130, \"drm_clients\": {\"1208\": 19833869712}, \"gpu_engine_ns\": 19833869712, \"cpu_user_ticks\": 5069, \"cpu_system_ticks\": 972, \"clock_ticks_per_second\": 100, \"config\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}, \"clock_snapshots\": {\"/sys/class/drm/card0/device/pp_dpm_sclk\": \"0: 1000Mhz *\\n1: 1500Mhz \\n2: 2000Mhz \\n\", \"/sys/class/drm/card0/device/pp_dpm_mclk\": \"0: 450Mhz *\\n\", \"/sys/class/drm/card0/device/power_dpm_force_performance_level\": \"auto\\n\"}}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 6, \"pid\": 131788, \"monotonic_ns\": 1987826873045026, \"drm_clients\": {\"1208\": 17983382542}, \"gpu_engine_ns\": 17983382542, \"cpu_user_ticks\": 4937, \"cpu_system_ticks\": 822, \"clock_ticks_per_second\": 100, \"config\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}, \"clock_snapshots\": {\"/sys/class/drm/card0/device/pp_dpm_sclk\": \"0: 1000Mhz *\\n1: 1500Mhz \\n2: 2000Mhz \\n\", \"/sys/class/drm/card0/device/pp_dpm_mclk\": \"0: 450Mhz *\\n\", \"/sys/class/drm/card0/device/power_dpm_force_performance_level\": \"auto\\n\"}}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 7, \"pid\": 132932, \"monotonic_ns\": 1987826804212631, \"drm_clients\": {\"1216\": 19559659914}, \"gpu_engine_ns\": 19559659914, \"cpu_user_ticks\": 5204, \"cpu_system_ticks\": 972, \"clock_ticks_per_second\": 100, \"config\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}, \"clock_snapshots\": {\"/sys/class/drm/card0/device/pp_dpm_sclk\": \"0: 1000Mhz *\\n1: 1500Mhz \\n2: 2000Mhz \\n\", \"/sys/class/drm/card0/device/pp_dpm_mclk\": \"0: 450Mhz *\\n\", \"/sys/class/drm/card0/device/power_dpm_force_performance_level\": \"auto\\n\"}}",
+    "Stderr": ""
+  }
+]

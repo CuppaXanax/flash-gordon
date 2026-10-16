@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 0, \"pid\": 205274, \"profiling_and_preload_absent\": true, \"environment\": {\"FG_EXPERT_Q8_WIDE\": \"0\", \"FG_RING_TRACE\": \"1\", \"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261015-abq-main/vulkan\"}, \"scratch_unreferenced\": true, \"current\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}}\nExperiment scratch removed; pinned mix-04 remains live.",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 1, \"pid\": 136975, \"profiling_and_preload_absent\": true, \"environment\": {\"FG_EXPERT_Q8_WIDE\": \"0\", \"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261015-abq-main/vulkan\"}, \"scratch_unreferenced\": true, \"current\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}}\nExperiment scratch removed; pinned mix-04 remains live.",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 2, \"pid\": 132977, \"profiling_and_preload_absent\": true, \"environment\": {\"FG_EXPERT_Q8_WIDE\": \"0\", \"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261015-abq-main/vulkan\"}, \"scratch_unreferenced\": true, \"current\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}}\nExperiment scratch removed; pinned mix-04 remains live.",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 3, \"pid\": 132496, \"profiling_and_preload_absent\": true, \"environment\": {\"FG_EXPERT_Q8_WIDE\": \"0\", \"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261015-abq-main/vulkan\"}, \"scratch_unreferenced\": true, \"current\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}}\nExperiment scratch removed; pinned mix-04 remains live.",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 4, \"pid\": 135469, \"profiling_and_preload_absent\": true, \"environment\": {\"FG_EXPERT_Q8_WIDE\": \"0\", \"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261015-abq-main/vulkan\"}, \"scratch_unreferenced\": true, \"current\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}}\nExperiment scratch removed; pinned mix-04 remains live.",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 5, \"pid\": 132480, \"profiling_and_preload_absent\": true, \"environment\": {\"FG_EXPERT_Q8_WIDE\": \"0\", \"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261015-abq-main/vulkan\"}, \"scratch_unreferenced\": true, \"current\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}}\nExperiment scratch removed; pinned mix-04 remains live.",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 6, \"pid\": 132817, \"profiling_and_preload_absent\": true, \"environment\": {\"FG_EXPERT_Q8_WIDE\": \"0\", \"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261015-abq-main/vulkan\"}, \"scratch_unreferenced\": true, \"current\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}}\nExperiment scratch removed; pinned mix-04 remains live.",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 7, \"pid\": 133963, \"profiling_and_preload_absent\": true, \"environment\": {\"FG_EXPERT_Q8_WIDE\": \"0\", \"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261015-abq-main/vulkan\"}, \"scratch_unreferenced\": true, \"current\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}}\nExperiment scratch removed; pinned mix-04 remains live.",
+    "Stderr": ""
+  }
+]

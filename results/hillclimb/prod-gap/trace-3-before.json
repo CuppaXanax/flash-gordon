@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 0, \"pid\": 202491, \"monotonic_ns\": 1987312171696335, \"drm_clients\": {\"1492\": 56113682245}, \"gpu_engine_ns\": 56113682245, \"cpu_user_ticks\": 3481, \"cpu_system_ticks\": 1225, \"clock_ticks_per_second\": 100, \"config\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 1, \"pid\": 134110, \"monotonic_ns\": 1987314718552998, \"drm_clients\": {\"1200\": 57849467279}, \"gpu_engine_ns\": 57849467279, \"cpu_user_ticks\": 6333, \"cpu_system_ticks\": 907, \"clock_ticks_per_second\": 100, \"config\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 2, \"pid\": 130109, \"monotonic_ns\": 1987314809996548, \"drm_clients\": {\"1192\": 51042889263}, \"gpu_engine_ns\": 51042889263, \"cpu_user_ticks\": 5999, \"cpu_system_ticks\": 875, \"clock_ticks_per_second\": 100, \"config\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 3, \"pid\": 129629, \"monotonic_ns\": 1987314771752325, \"drm_clients\": {\"1192\": 55625164299}, \"gpu_engine_ns\": 55625164299, \"cpu_user_ticks\": 6079, \"cpu_system_ticks\": 955, \"clock_ticks_per_second\": 100, \"config\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 4, \"pid\": 132609, \"monotonic_ns\": 1987313739021984, \"drm_clients\": {\"1200\": 52351097478}, \"gpu_engine_ns\": 52351097478, \"cpu_user_ticks\": 6439, \"cpu_system_ticks\": 928, \"clock_ticks_per_second\": 100, \"config\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 5, \"pid\": 129583, \"monotonic_ns\": 1987313767224215, \"drm_clients\": {\"1192\": 58605640106}, \"gpu_engine_ns\": 58605640106, \"cpu_user_ticks\": 6224, \"cpu_system_ticks\": 980, \"clock_ticks_per_second\": 100, \"config\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 6, \"pid\": 129921, \"monotonic_ns\": 1987314808250907, \"drm_clients\": {\"1192\": 52621887956}, \"gpu_engine_ns\": 52621887956, \"cpu_user_ticks\": 6148, \"cpu_system_ticks\": 892, \"clock_ticks_per_second\": 100, \"config\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "{\"rank\": 7, \"pid\": 131097, \"monotonic_ns\": 1987314742892620, \"drm_clients\": {\"1200\": 58167486918}, \"gpu_engine_ns\": 58167486918, \"cpu_user_ticks\": 6374, \"cpu_system_ticks\": 1034, \"clock_ticks_per_second\": 100, \"config\": {\"binary_sha256\": \"1ae81229f037c60bad39693292ec73ff70e7c5aeaef02bc6e61be22acdce8789\", \"manifest\": \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"release\": \"/home/xander/flash-gordon-live/20261015-abq-main\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"sessions\": 1, \"wide\": 0}}",
+    "Stderr": ""
+  }
+]

@@ -1,0 +1,3 @@
+AB_DEPLOY arm=user-authorized-mix04-promotion release=/home/xander/flash-gordon-live/20261015-abq-main sessions=1 wide=0 healthy=true
+Persistent current launchers installed, restart tested, API/models/chat healthy.
+Mix-04 promoted, pinned and restart-tested.

@@ -1,0 +1,420 @@
+{
+  "inferential": false,
+  "started_workload": "cold then cached follow-on",
+  "rows": [
+    {
+      "repeat": 0,
+      "context": 4096,
+      "salt": "22d90c1cf8f84f8aa6aa305a6bb2d906",
+      "cold": {
+        "wall_seconds": 12.525865600007819,
+        "usage": {
+          "prompt_tokens": 4129,
+          "completion_tokens": 1,
+          "total_tokens": 4130
+        },
+        "headers": {
+          "Content-Type": "application/json",
+          "Content-Length": "292",
+          "Connection": "close",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "4129",
+          "X-Flash-Gordon-Prefilled-Tokens": "4129",
+          "X-Flash-Gordon-Reused-Tokens": "0",
+          "X-Flash-Gordon-Prefix-Cache": "miss",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "public-history-mismatch",
+          "X-Flash-Gordon-Completion-Tokens": "1",
+          "X-Flash-Gordon-Context-Tokens": "4130",
+          "X-Flash-Gordon-Prefill-Seconds": "12.340521850",
+          "X-Flash-Gordon-Prefill-TPS": "334.588768",
+          "X-Flash-Gordon-Decode-Seconds": "0.067832840",
+          "X-Flash-Gordon-Decode-TPS": "14.742122",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+        },
+        "text": "Ready",
+        "sha256": "5fa7aac5375c5815787fba3f49559f9b45b14023147ce0652803387974144e5f",
+        "request_sha256": "9e4e0ab7b4471e9424d69e44fd7947eb9f9d3f78a34ff39f8ba83eef965b33b4",
+        "client_wall_tps": 0.07983480199559029
+      },
+      "decode": {
+        "wall_seconds": 5.262864899996202,
+        "usage": {
+          "prompt_tokens": 4161,
+          "completion_tokens": 128,
+          "total_tokens": 4289
+        },
+        "headers": {
+          "Content-Type": "application/json",
+          "Content-Length": "829",
+          "Connection": "close",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "4161",
+          "X-Flash-Gordon-Prefilled-Tokens": "31",
+          "X-Flash-Gordon-Reused-Tokens": "4130",
+          "X-Flash-Gordon-Prefix-Cache": "hit",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "none",
+          "X-Flash-Gordon-Completion-Tokens": "128",
+          "X-Flash-Gordon-Context-Tokens": "4289",
+          "X-Flash-Gordon-Prefill-Seconds": "0.721587477",
+          "X-Flash-Gordon-Prefill-TPS": "42.960834",
+          "X-Flash-Gordon-Decode-Seconds": "4.526726166",
+          "X-Flash-Gordon-Decode-TPS": "28.276506",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+        },
+        "text": "1. Implement a binary search algorithm to find a target value in a sorted array.\n2. Reverse a string in place without using extra memory.\n3. Check if a given string is a palindrome.\n4. Find the maximum subarray sum using Kadane\u2019s algorithm.\n5. Implement a stack data structure using an array.\n6. Implement a queue data structure using two stacks.\n7. Detect a cycle in a linked list using Floyd\u2019s Tortoise and Hare algorithm.\n8. Merge two sorted linked lists into one sorted linked list.\n9. Reverse a linked list iteratively.\n10",
+        "sha256": "0667464dbff733bc2507601d2da10addf41d09830b956411d82d04f07b579f94",
+        "request_sha256": "a1065f55f7df42223549bbbc477ab2a7b68b1ca695dd25b90d408149fbacf802",
+        "client_wall_tps": 24.32135394547034
+      }
+    },
+    {
+      "repeat": 0,
+      "context": 32768,
+      "salt": "1866f3cf51394760aa17517877454a4e",
+      "cold": {
+        "wall_seconds": 85.8371698000119,
+        "usage": {
+          "prompt_tokens": 32797,
+          "completion_tokens": 1,
+          "total_tokens": 32798
+        },
+        "headers": {
+          "Content-Type": "application/json",
+          "Content-Length": "294",
+          "Connection": "close",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "32797",
+          "X-Flash-Gordon-Prefilled-Tokens": "32797",
+          "X-Flash-Gordon-Reused-Tokens": "0",
+          "X-Flash-Gordon-Prefix-Cache": "miss",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "public-history-mismatch",
+          "X-Flash-Gordon-Completion-Tokens": "1",
+          "X-Flash-Gordon-Context-Tokens": "32798",
+          "X-Flash-Gordon-Prefill-Seconds": "85.683593615",
+          "X-Flash-Gordon-Prefill-TPS": "382.768726",
+          "X-Flash-Gordon-Decode-Seconds": "0.062921359",
+          "X-Flash-Gordon-Decode-TPS": "15.892854",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+        },
+        "text": "Ready",
+        "sha256": "5fa7aac5375c5815787fba3f49559f9b45b14023147ce0652803387974144e5f",
+        "request_sha256": "7d116833e30bb4cfa498ad33832f59c21b7b420bbc85eabfe36965179156f8bd",
+        "client_wall_tps": 0.011649964721924711
+      },
+      "decode": {
+        "wall_seconds": 5.692648299998837,
+        "usage": {
+          "prompt_tokens": 32829,
+          "completion_tokens": 128,
+          "total_tokens": 32957
+        },
+        "headers": {
+          "Content-Type": "application/json",
+          "Content-Length": "834",
+          "Connection": "close",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "32829",
+          "X-Flash-Gordon-Prefilled-Tokens": "31",
+          "X-Flash-Gordon-Reused-Tokens": "32798",
+          "X-Flash-Gordon-Prefix-Cache": "hit",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "none",
+          "X-Flash-Gordon-Completion-Tokens": "128",
+          "X-Flash-Gordon-Context-Tokens": "32957",
+          "X-Flash-Gordon-Prefill-Seconds": "0.735343231",
+          "X-Flash-Gordon-Prefill-TPS": "42.157184",
+          "X-Flash-Gordon-Decode-Seconds": "4.942446945",
+          "X-Flash-Gordon-Decode-TPS": "25.898103",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+        },
+        "text": "1. Implement a binary search algorithm to find a target value in a sorted array.\n2. Reverse a string in place without using extra memory.\n3. Check if a given string is a palindrome.\n4. Find the maximum and minimum values in an unsorted array.\n5. Calculate the factorial of a non-negative integer using recursion.\n6. Calculate the factorial of a non-negative integer using iteration.\n7. Determine if a number is prime.\n8. Generate the Fibonacci sequence up to the nth term.\n9. Find the greatest common divisor (GCD) of two numbers.\n10.",
+        "sha256": "0c177a477dbd3b8cfe7b5c13f5e986a9ad22b16322d37b3c7beba9a3379fc679",
+        "request_sha256": "b705f6068013b114eae81bb82cd80e51e70fc8b863ae3700b0158dc64b65bb47",
+        "client_wall_tps": 22.485141054652217
+      }
+    },
+    {
+      "repeat": 1,
+      "context": 4096,
+      "salt": "ad5a261330244441aa8285c327a1b502",
+      "cold": {
+        "wall_seconds": 11.826060899998993,
+        "usage": {
+          "prompt_tokens": 4117,
+          "completion_tokens": 1,
+          "total_tokens": 4118
+        },
+        "headers": {
+          "Content-Type": "application/json",
+          "Content-Length": "292",
+          "Connection": "close",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "4117",
+          "X-Flash-Gordon-Prefilled-Tokens": "4117",
+          "X-Flash-Gordon-Reused-Tokens": "0",
+          "X-Flash-Gordon-Prefix-Cache": "miss",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "public-history-mismatch",
+          "X-Flash-Gordon-Completion-Tokens": "1",
+          "X-Flash-Gordon-Context-Tokens": "4118",
+          "X-Flash-Gordon-Prefill-Seconds": "11.732727472",
+          "X-Flash-Gordon-Prefill-TPS": "350.898801",
+          "X-Flash-Gordon-Decode-Seconds": "0.059557884",
+          "X-Flash-Gordon-Decode-TPS": "16.790388",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+        },
+        "text": "Ready",
+        "sha256": "5fa7aac5375c5815787fba3f49559f9b45b14023147ce0652803387974144e5f",
+        "request_sha256": "0ab1dbb5ac4b3beb9d48e13cf23d6bf74b1086c3d81558f8afe6cf4baa9410ac",
+        "client_wall_tps": 0.08455900983903146
+      },
+      "decode": {
+        "wall_seconds": 5.211404700006824,
+        "usage": {
+          "prompt_tokens": 4149,
+          "completion_tokens": 128,
+          "total_tokens": 4277
+        },
+        "headers": {
+          "Content-Type": "application/json",
+          "Content-Length": "874",
+          "Connection": "close",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "4149",
+          "X-Flash-Gordon-Prefilled-Tokens": "31",
+          "X-Flash-Gordon-Reused-Tokens": "4118",
+          "X-Flash-Gordon-Prefix-Cache": "hit",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "none",
+          "X-Flash-Gordon-Completion-Tokens": "128",
+          "X-Flash-Gordon-Context-Tokens": "4277",
+          "X-Flash-Gordon-Prefill-Seconds": "0.714884252",
+          "X-Flash-Gordon-Prefill-TPS": "43.363663",
+          "X-Flash-Gordon-Decode-Seconds": "4.491760881",
+          "X-Flash-Gordon-Decode-TPS": "28.496619",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+        },
+        "text": "1. Implement a binary search algorithm to find a target value in a sorted array.\n2. Write a function to reverse a string without using built-in reverse methods.\n3. Create a program to check if a given string is a palindrome.\n4. Develop a script to calculate the factorial of a non-negative integer using recursion.\n5. Implement a bubble sort algorithm to sort an array of integers.\n6. Write a function to find the maximum element in an array.\n7. Create a program to count the frequency of each character in a string.\n8. Implement a linked list data structure with insert, delete",
+        "sha256": "e6bf4a1b3db4f8eb33c2c0c1245fc78ef647b700b06c3a9d71e5efa9f5d24ed0",
+        "request_sha256": "cd4888626e2271706152bb2ad804c9137f9ef942ec6641686932b534ba4bb714",
+        "client_wall_tps": 24.56151601502612
+      }
+    },
+    {
+      "repeat": 1,
+      "context": 32768,
+      "salt": "ffe152cb2c17416bbab2ca6d934171c2",
+      "cold": {
+        "wall_seconds": 83.94338720000815,
+        "usage": {
+          "prompt_tokens": 32797,
+          "completion_tokens": 1,
+          "total_tokens": 32798
+        },
+        "headers": {
+          "Content-Type": "application/json",
+          "Content-Length": "294",
+          "Connection": "close",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "32797",
+          "X-Flash-Gordon-Prefilled-Tokens": "32797",
+          "X-Flash-Gordon-Reused-Tokens": "0",
+          "X-Flash-Gordon-Prefix-Cache": "miss",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "public-history-mismatch",
+          "X-Flash-Gordon-Completion-Tokens": "1",
+          "X-Flash-Gordon-Context-Tokens": "32798",
+          "X-Flash-Gordon-Prefill-Seconds": "83.787691883",
+          "X-Flash-Gordon-Prefill-TPS": "391.429806",
+          "X-Flash-Gordon-Decode-Seconds": "0.063145342",
+          "X-Flash-Gordon-Decode-TPS": "15.836481",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+        },
+        "text": "Ready",
+        "sha256": "5fa7aac5375c5815787fba3f49559f9b45b14023147ce0652803387974144e5f",
+        "request_sha256": "1092c55692d24e92f734a9cee8a6ac7d9cf850003541fa35c69be2740c73f68f",
+        "client_wall_tps": 0.01191279067185298
+      },
+      "decode": {
+        "wall_seconds": 5.720968600013293,
+        "usage": {
+          "prompt_tokens": 32829,
+          "completion_tokens": 128,
+          "total_tokens": 32957
+        },
+        "headers": {
+          "Content-Type": "application/json",
+          "Content-Length": "844",
+          "Connection": "close",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "32829",
+          "X-Flash-Gordon-Prefilled-Tokens": "31",
+          "X-Flash-Gordon-Reused-Tokens": "32798",
+          "X-Flash-Gordon-Prefix-Cache": "hit",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "none",
+          "X-Flash-Gordon-Completion-Tokens": "128",
+          "X-Flash-Gordon-Context-Tokens": "32957",
+          "X-Flash-Gordon-Prefill-Seconds": "0.735913929",
+          "X-Flash-Gordon-Prefill-TPS": "42.124491",
+          "X-Flash-Gordon-Decode-Seconds": "4.966272171",
+          "X-Flash-Gordon-Decode-TPS": "25.773859",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+        },
+        "text": "1. Implement a binary search algorithm to find a target value in a sorted array.\n2. Reverse a linked list in place without using extra memory.\n3. Detect a cycle in a singly linked list using Floyd\u2019s Tortoise and Hare algorithm.\n4. Merge two sorted arrays into a single sorted array.\n5. Find the maximum subarray sum using Kadane\u2019s algorithm.\n6. Implement a stack using two queues.\n7. Implement a queue using two stacks.\n8. Check if a string is a palindrome ignoring non-alphanumeric characters.\n9. Find the first non-repeating character in a",
+        "sha256": "b857e421a4b483f4e8a943fadfed66c6ba60c225e3c17cb707778da38fbbae65",
+        "request_sha256": "e35b1a34f6f66ddc2eb163f64c130837c92f669dc69727c7d9cdf1e5c7b3ac6c",
+        "client_wall_tps": 22.37383368957882
+      }
+    },
+    {
+      "repeat": 2,
+      "context": 4096,
+      "salt": "fb2d378865e24bb5b0f27ae5b43e9c74",
+      "cold": {
+        "wall_seconds": 11.528756799991243,
+        "usage": {
+          "prompt_tokens": 4129,
+          "completion_tokens": 1,
+          "total_tokens": 4130
+        },
+        "headers": {
+          "Content-Type": "application/json",
+          "Content-Length": "293",
+          "Connection": "close",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "4129",
+          "X-Flash-Gordon-Prefilled-Tokens": "4129",
+          "X-Flash-Gordon-Reused-Tokens": "0",
+          "X-Flash-Gordon-Prefix-Cache": "miss",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "public-history-mismatch",
+          "X-Flash-Gordon-Completion-Tokens": "1",
+          "X-Flash-Gordon-Context-Tokens": "4130",
+          "X-Flash-Gordon-Prefill-Seconds": "11.425087240",
+          "X-Flash-Gordon-Prefill-TPS": "361.397678",
+          "X-Flash-Gordon-Decode-Seconds": "0.059552995",
+          "X-Flash-Gordon-Decode-TPS": "16.791767",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+        },
+        "text": "Ready",
+        "sha256": "5fa7aac5375c5815787fba3f49559f9b45b14023147ce0652803387974144e5f",
+        "request_sha256": "3335422e8858c167fcf4d6392f08d384d97b1dcdde77dae524cbde2bc1317be5",
+        "client_wall_tps": 0.08673962139619075
+      },
+      "decode": {
+        "wall_seconds": 5.206948600010946,
+        "usage": {
+          "prompt_tokens": 4161,
+          "completion_tokens": 128,
+          "total_tokens": 4289
+        },
+        "headers": {
+          "Content-Type": "application/json",
+          "Content-Length": "830",
+          "Connection": "close",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "4161",
+          "X-Flash-Gordon-Prefilled-Tokens": "31",
+          "X-Flash-Gordon-Reused-Tokens": "4130",
+          "X-Flash-Gordon-Prefix-Cache": "hit",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "none",
+          "X-Flash-Gordon-Completion-Tokens": "128",
+          "X-Flash-Gordon-Context-Tokens": "4289",
+          "X-Flash-Gordon-Prefill-Seconds": "0.715722344",
+          "X-Flash-Gordon-Prefill-TPS": "43.312886",
+          "X-Flash-Gordon-Decode-Seconds": "4.476908944",
+          "X-Flash-Gordon-Decode-TPS": "28.591156",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+        },
+        "text": "1. Implement a binary search algorithm to find a target value in a sorted array.\n2. Reverse a string in place without using extra memory.\n3. Check if a given string is a palindrome.\n4. Find the maximum subarray sum using Kadane\u2019s algorithm.\n5. Implement a stack data structure using an array.\n6. Implement a queue data structure using two stacks.\n7. Detect a cycle in a linked list using Floyd\u2019s Tortoise and Hare algorithm.\n8. Merge two sorted linked lists into one sorted linked list.\n9. Reverse a linked list iteratively.\n10",
+        "sha256": "0667464dbff733bc2507601d2da10addf41d09830b956411d82d04f07b579f94",
+        "request_sha256": "2bec9eb20e1baad5f69c4f2d427605995b80063f1a61ea3479baa74e1d10b527",
+        "client_wall_tps": 24.582535729223622
+      }
+    },
+    {
+      "repeat": 2,
+      "context": 32768,
+      "salt": "60a6fa38cc76425d97e88a43e5078c8b",
+      "cold": {
+        "wall_seconds": 82.1758986999921,
+        "usage": {
+          "prompt_tokens": 32801,
+          "completion_tokens": 1,
+          "total_tokens": 32802
+        },
+        "headers": {
+          "Content-Type": "application/json",
+          "Content-Length": "295",
+          "Connection": "close",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "32801",
+          "X-Flash-Gordon-Prefilled-Tokens": "32801",
+          "X-Flash-Gordon-Reused-Tokens": "0",
+          "X-Flash-Gordon-Prefix-Cache": "miss",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "public-history-mismatch",
+          "X-Flash-Gordon-Completion-Tokens": "1",
+          "X-Flash-Gordon-Context-Tokens": "32802",
+          "X-Flash-Gordon-Prefill-Seconds": "82.019308593",
+          "X-Flash-Gordon-Prefill-TPS": "399.918026",
+          "X-Flash-Gordon-Decode-Seconds": "0.062870570",
+          "X-Flash-Gordon-Decode-TPS": "15.905693",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+        },
+        "text": "Ready",
+        "sha256": "5fa7aac5375c5815787fba3f49559f9b45b14023147ce0652803387974144e5f",
+        "request_sha256": "57d42ce98460f054b5745eb68fca9a2f06aa2f010ee50207e6b63b773e031a6e",
+        "client_wall_tps": 0.012169018116258168
+      },
+      "decode": {
+        "wall_seconds": 5.717459199979203,
+        "usage": {
+          "prompt_tokens": 32833,
+          "completion_tokens": 128,
+          "total_tokens": 32961
+        },
+        "headers": {
+          "Content-Type": "application/json",
+          "Content-Length": "865",
+          "Connection": "close",
+          "Cache-Control": "no-store",
+          "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+          "X-Flash-Gordon-Prompt-Tokens": "32833",
+          "X-Flash-Gordon-Prefilled-Tokens": "31",
+          "X-Flash-Gordon-Reused-Tokens": "32802",
+          "X-Flash-Gordon-Prefix-Cache": "hit",
+          "X-Flash-Gordon-Exact-Frontier": "false",
+          "X-Flash-Gordon-Reset-Reason": "none",
+          "X-Flash-Gordon-Completion-Tokens": "128",
+          "X-Flash-Gordon-Context-Tokens": "32961",
+          "X-Flash-Gordon-Prefill-Seconds": "0.733092945",
+          "X-Flash-Gordon-Prefill-TPS": "42.286589",
+          "X-Flash-Gordon-Decode-Seconds": "4.965181636",
+          "X-Flash-Gordon-Decode-TPS": "25.779520",
+          "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+        },
+        "text": "1. Implement a binary search algorithm to find a target value in a sorted array.\n2. Reverse a linked list in place without using extra memory.\n3. Detect a cycle in a singly linked list using Floyd\u2019s Tortoise and Hare algorithm.\n4. Merge two sorted arrays into a single sorted array.\n5. Find the maximum subarray sum using Kadane\u2019s algorithm.\n6. Implement a stack data structure using two queues.\n7. Implement a queue data structure using two stacks.\n8. Calculate the factorial of a number using recursion.\n9. Calculate the factorial of a number using iteration.",
+        "sha256": "ac7b9b8689fbfc1d3d240f9c7841e43f19c87033d3608dcb8f8a5822b68a22fa",
+        "request_sha256": "8db6e99cdecc77d9e6b553693a97bfc119e9b91a9102b20acfeab7416c793e44",
+        "client_wall_tps": 22.387566840960684
+      }
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "4096": {
+    "actual_completion_tokens": [
+      128,
+      128,
+      128
+    ],
+    "engine": {
+      "current": {
+        "n": 3,
+        "mean": 28.454760333333333,
+        "median": 28.496619,
+        "min": 28.276506,
+        "max": 28.591156,
+        "p95": 28.591156
+      },
+      "historical_original_median": 26.550685,
+      "ratio_of_medians": 1.0732912917312678
+    },
+    "client": {
+      "current": {
+        "n": 3,
+        "mean": 24.488468563240026,
+        "median": 24.56151601502612,
+        "min": 24.32135394547034,
+        "max": 24.582535729223622,
+        "p95": 24.582535729223622
+      },
+      "historical_original_median": 26.533673801882358,
+      "ratio_of_medians": 0.9256733989578054
+    },
+    "prefill_engine": {
+      "current": {
+        "n": 3,
+        "mean": 348.961749,
+        "median": 350.898801,
+        "min": 334.588768,
+        "max": 361.397678,
+        "p95": 361.397678
+      },
+      "historical_original_median": 310.686616,
+      "ratio_of_medians": 1.1294300524358603
+    }
+  },
+  "32768": {
+    "actual_completion_tokens": [
+      128,
+      128,
+      128
+    ],
+    "engine": {
+      "current": {
+        "n": 3,
+        "mean": 25.817160666666666,
+        "median": 25.77952,
+        "min": 25.773859,
+        "max": 25.898103,
+        "p95": 25.898103
+      },
+      "historical_original_median": 24.303021,
+      "ratio_of_medians": 1.0607537227573478
+    },
+    "client": {
+      "current": {
+        "n": 3,
+        "mean": 22.415513861730574,
+        "median": 22.387566840960684,
+        "min": 22.37383368957882,
+        "max": 22.485141054652217,
+        "p95": 22.485141054652217
+      },
+      "historical_original_median": 24.27648135028508,
+      "ratio_of_medians": 0.9221915860841087
+    }
+  }
+}
+trace 0 4096 cycle 36.604933333333335 services 29.711033333333333 ngram 1.3775333333333333 residual 5.314658333333333
+trace 1 4096 cycle 37.39358333333333 services 30.579466666666665 ngram 1.3114083333333333 residual 5.303008333333333
+trace 2 4096 cycle 36.92881666666667 services 30.142225 ngram 1.3159416666666666 residual 5.264658333333333
+trace 3 32768 cycle 41.11329166666667 services 33.63178333333333 ngram 1.9558666666666666 residual 5.315941666666666
+wall 0 4096 cycle 38.87323333333333 services 31.844725 ngram 1.377975 residual 5.425675
+wall 1 4096 cycle 37.76289166666667 services 30.900733333333335 ngram 1.3197333333333334 residual 5.336691666666667
+wall 2 4096 cycle 39.970875 services 31.154766666666667 ngram 1.5138916666666666 residual 7.0782750000000005
+wall 3 32768 cycle 42.23585833333333 services 34.732866666666666 ngram 1.8887916666666666 residual 5.392916666666666
+engine 0 4096 cycle 51.08795 services 43.94858333333333 ngram 1.39645 residual 5.523475
+engine 1 4096 cycle 50.229758333333336 services 43.15893333333333 ngram 1.3282666666666667 residual 5.538858333333334
+engine 2 4096 cycle 50.32935833333333 services 43.22176666666667 ngram 1.2972 residual 5.605541666666666
+engine 3 32768 cycle 48.092416666666665 services 40.640575 ngram 1.7288666666666668 residual 5.519308333333334

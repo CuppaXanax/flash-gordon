@@ -1,0 +1,5 @@
+VKWALL op=submit begin_ns=138051256222456 end_ns=138051256222560 object=1 result=-4 gpu_before_ns=18446744073709551615 gpu_after_ns=0
+VKWALL op=wait begin_ns=138051256254452 end_ns=138051256254510 object=7 result=2 gpu_before_ns=0 gpu_after_ns=18446744073709551615
+VKWALL op=begin begin_ns=138051256319819 end_ns=138051256319864 object=8 result=0 gpu_before_ns=0 gpu_after_ns=0
+VKWALL op=end begin_ns=138051256321230 end_ns=138051256321260 object=8 result=0 gpu_before_ns=0 gpu_after_ns=0
+VKWALL op=reset begin_ns=138051256322564 end_ns=138051256322600 object=8 result=0 gpu_before_ns=0 gpu_after_ns=0

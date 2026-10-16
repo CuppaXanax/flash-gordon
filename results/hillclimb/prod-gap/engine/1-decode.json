@@ -1,0 +1,36 @@
+{
+  "inferential": false,
+  "prime_source": "D:\\looking-glass-labs\\fg-wt\\ab-harness\\results\\hillclimb\\prod-gap\\engine\\1-prime.json",
+  "decode": {
+    "wall_seconds": 7.4888355000002775,
+    "usage": {
+      "prompt_tokens": 4151,
+      "completion_tokens": 128,
+      "total_tokens": 4279
+    },
+    "headers": {
+      "Content-Type": "application/json",
+      "Content-Length": "856",
+      "Connection": "close",
+      "Cache-Control": "no-store",
+      "X-Flash-Gordon-Execution-Mode": "expert-parallel",
+      "X-Flash-Gordon-Prompt-Tokens": "4151",
+      "X-Flash-Gordon-Prefilled-Tokens": "31",
+      "X-Flash-Gordon-Reused-Tokens": "4120",
+      "X-Flash-Gordon-Prefix-Cache": "hit",
+      "X-Flash-Gordon-Exact-Frontier": "false",
+      "X-Flash-Gordon-Reset-Reason": "none",
+      "X-Flash-Gordon-Completion-Tokens": "128",
+      "X-Flash-Gordon-Context-Tokens": "4279",
+      "X-Flash-Gordon-Prefill-Seconds": "0.999846406",
+      "X-Flash-Gordon-Prefill-TPS": "31.004762",
+      "X-Flash-Gordon-Decode-Seconds": "6.454284101",
+      "X-Flash-Gordon-Decode-TPS": "19.831789",
+      "X-Flash-Gordon-Ledger": "FG_LEDGER rank=0 format=6 protocol=6 execution=ep layer_mode=single ranks=8 layers=48 experts=512 topk=10 hidden=2560 blocks=1:6,0:6,2:6,3:6,4:6,5:6,6:6,7:6 wire_hops=9 prefill_frames=8 batch=128 window=2 logical=262144 gpu_index=262144 qsa_hot=0 qsa_cache_pages=131072 qsa_cache_bytes=648019968 ring_prefill=1 ring_decode=1 sealed_context=262144 sealed_gpu_index=262144 sealed_hot=0 sealed_cache_bytes=16777216 weights=10478895104,10536951808,9783717888,9803464704,10464976896,10065608704,9783717888,10327752704 dense=1041711104,365764608,346533888,366280704,1027792896,366280704,346533888,366280704 expert=9437184000,10171187200,9437184000,9437184000,9437184000,9699328000,9437184000,9961472000 weights_total=81245085696 manifest_sha=e98c3099e6f18542 topology_sha=a3c587f62144ba50"
+    },
+    "text": "1. Implement a binary search algorithm to find a target value in a sorted array.\n2. Write a function to reverse a string without using built-in reverse methods.\n3. Create a program to check if a given string is a palindrome.\n4. Develop a function to calculate the factorial of a non-negative integer.\n5. Implement a bubble sort algorithm to sort an array of integers.\n6. Write a script to find the largest number in an array.\n7. Create a function to determine if a number is prime.\n8. Implement a Fibonacci sequence generator up to a specified limit.\n9. Write",
+    "sha256": "308923d99a2851964107572f31d54a8bc90b43c2b29d248cff157ee66a87be6b",
+    "request_sha256": "fbe5199820d80776600ffd65cdcc61fed65ef040403fe7fef777c8ccea0c8eb1",
+    "client_wall_tps": 17.09210998158462
+  }
+}

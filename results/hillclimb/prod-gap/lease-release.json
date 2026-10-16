@@ -1,0 +1,18 @@
+{
+  "no_further_fleet_activity": true,
+  "next_operator_requires_new_exclusive_lease": true,
+  "serving": "main a63a166 + sealed mix-04; sessions 1; wide 0",
+  "released_at": "2026-10-15T23:52:27.5320041-07:00",
+  "cleanup_receipt": "final-cleanup.json",
+  "targets": [
+    "192.168.42.42",
+    "192.168.42.43",
+    "192.168.42.44",
+    "192.168.42.45",
+    "192.168.42.46",
+    "192.168.42.47",
+    "192.168.42.48",
+    "192.168.42.49"
+  ],
+  "final_api_receipt": "final-api-health.json"
+}

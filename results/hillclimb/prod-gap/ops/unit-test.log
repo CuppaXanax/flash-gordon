@@ -1,0 +1,14 @@
+test_actual_one_token_not_requested_ceiling (test_prod_gap.ProbeTests.test_actual_one_token_not_requested_ceiling) ... ok
+test_coordinator_has_two_work_sends_not_one (test_prod_gap.ProbeTests.test_coordinator_has_two_work_sends_not_one) ... ok
+test_cpu_and_engine_accounting_are_separate (test_prod_gap.ProbeTests.test_cpu_and_engine_accounting_are_separate) ... ok
+test_head_calls_are_not_charged_to_block (test_prod_gap.ProbeTests.test_head_calls_are_not_charged_to_block) ... ok
+test_interval_union_does_not_double_count (test_prod_gap.ProbeTests.test_interval_union_does_not_double_count) ... ok
+test_missing_calls_are_not_zero_gpu_or_host_time (test_prod_gap.ProbeTests.test_missing_calls_are_not_zero_gpu_or_host_time) ... ok
+test_native_embedding_label_is_not_real_embedding (test_prod_gap.ProbeTests.test_native_embedding_label_is_not_real_embedding) ... ok
+test_replay_weights_36_gdn_12_qsa_not_eight_identical_blocks (test_prod_gap.ProbeTests.test_replay_weights_36_gdn_12_qsa_not_eight_identical_blocks) ... ok
+test_unavailable_drm_counter_is_not_gpu_time (test_prod_gap.ProbeTests.test_unavailable_drm_counter_is_not_gpu_time) ... ok
+
+----------------------------------------------------------------------
+Ran 9 tests in 0.001s
+
+OK

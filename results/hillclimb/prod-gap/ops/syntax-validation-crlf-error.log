@@ -1,0 +1,2 @@
+.build/gap/validate-syntax.sh: line 2: set: pipefail
+: invalid option name

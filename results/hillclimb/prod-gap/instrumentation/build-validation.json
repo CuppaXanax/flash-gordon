@@ -1,0 +1,36 @@
+{
+  "validated_at": "2026-10-16T00:02:58.4623289-07:00",
+  "flags": "-std=c17 -O2 -Wall -Wextra -Werror -fPIC -shared -ldl -pthread",
+  "forwarding_test": "five functions, arguments and original results including VK_TIMEOUT and VK_ERROR_DEVICE_LOST: passed",
+  "bash_syntax": "passed; ops/validate-syntax.sh",
+  "python_tests": 17,
+  "powershell_syntax": [
+    {
+      "passed": true,
+      "file": "tools\\ab-rollback-original.ps1"
+    },
+    {
+      "passed": true,
+      "file": ".build\\gap\\trace.ps1"
+    },
+    {
+      "passed": true,
+      "file": ".build\\gap\\common.ps1"
+    },
+    {
+      "passed": true,
+      "file": ".build\\gap\\promote.ps1"
+    },
+    {
+      "passed": true,
+      "file": ".build\\gap\\finalize.ps1"
+    }
+  ],
+  "gcc": "13.3.0",
+  "validation_corrections": [
+    "Fake-library loader needed project LD_LIBRARY_PATH; original loader error retained.",
+    "WSL inline-loop quoting replaced by project-local Bash; generated validation script normalized to LF."
+  ],
+  "intermediate_directory": "project .build/gap via TMPDIR",
+  "python_test_result": "passed"
+}
