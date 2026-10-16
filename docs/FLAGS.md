@@ -86,7 +86,14 @@ retain the unsplit path. Bit `131072` selects a six-head QSA union workgroup
 with four 16-lane record reductions, cached queries in LDS and shared K/V
 across N; it also enables the long-context union path without bit `4096`.
 Bit `262144` takes precedence over `16384`, testing sixteen expert cohorts
-in WG512 with a 4-KiB LDS epilogue. These are default-off research variants,
+in WG512 with a 4-KiB LDS epilogue. Bit `524288` prefetches compact R8 scale/
+minimum metadata using two `uvec4` loads and the eight row-code pairs with
+one `uvec4` load; it leaves R4, noncompact and IQ4 paths unchanged.
+Bit `1048576` selects 1024/2048-element bitonic top-512 tiles instead of
+fixed 4096-element tiles for batches of at most four QSA queries. It retains
+the same descending score/ascending-ID order and is useful with `4096` or
+`131072`; the short resident-prefix path does not need top-512 selection.
+These are default-off research variants,
 not serving or model-quality qualifications.
 The production-shape `expert_small_component` CPU oracle is enabled only when
 `FG_SMALL_KERNELS` is explicitly present (including `0`); it allocates full

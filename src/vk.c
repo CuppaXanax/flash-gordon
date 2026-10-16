@@ -24,7 +24,7 @@ typedef struct fg_vk_allocation {
 } fg_vk_allocation;
 
 struct fg_vk_tensor {fg_vk_context *context;fg_vk_allocation *allocation;uint64_t offset,bytes;fg_vk_tensor_format format;bool is_view;};
-typedef struct fg_vk_kernel {const char *file;uint32_t bindings,push_bytes;VkDescriptorSetLayout set_layout;VkPipelineLayout layout;VkPipeline pipeline;uint32_t specialization_count,specialization_values[3];} fg_vk_kernel;
+typedef struct fg_vk_kernel {const char *file;uint32_t bindings,push_bytes;VkDescriptorSetLayout set_layout;VkPipelineLayout layout;VkPipeline pipeline;uint32_t specialization_count,specialization_values[4];} fg_vk_kernel;
 typedef struct fg_vk_profile_dispatch {const char *scope,*name;uint32_t begin_query,end_query;} fg_vk_profile_dispatch;
 
 #define FG_VK_BATCH_MAX_SETS 4096u
@@ -85,7 +85,7 @@ struct fg_vk_context {
     bool small_n;
     uint32_t small_workgroup,small_rows;
     fg_vk_kernel small_dense[300],small_gate_up[8],small_down,small_down_q8,small_down_reduce,small_shared,small_union,small_gdn;
-    fg_vk_kernel small_plain[9],small_qsa_union[3];
+    fg_vk_kernel small_plain[9],small_qsa_union[3],small_qsa_select[2];
     /* Decomposition benchmark kernels */
     fg_vk_kernel bench_stream,bench_dequant,bench_dot_nored;
     fg_vk_kernel dense_cooked_split,dense_cooked_split_reduce,dense_cooked_split_reduce_silu;
@@ -312,7 +312,8 @@ static fg_status create_kernel(fg_vk_context *context,fg_vk_kernel *kernel,fg_er
     VkSpecializationMapEntry entries[]={
         {.constantID=0,.offset=0,.size=sizeof(uint32_t)},
         {.constantID=1,.offset=sizeof(uint32_t),.size=sizeof(uint32_t)},
-        {.constantID=2,.offset=2u*sizeof(uint32_t),.size=sizeof(uint32_t)}};
+        {.constantID=2,.offset=2u*sizeof(uint32_t),.size=sizeof(uint32_t)},
+        {.constantID=3,.offset=3u*sizeof(uint32_t),.size=sizeof(uint32_t)}};
     VkSpecializationInfo specialization={.mapEntryCount=kernel->specialization_count,
         .pMapEntries=entries,.dataSize=kernel->specialization_count*sizeof(uint32_t),
         .pData=kernel->specialization_values};
@@ -327,9 +328,9 @@ static fg_status create_kernel(fg_vk_context *context,fg_vk_kernel *kernel,fg_er
         .pSpecializationInfo=kernel->specialization_count?&specialization:NULL};
     VkComputePipelineCreateInfo cp={.sType=VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,.stage=stage,.layout=kernel->layout};
     const char *radv_debug=getenv("RADV_DEBUG");
-    if(context->profile_active||(radv_debug&&strstr(radv_debug,"shader")))fprintf(stderr,"VK_PIPELINE file=%s specialization=[%u,%u,%u]\n",
+    if(context->profile_active||(radv_debug&&strstr(radv_debug,"shader")))fprintf(stderr,"VK_PIPELINE file=%s specialization=[%u,%u,%u,%u]\n",
         kernel->file,kernel->specialization_values[0],kernel->specialization_values[1],
-        kernel->specialization_values[2]);
+        kernel->specialization_values[2],kernel->specialization_values[3]);
     vr=vkCreateComputePipelines(context->device,context->pipeline_cache,1,&cp,NULL,&kernel->pipeline);vkDestroyShaderModule(context->device,module,NULL);if(vr!=VK_SUCCESS){destroy_kernel(context,kernel);return vk_error(err,"create compute pipeline",vr);}return FG_OK;
 }
 
@@ -492,6 +493,7 @@ void fg_vk_close(fg_vk_context *c){
     if(!c)return;
     if(c->device)vkDeviceWaitIdle(c->device);
     for(uint32_t i=0;i<3u;i++)destroy_kernel(c,&c->small_qsa_union[i]);
+    for(uint32_t i=0;i<2u;i++)destroy_kernel(c,&c->small_qsa_select[i]);
     for(uint32_t i=0;i<144u;i++)destroy_kernel(c,&c->small_dense_split[i]);
     fg_vk_tensor_destroy(c->small_dense_partials);
     fg_vk_tensor_destroy(c->roof_partials);
@@ -1508,13 +1510,15 @@ fg_status fg_vk_dense_quant(fg_vk_context *c,fg_vk_tensor *out,const fg_vk_tenso
             geometry==3u?64u:64u<<geometry;
         uint32_t splits=reuse_rows>2u&&rows<=16384u&&c->small_dense_partials?
             small_kernel_enabled(c,65536u)?4u:small_kernel_enabled(c,32768u)?2u:1u:1u;
+        bool prefetch=reuse_rows==8u&&compact&&(in&127u)==0u&&
+            small_kernel_enabled(c,524288u);
         fg_vk_kernel *kernel=splits>1u?
             &c->small_dense_split[(reuse_rows==8u?72u:0u)+(compact?0u:36u)+i*4u+geometry]:
             &c->small_dense[variant*75u+(compact?0u:36u)+i*4u+geometry];
         const char *file=reuse_rows==8u?reuse8_files[i]:reuse_rows==4u?reuse4_files[i]:reuse_files[i];
         if(!kernel->file)*kernel=(fg_vk_kernel){.file=reuse?file:wide?wide_files[i]:small_files[i],.bindings=3,
-            .push_bytes=24,.specialization_count=splits>1u?3u:2u,
-            .specialization_values={workgroup,compact?1u:0u,splits}};
+            .push_bytes=24,.specialization_count=prefetch?4u:splits>1u?3u:2u,
+            .specialization_values={workgroup,compact?1u:0u,splits,prefetch}};
         struct{uint32_t in,rows,tokens,type,row_bytes;float scale;}
             p={in,rows,tokens,type,(uint32_t)row_bytes,scale};
         const fg_vk_tensor *b[]={w,x,splits>1u?c->small_dense_partials:out};
@@ -2543,11 +2547,20 @@ fg_status fg_vk_qsa_select_merge(fg_vk_context *c,fg_vk_tensor *scores_0,fg_vk_t
     fg_vk_tensor *scores[2]={scores_0,scores_1},*ids[2]={ids_0,ids_1};
     uint32_t side=0u,stride=input_stride;
     while(count>FG_VK_QSA_SELECTED_BLOCKS){
-        uint32_t groups=(count+4095u)/4096u,produced=groups*512u;
-        bool last=count<=4096u;
+        bool adaptive=query_count<=4u&&small_kernel_enabled(c,1048576u);
+        uint32_t tile=adaptive?(count<=1024u?1024u:2048u):4096u;
+        fg_vk_kernel *kernel=&c->qsa_resident_merge;
+        if(adaptive){
+            kernel=&c->small_qsa_select[tile==2048u];
+            if(!kernel->file)*kernel=(fg_vk_kernel){.file="fg_small_qsa_select.spv",
+                .bindings=4u,.push_bytes=16u,.specialization_count=1u,
+                .specialization_values={tile}};
+        }
+        uint32_t groups=(count+tile-1u)/tile,produced=groups*512u;
+        bool last=count<=tile;
         const fg_vk_tensor *bindings[]={scores[side],ids[side],scores[side^1u],last?result_ids:ids[side^1u]};
         struct{uint32_t count,input_stride,output_stride,query_tokens;}push={count,stride,last?512u:produced,query_count};
-        fg_status status=dispatch(c,&c->qsa_resident_merge,bindings,&push,groups,query_count,1u,err);
+        fg_status status=dispatch(c,kernel,bindings,&push,groups,query_count,1u,err);
         if(status!=FG_OK)return status;
         side^=1u;count=produced;stride=produced;
     }

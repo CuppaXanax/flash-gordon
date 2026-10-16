@@ -1,3 +1,5 @@
+layout(constant_id=3) const uint SMALL_PREFETCH=0u;
+#define FG_SMALL_META_PREFETCH
 #include "fg_small_reuse_decode.glsl"
 layout(constant_id=2) const uint SMALL_SPLITS=1u;
 #define ROW_INPUT(T,A,B) \
@@ -50,6 +52,7 @@ void main(){
 #endif
 #endif
     for(uint group=cohort/4u+split*8u;group<groups;group+=8u*SMALL_SPLITS){
+        reuse_prefetch(base,groups,group);
         ROW_INPUT(0u,x0,y0) ROW_INPUT(1u,x1,y1)
 #if SMALL_N >= 3
         ROW_INPUT(2u,x2,y2)

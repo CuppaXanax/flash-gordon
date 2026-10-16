@@ -1348,6 +1348,48 @@ static int test_qsa_prefill_prepare(void){
     fg_vk_tensor_destroy(bi);fg_vk_tensor_destroy(bk);fg_vk_tensor_destroy(bg);fg_vk_tensor_destroy(bq);fg_vk_tensor_destroy(pos);fg_vk_tensor_destroy(in);fg_vk_tensor_destroy(kn);fg_vk_tensor_destroy(qn);fg_vk_tensor_destroy(ri);fg_vk_tensor_destroy(rk);fg_vk_tensor_destroy(rq);free(batch_iq);free(batch_k);free(batch_gate);free(batch_q);free(raw_iq);free(raw_k);free(raw_qg);return ok;
 }
 
+static int test_small_qsa_select(void){
+    enum{STRIDE=6144,QUERIES=4};
+    const uint32_t counts[]={513u,1024u,1025u,2048u,2051u,4096u,5000u};
+    float *scores=malloc(STRIDE*QUERIES*sizeof(*scores));
+    uint32_t *ids=malloc(STRIDE*QUERIES*sizeof(*ids)),got[QUERIES*512];
+    score_id *reference=malloc(STRIDE*sizeof(*reference));
+    fg_vk_tensor *s0=tensor(NULL,STRIDE*QUERIES*4u),
+        *i0=tensor(NULL,STRIDE*QUERIES*4u),
+        *s1=tensor(NULL,STRIDE*QUERIES*4u),
+        *i1=tensor(NULL,STRIDE*QUERIES*4u),*out=tensor(NULL,sizeof(got));
+    int ok=scores&&ids&&reference&&s0&&i0&&s1&&i1&&out;
+    for(uint32_t c=0;ok&&c<sizeof(counts)/sizeof(counts[0]);c++){
+        uint32_t count=counts[c];
+        for(uint32_t q=0;q<QUERIES;q++)for(uint32_t i=0;i<STRIDE;i++){
+            uint32_t index=q*STRIDE+i;
+            scores[index]=i<count?(float)((int)((i*13u+q*19u)%97u)-48)/64.0f:NAN;
+            ids[index]=i<count?(i*23u+q*71u)%count:UINT32_MAX;
+        }
+        memset(got,255,sizeof(got));
+        ok=fg_vk_tensor_write(s0,0,scores,STRIDE*QUERIES*4u,&error)==FG_OK&&
+            fg_vk_tensor_write(i0,0,ids,STRIDE*QUERIES*4u,&error)==FG_OK&&
+            fg_vk_tensor_write(out,0,got,sizeof(got),&error)==FG_OK&&
+            fg_vk_qsa_select_merge(context,s0,i0,s1,i1,out,count,STRIDE,
+                QUERIES,&error)==FG_OK&&
+            fg_vk_tensor_read(out,0,got,sizeof(got),&error)==FG_OK;
+        for(uint32_t q=0;ok&&q<QUERIES;q++){
+            for(uint32_t i=0;i<count;i++)reference[i]=(score_id){
+                scores[q*STRIDE+i],ids[q*STRIDE+i]};
+            qsort(reference,count,sizeof(*reference),score_id_compare);
+            for(uint32_t i=0;i<512u;i++)if(got[q*512u+i]!=reference[i].id){
+                fprintf(stderr,"QSA_TOPK_CPU count=%u q=%u slot=%u gpu=%u cpu=%u\n",
+                    count,q,i,got[q*512u+i],reference[i].id);
+                ok=0;break;
+            }
+        }
+        fprintf(stderr,"QSA_TOPK_CPU count=%u pass=%d\n",count,ok);
+    }
+    fg_vk_tensor_destroy(out);fg_vk_tensor_destroy(i1);fg_vk_tensor_destroy(s1);
+    fg_vk_tensor_destroy(i0);fg_vk_tensor_destroy(s0);
+    free(reference);free(ids);free(scores);return ok;
+}
+
 static int test_qsa_attention_union(void){
     if(fg_vk_subgroup_size(context)!=64u)return 1;
     enum{BLOCKS=17,RECORDS=BLOCKS*4,Q=6144,K=512};
@@ -5258,4 +5300,5 @@ ok=run_test("qsa_prefill_prepare",test_qsa_prefill_prepare)&&ok;
 ok=run_test("qsa_attention_single",test_qsa_attention_single)&&ok;
 ok=run_test("qsa_attention",test_qsa_attention)&&ok;
 ok=run_test("qsa_attention_union",test_qsa_attention_union)&&ok;
+ok=run_test("small_qsa_select",test_small_qsa_select)&&ok;
 fg_vk_close(context);if(!selected_test_count){fprintf(stderr,"no Vulkan test matched DS4_REMOTE_TEST_FILTER\n");return 2;}if(!ok){fprintf(stderr,"native Vulkan oracle failed: %s\n",error.message);return 1;}puts("Flash Gordon native Vulkan production-dimension oracles: PASS");return 0;}

@@ -1,4 +1,14 @@
 #include "fg_small_fma.glsl"
+#ifdef FG_SMALL_META_PREFETCH
+uvec4 prefetched_dm0,prefetched_dm1,prefetched_codes;
+void reuse_prefetch(uint base,uint groups,uint group){
+    if(SMALL_PREFETCH!=0u){
+        uint offset=(base+(group/8u)*8u)/4u;
+        prefetched_dm0=W4(offset);prefetched_dm1=W4(offset+1u);
+        prefetched_codes=W4((base+groups+group*4u)/4u);
+    }
+}
+#endif
 vec2 reuse_scale(uint base,uint groups,uint row,uint group){
     if(TYPE==20u){
         uint packed=W(base+group*4u+(row>>1u));
@@ -6,6 +16,14 @@ vec2 reuse_scale(uint base,uint groups,uint row,uint group){
         return vec2((row&1u)==0u?d.x:d.y,0.0);
     }
     if(COMPACT!=0u){
+#ifdef FG_SMALL_META_PREFETCH
+        if(SMALL_PREFETCH!=0u){
+            uint packed=row<4u?prefetched_dm0[row]:prefetched_dm1[row-4u];
+            vec2 dm=unpackHalf2x16(packed);
+            uint codes=prefetched_codes[row>>1u]>>((row&1u)*16u);
+            return vec2(dm.x*float(codes&255u),dm.y*float((codes>>8u)&255u));
+        }
+#endif
         vec2 dm=unpackHalf2x16(W(base+(group/8u)*8u+row));
         uint codes=W(base+groups+group*4u+(row>>1u))>>((row&1u)*16u);
         return vec2(dm.x*float(codes&255u),dm.y*float((codes>>8u)&255u));
