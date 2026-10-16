@@ -758,8 +758,11 @@ fg_status fg_owner_gdn_decode(fg_owner_executor *executor,uint32_t layer,const f
     if(status==FG_OK&&!quantized)
         status=fg_vk_gdn_project_decode(vk,executor->gdn_qkv,executor->gdn_z,executor->gdn_alpha,executor->gdn_beta,qkv_weight,z_weight,alpha_weight,beta_weight,hidden,err);
     if(status==FG_OK&&quantized){
-        status=fg_vk_dense_q8_0_f32(vk,executor->gdn_qkv,qkv_weight,hidden,2560u,10240u,1u,1.0f,err);
+        if(fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gdn_qkv",err);
+        if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,executor->gdn_qkv,qkv_weight,hidden,2560u,10240u,1u,1.0f,err);
+        if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gdn_gate",err);
         if(status==FG_OK)status=fg_vk_dense_q8_0_f32(vk,executor->gdn_z,z_weight,hidden,2560u,6144u,1u,1.0f,err);
+        if(status==FG_OK&&fg_vk_profile_active(vk))status=fg_vk_profile_set_scope(vk,"gdn_controls",err);
         if(status==FG_OK)status=fg_vk_dense_f32(vk,executor->gdn_alpha,alpha_weight,hidden,2560u,48u,1u,err);
         if(status==FG_OK)status=fg_vk_dense_f32(vk,executor->gdn_beta,beta_weight,hidden,2560u,48u,1u,err);
     }

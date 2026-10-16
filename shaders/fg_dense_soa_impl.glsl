@@ -85,6 +85,9 @@ void main(){
     uint groups=pc.input_width/32u;
     uint base=(first/8u)*groups*(TYPE==13u?(COMPACT!=0?45u:56u):TYPE==20u?36u:(COMPACT!=0?37u:48u)),row=first&7u;
     vec4 acc0=vec4(0.0),acc1=vec4(0.0);
+#ifdef FG_ROOF_UNROLL
+    [[unroll]]
+#endif
     for(uint i=0u;i<(groups+WG/4u-1u)/(WG/4u);i++){
         uint group=i*(WG/4u)+cohort;
         if(COMPACT!=0&&TYPE==20u&&group>=groups)continue;
@@ -117,7 +120,11 @@ void main(){
     }
     vec4 r0=vec4(subgroupAdd(acc0.x),subgroupAdd(acc0.y),subgroupAdd(acc0.z),subgroupAdd(acc0.w));
     vec4 r1=vec4(subgroupAdd(acc1.x),subgroupAdd(acc1.y),subgroupAdd(acc1.z),subgroupAdd(acc1.w));
-    if(COMPACT!=0&&TYPE==20u&&gl_NumSubgroups==1u){
+    if(COMPACT!=0&&gl_NumSubgroups==1u
+#ifndef FG_ROOF_UNROLL
+       &&TYPE==20u
+#endif
+    ){
         if(subgroupElect())for(uint r=0u;r<4u;r++){
             if(first+r<pc.output_width)y[token*pc.output_width+first+r]=r0[r]*pc.scale;
             if(ROWS==8u&&first+r+4u<pc.output_width)y[token*pc.output_width+first+r+4u]=r1[r]*pc.scale;

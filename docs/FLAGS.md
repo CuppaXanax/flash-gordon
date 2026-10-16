@@ -40,6 +40,9 @@ Status values:
 | `FG_DENSE_SOA` | unset (off) | Convert supported dense GGML weights to SoA layout at load. | variant (opt-in) |
 | `FG_EXPERT_Q8_WIDE` | unset (off) | `1` opts into subgroup-shuffle wide Q8 MoE decode; off pending fleet A/B. | variant (opt-in) |
 | `FG_DECODE_FUSION` | unset (off) | Chained decode fusion bitmask: `1` router + tile schedule, `2` shared add + HC residual, `4` supported shared gate/up + SwiGLU; `7` enables all. Invalid masks disable it. Synthetic parity/performance only; model KL qualification required. | variant (opt-in) |
+| `FG_ROOFLINE` | unset (off) | Wave64 decode research mask: `1` large compact Q4 GEMV geometry, `2` QSA head geometry, `4` recurrent state-update/output loop, `8` one-wave router, `16` HC injection shuffle reduction and four-group mixing, `32` expert gate/up shuffle reduction, `64` QSA eight-way split for at least eight records, `128` vec4/WG256 GDN alpha/beta F32 GEMV. Unsupported subgroup devices fall back (split count is portable). No production promotion; see `results/hillclimb/ROOFLINE.md`. Set before static recording; graph-only expert paths retain the baseline. | variant (opt-in) |
+| `FG_ROOF_DENSE` | `7` | With roofline bit `1`, large compact Q4 GEMV geometry: `1` r4/WG64, `2` r4/WG128, `3` r8/WG256, `4` r8/WG128, `5` r8/WG64, `6` shape-selected WG64 for K=2560 and WG128 otherwise, `7` retain the baseline gate geometry and use r8/WG64 elsewhere to preserve accumulation order. M<2560 retains baseline. Other values fall back. | variant (opt-in) |
+| `FG_ROOF_QSA` | `2` | With roofline bit `2`: `1` register-tiled one-head/WG64, `2` LDS-tiled three-head/WG192, `3` six-head/WG384, `4` one-head/WG64. Other values retain baseline. | variant (opt-in) |
 
 Prefix continuation (resuming exact token-prefix extensions from the recorded
 owner-state frontier) is the default. Disable it per run with

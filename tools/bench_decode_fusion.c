@@ -157,6 +157,11 @@ int main(int argc,char **argv){
     model->tensor=calloc(256u,sizeof(*model->tensor));
     if(!model->tensor)return 1;
     check(fg_vk_open(&model->vk,&error),&error);
+    printf("{\"kind\":\"roofline\",\"mask\":\"%s\",\"dense_variant\":\"%s\","
+           "\"reported_cus\":%u,\"subgroup_size\":%u}\n",
+           getenv("FG_ROOFLINE")?getenv("FG_ROOFLINE"):"0",
+           getenv("FG_ROOF_DENSE")?getenv("FG_ROOF_DENSE"):"7",
+           fg_vk_active_compute_units(model->vk),fg_vk_subgroup_size(model->vk));
     for(uint32_t l=0;l<FG_LAYER_COUNT;l++){
         manifest->layer_owner[l]=(l>=6u&&l<=11u)?1u:2u;
         for(uint32_t e=0;e<FG_EXPERT_COUNT;e++)manifest->expert_rank[l][e]=manifest->layer_owner[l];
@@ -264,12 +269,22 @@ int main(int argc,char **argv){
     if(raw&&fclose(raw))return 1;
     fg_owner_session_checkpoint snapshot={0};
     check(fg_owner_session_snapshot(owner,0u,&snapshot,&error),&error);
+    FILE *state_raw=NULL;
+    if(dump){
+        char path[4096];
+        int length=snprintf(path,sizeof(path),"%s.gdn",dump);
+        if(length<0||(size_t)length>=sizeof(path)||(state_raw=fopen(path,"wb"))==NULL)return 1;
+    }
     uint64_t state_hash=UINT64_C(1469598103934665603);
-    for(uint32_t s=0;s<snapshot.gdn_count;s++)
+    for(uint32_t s=0;s<snapshot.gdn_count;s++){
+        if(state_raw&&fwrite(snapshot.gdn[s].data,sizeof(float),snapshot.gdn[s].values,
+                           state_raw)!=snapshot.gdn[s].values)return 1;
         for(uint64_t i=0;i<snapshot.gdn[s].values;i++){
             uint32_t bits;memcpy(&bits,snapshot.gdn[s].data+i,4u);
             state_hash^=bits;state_hash*=UINT64_C(1099511628211);
         }
+    }
+    if(state_raw&&fclose(state_raw))return 1;
     printf("{\"kind\":\"parity\",\"output_hash\":\"%016llx\",\"gdn_state_hash\":\"%016llx\"}\n",
         (unsigned long long)hash,(unsigned long long)state_hash);
     fg_owner_session_snapshot_release(&snapshot);

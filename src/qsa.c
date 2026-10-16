@@ -936,6 +936,9 @@ static fg_status decode_attention(fg_qsa_session *s,fg_vk_tensor *attention,
     fg_vk_context *vk=fg_model_vk(s->model);
     uint32_t splits=(selected_tokens+FG_QSA_DECODE_SPLIT_TOKENS-1u)/
         FG_QSA_DECODE_SPLIT_TOKENS;
+    const char *roof=getenv("FG_ROOFLINE");
+    if(roof&&((uint32_t)strtoul(roof,NULL,0)&64u)!=0u&&selected_tokens>=8u)
+        splits=FG_QSA_ATTENTION_SPLITS;
     if(splits>FG_QSA_ATTENTION_SPLITS)splits=FG_QSA_ATTENTION_SPLITS;
     if(splits<2u)
         return fg_vk_qsa_attention(vk,attention,s->selected_records,query,gate,

@@ -3982,6 +3982,128 @@ static int test_decode_layer_clocks(void){
     fg_vk_close(clock);context=saved;return ok;
 }
 
+static int test_roof_dense_exact(void){
+    const uint32_t shapes[][2]={{2560u,10240u},{2560u,6144u},{6144u,2560u},
+                                {2560u,12288u},{10240u,320u}};
+    char *old_mask=getenv("FG_ROOFLINE")?strdup(getenv("FG_ROOFLINE")):NULL;
+    char *old_dense=getenv("FG_ROOF_DENSE")?strdup(getenv("FG_ROOF_DENSE")):NULL;
+    int ok=1;
+    for(uint32_t s=0;ok&&s<sizeof(shapes)/sizeof(*shapes);s++){
+        uint32_t k=shapes[s][0],m=shapes[s][1];
+        uint64_t raw_bytes=(uint64_t)k*m/256u*144u,bytes=fg_dense_compact_bytes(k,m,12u);
+        uint8_t *raw=malloc(raw_bytes),*cooked=malloc(bytes);
+        fg_vk_tensor *w=tensor(NULL,bytes),*x=tensor(NULL,k*4u),*a=tensor(NULL,m*4u),*b=tensor(NULL,m*4u);
+        ok=raw&&cooked&&w&&x&&a&&b;
+        for(uint32_t seed=0;ok&&seed<3u;seed++){
+            for(uint64_t i=0;i<raw_bytes;i++)raw[i]=(uint8_t)(i*73u+i/17u+seed*53u);
+            for(uint64_t i=0;i<raw_bytes;i+=144u){
+                uint16_t d=fg_f32_to_f16(0.001f+seed*0.0001f),dm=fg_f32_to_f16(0.0007f);
+                memcpy(raw+i,&d,2u);memcpy(raw+i+2u,&dm,2u);
+            }
+            ok=fg_cook_dense_compact(raw,cooked,bytes,k,m,12u)&&
+                fg_vk_tensor_write(w,0,cooked,bytes,&error)==FG_OK;
+            fg_vk_tensor_set_format(w,FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K);
+            float *input=fg_vk_tensor_map(x);
+            for(uint32_t i=0;i<k;i++)input[i]=seed==2u?0.0f:sinf(i*0.013f+seed);
+            setenv("FG_ROOFLINE","0",1);
+            ok=ok&&fg_vk_dense_q8_0_f32(context,a,w,x,k,m,1u,0.75f,&error)==FG_OK;
+            setenv("FG_ROOFLINE","1",1);setenv("FG_ROOF_DENSE","7",1);
+            ok=ok&&fg_vk_dense_q8_0_f32(context,b,w,x,k,m,1u,0.75f,&error)==FG_OK&&
+                memcmp(fg_vk_tensor_const_map(a),fg_vk_tensor_const_map(b),m*4u)==0;
+            fprintf(stderr,"ROOF_DENSE_EXACT K=%u M=%u seed=%u %s\n",k,m,seed,ok?"PASS":"FAIL");
+        }
+        fg_vk_tensor_destroy(b);fg_vk_tensor_destroy(a);fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);
+        free(cooked);free(raw);
+    }
+    if(old_mask){setenv("FG_ROOFLINE",old_mask,1);free(old_mask);}else unsetenv("FG_ROOFLINE");
+    if(old_dense){setenv("FG_ROOF_DENSE",old_dense,1);free(old_dense);}else unsetenv("FG_ROOF_DENSE");
+    return ok;
+}
+
+static int test_roof_controls(void){
+    enum{K=2560,M=48};
+    fg_vk_tensor *w=tensor(NULL,K*M*4u),*x=tensor(NULL,K*4u),*y=tensor(NULL,M*4u);
+    int ok=w&&x&&y;
+    char *saved=getenv("FG_ROOFLINE")?strdup(getenv("FG_ROOFLINE")):NULL;
+    if(ok){
+        float *a=fg_vk_tensor_map(w),*b=fg_vk_tensor_map(x);
+        for(uint32_t i=0;i<K*M;i++)a[i]=sinf(i*0.017f)*0.03f;
+        for(uint32_t i=0;i<K;i++)b[i]=cosf(i*0.013f);
+        float ref[M],got[M];
+        setenv("FG_ROOFLINE","0",1);
+        ok=fg_vk_dense_f32(context,y,w,x,K,M,1u,&error)==FG_OK&&
+            fg_vk_tensor_read(y,0,ref,sizeof(ref),&error)==FG_OK;
+        setenv("FG_ROOFLINE","128",1);
+        ok=ok&&fg_vk_dense_f32(context,y,w,x,K,M,1u,&error)==FG_OK&&
+            fg_vk_tensor_read(y,0,got,sizeof(got),&error)==FG_OK;
+        for(uint32_t r=0;ok&&r<M;r++){
+            double cpu=0.0;
+            for(uint32_t i=0;i<K;i++)cpu+=(double)a[r*K+i]*b[i];
+            if(!isfinite(got[r])||fabs(got[r]-cpu)>2e-4*fmax(1.0,fabs(cpu))||
+                fabsf(got[r]-ref[r])>2e-4f*fmaxf(1.0f,fabsf(ref[r])))ok=0;
+        }
+    }
+    if(saved){setenv("FG_ROOFLINE",saved,1);free(saved);}else unsetenv("FG_ROOFLINE");
+    fg_vk_tensor_destroy(y);fg_vk_tensor_destroy(x);fg_vk_tensor_destroy(w);return ok;
+}
+
+static int test_roof_qsa(void){
+    enum{COUNT=2051,Q=6144};
+    fg_vk_tensor *records=tensor(NULL,(uint64_t)COUNT*FG_Q38_QSA_TOKEN_RECORD_BYTES),
+        *query=tensor(NULL,Q*4u),*gate=tensor(NULL,Q*4u),
+        *partials=tensor(NULL,8u*24u*258u*4u),*output=tensor(NULL,Q*4u);
+    int ok=records&&query&&gate&&partials&&output;
+    char *old_mask=getenv("FG_ROOFLINE")?strdup(getenv("FG_ROOFLINE")):NULL;
+    char *old_qsa=getenv("FG_ROOF_QSA")?strdup(getenv("FG_ROOF_QSA")):NULL;
+    if(ok){
+        uint8_t *r=fg_vk_tensor_map(records);
+        for(uint32_t t=0;t<COUNT;t++){
+            float k[512],v[512];
+            for(uint32_t i=0;i<512u;i++){
+                k[i]=sinf((t+1u)*(i+2u)*0.0023f);
+                v[i]=cosf((t+3u)*(i+1u)*0.0017f)*2.0f;
+            }
+            fg_quantize_q8_0(k,r+(uint64_t)t*FG_Q38_QSA_TOKEN_RECORD_BYTES,512u);
+            fg_quantize_q8_0(v,r+(uint64_t)t*FG_Q38_QSA_TOKEN_RECORD_BYTES+FG_Q38_QSA_KEY_BYTES,512u);
+        }
+        float *q=fg_vk_tensor_map(query),*g=fg_vk_tensor_map(gate);
+        for(uint32_t i=0;i<Q;i++){q[i]=sinf(i*0.0041f);g[i]=cosf(i*0.013f);}
+    }
+    const uint32_t counts[]={1u,7u,8u,31u,257u,513u,2051u};
+    for(uint32_t c=0;ok&&c<sizeof(counts)/sizeof(*counts);c++){
+        float reference[Q],candidate[Q];uint32_t count=counts[c];
+        setenv("FG_ROOFLINE","0",1);
+        uint32_t baseline_splits=(count+255u)/256u;
+        if(baseline_splits>8u)baseline_splits=8u;
+        if(baseline_splits<2u)
+            ok=fg_vk_qsa_attention(context,output,records,query,gate,count,&error)==FG_OK;
+        else ok=fg_vk_qsa_decode_attention_split(context,partials,records,query,count,baseline_splits,&error)==FG_OK&&
+            fg_vk_qsa_attention_merge(context,output,partials,gate,baseline_splits,&error)==FG_OK;
+        ok=ok&&fg_vk_tensor_read(output,0,reference,sizeof(reference),&error)==FG_OK;
+        for(uint32_t v=1u;ok&&v<=4u;v++){
+            char variant[2]={(char)('0'+v),0};
+            setenv("FG_ROOFLINE","2",1);setenv("FG_ROOF_QSA",variant,1);
+            for(uint32_t splits=2u;ok&&splits<=8u;splits*=2u){
+                ok=fg_vk_qsa_decode_attention_split(context,partials,records,query,count,splits,&error)==FG_OK&&
+                    fg_vk_qsa_attention_merge(context,output,partials,gate,splits,&error)==FG_OK&&
+                    fg_vk_tensor_read(output,0,candidate,sizeof(candidate),&error)==FG_OK;
+                float maximum=0.0f;
+                for(uint32_t i=0;ok&&i<Q;i++){
+                    float diff=fabsf(candidate[i]-reference[i]);
+                    maximum=fmaxf(maximum,diff);
+                    if(!isfinite(candidate[i])||diff>4e-4f*fmaxf(1.0f,fabsf(reference[i])))ok=0;
+                }
+                fprintf(stderr,"ROOF_QSA count=%u variant=%u splits=%u max_abs=%g %s\n",
+                    count,v,splits,maximum,ok?"PASS":"FAIL");
+            }
+        }
+    }
+    if(old_mask){setenv("FG_ROOFLINE",old_mask,1);free(old_mask);}else unsetenv("FG_ROOFLINE");
+    if(old_qsa){setenv("FG_ROOF_QSA",old_qsa,1);free(old_qsa);}else unsetenv("FG_ROOF_QSA");
+    fg_vk_tensor_destroy(output);fg_vk_tensor_destroy(partials);fg_vk_tensor_destroy(gate);
+    fg_vk_tensor_destroy(query);fg_vk_tensor_destroy(records);return ok;
+}
+
 static int test_decode_fusion_router(void){
     fg_vk_tensor *logits=tensor(NULL,2048u),*selected=tensor(NULL,40u),
         *gates=tensor(NULL,40u),*tiles=tensor(NULL,360u),
@@ -4088,6 +4210,9 @@ static int run_test(const char *name,int (*fn)(void)){if(!test_selected(name))re
 static int run_test_i(const char *name,int (*fn)(int),int arg){if(!test_selected(name))return 1;selected_test_count++;fprintf(stderr,"  [%s(%d)] ... ",name,arg);fflush(stderr);int ok=fn(arg);fprintf(stderr,"%s\n",ok?"ok":"FAIL");return ok;}
 int main(void){if(fg_vk_open(&context,&error)!=FG_OK){fprintf(stderr,"Vulkan unavailable: %s\n",error.message);return 77;}fprintf(stderr,"Flash Gordon Vulkan device: %s\n",fg_vk_device_name(context));int ok=1;
 ok=run_test("decode_fusion_router",test_decode_fusion_router)&&ok;
+ok=run_test("roof_qsa",test_roof_qsa)&&ok;
+ok=run_test("roof_controls",test_roof_controls)&&ok;
+ok=run_test("roof_dense_exact",test_roof_dense_exact)&&ok;
 ok=run_test("decode_layer_clocks",test_decode_layer_clocks)&&ok;
 ok=run_test("decode_fusion_residual",test_decode_fusion_residual)&&ok;
 ok=run_test_i("decode_fusion_shared",test_decode_fusion_shared_i,8)&&ok;
