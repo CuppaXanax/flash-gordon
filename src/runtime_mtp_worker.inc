@@ -81,7 +81,27 @@ static fg_status handle_mtp_head_work(fg_fabric *fabric,const fg_manifest *manif
     return status;
 }
 
-static fg_status handle_mtp_native_work(fg_fabric *fabric,const fg_manifest *manifest,
+static fg_status mtp_target_memory_prepare(fg_owner_executor *owner,
+    fg_expert_executor *expert,uint32_t sessions,fg_vk_context *vk,uint64_t cap,
+    fg_error *err){
+    fg_status status=fg_expert_prepare_small_n_scratch(expert,err);
+    for(uint32_t slot=0;status==FG_OK&&slot<sessions;slot++){
+        fg_owner_session_checkpoint checkpoint={0};
+        status=fg_owner_session_device_snapshot(owner,slot,&checkpoint,err);
+        fg_owner_session_snapshot_release(&checkpoint);
+    }
+    fg_vk_memory_stats memory;
+    fg_vk_get_memory_stats(vk,&memory);
+    if(status==FG_OK&&cap&&memory.requested_live_bytes>cap){
+        fg_error_set(err,FG_ERR_LIMIT,"MTP target readiness residency: live=%llu cap=%llu",
+            (unsigned long long)memory.requested_live_bytes,(unsigned long long)cap);
+        status=FG_ERR_LIMIT;
+    }
+    return status;
+}
+
+static fg_status handle_mtp_native_work(fg_fabric *fabric,fg_owner_executor *owner,
+    const fg_manifest *manifest,
     uint32_t self,uint64_t session,uint32_t peer,const fg_frame_header *header,
     const uint8_t *payload,uint32_t bytes,layer_work_context *context,fg_error *err){
     fg_mtp_native_work work;char overlay[FG_MTP_OVERLAY_PATH_MAX+1u];
@@ -90,18 +110,34 @@ static fg_status handle_mtp_native_work(fg_fabric *fabric,const fg_manifest *man
         FG_PREFILL_MAX_TOKENS,overlay,embedding_file,payload,bytes,err);
     uint64_t request=fg_frame_request_id(header);
     bool config=status==FG_OK&&work.operation==FG_MTP_NATIVE_CONFIG;
+    bool prepare=status==FG_OK&&work.operation==FG_MTP_NATIVE_PREPARE;
     if(status==FG_OK&&config&&(!context->vk||context->tokens<FG_MTP_MAX_VERIFY)){
         fg_error_set(err,FG_ERR_UNAVAILABLE,"MTP requires a decode owner with N=4 input storage");
         status=FG_ERR_UNAVAILABLE;
     }
     if(status==FG_OK&&(peer!=0u||(!config&&(!session||request!=session))||
-       (!config&&self!=manifest->layer_owner[FG_LAYER_COUNT-1u]))){
+       (!config&&!prepare&&self!=manifest->layer_owner[FG_LAYER_COUNT-1u]))){
         fg_error_set(err,FG_ERR_MISMATCH,"stale or misrouted native MTP work");
         status=FG_ERR_MISMATCH;
     }
     float hidden[FG_HIDDEN_SIZE];fg_mtp_native_ack ack;
-    if(status==FG_OK)status=fg_mtp_native_run(context->mtp_native,
+    if(status==FG_OK&&prepare){
+        if(!fg_mtp_native_enabled(context->mtp_native)){
+            fg_error_set(err,FG_ERR_MISMATCH,"MTP admission before configuration");
+            status=FG_ERR_MISMATCH;
+        }else status=mtp_target_memory_prepare(owner,context->dispatch.expert,
+            work.argument,context->vk,manifest->residency_cap_bytes,err);
+    }
+    if(status==FG_OK&&prepare&&self!=manifest->layer_owner[FG_LAYER_COUNT-1u])
+        ack=(fg_mtp_native_ack){.operation=work.operation};
+    else if(status==FG_OK)status=fg_mtp_native_run(context->mtp_native,
         fg_frame_session_slot(header),&work,hidden,&ack,err);
+    if(prepare&&
+       (status==FG_ERR_LIMIT||status==FG_ERR_OOM)){
+        fprintf(stderr,"MTP readiness rejected: %s\n",err?err->message:"memory admission");
+        ack=(fg_mtp_native_ack){.operation=work.operation,.status=status};
+        status=FG_OK;
+    }
     if(status==FG_OK&&work.operation==FG_MTP_NATIVE_DRAFT)
         return mtp_head_fanout(fabric,manifest,self,request,FG_MTP_HEAD_DRAFT,
             work.first_token,1u,hidden,context,err);

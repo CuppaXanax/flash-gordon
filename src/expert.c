@@ -436,6 +436,18 @@ fg_status fg_expert_decode_chain_ready(fg_expert_executor *executor,uint32_t lay
         &gate_stride,&up_stride,&down_stride,&gate_type,&up_type,&down_type,err);
 }
 
+fg_status fg_expert_prepare_small_n_scratch(fg_expert_executor *executor,fg_error *err){
+    if(!executor||executor->max_tokens<2u){
+        fg_error_set(err,FG_ERR_ARGUMENT,"small-N scratch requires batch capacity");
+        return FG_ERR_ARGUMENT;
+    }
+    if(executor->small_down_parts)return FG_OK;
+    uint32_t capacity=executor->max_tokens<4u?executor->max_tokens:4u;
+    return fg_vk_tensor_create(fg_model_vk(executor->model),
+        (uint64_t)capacity*FG_TOP_K*FG_HIDDEN_SIZE*4u*4u,
+        &executor->small_down_parts,err);
+}
+
 fg_status fg_expert_decode_small_n(fg_expert_executor *executor,uint32_t layer,
     const fg_vk_tensor *activation,const fg_vk_tensor *router_logits,
     uint32_t tokens,fg_vk_tensor **reduced,fg_error *err){
@@ -449,11 +461,7 @@ fg_status fg_expert_decode_small_n(fg_expert_executor *executor,uint32_t layer,
     if(status==FG_OK)status=chain_expert_layout(executor,layer,&gate,&up,&down,
         &gs,&us,&ds,&gt,&ut,&dt,err);
     fg_vk_context *vk=fg_model_vk(executor->model);
-    if(status==FG_OK&&!executor->small_down_parts){
-        uint32_t capacity=executor->max_tokens<4u?executor->max_tokens:4u;
-        status=fg_vk_tensor_create(vk,(uint64_t)capacity*FG_TOP_K*FG_HIDDEN_SIZE*4u*4u,
-            &executor->small_down_parts,err);
-    }
+    if(status==FG_OK)status=fg_expert_prepare_small_n_scratch(executor,err);
     fg_vk_tensor *selected=status==FG_OK?selected_for_layer(executor,layer,tokens):NULL;
     if(status==FG_OK)status=fg_vk_router_top10(vk,selected,executor->gates,
         router_logits,FG_EXPERT_COUNT,tokens,err);

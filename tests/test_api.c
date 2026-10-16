@@ -61,6 +61,8 @@ const char *fg_runtime_ledger(const fg_runtime *runtime){
 }
 
 static fg_mtp_capability test_mtp_capability = FG_MTP_CAPABILITY_UNSUPPORTED;
+static fg_runtime *test_open_runtime;
+static unsigned test_pipeline_admissions;
 
 fg_mtp_capability fg_runtime_mtp_capability(const fg_runtime *runtime){
     (void)runtime;
@@ -68,10 +70,16 @@ fg_mtp_capability fg_runtime_mtp_capability(const fg_runtime *runtime){
 }
 
 fg_status fg_runtime_open(fg_runtime **out, const char *manifest_path, fg_error *err) {
-    (void)out;
+    if(test_open_runtime){*out=test_open_runtime;return FG_OK;}
     (void)manifest_path;
     fg_error_set(err, FG_ERR_UNAVAILABLE, "test runtime");
     return FG_ERR_UNAVAILABLE;
+}
+
+fg_status fg_runtime_enable_pipeline(fg_runtime *runtime,fg_runtime **second,fg_error *err){
+    (void)runtime;*second=NULL;test_pipeline_admissions++;
+    fg_error_set(err,FG_ERR_LIMIT,"injected startup residency rejection");
+    return FG_ERR_LIMIT;
 }
 
 fg_status fg_runtime_open_with_options(fg_runtime **out, const char *manifest_path,
@@ -3713,7 +3721,18 @@ static void test_stop_sequences(void){
     }
 }
 
+static void test_admission_before_listener(void){
+    fg_runtime runtime={0};fg_runtime_options options={.sessions=2u};fg_error err={0};
+    unsigned before=test_pipeline_admissions;
+    test_open_runtime=&runtime;
+    CHECK(fg_api_main_with_options("fixture",":::",8080u,&options,&err)==FG_ERR_LIMIT);
+    CHECK(test_pipeline_admissions==before+1u);
+    CHECK(strstr(err.message,"startup residency rejection")!=NULL);
+    test_open_runtime=NULL;
+}
+
 int main(void) {
+    test_admission_before_listener();
     test_stop_sequences();
     test_session_affinity();
     test_openai_tools_request();

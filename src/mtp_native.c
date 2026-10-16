@@ -165,6 +165,11 @@ fg_status fg_mtp_native_run(fg_mtp_native *n,uint32_t slot,
     if(status!=FG_OK)return status;
     switch(w->operation){
         case FG_MTP_NATIVE_CONFIG:break;
+        case FG_MTP_NATIVE_PREPARE:
+            for(uint32_t i=0;status==FG_OK&&i<w->argument;i++)
+                status=ensure_session(n,i,err);
+            if(status==FG_OK)status=fg_mtp_head_check_residency(s->head,err);
+            break;
         case FG_MTP_NATIVE_PREFIX:{
             s->draft_hyper=NULL;s->drafted=0u;s->verify_count=0u;
             s->warm_start=w->argument;s->prefix_end=w->limit;

@@ -4251,11 +4251,12 @@ static void api_pipeline_generate(void *argument){
     api_engine_queue_complete(job->queue);
 }
 
-static fg_status api_pipeline_engine(fg_runtime *runtime,api_engine_queue *queue,
+static fg_status api_pipeline_engine(fg_runtime *runtime,fg_runtime *second,
+                                      api_engine_queue *queue,
                                       fg_error *err){
-    api_pipeline_job jobs[FG_PIPELINE_SESSIONS]={{.runtime=runtime,.queue=queue}};
-    fg_status status=fg_runtime_enable_pipeline(runtime,&jobs[1].runtime,err);
-    if(status!=FG_OK)return status;
+    api_pipeline_job jobs[FG_PIPELINE_SESSIONS]={{.runtime=runtime,.queue=queue},
+                                              {.runtime=second,.queue=queue}};
+    fg_status status=FG_OK;
     jobs[1].queue=queue;
     fg_pipeline pipeline;
     status=fg_pipeline_init(&pipeline,fg_runtime_fabric(runtime),err);
@@ -4336,9 +4337,14 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
     fg_status status =
         fg_runtime_open_with_options(&runtime, manifest_path, runtime_options, err);
     if (status != FG_OK) return status;
+    fg_runtime *second=NULL;
+    if(runtime_options&&runtime_options->sessions==2u)
+        status=fg_runtime_enable_pipeline(runtime,&second,err);
+    if(status!=FG_OK){fg_runtime_close(runtime);return status;}
     int listener = -1;
     status = open_listener(host, port, &listener, err);
     if (status != FG_OK) {
+        fg_runtime_close(second);
         fg_runtime_close(runtime);
         return status;
     }
@@ -4363,6 +4369,7 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
     api_frontend frontend;
     status = api_frontend_start(&frontend, listener, runtime, &queue, err);
     if (status != FG_OK) {
+        fg_runtime_close(second);
         api_engine_queue_destroy(&queue);
         close(listener);
         sigaction(SIGINT, &old_int, NULL);
@@ -4375,7 +4382,7 @@ fg_status fg_api_main_with_options(const char *manifest_path, const char *host,
     api_public_session public_session = {0};
 #ifndef FG_API_TEST_BUILD
     if(queue.multiplexed){
-        status=api_pipeline_engine(runtime,&queue,err);
+        status=api_pipeline_engine(runtime,second,&queue,err);
         goto engine_done;
     }
 #endif

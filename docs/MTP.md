@@ -42,6 +42,92 @@ files match the prior authentic-pack qualification; its real-tensor proof is
 inherited explicitly, not rerun or presented as new real-model greedy evidence.
 The frozen source excludes subsequent eager-admission and residency-probe work.
 
+### Rank7 two-session memory budget
+
+**Real-rank load on .52: one session admitted; two sessions rejected before
+readiness under the unchanged cap.** All152 trained tensor spans are reconstructed
+losslessly and checked against the sealed manifest:104 from pinned public GGUF
+ranges and48 from the authenticated retained mix04 source. Global HC spans,
+the target embedding sidecar and the real native Q8 overlay are included.
+This is a load-only rank7 probe, not a ring join or a real-model generation gate.
+See [memory/provenance receipts](../results/hillclimb/mtp-residency.json).
+
+The target's152 payloads total10,327,643,648 bytes; its4096-aligned Vulkan arena
+is10,327,752,704 bytes. Shared native cooked weights measure2,772,584,448 bytes.
+The independently measured private allocation is38,705,712 bytes per native
+head at window8192/capacity8196, plus51,200 wrapper input/embedding bytes.
+The distributed target vocabulary head is reused, not duplicated on rank7.
+
+| Rank7 component | Bytes | Evidence |
+|---|---:|---|
+| Target trained-weight arena, including padding | 10,327,752,704 | Sealed152-record offsets |
+| Target shared owner/expert/HC/activation scratch and both actual GDN state slots | 107,625,984 | .52 owner/expert/HC stage minus arena |
+| Two target QSA GPU state/index/cache sets | 1,440,897,008 | 2×720,448,504 measured session delta |
+| Both target sessions' GDN rollback shadows | 26,476,544 | 2×4 layers×3,309,568 measured bytes |
+| Target small-N expert-down scratch | 1,638,400 | Eager N=4 capacity, shared between sessions |
+| Shared native MTP core/head weights | 2,772,584,448 | Real-overlay .52 allocation |
+| Two native KV pairs | 67,141,632 | 2×8196×512×4×2 |
+| Two native private non-KV scratch/owner states and input buffers | 10,372,192 | Measured private delta minus KV, plus inputs |
+| **Projected complete two-session GPU requested residency** | **14,754,488,912** | Measured components; second native context not admitted with the target |
+
+The unchanged policy cap is14,495,514,624 bytes (13.5GiB). The complete two-session
+projection exceeds it by258,974,288 bytes (246.98MiB). Actual admission rejects
+at14,715,732,000 bytes, after both target sessions and their rollback shadows,
+but **before** the second native context. The earlier cold projection omitted
+28,114,944 bytes of deferred target rollback/small-N storage; it was a lower bound.
+
+Actual single-session readiness is13,982,045,224 requested /13,982,045,232 allocated
+bytes, leaving513,469,400 requested bytes below policy. Repeating target preparation
+allocates nothing further. MemAvailable at the ready sample is1,156,321,280 bytes;
+VmLck is134,217,728 bytes. Neither this single-rank load nor the synthetic
+causal/session/rollback gates replace real-ring greedy/TPS qualification.
+
+MemTotal is15,936,958,464 bytes (~14.84GiB). For the complete two-session projection,
+subtracting512MiB driver reserve and128MiB pinned n-gram hot region leaves only
+511,380,912 bytes for other host/kernel working sets, including12,140,752 bytes of
+target QSA host metadata. Do not add all process RSS to GPU residency on UMA:
+those mappings overlap. The4,200,020,730-byte n-gram file and embedding sidecar
+are pageable mappings, not additional permanently resident whole-file copies.
+The legacy manifest has no n-gram shard digest; the n-gram span instead has
+independent pinned-original-GGUF range provenance. No physical Vulkan OOM was
+reported and no fully warm two-session physical fit is certified.
+
+The independent fit implementation adds typed `PREPARE` admission on **all**
+target owners: eagerly create expert small-N scratch and each requested session's
+GDN/PLE rollback shadows, check target live residency, and on the final owner
+materialize all requested private native contexts and check their total. API
+startup does this before opening its listener or announcing readiness. A bounded
+memory denial is acknowledged without poisoning transport; the coordinator
+drains all outstanding admission ACKs before returning a denial. Four
+numerical-double eight-rank tests exercise denial/retry/idempotence, and
+native/wire/API tests cover eager provisioning and rejection before listener
+creation. No extra MTP target scratch is allocated when MTP is off. These changes
+are not in the frozen single-session performance release above.
+
+Reproduce on an owned, authenticated rank7 staging pack, without joining a ring:
+`make tools/mtp-residency`, then
+`tools/mtp-residency MANIFEST OVERLAY EMBEDDING 1` (ready, exit0) or
+`tools/mtp-residency MANIFEST OVERLAY EMBEDDING 2` (policy denial, exit3).
+Use the sealed production flags, mask330/wide1, and process-local256MiB memlock
+limit; the probe uses production allocation factories. `--native-only MANIFEST
+OVERLAY` measures isolated native allocation and explicitly is **not** a rank fit.
+`mtp_rank_source.py` and `mtp-real-place` provide bounded public-range download
+and per-tensor authenticated lossless cooking into owned staging files.
+
+**Proposed relocation if rank7 cannot admit both sessions:** rank6 (.48) has a
+measured target-only two-session footprint of10,648,701,936 bytes from the
+released B0/K1 logs. Its five GDN layers require33,095,680 bytes of two-session
+rollback shadows at the measured per-layer geometry; add1,638,400 bytes of small-N
+scratch and2,850,098,272 bytes for both native contexts. This projects13,533,534,288
+bytes, leaving961,980,336 bytes below policy. Rank7 would retain11,904,390,640 bytes
+of target-only residency including eager verification storage. This is a
+placement estimate, **not implemented or load-qualified**. It requires a distinct native
+owner in the wire/runtime, forwarding final target hyperstates from rank7 to
+rank6 with session/frontier identity, and routing draft/repair RPCs to rank6.
+Keep target verification/QSA/GDN ownership and the existing four vocabulary
+head shards unchanged. Merely changing an overlay path cannot relocate the core;
+the current implementation deliberately requires the final target owner.
+
 **Real-format component gate: PASS.** The corrected `3c84f62` engine passed .51 with the exact
 891,289,600-byte real-pack Q8 down slab:36 byte-exact native-N1 comparisons,
 wide0/1 and small-kernel masks0/330. All1,225 target records /51 family-format

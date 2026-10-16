@@ -58,6 +58,10 @@ static fg_status coordinator_mtp_rpc(fg_coordinator *c,const fg_mtp_native_work 
     fg_status status=coordinator_mtp_send_native(c,peer,work,&sequence,err);
     fg_mtp_native_ack ack;
     if(status==FG_OK)status=coordinator_mtp_ack(c,peer,c->session_id,sequence,work,&ack,err);
+    if(status==FG_OK&&ack.status!=FG_OK){
+        fg_error_set(err,ack.status,"native MTP rank %u failed startup memory admission",peer);
+        return ack.status;
+    }
     if(status==FG_OK&&ack.frontier!=expected_frontier){
         fg_error_set(err,FG_ERR_MISMATCH,"native MTP frontier %u != expected %u",
                      ack.frontier,expected_frontier);
@@ -65,6 +69,33 @@ static fg_status coordinator_mtp_rpc(fg_coordinator *c,const fg_mtp_native_work 
     }
     if(status!=FG_OK)transport_poison(&c->transport_state);
     return status;
+}
+
+static fg_status coordinator_mtp_prepare(fg_coordinator *c,uint32_t sessions,fg_error *err){
+    if(!c->mtp)return FG_OK;
+    fg_mtp_native_work work={.operation=FG_MTP_NATIVE_PREPARE,.argument=sessions};
+    uint32_t sequences[FG_RANK_COUNT]={0};
+    fg_status status=mtp_target_memory_prepare(c->owner,c->expert,sessions,
+        fg_model_vk(c->model),c->manifest->residency_cap_bytes,err);
+    if(status!=FG_OK)return status;
+    for(uint32_t peer=1u;status==FG_OK&&peer<FG_RANK_COUNT;peer++)
+        status=coordinator_mtp_send_native(c,peer,&work,&sequences[peer],err);
+    if(status!=FG_OK){transport_poison(&c->transport_state);return status;}
+    fg_status denied=FG_OK;
+    for(uint32_t peer=1u;peer<FG_RANK_COUNT;peer++){
+        fg_mtp_native_ack ack;
+        status=coordinator_mtp_ack(c,peer,c->session_id,sequences[peer],&work,&ack,err);
+        if(status==FG_OK&&ack.frontier){
+            fg_error_set(err,FG_ERR_MISMATCH,"MTP startup inherited a nonzero frontier");
+            status=FG_ERR_MISMATCH;
+        }
+        if(status!=FG_OK){transport_poison(&c->transport_state);return status;}
+        if(ack.status!=FG_OK&&denied==FG_OK){
+            denied=ack.status;
+            fg_error_set(err,denied,"native MTP rank %u failed startup memory admission",peer);
+        }
+    }
+    return denied;
 }
 
 static fg_status coordinator_mtp_create(fg_coordinator *c,bool configure,fg_error *err){

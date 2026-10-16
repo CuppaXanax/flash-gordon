@@ -31,6 +31,8 @@ MTP_RING_WRAPS = fg_vk_tensor_create fg_vk_tensor_destroy fg_vk_tensor_write fg_
  fg_owner_decode_small_n fg_owner_decode_block_chained fg_owner_prefill_layer_begin \
  fg_owner_prefill_layer_finish fg_mtp_embedding_open fg_mtp_embedding_close \
  fg_mtp_embedding_row fg_mtp_head_open_windowed fg_mtp_head_fork fg_mtp_head_close \
+ fg_mtp_head_check_residency \
+ fg_expert_prepare_small_n_scratch fg_vk_get_memory_stats \
  fg_mtp_head_frontier fg_mtp_head_reset fg_mtp_head_truncate fg_mtp_head_warm_replay \
  fg_mtp_head_step_replay
 comma := ,
@@ -123,6 +125,16 @@ tools/mtp-embedding: tools/mtp_embedding.c src/mtp_embedding.o $(TEST_COMMON)
 
 tools/mtp-real-cook: tools/mtp_real_cook.c $(TEST_COMMON)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
+tools/mtp-real-place: tools/mtp_real_place.c $(TEST_COMMON)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
+tools/mtp-residency: tools/mtp_residency.c $(filter-out src/main.o,$(OBJ)) | shaders
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
+-include tools/mtp-residency.d
+
+-include tools/mtp-real-place.d
 
 -include tools/mtp-real-cook.d
 
@@ -316,6 +328,8 @@ test-gdn-fleet: tests/test_fg_vk
 	done
 
 clean:
+	rm -f tools/mtp-residency tools/mtp-residency.d
+	rm -f tools/mtp-real-place tools/mtp-real-place.d
 	rm -f tools/mtp-real-cook tools/mtp-real-cook.d
 	rm -f tests/test_mtp_ring
 	rm -f tests/test_mtp_wire tests/test_mtp_native tests/test_mtp_embedding tools/mtp-embedding tools/mtp-embedding.d

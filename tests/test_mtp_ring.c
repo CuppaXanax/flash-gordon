@@ -159,6 +159,21 @@ fg_status __wrap_fg_mtp_head_open_windowed(fg_mtp_head **h,fg_vk_context *v,
 fg_status __wrap_fg_mtp_head_fork(fg_mtp_head **out,fg_mtp_head *h,uint32_t s,fg_error *e){
     (void)h;(void)s;return __wrap_fg_mtp_head_open_windowed(out,NULL,NULL,0,NULL,0,0,e);
 }
+fg_status __wrap_fg_mtp_head_check_residency(const fg_mtp_head *head,fg_error *err){
+    static uint32_t checks;
+    VERIFY(head);
+    if(!checks++){
+        fg_error_set(err,FG_ERR_LIMIT,"injected startup residency rejection");
+        return FG_ERR_LIMIT;
+    }
+    return FG_OK;
+}
+fg_status __wrap_fg_expert_prepare_small_n_scratch(fg_expert_executor *expert,fg_error *err){
+    (void)expert;(void)err;return FG_OK;
+}
+void __wrap_fg_vk_get_memory_stats(const fg_vk_context *vk,fg_vk_memory_stats *stats){
+    (void)vk;memset(stats,0,sizeof(*stats));
+}
 void __wrap_fg_mtp_head_close(fg_mtp_head *h){
     if(h){fg_vk_tensor_destroy(h->next);fg_vk_tensor_destroy(h->hidden);free(h);}
 }
@@ -336,6 +351,12 @@ static int run_rank(fg_manifest *m,uint32_t rank){
             c=&runtime->coordinator;
             c->output_session=slot;c->session_id=nonce[slot];fg_fabric_set_slot(f,slot);
             require(fg_owner_set_active_session(&owner,slot,&e),&e);
+            if(!slot){
+                VERIFY(coordinator_mtp_prepare(c,2u,&e)==FG_ERR_LIMIT);
+                VERIFY(transport_ready(&c->transport_state));
+                require(coordinator_mtp_prepare(c,2u,&e),&e);
+                require(coordinator_mtp_prepare(c,2u,&e),&e);
+            }
             if(slot){c->mtp=NULL;require(coordinator_mtp_create(c,false,&e),&e);}
             uint32_t seed=slot?101u:1u;
             uint32_t prefix[2]={seed,seed+1u},next[2]={seed+1u,UINT32_MAX},pos[6]={0,0,0,1,1,1};
@@ -413,7 +434,7 @@ static int run_rank(fg_manifest *m,uint32_t rank){
             fg_fabric_set_slot(f,slot);require(fg_owner_set_active_session(&owner,slot,&e),&e);
             fg_status status=FG_ERR_FORMAT;
             if(type==FG_MSG_MTP_NATIVE_WORK)
-                status=handle_mtp_native_work(f,m,rank,nonce[slot],peer,&header,
+                status=handle_mtp_native_work(f,&owner,m,rank,nonce[slot],peer,&header,
                     context.result_wire,bytes,&context,&e);
             else if(type==FG_MSG_MTP_PREFILL_WORK)
                 status=handle_prefill_layer_work(f,&owner,m,rank,nonce[slot],peer,

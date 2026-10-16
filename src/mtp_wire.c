@@ -21,7 +21,7 @@ static fg_status malformed(fg_error *err,const char *what){
     fg_error_set(err,FG_ERR_FORMAT,"invalid MTP %s",what);return FG_ERR_FORMAT;
 }
 static bool operation_valid(fg_mtp_native_operation op){
-    return op>=FG_MTP_NATIVE_CONFIG&&op<=FG_MTP_NATIVE_ADVANCE;
+    return op>=FG_MTP_NATIVE_CONFIG&&op<=FG_MTP_NATIVE_PREPARE;
 }
 fg_status fg_mtp_prefill_tokens_encode(uint8_t *wire,uint32_t capacity,
     uint32_t *bytes,const uint32_t *next_tokens,uint32_t count,fg_error *err){
@@ -118,6 +118,11 @@ static fg_status native_shape(const fg_mtp_native_work *w,uint32_t *rows,
                w->count!=1u||w->argument||w->limit)
                 return malformed(err,"advance range");
             *rows=1u;break;
+        case FG_MTP_NATIVE_PREPARE:
+            if(w->first_token||w->count||w->limit||
+               !w->argument||w->argument>2u)
+                return malformed(err,"session admission");
+            break;
         default:return malformed(err,"native operation");
     }
     if(*rows&&!w->tokens)return malformed(err,"token storage");
@@ -181,23 +186,31 @@ fg_status fg_mtp_native_work_decode(fg_mtp_native_work *w,uint32_t *tokens,
     return FG_OK;
 }
 
+static bool ack_status_valid(fg_mtp_native_operation operation,fg_status status){
+    return status==FG_OK||(operation==FG_MTP_NATIVE_PREPARE&&
+        (status==FG_ERR_LIMIT||status==FG_ERR_OOM));
+}
 fg_status fg_mtp_native_ack_encode(uint8_t out[FG_MTP_NATIVE_ACK_BYTES],
     const fg_mtp_native_ack *a,fg_error *err){
-    if(!out||!a||!operation_valid(a->operation)||a->frontier>FG_NATIVE_CONTEXT)
+    if(!out||!a||!operation_valid(a->operation)||a->frontier>FG_NATIVE_CONTEXT||
+       !ack_status_valid(a->operation,a->status))
         return malformed(err,"native acknowledgement");
     memset(out,0,FG_MTP_NATIVE_ACK_BYTES);
     out[0]=FG_MTP_WIRE_VERSION;out[1]=(uint8_t)a->operation;
+    out[2]=(uint8_t)a->status;
     put32(out+4u,a->first_token);put32(out+8u,a->count);
     put32(out+12u,a->frontier);return FG_OK;
 }
 fg_status fg_mtp_native_ack_decode(fg_mtp_native_ack *a,const uint8_t *p,
     uint32_t bytes,fg_error *err){
     if(!a||!p||bytes!=FG_MTP_NATIVE_ACK_BYTES||
-       p[0]!=FG_MTP_WIRE_VERSION||p[2]||p[3]||
+       p[0]!=FG_MTP_WIRE_VERSION||p[3]||
        !operation_valid((fg_mtp_native_operation)p[1])||
+       !ack_status_valid((fg_mtp_native_operation)p[1],(fg_status)p[2])||
        get32(p+12u)>FG_NATIVE_CONTEXT)return malformed(err,"native acknowledgement");
     *a=(fg_mtp_native_ack){.operation=(fg_mtp_native_operation)p[1],
-        .first_token=get32(p+4u),.count=get32(p+8u),.frontier=get32(p+12u)};
+        .first_token=get32(p+4u),.count=get32(p+8u),.frontier=get32(p+12u),
+        .status=(fg_status)p[2]};
     return FG_OK;
 }
 

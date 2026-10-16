@@ -36,6 +36,7 @@ fg_status fg_mtp_head_fork(fg_mtp_head **out,fg_mtp_head *source,
 void fg_mtp_head_close(fg_mtp_head *head);
 uint32_t fg_mtp_head_frontier(const fg_mtp_head *head);
 uint64_t fg_mtp_head_weight_bytes(const fg_mtp_head *head);
+fg_status fg_mtp_head_check_residency(const fg_mtp_head *head,fg_error *err);
 fg_status fg_mtp_head_truncate(fg_mtp_head *head,uint32_t cells,fg_error *err);
 fg_status fg_mtp_head_reset(fg_mtp_head *head,uint32_t first_cell,fg_error *err);
 /* Cell c consumes target HC[c] and embedding(token[c+1]), predicts token[c+2].

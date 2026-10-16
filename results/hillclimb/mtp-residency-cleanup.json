@@ -1,0 +1,6 @@
+{
+  "IP": "192.168.42.52",
+  "ExitCode": 0,
+  "Stdout": "FGFLAGS code=55 test=35 doc=84 removed=18 status=PASS\n/etc/cyan-skillfish-governor-smu/config.toml: OK\n{\"owned_executables\": []}\nowned root absent: check1\nowned root absent: check2\ngovernor active and original config unchanged after cleanup",
+  "Stderr": ""
+}

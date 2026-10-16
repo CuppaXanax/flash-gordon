@@ -2909,7 +2909,7 @@ static fg_status rank_worker_loop(fg_fabric *fabric,fg_owner_executor *owner,fg_
             status=handle_mtp_verify_work(fabric,owner,manifest,self,session_id,peer,
                 &header,payload,bytes,&layer_work,&depthb,err);
         else if(type==FG_MSG_MTP_NATIVE_WORK)
-            status=handle_mtp_native_work(fabric,manifest,self,session_id,peer,
+            status=handle_mtp_native_work(fabric,owner,manifest,self,session_id,peer,
                 &header,payload,bytes,&layer_work,err);
         else if(type==FG_MSG_MTP_HEAD_WORK)
             status=handle_mtp_head_work(fabric,manifest,self,session_id,peer,
@@ -3044,6 +3044,130 @@ fg_status fg_rank_main(const char *path,uint32_t rank,fg_error *err){
     }
     free(manifest);
     return status;
+}
+
+static uint64_t residency_proc_bytes(const char *path,const char *key){
+    FILE *file=fopen(path,"r");if(!file)return 0u;
+    char line[256];unsigned long long kib=0u;size_t length=strlen(key);
+    while(fgets(line,sizeof(line),file))
+        if(!strncmp(line,key,length)&&sscanf(line+length,"%llu",&kib)==1)break;
+    fclose(file);return (uint64_t)kib*1024u;
+}
+
+static void residency_stage(fg_model *model,fg_owner_executor *owner,const char *stage){
+    fg_vk_memory_stats memory={0};
+    fg_vk_get_memory_stats(fg_model_vk(model),&memory);
+    printf("{\"stage\":\"%s\",\"requested\":%llu,\"allocated\":%llu,"
+           "\"peak_requested\":%llu,\"qsa_host\":%llu,\"mem_total\":%llu,"
+           "\"mem_available\":%llu,\"vm_rss\":%llu,\"vm_locked\":%llu}\n",stage,
+        (unsigned long long)memory.requested_live_bytes,
+        (unsigned long long)memory.allocated_live_bytes,
+        (unsigned long long)memory.requested_peak_bytes,
+        (unsigned long long)fg_owner_qsa_host_bytes(owner),
+        (unsigned long long)residency_proc_bytes("/proc/meminfo","MemTotal:"),
+        (unsigned long long)residency_proc_bytes("/proc/meminfo","MemAvailable:"),
+        (unsigned long long)residency_proc_bytes("/proc/self/status","VmRSS:"),
+        (unsigned long long)residency_proc_bytes("/proc/self/status","VmLck:"));
+    fflush(stdout);
+}
+
+fg_status fg_runtime_probe_mtp_residency(const char *path,const char *overlay,
+    const char *embedding,uint32_t sessions,fg_error *err){
+    if(!path||!overlay||!embedding||!sessions||sessions>FG_OWNER_SESSION_MAX){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid MTP residency probe");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_manifest *manifest=NULL;char directory[1024];
+    fg_status status=load_checked(path,&manifest,err);
+    if(status==FG_OK)status=manifest_directory(path,directory,err);
+    fg_model *model=NULL;fg_expert_executor *expert=NULL;
+    fg_owner_executor *owner=NULL;fg_output_hc *hc=NULL;
+    fg_ngram_resident *ngram=NULL;fg_mtp_native *native=NULL;
+    prefill_worker_buffers prefill={0};layer_work_context work={0};
+    qsa_owner_runtime qsa[FG_OWNER_SESSION_MAX]={0};
+    uint32_t rank=status==FG_OK?manifest->layer_owner[FG_LAYER_COUNT-1u]:0u;
+    if(status==FG_OK&&rank!=7u){
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"rank7 final-owner probe only");status=FG_ERR_UNAVAILABLE;
+    }
+    if(status==FG_OK)status=fg_model_open(&model,manifest,directory,rank,err);
+    if(status==FG_OK)residency_stage(model,NULL,"real_weights");
+    if(status==FG_OK)status=fg_expert_executor_create(&expert,model,err);
+    if(status==FG_OK)status=fg_owner_executor_create_worker_slots(
+        &owner,model,FG_OWNER_SESSION_MAX,err);
+    if(status==FG_OK)status=fg_output_hc_create(&hc,model,directory,true,err);
+    if(status==FG_OK)residency_stage(model,owner,"owner_expert_hc");
+    uint64_t row_begin=0u,row_count=0u;char ngram_path[1200];
+    if(status==FG_OK)status=fg_q38_ngram_rank_range(rank,&row_begin,&row_count,err);
+    if(status==FG_OK&&snprintf(ngram_path,sizeof(ngram_path),
+       "%s/ngram-rank-%02u.iq4nl",directory,rank)>=(int)sizeof(ngram_path)){
+        fg_error_set(err,FG_ERR_LIMIT,"residency ngram path");status=FG_ERR_LIMIT;
+    }
+    if(status==FG_OK)status=fg_ngram_resident_open(
+        &ngram,ngram_path,row_begin,row_count,err);
+    if(status==FG_OK)status=prefill_worker_buffers_create(
+        &prefill,manifest->prefill_microbatch,false,err);
+    if(status==FG_OK)status=layer_work_context_create(
+        &work,model,owner,manifest,expert,&prefill,err);
+    if(status==FG_OK)status=token_profile_prepare(fg_model_vk(model),err);
+    if(status==FG_OK)status=fg_mtp_native_create(
+        &native,fg_model_vk(model),manifest,rank,err);
+    uint32_t logical=status==FG_OK?manifest->session.logical_context_tokens:0u;
+    fg_mtp_native_ack ack;
+    for(uint32_t slot=0;status==FG_OK&&slot<sessions;slot++){
+        status=qsa_owner_runtime_create(&qsa[slot],manifest,rank,err);
+        if(status==FG_OK){
+            int count=snprintf(qsa[slot].state_path,sizeof(qsa[slot].state_path),
+                "%s/residency-qsa-s%u.state",directory,slot);
+            if(count<0||(size_t)count>=sizeof(qsa[slot].state_path)){
+                fg_error_set(err,FG_ERR_LIMIT,"residency state path");status=FG_ERR_LIMIT;
+            }
+        }
+        if(status==FG_OK)status=fg_qsa_state_open(&qsa[slot].state,
+            qsa[slot].state_path,qsa[slot].layers,qsa[slot].layer_count,logical,true,err);
+        if(status==FG_OK)status=fg_owner_set_active_session(owner,slot,err);
+        if(status==FG_OK)status=worker_open_qsa_state(
+            owner,&qsa[slot],manifest,directory,rank,logical,NULL,err);
+        if(status==FG_OK)residency_stage(model,owner,slot?"target_session1":"target_session0");
+        if(status==FG_OK&&!slot){
+            fg_mtp_native_work config={.operation=FG_MTP_NATIVE_CONFIG,
+                .overlay=overlay,.count=(uint32_t)strlen(overlay),
+                .embedding_file=embedding,.argument=logical,
+                .limit=logical<8192u?logical:8192u};
+            status=fg_mtp_native_run(native,0u,&config,NULL,&ack,err);
+            if(status==FG_OK)residency_stage(model,owner,"native_session0");
+        }
+    }
+    if(status==FG_OK){
+        status=mtp_target_memory_prepare(owner,expert,sessions,fg_model_vk(model),
+            manifest->residency_cap_bytes,err);
+        residency_stage(model,owner,status==FG_OK?"target_verify_ready":
+                                                "target_admission_rejected");
+        if(status==FG_OK){
+            fg_vk_memory_stats before,after;
+            fg_vk_get_memory_stats(fg_model_vk(model),&before);
+            status=mtp_target_memory_prepare(owner,expert,sessions,fg_model_vk(model),
+                manifest->residency_cap_bytes,err);
+            fg_vk_get_memory_stats(fg_model_vk(model),&after);
+            if(status==FG_OK&&(before.requested_live_bytes!=after.requested_live_bytes||
+               before.allocated_live_bytes!=after.allocated_live_bytes||
+               before.live_allocations!=after.live_allocations)){
+                fg_error_set(err,FG_ERR_MISMATCH,"target readiness allocated on retry");
+                status=FG_ERR_MISMATCH;
+            }
+        }
+    }
+    if(status==FG_OK){
+        fg_mtp_native_work prepare={.operation=FG_MTP_NATIVE_PREPARE,.argument=sessions};
+        status=fg_mtp_native_run(native,0u,&prepare,NULL,&ack,err);
+        residency_stage(model,owner,status==FG_OK?"native_all_ready":"native_admission_rejected");
+    }
+    fg_mtp_native_close(native);
+    for(uint32_t slot=0;slot<FG_OWNER_SESSION_MAX;slot++)
+        qsa_owner_runtime_destroy(&qsa[slot]);
+    layer_work_context_destroy(&work);prefill_worker_buffers_destroy(&prefill);
+    fg_ngram_resident_close(ngram);fg_output_hc_destroy(hc);
+    fg_owner_executor_destroy(owner);fg_expert_executor_destroy(expert);
+    fg_model_close(model);free(manifest);return status;
 }
 
 typedef struct qsa_page_transport {
@@ -5889,6 +6013,8 @@ fg_status fg_runtime_open_with_options(fg_runtime **out,const char *path,
     if(status==FG_OK)status=runtime_reset_state(runtime,FG_PREFIX_RESET_COLD_START,err);
     if(status==FG_OK&&runtime->coordinator.mtp)
         status=runtime_mtp_policy_init(runtime,err);
+    if(status==FG_OK&&runtime->options.sessions!=2u)
+        status=coordinator_mtp_prepare(&runtime->coordinator,1u,err);
     if(status!=FG_OK){fg_runtime_close(runtime);return status;}*out=runtime;return FG_OK;
 }
 
@@ -6003,6 +6129,7 @@ fg_status fg_runtime_enable_pipeline(fg_runtime *runtime,fg_runtime **second,fg_
         copy->context_limit,coordinator_qsa_cache_pages(copy->manifest,&copy->options),err);
     if(status==FG_OK)status=runtime_reset_state(copy,FG_PREFIX_RESET_COLD_START,err);
     if(status==FG_OK)status=coordinator_begin_session(&copy->coordinator,err);
+    if(status==FG_OK)status=coordinator_mtp_prepare(&copy->coordinator,2u,err);
     if(status==FG_OK)*second=copy;
     else fg_runtime_close(copy);
     fg_error ignored={0};fg_runtime_activate(runtime,&ignored);

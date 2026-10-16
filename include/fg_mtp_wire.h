@@ -28,7 +28,8 @@ typedef enum fg_mtp_native_operation {
     FG_MTP_NATIVE_PREFIX = 2,
     FG_MTP_NATIVE_DRAFT = 3,
     FG_MTP_NATIVE_FINISH = 4,
-    FG_MTP_NATIVE_ADVANCE = 5
+    FG_MTP_NATIVE_ADVANCE = 5,
+    FG_MTP_NATIVE_PREPARE = 6
 } fg_mtp_native_operation;
 
 /* FINISH has count-1 token IDs; CONFIG has overlay and target-embedding paths.
@@ -44,6 +45,7 @@ typedef struct fg_mtp_native_work {
 typedef struct fg_mtp_native_ack {
     fg_mtp_native_operation operation;
     uint32_t first_token,count,frontier;
+    fg_status status;
 } fg_mtp_native_ack;
 
 typedef enum fg_mtp_head_kind {

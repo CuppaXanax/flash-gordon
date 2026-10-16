@@ -13,7 +13,8 @@ struct fg_mtp_head {
 };
 typedef struct warm_record {uint32_t slot,cell;float hyper,embedding;} warm_record;
 static warm_record warmed[128];
-static uint32_t warm_count,opens,forks;
+static uint32_t warm_count,opens,forks,admission_checks;
+static bool admission_rejected;
 static unsigned failures;
 #define CHECK(x) do{if(!(x)){fprintf(stderr,"%s:%d: %s\n",__FILE__,__LINE__,#x);failures++;}}while(0)
 
@@ -55,6 +56,10 @@ fg_status fg_mtp_head_open_windowed(fg_mtp_head **out,fg_vk_context *vk,
 }
 fg_status fg_mtp_head_fork(fg_mtp_head **out,fg_mtp_head *source,uint32_t slot,fg_error *err){
     CHECK(source!=NULL);forks++;return mock_head(out,slot,err);
+}
+fg_status fg_mtp_head_check_residency(const fg_mtp_head *head,fg_error *err){
+    (void)err;CHECK(head!=NULL);admission_checks++;
+    return admission_rejected?FG_ERR_LIMIT:FG_OK;
 }
 void fg_mtp_head_close(fg_mtp_head *h){
     if(h){fg_vk_tensor_destroy(h->next);fg_vk_tensor_destroy(h->hidden);free(h);}
@@ -112,6 +117,15 @@ int main(void){
         .embedding_file="embedding.fgme",.count=11u,.argument=8192u,.limit=3u};
     CHECK(fg_mtp_native_run(other,0u,&cfg,hidden,&ack,&err)==FG_OK&&opens==0u);
     CHECK(fg_mtp_native_run(n,0u,&cfg,hidden,&ack,&err)==FG_OK&&opens==1u);
+    CHECK(run(n,0u,FG_MTP_NATIVE_PREPARE,0u,0u,1u,0u,NULL,NULL,&ack,&err)==FG_OK);
+    CHECK(admission_checks==1u&&forks==0u);
+    CHECK(run(n,0u,FG_MTP_NATIVE_PREPARE,0u,0u,2u,0u,NULL,NULL,&ack,&err)==FG_OK);
+    CHECK(admission_checks==2u&&forks==1u);
+    admission_rejected=true;
+    CHECK(run(n,0u,FG_MTP_NATIVE_PREPARE,0u,0u,2u,0u,NULL,NULL,&ack,&err)==FG_ERR_LIMIT);
+    admission_rejected=false;
+    CHECK(run(n,0u,FG_MTP_NATIVE_PREPARE,0u,0u,2u,0u,NULL,NULL,&ack,&err)==FG_OK);
+    CHECK(forks==1u&&opens==1u);
     fg_mtp_native_work malformed={.operation=FG_MTP_NATIVE_DRAFT,.count=1u};
     CHECK(fg_mtp_native_run(n,0u,&malformed,hidden,&ack,&err)!=FG_OK);
     malformed=(fg_mtp_native_work){.operation=FG_MTP_NATIVE_CONFIG};

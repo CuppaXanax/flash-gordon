@@ -194,6 +194,8 @@ const char *fg_execution_mode_name(fg_execution_mode mode);
 fg_mtp_capability fg_runtime_mtp_capability(const fg_runtime *runtime);
 
 fg_status fg_rank_main(const char *manifest_path, uint32_t rank, fg_error *err);
+fg_status fg_runtime_probe_mtp_residency(const char *manifest_path,
+    const char *overlay,const char *embedding,uint32_t sessions,fg_error *err);
 /* Test-only depth-B parity gate: two canned conversations run at depth 1 and
  * interleaved through the B=2 ring, with exact token/logit/state comparison and
  * an injected abort-retry.  Not part of the serving path. */

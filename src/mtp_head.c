@@ -469,7 +469,10 @@ fg_status fg_mtp_head_fork(fg_mtp_head **out,fg_mtp_head *source,
     uint64_t needed=(uint64_t)source->capacity*512u*4u*2u+(16u<<20u);
     if(memory.requested_live_bytes>source->residency_cap||
        needed>source->residency_cap-memory.requested_live_bytes){
-        fg_error_set(err,FG_ERR_LIMIT,"native MTP session KV/scratch exceed residency cap");
+        fg_error_set(err,FG_ERR_LIMIT,
+            "native MTP session residency: live=%llu needed=%llu cap=%llu",
+            (unsigned long long)memory.requested_live_bytes,
+            (unsigned long long)needed,(unsigned long long)source->residency_cap);
         return FG_ERR_LIMIT;
     }
     fg_mtp_head *h=calloc(1,sizeof(*h));
@@ -487,6 +490,18 @@ fg_status fg_mtp_head_fork(fg_mtp_head **out,fg_mtp_head *source,
     if(status==FG_OK)status=allocate_scratch(h,err);
     if(status!=FG_OK){fg_mtp_head_close(h);return status;}
     *out=h;return FG_OK;
+}
+
+fg_status fg_mtp_head_check_residency(const fg_mtp_head *h,fg_error *err){
+    if(!h){fg_error_set(err,FG_ERR_ARGUMENT,"missing native MTP head");return FG_ERR_ARGUMENT;}
+    fg_vk_memory_stats memory={0};fg_vk_get_memory_stats(h->vk,&memory);
+    if(memory.requested_live_bytes>h->residency_cap){
+        fg_error_set(err,FG_ERR_LIMIT,"native MTP readiness: live=%llu cap=%llu",
+            (unsigned long long)memory.requested_live_bytes,
+            (unsigned long long)h->residency_cap);
+        return FG_ERR_LIMIT;
+    }
+    return FG_OK;
 }
 
 void fg_mtp_head_close(fg_mtp_head *h){

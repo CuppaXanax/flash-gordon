@@ -95,6 +95,19 @@ int main(void){
     CHECK(fg_mtp_native_ack_encode(wire,&ack,&err)==FG_OK);
     CHECK(fg_mtp_native_ack_decode(&read_ack,wire,FG_MTP_NATIVE_ACK_BYTES,&err)==FG_OK);
     CHECK(read_ack.frontier==72u&&read_ack.count==3u);
+    ack.status=FG_ERR_LIMIT;
+    CHECK(fg_mtp_native_ack_encode(wire,&ack,&err)!=FG_OK);
+    ack=(fg_mtp_native_ack){.operation=FG_MTP_NATIVE_PREPARE,.status=FG_ERR_LIMIT};
+    CHECK(fg_mtp_native_ack_encode(wire,&ack,&err)==FG_OK);
+    CHECK(fg_mtp_native_ack_decode(&read_ack,wire,FG_MTP_NATIVE_ACK_BYTES,&err)==FG_OK);
+    CHECK(read_ack.status==FG_ERR_LIMIT);
+    wire[2]=255u;
+    CHECK(fg_mtp_native_ack_decode(&read_ack,wire,FG_MTP_NATIVE_ACK_BYTES,&err)!=FG_OK);
+    for(uint32_t sessions=0u;sessions<=3u;sessions++){
+        fg_mtp_native_work prepare={.operation=FG_MTP_NATIVE_PREPARE,.argument=sessions};
+        fg_status status=fg_mtp_native_work_encode(wire,capacity,&bytes,&prepare,&err);
+        CHECK((status==FG_OK)==(sessions==1u||sessions==2u));
+    }
     for(uint32_t type=FG_MSG_MTP_VERIFY_WORK;type<=FG_MSG_MTP_PREFILL_WORK;type++){
         fg_frame_header header;
         CHECK(fg_frame_encode_version(&header,6u,(fg_message_type)type,22u,1u,

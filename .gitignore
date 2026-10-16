@@ -52,6 +52,10 @@ tools/mtp-embedding
 tools/mtp-embedding.d
 tools/mtp-real-cook
 tools/mtp-real-cook.d
+tools/mtp-real-place
+tools/mtp-real-place.d
+tools/mtp-residency
+tools/mtp-residency.d
 tests/test_mtp_capture_io
 tools/mtp-acceptance
 tools/mtp-acceptance.d
