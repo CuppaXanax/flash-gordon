@@ -1,5 +1,14 @@
 # MTP: native head, causal verification and remaining execution gates
 
+Latest: [production roadmap and authorized diagnostic](MTP_TO_PROD.md).
+The 2026-10-16 lease measured actual N4 application frames, but its local-head
+retry failed before a completed MTP round; no new on/off TPS claim is made.
+All eight original sessions2/wide1 services were restored/verified and scratch
+removed; final release verification20:23:07Z. User policy now permits
+**below-Q4 draft layer/head weights only**; the target remains≥Q4.
+The roadmap includes low-bit draft residency and rank7 future-window overlap;
+neither is implemented or qualified.
+
 ## Revised numerical gate and local-chain candidate
 
 **Policy update: N1/N4 arithmetic alignment is not required.** This supersedes

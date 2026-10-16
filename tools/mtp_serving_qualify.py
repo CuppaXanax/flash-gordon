@@ -199,10 +199,15 @@ def summarize(args):
     phases = ["A0", "K1", "A1", "K2", "A2", "K3", "A3"]
     expanded = (directory / "B0-perf.json").exists()
     single = (directory / "D3-perf.json").exists()
+    n4_only = (directory / "F3-perf.json").exists() and not single
+    if n4_only:
+        single = True
     if expanded:
         phases = ["A0", "B0", "K1", "S1", "A1", "K2", "S2", "A2", "K3", "S3", "A3"]
     if single:
         phases = ["A0", "D3", "A1", "F1", "A2", "F2", "A3", "F3", "A4"]
+    if n4_only:
+        phases = ["A0", "F3", "A1"]
     data = {phase: json.loads((directory / f"{phase}-perf.json").read_text(encoding="utf-8"))
             for phase in phases}
     comparisons = []
@@ -211,6 +216,8 @@ def summarize(args):
         arms = [(2, 0, 4), (3, 0, 4), (5, 4, 7), (6, 4, 7), (8, 7, 10), (9, 7, 10)]
     if single:
         arms = [(1, 0, 2), (3, 2, 4), (5, 4, 6), (7, 6, 8)]
+    if n4_only:
+        arms = [(1, 0, 2)]
     for index, left, right in arms:
         phase = phases[index]
         before, candidate, after = (data[phases[i]]["rows"] for i in (left, index, right))

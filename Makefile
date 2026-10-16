@@ -144,6 +144,11 @@ tools/bench-mtp-chain: tools/bench_mtp_chain.c $(filter-out src/main.o,$(OBJ)) |
 
 -include tools/bench-mtp-chain.d
 
+tools/bench-mtp-transport: tools/bench_mtp_transport.c src/protocol.c src/util.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ $^ -lm
+
+-include tools/bench-mtp-transport.d
+
 tools/mtp-tokens: tools/mtp_tokens.c $(TEST_COMMON)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
 
@@ -352,6 +357,7 @@ test-gdn-fleet: tests/test_fg_vk
 	done
 
 clean:
+	rm -f tools/bench-mtp-transport tools/bench-mtp-transport.d
 	rm -f tools/bench-mtp-chain tools/bench-mtp-chain.d
 	rm -f tools/mtp-offline tools/mtp-offline.d
 	rm -f tools/mtp-native-replay tools/mtp-native-replay.d

@@ -1810,6 +1810,12 @@ static uint32_t owned_qsa_layers(const fg_manifest *manifest,uint32_t rank){
 static uint32_t worker_qsa_cache_pages(uint32_t layers,uint32_t full_pages){
     if(!layers)return 0u;
     uint64_t mib=FG_QSA_WORKER_CACHE_MIB;
+    const char *cache_limit=getenv("FG_QSA_WORKER_CACHE_MIB");
+    if(cache_limit&&*cache_limit){
+        char *end=NULL;unsigned long value=strtoul(cache_limit,&end,10);
+        if(end!=cache_limit&&!*end&&value>=16u&&value<=FG_QSA_WORKER_CACHE_MIB)
+            mib=value;
+    }
     if(mib>(FG_RUNTIME_QSA_CACHE_MAX_BYTES>>20u))
         mib=FG_RUNTIME_QSA_CACHE_MAX_BYTES>>20u;
     uint64_t pages=(mib<<20u)/FG_QSA_PAGE_RECORD_BYTES;

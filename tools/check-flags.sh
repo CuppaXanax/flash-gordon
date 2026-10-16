@@ -69,6 +69,7 @@ expected_code="$(printf '%s\n' \
     FG_QSA_LOCALITY_TRACE \
     FG_QSA_PREFETCH_TRACE \
     FG_QSA_WARM_TRACE \
+    FG_QSA_WORKER_CACHE_MIB \
     FG_RING_TRACE \
     FG_ROOFLINE \
     FG_ROOF_DENSE \

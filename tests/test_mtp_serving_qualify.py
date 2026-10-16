@@ -41,6 +41,10 @@ class ServingClientTest(unittest.TestCase):
         self.assertTrue(plan["diagnosticOnly"])
         self.assertEqual(plan["candidateSessions"], 1)
         self.assertEqual(plan["candidateQsaPageCacheMiB"], 440)
+        result = subprocess.run(command+["-Action", "Plan", "-Profile", "SingleSessionPerf",
+            "-DiagnosticGreedy", "-N4Diagnostic"], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([p[0] for p in json.loads(result.stdout)["phases"]], ["A0", "F3", "A1"])
         result = subprocess.run(command+["-Action", "Run", "-LeaseConfirmed",
             "-LeaseId", "mock-new-policy"], capture_output=True, text=True, timeout=30)
         self.assertNotEqual(result.returncode, 0)
@@ -138,6 +142,7 @@ class ServingClientTest(unittest.TestCase):
             "MTP_ROUND slot=1 first=3 k=3 accepted=3 emitted=4 consumed=4 ms=20.0\n",
             encoding="utf-8")
         CLIENT.summarize(types.SimpleNamespace(directory=str(self.root)))
+
         summary = json.loads((self.root / "serving-summary.json").read_text(encoding="utf-8"))
         for comparison in summary["comparisons"]:
             for result in comparison["bracketed_tps_ratios"].values():
@@ -156,6 +161,16 @@ class ServingClientTest(unittest.TestCase):
         for comparison in expanded["comparisons"]:
             for result in comparison["bracketed_tps_ratios"].values():
                 self.assertEqual(result["paired_median"], 2)
+
+    def test_n4_diagnostic_brackets(self):
+        for phase, scale in (("A0", 1), ("F3", 2), ("A1", 1)):
+            rows = [dict(case=kind+"-0", repeat=0, category=kind, decode_tps=30*scale)
+                    for kind in ("chat", "code")]
+            (self.root / f"{phase}-perf.json").write_text(json.dumps(dict(rows=rows)))
+        CLIENT.summarize(types.SimpleNamespace(directory=str(self.root)))
+        result = json.loads((self.root / "serving-summary.json").read_text())
+        self.assertEqual([r["phase"] for r in result["comparisons"]], ["F3"])
+        self.assertEqual(result["comparisons"][0]["bracketed_tps_ratios"]["code"]["paired_median"], 2)
 
     def test_single_session_perf_is_serial(self):
         args = types.SimpleNamespace(suite="perf", single_session=True, base="unused",

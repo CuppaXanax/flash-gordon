@@ -170,6 +170,7 @@ start-serving)
     [[ "$local_head" =~ ^[01]$ ]]
     [[ "$qsa_cache" == 440 || "$qsa_cache" == 700 ]]
     [[ ! -e "$root/candidate.pid" && ! -e "$root/watchdog.cancel" ]]
+    find "$root/pack" -maxdepth 1 -type f -name 'qsa*.state' -delete
     [[ "$(( $(date +%s)+30 ))" -lt "$(cat "$root/lease.deadline")" ]]
     command=(rank --manifest "$root/pack/manifest.fgm" --rank "$rank")
     trace=()
@@ -195,6 +196,7 @@ start-serving)
             FG_ROOF_HC=96 FG_ROOF_RECURRENT=3 FG_ROOF_GDN=1 \
             FG_NGRAM_LOCAL_CACHE=1 FG_DECODE_SUBMIT_GROUP=2 "${trace[@]}" \
             FG_SMALL_KERNELS="$small" FG_DECODE_MS=1 \
+            FG_QSA_WORKER_CACHE_MIB="$qsa_cache" \
             "$root/release/flash-gordon" "${command[@]}"
     ) >"$root/serving-$phase-rank-$rank.log" 2>&1 </dev/null &
     echo "$!" > "$root/candidate.pid"
@@ -255,6 +257,7 @@ evidence)
         rank-*.log serving-*.log serving-*.json watchdog*.log lease.sh
         capture-hashes.sha256 pack/manifest.fgm release/release.sha256)
     if [[ -f capture/cases.tsv ]]; then files+=(capture/cases.tsv); fi
+    if [[ -f transport.jsonl ]]; then files+=(transport.jsonl transport/bench); fi
     tar -czf final-evidence.tar.gz "${files[@]}"
     sha256sum final-evidence.tar.gz
     ;;

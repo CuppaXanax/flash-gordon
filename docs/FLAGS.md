@@ -168,6 +168,7 @@ slice ranks (the foreign loader names the exact missing span at startup).
 | `FG_PROFILE_TOKEN` | unset (off) | Selects a single token index; enables the detailed per-token captures below. | profiling |
 | `FG_NGRAM_VERIFY` | unset (off) | Verified n-gram row comparison for the `FG_PROFILE_TOKEN` token. | profiling |
 | `FG_QSA_WARM_TRACE` | unset (off) | QSA cache warming trace. | profiling |
+| `FG_QSA_WORKER_CACHE_MIB` | `640` | Worker QSA record-cache ceiling in MiB, clamped to each rank's complete page set. Integer overrides16..640 are accepted; invalid values retain the default. Use the same limit on both arms of memory-constrained diagnostics. Does not change logical context or the coordinator CLI cache. | variant (opt-in) |
 | `FG_NGRAM_LOCALITY_TRACE` | unset (off) | n-gram locality summary. | profiling |
 | `FG_QSA_LOCALITY_TRACE` | unset (off) | QSA locality report on every rank: `summary` at reset/close, `token` adds one keyed digest per QSA layer/token. Append `+prefill` to include prefill selections (slow and noisy at long context). Models the decode page stream by default; allocates nothing when off. | profiling |
 | `FG_QSA_LOCALITY_MIB` | `16,32,64,128,256,512,1024` | Comma-list of curve budgets used by the locality report. | profiling |

@@ -1,0 +1,31 @@
+{
+  "base": "bc75b750995e9302d309161799541da10b6bcd4c",
+  "binary_sha256": "67602b4ac100c1b608aea5747e464f9c99fcb68019e7b23f7f9659eb8afdcf58",
+  "scope": "Incomplete diagnostic, no promotion; both failures preserved",
+  "archive_sha256": "e6aea7f1a04e7c5679468c850919cca6370c6e2fbb1e258e671f306fe32a2d46",
+  "archive_bytes": 16656165,
+  "report_sha256": "6b97302bc3964098abac9be43b0b72bd63848cc388eb9f184589d42810fb8a0c",
+  "source_inputs_sha256": {
+    "Makefile": "9a4d628100bf2b65bc0af4026c2bd497da597bf270575a8d3a2b829f3753fb08",
+    "src/runtime.c": "baa0fda666c4cbd9674e10e9b0d9bffbb233918fe60a298cadbb4a68a3ff20c4",
+    "docs/FLAGS.md": "2de34d901f45fe2d32fd68c908733dcc62d4100f33ccd8713c86798edcf84944",
+    "docs/MTP.md": "1d889ea94023414c21790c311e176c9fdd013b205d6f9c872e9e834657489384",
+    "docs/MTP_TO_PROD.md": "b3bf7a049d7c9d46dc607f9c00e189fcd73d688c1199200398804da249823ebf",
+    "tools/Invoke-MTPServingQualification.ps1": "e2ad48121dc7912d241f48b69e2172f3c65891b1843a8e7afed1bc09e4444b39",
+    "tools/mtp-lease-guard.sh": "4225e119fe47188b9db7cea66c23bf91661221ae2ca046ec306d228009e92651",
+    "tools/mtp_serving_qualify.py": "79f7266fc2e262ed17eef7385da38da24ab4f1fb29848eccda10f6fcd9dd27e8",
+    "tools/check-flags.sh": "bc4a487741643490a5d4db019890cf421facf6c75d55f69dc8d637bb6f2c096b",
+    "tools/bench_mtp_transport.c": "c82802d65e86fc1f1713cbf8dbf3a3de2c94cb0476a602d6364787b1d353e952",
+    "tools/mtp_live_analyze.py": "d166533dde55318a01df0ed48d9faabe074960f87b55c6d70c72f2f715ffd408",
+    "tests/test_mtp_live_analyze.py": "bb80bebdf68ea751e01ddaecd6b9cb78cf36f2028a3ebb0a8c855ed5a787a6cf",
+    "tests/test_mtp_serving_qualify.py": "93a62257a6592f26d1b3c30230eca19ca5ac2d3de3fc36c45242ca1d4499e6b2"
+  },
+  "release": {
+    "granted": "2026-10-16T19:56:06Z",
+    "absolute_deadline": "2026-10-16T20:41:06Z",
+    "released_verified": "2026-10-16T20:23:07Z",
+    "final_verification_sha256": "7f88feaa45f2be2baa6ae6e89f79c0aef8410e310628460dd6f910a37a751d51"
+  },
+  "audit_source_sha256": "98db1931e0092ca6c2e696a508386d01e596184d638e2eb9466c1bf1b840554f",
+  "validation": "27 targeted Python tests; C17-Werror build, flags gate and bounded TCP-double fixture"
+}

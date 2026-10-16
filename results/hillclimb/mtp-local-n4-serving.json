@@ -1,0 +1,515 @@
+{
+  "scope": "Incomplete diagnostic: one cold N4 pass, zero completed MTP rounds; no on/off comparison",
+  "off": {
+    "chat": {
+      "requests": 6,
+      "decode_tps": {
+        "samples": 6,
+        "mean": 31.29294652592162,
+        "median": 31.97831928050185,
+        "p95": 32.09554132538716,
+        "maximum": 32.09554132538716
+      },
+      "wall_tps": {
+        "samples": 6,
+        "mean": 24.43961778317022,
+        "median": 24.24370409633546,
+        "p95": 27.206742034674793,
+        "maximum": 27.206742034674793
+      }
+    },
+    "code": {
+      "requests": 6,
+      "decode_tps": {
+        "samples": 6,
+        "mean": 31.547621403291416,
+        "median": 31.988146368262882,
+        "p95": 32.152594347924776,
+        "maximum": 32.152594347924776
+      },
+      "wall_tps": {
+        "samples": 6,
+        "mean": 26.517540461171315,
+        "median": 26.710362843858064,
+        "p95": 27.264908169496152,
+        "maximum": 27.264908169496152
+      }
+    }
+  },
+  "mtp_decode_tps": null,
+  "live_acceptance": null,
+  "live_round_ms": null,
+  "cold_verify_compute_sum_ms": 1264.588,
+  "cold_verify_service_sum_ms": 1267.0729999999999,
+  "ranks": {
+    "0": {
+      "verify": [
+        {
+          "rank": "0",
+          "first": "22",
+          "n": "4",
+          "replay": "0",
+          "input_ms": "0.182",
+          "compute_ms": "225.732",
+          "read_ms": "0.152",
+          "forward_or_head_ms": "0.266",
+          "total_ms": "226.332",
+          "status": "0"
+        }
+      ],
+      "vocab": [
+        {
+          "rank": "0",
+          "first": "22",
+          "kind": "2",
+          "n": "4",
+          "serial_calls": "4",
+          "compute_ms": "28.499",
+          "status": "0"
+        }
+      ],
+      "native": [],
+      "memory_lines": [
+        "[rank 0] Vulkan memory: live_requested=11763341368 live_allocated=11763341376 peak_requested=11763341368 peak_allocated=11763341376 live_allocations=56"
+      ],
+      "completed_rounds": 0,
+      "tail": [
+        "RING_STAGE chunk=0 layer=6 in_flight=1 t=146.456",
+        "RING_OWN_BLOCK chunk=0 layers=6..11 ms=135.4",
+        "RING_DONE chunk=0 in_flight=0 completed=1 handle_ms=24.8 t=924.373",
+        "OWNER_TXN_MS op=3 slot=0 local_ms=0.297 send_ms=0.081 recv_ms=87.586 total_ms=87.964 status=0",
+        "MTP_VERIFY_RANK rank=0 first=22 n=4 replay=0 input_ms=0.182 compute_ms=225.732 read_ms=0.152 forward_or_head_ms=0.266 total_ms=226.332 status=0",
+        "MTP_VOCAB_STAGE rank=0 first=22 kind=2 n=4 serial_calls=4 compute_ms=28.499 status=0",
+        "OWNER_TXN_MS op=7 slot=0 local_ms=0.331 send_ms=0.080 recv_ms=0.268 total_ms=0.679 status=5",
+        "flash-gordon: distributed transport is not reusable; reopen the runtime"
+      ]
+    },
+    "1": {
+      "verify": [
+        {
+          "rank": "1",
+          "first": "22",
+          "n": "4",
+          "replay": "0",
+          "input_ms": "0.222",
+          "compute_ms": "168.665",
+          "read_ms": "0.130",
+          "forward_or_head_ms": "0.363",
+          "total_ms": "169.380",
+          "status": "0"
+        }
+      ],
+      "vocab": [
+        {
+          "rank": "1",
+          "first": "22",
+          "kind": "2",
+          "n": "4",
+          "serial_calls": "4",
+          "compute_ms": "3.612",
+          "status": "0"
+        }
+      ],
+      "native": [],
+      "memory_lines": [
+        "[rank 1] Vulkan memory: live_requested=11195123448 live_allocated=11195123456 peak_requested=11195123448 peak_allocated=11195123456 live_allocations=81"
+      ],
+      "completed_rounds": 0,
+      "tail": [
+        "[rank 1] QSA decode session: 262144 logical, 65536 cache pages, 1 layers, 20.0 MiB eager index, 309.0 MiB record cache",
+        "[rank 1] Vulkan memory: live_requested=11195123448 live_allocated=11195123456 peak_requested=11195123448 peak_allocated=11195123456 live_allocations=81",
+        "OWNER_TXN_WORK_MS rank=1 op=4 slot=0 op_ms=0.267 total_ms=0.294 status=0",
+        "MTP_VERIFY_RANK rank=1 first=22 n=4 replay=0 input_ms=0.222 compute_ms=168.665 read_ms=0.130 forward_or_head_ms=0.363 total_ms=169.380 status=0",
+        "MTP_VOCAB_STAGE rank=1 first=22 kind=2 n=4 serial_calls=4 compute_ms=3.612 status=0",
+        "MTP_NATIVE_STAGE rank=1 first=22 op=7 run_ms=0.572 ack_ms=0.036 status=0",
+        "OWNER_TXN_WORK_MS rank=1 op=8 slot=0 op_ms=0.342 total_ms=0.367 status=0",
+        "flash-gordon: io_uring operation: Connection reset by peer"
+      ]
+    },
+    "2": {
+      "verify": [
+        {
+          "rank": "2",
+          "first": "22",
+          "n": "4",
+          "replay": "0",
+          "input_ms": "0.184",
+          "compute_ms": "143.724",
+          "read_ms": "0.134",
+          "forward_or_head_ms": "0.328",
+          "total_ms": "144.370",
+          "status": "0"
+        }
+      ],
+      "vocab": [
+        {
+          "rank": "2",
+          "first": "22",
+          "kind": "2",
+          "n": "4",
+          "serial_calls": "4",
+          "compute_ms": "3.535",
+          "status": "0"
+        }
+      ],
+      "native": [],
+      "memory_lines": [
+        "[rank 2] Vulkan memory: live_requested=10439841528 live_allocated=10439841536 peak_requested=10439841528 peak_allocated=10439841536 live_allocations=78"
+      ],
+      "completed_rounds": 0,
+      "tail": [
+        "[rank 2] QSA decode session: 262144 logical, 65536 cache pages, 1 layers, 20.0 MiB eager index, 309.0 MiB record cache",
+        "[rank 2] Vulkan memory: live_requested=10439841528 live_allocated=10439841536 peak_requested=10439841528 peak_allocated=10439841536 live_allocations=78",
+        "OWNER_TXN_WORK_MS rank=2 op=4 slot=0 op_ms=0.236 total_ms=0.260 status=0",
+        "MTP_VERIFY_RANK rank=2 first=22 n=4 replay=0 input_ms=0.184 compute_ms=143.724 read_ms=0.134 forward_or_head_ms=0.328 total_ms=144.370 status=0",
+        "MTP_VOCAB_STAGE rank=2 first=22 kind=2 n=4 serial_calls=4 compute_ms=3.535 status=0",
+        "MTP_NATIVE_STAGE rank=2 first=22 op=7 run_ms=0.524 ack_ms=0.016 status=0",
+        "OWNER_TXN_WORK_MS rank=2 op=8 slot=0 op_ms=0.294 total_ms=0.318 status=0",
+        "flash-gordon: io_uring operation: Connection reset by peer"
+      ]
+    },
+    "3": {
+      "verify": [
+        {
+          "rank": "3",
+          "first": "22",
+          "n": "4",
+          "replay": "0",
+          "input_ms": "0.190",
+          "compute_ms": "144.032",
+          "read_ms": "0.071",
+          "forward_or_head_ms": "0.176",
+          "total_ms": "144.469",
+          "status": "0"
+        }
+      ],
+      "vocab": [],
+      "native": [],
+      "memory_lines": [
+        "[rank 3] Vulkan memory: live_requested=10438926120 live_allocated=10438926128 peak_requested=10438926120 peak_allocated=10438926128 live_allocations=62"
+      ],
+      "completed_rounds": 0,
+      "tail": [
+        "[rank 3] QSA Vulkan index canary: eager_segments=2 of=4 max_segment=17825792 requested=35651584 allocated=35651584 touched=35651584 bytes",
+        "[rank 3] QSA decode session: 262144 logical, 93319 cache pages, 2 layers, 37.0 MiB eager index, 440.0 MiB record cache",
+        "[rank 3] Vulkan memory: live_requested=10438926120 live_allocated=10438926128 peak_requested=10438926120 peak_allocated=10438926128 live_allocations=62",
+        "OWNER_TXN_WORK_MS rank=3 op=4 slot=0 op_ms=0.259 total_ms=0.288 status=0",
+        "MTP_VERIFY_RANK rank=3 first=22 n=4 replay=0 input_ms=0.190 compute_ms=144.032 read_ms=0.071 forward_or_head_ms=0.176 total_ms=144.469 status=0",
+        "MTP_NATIVE_STAGE rank=3 first=22 op=7 run_ms=0.597 ack_ms=0.026 status=0",
+        "OWNER_TXN_WORK_MS rank=3 op=8 slot=0 op_ms=0.302 total_ms=0.326 status=0",
+        "flash-gordon: io_uring operation: Connection reset by peer"
+      ]
+    },
+    "4": {
+      "verify": [
+        {
+          "rank": "4",
+          "first": "22",
+          "n": "4",
+          "replay": "0",
+          "input_ms": "0.184",
+          "compute_ms": "143.480",
+          "read_ms": "0.142",
+          "forward_or_head_ms": "0.293",
+          "total_ms": "144.099",
+          "status": "0"
+        }
+      ],
+      "vocab": [
+        {
+          "rank": "4",
+          "first": "22",
+          "kind": "2",
+          "n": "4",
+          "serial_calls": "4",
+          "compute_ms": "3.423",
+          "status": "0"
+        }
+      ],
+      "native": [],
+      "memory_lines": [
+        "[rank 4] Vulkan memory: live_requested=10956851448 live_allocated=10956851456 peak_requested=10956851448 peak_allocated=10956851456 live_allocations=90"
+      ],
+      "completed_rounds": 0,
+      "tail": [
+        "[rank 4] QSA decode session: 262144 logical, 65536 cache pages, 1 layers, 20.0 MiB eager index, 309.0 MiB record cache",
+        "[rank 4] Vulkan memory: live_requested=10956851448 live_allocated=10956851456 peak_requested=10956851448 peak_allocated=10956851456 live_allocations=90",
+        "OWNER_TXN_WORK_MS rank=4 op=4 slot=0 op_ms=0.198 total_ms=0.222 status=0",
+        "MTP_VERIFY_RANK rank=4 first=22 n=4 replay=0 input_ms=0.184 compute_ms=143.480 read_ms=0.142 forward_or_head_ms=0.293 total_ms=144.099 status=0",
+        "MTP_VOCAB_STAGE rank=4 first=22 kind=2 n=4 serial_calls=4 compute_ms=3.423 status=0",
+        "MTP_NATIVE_STAGE rank=4 first=22 op=7 run_ms=0.538 ack_ms=0.017 status=0",
+        "OWNER_TXN_WORK_MS rank=4 op=8 slot=0 op_ms=0.328 total_ms=0.354 status=0",
+        "flash-gordon: io_uring operation: Connection reset by peer"
+      ]
+    },
+    "5": {
+      "verify": [
+        {
+          "rank": "5",
+          "first": "22",
+          "n": "4",
+          "replay": "0",
+          "input_ms": "0.185",
+          "compute_ms": "146.429",
+          "read_ms": "0.071",
+          "forward_or_head_ms": "0.163",
+          "total_ms": "146.848",
+          "status": "0"
+        }
+      ],
+      "vocab": [],
+      "native": [],
+      "memory_lines": [
+        "[rank 5] Vulkan memory: live_requested=10701070120 live_allocated=10701070128 peak_requested=10701070120 peak_allocated=10701070128 live_allocations=62"
+      ],
+      "completed_rounds": 0,
+      "tail": [
+        "[rank 5] QSA Vulkan index canary: eager_segments=2 of=4 max_segment=17825792 requested=35651584 allocated=35651584 touched=35651584 bytes",
+        "[rank 5] QSA decode session: 262144 logical, 93319 cache pages, 2 layers, 37.0 MiB eager index, 440.0 MiB record cache",
+        "[rank 5] Vulkan memory: live_requested=10701070120 live_allocated=10701070128 peak_requested=10701070120 peak_allocated=10701070128 live_allocations=62",
+        "OWNER_TXN_WORK_MS rank=5 op=4 slot=0 op_ms=0.228 total_ms=0.270 status=0",
+        "MTP_VERIFY_RANK rank=5 first=22 n=4 replay=0 input_ms=0.185 compute_ms=146.429 read_ms=0.071 forward_or_head_ms=0.163 total_ms=146.848 status=0",
+        "MTP_NATIVE_STAGE rank=5 first=22 op=7 run_ms=0.569 ack_ms=0.025 status=0",
+        "OWNER_TXN_WORK_MS rank=5 op=8 slot=0 op_ms=0.311 total_ms=0.336 status=0",
+        "flash-gordon: io_uring operation: Connection reset by peer"
+      ]
+    },
+    "6": {
+      "verify": [
+        {
+          "rank": "6",
+          "first": "22",
+          "n": "4",
+          "replay": "0",
+          "input_ms": "0.185",
+          "compute_ms": "144.534",
+          "read_ms": "0.132",
+          "forward_or_head_ms": "0.331",
+          "total_ms": "145.182",
+          "status": "0"
+        }
+      ],
+      "vocab": [],
+      "native": [],
+      "memory_lines": [
+        "[rank 6] Vulkan memory: live_requested=10270351352 live_allocated=10270351360 peak_requested=10270351352 peak_allocated=10270351360 live_allocations=65"
+      ],
+      "completed_rounds": 0,
+      "tail": [
+        "[rank 6] QSA Vulkan index canary: eager_segments=1 of=2 max_segment=17825792 requested=17825792 allocated=17825792 touched=17825792 bytes",
+        "[rank 6] QSA decode session: 262144 logical, 65536 cache pages, 1 layers, 20.0 MiB eager index, 309.0 MiB record cache",
+        "[rank 6] Vulkan memory: live_requested=10270351352 live_allocated=10270351360 peak_requested=10270351352 peak_allocated=10270351360 live_allocations=65",
+        "OWNER_TXN_WORK_MS rank=6 op=4 slot=0 op_ms=0.239 total_ms=0.265 status=0",
+        "MTP_VERIFY_RANK rank=6 first=22 n=4 replay=0 input_ms=0.185 compute_ms=144.534 read_ms=0.132 forward_or_head_ms=0.331 total_ms=145.182 status=0",
+        "MTP_NATIVE_STAGE rank=6 first=22 op=7 run_ms=0.607 ack_ms=0.020 status=0",
+        "OWNER_TXN_WORK_MS rank=6 op=8 slot=0 op_ms=0.324 total_ms=0.349 status=0",
+        "flash-gordon: io_uring operation: Connection reset by peer"
+      ]
+    },
+    "7": {
+      "verify": [
+        {
+          "rank": "7",
+          "first": "22",
+          "n": "4",
+          "replay": "0",
+          "input_ms": "0.191",
+          "compute_ms": "147.992",
+          "read_ms": "0.130",
+          "forward_or_head_ms": "1.593",
+          "total_ms": "149.906",
+          "status": "0"
+        }
+      ],
+      "vocab": [],
+      "native": [
+        {
+          "rank": "7",
+          "first": "22",
+          "k": "3",
+          "total_ms": "87.328",
+          "status": "0"
+        }
+      ],
+      "memory_lines": [
+        "[rank 7] Vulkan memory: live_requested=14457438040 live_allocated=14457438048 peak_requested=14457438040 peak_allocated=14457438048 live_allocations=149"
+      ],
+      "completed_rounds": 0,
+      "tail": [
+        "[rank 7] QSA decode session: 262144 logical, 93319 cache pages, 2 layers, 37.0 MiB eager index, 440.0 MiB record cache",
+        "[rank 7] Vulkan memory: live_requested=14457438040 live_allocated=14457438048 peak_requested=14457438040 peak_allocated=14457438048 live_allocations=149",
+        "MTP_LOCAL_CHAIN rank=7 first=22 k=3 total_ms=87.328 status=0",
+        "OWNER_TXN_WORK_MS rank=7 op=4 slot=0 op_ms=0.174 total_ms=0.197 status=0",
+        "MTP_VERIFY_RANK rank=7 first=22 n=4 replay=0 input_ms=0.191 compute_ms=147.992 read_ms=0.130 forward_or_head_ms=1.593 total_ms=149.906 status=0",
+        "MTP_NATIVE_STAGE rank=7 first=22 op=7 run_ms=0.507 ack_ms=0.018 status=0",
+        "OWNER_TXN_WORK_MS rank=7 op=8 slot=0 op_ms=0.308 total_ms=0.334 status=0",
+        "flash-gordon: io_uring operation: Connection reset by peer"
+      ]
+    }
+  },
+  "direct_codec_crc_tcp_pair": {
+    "1": {
+      "ordinary_rtt_half_ms": {
+        "samples": 5,
+        "mean": 0.500799049,
+        "median": 0.513659221,
+        "p95": 0.5208912205,
+        "maximum": 0.5208912205
+      },
+      "initial_rtt_half_ms": {
+        "samples": 5,
+        "mean": 0.6041993442,
+        "median": 0.6183294285,
+        "p95": 0.627578506,
+        "maximum": 0.627578506
+      },
+      "eight_work_hop_pair_transfer_model_ms": 4.1097926872,
+      "model_ci95_ms": 0.25723414566082525,
+      "ordinary_frame_bytes": 41020,
+      "initial_frame_bytes": 51260
+    },
+    "2": {
+      "ordinary_rtt_half_ms": {
+        "samples": 5,
+        "mean": 0.8911680385,
+        "median": 0.8844216625,
+        "p95": 0.9141914195,
+        "maximum": 0.9141914195
+      },
+      "initial_rtt_half_ms": {
+        "samples": 5,
+        "mean": 1.0924977717,
+        "median": 1.108106006,
+        "p95": 1.1122535875000001,
+        "maximum": 1.1122535875000001
+      },
+      "eight_work_hop_pair_transfer_model_ms": 7.3306740412,
+      "model_ci95_ms": 0.20627184704581353,
+      "ordinary_frame_bytes": 81992,
+      "initial_frame_bytes": 102472
+    },
+    "3": {
+      "ordinary_rtt_half_ms": {
+        "samples": 5,
+        "mean": 1.2987992232,
+        "median": 1.2972162795,
+        "p95": 1.327721847,
+        "maximum": 1.327721847
+      },
+      "initial_rtt_half_ms": {
+        "samples": 5,
+        "mean": 1.6093149453,
+        "median": 1.609979048,
+        "p95": 1.655746914,
+        "maximum": 1.655746914
+      },
+      "eight_work_hop_pair_transfer_model_ms": 10.7009095077,
+      "model_ci95_ms": 0.2960477872996365,
+      "ordinary_frame_bytes": 122964,
+      "initial_frame_bytes": 153684
+    },
+    "4": {
+      "ordinary_rtt_half_ms": {
+        "samples": 5,
+        "mean": 1.7289314224,
+        "median": 1.7373797340000001,
+        "p95": 1.7709305015,
+        "maximum": 1.7709305015
+      },
+      "initial_rtt_half_ms": {
+        "samples": 5,
+        "mean": 2.1131739228,
+        "median": 2.1395237120000004,
+        "p95": 2.1711947925,
+        "maximum": 2.1711947925
+      },
+      "eight_work_hop_pair_transfer_model_ms": 14.2156938796,
+      "model_ci95_ms": 0.4404370946646311,
+      "ordinary_frame_bytes": 163936,
+      "initial_frame_bytes": 204896
+    }
+  },
+  "transport_scope": "Measured actual application-frame codec/CRC TCP RTT/2 on .48/.49; pair-to-eight-hop transfer remains a model, not synchronized one-way or wire-only latency",
+  "gates": {
+    "full_same_prefix_divergence_capture": false,
+    "original_q8_n4_quality": false,
+    "promotion": false
+  },
+  "outcome": {
+    "elapsedSeconds": 1499.0718255,
+    "diagnosticOnly": true,
+    "complete": false,
+    "failure": "HTTP client failed; see D:\\looking-glass-labs\\fg-wt\\mtp\\.build\\mtp-live\\runs\\mtp-local-n4-20261016-retry1\\client-d59bccf11de943d4aacf094c0fee291f.stderr",
+    "scratchRemoved": true,
+    "lease": "mtp-local-n4-20261016-retry1",
+    "productionVerified": true,
+    "finalizationErrors": []
+  },
+  "inputs_sha256": {
+    "001-create-owned-scratch.json": "6cd505dbdb40231f3d0fad17aecfdaf7790b87473dfb8163c46675be26b41b86",
+    "002-upload-guard.json": "6cd505dbdb40231f3d0fad17aecfdaf7790b87473dfb8163c46675be26b41b86",
+    "003-preflight-production.json": "006c5c5d689d4346d4ac86d0edad63afb78b84356a8f4424b91da56ba2599369",
+    "004-stage-release.json": "6cd505dbdb40231f3d0fad17aecfdaf7790b87473dfb8163c46675be26b41b86",
+    "005-stage-serving.json": "ceb9db6bd9df3508813cd4fdd7526299fb0daf637169f0fa495d55eb215edf67",
+    "006-stage-native-final-owner.json": "18b1c6ed71a54a09ef976dc1f4021172954a1cb153780ebf9332635699cb6b33",
+    "007-fetch-exact-embedding.json": "2d18bef1d923d79e16380813a4fd398f05059c194e6e844812217c25cf3d8e9e",
+    "008-stage-exact-embedding-final-owner.json": "a23410790bd837ca93f70d9ac08d5739e98c53f5053395e64323263438b26f00",
+    "009-arm-worker-watchdogs.json": "2088514647b94dd10f6b2779721c2ba1ffccc07c9b7ce6ee072954b80297164d",
+    "010-arm-coordinator-watchdog.json": "2d18bef1d923d79e16380813a4fd398f05059c194e6e844812217c25cf3d8e9e",
+    "011-stop-production.json": "a581a94dbdef7bb0ee2337a64935104ab69affa0bef697fea1b8c195aa9aabb6",
+    "012-start-workers-A0.json": "2088514647b94dd10f6b2779721c2ba1ffccc07c9b7ce6ee072954b80297164d",
+    "013-start-coordinator-A0.json": "2d18bef1d923d79e16380813a4fd398f05059c194e6e844812217c25cf3d8e9e",
+    "014-token-receipts-A0.json": "2d18bef1d923d79e16380813a4fd398f05059c194e6e844812217c25cf3d8e9e",
+    "015-complete-round-traces-A0.json": "2d18bef1d923d79e16380813a4fd398f05059c194e6e844812217c25cf3d8e9e",
+    "016-stop-before-F3.json": "6cd505dbdb40231f3d0fad17aecfdaf7790b87473dfb8163c46675be26b41b86",
+    "017-stage-n4-local-head.json": "d15d29950630466a8096a89d0e5becee3e8fbfcd0045e395def65a8202201026",
+    "018-start-workers-F3.json": "2088514647b94dd10f6b2779721c2ba1ffccc07c9b7ce6ee072954b80297164d",
+    "019-start-coordinator-F3.json": "2d18bef1d923d79e16380813a4fd398f05059c194e6e844812217c25cf3d8e9e",
+    "020-remove-loaded-n4-weight-copies.json": "f3d05ce4505363823c823bc6ffd0076580ee31ac11ec3e018cbad8c0c4b33274",
+    "021-stop-candidates.json": "6cd505dbdb40231f3d0fad17aecfdaf7790b87473dfb8163c46675be26b41b86",
+    "022-restore-workers.json": "e90f41ada0772b791ede440c4b73f5f3f7a525b1d722eff4b9a9e806e925aa09",
+    "023-restore-coordinator.json": "7d1dabf5b49fa7ec6770483e3ed92b75877d820f3c0ca5f7310d6686b16a988e",
+    "024-verify-pinned-production.json": "d300e03e238972fc6de1cce1980aa5f3725b912f6ec3a47d45e02564814e453e",
+    "025-cancel-watchdogs.json": "6cd505dbdb40231f3d0fad17aecfdaf7790b87473dfb8163c46675be26b41b86",
+    "026-evidence-192.168.42.42.json": "4ef600aec476cfc118b4860f16168289c0fb54fb06534f6c529f7acd8e9d38d4",
+    "027-download-evidence-192.168.42.42.json": "2d18bef1d923d79e16380813a4fd398f05059c194e6e844812217c25cf3d8e9e",
+    "028-evidence-192.168.42.43.json": "9dfd40c14f3d74c2f9e905df7133614cdd9bdef4611b2205633c63da80f7c039",
+    "029-download-evidence-192.168.42.43.json": "d16d3533cba7a0ded8850a14b7a479338de8bab57b628ad2486ab2f1cd166aac",
+    "030-evidence-192.168.42.44.json": "b19f18f1813fe855bf71f9b2af86ed4e309d447b10ec2fb4ad21dcece78c1557",
+    "031-download-evidence-192.168.42.44.json": "6c9b796f01cf7f749cb8b3a9251609f1182f2ebaf233ac389ad4b8a9ea3a0fd8",
+    "032-evidence-192.168.42.45.json": "737a7d733c8478ae0f691e6b2e6fbf48c925a6a0bbd96f782ca07dd0e742c02c",
+    "033-download-evidence-192.168.42.45.json": "59c458ff23c7264f9316b764be9965ebeff34c72c21c459eebe1742686500de1",
+    "034-evidence-192.168.42.46.json": "b3d2f8ec5e3aedeec06cbb0e11fa7fb4029cda7f15ad5a864ed1e585f7c1109d",
+    "035-download-evidence-192.168.42.46.json": "27b57b6bc30226f2933d2c010ab4027317ce8a190dcd17b1299cdd20c672448b",
+    "036-evidence-192.168.42.47.json": "d53747f1d0882884fae21f779e54993f84ee9fddca5cd849a636572a244862c2",
+    "037-download-evidence-192.168.42.47.json": "f9ee9e1f3c775746791ff1ad97bffea48b40858207c2b2709b87e6fc3d704e18",
+    "038-evidence-192.168.42.48.json": "5b394710372689a491090794565938c6bbe8afc1b4720e27a93bb32e2cd2305f",
+    "039-download-evidence-192.168.42.48.json": "42795e4a5f2efba0830c44e7c17bd19e2e0f79f742338fff4613112ff957c518",
+    "040-evidence-192.168.42.49.json": "f39101946fa5d0fbc235faa80e032a4ff46e1803a02575f46b88708fc8679843",
+    "041-download-evidence-192.168.42.49.json": "a23410790bd837ca93f70d9ac08d5739e98c53f5053395e64323263438b26f00",
+    "042-remove-owned-scratch.json": "7858deb166c958b8f8f966531c30832450eef5bfbd42c8cd9ef43a2e26333588",
+    "A0-greedy.json": "2c41ee4b8ad05c12e627cf9928a8b853c14573d3e8855df767e8b915c4fa20a7",
+    "A0-perf.json": "96157a2323a5d6698b4ca340343a6bb2e84987cb00f44b9ea5d76eca516097e4",
+    "A0-rank-0.log": "5d29b8d04be507877d44102235a0adcc095356d731e6657243e576d3cf354d2e",
+    "before-api.json": "8ef2996674e547574b617ec6e1fe8ea3d5080c4710227a904e1a659e0c37415b",
+    "evidence-192.168.42.42.tar.gz": "3fc47f6520ff4e05798720936eb2532c6d2cb8f5cff865feff6e41c6721f40b2",
+    "evidence-192.168.42.43.tar.gz": "fdaedfdff6466f439996722558d2c14956487603b91c9e7c3f53253ce3a29798",
+    "evidence-192.168.42.44.tar.gz": "17010bbbcf776387bc3c4ccd5b0fefc061a47075c8c2069f40aaebec8df49ced",
+    "evidence-192.168.42.45.tar.gz": "1ee6f0a44f3b8bafd32e7b6ef23ee78e77a08b3dbdac189ecc6eea3f7c7a11a9",
+    "evidence-192.168.42.46.tar.gz": "7ff679efc12e8b79e1ff367b630849dfb86b47e39fd22218ed6f1d0449ca36c6",
+    "evidence-192.168.42.47.tar.gz": "39c017d7319d81be7860dccc120fca2c737b65e58129ab58e336aed95faac10f",
+    "evidence-192.168.42.48.tar.gz": "13e5836e2a989ba232240c66d98889a65bf7bdfa35fa18dbfe8effd54c1e353a",
+    "evidence-192.168.42.49.tar.gz": "f691d536593bc9cd799c43495876d744a1f768ce9d3a60bf6962665693dfd95c",
+    "outcome.json": "475f951cf048a1a335795afb5a4da19bc4937d5214135d3c0dc3ff8032d47e1b",
+    "restored-api.json": "94e5e29d1e6e1571501955647d837fcd5b94723e01a9353b8795452f1d2b6a99"
+  },
+  "transport_receipt_sha256": "b6c65318bd8ad0da4acb53d2879241bb7d4af3d4844538bf9b2e235e7d2cfc18",
+  "lease": {
+    "granted": "2026-10-16T19:56:06Z",
+    "absolute_deadline": "2026-10-16T20:41:06Z",
+    "released_verified": "2026-10-16T20:23:07Z",
+    "final_verification_sha256": "7f88feaa45f2be2baa6ae6e89f79c0aef8410e310628460dd6f910a37a751d51"
+  },
+  "binary_sha256": "67602b4ac100c1b608aea5747e464f9c99fcb68019e7b23f7f9659eb8afdcf58",
+  "audit_source_sha256": "98db1931e0092ca6c2e696a508386d01e596184d638e2eb9466c1bf1b840554f"
+}

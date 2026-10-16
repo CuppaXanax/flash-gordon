@@ -8,8 +8,10 @@ param(
     [ValidateRange(1,35)][int]$WorkMinutes=35,
     [ValidateSet('DualSession','SingleSessionPerf')][string]$Profile='DualSession',
     [switch]$DiagnosticGreedy,
+    [switch]$N4Diagnostic,
     [string]$CorrectnessArtifacts='',
     [string]$LocalHead='',
+    [string]$TransportSource='',
     [string]$Artifacts='',
     [string]$NativeOverlay='',
     [string]$ProductionRunner='D:\looking-glass-labs\fg-wt\ab-harness\tools\ab-fleet.ps1',
@@ -35,6 +37,12 @@ if($Profile -eq 'SingleSessionPerf'){
         @('F1',3,330,1),@('A2',0,330,0),@('F2',3,330,2),
         @('A3',0,330,0),@('F3',3,330,3),@('A4',0,330,0))
 }
+if($N4Diagnostic){
+    if(-not $DiagnosticGreedy -or $Profile -ne 'SingleSessionPerf'){
+        throw 'N4Diagnostic requires DiagnosticGreedy and SingleSessionPerf.'
+    }
+    $phases=@(@('A0',0,330,0),@('F3',3,330,3),@('A1',0,330,0))
+}
 if($Action -eq 'Plan'){
     [ordered]@{
         productionAccess=$false; ring='192.168.42.42-.49'; phases=$phases
@@ -42,6 +50,7 @@ if($Action -eq 'Plan'){
         smallKernelMasks=$(if($candidateSessions -eq 1){@(330)}else{@(0,330)})
         greedy='off arms retain exact identity; MTP requires receipt-complete pass-local argmax, same-prefix top2 margins <0.10 and original-Q8 KL<=0.005/top1>=0.985'
         diagnosticOnly=[bool]$DiagnosticGreedy
+        n4Diagnostic=[bool]$N4Diagnostic
         localDraftHead=[bool]$LocalHead
         candidateQsaPageCacheMiB=$candidateQsaCacheMiB
         perf='three repeats of two chat/two code prompts, 128 output tokens, bracketed paired ratios'
@@ -213,22 +222,46 @@ try {
     $embedding=Join-Path $run 'embedding.fgme'
     $null=Remote 'fetch-exact-embedding' ':' @('192.168.42.42') -Download "$root/embedding.fgme" -Local $embedding
     $null=Remote 'stage-exact-embedding-final-owner' ':' @('192.168.42.49') -Upload $embedding -Destination "$root/embedding.fgme"
-    if($LocalHead){
+    if($LocalHead -and -not $N4Diagnostic){
         $null=Remote 'stage-local-head-final-owner' "echo '2801d79db74bcae38b47fd5051f03136d8ca7715abeba7d92b49ba46c696bc33  $root/local-head.q8' | sha256sum -c -" `
             @('192.168.42.49') -Upload $LocalHead -Destination "$root/local-head.q8" -Timeout 240
     }
     $armed=$true
     $null=Guard 'arm-worker-watchdogs' "arm $($started.AddMinutes(38).ToUnixTimeSeconds())" $workers
     $null=Guard 'arm-coordinator-watchdog' "arm $($started.AddMinutes(39).ToUnixTimeSeconds())" @('192.168.42.42')
+    if($TransportSource){
+        if(-not $DiagnosticGreedy){throw 'Transport probing requires a diagnostic lease.'}
+        $pair=@('192.168.42.48','192.168.42.49')
+        $null=Remote 'stage-transport-source' ':' $pair -Upload $TransportSource -Destination "$root/transport-source.tar.gz"
+        $text=@'
+mkdir -p /home/xander/hc-mtp/transport
+tar -xzf /home/xander/hc-mtp/transport-source.tar.gz -C /home/xander/hc-mtp/transport
+cd /home/xander/hc-mtp/transport
+gcc -std=c17 -O3 -Wall -Wextra -Werror -D_POSIX_C_SOURCE=200809L -Iinclude -ffunction-sections -fdata-sections -Wl,--gc-sections tools/bench_mtp_transport.c src/protocol.c src/util.c -lm -o bench
+if [[ " $(hostname -I) " == *" 192.168.42.48 "* ]]; then
+    timeout 90s ./bench server 192.168.42.48 26840
+else
+    timeout 90s ./bench client 192.168.42.48 26840 | tee /home/xander/hc-mtp/transport.jsonl
+fi
+'@
+        $null=Remote 'measure-n1-n4-transport' $text $pair -Timeout 120
+    }
     foreach($phase in $phases){
         $name=[string]$phase[0];$cap=[int]$phase[1];$small=[int]$phase[2]
         $fixed=if($phase.Count -gt 3){[int]$phase[3]}else{0}
         if(-not $mutated){$mutated=$true;$null=Guard 'stop-production' 'stop-prod' $all}
         else {$null=Guard "stop-before-$name" 'stop-candidate' $all}
+        if($N4Diagnostic -and $LocalHead -and $cap){
+            $null=Remote 'stage-n4-local-head' "echo '2801d79db74bcae38b47fd5051f03136d8ca7715abeba7d92b49ba46c696bc33  $root/local-head.q8' | sha256sum -c -" `
+                @('192.168.42.49') -Upload $LocalHead -Destination "$root/local-head.q8" -Timeout 240
+        }
         $localHeadEnabled=[int][bool]$LocalHead
         $null=Guard "start-workers-$name" "start-serving $name $cap $small $candidateSessions $fixed $localHeadEnabled $candidateQsaCacheMiB" $workers
         $null=Guard "start-coordinator-$name" "start-serving $name $cap $small $candidateSessions $fixed $localHeadEnabled $candidateQsaCacheMiB" @('192.168.42.42')
         $null=WaitApi
+        if($N4Diagnostic -and $LocalHead -and $cap){
+            $null=Remote 'remove-loaded-n4-weight-copies' "rm '$root/native-q8.gguf' '$root/local-head.q8'; df -B1 '$root'" @('192.168.42.49')
+        }
         $greedyFile=Join-Path $run "$name-greedy.json"
         Client @('run','--phase',$name,'--suite','greedy','--base',$ApiBaseUrl,'--output',$greedyFile)
         $trace=Join-Path $run "$name-rank-0.log"
