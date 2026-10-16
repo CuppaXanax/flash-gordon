@@ -1,0 +1,49 @@
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x=64)in;
+layout(set=0,binding=0)readonly buffer Records{uint records[];};
+layout(set=0,binding=1)readonly buffer Query{vec4 query4[];};
+layout(set=0,binding=2)writeonly buffer Partials{float partials[];};
+layout(push_constant)uniform Push{uint selected_count;uint splits;}pc;
+const float NEG_INF=-3.402823466e38;
+const float L2E=1.4426950408889634;
+vec4 decode(uint token,uint kv,uint slot,uint value_offset){
+    uint at=token*1236u+value_offset+kv*272u+(slot>>3u)*34u;
+    uint packed_at=at+2u+(slot&7u)*4u;
+    uint shift=(packed_at&3u)*8u;
+    uint lo=records[packed_at>>2u],hi=records[(packed_at>>2u)+1u];
+    uint packed=(lo>>shift)|((hi<<((32u-shift)&31u))&(shift==0u?0u:0xffffffffu));
+    float scale=unpackHalf2x16(records[at>>2u]>>((at&3u)*8u)).x;
+    return unpackSnorm4x8(packed)*(scale*127.0);
+}
+void main(){
+    uint head=gl_WorkGroupID.x,split=gl_WorkGroupID.y,lane=gl_LocalInvocationID.x;
+    uint begin=pc.selected_count*split/pc.splits,end=pc.selected_count*(split+1u)/pc.splits;
+    vec4 q=query4[head*64u+lane],acc=vec4(0.0);
+    float maximum=NEG_INF,denominator=0.0;
+    for(uint tile=begin;tile<end;tile+=8u){
+        float scores[8];vec4 values[8];float tile_max=NEG_INF;
+        [[unroll]] for(uint r=0u;r<8u;r++){
+            float score=NEG_INF;vec4 v=vec4(0.0);
+            if(tile+r<end){
+                score=subgroupAdd(dot(q,decode(tile+r,head/12u,lane,0u)))*0.0625;
+                v=decode(tile+r,head/12u,lane,544u);
+            }
+            scores[r]=score;values[r]=v;tile_max=max(tile_max,score);
+        }
+        float next_max=max(maximum,tile_max);
+        float scale=maximum<-3.0e38?0.0:exp2((maximum-next_max)*L2E);
+        acc*=scale;denominator*=scale;
+        [[unroll]] for(uint r=0u;r<8u;r++){
+            float weight=exp2((scores[r]-next_max)*L2E);
+            denominator+=weight;acc=fma(vec4(weight),values[r],acc);
+        }
+        maximum=next_max;
+    }
+    uint base=(head*pc.splits+split)*258u;
+    partials[base+lane*4u]=acc.x;partials[base+lane*4u+1u]=acc.y;
+    partials[base+lane*4u+2u]=acc.z;partials[base+lane*4u+3u]=acc.w;
+    if(lane==0u){partials[base+256u]=maximum;partials[base+257u]=denominator;}
+}

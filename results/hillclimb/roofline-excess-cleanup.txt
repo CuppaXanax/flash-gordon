@@ -1,0 +1,11 @@
+
+Running .\tools\roofline-cleanup.sh on 1 blades...
+
+[192.168.42.50] OK
+[192.168.42.50] active
+[192.168.42.50] active
+[192.168.42.50] active
+[192.168.42.50]   CUs active & routed  : 40/40
+[192.168.42.50] {"status":"ok"}{"status":"ok"}hc-roof absent; services healthy; original governor and CU profile restored
+
+Fleet result: 1/1 succeeded.

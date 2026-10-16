@@ -1,0 +1,48 @@
+#version 460
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x=128)in;
+layout(set=0,binding=0)readonly buffer QKV{float qkv[];};
+layout(set=0,binding=1)readonly buffer ZGate{float z[];};
+layout(set=0,binding=2)readonly buffer Alpha{float alpha[];};
+layout(set=0,binding=3)readonly buffer Beta{float beta[];};
+layout(set=0,binding=4)readonly buffer ADecay{float a_decay[];};
+layout(set=0,binding=5)readonly buffer DtBias{float dt_bias[];};
+layout(set=0,binding=6)readonly buffer NormWeight{float norm_weight[];};
+layout(set=0,binding=7)buffer RecurrentState{float recurrent[];};
+layout(set=0,binding=8)writeonly buffer Output{float output_value[];};
+layout(push_constant)uniform Push{uint value_heads;uint key_heads;uint head_dim;float epsilon;}pc;
+shared float query[128],key[128],sum_q[128],sum_k[128],sum_out[128];
+float softplus(float value){return max(value,0.0)+log(1.0+exp(-abs(value)));}
+void main(){
+    uint lane=gl_LocalInvocationID.x,head=gl_WorkGroupID.x;
+    uint key_head=head%pc.key_heads,key_width=pc.key_heads*128u;
+    query[lane]=qkv[key_head*128u+lane];key[lane]=qkv[key_width+key_head*128u+lane];
+    float value=qkv[2u*key_width+head*128u+lane];
+    sum_q[lane]=query[lane]*query[lane];sum_k[lane]=key[lane]*key[lane];barrier();
+    for(uint stride=64u;stride>0u;stride>>=1u){
+        if(lane<stride){sum_q[lane]+=sum_q[lane+stride];sum_k[lane]+=sum_k[lane+stride];}
+        barrier();
+    }
+    query[lane]*=inversesqrt(sum_q[0]+pc.epsilon)/sqrt(float(pc.head_dim));
+    key[lane]*=inversesqrt(sum_k[0]+pc.epsilon);barrier();
+    float decay=exp(a_decay[head]*softplus(alpha[head]+dt_bias[head]));
+    float mix=1.0/(1.0+exp(-beta[head])),memory=0.0;
+    uint base=head*128u*128u;
+    [[unroll]] for(uint k=0u;k<128u;k++)
+        memory=fma(recurrent[base+k*128u+lane]*decay,key[k],memory);
+    float delta=(value-memory)*mix,result=0.0;
+    // Each lane owns one complete state column; no cross-lane state reads.
+    [[unroll]] for(uint k=0u;k<128u;k++){
+        uint at=base+k*128u+lane;
+        float updated=recurrent[at]*decay+key[k]*delta;
+        recurrent[at]=updated;
+        result=fma(updated,query[k],result);
+    }
+    sum_out[lane]=result*result;barrier();
+    for(uint stride=64u;stride>0u;stride>>=1u){
+        if(lane<stride)sum_out[lane]+=sum_out[lane+stride];
+        barrier();
+    }
+    float normalized=result*inversesqrt(sum_out[0]/float(pc.head_dim)+pc.epsilon)*norm_weight[lane];
+    output_value[head*128u+lane]=normalized*(1.0/(1.0+exp(-z[head*128u+lane])));
+}

@@ -1,0 +1,8 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_control_flow_attributes : require
+#define TYPE 12
+#define ROWS 8u
+#define WG 256u
+#define FG_ROOF_UNROLL
+#include "fg_dense_compact_gemv.glsl"

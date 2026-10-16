@@ -1,0 +1,52 @@
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x=128)in;
+layout(set=0,binding=0)readonly buffer QKV{float qkv[];};
+layout(set=0,binding=1)readonly buffer ZGate{float z[];};
+layout(set=0,binding=2)readonly buffer Alpha{float alpha[];};
+layout(set=0,binding=3)readonly buffer Beta{float beta[];};
+layout(set=0,binding=4)readonly buffer ADecay{float a_decay[];};
+layout(set=0,binding=5)readonly buffer DtBias{float dt_bias[];};
+layout(set=0,binding=6)readonly buffer NormWeight{float norm_weight[];};
+layout(set=0,binding=7)buffer State{float state[];};
+layout(set=0,binding=8)writeonly buffer Output{float result[];};
+layout(push_constant)uniform Push{uint value_heads,key_heads,head_dim;float epsilon;}pc;
+shared float query[128],key[128],memory[128],prior[128],delta[32];
+shared vec2 norms[2];
+shared float qk[2];
+void main(){
+    uint lid=gl_LocalInvocationID.x,head=gl_WorkGroupID.x;
+    uint kh=head%pc.key_heads,kw=pc.key_heads*128u;
+    float q=qkv[kh*128u+lid],k=qkv[kw+kh*128u+lid];
+    vec2 sum=vec2(subgroupAdd(q*q),subgroupAdd(k*k));
+    if(subgroupElect())norms[gl_SubgroupID]=sum;
+    barrier();
+    q*=inversesqrt(norms[0].x+norms[1].x+pc.epsilon)/sqrt(128.0);
+    k*=inversesqrt(norms[0].y+norms[1].y+pc.epsilon);
+    query[lid]=q;key[lid]=k;
+    float product=subgroupAdd(q*k);
+    if(subgroupElect())qk[gl_SubgroupID]=product;
+    barrier();
+    uint part=lid/32u,col=gl_WorkGroupID.y*32u+lid%32u;
+    float a=alpha[head]+dt_bias[head];
+    float decay=exp(a_decay[head]*(max(a,0.0)+log(1.0+exp(-abs(a)))));
+    uint base=head*16384u+col;
+    float cached[32],m=0.0,p=0.0;
+    [[unroll]]for(uint i=0u;i<32u;i++)cached[i]=state[base+(part*32u+i)*128u]*decay;
+    [[unroll]]for(uint i=0u;i<32u;i++){
+        m=fma(cached[i],key[part*32u+i],m);
+        p=fma(cached[i],query[part*32u+i],p);
+    }
+    memory[lid]=m;prior[lid]=p;
+    barrier();
+    if(part==0u){
+        float total=(memory[lid]+memory[lid+32u])+(memory[lid+64u]+memory[lid+96u]);
+        float old=(prior[lid]+prior[lid+32u])+(prior[lid+64u]+prior[lid+96u]);
+        delta[lid]=(qkv[2u*kw+head*128u+col]-total)/(1.0+exp(-beta[head]));
+        result[head*128u+col]=fma(delta[lid],qk[0]+qk[1],old);
+    }
+    barrier();
+    [[unroll]]for(uint i=0u;i<32u;i++)
+        state[base+(part*32u+i)*128u]=cached[i]+key[part*32u+i]*delta[lid%32u];
+}

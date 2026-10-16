@@ -4,9 +4,37 @@
 
 #include "fg_vk.h"
 
+static int lossless_iq4_expansion(void){
+    int ok=1;
+    for(uint32_t k=320u;k<=640u;k+=320u){
+        uint32_t rows=17u;uint64_t values=(uint64_t)k*rows,raw_bytes=values/32u*18u;
+        uint64_t cooked_bytes=fg_q8_0_cooked_matrix_bytes(k,rows),dense_bytes=fg_dense_compact_bytes(k,rows,20u);
+        uint8_t *raw=malloc(raw_bytes),*dense=malloc(dense_bytes),*cooked=malloc(cooked_bytes),*q8=malloc(values/32u*34u);
+        float *expected=malloc(values*4u),*got=malloc(values*4u);
+        ok=ok&&raw&&dense&&cooked&&q8&&expected&&got;
+        if(ok){
+            for(uint64_t b=0;b<values/32u;b++){
+                uint16_t d=fg_f32_to_f16(((int)(b%7u)-3)*0.03125f);
+                memcpy(raw+b*18u,&d,2u);
+                for(uint32_t j=0;j<16u;j++)raw[b*18u+2u+j]=(uint8_t)(b*37u+j*13u);
+            }
+            fg_dequantize_iq4_nl(raw,expected,values);
+            ok=fg_cook_dense_compact(raw,dense,dense_bytes,k,rows,20u);
+            for(uint32_t layout=0;ok&&layout<2u;layout++){
+                ok=!fg_expand_iq4_q8_cooked(raw,cooked,cooked_bytes-1u,k,rows,false)&&
+                    fg_expand_iq4_q8_cooked(layout?dense:raw,cooked,cooked_bytes,k,rows,layout!=0u)&&
+                    fg_uncook_q8_0_rows(cooked,q8,values/32u*34u,k,rows);
+                if(ok){fg_dequantize_q8_0(q8,got,values);ok=!memcmp(expected,got,values*4u);}
+            }
+        }
+        free(got);free(expected);free(q8);free(cooked);free(dense);free(raw);
+    }
+    return ok;
+}
+
 int main(void){
     const uint32_t types[]={12u,13u,20u};
-    int ok=1;
+    int ok=lossless_iq4_expansion();
     ok=ok&&tensor_family("blk.0.attn_qkv.weight")==0u&&
         tensor_family("blk.0.ssm_out.weight")==1u&&
         tensor_family("blk.0.attn_gate.weight")==2u&&

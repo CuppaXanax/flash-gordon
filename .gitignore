@@ -1,6 +1,9 @@
 # Flash Gordon build products
 /flash-gordon
+/.build/
 /results/
+tools/bench-decode-fusion
+tools/bench-decode-fusion.d
 *.a
 
 # Object files and dependency files

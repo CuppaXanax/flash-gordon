@@ -1,0 +1,3 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "fg_moe_decode_down_reduce.glsl"

@@ -1,0 +1,405 @@
+mask,layer,index,scope,shader,barrier,grid,push,reference_bytes,ideal_us_at_450GBs,bytes_basis,intrusive_scope_mean_us
+0,6,0,gr_attn_read,fg_group_rms_norm.spv,False,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.466666666666667
+0,6,1,gr_attn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.726666666666667
+0,6,2,gr_attn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.406666666666666
+0,6,3,gr_attn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8466666666666667
+0,6,4,gr_attn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.48
+0,6,5,gr_attn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.566666666666666
+0,6,6,gdn_projection,fg_dense_compact.spv,True,"[1280, 1, 1]","[2560, 10240, 1, 12, 1440, 1065353216]",15155200,33.678222222222225,exact weight storage; activation traffic omitted,53.81
+0,6,7,gdn_projection,fg_dense_compact_mid.spv,True,"[768, 1, 1]","[2560, 6144, 1, 12, 1440, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,38.59
+0,6,8,gdn_projection,fg_dense_f32.spv,True,"[48, 1, 1]","[2560, 48, 1]",491520,1.0922666666666667,exact weight storage; activation traffic omitted,5.235
+0,6,9,gdn_projection,fg_dense_f32.spv,True,"[48, 1, 1]","[2560, 48, 1]",491520,1.0922666666666667,exact weight storage; activation traffic omitted,5.235
+0,6,10,gdn_recurrent,fg_gdn_conv_decode.spv,True,"[40, 1, 1]",[10240],573440,1.2743111111111112,logical projection + state R/W + weights + output,2.27
+0,6,11,gdn_recurrent,fg_gdn_recurrent_algebraic.spv,True,"[48, 1, 1]","[48, 16, 128, 897988541]",6382848,14.184106666666667,logical recurrent state R/W + small tensors,28.8
+0,6,12,gdn_output,fg_dense_compact.spv,True,"[320, 1, 1]","[6144, 2560, 1, 12, 3456, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,30.44
+0,6,13,gr_attn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.6266666666666667
+0,6,14,gr_ffn_read,fg_group_rms_norm.spv,True,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.06
+0,6,15,gr_ffn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.513333333333333
+0,6,16,gr_ffn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.366666666666667
+0,6,17,gr_ffn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8333333333333334
+0,6,18,gr_ffn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.48
+0,6,19,gr_ffn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.413333333333333
+0,6,20,router,fg_dense_f32.spv,True,"[512, 1, 1]","[2560, 512, 1]",5242880,11.650844444444445,exact weight storage; activation traffic omitted,15.700000000000001
+0,6,21,router_quantization,fg_quantize_q8_k.spv,False,"[10, 1, 1]","[2560, 10, 1]",13200,0.029333333333333333,logical activation read + packed output,0.06666666666666667
+0,6,22,shared_expert,fg_dense_soa_r4.spv,True,"[160, 1, 1]","[2560, 640, 1, 12, 1440, 1065353216]",1228800,2.7306666666666666,exact weight storage; activation traffic omitted,4.47
+0,6,23,shared_expert,fg_dense_soa_r4.spv,False,"[160, 1, 1]","[2560, 640, 1, 12, 1440, 1065353216]",1228800,2.7306666666666666,exact weight storage; activation traffic omitted,4.47
+0,6,24,shared_expert,fg_dense_f32.spv,False,"[1, 1, 1]","[2560, 1, 1]",10240,0.022755555555555557,exact weight storage; activation traffic omitted,0.36000000000000004
+0,6,25,shared_expert,fg_swiglu.spv,True,"[3, 1, 1]",[640],7680,0.017066666666666667,logical two inputs + output,0.8733333333333334
+0,6,26,shared_expert,fg_dense_compact_iq4.spv,True,"[640, 1, 1]","[640, 2560, 1, 20, 360, 1065353216]",921600,2.048,exact weight storage; activation traffic omitted,5.886666666666667
+0,6,27,expert_decode,fg_router_top10.spv,True,"[1, 1, 1]","[512, 1]",2128,0.004728888888888889,logical logits + routes/gates/schedule,9.226666666666667
+0,6,28,expert_decode,fg_decode_tile_schedule.spv,True,"[1, 1, 1]",[],400,0.0008888888888888889,logical selected IDs + tile schedule,1.0733333333333335
+0,6,29,expert_decode,fg_moe_decode_gate_up.spv,True,"[80, 10, 1]","[640, 10, 11520, 11520, 921600, 921600, 12, 12]",18432000,40.96,10 selected expert weight matrices,57.43333333333334
+0,6,30,expert_decode,fg_moe_decode_down_reduce.spv,True,"[160, 1, 1]","[2560, 640, 20, 7680, 1228800, 10, 7]",12288000,27.30666666666667,10 selected expert weight matrices,38.233333333333334
+0,6,31,moe_reduce,fg_moe_shared_add.spv,True,"[10, 1, 1]",[2560],30724,0.06827555555555556,logical two inputs + output + scalar,1.0133333333333334
+0,6,32,gr_ffn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.14
+0,7,0,gr_attn_read,fg_group_rms_norm.spv,False,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.466666666666667
+0,7,1,gr_attn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.726666666666667
+0,7,2,gr_attn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.406666666666666
+0,7,3,gr_attn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8466666666666667
+0,7,4,gr_attn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.48
+0,7,5,gr_attn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.566666666666666
+0,7,6,qsa_projection,fg_dense_compact.spv,False,"[1536, 1, 1]","[2560, 12288, 1, 12, 1440, 1065353216]",18186240,40.413866666666664,exact weight storage; activation traffic omitted,70.22
+0,7,7,qsa_projection,fg_dense_soa_r4.spv,True,"[128, 1, 1]","[2560, 512, 1, 12, 1440, 1065353216]",983040,2.1845333333333334,exact weight storage; activation traffic omitted,6.2
+0,7,8,qsa_projection,fg_dense_soa_r4.spv,True,"[128, 1, 1]","[2560, 512, 1, 12, 1440, 1065353216]",983040,2.1845333333333334,exact weight storage; activation traffic omitted,6.2
+0,7,9,qsa_projection,fg_qsa_prepare.spv,True,"[24, 1, 1]",[],104460,0.23213333333333333,logical unique Q/G/K + norms + position + outputs,5.9
+0,7,10,qsa_projection,fg_dense_bf16_f32.spv,True,"[512, 1, 1]","[2560, 512, 1]",2621440,5.8254222222222225,exact weight storage; activation traffic omitted,17.12
+0,7,11,qsa_projection,fg_dense_bf16_f32.spv,True,"[128, 1, 1]","[2560, 128, 1]",655360,1.4563555555555556,exact weight storage; activation traffic omitted,17.12
+0,7,12,qsa_projection,fg_qsa_index_prepare.spv,True,"[4, 1, 1]",[],4620,0.010266666666666667,logical unique raw index query + norm + position + output,2.5
+0,7,13,qsa_projection,fg_quantize_q8_0.spv,True,"[1, 1, 1]","[512, 16, 1]",2592,0.00576,logical activation read + packed output,11.413333333333334
+0,7,14,qsa_projection,fg_quantize_q8_0.spv,True,"[1, 1, 1]","[512, 16, 1]",2592,0.00576,logical activation read + packed output,11.413333333333334
+0,7,15,qsa_projection,fg_quantize_q8_0.spv,True,"[1, 1, 1]","[128, 4, 1]",648,0.00144,logical activation read + packed output,11.413333333333334
+0,7,16,qsa_state_attention,fg_qsa_record_commit.spv,False,"[2, 1, 1]","[0, 0, 8192, 256, 512, 16384]",2608,0.0057955555555555555,logical QSA record read/write + index history write,1.74
+0,7,17,qsa_state_attention,fg_qsa_record_gather.spv,True,"[311, 1, 1]","[0, 16384, 64, 512, 1]",635304,1.4117866666666667,logical selected records read/write,6.52
+0,7,18,qsa_state_attention,fg_qsa_decode_attention_split.spv,True,"[2, 2, 1]","[257, 2]",353344,0.7852088888888888,unique KV + query/gate/output; per-head reloads omitted,46.72
+0,7,19,qsa_state_attention,fg_qsa_attention_merge.spv,True,"[24, 1, 1]",[2],98688,0.21930666666666668,logical split partials + gate/output,2.42
+0,7,20,qsa_output,fg_dense_compact.spv,True,"[320, 1, 1]","[6144, 2560, 1, 12, 3456, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,31.66
+0,7,21,gr_attn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.6266666666666667
+0,7,22,gr_ffn_read,fg_group_rms_norm.spv,True,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.06
+0,7,23,gr_ffn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.513333333333333
+0,7,24,gr_ffn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.366666666666667
+0,7,25,gr_ffn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8333333333333334
+0,7,26,gr_ffn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.48
+0,7,27,gr_ffn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.413333333333333
+0,7,28,router,fg_dense_f32.spv,True,"[512, 1, 1]","[2560, 512, 1]",5242880,11.650844444444445,exact weight storage; activation traffic omitted,15.700000000000001
+0,7,29,router_quantization,fg_quantize_q8_k.spv,False,"[10, 1, 1]","[2560, 10, 1]",13200,0.029333333333333333,logical activation read + packed output,0.06666666666666667
+0,7,30,shared_expert,fg_dense_soa_r4.spv,True,"[160, 1, 1]","[2560, 640, 1, 12, 1440, 1065353216]",1228800,2.7306666666666666,exact weight storage; activation traffic omitted,4.47
+0,7,31,shared_expert,fg_dense_soa_r4.spv,False,"[160, 1, 1]","[2560, 640, 1, 12, 1440, 1065353216]",1228800,2.7306666666666666,exact weight storage; activation traffic omitted,4.47
+0,7,32,shared_expert,fg_dense_f32.spv,False,"[1, 1, 1]","[2560, 1, 1]",10240,0.022755555555555557,exact weight storage; activation traffic omitted,0.36000000000000004
+0,7,33,shared_expert,fg_swiglu.spv,True,"[3, 1, 1]",[640],7680,0.017066666666666667,logical two inputs + output,0.8733333333333334
+0,7,34,shared_expert,fg_dense_compact_iq4.spv,True,"[640, 1, 1]","[640, 2560, 1, 20, 360, 1065353216]",921600,2.048,exact weight storage; activation traffic omitted,5.886666666666667
+0,7,35,expert_decode,fg_router_top10.spv,True,"[1, 1, 1]","[512, 1]",2128,0.004728888888888889,logical logits + routes/gates/schedule,9.226666666666667
+0,7,36,expert_decode,fg_decode_tile_schedule.spv,True,"[1, 1, 1]",[],400,0.0008888888888888889,logical selected IDs + tile schedule,1.0733333333333335
+0,7,37,expert_decode,fg_moe_decode_gate_up.spv,True,"[80, 10, 1]","[640, 10, 11520, 11520, 921600, 921600, 12, 12]",18432000,40.96,10 selected expert weight matrices,57.43333333333334
+0,7,38,expert_decode,fg_moe_decode_down_reduce.spv,True,"[160, 1, 1]","[2560, 640, 20, 7680, 1228800, 10, 7]",12288000,27.30666666666667,10 selected expert weight matrices,38.233333333333334
+0,7,39,moe_reduce,fg_moe_shared_add.spv,True,"[10, 1, 1]",[2560],30724,0.06827555555555556,logical two inputs + output + scalar,1.0133333333333334
+0,7,40,gr_ffn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.14
+0,8,0,gr_attn_read,fg_group_rms_norm.spv,False,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.466666666666667
+0,8,1,gr_attn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.726666666666667
+0,8,2,gr_attn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.406666666666666
+0,8,3,gr_attn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8466666666666667
+0,8,4,gr_attn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.48
+0,8,5,gr_attn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.566666666666666
+0,8,6,gdn_projection,fg_dense_compact.spv,True,"[1280, 1, 1]","[2560, 10240, 1, 12, 1440, 1065353216]",15155200,33.678222222222225,exact weight storage; activation traffic omitted,53.81
+0,8,7,gdn_projection,fg_dense_compact_mid.spv,True,"[768, 1, 1]","[2560, 6144, 1, 12, 1440, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,38.59
+0,8,8,gdn_projection,fg_dense_f32.spv,True,"[48, 1, 1]","[2560, 48, 1]",491520,1.0922666666666667,exact weight storage; activation traffic omitted,5.235
+0,8,9,gdn_projection,fg_dense_f32.spv,True,"[48, 1, 1]","[2560, 48, 1]",491520,1.0922666666666667,exact weight storage; activation traffic omitted,5.235
+0,8,10,gdn_recurrent,fg_gdn_conv_decode.spv,True,"[40, 1, 1]",[10240],573440,1.2743111111111112,logical projection + state R/W + weights + output,2.27
+0,8,11,gdn_recurrent,fg_gdn_recurrent_algebraic.spv,True,"[48, 1, 1]","[48, 16, 128, 897988541]",6382848,14.184106666666667,logical recurrent state R/W + small tensors,28.8
+0,8,12,gdn_output,fg_dense_compact.spv,True,"[320, 1, 1]","[6144, 2560, 1, 12, 3456, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,30.44
+0,8,13,gr_attn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.6266666666666667
+0,8,14,gr_ffn_read,fg_group_rms_norm.spv,True,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.06
+0,8,15,gr_ffn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.513333333333333
+0,8,16,gr_ffn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.366666666666667
+0,8,17,gr_ffn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8333333333333334
+0,8,18,gr_ffn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.48
+0,8,19,gr_ffn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.413333333333333
+0,8,20,router,fg_dense_f32.spv,True,"[512, 1, 1]","[2560, 512, 1]",5242880,11.650844444444445,exact weight storage; activation traffic omitted,15.700000000000001
+0,8,21,router_quantization,fg_quantize_q8_k.spv,False,"[10, 1, 1]","[2560, 10, 1]",13200,0.029333333333333333,logical activation read + packed output,0.06666666666666667
+0,8,22,shared_expert,fg_dense_soa_r4.spv,True,"[160, 1, 1]","[2560, 640, 1, 12, 1440, 1065353216]",1228800,2.7306666666666666,exact weight storage; activation traffic omitted,4.47
+0,8,23,shared_expert,fg_dense_soa_r4.spv,False,"[160, 1, 1]","[2560, 640, 1, 12, 1440, 1065353216]",1228800,2.7306666666666666,exact weight storage; activation traffic omitted,4.47
+0,8,24,shared_expert,fg_dense_f32.spv,False,"[1, 1, 1]","[2560, 1, 1]",10240,0.022755555555555557,exact weight storage; activation traffic omitted,0.36000000000000004
+0,8,25,shared_expert,fg_swiglu.spv,True,"[3, 1, 1]",[640],7680,0.017066666666666667,logical two inputs + output,0.8733333333333334
+0,8,26,shared_expert,fg_dense_compact_iq4.spv,True,"[640, 1, 1]","[640, 2560, 1, 20, 360, 1065353216]",921600,2.048,exact weight storage; activation traffic omitted,5.886666666666667
+0,8,27,expert_decode,fg_router_top10.spv,True,"[1, 1, 1]","[512, 1]",2128,0.004728888888888889,logical logits + routes/gates/schedule,9.226666666666667
+0,8,28,expert_decode,fg_decode_tile_schedule.spv,True,"[1, 1, 1]",[],400,0.0008888888888888889,logical selected IDs + tile schedule,1.0733333333333335
+0,8,29,expert_decode,fg_moe_decode_gate_up.spv,True,"[80, 10, 1]","[640, 10, 11520, 11520, 921600, 921600, 12, 12]",18432000,40.96,10 selected expert weight matrices,57.43333333333334
+0,8,30,expert_decode,fg_moe_decode_down_reduce.spv,True,"[160, 1, 1]","[2560, 640, 20, 7680, 1228800, 10, 7]",12288000,27.30666666666667,10 selected expert weight matrices,38.233333333333334
+0,8,31,moe_reduce,fg_moe_shared_add.spv,True,"[10, 1, 1]",[2560],30724,0.06827555555555556,logical two inputs + output + scalar,1.0133333333333334
+0,8,32,gr_ffn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.14
+0,9,0,gr_attn_read,fg_group_rms_norm.spv,True,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.466666666666667
+0,9,1,gr_attn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.726666666666667
+0,9,2,gr_attn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.406666666666666
+0,9,3,gr_attn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8466666666666667
+0,9,4,gr_attn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.48
+0,9,5,gr_attn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.566666666666666
+0,9,6,gdn_projection,fg_dense_compact.spv,True,"[1280, 1, 1]","[2560, 10240, 1, 12, 1440, 1065353216]",15155200,33.678222222222225,exact weight storage; activation traffic omitted,53.81
+0,9,7,gdn_projection,fg_dense_compact_mid.spv,True,"[768, 1, 1]","[2560, 6144, 1, 12, 1440, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,38.59
+0,9,8,gdn_projection,fg_dense_f32.spv,True,"[48, 1, 1]","[2560, 48, 1]",491520,1.0922666666666667,exact weight storage; activation traffic omitted,5.235
+0,9,9,gdn_projection,fg_dense_f32.spv,True,"[48, 1, 1]","[2560, 48, 1]",491520,1.0922666666666667,exact weight storage; activation traffic omitted,5.235
+0,9,10,gdn_recurrent,fg_gdn_conv_decode.spv,True,"[40, 1, 1]",[10240],573440,1.2743111111111112,logical projection + state R/W + weights + output,2.27
+0,9,11,gdn_recurrent,fg_gdn_recurrent_algebraic.spv,True,"[48, 1, 1]","[48, 16, 128, 897988541]",6382848,14.184106666666667,logical recurrent state R/W + small tensors,28.8
+0,9,12,gdn_output,fg_dense_compact.spv,True,"[320, 1, 1]","[6144, 2560, 1, 12, 3456, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,30.44
+0,9,13,gr_attn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.6266666666666667
+0,9,14,gr_ffn_read,fg_group_rms_norm.spv,True,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.06
+0,9,15,gr_ffn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.513333333333333
+0,9,16,gr_ffn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.366666666666667
+0,9,17,gr_ffn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8333333333333334
+0,9,18,gr_ffn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.48
+0,9,19,gr_ffn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.413333333333333
+0,9,20,router,fg_dense_f32.spv,True,"[512, 1, 1]","[2560, 512, 1]",5242880,11.650844444444445,exact weight storage; activation traffic omitted,15.700000000000001
+0,9,21,router_quantization,fg_quantize_q8_k.spv,False,"[10, 1, 1]","[2560, 10, 1]",13200,0.029333333333333333,logical activation read + packed output,0.06666666666666667
+0,9,22,shared_expert,fg_dense_soa_r4.spv,True,"[160, 1, 1]","[2560, 640, 1, 12, 1440, 1065353216]",1228800,2.7306666666666666,exact weight storage; activation traffic omitted,4.47
+0,9,23,shared_expert,fg_dense_soa_r4.spv,False,"[160, 1, 1]","[2560, 640, 1, 12, 1440, 1065353216]",1228800,2.7306666666666666,exact weight storage; activation traffic omitted,4.47
+0,9,24,shared_expert,fg_dense_f32.spv,False,"[1, 1, 1]","[2560, 1, 1]",10240,0.022755555555555557,exact weight storage; activation traffic omitted,0.36000000000000004
+0,9,25,shared_expert,fg_swiglu.spv,True,"[3, 1, 1]",[640],7680,0.017066666666666667,logical two inputs + output,0.8733333333333334
+0,9,26,shared_expert,fg_dense_compact_iq4.spv,True,"[640, 1, 1]","[640, 2560, 1, 20, 360, 1065353216]",921600,2.048,exact weight storage; activation traffic omitted,5.886666666666667
+0,9,27,expert_decode,fg_router_top10.spv,True,"[1, 1, 1]","[512, 1]",2128,0.004728888888888889,logical logits + routes/gates/schedule,9.226666666666667
+0,9,28,expert_decode,fg_decode_tile_schedule.spv,True,"[1, 1, 1]",[],400,0.0008888888888888889,logical selected IDs + tile schedule,1.0733333333333335
+0,9,29,expert_decode,fg_moe_decode_gate_up.spv,True,"[80, 10, 1]","[640, 10, 11520, 11520, 921600, 921600, 12, 12]",18432000,40.96,10 selected expert weight matrices,57.43333333333334
+0,9,30,expert_decode,fg_moe_decode_down_reduce.spv,True,"[160, 1, 1]","[2560, 640, 20, 7680, 1228800, 10, 7]",12288000,27.30666666666667,10 selected expert weight matrices,38.233333333333334
+0,9,31,moe_reduce,fg_moe_shared_add.spv,True,"[10, 1, 1]",[2560],30724,0.06827555555555556,logical two inputs + output + scalar,1.0133333333333334
+0,9,32,gr_ffn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.14
+0,10,0,gr_attn_read,fg_group_rms_norm.spv,True,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.466666666666667
+0,10,1,gr_attn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.726666666666667
+0,10,2,gr_attn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.406666666666666
+0,10,3,gr_attn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8466666666666667
+0,10,4,gr_attn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.48
+0,10,5,gr_attn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.566666666666666
+0,10,6,gdn_projection,fg_dense_compact.spv,True,"[1280, 1, 1]","[2560, 10240, 1, 12, 1440, 1065353216]",15155200,33.678222222222225,exact weight storage; activation traffic omitted,53.81
+0,10,7,gdn_projection,fg_dense_compact_mid.spv,True,"[768, 1, 1]","[2560, 6144, 1, 12, 1440, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,38.59
+0,10,8,gdn_projection,fg_dense_f32.spv,True,"[48, 1, 1]","[2560, 48, 1]",491520,1.0922666666666667,exact weight storage; activation traffic omitted,5.235
+0,10,9,gdn_projection,fg_dense_f32.spv,True,"[48, 1, 1]","[2560, 48, 1]",491520,1.0922666666666667,exact weight storage; activation traffic omitted,5.235
+0,10,10,gdn_recurrent,fg_gdn_conv_decode.spv,True,"[40, 1, 1]",[10240],573440,1.2743111111111112,logical projection + state R/W + weights + output,2.27
+0,10,11,gdn_recurrent,fg_gdn_recurrent_algebraic.spv,True,"[48, 1, 1]","[48, 16, 128, 897988541]",6382848,14.184106666666667,logical recurrent state R/W + small tensors,28.8
+0,10,12,gdn_output,fg_dense_compact.spv,True,"[320, 1, 1]","[6144, 2560, 1, 12, 3456, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,30.44
+0,10,13,gr_attn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.6266666666666667
+0,10,14,gr_ffn_read,fg_group_rms_norm.spv,True,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.06
+0,10,15,gr_ffn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.513333333333333
+0,10,16,gr_ffn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.366666666666667
+0,10,17,gr_ffn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8333333333333334
+0,10,18,gr_ffn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.48
+0,10,19,gr_ffn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.413333333333333
+0,10,20,router,fg_dense_f32.spv,True,"[512, 1, 1]","[2560, 512, 1]",5242880,11.650844444444445,exact weight storage; activation traffic omitted,15.700000000000001
+0,10,21,router_quantization,fg_quantize_q8_k.spv,False,"[10, 1, 1]","[2560, 10, 1]",13200,0.029333333333333333,logical activation read + packed output,0.06666666666666667
+0,10,22,shared_expert,fg_dense_soa_r4.spv,True,"[160, 1, 1]","[2560, 640, 1, 12, 1440, 1065353216]",1228800,2.7306666666666666,exact weight storage; activation traffic omitted,4.47
+0,10,23,shared_expert,fg_dense_soa_r4.spv,False,"[160, 1, 1]","[2560, 640, 1, 12, 1440, 1065353216]",1228800,2.7306666666666666,exact weight storage; activation traffic omitted,4.47
+0,10,24,shared_expert,fg_dense_f32.spv,False,"[1, 1, 1]","[2560, 1, 1]",10240,0.022755555555555557,exact weight storage; activation traffic omitted,0.36000000000000004
+0,10,25,shared_expert,fg_swiglu.spv,True,"[3, 1, 1]",[640],7680,0.017066666666666667,logical two inputs + output,0.8733333333333334
+0,10,26,shared_expert,fg_dense_compact_iq4.spv,True,"[640, 1, 1]","[640, 2560, 1, 20, 360, 1065353216]",921600,2.048,exact weight storage; activation traffic omitted,5.886666666666667
+0,10,27,expert_decode,fg_router_top10.spv,True,"[1, 1, 1]","[512, 1]",2128,0.004728888888888889,logical logits + routes/gates/schedule,9.226666666666667
+0,10,28,expert_decode,fg_decode_tile_schedule.spv,True,"[1, 1, 1]",[],400,0.0008888888888888889,logical selected IDs + tile schedule,1.0733333333333335
+0,10,29,expert_decode,fg_moe_decode_gate_up.spv,True,"[80, 10, 1]","[640, 10, 11520, 11520, 921600, 921600, 12, 12]",18432000,40.96,10 selected expert weight matrices,57.43333333333334
+0,10,30,expert_decode,fg_moe_decode_down_reduce.spv,True,"[160, 1, 1]","[2560, 640, 20, 7680, 1228800, 10, 7]",12288000,27.30666666666667,10 selected expert weight matrices,38.233333333333334
+0,10,31,moe_reduce,fg_moe_shared_add.spv,True,"[10, 1, 1]",[2560],30724,0.06827555555555556,logical two inputs + output + scalar,1.0133333333333334
+0,10,32,gr_ffn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.14
+0,11,0,gr_attn_read,fg_group_rms_norm.spv,False,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.466666666666667
+0,11,1,gr_attn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.726666666666667
+0,11,2,gr_attn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.406666666666666
+0,11,3,gr_attn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8466666666666667
+0,11,4,gr_attn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.48
+0,11,5,gr_attn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.566666666666666
+0,11,6,qsa_projection,fg_dense_compact.spv,False,"[1536, 1, 1]","[2560, 12288, 1, 12, 1440, 1065353216]",18186240,40.413866666666664,exact weight storage; activation traffic omitted,70.22
+0,11,7,qsa_projection,fg_dense_soa_r4.spv,True,"[128, 1, 1]","[2560, 512, 1, 12, 1440, 1065353216]",983040,2.1845333333333334,exact weight storage; activation traffic omitted,6.2
+0,11,8,qsa_projection,fg_dense_soa_r4.spv,True,"[128, 1, 1]","[2560, 512, 1, 12, 1440, 1065353216]",983040,2.1845333333333334,exact weight storage; activation traffic omitted,6.2
+0,11,9,qsa_projection,fg_qsa_prepare.spv,True,"[24, 1, 1]",[],104460,0.23213333333333333,logical unique Q/G/K + norms + position + outputs,5.9
+0,11,10,qsa_projection,fg_dense_bf16_f32.spv,True,"[512, 1, 1]","[2560, 512, 1]",2621440,5.8254222222222225,exact weight storage; activation traffic omitted,17.12
+0,11,11,qsa_projection,fg_dense_bf16_f32.spv,True,"[128, 1, 1]","[2560, 128, 1]",655360,1.4563555555555556,exact weight storage; activation traffic omitted,17.12
+0,11,12,qsa_projection,fg_qsa_index_prepare.spv,True,"[4, 1, 1]",[],4620,0.010266666666666667,logical unique raw index query + norm + position + output,2.5
+0,11,13,qsa_projection,fg_quantize_q8_0.spv,True,"[1, 1, 1]","[512, 16, 1]",2592,0.00576,logical activation read + packed output,11.413333333333334
+0,11,14,qsa_projection,fg_quantize_q8_0.spv,True,"[1, 1, 1]","[512, 16, 1]",2592,0.00576,logical activation read + packed output,11.413333333333334
+0,11,15,qsa_projection,fg_quantize_q8_0.spv,True,"[1, 1, 1]","[128, 4, 1]",648,0.00144,logical activation read + packed output,11.413333333333334
+0,11,16,qsa_state_attention,fg_qsa_record_commit.spv,False,"[2, 1, 1]","[0, 0, 8192, 256, 516, 16384]",2608,0.0057955555555555555,logical QSA record read/write + index history write,1.74
+0,11,17,qsa_state_attention,fg_qsa_record_gather.spv,True,"[311, 1, 1]","[0, 16384, 64, 516, 1]",635304,1.4117866666666667,logical selected records read/write,6.52
+0,11,18,qsa_state_attention,fg_qsa_decode_attention_split.spv,True,"[2, 2, 1]","[257, 2]",353344,0.7852088888888888,unique KV + query/gate/output; per-head reloads omitted,46.72
+0,11,19,qsa_state_attention,fg_qsa_attention_merge.spv,True,"[24, 1, 1]",[2],98688,0.21930666666666668,logical split partials + gate/output,2.42
+0,11,20,qsa_output,fg_dense_compact.spv,True,"[320, 1, 1]","[6144, 2560, 1, 12, 3456, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,31.66
+0,11,21,gr_attn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.6266666666666667
+0,11,22,gr_ffn_read,fg_group_rms_norm.spv,True,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.06
+0,11,23,gr_ffn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.513333333333333
+0,11,24,gr_ffn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.366666666666667
+0,11,25,gr_ffn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8333333333333334
+0,11,26,gr_ffn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.48
+0,11,27,gr_ffn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.413333333333333
+0,11,28,router,fg_dense_f32.spv,True,"[512, 1, 1]","[2560, 512, 1]",5242880,11.650844444444445,exact weight storage; activation traffic omitted,15.700000000000001
+0,11,29,router_quantization,fg_quantize_q8_k.spv,False,"[10, 1, 1]","[2560, 10, 1]",13200,0.029333333333333333,logical activation read + packed output,0.06666666666666667
+0,11,30,shared_expert,fg_dense_soa_r4.spv,True,"[160, 1, 1]","[2560, 640, 1, 12, 1440, 1065353216]",1228800,2.7306666666666666,exact weight storage; activation traffic omitted,4.47
+0,11,31,shared_expert,fg_dense_soa_r4.spv,False,"[160, 1, 1]","[2560, 640, 1, 12, 1440, 1065353216]",1228800,2.7306666666666666,exact weight storage; activation traffic omitted,4.47
+0,11,32,shared_expert,fg_dense_f32.spv,False,"[1, 1, 1]","[2560, 1, 1]",10240,0.022755555555555557,exact weight storage; activation traffic omitted,0.36000000000000004
+0,11,33,shared_expert,fg_swiglu.spv,True,"[3, 1, 1]",[640],7680,0.017066666666666667,logical two inputs + output,0.8733333333333334
+0,11,34,shared_expert,fg_dense_compact_iq4.spv,True,"[640, 1, 1]","[640, 2560, 1, 20, 360, 1065353216]",921600,2.048,exact weight storage; activation traffic omitted,5.886666666666667
+0,11,35,expert_decode,fg_router_top10.spv,True,"[1, 1, 1]","[512, 1]",2128,0.004728888888888889,logical logits + routes/gates/schedule,9.226666666666667
+0,11,36,expert_decode,fg_decode_tile_schedule.spv,True,"[1, 1, 1]",[],400,0.0008888888888888889,logical selected IDs + tile schedule,1.0733333333333335
+0,11,37,expert_decode,fg_moe_decode_gate_up.spv,True,"[80, 10, 1]","[640, 10, 11520, 11520, 921600, 921600, 12, 12]",18432000,40.96,10 selected expert weight matrices,57.43333333333334
+0,11,38,expert_decode,fg_moe_decode_down_reduce.spv,True,"[160, 1, 1]","[2560, 640, 20, 7680, 1228800, 10, 7]",12288000,27.30666666666667,10 selected expert weight matrices,38.233333333333334
+0,11,39,moe_reduce,fg_moe_shared_add.spv,True,"[10, 1, 1]",[2560],30724,0.06827555555555556,logical two inputs + output + scalar,1.0133333333333334
+0,11,40,gr_ffn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.14
+7,6,0,gr_attn_read,fg_group_rms_norm.spv,False,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.473333333333333
+7,6,1,gr_attn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.6866666666666665
+7,6,2,gr_attn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.46
+7,6,3,gr_attn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8466666666666667
+7,6,4,gr_attn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.52
+7,6,5,gr_attn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.553333333333334
+7,6,6,gdn_projection,fg_dense_compact.spv,True,"[1280, 1, 1]","[2560, 10240, 1, 12, 1440, 1065353216]",15155200,33.678222222222225,exact weight storage; activation traffic omitted,54.33
+7,6,7,gdn_projection,fg_dense_compact_mid.spv,True,"[768, 1, 1]","[2560, 6144, 1, 12, 1440, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,38.47
+7,6,8,gdn_projection,fg_dense_f32.spv,True,"[48, 1, 1]","[2560, 48, 1]",491520,1.0922666666666667,exact weight storage; activation traffic omitted,5.275
+7,6,9,gdn_projection,fg_dense_f32.spv,True,"[48, 1, 1]","[2560, 48, 1]",491520,1.0922666666666667,exact weight storage; activation traffic omitted,5.275
+7,6,10,gdn_recurrent,fg_gdn_conv_decode.spv,True,"[40, 1, 1]",[10240],573440,1.2743111111111112,logical projection + state R/W + weights + output,2.3
+7,6,11,gdn_recurrent,fg_gdn_recurrent_algebraic.spv,True,"[48, 1, 1]","[48, 16, 128, 897988541]",6382848,14.184106666666667,logical recurrent state R/W + small tensors,29.8
+7,6,12,gdn_output,fg_dense_compact.spv,True,"[320, 1, 1]","[6144, 2560, 1, 12, 3456, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,30.14
+7,6,13,gr_attn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.6333333333333335
+7,6,14,gr_ffn_read,fg_group_rms_norm.spv,True,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.0533333333333332
+7,6,15,gr_ffn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.426666666666667
+7,6,16,gr_ffn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.353333333333333
+7,6,17,gr_ffn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8533333333333334
+7,6,18,gr_ffn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.459999999999999
+7,6,19,gr_ffn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.433333333333334
+7,6,20,router,fg_dense_f32.spv,True,"[512, 1, 1]","[2560, 512, 1]",5242880,11.650844444444445,exact weight storage; activation traffic omitted,15.746666666666668
+7,6,21,router_quantization,fg_quantize_q8_k.spv,False,"[10, 1, 1]","[2560, 10, 1]",13200,0.029333333333333333,logical activation read + packed output,0.07333333333333333
+7,6,22,shared_expert,fg_shared_swiglu_q4.spv,True,"[160, 1, 1]","[2560, 640, 1, 12, 0, 1065353216]",2457600,5.461333333333333,exact weight storage,10.966666666666667
+7,6,23,shared_expert,fg_dense_f32.spv,False,"[1, 1, 1]","[2560, 1, 1]",10240,0.022755555555555557,exact weight storage; activation traffic omitted,0.06666666666666667
+7,6,24,shared_expert,fg_dense_compact_iq4.spv,True,"[640, 1, 1]","[640, 2560, 1, 20, 360, 1065353216]",921600,2.048,exact weight storage; activation traffic omitted,5.786666666666666
+7,6,25,expert_decode,fg_router_top10_subgroup_tiles.spv,True,"[1, 1, 1]","[512, 1]",2488,0.005528888888888889,logical logits + routes/gates/schedule,8.64
+7,6,26,expert_decode,fg_moe_decode_gate_up.spv,True,"[80, 10, 1]","[640, 10, 11520, 11520, 921600, 921600, 12, 12]",18432000,40.96,10 selected expert weight matrices,57.22
+7,6,27,expert_decode,fg_moe_decode_down_reduce.spv,True,"[160, 1, 1]","[2560, 640, 20, 7680, 1228800, 10, 7]",12288000,27.30666666666667,10 selected expert weight matrices,38.166666666666664
+7,6,28,gr_ffn_write,fg_moe_shared_gr_write.spv,True,"[10, 1, 1]","[2560, 4]",102420,0.2276,logical unique inputs + output; cache reuse assumed,1.5533333333333335
+7,7,0,gr_attn_read,fg_group_rms_norm.spv,False,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.473333333333333
+7,7,1,gr_attn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.6866666666666665
+7,7,2,gr_attn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.46
+7,7,3,gr_attn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8466666666666667
+7,7,4,gr_attn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.52
+7,7,5,gr_attn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.553333333333334
+7,7,6,qsa_projection,fg_dense_compact.spv,False,"[1536, 1, 1]","[2560, 12288, 1, 12, 1440, 1065353216]",18186240,40.413866666666664,exact weight storage; activation traffic omitted,70.78
+7,7,7,qsa_projection,fg_dense_soa_r4.spv,True,"[128, 1, 1]","[2560, 512, 1, 12, 1440, 1065353216]",983040,2.1845333333333334,exact weight storage; activation traffic omitted,6.23
+7,7,8,qsa_projection,fg_dense_soa_r4.spv,True,"[128, 1, 1]","[2560, 512, 1, 12, 1440, 1065353216]",983040,2.1845333333333334,exact weight storage; activation traffic omitted,6.23
+7,7,9,qsa_projection,fg_qsa_prepare.spv,True,"[24, 1, 1]",[],104460,0.23213333333333333,logical unique Q/G/K + norms + position + outputs,5.76
+7,7,10,qsa_projection,fg_dense_bf16_f32.spv,True,"[512, 1, 1]","[2560, 512, 1]",2621440,5.8254222222222225,exact weight storage; activation traffic omitted,17.12
+7,7,11,qsa_projection,fg_dense_bf16_f32.spv,True,"[128, 1, 1]","[2560, 128, 1]",655360,1.4563555555555556,exact weight storage; activation traffic omitted,17.12
+7,7,12,qsa_projection,fg_qsa_index_prepare.spv,True,"[4, 1, 1]",[],4620,0.010266666666666667,logical unique raw index query + norm + position + output,2.54
+7,7,13,qsa_projection,fg_quantize_q8_0.spv,True,"[1, 1, 1]","[512, 16, 1]",2592,0.00576,logical activation read + packed output,11.493333333333332
+7,7,14,qsa_projection,fg_quantize_q8_0.spv,True,"[1, 1, 1]","[512, 16, 1]",2592,0.00576,logical activation read + packed output,11.493333333333332
+7,7,15,qsa_projection,fg_quantize_q8_0.spv,True,"[1, 1, 1]","[128, 4, 1]",648,0.00144,logical activation read + packed output,11.493333333333332
+7,7,16,qsa_state_attention,fg_qsa_record_commit.spv,False,"[2, 1, 1]","[0, 0, 8192, 256, 512, 16384]",2608,0.0057955555555555555,logical QSA record read/write + index history write,1.78
+7,7,17,qsa_state_attention,fg_qsa_record_gather.spv,True,"[311, 1, 1]","[0, 16384, 64, 512, 1]",635304,1.4117866666666667,logical selected records read/write,6.4
+7,7,18,qsa_state_attention,fg_qsa_decode_attention_split.spv,True,"[2, 2, 1]","[257, 2]",353344,0.7852088888888888,unique KV + query/gate/output; per-head reloads omitted,45.9
+7,7,19,qsa_state_attention,fg_qsa_attention_merge.spv,True,"[24, 1, 1]",[2],98688,0.21930666666666668,logical split partials + gate/output,2.42
+7,7,20,qsa_output,fg_dense_compact.spv,True,"[320, 1, 1]","[6144, 2560, 1, 12, 3456, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,31.56
+7,7,21,gr_attn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.6333333333333335
+7,7,22,gr_ffn_read,fg_group_rms_norm.spv,True,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.0533333333333332
+7,7,23,gr_ffn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.426666666666667
+7,7,24,gr_ffn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.353333333333333
+7,7,25,gr_ffn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8533333333333334
+7,7,26,gr_ffn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.459999999999999
+7,7,27,gr_ffn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.433333333333334
+7,7,28,router,fg_dense_f32.spv,True,"[512, 1, 1]","[2560, 512, 1]",5242880,11.650844444444445,exact weight storage; activation traffic omitted,15.746666666666668
+7,7,29,router_quantization,fg_quantize_q8_k.spv,False,"[10, 1, 1]","[2560, 10, 1]",13200,0.029333333333333333,logical activation read + packed output,0.07333333333333333
+7,7,30,shared_expert,fg_shared_swiglu_q4.spv,True,"[160, 1, 1]","[2560, 640, 1, 12, 0, 1065353216]",2457600,5.461333333333333,exact weight storage,10.966666666666667
+7,7,31,shared_expert,fg_dense_f32.spv,False,"[1, 1, 1]","[2560, 1, 1]",10240,0.022755555555555557,exact weight storage; activation traffic omitted,0.06666666666666667
+7,7,32,shared_expert,fg_dense_compact_iq4.spv,True,"[640, 1, 1]","[640, 2560, 1, 20, 360, 1065353216]",921600,2.048,exact weight storage; activation traffic omitted,5.786666666666666
+7,7,33,expert_decode,fg_router_top10_subgroup_tiles.spv,True,"[1, 1, 1]","[512, 1]",2488,0.005528888888888889,logical logits + routes/gates/schedule,8.64
+7,7,34,expert_decode,fg_moe_decode_gate_up.spv,True,"[80, 10, 1]","[640, 10, 11520, 11520, 921600, 921600, 12, 12]",18432000,40.96,10 selected expert weight matrices,57.22
+7,7,35,expert_decode,fg_moe_decode_down_reduce.spv,True,"[160, 1, 1]","[2560, 640, 20, 7680, 1228800, 10, 7]",12288000,27.30666666666667,10 selected expert weight matrices,38.166666666666664
+7,7,36,gr_ffn_write,fg_moe_shared_gr_write.spv,True,"[10, 1, 1]","[2560, 4]",102420,0.2276,logical unique inputs + output; cache reuse assumed,1.5533333333333335
+7,8,0,gr_attn_read,fg_group_rms_norm.spv,False,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.473333333333333
+7,8,1,gr_attn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.6866666666666665
+7,8,2,gr_attn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.46
+7,8,3,gr_attn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8466666666666667
+7,8,4,gr_attn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.52
+7,8,5,gr_attn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.553333333333334
+7,8,6,gdn_projection,fg_dense_compact.spv,True,"[1280, 1, 1]","[2560, 10240, 1, 12, 1440, 1065353216]",15155200,33.678222222222225,exact weight storage; activation traffic omitted,54.33
+7,8,7,gdn_projection,fg_dense_compact_mid.spv,True,"[768, 1, 1]","[2560, 6144, 1, 12, 1440, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,38.47
+7,8,8,gdn_projection,fg_dense_f32.spv,True,"[48, 1, 1]","[2560, 48, 1]",491520,1.0922666666666667,exact weight storage; activation traffic omitted,5.275
+7,8,9,gdn_projection,fg_dense_f32.spv,True,"[48, 1, 1]","[2560, 48, 1]",491520,1.0922666666666667,exact weight storage; activation traffic omitted,5.275
+7,8,10,gdn_recurrent,fg_gdn_conv_decode.spv,True,"[40, 1, 1]",[10240],573440,1.2743111111111112,logical projection + state R/W + weights + output,2.3
+7,8,11,gdn_recurrent,fg_gdn_recurrent_algebraic.spv,True,"[48, 1, 1]","[48, 16, 128, 897988541]",6382848,14.184106666666667,logical recurrent state R/W + small tensors,29.8
+7,8,12,gdn_output,fg_dense_compact.spv,True,"[320, 1, 1]","[6144, 2560, 1, 12, 3456, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,30.14
+7,8,13,gr_attn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.6333333333333335
+7,8,14,gr_ffn_read,fg_group_rms_norm.spv,True,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.0533333333333332
+7,8,15,gr_ffn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.426666666666667
+7,8,16,gr_ffn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.353333333333333
+7,8,17,gr_ffn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8533333333333334
+7,8,18,gr_ffn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.459999999999999
+7,8,19,gr_ffn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.433333333333334
+7,8,20,router,fg_dense_f32.spv,True,"[512, 1, 1]","[2560, 512, 1]",5242880,11.650844444444445,exact weight storage; activation traffic omitted,15.746666666666668
+7,8,21,router_quantization,fg_quantize_q8_k.spv,False,"[10, 1, 1]","[2560, 10, 1]",13200,0.029333333333333333,logical activation read + packed output,0.07333333333333333
+7,8,22,shared_expert,fg_shared_swiglu_q4.spv,True,"[160, 1, 1]","[2560, 640, 1, 12, 0, 1065353216]",2457600,5.461333333333333,exact weight storage,10.966666666666667
+7,8,23,shared_expert,fg_dense_f32.spv,False,"[1, 1, 1]","[2560, 1, 1]",10240,0.022755555555555557,exact weight storage; activation traffic omitted,0.06666666666666667
+7,8,24,shared_expert,fg_dense_compact_iq4.spv,True,"[640, 1, 1]","[640, 2560, 1, 20, 360, 1065353216]",921600,2.048,exact weight storage; activation traffic omitted,5.786666666666666
+7,8,25,expert_decode,fg_router_top10_subgroup_tiles.spv,True,"[1, 1, 1]","[512, 1]",2488,0.005528888888888889,logical logits + routes/gates/schedule,8.64
+7,8,26,expert_decode,fg_moe_decode_gate_up.spv,True,"[80, 10, 1]","[640, 10, 11520, 11520, 921600, 921600, 12, 12]",18432000,40.96,10 selected expert weight matrices,57.22
+7,8,27,expert_decode,fg_moe_decode_down_reduce.spv,True,"[160, 1, 1]","[2560, 640, 20, 7680, 1228800, 10, 7]",12288000,27.30666666666667,10 selected expert weight matrices,38.166666666666664
+7,8,28,gr_ffn_write,fg_moe_shared_gr_write.spv,True,"[10, 1, 1]","[2560, 4]",102420,0.2276,logical unique inputs + output; cache reuse assumed,1.5533333333333335
+7,9,0,gr_attn_read,fg_group_rms_norm.spv,True,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.473333333333333
+7,9,1,gr_attn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.6866666666666665
+7,9,2,gr_attn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.46
+7,9,3,gr_attn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8466666666666667
+7,9,4,gr_attn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.52
+7,9,5,gr_attn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.553333333333334
+7,9,6,gdn_projection,fg_dense_compact.spv,True,"[1280, 1, 1]","[2560, 10240, 1, 12, 1440, 1065353216]",15155200,33.678222222222225,exact weight storage; activation traffic omitted,54.33
+7,9,7,gdn_projection,fg_dense_compact_mid.spv,True,"[768, 1, 1]","[2560, 6144, 1, 12, 1440, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,38.47
+7,9,8,gdn_projection,fg_dense_f32.spv,True,"[48, 1, 1]","[2560, 48, 1]",491520,1.0922666666666667,exact weight storage; activation traffic omitted,5.275
+7,9,9,gdn_projection,fg_dense_f32.spv,True,"[48, 1, 1]","[2560, 48, 1]",491520,1.0922666666666667,exact weight storage; activation traffic omitted,5.275
+7,9,10,gdn_recurrent,fg_gdn_conv_decode.spv,True,"[40, 1, 1]",[10240],573440,1.2743111111111112,logical projection + state R/W + weights + output,2.3
+7,9,11,gdn_recurrent,fg_gdn_recurrent_algebraic.spv,True,"[48, 1, 1]","[48, 16, 128, 897988541]",6382848,14.184106666666667,logical recurrent state R/W + small tensors,29.8
+7,9,12,gdn_output,fg_dense_compact.spv,True,"[320, 1, 1]","[6144, 2560, 1, 12, 3456, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,30.14
+7,9,13,gr_attn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.6333333333333335
+7,9,14,gr_ffn_read,fg_group_rms_norm.spv,True,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.0533333333333332
+7,9,15,gr_ffn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.426666666666667
+7,9,16,gr_ffn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.353333333333333
+7,9,17,gr_ffn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8533333333333334
+7,9,18,gr_ffn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.459999999999999
+7,9,19,gr_ffn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.433333333333334
+7,9,20,router,fg_dense_f32.spv,True,"[512, 1, 1]","[2560, 512, 1]",5242880,11.650844444444445,exact weight storage; activation traffic omitted,15.746666666666668
+7,9,21,router_quantization,fg_quantize_q8_k.spv,False,"[10, 1, 1]","[2560, 10, 1]",13200,0.029333333333333333,logical activation read + packed output,0.07333333333333333
+7,9,22,shared_expert,fg_shared_swiglu_q4.spv,True,"[160, 1, 1]","[2560, 640, 1, 12, 0, 1065353216]",2457600,5.461333333333333,exact weight storage,10.966666666666667
+7,9,23,shared_expert,fg_dense_f32.spv,False,"[1, 1, 1]","[2560, 1, 1]",10240,0.022755555555555557,exact weight storage; activation traffic omitted,0.06666666666666667
+7,9,24,shared_expert,fg_dense_compact_iq4.spv,True,"[640, 1, 1]","[640, 2560, 1, 20, 360, 1065353216]",921600,2.048,exact weight storage; activation traffic omitted,5.786666666666666
+7,9,25,expert_decode,fg_router_top10_subgroup_tiles.spv,True,"[1, 1, 1]","[512, 1]",2488,0.005528888888888889,logical logits + routes/gates/schedule,8.64
+7,9,26,expert_decode,fg_moe_decode_gate_up.spv,True,"[80, 10, 1]","[640, 10, 11520, 11520, 921600, 921600, 12, 12]",18432000,40.96,10 selected expert weight matrices,57.22
+7,9,27,expert_decode,fg_moe_decode_down_reduce.spv,True,"[160, 1, 1]","[2560, 640, 20, 7680, 1228800, 10, 7]",12288000,27.30666666666667,10 selected expert weight matrices,38.166666666666664
+7,9,28,gr_ffn_write,fg_moe_shared_gr_write.spv,True,"[10, 1, 1]","[2560, 4]",102420,0.2276,logical unique inputs + output; cache reuse assumed,1.5533333333333335
+7,10,0,gr_attn_read,fg_group_rms_norm.spv,True,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.473333333333333
+7,10,1,gr_attn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.6866666666666665
+7,10,2,gr_attn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.46
+7,10,3,gr_attn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8466666666666667
+7,10,4,gr_attn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.52
+7,10,5,gr_attn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.553333333333334
+7,10,6,gdn_projection,fg_dense_compact.spv,True,"[1280, 1, 1]","[2560, 10240, 1, 12, 1440, 1065353216]",15155200,33.678222222222225,exact weight storage; activation traffic omitted,54.33
+7,10,7,gdn_projection,fg_dense_compact_mid.spv,True,"[768, 1, 1]","[2560, 6144, 1, 12, 1440, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,38.47
+7,10,8,gdn_projection,fg_dense_f32.spv,True,"[48, 1, 1]","[2560, 48, 1]",491520,1.0922666666666667,exact weight storage; activation traffic omitted,5.275
+7,10,9,gdn_projection,fg_dense_f32.spv,True,"[48, 1, 1]","[2560, 48, 1]",491520,1.0922666666666667,exact weight storage; activation traffic omitted,5.275
+7,10,10,gdn_recurrent,fg_gdn_conv_decode.spv,True,"[40, 1, 1]",[10240],573440,1.2743111111111112,logical projection + state R/W + weights + output,2.3
+7,10,11,gdn_recurrent,fg_gdn_recurrent_algebraic.spv,True,"[48, 1, 1]","[48, 16, 128, 897988541]",6382848,14.184106666666667,logical recurrent state R/W + small tensors,29.8
+7,10,12,gdn_output,fg_dense_compact.spv,True,"[320, 1, 1]","[6144, 2560, 1, 12, 3456, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,30.14
+7,10,13,gr_attn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.6333333333333335
+7,10,14,gr_ffn_read,fg_group_rms_norm.spv,True,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.0533333333333332
+7,10,15,gr_ffn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.426666666666667
+7,10,16,gr_ffn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.353333333333333
+7,10,17,gr_ffn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8533333333333334
+7,10,18,gr_ffn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.459999999999999
+7,10,19,gr_ffn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.433333333333334
+7,10,20,router,fg_dense_f32.spv,True,"[512, 1, 1]","[2560, 512, 1]",5242880,11.650844444444445,exact weight storage; activation traffic omitted,15.746666666666668
+7,10,21,router_quantization,fg_quantize_q8_k.spv,False,"[10, 1, 1]","[2560, 10, 1]",13200,0.029333333333333333,logical activation read + packed output,0.07333333333333333
+7,10,22,shared_expert,fg_shared_swiglu_q4.spv,True,"[160, 1, 1]","[2560, 640, 1, 12, 0, 1065353216]",2457600,5.461333333333333,exact weight storage,10.966666666666667
+7,10,23,shared_expert,fg_dense_f32.spv,False,"[1, 1, 1]","[2560, 1, 1]",10240,0.022755555555555557,exact weight storage; activation traffic omitted,0.06666666666666667
+7,10,24,shared_expert,fg_dense_compact_iq4.spv,True,"[640, 1, 1]","[640, 2560, 1, 20, 360, 1065353216]",921600,2.048,exact weight storage; activation traffic omitted,5.786666666666666
+7,10,25,expert_decode,fg_router_top10_subgroup_tiles.spv,True,"[1, 1, 1]","[512, 1]",2488,0.005528888888888889,logical logits + routes/gates/schedule,8.64
+7,10,26,expert_decode,fg_moe_decode_gate_up.spv,True,"[80, 10, 1]","[640, 10, 11520, 11520, 921600, 921600, 12, 12]",18432000,40.96,10 selected expert weight matrices,57.22
+7,10,27,expert_decode,fg_moe_decode_down_reduce.spv,True,"[160, 1, 1]","[2560, 640, 20, 7680, 1228800, 10, 7]",12288000,27.30666666666667,10 selected expert weight matrices,38.166666666666664
+7,10,28,gr_ffn_write,fg_moe_shared_gr_write.spv,True,"[10, 1, 1]","[2560, 4]",102420,0.2276,logical unique inputs + output; cache reuse assumed,1.5533333333333335
+7,11,0,gr_attn_read,fg_group_rms_norm.spv,False,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.473333333333333
+7,11,1,gr_attn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.6866666666666665
+7,11,2,gr_attn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.46
+7,11,3,gr_attn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8466666666666667
+7,11,4,gr_attn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.52
+7,11,5,gr_attn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.553333333333334
+7,11,6,qsa_projection,fg_dense_compact.spv,False,"[1536, 1, 1]","[2560, 12288, 1, 12, 1440, 1065353216]",18186240,40.413866666666664,exact weight storage; activation traffic omitted,70.78
+7,11,7,qsa_projection,fg_dense_soa_r4.spv,True,"[128, 1, 1]","[2560, 512, 1, 12, 1440, 1065353216]",983040,2.1845333333333334,exact weight storage; activation traffic omitted,6.23
+7,11,8,qsa_projection,fg_dense_soa_r4.spv,True,"[128, 1, 1]","[2560, 512, 1, 12, 1440, 1065353216]",983040,2.1845333333333334,exact weight storage; activation traffic omitted,6.23
+7,11,9,qsa_projection,fg_qsa_prepare.spv,True,"[24, 1, 1]",[],104460,0.23213333333333333,logical unique Q/G/K + norms + position + outputs,5.76
+7,11,10,qsa_projection,fg_dense_bf16_f32.spv,True,"[512, 1, 1]","[2560, 512, 1]",2621440,5.8254222222222225,exact weight storage; activation traffic omitted,17.12
+7,11,11,qsa_projection,fg_dense_bf16_f32.spv,True,"[128, 1, 1]","[2560, 128, 1]",655360,1.4563555555555556,exact weight storage; activation traffic omitted,17.12
+7,11,12,qsa_projection,fg_qsa_index_prepare.spv,True,"[4, 1, 1]",[],4620,0.010266666666666667,logical unique raw index query + norm + position + output,2.54
+7,11,13,qsa_projection,fg_quantize_q8_0.spv,True,"[1, 1, 1]","[512, 16, 1]",2592,0.00576,logical activation read + packed output,11.493333333333332
+7,11,14,qsa_projection,fg_quantize_q8_0.spv,True,"[1, 1, 1]","[512, 16, 1]",2592,0.00576,logical activation read + packed output,11.493333333333332
+7,11,15,qsa_projection,fg_quantize_q8_0.spv,True,"[1, 1, 1]","[128, 4, 1]",648,0.00144,logical activation read + packed output,11.493333333333332
+7,11,16,qsa_state_attention,fg_qsa_record_commit.spv,False,"[2, 1, 1]","[0, 0, 8192, 256, 516, 16384]",2608,0.0057955555555555555,logical QSA record read/write + index history write,1.78
+7,11,17,qsa_state_attention,fg_qsa_record_gather.spv,True,"[311, 1, 1]","[0, 16384, 64, 516, 1]",635304,1.4117866666666667,logical selected records read/write,6.4
+7,11,18,qsa_state_attention,fg_qsa_decode_attention_split.spv,True,"[2, 2, 1]","[257, 2]",353344,0.7852088888888888,unique KV + query/gate/output; per-head reloads omitted,45.9
+7,11,19,qsa_state_attention,fg_qsa_attention_merge.spv,True,"[24, 1, 1]",[2],98688,0.21930666666666668,logical split partials + gate/output,2.42
+7,11,20,qsa_output,fg_dense_compact.spv,True,"[320, 1, 1]","[6144, 2560, 1, 12, 3456, 1065353216]",9093120,20.206933333333332,exact weight storage; activation traffic omitted,31.56
+7,11,21,gr_attn_write,fg_gr_write.spv,True,"[40, 1, 1]","[2560, 4, 1]",92176,0.20483555555555555,logical hyper read/write + block + gates,1.6333333333333335
+7,11,22,gr_ffn_read,fg_group_rms_norm.spv,True,"[4, 1, 1]","[2560, 4, 1, 897988541]",122880,0.2730666666666667,logical input + norm weights + output,2.0533333333333332
+7,11,23,gr_ffn_read,fg_hc_inject_partial.spv,True,"[24, 1, 1]","[2560, 4, 1, 24]",205184,0.45596444444444445,logical unique norm + inject weights + partials,6.426666666666667
+7,11,24,gr_ffn_read,fg_dense_compact_long.spv,True,"[80, 1, 1]","[10240, 320, 1, 12, 5760, 1065353216]",1894400,4.209777777777778,exact weight storage; activation traffic omitted,11.353333333333333
+7,11,25,gr_ffn_read,fg_silu_scaled.spv,True,"[2, 1, 1]","[320, 1048576000]",2560,0.005688888888888889,logical input + output,0.8533333333333334
+7,11,26,gr_ffn_read,fg_dense_compact_iq4.spv,True,"[2560, 1, 1]","[320, 10240, 1, 20, 180, 1065353216]",1843200,4.096,exact weight storage; activation traffic omitted,10.459999999999999
+7,11,27,gr_ffn_read,fg_gr_mix_partial.spv,True,"[10, 1, 1]","[2560, 4, 1, 24]",92560,0.2056888888888889,logical norm + logits + partials + outputs,4.433333333333334
+7,11,28,router,fg_dense_f32.spv,True,"[512, 1, 1]","[2560, 512, 1]",5242880,11.650844444444445,exact weight storage; activation traffic omitted,15.746666666666668
+7,11,29,router_quantization,fg_quantize_q8_k.spv,False,"[10, 1, 1]","[2560, 10, 1]",13200,0.029333333333333333,logical activation read + packed output,0.07333333333333333
+7,11,30,shared_expert,fg_shared_swiglu_q4.spv,True,"[160, 1, 1]","[2560, 640, 1, 12, 0, 1065353216]",2457600,5.461333333333333,exact weight storage,10.966666666666667
+7,11,31,shared_expert,fg_dense_f32.spv,False,"[1, 1, 1]","[2560, 1, 1]",10240,0.022755555555555557,exact weight storage; activation traffic omitted,0.06666666666666667
+7,11,32,shared_expert,fg_dense_compact_iq4.spv,True,"[640, 1, 1]","[640, 2560, 1, 20, 360, 1065353216]",921600,2.048,exact weight storage; activation traffic omitted,5.786666666666666
+7,11,33,expert_decode,fg_router_top10_subgroup_tiles.spv,True,"[1, 1, 1]","[512, 1]",2488,0.005528888888888889,logical logits + routes/gates/schedule,8.64
+7,11,34,expert_decode,fg_moe_decode_gate_up.spv,True,"[80, 10, 1]","[640, 10, 11520, 11520, 921600, 921600, 12, 12]",18432000,40.96,10 selected expert weight matrices,57.22
+7,11,35,expert_decode,fg_moe_decode_down_reduce.spv,True,"[160, 1, 1]","[2560, 640, 20, 7680, 1228800, 10, 7]",12288000,27.30666666666667,10 selected expert weight matrices,38.166666666666664
+7,11,36,gr_ffn_write,fg_moe_shared_gr_write.spv,True,"[10, 1, 1]","[2560, 4]",102420,0.2276,logical unique inputs + output; cache reuse assumed,1.5533333333333335

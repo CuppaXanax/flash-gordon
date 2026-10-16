@@ -39,6 +39,54 @@ Status values:
 | `FG_DENSE_K_COOKED` | unset (off) | Cook supported Q4_K/Q5_K weights to the dense cooked layout at load. | variant (opt-in) |
 | `FG_DENSE_SOA` | unset (off) | Convert supported dense GGML weights to SoA layout at load. | variant (opt-in) |
 | `FG_EXPERT_Q8_WIDE` | unset (off) | `1` opts into subgroup-shuffle wide Q8 MoE decode; off pending fleet A/B. | variant (opt-in) |
+| `FG_DECODE_FUSION` | unset (off) | Chained decode fusion bitmask: `1` router + tile schedule, `2` shared add + HC residual, `4` supported shared gate/up + SwiGLU; `7` enables all. Invalid masks disable it. Synthetic parity/performance only; model KL qualification required. | variant (opt-in) |
+| `FG_ROOFLINE` | unset (off) | Decode research mask: `1` large compact Q4 GEMV geometry, `2` QSA head geometry, `4` recurrence variants, `8` one-wave router, `16` HC injection/mixing reductions, `32` expert GEMV variants, `64` QSA eight-way split for at least eight records, `128` vec4/WG256 alpha/beta, `256` fused HC up/mix, `512` fused HC down/injection/SiLU, `1024` fused Q4 GDN gate/controls. Unsupported devices/formats fall back (split count is portable). No production promotion; see `results/hillclimb/ROOFLINE.md`. Set before static recording; graph-only expert paths retain baseline. | variant (opt-in) |
+| `FG_ROOF_DENSE` | `7` | With roofline bit `1`, compact Q4 GEMV geometry: `1` r4/WG64, `2` r4/WG128, `3` r8/WG256, `4` r8/WG128, `5` r8/WG64, `6` shape-selected WG64 for K=2560 and WG128 otherwise, `7` retain the baseline gate geometry and use r8/WG64 elsewhere to preserve accumulation order. Selections 1-7 leave M<2560 unchanged. Research selections 8-28 are described below; unrecognized selections fall back. | variant (opt-in) |
+| `FG_ROOF_QSA` | `2` | With roofline bit `2`: `1` register-tiled one-head/WG64, `2` LDS-tiled three-head/WG192, `3` six-head/WG384, `4` one-head/WG64. Other values retain baseline. | variant (opt-in) |
+| `FG_ROOF_EXPERT` | `0` | With roofline bit `32`, low three bits select gate/up: `0` original shuffle epilogue, `1/2` two/four prefetched blocks wave64, `3` one block wave32, `4/5` two/four prefetched blocks wave32, `6/7` WG128/256 with two-block prefetch. Add `8` for true wave32 down. Bits `16/32/48` select Q5_1 down WG64 shuffle / one lane per row / two lanes per row. Gate/up overrides `64/128/192` batch 2/10/5 experts per workgroup and cache activation in LDS; `256/512/1024` cache one expert / two with prefetch4 / one with true wave32. These overrides require Q4/Q4, K2560 and ten slots. Down `2048/4096` parallelizes ten slots in WG32/64 plus a merge, for M2560/ten slots. Wave32 requires subgroup-size-control support. Pending real-pack quality gate. | variant (opt-in) |
+| `FG_ROOF_HC` | `0` | Low two bits: `1` losslessly expand HC IQ4 integer-grid weights to cooked Q8 (same half scales), `2` also select one-row-per-lane vector-prefetched low-K Q8 GEMV. Expansion occurs at model load; raw and saved SoA/compact IQ4 are supported, with persistent-cap accounting. Bit `4` chooses eight rather than four HC-down splits, `8` WG64 rather than WG128, `16` true-wave32/WG32 (requires subgroup control), for roofline bit `512`. No weight quantization error is introduced by expansion; model-level qualification remains mandatory. | variant (opt-in) |
+| `FG_ROOF_RECURRENT` | `0` | With roofline bit `4`, `1` selects four column partitions/head, four K partitions/column and register-cached state, plus a separate RMS/gate dispatch. `2` uses vec4 state loads/stores, sixteen K parts and subgroup shuffles. `3` caches state in WG512/head and fuses final normalization. Restricted to production 48x128 state; other values retain the original bit-4 research kernel. | variant (opt-in) |
+| `FG_ROOF_GDN` | `8` | With roofline bit `1024`, `1/2/4/8` selects F32 control rows per workgroup appended to the fused GDN gate GEMV, trading register pressure against workgroup count. Other values use eight rows. | variant (opt-in) |
+
+Roofline dense selections `8/9/10` additionally test one/two/four independent
+uvec4 streams per lane with wave64; `11/12` use two/four streams with **true
+wave32**, not half-populated wave64. These stream variants cover compact Q4
+and IQ4, including HC up/down and small outputs. They do not change pack bytes.
+All reassociated variants, including dense `6`, split bit `64` and control bit
+`128`, are candidates for the real-pack KL/top-1 gate, not bit-exactness gates.
+
+Further dense research selections: `13/14` use four/eight K splits for compact
+Q4 with K>=8192 and M<=1024 (including an extra merge dispatch), and selection
+`6` elsewhere. `15/16` use two/one lanes per K-group with aligned uvec2/uvec4
+loads and WG64; `17/18` use those geometries with true wave32. Non-Q4 retains
+selection `6`. `19` selects `18` for the K=2560 gate/query shapes, `15` for
+other large Q4 matrices, and the baseline small/HC geometry. `20` tests IQ4
+wave32, `21` tests expanded-F32-metadata wide SoA Q4 with two lanes/group
+(requires a matching wide layout; the replay bench recooks large Q4 when
+this flag is selected), and `22` tests two lanes/group with WG128. These
+are off-by-default experiments, not a commitment to their performance.
+
+Roofline mask `256` fuses HC IQ4/cooked-Q8 up projection with four-group
+mixing and injection-partial finalization (batch1 only). Mask `512` fuses
+compact-Q4 HC down K-splits with injection partials, then merges and applies
+SiLU **after scaling its argument by 0.25**. Both are wired into owner decode;
+prefill and unsupported formats retain the existing paths.
+Mask `1024` appends twelve F32-control workgroups to the Q4 GDN gate GEMV,
+producing gate, alpha and beta in one dispatch; it requires true wave32 and
+the production compact-Q4 K2560/M6144 shape.
+Expert down high bits `8192/16384` split selected slots into two/four
+parallel in-workgroup cohorts (WG64/128, still sixteen output rows per
+workgroup). `32768/65536` use the same geometries with true wave32 when
+supported. Unlike `2048/4096`, they reduce partials in LDS and require no
+second dispatch; these paths require Q5_1, K640 and ten selected experts.
+HC bit `32` disables K splitting and fuses down, injection and scaled SiLU
+in one dispatch. With it, bits `8/16/64/128` choose WG64/true-wave32-WG32/
+WG256/WG512 instead of WG128; precedence is 128, 64, 16, 8.
+Recurrence selector `3` keeps all 128 columns and four K parts in one
+WG512/head, caches state in registers, and also fuses the final RMS/gate.
+Dense `23/24` test two-lane IQ4/WG64 and one-lane IQ4/true-wave32;
+`25-28` test compact-Q4 four lanes/row, two/four prefetched groups, WG64
+then true-wave32/WG32. These retain adaptive `19` on other types/shapes.
 
 Prefix continuation (resuming exact token-prefix extensions from the recorded
 owner-state frontier) is the default. Disable it per run with
@@ -127,7 +175,7 @@ slice ranks (the foreign loader names the exact missing span at startup).
 | `FG_BENCH_PREFILL_SHAPES` | Prefill shape sweep. |
 | `FG_BENCH_Q8_SUBGROUP` | Q8_0 subgroup vs generic dense benchmark. |
 | `FG_BENCH_Q8_COOKED` | Cooked Q8_0 dense benchmark. |
-| `FG_BENCH_HC_INJECT` | HC-inject partial vs two-pass benchmark. |
+| `FG_BENCH_HC_INJECT` | HC-inject partial vs two-pass benchmark; with `roof_hc_up_mix`, five paired profiles at K320/640 for original IQ4 and its lossless Q8 expansion. |
 | `FG_BENCH_GDN_ALGEBRAIC` | GDN algebraic vs classic recurrence benchmark. |
 | `FG_BENCH_Q5_1_COOKED` | Cooked Q5_1 down benchmark. |
 | `FG_BENCH_KQUANT_COOKED` | Cooked K-quant benchmark. |

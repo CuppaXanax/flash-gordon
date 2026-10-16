@@ -1,0 +1,6 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_control_flow_attributes : require
+#define FG_DOWN_WG 128
+#define FG_DOWN_SLOT_PARTS 4
+#include "fg_moe_decode_down_reduce.glsl"

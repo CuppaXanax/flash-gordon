@@ -1,0 +1,43 @@
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x=64)in;
+layout(set=0,binding=0)readonly buffer Logits{float logits[];};
+layout(set=0,binding=1)writeonly buffer Selected{uint selected[];};
+layout(set=0,binding=2)writeonly buffer Gates{float gates[];};
+layout(push_constant)uniform Push{uint experts;uint tokens;}pc;
+void main(){
+    uint lane=gl_LocalInvocationID.x,token=gl_WorkGroupID.x;
+    float values[8],winners[10];uint ids[10];bool invalid=false;
+    [[unroll]] for(uint j=0u;j<8u;j++){
+        float v=logits[token*512u+j*64u+lane];
+        values[j]=v;invalid=invalid||isnan(v)||(isinf(v)&&v>0.0);
+    }
+    if(subgroupMax(invalid?1u:0u)!=0u){
+        if(lane<10u){selected[token*10u+lane]=0xffffffffu;gates[token*10u+lane]=0.0;}
+        return;
+    }
+    uint taken=0u;
+    [[unroll]] for(uint slot=0u;slot<10u;slot++){
+        float best=-1.0/0.0;uint id=0xffffffffu;
+        [[unroll]] for(uint j=0u;j<8u;j++){
+            uint candidate=(taken&(1u<<j))!=0u?0xffffffffu:j*64u+lane;
+            float v=candidate==0xffffffffu?-1.0/0.0:values[j];
+            if(v>best||(v==best&&candidate<id)){best=v;id=candidate;}
+        }
+        float maximum=subgroupMax(best);
+        uint winner=subgroupMin(best==maximum?id:0xffffffffu);
+        ids[slot]=winner;winners[slot]=maximum;
+        if((winner&63u)==lane)taken|=1u<<(winner>>6u);
+    }
+    if(lane==0u){
+        float denominator=0.0,probabilities[10];
+        [[unroll]] for(uint slot=0u;slot<10u;slot++){
+            probabilities[slot]=exp(winners[slot]-winners[0]);denominator+=probabilities[slot];
+        }
+        [[unroll]] for(uint slot=0u;slot<10u;slot++){
+            selected[token*10u+slot]=ids[slot];gates[token*10u+slot]=probabilities[slot]/denominator;
+        }
+    }
+}
