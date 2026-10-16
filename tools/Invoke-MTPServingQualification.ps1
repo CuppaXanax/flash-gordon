@@ -46,6 +46,18 @@ if($Action -eq 'Run'){
        '536bab54b0a1bdea23b65871c4cdc38deee5803771501a0c770a0510bcd3283b'){
         throw 'Native Q8 overlay identity differs from the qualified artifact.'
     }
+    $auditPath=Join-Path $Artifacts 'format-audit.json'
+    if(-not $prepared.formatAuditSha256 -or -not (Test-Path $auditPath) -or
+       (Get-FileHash $auditPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $prepared.formatAuditSha256){
+        throw 'A sealed exhaustive real-pack format audit is required before accessing production.'
+    }
+    $formatAudit=Get-Content $auditPath -Raw | ConvertFrom-Json
+    if(-not $formatAudit.supported -or -not $formatAudit.real_pack_gate_passed -or
+       $formatAudit.candidate_release_sha256 -ne $prepared.releaseSha256 -or
+       $formatAudit.manifest_sha256 -ne '0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252' -or
+       $formatAudit.native_overlay_sha256 -ne '536bab54b0a1bdea23b65871c4cdc38deee5803771501a0c770a0510bcd3283b'){
+        throw 'Format/real-Q8 gates do not qualify this candidate release and sealed production pack.'
+    }
 }
 $all=@(42..49 | ForEach-Object {"192.168.42.$_"})
 $workers=@(43..49 | ForEach-Object {"192.168.42.$_"})

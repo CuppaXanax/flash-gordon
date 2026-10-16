@@ -50,6 +50,8 @@ tests/test_mtp_embedding
 /tests/test_mtp_ring
 tools/mtp-embedding
 tools/mtp-embedding.d
+tools/mtp-real-cook
+tools/mtp-real-cook.d
 tests/test_mtp_capture_io
 tools/mtp-acceptance
 tools/mtp-acceptance.d

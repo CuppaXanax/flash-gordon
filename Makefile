@@ -121,6 +121,11 @@ tools/mtp-acceptance: tools/mtp_acceptance.c src/mtp_head.o src/model.o src/expe
 tools/mtp-embedding: tools/mtp_embedding.c src/mtp_embedding.o $(TEST_COMMON)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
 
+tools/mtp-real-cook: tools/mtp_real_cook.c $(TEST_COMMON)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
+-include tools/mtp-real-cook.d
+
 -include tools/mtp-acceptance.d
 
 tests/test_mtp_capture_io: tests/test_mtp_capture_io.c src/mtp_capture.o src/util.o
@@ -311,6 +316,7 @@ test-gdn-fleet: tests/test_fg_vk
 	done
 
 clean:
+	rm -f tools/mtp-real-cook tools/mtp-real-cook.d
 	rm -f tests/test_mtp_ring
 	rm -f tests/test_mtp_wire tests/test_mtp_native tests/test_mtp_embedding tools/mtp-embedding tools/mtp-embedding.d
 	rm -f tests/test_mtp_capture_io tests/test_mtp_capture_io.d tools/mtp-acceptance tools/mtp-acceptance.d

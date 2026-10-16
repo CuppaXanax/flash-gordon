@@ -1,7 +1,18 @@
 # MTP: native head, causal verification and remaining execution gates
 
-**2026-10-16 trained-pack serving gate: blocked, not promoted.** The first
-MTP k1/mask0 request failed closed because the small-N expert kernel rejects
+**2026-10-16 real-format readiness gate: PASS; serving still unqualified,
+not promoted.** The corrected `3c84f62` engine passed .51 with the exact
+891,289,600-byte real-pack Q8 down slab:36 byte-exact native-N1 comparisons,
+wide0/1 and small-kernel masks0/330. All1,225 target records /51 family-format
+groups and31 native tensors are accounted for in
+[the exhaustive format audit](MTP_FORMATS.md).
+The full production recipe also passes150 actual-shape dense comparisons,
+72 independent expert component checks,30 operator oracles, mixed-format
+causal/session/rollback and real-overlay native-session tests.
+No production access occurred for these gates; .51 scratch is removed.
+
+The first
+MTP k1/mask0 request failed closed because the then-current small-N kernel rejected
 the real pack's cooked Q8_0 down projections. MTP-off masks0/330 matched all
 eight greedy token-ID hashes; this does not qualify either MTP-on path.
 Production was restored and verified on all eight owners, and the ring was
@@ -14,7 +25,11 @@ partition and reductions for both the default LDS path and the opt-in
 `FG_EXPERT_Q8_WIDE=1` subgroup path. It deliberately does not share Q8 weights across
 tokens or promote research kernels. Q4_K/Q5_K gate/up and both cooked Q5_1/Q8_0
 down are accepted for complete owner-local 512-expert slabs. Q5_1 is unchanged.
-The trained-pack serving gate above remains unqualified until rerun.
+The trained-pack serving gate remains unqualified until an explicitly granted
+new ring lease. The corrected release and exhaustive audit are hash-sealed
+together; the controller rejects missing, tampered or mismatched qualification
+before production access. All318 previous SPIRV binaries remain unchanged;
+only the two exact-Q8 down variants are added. No research experiment is bundled.
 
 Targeted component verification on an idle blade:
 
@@ -36,6 +51,15 @@ The stock .50 synthetic compatibility receipts pass both native down modes,
 strict mask0 N2..4 output/state identity, mask330 reassociation tolerance,
 causal prefixes, two sessions and rollback; see
 [component receipt](../results/hillclimb/mtp-q8-down-compat.json).
+The actual .51 full-recipe receipts and candidate identities are in
+[mtp-format-audit.json](../results/hillclimb/mtp-format-audit.json).
+Production dense19 versus small-N compact arithmetic is not generally
+byte-identical, even for mask0: actual-shape dense maximum absolute error is
+`2.03e-6`; mixed-block output/state maxima are `9.54e-7` / `9.54e-6`.
+Explicit component reassociation tolerance passes, while causal-prefix,
+session-replay and rollback comparisons remain exact. Same-build full-model
+greedy identity for **both** masks is still mandatory before reporting serving
+performance; no model-level KL/top-1 or promotion gate is implied.
 
 The offline-prepared acceptance lease and current-production restore procedure
 are documented in [MTP_CAPTURE.md](MTP_CAPTURE.md). This diagnostic gate uses

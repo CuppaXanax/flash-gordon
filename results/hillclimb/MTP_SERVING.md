@@ -1,5 +1,64 @@
 # MTP serving foundation on the promoted multisession base
 
+## Corrected real-format candidate — 2026-10-16: READY TO REQUEST LEASE
+
+The cooked-Q8 compatibility fix `3c84f62` is qualified on idle **.51**, not
+on the production ring. Public pinned-source GGUF ranges were cooked by the
+existing C routine; the **entire891,289,600-byte /512-expert real layer2 slab**
+matches the retained mix-04 manifest tensor SHA256 `065b86394f68...`.
+
+* Both wide0/1 × masks0/330 × N2/3/4 × three input patterns: **36 byte-exact
+  native-N1 Q8-down comparisons**; independent CPU basis error `<3.2e-10`.
+* Exhaustive **1,225 target records /51 family-format-layout groups**, plus
+  **31 native tensors /29 runtime aliases**, all accounted for. Three native
+  learned-indexer tensors are explicitly unused by full/bounded draft attention;
+  target verification still runs its learned indexer. See every family and
+  dispatch in [MTP_FORMATS.md](../../docs/MTP_FORMATS.md).
+* Full production flag recipe, masks0/330:150 dense comparisons across all18
+  actual matrix shapes;72 independent expert CPU comparisons;30 PLE/GDN/QSA/
+  HC/ngram operator oracles; mixed six-layer causal/session/rollback tests;
+  four real native-overlay session/window/repair cases. All pass.
+* Explicit `1e-4 * max(1,abs(ref))` component tolerance, not blanket byte
+  identity: dense maximum absolute2.03e-6; mixed output9.54e-7, state9.54e-6.
+  Causal prefixes, replay isolation and retained-prefix rollback remain exact.
+  The initial strict dense-byte gate correctly stopped on9.54e-7; its archive
+  and diagnostic are retained alongside the successful explicit-tolerance rerun.
+* All318 previous SPIRV files are byte-identical; two new exact-Q8 down variants.
+  No unpublished research, precision reduction or production promotion.
+* Cooker corruption/overwrite protection and exact Q8 embedding sidecar pass.
+  C17-Werror/host MTP/session build and flag registry pass. Local tests: six
+  restoration-finalizer cases, eight sealed-audit preflight cases and seven
+  Python parser/client cases. .51 reported24CUs/subgroup64; no hardware change.
+* Governor checksum unchanged, no owned processes, scratch absence verified
+  twice. No production access, service/current-launcher or governor changes.
+
+Fresh sealed artifacts are `.build\mtp-serving-q8-lease`:
+
+| Artifact | SHA256 |
+|---|---|
+| release.tar.gz | `54be56c2f1188a2847923f4d1ab9c81f39ea8bb95c4bbbe8653fc2eab107d6f5` |
+| flash-gordon | `03d9c1a0dcc3637a47824db09a5d83586e88159ea1401e4293480207295c49ce` |
+| shader-tree | `6901693b938d2a81cbba183026b9bfae040842467a3aef085701d3dbe6dca281` |
+| raw .51 evidence archive | `8d97a641cf5990e1d7a5ee65f0df61c336270aa28ba16e1e5d3d115d3de07f02` |
+
+`prepared.json` binds this release to `format-audit.json`; missing/tampered
+seals, unsupported formats, unpassed real-weight gates and wrong release,
+manifest or native-overlay identities are rejected **before production access**.
+Complete inventory, provenance, source/compiled hashes, raw GPU receipts,
+negative tests and cleanup receipt: `mtp-format-audit.json`.
+The previous `419e303` release is retained as history and must not be reused.
+
+**Request only; no new ring lease is assumed.** After an explicit exclusive
+.42–.49 grant, use `Invoke-MTPServingQualification.ps1` with
+`-Artifacts .build\mtp-serving-q8-lease` and a fresh lease ID. Planned arms:
+A0/B0/K1/S1/A1/K2/S2/A2/K3/S3/A3. Both masks must pass all eight same-build
+greedy token-ID/public-completion checks; measure bracketed chat/code and
+two-session throughput, then SSE/stop/cancel. Stop work at35min, watchdog
+workers/coordinator at38/39min,45min hard cap. Restore and verify the pinned
+31508ee / stack-1 / mix-04 sessions2/wide1 deployment, clean and release.
+**No end-to-end acceptance/TPS, trained-model greedy, long-context or promotion
+claim is made by this component audit.**
+
 ## Granted trained-pack ring lease — 2026-10-16: BLOCKED
 
 Candidate `419e303` contains `822be55`. The exclusive .42–.49 lease started
