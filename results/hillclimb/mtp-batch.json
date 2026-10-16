@@ -1,0 +1,246 @@
+{
+  "host": "192.168.42.51",
+  "synthetic": true,
+  "runs": [
+    {
+      "seed": 1,
+      "n": 1,
+      "mean_us": 2683.953734375,
+      "p50_us": 2677.6465,
+      "ratio": 1.0,
+      "config": {
+        "kind": "config",
+        "weights": "synthetic-q4-compact",
+        "first_layer": 6,
+        "last_layer": 11,
+        "resident_bytes": 9739403264,
+        "warmup": 256,
+        "iterations": 64,
+        "windows": 3,
+        "seed": 1,
+        "batch": 1,
+        "intrusive": false,
+        "device": "AMD BC-250 (RADV GFX1013)"
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "cb8abd769d7d838f",
+        "gdn_state_hash": "d910022185601737"
+      },
+      "hidden_argmax_matches": 192,
+      "compared_tokens": 192,
+      "bit_equal_tokens": 192,
+      "max_abs_hidden_difference": 0.0
+    },
+    {
+      "seed": 1,
+      "n": 2,
+      "mean_us": 22830.12690625,
+      "p50_us": 22773.263,
+      "ratio": 8.50615515977452,
+      "config": {
+        "kind": "config",
+        "weights": "synthetic-q4-compact",
+        "first_layer": 6,
+        "last_layer": 11,
+        "resident_bytes": 9739403264,
+        "warmup": 128,
+        "iterations": 32,
+        "windows": 3,
+        "seed": 1,
+        "batch": 2,
+        "intrusive": false,
+        "device": "AMD BC-250 (RADV GFX1013)"
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "4fe94cfcbc78bc52",
+        "gdn_state_hash": "647b11ff87df3dab"
+      },
+      "hidden_argmax_matches": 192,
+      "compared_tokens": 192,
+      "bit_equal_tokens": 0,
+      "max_abs_hidden_difference": 0.18511962890625
+    },
+    {
+      "seed": 1,
+      "n": 3,
+      "mean_us": 24230.262666666666,
+      "p50_us": 24148.82,
+      "ratio": 9.027824271460124,
+      "config": {
+        "kind": "config",
+        "weights": "synthetic-q4-compact",
+        "first_layer": 6,
+        "last_layer": 11,
+        "resident_bytes": 9739403264,
+        "warmup": 85,
+        "iterations": 21,
+        "windows": 3,
+        "seed": 1,
+        "batch": 3,
+        "intrusive": false,
+        "device": "AMD BC-250 (RADV GFX1013)"
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "23fc762b15d4da9a",
+        "gdn_state_hash": "c5a428869531ab5e"
+      },
+      "hidden_argmax_matches": 188,
+      "compared_tokens": 188,
+      "bit_equal_tokens": 0,
+      "max_abs_hidden_difference": 0.18511962890625
+    },
+    {
+      "seed": 1,
+      "n": 4,
+      "mean_us": 24562.069104166665,
+      "p50_us": 24473.817000000003,
+      "ratio": 9.151450261450323,
+      "config": {
+        "kind": "config",
+        "weights": "synthetic-q4-compact",
+        "first_layer": 6,
+        "last_layer": 11,
+        "resident_bytes": 9739403264,
+        "warmup": 64,
+        "iterations": 16,
+        "windows": 3,
+        "seed": 1,
+        "batch": 4,
+        "intrusive": false,
+        "device": "AMD BC-250 (RADV GFX1013)"
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "4fe94cfcbc78bc52",
+        "gdn_state_hash": "647b11ff87df3dab"
+      },
+      "hidden_argmax_matches": 192,
+      "compared_tokens": 192,
+      "bit_equal_tokens": 0,
+      "max_abs_hidden_difference": 0.18511962890625
+    },
+    {
+      "seed": 2,
+      "n": 1,
+      "mean_us": 2667.413244791667,
+      "p50_us": 2665.7934999999998,
+      "ratio": 1.0,
+      "config": {
+        "kind": "config",
+        "weights": "synthetic-q4-compact",
+        "first_layer": 6,
+        "last_layer": 11,
+        "resident_bytes": 9739403264,
+        "warmup": 256,
+        "iterations": 64,
+        "windows": 3,
+        "seed": 2,
+        "batch": 1,
+        "intrusive": false,
+        "device": "AMD BC-250 (RADV GFX1013)"
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "f1c9973649f0c97a",
+        "gdn_state_hash": "538cd3d7f51d0394"
+      },
+      "hidden_argmax_matches": 192,
+      "compared_tokens": 192,
+      "bit_equal_tokens": 192,
+      "max_abs_hidden_difference": 0.0
+    },
+    {
+      "seed": 2,
+      "n": 2,
+      "mean_us": 22894.764614583335,
+      "p50_us": 22802.763,
+      "ratio": 8.58313373800897,
+      "config": {
+        "kind": "config",
+        "weights": "synthetic-q4-compact",
+        "first_layer": 6,
+        "last_layer": 11,
+        "resident_bytes": 9739403264,
+        "warmup": 128,
+        "iterations": 32,
+        "windows": 3,
+        "seed": 2,
+        "batch": 2,
+        "intrusive": false,
+        "device": "AMD BC-250 (RADV GFX1013)"
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "3857652a70c45f9d",
+        "gdn_state_hash": "af21636f06008b1d"
+      },
+      "hidden_argmax_matches": 192,
+      "compared_tokens": 192,
+      "bit_equal_tokens": 0,
+      "max_abs_hidden_difference": 0.05950927734375
+    },
+    {
+      "seed": 2,
+      "n": 3,
+      "mean_us": 23663.13587301587,
+      "p50_us": 23623.998,
+      "ratio": 8.871192313084595,
+      "config": {
+        "kind": "config",
+        "weights": "synthetic-q4-compact",
+        "first_layer": 6,
+        "last_layer": 11,
+        "resident_bytes": 9739403264,
+        "warmup": 85,
+        "iterations": 21,
+        "windows": 3,
+        "seed": 2,
+        "batch": 3,
+        "intrusive": false,
+        "device": "AMD BC-250 (RADV GFX1013)"
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "e2684a63f412f50a",
+        "gdn_state_hash": "35ff2bddc7a43903"
+      },
+      "hidden_argmax_matches": 188,
+      "compared_tokens": 188,
+      "bit_equal_tokens": 0,
+      "max_abs_hidden_difference": 0.05950927734375
+    },
+    {
+      "seed": 2,
+      "n": 4,
+      "mean_us": 25571.269208333335,
+      "p50_us": 25569.734,
+      "ratio": 9.58654203965705,
+      "config": {
+        "kind": "config",
+        "weights": "synthetic-q4-compact",
+        "first_layer": 6,
+        "last_layer": 11,
+        "resident_bytes": 9739403264,
+        "warmup": 64,
+        "iterations": 16,
+        "windows": 3,
+        "seed": 2,
+        "batch": 4,
+        "intrusive": false,
+        "device": "AMD BC-250 (RADV GFX1013)"
+      },
+      "parity": {
+        "kind": "parity",
+        "output_hash": "3857652a70c45f9d",
+        "gdn_state_hash": "af21636f06008b1d"
+      },
+      "hidden_argmax_matches": 192,
+      "compared_tokens": 192,
+      "bit_equal_tokens": 0,
+      "max_abs_hidden_difference": 0.05950927734375
+    }
+  ]
+}

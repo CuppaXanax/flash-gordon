@@ -37,6 +37,10 @@ tests/bench_bc250_qsa_curve
 tests/test_fg_ledger
 tests/test_qsa_model_load
 tests/test_sampler
+tests/test_mtp
+tools/bench-decode-fusion
+tools/bench-decode-fusion.d
+/.build/
 tests/test_tower
 tests/test_video
 

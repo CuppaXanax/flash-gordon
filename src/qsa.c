@@ -769,6 +769,71 @@ void fg_qsa_session_set_layer_tokens(fg_qsa_session *s,uint32_t layer,uint32_t t
     if(s->state)fg_qsa_state_set_layer_tokens(s->state,(uint32_t)slot,tokens);
 }
 
+fg_status fg_qsa_session_rollback(fg_qsa_session *s,
+    const uint32_t tokens[FG_LAYER_COUNT],fg_error *err){
+    if(!s||!tokens){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid QSA rollback");
+        return FG_ERR_ARGUMENT;
+    }
+    for(uint32_t slot=0;slot<s->layer_count;slot++)
+        if(tokens[s->layers[slot]]>s->committed[slot]){
+            fg_error_set(err,FG_ERR_MISMATCH,"QSA rollback would advance the frontier");
+            return FG_ERR_MISMATCH;
+        }
+    fg_status status=fg_qsa_submit_host_reads(fg_model_vk(s->model),err);
+    uint32_t first=s->max_context;
+    for(uint32_t slot=0;status==FG_OK&&slot<s->layer_count;slot++){
+        uint32_t layer=s->layers[slot],keep=tokens[layer];
+        uint32_t old=s->committed[slot],tail=keep%FG_Q38_QSA_COMPRESS_RATIO;
+        if(keep<first)first=keep;
+        if(keep==old)continue;
+        memset(s->partial[slot],0,sizeof(s->partial[slot]));
+        if(tail){
+            uint32_t block=keep/FG_Q38_QSA_COMPRESS_RATIO,cache_slot=0u;
+            if(s->cache&&fg_qsa_page_cache_lookup(s->cache,layer,block,&cache_slot)){
+                status=fg_vk_tensor_read(s->cache_records,
+                    (uint64_t)cache_slot*FG_QSA_PAGE_RECORD_BYTES,
+                    s->partial[slot],(uint64_t)tail*FG_Q38_QSA_TOKEN_RECORD_BYTES,err);
+                if(status==FG_OK)status=fg_qsa_page_cache_pin(s->cache,layer,block,err);
+            }else if(s->state){
+                uint32_t committed=0u;
+                status=fg_qsa_state_read_block(s->state,slot,block,
+                                               s->partial[slot],&committed,err);
+                if(status==FG_OK&&committed<tail){
+                    fg_error_set(err,FG_ERR_MISMATCH,"QSA rollback lost its prefix page");
+                    status=FG_ERR_MISMATCH;
+                }
+                if(status==FG_OK&&s->cache){
+                    bool hit=false;
+                    status=qsa_cache_acquire(s,layer,block,&cache_slot,&hit,err);
+                    if(status==FG_OK)status=fg_vk_tensor_write(s->cache_records,
+                        (uint64_t)cache_slot*FG_QSA_PAGE_RECORD_BYTES,
+                        s->partial[slot],FG_QSA_PAGE_RECORD_BYTES,err);
+                    if(status==FG_OK)status=fg_qsa_page_cache_pin(s->cache,layer,block,err);
+                }
+            }else{
+                fg_error_set(err,FG_ERR_MISMATCH,"QSA rollback lost its cached tail");
+                status=FG_ERR_MISMATCH;
+            }
+        }
+        if(status!=FG_OK)break;
+        if(s->state&&fg_qsa_state_layer_tokens(s->state,slot)>=keep)
+            status=fg_qsa_state_truncate(s->state,slot,keep,err);
+        if(status!=FG_OK)break;
+        if(s->cache){
+            uint32_t begin=(keep+FG_Q38_QSA_COMPRESS_RATIO-1u)/FG_Q38_QSA_COMPRESS_RATIO;
+            uint32_t end=(old+FG_Q38_QSA_COMPRESS_RATIO-1u)/FG_Q38_QSA_COMPRESS_RATIO;
+            for(uint32_t block=begin;block<end;block++)
+                fg_qsa_page_cache_unpin(s->cache,layer,block);
+        }
+        s->committed[slot]=keep;
+    }
+    /* Rejected positions can be reused with a different MRoPE triple. */
+    if(status==FG_OK&&s->position_written&&first<s->max_context)
+        memset(s->position_written+first,0,s->max_context-first);
+    return status;
+}
+
 uint64_t fg_qsa_session_host_bytes(const fg_qsa_session *s){
     if(!s)return 0;
     return (s->read_records?(uint64_t)FG_QSA_MAX_SELECTED_BLOCKS*

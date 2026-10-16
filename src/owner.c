@@ -973,9 +973,7 @@ fg_status fg_owner_qsa_rollback(fg_owner_executor *executor,uint32_t session,
     }
     fg_qsa_session *qsa=executor->qsa[session];
     if(!qsa)return FG_OK;
-    for(uint32_t layer=0;layer<FG_LAYER_COUNT;layer++)
-        fg_qsa_session_set_layer_tokens(qsa,layer,tokens[layer]);
-    return FG_OK;
+    return fg_qsa_session_rollback(qsa,tokens,err);
 }
 void fg_owner_session_snapshot_release(fg_owner_session_checkpoint *snapshot){
     if(!snapshot)return;
@@ -1795,6 +1793,33 @@ fg_status fg_owner_prefill_layer(fg_owner_executor *e,uint32_t layer,uint32_t fi
     if(status==FG_OK&&profiling)status=fg_vk_profile_set_scope(vk,"gr_ffn_write_prefill",err);
     if(status==FG_OK)status=fg_owner_gr_write_batch(e,residual,block,injection,token_count,output,err);
     if(profiling){double t_end=ts_ms();fprintf(stderr,"PREFILL_PROFILE_STAGE first=%u tokens=%u layer=%u ple_ms=%.3f attn_read_ms=%.3f attention_ms=%.3f attn_write_ms=%.3f ffn_read_ms=%.3f router_ms=%.3f dispatch_ms=%.3f reduce_ms=%.3f final_write_ms=%.3f total_ms=%.3f\n",first_token,token_count,layer,t_ple-t0,t_attn_read-t_ple,t_attention-t_attn_read,t_attn_write-t_attention,t_ffn_read-t_attn_write,t_router-t_ffn_read,t_dispatch-t_router,t_reduce-t_dispatch,t_end-t_reduce,t_end-t0);}
+    return status;
+}
+
+fg_status fg_owner_verify_block(fg_owner_executor *e,uint32_t first_layer,
+    uint32_t last_layer,uint32_t first_token,const uint32_t *positions,
+    uint16_t token_count,const fg_vk_tensor *hyper_input,
+    const fg_vk_tensor *ngram_embeddings,fg_owner_prefill_dispatch_fn dispatch,
+    void *context,fg_vk_tensor **output,fg_error *err){
+    if(!e||!positions||!token_count||token_count>4u||!hyper_input||!dispatch||
+       !output||first_layer>last_layer||last_layer>=FG_LAYER_COUNT||
+       first_token>UINT32_MAX-token_count||
+       ((first_layer<=1u&&last_layer>=1u)!=(ngram_embeddings!=NULL))){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid causal owner verification block");
+        return FG_ERR_ARGUMENT;
+    }
+    for(uint32_t layer=first_layer;layer<=last_layer;layer++)
+        if(!owns_layer(e,layer)){
+            fg_error_set(err,FG_ERR_MISMATCH,"verification crosses owner boundary");
+            return FG_ERR_MISMATCH;
+        }
+    fg_vk_tensor *current=(fg_vk_tensor *)hyper_input;
+    fg_status status=FG_OK;
+    for(uint32_t layer=first_layer;status==FG_OK&&layer<=last_layer;layer++)
+        status=fg_owner_prefill_layer(e,layer,first_token,positions,token_count,
+            current,layer==1u?ngram_embeddings:NULL,dispatch,context,NULL,NULL,
+            &current,err);
+    if(status==FG_OK)*output=current;
     return status;
 }
 

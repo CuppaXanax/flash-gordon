@@ -273,6 +273,16 @@ fg_status fg_owner_prefill_layer(fg_owner_executor *executor,uint32_t layer,
                                  fg_owner_qsa_prefill_dispatch_fn qsa_dispatch,
                                  void *qsa_context,
                                  fg_vk_tensor **output,fg_error *err);
+/* Causal verification of 1..4 consecutive inputs in one owner block.  The
+ * caller must checkpoint before this mutating operation and commit or restore
+ * the accepted prefix afterwards.  This is not a multi-session depth-B batch. */
+fg_status fg_owner_verify_block(fg_owner_executor *executor,uint32_t first_layer,
+                                uint32_t last_layer,uint32_t first_token,
+                                const uint32_t *positions,uint16_t token_count,
+                                const fg_vk_tensor *hyper_input,
+                                const fg_vk_tensor *ngram_embeddings,
+                                fg_owner_prefill_dispatch_fn dispatch,void *context,
+                                fg_vk_tensor **output,fg_error *err);
 fg_vk_tensor *fg_owner_prefill_input_slot(fg_owner_executor *executor,uint32_t slot);
 fg_status fg_owner_prefill_layer_begin(fg_owner_executor *executor,uint32_t slot,uint32_t layer,
                                        uint32_t first_token,const uint32_t *positions,

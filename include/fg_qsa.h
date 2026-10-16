@@ -9,6 +9,11 @@ typedef fg_status (*fg_qsa_page_fetch_fn)(void *opaque,uint32_t layer,
                                           const uint32_t *blocks,uint32_t block_count,
                                           uint8_t *records,fg_error *err);
 
+/* Restore an append-only causal frontier. Prefix records remain immutable;
+ * speculative suffix pages must not have been published to other ranks. */
+fg_status fg_qsa_session_rollback(fg_qsa_session *session,
+                                 const uint32_t tokens[FG_LAYER_COUNT],fg_error *err);
+
 /* Submits every open batch level before QSA reads mapped projection data. */
 fg_status fg_qsa_submit_host_reads(fg_vk_context *vk,fg_error *err);
 
