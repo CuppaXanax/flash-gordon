@@ -95,10 +95,12 @@ fg_status fg_expert_route_trace_enable(fg_expert_executor *executor,fg_error *er
 fg_status fg_expert_route_trace_read(fg_expert_executor *executor,uint32_t layer,
     uint32_t tokens,uint32_t *selected,fg_error *err){
     if(!executor||!selected||layer>=FG_LAYER_COUNT||!tokens||
-       tokens!=executor->route_tokens[layer]||!executor->route_trace[layer]){
+       tokens>executor->max_tokens||!executor->route_tokens[layer]||!executor->route_trace[layer]){
         fg_error_set(err,FG_ERR_ARGUMENT,"routing trace layer/shape is unavailable");
         return FG_ERR_ARGUMENT;
     }
+    /* Static replay skips the recorder's route_tokens update. The drained
+       frame, not that stale hint, supplies the readback shape. */
     return fg_vk_tensor_read(executor->route_trace[layer],0,selected,
         (uint64_t)tokens*FG_TOP_K*4u,err);
 }

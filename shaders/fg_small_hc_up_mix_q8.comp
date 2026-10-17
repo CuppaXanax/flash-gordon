@@ -1,0 +1,4 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#define TYPE 8
+#include "fg_small_hc_up_mix.glsl"

@@ -27,7 +27,8 @@ fg_status fg_expert_selected_readback(fg_expert_executor *executor,
     uint32_t tokens,uint32_t *selected,fg_error *err);
 /* Opt-in diagnostic: retain each owned layer's chained router output instead
  * of overwriting one scratch buffer. Enable before recording static graphs.
- * Read only after the block drains; never use traced runs for timing. */
+ * Read only after the block drains, passing that frame's exact token count
+ * (static replay skips CPU recording); never use traced runs for timing. */
 fg_status fg_expert_route_trace_enable(fg_expert_executor *executor,fg_error *err);
 fg_status fg_expert_route_trace_read(fg_expert_executor *executor,uint32_t layer,
     uint32_t tokens,uint32_t *selected,fg_error *err);

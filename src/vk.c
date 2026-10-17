@@ -86,6 +86,7 @@ struct fg_vk_context {
     uint32_t small_workgroup,small_rows;
     fg_vk_kernel small_dense[300],small_gate_up[8],small_down,small_down_q8,small_down_q8_union,small_down_reduce,small_shared,small_union,small_gdn;
     fg_vk_kernel small_plain[9];
+    fg_vk_kernel small_hc_up_mix[6];
     /* Decomposition benchmark kernels */
     fg_vk_kernel bench_stream,bench_dequant,bench_dot_nored;
     fg_vk_kernel dense_cooked_split,dense_cooked_split_reduce,dense_cooked_split_reduce_silu;
@@ -271,6 +272,7 @@ static void destroy_kernel(fg_vk_context *context,fg_vk_kernel *kernel){
     if(kernel==&context->dense){
         for(uint32_t i=0;i<300u;i++)destroy_kernel(context,&context->small_dense[i]);
         for(uint32_t i=0;i<9u;i++)destroy_kernel(context,&context->small_plain[i]);
+        for(uint32_t i=0;i<6u;i++)destroy_kernel(context,&context->small_hc_up_mix[i]);
         for(uint32_t i=0;i<8u;i++)destroy_kernel(context,&context->small_gate_up[i]);
         destroy_kernel(context,&context->small_down);
         destroy_kernel(context,&context->small_down_q8);
@@ -1874,6 +1876,12 @@ bool fg_vk_hc_up_mix_supported(const fg_vk_context *c,const fg_vk_tensor *w){
 bool fg_vk_hc_down_inject_supported(const fg_vk_context *c,const fg_vk_tensor *w){
     return c&&w&&roof_enabled(c,512u)&&w->format==FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K;
 }
+bool fg_vk_hc_up_mix_small_supported(const fg_vk_context *c,const fg_vk_tensor *w){
+    return small_kernel_enabled(c,262144u)&&
+        fg_vk_subgroup_size(c)==64u&&fg_vk_hc_up_mix_supported(c,w)&&
+        (w->format==FG_VK_TENSOR_FORMAT_DENSE_COMPACT_IQ4_NL||
+         w->format==FG_VK_TENSOR_FORMAT_Q8_0_COOKED);
+}
 bool fg_vk_gdn_gate_controls_supported(const fg_vk_context *c,const fg_vk_tensor *w){
     return c&&w&&roof_enabled(c,1024u)&&c->roof_wave32&&
         w->format==FG_VK_TENSOR_FORMAT_DENSE_COMPACT_Q4_K;
@@ -1954,6 +1962,32 @@ fg_status fg_vk_hc_up_mix(fg_vk_context *c,fg_vk_tensor *mixed,fg_vk_tensor *inj
     const fg_vk_tensor *bindings[]={w,input,normalized,partials,mixed,injection};
     return dispatch(c,roof_kernel(c,q8?49u:48u,q8?"fg_roof_hc_up_mix_q8.spv":"fg_roof_hc_up_mix_iq4.spv",6u,12u),
         bindings,&push,hidden/8u,1u,1u,err);
+}
+fg_status fg_vk_hc_up_mix_small(fg_vk_context *c,fg_vk_tensor *mixed,fg_vk_tensor *injection,
+    const fg_vk_tensor *w,const fg_vk_tensor *input,const fg_vk_tensor *normalized,
+    const fg_vk_tensor *partials,uint32_t in,uint32_t hidden,uint32_t pieces,
+    uint32_t tokens,fg_error *err){
+    bool q8=w&&w->format==FG_VK_TENSOR_FORMAT_Q8_0_COOKED;
+    uint64_t bytes=hidden>UINT32_MAX/4u?0u:q8?fg_q8_0_cooked_matrix_bytes(in,hidden*4u):
+        fg_dense_compact_bytes(in,hidden*4u,20u);
+    if(!fg_vk_hc_up_mix_small_supported(c,w)||tokens<2u||tokens>4u||
+       (in!=320u&&in!=640u)||!hidden||hidden%8u||!bytes||!pieces||pieces>64u||
+       !tensor_range(w,0,bytes)||!tensor_range(input,0,(uint64_t)tokens*in*4u)||
+       !tensor_range(normalized,0,(uint64_t)tokens*hidden*16u)||
+       !tensor_range(partials,0,(uint64_t)tokens*pieces*16u)||
+       !tensor_range(mixed,0,(uint64_t)tokens*hidden*4u)||
+       !tensor_range(injection,0,(uint64_t)tokens*16u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid fused small-N HC up/mix dispatch");
+        return FG_ERR_ARGUMENT;
+    }
+    fg_vk_kernel *kernel=&c->small_hc_up_mix[(q8?3u:0u)+tokens-2u];
+    if(!kernel->file)*kernel=(fg_vk_kernel){
+        .file=q8?"fg_small_hc_up_mix_q8.spv":"fg_small_hc_up_mix_iq4.spv",
+        .bindings=6u,.push_bytes=12u,.specialization_count=1u,
+        .specialization_values={tokens,0u}};
+    struct{uint32_t in,hidden,pieces;}push={in,hidden,pieces};
+    const fg_vk_tensor *bindings[]={w,input,normalized,partials,mixed,injection};
+    return dispatch(c,kernel,bindings,&push,hidden/8u,1u,1u,err);
 }
 fg_status fg_vk_hc_inject_partial(fg_vk_context *c,fg_vk_tensor *partials,const fg_vk_tensor *normalized,const fg_vk_tensor *weights,uint32_t hidden,uint32_t groups,uint32_t tokens,uint32_t pieces,fg_error *err){uint64_t width=(uint64_t)hidden*groups;if(!c||!hidden||!groups||groups>4u||!tokens||!pieces||pieces>64u||!tensor_range(normalized,0,width*tokens*4u)||!tensor_range(weights,0,width*groups*4u)||!tensor_range(partials,0,(uint64_t)tokens*pieces*groups*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid HC injection partial dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t hidden,groups,tokens,pieces;}push={hidden,groups,tokens,pieces};const fg_vk_tensor *bindings[]={normalized,weights,partials};return dispatch(c,&c->hc_inject_partial,bindings,&push,pieces,tokens,1,err);}
 fg_status fg_vk_gr_mix_partial(fg_vk_context *c,fg_vk_tensor *mixed,fg_vk_tensor *injection,const fg_vk_tensor *normalized,const fg_vk_tensor *up,const fg_vk_tensor *partials,uint32_t hidden,uint32_t groups,uint32_t tokens,uint32_t pieces,fg_error *err){uint64_t hyper=(uint64_t)hidden*groups*tokens;if(!c||!hidden||!groups||groups>4u||!tokens||!pieces||pieces>64u||!tensor_range(normalized,0,hyper*4u)||!tensor_range(up,0,hyper*4u)||!tensor_range(partials,0,(uint64_t)tokens*pieces*groups*4u)||!tensor_range(mixed,0,(uint64_t)hidden*tokens*4u)||!tensor_range(injection,0,(uint64_t)groups*tokens*4u)){fg_error_set(err,FG_ERR_ARGUMENT,"invalid gated residual partial dispatch");return FG_ERR_ARGUMENT;}struct{uint32_t hidden,groups,tokens,pieces;}push={hidden,groups,tokens,pieces};const fg_vk_tensor *bindings[]={normalized,up,partials,mixed,injection};return dispatch(c,&c->gr_partial,bindings,&push,tokens*((hidden+255u)/256u),1,1,err);}

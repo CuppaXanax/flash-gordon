@@ -165,8 +165,10 @@ static void print_dispatches(fg_vk_context *vk,uint32_t layer,fg_error *error){
     free(sample);
 }
 
+static uint64_t small_expert_calls[FG_LAYER_COUNT];
 static fg_status small_expert(void *opaque,uint32_t layer,const fg_vk_tensor *activation,
     const fg_vk_tensor *logits,uint32_t count,fg_vk_tensor **output,fg_error *error){
+    if(layer<FG_LAYER_COUNT)small_expert_calls[layer]++;
     return fg_expert_decode_small_n(opaque,layer,activation,logits,count,output,error);
 }
 static fg_status fail_small_expert(void *opaque,uint32_t layer,const fg_vk_tensor *activation,
@@ -412,7 +414,7 @@ static void test_small_schedule(fg_vk_context *vk,fg_error *error){
 }
 
 static void test_small_block(fg_owner_executor *owner,fg_expert_executor *expert,
-    fg_vk_context *vk,uint32_t first,fg_error *error){
+    fg_vk_context *vk,uint32_t first,bool trace_test,fg_error *error){
     test_small_schedule(vk,error);
     fg_owner_session_checkpoint initial={0};
     check(fg_owner_session_snapshot(owner,0u,&initial,error),error);
@@ -480,6 +482,34 @@ static void test_small_block(fg_owner_executor *owner,fg_expert_executor *expert
             bool causal=!memcmp(actual,reference,3u*FG_HYPER_WIDTH*4u);
             printf("{\"kind\":\"small_causal_test\",\"prefix_bit_exact\":%s}\n",causal?"true":"false");
             if(!causal)exit(1);
+            if(trace_test){
+                uint32_t expected_ids[4u*FG_TOP_K],actual_ids[4u*FG_TOP_K];
+                check(fg_expert_route_trace_read(expert,6u,4u,expected_ids,error),error);
+                fg_vk_tensor *activation=NULL,*logits=NULL,*reduced=NULL;
+                float scores[FG_EXPERT_COUNT];
+                for(uint32_t i=0;i<FG_EXPERT_COUNT;i++)scores[i]=(float)i*0.001f;
+                check(fg_vk_tensor_create(vk,FG_HIDDEN_SIZE*4u,&activation,error),error);
+                check(fg_vk_tensor_create(vk,sizeof(scores),&logits,error),error);
+                check(fg_vk_tensor_write(activation,0u,hidden,FG_HIDDEN_SIZE*4u,error),error);
+                check(fg_vk_tensor_write(logits,0u,scores,sizeof(scores),error),error);
+                check(fg_vk_begin(vk,error),error);
+                check(fg_expert_decode_chain(expert,6u,activation,logits,&reduced,error),error);
+                check(fg_vk_end(vk,error),error);
+                check(fg_owner_session_rollback(owner,&initial,error),error);
+                check(fg_vk_tensor_write(input,0,hidden,sizeof(hidden),error),error);
+                uint64_t recorded=small_expert_calls[6u];
+                check(fg_owner_decode_small_n(owner,6u,11u,first,positions,4u,input,NULL,
+                    small_expert,expert,&output,error),error);
+                check(fg_vk_tensor_read(output,0,reference,sizeof(reference),error),error);
+                check(fg_expert_route_trace_read(expert,6u,4u,actual_ids,error),error);
+                bool replayed=recorded==small_expert_calls[6u];
+                bool equal=!memcmp(expected_ids,actual_ids,sizeof(expected_ids));
+                printf("{\"kind\":\"route_replay_shape_test\",\"n\":4,"
+                    "\"record_callback_skipped\":%s,\"ids_equal\":%s}\n",
+                    replayed?"true":"false",equal?"true":"false");
+                fg_vk_tensor_destroy(logits);fg_vk_tensor_destroy(activation);
+                if(!replayed||!equal)exit(1);
+            }
         }
         fg_owner_session_snapshot_release(&result);fg_owner_session_snapshot_release(&expected);
     }
@@ -955,7 +985,7 @@ int main(int argc,char **argv){
             "\"unique_experts\":%u}\n",batch*FG_TOP_K,unique);
     }
     if(small_test)test_small_block(owner,expert,model->vk,
-        batch*(warmup+iterations*windows),&error);
+        batch*(warmup+iterations*windows),routing_trace!=NULL,&error);
     if(rollback_test)test_rollback(owner,expert,&prefill,
         batch*(warmup+iterations*windows),small_n,&error);
     fg_owner_session_checkpoint snapshot={0};

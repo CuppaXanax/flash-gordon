@@ -1,0 +1,948 @@
+{
+  "status": "offline research candidate; actual real-draft target unions unavailable",
+  "real_draft_union_measured": false,
+  "real_draft_union_blocker": "Retained authentic captures lack N4 target routes; fresh explicit capture lease needed.",
+  "device": "AMD BC-250 (RADV GFX1013), .51 only, Vulkan reports24 CUs",
+  "target_weights_unchanged": true,
+  "draft_vocab_unchanged": true,
+  "selected_mask": 393546,
+  "baseline_mask": 131402,
+  "selected_kernel": "N2..4 native HC up+mix: one packed fragment, N FP32 accumulators, fused mix/injection",
+  "source_baseline": "4b002778f21d9c1e63a5f246be572638637f827b",
+  "replay_geometry": {
+    "layers": [
+      6,
+      7,
+      8,
+      9,
+      10,
+      11
+    ],
+    "warmup_tokens": 264,
+    "timed_tokens": 216,
+    "origin": "synthetic input/weights; not authentic rank7 or fleet"
+  },
+  "brackets": [
+    {
+      "bracket": 1,
+      "n1": {
+        "a0_us": 2290.8085,
+        "b_us": 2290.7825000000003,
+        "a1_us": 2288.5035,
+        "b_over_bracket_a": 1.0004919953040983
+      },
+      "n4": {
+        "a0_us": 5097.861999999999,
+        "b_us": 4936.845499999999,
+        "a1_us": 5096.305,
+        "b_over_bracket_a": 0.9685628065539832
+      },
+      "candidate_n4_over_n1": 2.155091327963261
+    },
+    {
+      "bracket": 2,
+      "n1": {
+        "a0_us": 2306.1440000000002,
+        "b_us": 2290.5375000000004,
+        "a1_us": 2301.1805000000004,
+        "b_over_bracket_a": 0.9943026587339355
+      },
+      "n4": {
+        "a0_us": 5144.009,
+        "b_us": 4973.58,
+        "a1_us": 5105.232,
+        "b_over_bracket_a": 0.9705265004501309
+      },
+      "candidate_n4_over_n1": 2.1713593425124014
+    },
+    {
+      "bracket": 3,
+      "n1": {
+        "a0_us": 2291.6285,
+        "b_us": 2289.9184999999998,
+        "a1_us": 2290.8379999999997,
+        "b_over_bracket_a": 0.9994261823845303
+      },
+      "n4": {
+        "a0_us": 5115.199500000001,
+        "b_us": 4961.364,
+        "a1_us": 5111.949500000001,
+        "b_over_bracket_a": 0.9702340310090327
+      },
+      "candidate_n4_over_n1": 2.166611606482938
+    }
+  ],
+  "median_n4_b_over_a": 0.9702340310090327,
+  "median_n1_b_over_a": 0.9994261823845303,
+  "median_candidate_n4_over_n1": 2.166611606482938,
+  "replay_rows": [
+    {
+      "name": "final-replay-1-131402-1792197599050283416-1.jsonl",
+      "bracket": 1,
+      "mask": 131402,
+      "tag": 1792197599050283416,
+      "n": 1,
+      "median_us": 2290.8085,
+      "mean_us": 2301.856921296296,
+      "samples": 216,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "b06afd2760646dd1",
+        "gdn_state_hash": "0ffd8effe54b3697"
+      }
+    },
+    {
+      "name": "final-replay-1-131402-1792197599050283416-4.jsonl",
+      "bracket": 1,
+      "mask": 131402,
+      "tag": 1792197599050283416,
+      "n": 4,
+      "median_us": 5097.861999999999,
+      "mean_us": 5122.961537037037,
+      "samples": 54,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "cf88618527e461e8",
+        "gdn_state_hash": "dee15a9dccc1efe0"
+      }
+    },
+    {
+      "name": "final-replay-1-131402-1792197620253367026-1.jsonl",
+      "bracket": 1,
+      "mask": 131402,
+      "tag": 1792197620253367026,
+      "n": 1,
+      "median_us": 2288.5035,
+      "mean_us": 2300.2231574074076,
+      "samples": 216,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "b06afd2760646dd1",
+        "gdn_state_hash": "0ffd8effe54b3697"
+      }
+    },
+    {
+      "name": "final-replay-1-131402-1792197620253367026-4.jsonl",
+      "bracket": 1,
+      "mask": 131402,
+      "tag": 1792197620253367026,
+      "n": 4,
+      "median_us": 5096.305,
+      "mean_us": 5101.345407407407,
+      "samples": 54,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "cf88618527e461e8",
+        "gdn_state_hash": "dee15a9dccc1efe0"
+      }
+    },
+    {
+      "name": "final-replay-1-393546-1792197609656701413-1.jsonl",
+      "bracket": 1,
+      "mask": 393546,
+      "tag": 1792197609656701413,
+      "n": 1,
+      "median_us": 2290.7825000000003,
+      "mean_us": 2302.0682268518517,
+      "samples": 216,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "b06afd2760646dd1",
+        "gdn_state_hash": "0ffd8effe54b3697"
+      }
+    },
+    {
+      "name": "final-replay-1-393546-1792197609656701413-4.jsonl",
+      "bracket": 1,
+      "mask": 393546,
+      "tag": 1792197609656701413,
+      "n": 4,
+      "median_us": 4936.845499999999,
+      "mean_us": 4959.8332037037035,
+      "samples": 54,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "cf88618527e461e8",
+        "gdn_state_hash": "dee15a9dccc1efe0"
+      }
+    },
+    {
+      "name": "final-replay-2-131402-1792197630867417824-1.jsonl",
+      "bracket": 2,
+      "mask": 131402,
+      "tag": 1792197630867417824,
+      "n": 1,
+      "median_us": 2306.1440000000002,
+      "mean_us": 2335.2276944444443,
+      "samples": 216,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "b06afd2760646dd1",
+        "gdn_state_hash": "0ffd8effe54b3697"
+      }
+    },
+    {
+      "name": "final-replay-2-131402-1792197630867417824-4.jsonl",
+      "bracket": 2,
+      "mask": 131402,
+      "tag": 1792197630867417824,
+      "n": 4,
+      "median_us": 5144.009,
+      "mean_us": 5283.973740740741,
+      "samples": 54,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "cf88618527e461e8",
+        "gdn_state_hash": "dee15a9dccc1efe0"
+      }
+    },
+    {
+      "name": "final-replay-2-131402-1792197652184876714-1.jsonl",
+      "bracket": 2,
+      "mask": 131402,
+      "tag": 1792197652184876714,
+      "n": 1,
+      "median_us": 2301.1805000000004,
+      "mean_us": 2317.5574166666665,
+      "samples": 216,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "b06afd2760646dd1",
+        "gdn_state_hash": "0ffd8effe54b3697"
+      }
+    },
+    {
+      "name": "final-replay-2-131402-1792197652184876714-4.jsonl",
+      "bracket": 2,
+      "mask": 131402,
+      "tag": 1792197652184876714,
+      "n": 4,
+      "median_us": 5105.232,
+      "mean_us": 5181.365629629629,
+      "samples": 54,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "cf88618527e461e8",
+        "gdn_state_hash": "dee15a9dccc1efe0"
+      }
+    },
+    {
+      "name": "final-replay-2-393546-1792197641570331146-1.jsonl",
+      "bracket": 2,
+      "mask": 393546,
+      "tag": 1792197641570331146,
+      "n": 1,
+      "median_us": 2290.5375000000004,
+      "mean_us": 2309.4389305555555,
+      "samples": 216,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "b06afd2760646dd1",
+        "gdn_state_hash": "0ffd8effe54b3697"
+      }
+    },
+    {
+      "name": "final-replay-2-393546-1792197641570331146-4.jsonl",
+      "bracket": 2,
+      "mask": 393546,
+      "tag": 1792197641570331146,
+      "n": 4,
+      "median_us": 4973.58,
+      "mean_us": 5095.288277777778,
+      "samples": 54,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "cf88618527e461e8",
+        "gdn_state_hash": "dee15a9dccc1efe0"
+      }
+    },
+    {
+      "name": "final-replay-3-131402-1792197662831432884-1.jsonl",
+      "bracket": 3,
+      "mask": 131402,
+      "tag": 1792197662831432884,
+      "n": 1,
+      "median_us": 2291.6285,
+      "mean_us": 2305.2282638888887,
+      "samples": 216,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "b06afd2760646dd1",
+        "gdn_state_hash": "0ffd8effe54b3697"
+      }
+    },
+    {
+      "name": "final-replay-3-131402-1792197662831432884-4.jsonl",
+      "bracket": 3,
+      "mask": 131402,
+      "tag": 1792197662831432884,
+      "n": 4,
+      "median_us": 5115.199500000001,
+      "mean_us": 5189.398185185185,
+      "samples": 54,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "cf88618527e461e8",
+        "gdn_state_hash": "dee15a9dccc1efe0"
+      }
+    },
+    {
+      "name": "final-replay-3-131402-1792197684017672552-1.jsonl",
+      "bracket": 3,
+      "mask": 131402,
+      "tag": 1792197684017672552,
+      "n": 1,
+      "median_us": 2290.8379999999997,
+      "mean_us": 2306.766662037037,
+      "samples": 216,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "b06afd2760646dd1",
+        "gdn_state_hash": "0ffd8effe54b3697"
+      }
+    },
+    {
+      "name": "final-replay-3-131402-1792197684017672552-4.jsonl",
+      "bracket": 3,
+      "mask": 131402,
+      "tag": 1792197684017672552,
+      "n": 4,
+      "median_us": 5111.949500000001,
+      "mean_us": 5174.5583703703705,
+      "samples": 54,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "cf88618527e461e8",
+        "gdn_state_hash": "dee15a9dccc1efe0"
+      }
+    },
+    {
+      "name": "final-replay-3-393546-1792197673433094788-1.jsonl",
+      "bracket": 3,
+      "mask": 393546,
+      "tag": 1792197673433094788,
+      "n": 1,
+      "median_us": 2289.9184999999998,
+      "mean_us": 2303.2229166666666,
+      "samples": 216,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "b06afd2760646dd1",
+        "gdn_state_hash": "0ffd8effe54b3697"
+      }
+    },
+    {
+      "name": "final-replay-3-393546-1792197673433094788-4.jsonl",
+      "bracket": 3,
+      "mask": 393546,
+      "tag": 1792197673433094788,
+      "n": 4,
+      "median_us": 4961.364,
+      "mean_us": 5040.197259259259,
+      "samples": 54,
+      "parity": {
+        "kind": "parity",
+        "output_hash": "cf88618527e461e8",
+        "gdn_state_hash": "dee15a9dccc1efe0"
+      }
+    }
+  ],
+  "conditional_op_weighted_floor": {
+    "measured_real_ceiling": false,
+    "source": "Published intrusive six-layer N1 proxy, not authentic service",
+    "dense_and_hc_ratio_assumption": 1.1,
+    "scenarios": [
+      {
+        "assumed_gu_and_down_byte_ratio": 1,
+        "ideal_other_us": 2822.7439999999997,
+        "current_other_us": 3207.224,
+        "ideal_n4_over_n1": 1.0478358353007555,
+        "current_other_n4_over_n1": 1.1905593419157499
+      },
+      {
+        "assumed_gu_and_down_byte_ratio": 1.8,
+        "ideal_other_us": 3409.9440000000004,
+        "current_other_us": 3794.424000000001,
+        "ideal_n4_over_n1": 1.265811394716914,
+        "current_other_n4_over_n1": 1.4085349013319082
+      },
+      {
+        "assumed_gu_and_down_byte_ratio": 3,
+        "ideal_other_us": 4290.744,
+        "current_other_us": 4675.224,
+        "ideal_n4_over_n1": 1.5927747338411509,
+        "current_other_n4_over_n1": 1.735498240456145
+      },
+      {
+        "assumed_gu_and_down_byte_ratio": 4,
+        "ideal_other_us": 5024.744,
+        "current_other_us": 5409.224,
+        "ideal_n4_over_n1": 1.8652441831113484,
+        "current_other_n4_over_n1": 2.0079676897263425
+      }
+    ]
+  },
+  "rejected_experiments": [
+    {
+      "name": "shared-LDS HC up/mix",
+      "result": "slower than register fusion; removed"
+    },
+    {
+      "name": "shared-LDS dense tiles",
+      "result": "N4 representative dense2.2\u20132.5x slower; whole block~29% slower; removed"
+    }
+  ],
+  "excluded_evidence": [
+    {
+      "name": "first-evidence.tar.gz microbench",
+      "reason": "baseline did not enable small-N mode; component results valid, microbench speedups not serving comparisons"
+    },
+    {
+      "name": "compute-evidence.tar.gz",
+      "reason": "private nominal arithmetic probe; not used to establish an attainable quantized-kernel ceiling"
+    }
+  ],
+  "raw_archives": [
+    {
+      "path": "hc-ab-evidence.tar.gz",
+      "bytes": 12078,
+      "sha256": "4434bbba6ce89d742cde76fdf7beff1e6facb1aee1957398604c11a14e6b20d2"
+    },
+    {
+      "path": "dense-ab-evidence.tar.gz",
+      "bytes": 5875,
+      "sha256": "e0e8df79901df1196b70875bb43aea4ad63e16da69d083152b67ece1d05b932f"
+    },
+    {
+      "path": "rejected-kernel-sources.tar.gz",
+      "bytes": 4833,
+      "sha256": "f9b8b60b1b39bfa794c6ae05d790adcbf04b2e1cb4667badfdcdd749e19aadd2"
+    },
+    {
+      "path": "final-evidence.tar.gz",
+      "bytes": 84542,
+      "sha256": "5cde5a0cf2c97b09ac352d41584f045e1a4202e56f0656526e86153ed52027e2"
+    },
+    {
+      "path": "close-evidence.tar.gz",
+      "bytes": 85898,
+      "sha256": "726b6552ecab7d20c11210dbe2dbc1cc6eabc6c893574dade6b58b74617f7086"
+    }
+  ],
+  "intrusive_profiles": {
+    "rows": [
+      {
+        "round": 1,
+        "mask": 131402,
+        "tag": 1792197928271868313,
+        "n": 1,
+        "ops": {
+          "HC/projections/small ops": 435.2,
+          "Dense projections/shared": 854.32,
+          "GDN convolution/recurrence/normalization": 97.32000000000001,
+          "Expert routing/union": 163.96,
+          "Expert gate/up": 438.91999999999996,
+          "Expert down/reduce": 294.08,
+          "QSA attention/cache/index": 279.04,
+          "Inter-dispatch gaps": 133.68
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 2696.52,
+          "gaps_us": 133.68,
+          "submissions": 10,
+          "dispatches": 170
+        }
+      },
+      {
+        "round": 1,
+        "mask": 131402,
+        "tag": 1792197928271868313,
+        "n": 4,
+        "ops": {
+          "HC/projections/small ops": 1211.9199999999998,
+          "Dense projections/shared": 2069.4,
+          "GDN convolution/recurrence/normalization": 212.6,
+          "Expert routing/union": 305.28000000000003,
+          "Expert gate/up": 1519.72,
+          "Expert down/reduce": 768.8399999999999,
+          "QSA attention/cache/index": 350.03999999999996,
+          "Inter-dispatch gaps": 185.68
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 6623.48,
+          "gaps_us": 185.68,
+          "submissions": 6,
+          "dispatches": 226
+        }
+      },
+      {
+        "round": 1,
+        "mask": 131402,
+        "tag": 1792197948721952092,
+        "n": 1,
+        "ops": {
+          "HC/projections/small ops": 498.64000000000004,
+          "Dense projections/shared": 930.8400000000001,
+          "GDN convolution/recurrence/normalization": 105.08,
+          "Expert routing/union": 178.23999999999998,
+          "Expert gate/up": 507.16,
+          "Expert down/reduce": 321.76,
+          "QSA attention/cache/index": 306.68000000000006,
+          "Inter-dispatch gaps": 155.0
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 3003.4,
+          "gaps_us": 155.0,
+          "submissions": 10,
+          "dispatches": 170
+        }
+      },
+      {
+        "round": 1,
+        "mask": 131402,
+        "tag": 1792197948721952092,
+        "n": 4,
+        "ops": {
+          "HC/projections/small ops": 1215.08,
+          "Dense projections/shared": 2067.08,
+          "GDN convolution/recurrence/normalization": 212.92,
+          "Expert routing/union": 303.59999999999997,
+          "Expert gate/up": 1515.2,
+          "Expert down/reduce": 764.24,
+          "QSA attention/cache/index": 348.28,
+          "Inter-dispatch gaps": 184.04
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 6610.44,
+          "gaps_us": 184.04,
+          "submissions": 6,
+          "dispatches": 226
+        }
+      },
+      {
+        "round": 1,
+        "mask": 393546,
+        "tag": 1792197938478900608,
+        "n": 1,
+        "ops": {
+          "HC/projections/small ops": 434.23999999999995,
+          "Dense projections/shared": 857.2,
+          "GDN convolution/recurrence/normalization": 105.76,
+          "Expert routing/union": 166.27999999999997,
+          "Expert gate/up": 437.56,
+          "Expert down/reduce": 292.8,
+          "QSA attention/cache/index": 276.67999999999995,
+          "Inter-dispatch gaps": 131.92
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 2702.44,
+          "gaps_us": 131.92,
+          "submissions": 10,
+          "dispatches": 170
+        }
+      },
+      {
+        "round": 1,
+        "mask": 393546,
+        "tag": 1792197938478900608,
+        "n": 4,
+        "ops": {
+          "HC/projections/small ops": 1023.0799999999999,
+          "Dense projections/shared": 2079.4799999999996,
+          "GDN convolution/recurrence/normalization": 216.32,
+          "Expert routing/union": 300.0,
+          "Expert gate/up": 1519.48,
+          "Expert down/reduce": 768.36,
+          "QSA attention/cache/index": 350.75999999999993,
+          "Inter-dispatch gaps": 179.56
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 6437.04,
+          "gaps_us": 179.56,
+          "submissions": 6,
+          "dispatches": 214
+        }
+      },
+      {
+        "round": 2,
+        "mask": 131402,
+        "tag": 1792197959084132133,
+        "n": 1,
+        "ops": {
+          "HC/projections/small ops": 435.68,
+          "Dense projections/shared": 855.92,
+          "GDN convolution/recurrence/normalization": 102.72,
+          "Expert routing/union": 165.44,
+          "Expert gate/up": 439.12,
+          "Expert down/reduce": 295.6,
+          "QSA attention/cache/index": 274.64000000000004,
+          "Inter-dispatch gaps": 131.56
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 2700.68,
+          "gaps_us": 131.56,
+          "submissions": 10,
+          "dispatches": 170
+        }
+      },
+      {
+        "round": 2,
+        "mask": 131402,
+        "tag": 1792197959084132133,
+        "n": 4,
+        "ops": {
+          "HC/projections/small ops": 1212.9999999999998,
+          "Dense projections/shared": 2072.4399999999996,
+          "GDN convolution/recurrence/normalization": 210.4,
+          "Expert routing/union": 303.52,
+          "Expert gate/up": 1517.0,
+          "Expert down/reduce": 766.56,
+          "QSA attention/cache/index": 349.92,
+          "Inter-dispatch gaps": 187.24
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 6620.08,
+          "gaps_us": 187.24,
+          "submissions": 6,
+          "dispatches": 226
+        }
+      },
+      {
+        "round": 2,
+        "mask": 131402,
+        "tag": 1792197979659266291,
+        "n": 1,
+        "ops": {
+          "HC/projections/small ops": 437.04,
+          "Dense projections/shared": 856.4000000000001,
+          "GDN convolution/recurrence/normalization": 101.63999999999999,
+          "Expert routing/union": 166.07999999999998,
+          "Expert gate/up": 437.44000000000005,
+          "Expert down/reduce": 294.15999999999997,
+          "QSA attention/cache/index": 277.32,
+          "Inter-dispatch gaps": 130.12
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 2700.2,
+          "gaps_us": 130.12,
+          "submissions": 10,
+          "dispatches": 170
+        }
+      },
+      {
+        "round": 2,
+        "mask": 131402,
+        "tag": 1792197979659266291,
+        "n": 4,
+        "ops": {
+          "HC/projections/small ops": 1364.1599999999999,
+          "Dense projections/shared": 2288.0799999999995,
+          "GDN convolution/recurrence/normalization": 235.96,
+          "Expert routing/union": 338.2,
+          "Expert gate/up": 1771.96,
+          "Expert down/reduce": 834.72,
+          "QSA attention/cache/index": 392.03999999999996,
+          "Inter-dispatch gaps": 215.92
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 7441.04,
+          "gaps_us": 215.92,
+          "submissions": 6,
+          "dispatches": 226
+        }
+      },
+      {
+        "round": 2,
+        "mask": 393546,
+        "tag": 1792197969354575841,
+        "n": 1,
+        "ops": {
+          "HC/projections/small ops": 497.88,
+          "Dense projections/shared": 929.36,
+          "GDN convolution/recurrence/normalization": 112.6,
+          "Expert routing/union": 177.96,
+          "Expert gate/up": 506.59999999999997,
+          "Expert down/reduce": 320.12,
+          "QSA attention/cache/index": 309.36,
+          "Inter-dispatch gaps": 156.16
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 3010.04,
+          "gaps_us": 156.16,
+          "submissions": 10,
+          "dispatches": 170
+        }
+      },
+      {
+        "round": 2,
+        "mask": 393546,
+        "tag": 1792197969354575841,
+        "n": 4,
+        "ops": {
+          "HC/projections/small ops": 924.1200000000001,
+          "Dense projections/shared": 1899.3199999999995,
+          "GDN convolution/recurrence/normalization": 198.95999999999998,
+          "Expert routing/union": 279.84,
+          "Expert gate/up": 1338.68,
+          "Expert down/reduce": 723.44,
+          "QSA attention/cache/index": 321.24000000000007,
+          "Inter-dispatch gaps": 146.96
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 5832.56,
+          "gaps_us": 146.96,
+          "submissions": 6,
+          "dispatches": 214
+        }
+      },
+      {
+        "round": 3,
+        "mask": 131402,
+        "tag": 1792197989947533594,
+        "n": 1,
+        "ops": {
+          "HC/projections/small ops": 437.08,
+          "Dense projections/shared": 861.5200000000001,
+          "GDN convolution/recurrence/normalization": 103.36,
+          "Expert routing/union": 164.55999999999997,
+          "Expert gate/up": 439.96000000000004,
+          "Expert down/reduce": 295.04,
+          "QSA attention/cache/index": 278.16,
+          "Inter-dispatch gaps": 132.08
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 2711.76,
+          "gaps_us": 132.08,
+          "submissions": 10,
+          "dispatches": 170
+        }
+      },
+      {
+        "round": 3,
+        "mask": 131402,
+        "tag": 1792197989947533594,
+        "n": 4,
+        "ops": {
+          "HC/projections/small ops": 1210.04,
+          "Dense projections/shared": 2073.16,
+          "GDN convolution/recurrence/normalization": 211.68,
+          "Expert routing/union": 303.84,
+          "Expert gate/up": 1518.2,
+          "Expert down/reduce": 765.24,
+          "QSA attention/cache/index": 349.40000000000003,
+          "Inter-dispatch gaps": 185.36
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 6616.92,
+          "gaps_us": 185.36,
+          "submissions": 6,
+          "dispatches": 226
+        }
+      },
+      {
+        "round": 3,
+        "mask": 131402,
+        "tag": 1792198010538677602,
+        "n": 1,
+        "ops": {
+          "HC/projections/small ops": 501.91999999999996,
+          "Dense projections/shared": 931.7200000000001,
+          "GDN convolution/recurrence/normalization": 110.2,
+          "Expert routing/union": 179.51999999999998,
+          "Expert gate/up": 506.04,
+          "Expert down/reduce": 321.52,
+          "QSA attention/cache/index": 310.28,
+          "Inter-dispatch gaps": 156.84
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 3018.04,
+          "gaps_us": 156.84,
+          "submissions": 10,
+          "dispatches": 170
+        }
+      },
+      {
+        "round": 3,
+        "mask": 131402,
+        "tag": 1792198010538677602,
+        "n": 4,
+        "ops": {
+          "HC/projections/small ops": 1097.3999999999999,
+          "Dense projections/shared": 1894.64,
+          "GDN convolution/recurrence/normalization": 190.24,
+          "Expert routing/union": 283.88,
+          "Expert gate/up": 1341.36,
+          "Expert down/reduce": 721.44,
+          "QSA attention/cache/index": 320.03999999999996,
+          "Inter-dispatch gaps": 164.92
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 6013.92,
+          "gaps_us": 164.92,
+          "submissions": 6,
+          "dispatches": 226
+        }
+      },
+      {
+        "round": 3,
+        "mask": 393546,
+        "tag": 1792198000274196334,
+        "n": 1,
+        "ops": {
+          "HC/projections/small ops": 436.32000000000005,
+          "Dense projections/shared": 858.68,
+          "GDN convolution/recurrence/normalization": 100.08,
+          "Expert routing/union": 165.6,
+          "Expert gate/up": 437.36,
+          "Expert down/reduce": 295.68,
+          "QSA attention/cache/index": 277.28,
+          "Inter-dispatch gaps": 128.88
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 2699.88,
+          "gaps_us": 128.88,
+          "submissions": 10,
+          "dispatches": 170
+        }
+      },
+      {
+        "round": 3,
+        "mask": 393546,
+        "tag": 1792198000274196334,
+        "n": 4,
+        "ops": {
+          "HC/projections/small ops": 1157.9599999999998,
+          "Dense projections/shared": 2294.84,
+          "GDN convolution/recurrence/normalization": 248.0,
+          "Expert routing/union": 331.4,
+          "Expert gate/up": 1771.2,
+          "Expert down/reduce": 840.6400000000001,
+          "QSA attention/cache/index": 392.67999999999995,
+          "Inter-dispatch gaps": 204.96
+        },
+        "total": {
+          "kind": "profile",
+          "gpu_us": 7241.68,
+          "gaps_us": 204.96,
+          "submissions": 6,
+          "dispatches": 214
+        }
+      }
+    ],
+    "median_operations": [
+      {
+        "operation": "Dense projections/shared",
+        "baseline_ratio": 2.3171480427524696,
+        "candidate_ratio": 2.425898273448436,
+        "normalized_b_over_a": 1.0469327935416615,
+        "candidate_n1_us": 858.68,
+        "candidate_n4_us": 2079.4799999999996
+      },
+      {
+        "operation": "Expert down/reduce",
+        "baseline_ratio": 2.489412834502468,
+        "candidate_ratio": 2.6241803278688525,
+        "normalized_b_over_a": 1.0541362571521082,
+        "candidate_n1_us": 295.68,
+        "candidate_n4_us": 768.36
+      },
+      {
+        "operation": "Expert gate/up",
+        "baseline_ratio": 3.207889396245561,
+        "candidate_ratio": 3.4726208977054576,
+        "normalized_b_over_a": 1.0825251337436173,
+        "candidate_n1_us": 437.56,
+        "candidate_n4_us": 1519.48
+      },
+      {
+        "operation": "Expert routing/union",
+        "baseline_ratio": 1.7793103448275862,
+        "candidate_ratio": 1.8041857108491703,
+        "normalized_b_over_a": 1.0139803413687198,
+        "candidate_n1_us": 166.27999999999997,
+        "candidate_n4_us": 300.0
+      },
+      {
+        "operation": "GDN convolution/recurrence/normalization",
+        "baseline_ratio": 2.102371541501976,
+        "candidate_ratio": 2.0453857791225416,
+        "normalized_b_over_a": 0.9728945330287707,
+        "candidate_n1_us": 105.76,
+        "candidate_n4_us": 216.32
+      },
+      {
+        "operation": "HC/projections/small ops",
+        "baseline_ratio": 2.5989462863017216,
+        "candidate_ratio": 2.3560243183493,
+        "normalized_b_over_a": 0.9065305930973673,
+        "candidate_n1_us": 436.32000000000005,
+        "candidate_n4_us": 1023.0799999999999
+      },
+      {
+        "operation": "Inter-dispatch gaps",
+        "baseline_ratio": 1.280726063461272,
+        "candidate_ratio": 1.361127956337174,
+        "normalized_b_over_a": 1.0627783685908672,
+        "candidate_n1_us": 131.92,
+        "candidate_n4_us": 179.56
+      },
+      {
+        "operation": "QSA attention/cache/index",
+        "baseline_ratio": 1.1922420269070544,
+        "candidate_ratio": 1.2677461327164956,
+        "normalized_b_over_a": 1.0633295120499282,
+        "candidate_n1_us": 277.28,
+        "candidate_n4_us": 350.75999999999993
+      }
+    ],
+    "caveat": "Intrusive scope attribution, not replay timing. Ratios are normalized within brackets; component medians need not close."
+  },
+  "release": {
+    "host": "192.168.42.51",
+    "utc": "2026-10-17T00:48:08Z",
+    "root_absent_twice": true,
+    "owned_processes": 0,
+    "test_listeners": 0,
+    "governor_inventory_unchanged": true
+  },
+  "candidate_release_sha256": "d1368bbfdd5721ba9e2ba2561bc951d6f4bfaf894e8abdff4e53d1e7e5688883",
+  "validation": {
+    "c17_werror": true,
+    "analyzer_tests": 15,
+    "lease_identity_tests": 2,
+    "hc_cpu_oracle_cases": 12,
+    "hc_max_normalized_error": 6.70552e-08,
+    "state_retain_fixtures": 24,
+    "localhost_ring_configurations": 8,
+    "route_replay_shape": {
+      "old_guard_failure_reproduced": true,
+      "corrected_guard_passes": true,
+      "recording_callback_skipped": true,
+      "cached_route_ids_equal": true
+    },
+    "local_compiled_source_inputs_authenticated": 716
+  },
+  "source_inputs_manifest_sha256": "4439e7a32b8c13718677def35ef56152f73f97489c716022716ef928c5777043",
+  "evidence": {
+    "path": "mtp-union-kernels-evidence.tar.gz",
+    "bytes": 400550,
+    "sha256": "daeaa2aab845ffb55d92b666c726611167a4e1dc1b26d4fbf0384934b36d14bb"
+  }
+}

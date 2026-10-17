@@ -18,6 +18,7 @@ int main(int argc,char **argv){
     assert(fg_mtp_capture_configure(NULL,&e)==FG_OK);
     assert(!fg_mtp_capture_enabled());
     assert(fg_mtp_capture_routes(0,0,0,0,NULL,&e)==FG_OK);
+    assert(fg_mtp_capture_verify_routes(0,0,0,0,false,NULL,&e)==FG_OK);
     assert(fg_mtp_capture_hyper(0,0,0,NULL,&e)==FG_OK);
     assert(!mkdir(argv[1],0700));
     assert(fg_mtp_capture_configure(argv[1],&e)==FG_OK);
@@ -55,6 +56,21 @@ int main(int argc,char **argv){
     snprintf(path,sizeof(path),"%s/routes-42-6.coverage",argv[1]);f=fopen(path,"rb");assert(f);
     for(uint32_t i=0;i<3u;i++)assert(fgetc(f)==1);
     assert(fgetc(f)==EOF);assert(!fclose(f));assert(!unlink(path));
+    uint32_t verify[4u*FG_TOP_K];
+    for(uint32_t i=0;i<4u*FG_TOP_K;i++)verify[i]=i;
+    assert(fg_mtp_capture_verify_routes(42u,6u,2u,4u,false,verify,&e)==FG_OK);
+    verify[FG_TOP_K]=100u;
+    assert(fg_mtp_capture_verify_routes(42u,6u,2u,4u,true,verify,&e)==FG_OK);
+    assert(fg_mtp_capture_verify_routes(42u,6u,2u,5u,false,verify,&e)==FG_ERR_ARGUMENT);
+    verify[1]=verify[0];
+    assert(fg_mtp_capture_verify_routes(42u,6u,2u,4u,false,verify,&e)==FG_ERR_ARGUMENT);
+    snprintf(path,sizeof(path),"%s/verify-routes-42-6.jsonl",argv[1]);
+    f=fopen(path,"rb");assert(f);
+    char line[2048];
+    assert(fgets(line,sizeof(line),f)&&strstr(line,"\"replay\":false")&&
+        strstr(line,"\"first\":2,\"n\":4")&&strstr(line,"[10,11,12"));
+    assert(fgets(line,sizeof(line),f)&&strstr(line,"\"replay\":true")&&strstr(line,"[100,11,12"));
+    assert(!fgets(line,sizeof(line),f)&&!fclose(f));assert(!unlink(path));
     assert(fg_mtp_capture_configure(NULL,&e)==FG_OK);
     assert(!rmdir(argv[1]));free(values);free(readback);
     puts("capture I/O: disabled, out-of-order, exact offsets, coverage and bounds PASS");

@@ -145,6 +145,11 @@ uint32_t fg_vk_active_compute_units(const fg_vk_context *context);
 uint32_t fg_vk_subgroup_size(const fg_vk_context *context);
 uint32_t fg_vk_hc_inject_pieces(const fg_vk_context *context);
 bool fg_vk_hc_up_mix_supported(const fg_vk_context *context,const fg_vk_tensor *weights);
+bool fg_vk_hc_up_mix_small_supported(const fg_vk_context *context,const fg_vk_tensor *weights);
+fg_status fg_vk_hc_up_mix_small(fg_vk_context *context,fg_vk_tensor *mixed,fg_vk_tensor *injection,
+    const fg_vk_tensor *weights,const fg_vk_tensor *input,const fg_vk_tensor *normalized,
+    const fg_vk_tensor *partials,uint32_t input_width,uint32_t hidden,uint32_t pieces,
+    uint32_t tokens,fg_error *err);
 bool fg_vk_hc_down_inject_supported(const fg_vk_context *context,const fg_vk_tensor *weights);
 bool fg_vk_gdn_gate_controls_supported(const fg_vk_context *context,const fg_vk_tensor *weights);
 fg_status fg_vk_gdn_gate_controls(fg_vk_context *context,fg_vk_tensor *gate,

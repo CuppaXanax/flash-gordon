@@ -180,7 +180,7 @@ Do not describe either failed attempt as a completed serving comparison.
 | N1/N4 divergence |No bitwise alignment requirement. At identical prefixes, differing winners must exchange the same top2 with **both raw margins<0.10**; complete serving capture pending |
 | Full-model N4 quality |Same-geometry original-Q880-vector control now retained by the precision sibling; N4 candidate comparison still pending: `KL(P_Q8||P_N4)≤0.005`, top1≥0.985, hence≥79/80 |
 | Reference provenance |New Q8-control archive SHA `d4ca5b1351204674082c580e3623e90bb97fb518cd0c577efbf81b3b67fd48c3`; historical80 geometry discrepancy is not N4 attribution. Separate480-natural-context/p99 gate is not interchangeable |
-| N1 target prerequisite |**Reported FAIL** on matched80 forced-frontier contexts: current-Q8→current-mix04 mean KL0.051191953/top1 85%; this is already an N1 target/profile gap, not evidence against N4 |
+| N1 target prerequisite |**Forced80 FAIL**: cold-N1 KL0.051191953/top1 85%; selected native KL0.053829783/85%. Natural480 selected native passes original-Q8 at0.003084267/98.75%. Cold-N1 is not the deployed native-prefill + cached-N1 path; see final reconciliation below |
 | State correctness |Cold coordinator failure fixed offline and confirmed on authentic a038dec ring:775 completed aligned rounds;24 GPU fixtures/8 TCP cases also pass |
 | Residency |Offline complete two-session/deferred graph fit now passes with CJK320 MiB or English416 MiB caches; both440 MiB admissions reject. Production disk/coexistence/long-context and any future extra speculative banks remain unqualified |
 | Performance |Paired A0/F3/A1 completed: code1.074×, chat0.736× median paired decode ratio; warm≈101.3 ms rounds, not60 ms |
@@ -215,17 +215,96 @@ The sibling's subsequent raw480 reconciliation reproduces mix04/Q8
 KL0.003128578/top1 98.9583% and direct original-Q8/stack
 KL0.003084267/top1 98.75%, both passing. The often-cited stack
 KL0.000246435/top1 99.7917% is **incremental versus mix04**, not versus Q8.
-Native-prefill/current-N1 cross-running and conditioning reconciliation are
-still in progress; do not revoke the older cohort's pass or relabel an
-incremental statistic as cumulative.
+Native-prefill/current-N1 cross-running was still pending at that snapshot;
+the final reconciliation below supersedes that uncertainty. Do not revoke
+the older cohort's pass or relabel an incremental statistic as cumulative.
 
-Promotion is blocked on diagnosing the N1 target gap as well as the N4 gates.
-Prioritize offline target-format/kernel/profile attribution using matched
-prefixes; do not resume bitwise arithmetic alignment or weaken thresholds.
+**Final reconciliation update:** peer commit
+`cuppaxanax/bf16-hops@8a148ed36823b1b07184d58f2a2b630d12156544`
+exactly reproduces the historical logit bytes. Cohort sensitivity is the
+principal discrepancy, not a faulty reference/harness: Forced80 still fails
+legacy native prefill (`0.059809481 /85%`) and selected native
+(`0.053829783 /85%`). Natural480 selected native remains qualified versus the
+**original** Q8 reference (`0.003084267 /98.75%`); cold-N1 Natural480 versus
+matched current Q8 is `0.003335419 /98.333%`, failing top1. Cold-N1 here means
+decoding every supplied prompt token, **not** serving native prefill followed
+by ordinary decode. All560 unions fail. Preserve the qualified natural scope
+without discarding the failing stress cohort; no quality waiver or FP16
+promotion follows. Canonical evidence is `results/hillclimb/QUALITY_RECONCILIATION.md`
+on that peer branch.
+
+Promotion remains blocked on the failing stress cohort as well as N4 gates
+on the actual native-prefill + cached recurrent/KV serving path. Cold-N1
+results are not a measurement of that deployed serving path. Prioritize
+matched-prefix target-format/kernel/profile attribution; do not resume
+bitwise arithmetic alignment or weaken thresholds.
 The≈7 ms all-hop half-precision lever remains conditional, and mask224's
 relative-to-F32 success is **not** an original-Q8 quality pass.
-Any requested performance-only lease must explicitly acknowledge this known
+Any requested performance-only lease must acknowledge the known Forced80
 baseline failure; no active lease or production access follows from this update.
+
+## Expert-union physics versus the kernel gap
+
+**Actual speculative-draft unions are still UNMEASURED.** An audit of retained
+lease/capture archives found final target HC, teacher tokens and native draft
+proposals, but no target N4 per-layer router IDs. Final HC cannot recover those
+IDs; consecutive teacher routes, the native draft router and synthetic unions
+are not substitutes. Prior N1-only capture plumbing did not capture the N4
+verifier at all. A new append-only per-verification trace and
+`tools/analyze_mtp_union.py` close that instrumentation gap. A fresh diagnostic
+lease is required to obtain the actual all48-layer chat/code observations;
+none is implied by this offline work.
+
+For each **same** pending-token + three-draft target call, compute
+`R_GU=sum(unique_ids*(gate_stride+up_stride))/sum(10*(gate_stride+up_stride))`
+and analogously `R_down` with down strides. Strides are exact bytes/expert from
+the authenticated complete-owner manifest; formats differ by layer. These are
+logical union-byte ratios, not DRAM counters. Report category/per-layer
+distributions and byte-weight totals, never an unweighted cardinality mean.
+Restore replays are excluded; all48 layers of every window must be present.
+
+An **optimistic op-weighted planning floor**, using the published intrusive
+six-layer N1 proxy (not authentic ring timing), is:
+
+```
+T4_ideal_us = 437.84*R_GU + 296.16*R_down
+            + 1.1*(854.20 dense + 434.44 HC) + 671.24 other
+T4_current_other_us = T4_ideal_us + (1055.72 - 671.24)
+N1_proxy_us = 2693.88
+```
+
+| Assumed GU/down union ratio | Ideal-other N4/N1 | Current-other N4/N1 |
+|---:|---:|---:|
+| 1.0 /1.0 | 1.048 | 1.191 |
+| 1.8 /1.8 | 1.266 | 1.409 |
+| 3.0 /3.0 | 1.593 | 1.735 |
+| 4.0 /4.0 | 1.865 | 2.008 |
+
+Thus a **measured**≈3x union would invalidate a blanket≤1.5x whole-block target
+under this model even after dense/HC reach1.1x. It would **not** prove every
+3x GU/down service ratio inherent: compare byte growth, FP32 arithmetic,
+launch/occupancy and physical traffic separately. The1.1x dense/HC prices and
+unchanged-other price are assumptions, not hardware lower bounds; N4 still
+does four sets of FMAs and quantization/dequantization work. Current-other
+retains measured N4 GDN/QSA/routing/gap prices. Actual cooked format mix,
+per-layer service prices, union observations and full-ring validation are
+needed before calling either row an attainable TPS ceiling.
+
+With an authentic measured `T_verify4` and unchanged draft/control cost `D`,
+use `TPS=1000*yield/(D+T_verify4)`; do not scale the101ms round by these proxy
+ratios or credit the conditional≈7ms half-hop saving before its quality pass.
+The code3.386667 yield requires≤56.44ms/round for60TPS, not just≤60ms.
+
+The new offline HC candidate fixes a concrete missing fast path: N4 formerly
+disabled native up+mix fusion. It now reuses IQ4/Q8 fragments across N columns
+and fuses the mix/injection reduction without changing N1 or target precision.
+Three synthetic A/B/A replay brackets reduce N4 cost **2.98%**, with N1
+unchanged; the candidate whole-block ratio remains **2.167x**. Closing
+intrusive profiles still price dense/shared at **2.426x** and HC at **2.356x**.
+These are not authentic union, rank7/full-head or serving results.
+Its independently checked outputs and replay evidence are in
+`results/hillclimb/MTP_UNION_KERNELS.md`. Shared-LDS dense and HC prototypes
+were measured, regressed and removed; the dense gap is **not closed**.
 
 ## Ranked experiments
 

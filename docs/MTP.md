@@ -1632,6 +1632,31 @@ IDs per layer and position, with coverage, on every owning rank. Aggregate
 all rank archives before `tools/mtp_physics.py --captured-routes DIRECTORY`.
 No new production environment flag is introduced.
 
+Those position-addressed N1 files are **not real speculative N4 route
+captures**: rejected drafts never become the teacher token stream, and
+overlapping/replayed windows must not overwrite one another. Capture now
+additionally appends `verify-routes-SESSION-LAYER.jsonl` after each drained
+target verification, including N, first position, per-token IDs and replay
+classification. Static replay uses the drained frame's shape rather than a
+stale CPU recording hint. These readbacks are diagnostic-only, never timing
+inputs. `tools/analyze_mtp_union.py` requires the exact manifest, source commit
+and explicit session→case/category provenance; it rejects duplicate/incomplete
+windows and byte-weights the actual per-layer gate/up/down bank strides.
+Accepted-prefix restore replays are excluded. Aggregate every owning rank;
+teacher sliding windows and draft-head routing remain different observations.
+
+Provenance JSON has this shape (replace placeholders with authenticated capture
+metadata and bind every included request/session):
+```json
+{"origin":"native-target-MTP-verification","manifest_sha256":"<manifest SHA256>",
+ "source_commit":"<40-hex built commit>",
+ "sessions":{"42":{"case":"code-0","category":"code"}}}
+```
+Run `python tools\analyze_mtp_union.py --routes CAPTURE_DIR --manifest MANIFEST
+--provenance PROVENANCE_JSON --output RESULT_JSON` on one line. Unknown
+sessions fail unless explicitly listed in `excluded_sessions`; partial-layer
+diagnostics require `--layers` and are never labeled full-model observations.
+
 The candidate uses true N-column compact projections, four-pair weight reuse
 in expert down, and shader-local GDN state across causal N updates.
 The global recurrent buffer is loaded/stored at round edges, but the compiler

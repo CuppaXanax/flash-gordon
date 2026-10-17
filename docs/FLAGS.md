@@ -71,6 +71,15 @@ Scheduling remains GPU-only, existing scratch is reused, and per-token
 gates/IDs are unchanged. N1 is unchanged. This is not a whole-block≤1.5×,
 full-model quality or serving qualification; `330+131072=131402`.
 
+Additional default-off bit `262144` restores native HC up+mix fusion for N2..4:
+IQ4 compact or cooked-Q8 weights are loaded/decoded once into the N-column
+accumulators, followed by the per-token sigmoid mix and injection reduction
+in the same dispatch. Requires `FG_ROOFLINE` bit256 and native 64-lane
+subgroups; other formats/shapes retain the old path. N1 is unchanged.
+This is **not** the earlier rejected compact-HC two-row guard using a
+transient experimental bit of the same value. The combined union-down/HC
+research mask is `393546`; no full-model or serving promotion is implied.
+
 Small-N bit `512` is a **rejected precision experiment**, not a qualified
 selection: packed FP16 GU accumulation enables `shaderFloat16` only when
 requested and supported, but fails the independent `1e-4` CPU component gate.

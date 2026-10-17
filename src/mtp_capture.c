@@ -88,3 +88,50 @@ fg_status fg_mtp_capture_routes(uint64_t session,uint32_t layer,uint32_t first,
         (unsigned long long)session,layer);
     return write_at(path,first,present,count,err);
 }
+
+fg_status fg_mtp_capture_verify_routes(uint64_t session,uint32_t layer,uint32_t first,
+    uint32_t count,bool replay,const uint32_t *experts,fg_error *err){
+    if(!capture_directory)return FG_OK;
+    if(!session||layer>=FG_LAYER_COUNT||!count||count>4u||!experts||
+       first>FG_NATIVE_CONTEXT-count){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid MTP verification routing capture");
+        return FG_ERR_ARGUMENT;
+    }
+    for(uint32_t t=0;t<count;t++)for(uint32_t k=0;k<FG_TOP_K;k++){
+        uint32_t id=experts[t*FG_TOP_K+k];
+        if(id>=FG_EXPERT_COUNT){
+            fg_error_set(err,FG_ERR_ARGUMENT,"invalid verification expert");return FG_ERR_ARGUMENT;
+        }
+        for(uint32_t j=0;j<k;j++)if(id==experts[t*FG_TOP_K+j]){
+            fg_error_set(err,FG_ERR_ARGUMENT,"duplicate verification expert");return FG_ERR_ARGUMENT;
+        }
+    }
+    char path[1024],line[2048];
+    int used=snprintf(line,sizeof(line),
+        "{\"kind\":\"mtp_verify_routes\",\"version\":1,\"session\":%llu,\"layer\":%u,"
+        "\"first\":%u,\"n\":%u,\"replay\":%s,\"experts\":[",
+        (unsigned long long)session,layer,first,count,replay?"true":"false");
+    for(uint32_t t=0;t<count;t++){
+        used+=snprintf(line+used,sizeof(line)-(size_t)used,"%s[",t?",":"");
+        for(uint32_t k=0;k<FG_TOP_K;k++)
+            used+=snprintf(line+used,sizeof(line)-(size_t)used,"%s%u",k?",":"",experts[t*FG_TOP_K+k]);
+        used+=snprintf(line+used,sizeof(line)-(size_t)used,"]");
+    }
+    used+=snprintf(line+used,sizeof(line)-(size_t)used,"]}\n");
+    snprintf(path,sizeof(path),"%s/verify-routes-%llu-%u.jsonl",capture_directory,
+        (unsigned long long)session,layer);
+    int fd=open(path,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600);
+    if(fd<0)goto fail;
+    size_t done=0u;
+    while(done<(size_t)used){
+        ssize_t n=write(fd,line+done,(size_t)used-done);
+        if(n<0&&errno==EINTR)continue;
+        if(n<=0){close(fd);goto fail;}
+        done+=(size_t)n;
+    }
+    if(close(fd))goto fail;
+    return FG_OK;
+fail:
+    fg_error_set(err,FG_ERR_IO,"MTP verification routing write %s: %s",path,strerror(errno));
+    return FG_ERR_IO;
+}

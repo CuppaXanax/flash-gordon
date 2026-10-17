@@ -597,6 +597,9 @@ static fg_status gr_read_batch_into(fg_owner_executor *e,uint32_t layer,bool ffn
     if(status==FG_OK&&token_count==1u&&fg_vk_hc_up_mix_supported(vk,up_weight)){
         status=fg_vk_hc_up_mix(vk,e->mixed,injection_tensor,up_weight,e->low_active,e->hyper_norm,e->inject_partials,
             320u,FG_HIDDEN_SIZE,e->hc_inject_pieces,err);
+    }else if(status==FG_OK&&token_count>=2u&&token_count<=4u&&fg_vk_hc_up_mix_small_supported(vk,up_weight)){
+        status=fg_vk_hc_up_mix_small(vk,e->mixed,injection_tensor,up_weight,e->low_active,e->hyper_norm,e->inject_partials,
+            320u,FG_HIDDEN_SIZE,e->hc_inject_pieces,token_count,err);
     }else{
         if(status==FG_OK)status=dense_prefill(e,e->up_logits,up_weight,e->low_active,320u,10240u,token_count,1.0f,err);
         if(status==FG_OK)status=fg_vk_gr_mix_partial(vk,e->mixed,injection_tensor,e->hyper_norm,e->up_logits,e->inject_partials,FG_HIDDEN_SIZE,4u,token_count,e->hc_inject_pieces,err);

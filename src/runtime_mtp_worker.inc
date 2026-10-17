@@ -396,6 +396,15 @@ static fg_status handle_mtp_verify_work(fg_fabric *fabric,fg_owner_executor *own
     for(uint32_t i=0;status==FG_OK&&i<work.token_count;i++)
         status=validate_block_hidden(self,work.first_token+i,last,
             context->hyper_out+(uint64_t)i*FG_HYPER_WIDTH,err);
+    if(status==FG_OK&&fg_mtp_capture_enabled()){
+        uint32_t selected[FG_MTP_MAX_VERIFY*FG_TOP_K];
+        for(uint32_t layer=work.layer;status==FG_OK&&layer<=last;layer++){
+            status=fg_expert_route_trace_read(context->decode_dispatch.expert,layer,
+                work.token_count,selected,err);
+            if(status==FG_OK)status=fg_mtp_capture_verify_routes(session,layer,
+                work.first_token,work.token_count,(flags&FG_MTP_VERIFY_REPLAY)!=0u,selected,err);
+        }
+    }
     double t_read=dispatch_ts();
     if(status==FG_OK&&last+1u<FG_LAYER_COUNT){
         fg_prefill_layer_work next={.layer=(uint8_t)(last+1u),.source_rank=(uint8_t)self,

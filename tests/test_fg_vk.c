@@ -4841,6 +4841,108 @@ static int test_roof_hc_up_mix(void){
     return ok;
 }
 
+static int test_small_hc_up_mix(void){
+    const char *old=getenv("FG_ROOFLINE"),*small=getenv("FG_SMALL_KERNELS");
+    char *saved=old?strdup(old):NULL,*saved_small=small?strdup(small):NULL;
+    bool small_mode=fg_vk_small_n_active(context);
+    setenv("FG_ROOFLINE","256",1);
+    char mask[32];
+    snprintf(mask,sizeof(mask),"%lu",(small?strtoul(small,NULL,0):0ul)|262144ul);
+    setenv("FG_SMALL_KERNELS",mask,1);
+    fg_vk_small_n_mode(context,true);
+    int ok=1;
+    for(uint32_t k=320u;ok&&k<=640u;k+=320u)for(uint32_t q8=0;ok&&q8<2u;q8++){
+        const uint32_t hidden=2560u,rows=hidden*4u,pieces=37u,groups=k/32u;
+        uint64_t raw_bytes=(uint64_t)rows*groups*18u;
+        uint64_t bytes=q8?fg_q8_0_cooked_matrix_bytes(k,rows):fg_dense_compact_bytes(k,rows,20u);
+        uint8_t *raw=malloc(raw_bytes),*cooked=malloc(bytes);
+        float input[2560],normed[40960],partials[1024],logits[40960],got[10240],injected[16];
+        ok=raw&&cooked;
+        for(uint32_t t=0;t<4u;t++){
+            for(uint32_t j=0;j<k;j++)input[t*k+j]=sinf(j*0.31f+t*0.83f)*0.2f;
+            for(uint32_t j=0;j<rows;j++)normed[t*rows+j]=cosf(j*0.13f+t)*0.3f;
+            for(uint32_t j=0;j<pieces*4u;j++)partials[t*pieces*4u+j]=sinf(j*0.29f+t)*0.1f;
+        }
+        for(uint32_t r=0;ok&&r<rows;r++){
+            for(uint32_t t=0;t<4u;t++)logits[t*rows+r]=0.0f;
+            for(uint32_t g=0;g<groups;g++){
+                uint8_t *block=raw+((uint64_t)r*groups+g)*18u;
+                uint16_t d=fg_f32_to_f16(0.002f*(1.0f+(float)(r%3u)));
+                memcpy(block,&d,2u);
+                for(uint32_t j=0;j<16u;j++)block[j+2u]=(uint8_t)(r*37u+g*19u+j*13u);
+                float values[32];fg_dequantize_iq4_nl(block,values,32u);
+                for(uint32_t t=0;t<4u;t++)for(uint32_t j=0;j<32u;j++)
+                    logits[t*rows+r]=fmaf(values[j],input[t*k+g*32u+j],logits[t*rows+r]);
+            }
+        }
+        if(ok)ok=q8?fg_expand_iq4_q8_cooked(raw,cooked,bytes,k,rows,false):
+            fg_cook_dense_compact(raw,cooked,bytes,k,rows,20u);
+        fg_vk_tensor *gw=ok?tensor(cooked,bytes):NULL,*gx=tensor(input,4u*k*4u),
+            *gn=tensor(normed,4u*rows*4u),*gp=tensor(partials,4u*pieces*16u),
+            *go=tensor(NULL,4u*hidden*4u),*gi=tensor(NULL,64u),*gl=tensor(NULL,4u*rows*4u);
+        if(gw)fg_vk_tensor_set_format(gw,q8?FG_VK_TENSOR_FORMAT_Q8_0_COOKED:FG_VK_TENSOR_FORMAT_DENSE_COMPACT_IQ4_NL);
+        ok=ok&&gw&&gx&&gn&&gp&&go&&gi&&gl;
+        for(uint32_t n=2u;ok&&n<=4u;n++){
+            for(uint32_t i=0;i<4u*hidden;i++)got[i]=NAN;
+            for(uint32_t i=0;i<16u;i++)injected[i]=NAN;
+            ok=fg_vk_tensor_write(go,0,got,sizeof(got),&error)==FG_OK&&
+                fg_vk_tensor_write(gi,0,injected,sizeof(injected),&error)==FG_OK&&
+                fg_vk_hc_up_mix_small(context,go,gi,gw,gx,gn,gp,k,hidden,pieces,n,&error)==FG_OK&&
+                fg_vk_tensor_read(go,0,got,sizeof(got),&error)==FG_OK&&
+                fg_vk_tensor_read(gi,0,injected,sizeof(injected),&error)==FG_OK;
+            float worst=0.0f;
+            for(uint32_t t=0;ok&&t<n;t++)for(uint32_t r=0;ok&&r<hidden;r++){
+                float expected=0.0f;
+                for(uint32_t g=0;g<4u;g++)
+                    expected=fmaf(1.0f/(1.0f+expf(-logits[t*rows+g*hidden+r])),
+                        normed[t*rows+g*hidden+r],expected);
+                expected*=0.25f;
+                float diff=fabsf(got[t*hidden+r]-expected)/fmaxf(1.0f,fabsf(expected));
+                worst=fmaxf(worst,diff);
+                if(!isfinite(got[t*hidden+r])||diff>1e-4f)ok=0;
+            }
+            for(uint32_t t=0;ok&&t<n;t++)for(uint32_t g=0;g<4u;g++){
+                float sum=0.0f;for(uint32_t p=0;p<pieces;p++)sum+=partials[(t*pieces+p)*4u+g];
+                float expected=2.0f/(1.0f+expf(-sum*0.25f));
+                if(!isfinite(injected[t*4u+g])||fabsf(injected[t*4u+g]-expected)>1e-4f)ok=0;
+            }
+            for(uint32_t i=n*hidden;i<4u*hidden;i++)if(!isnan(got[i]))ok=0;
+            for(uint32_t i=n*4u;i<16u;i++)if(!isnan(injected[i]))ok=0;
+            fprintf(stderr,"SMALL_HC_UP_MIX k=%u q8=%u n=%u output_max=%g %s\n",k,q8,n,worst,ok?"PASS":error.message);
+            if(ok&&getenv("FG_BENCH_HC_INJECT")){
+                for(uint32_t round=0;ok&&round<3u;round++)for(uint32_t fused=0;ok&&fused<2u;fused++){
+                    fg_vk_profile profile={0};
+                    for(uint32_t warm=0;ok&&warm<16u;warm++){
+                        if(fused)ok=fg_vk_hc_up_mix_small(context,go,gi,gw,gx,gn,gp,k,hidden,pieces,n,&error)==FG_OK;
+                        else ok=fg_vk_dense_q8_0_f32(context,gl,gw,gx,k,rows,n,1.0f,&error)==FG_OK&&
+                            fg_vk_gr_mix_partial(context,go,gi,gn,gl,gp,hidden,4u,n,pieces,&error)==FG_OK;
+                    }
+                    ok=ok&&fg_vk_profile_begin(context,&error)==FG_OK&&fg_vk_begin(context,&error)==FG_OK;
+                    for(uint32_t i=0;ok&&i<64u;i++){
+                        if(fused)ok=fg_vk_hc_up_mix_small(context,go,gi,gw,gx,gn,gp,k,hidden,pieces,n,&error)==FG_OK;
+                        else ok=fg_vk_dense_q8_0_f32(context,gl,gw,gx,k,rows,n,1.0f,&error)==FG_OK&&
+                            fg_vk_gr_mix_partial(context,go,gi,gn,gl,gp,hidden,4u,n,pieces,&error)==FG_OK;
+                    }
+                    if(fg_vk_batch_active(context))ok=fg_vk_end(context,&error)==FG_OK&&ok;
+                    if(fg_vk_profile_active(context))ok=fg_vk_profile_end(context,&profile,&error)==FG_OK&&ok;
+                    fprintf(stderr,"SMALL_HC_UP_MIX_BENCH k=%u q8=%u n=%u round=%u fused=%u us=%.6f bytes=%llu %s\n",
+                        k,q8,n,round,fused,profile.kernel_ms*1000.0/64.0,(unsigned long long)bytes,ok?"PASS":"FAIL");
+                }
+            }
+        }
+        if(ok)ok=fg_vk_hc_up_mix_small(context,go,gi,gw,gx,gn,gp,k,hidden,pieces,1u,&error)==FG_ERR_ARGUMENT&&
+            fg_vk_hc_up_mix_small(context,go,gi,gw,gx,gn,gp,k,hidden,65u,4u,&error)==FG_ERR_ARGUMENT&&
+            fg_vk_hc_up_mix_small(context,go,gi,gw,gx,gn,gp,k+1u,hidden,pieces,4u,&error)==FG_ERR_ARGUMENT;
+        fg_vk_tensor_destroy(gl);fg_vk_tensor_destroy(gi);fg_vk_tensor_destroy(go);fg_vk_tensor_destroy(gp);
+        fg_vk_tensor_destroy(gn);fg_vk_tensor_destroy(gx);fg_vk_tensor_destroy(gw);
+        free(cooked);free(raw);
+    }
+    if(saved){setenv("FG_ROOFLINE",saved,1);free(saved);}else unsetenv("FG_ROOFLINE");
+    if(saved_small){setenv("FG_SMALL_KERNELS",saved_small,1);free(saved_small);}else unsetenv("FG_SMALL_KERNELS");
+    fg_vk_small_n_mode(context,small_mode);
+    return ok;
+}
+
 static int test_roof_qsa(void){
     enum{COUNT=2051,Q=6144};
     fg_vk_tensor *records=tensor(NULL,(uint64_t)COUNT*FG_Q38_QSA_TOKEN_RECORD_BYTES),
@@ -5006,6 +5108,7 @@ int main(void){if(fg_vk_open(&context,&error)!=FG_OK){fprintf(stderr,"Vulkan una
 ok=run_test("decode_fusion_router",test_decode_fusion_router)&&ok;
 ok=run_test("roof_qsa",test_roof_qsa)&&ok;
 ok=run_test("roof_hc_up_mix",test_roof_hc_up_mix)&&ok;
+ok=run_test("small_hc_up_mix",test_small_hc_up_mix)&&ok;
 ok=run_test("roof_hc_down_inject",test_roof_hc_down_inject)&&ok;
 ok=run_test("roof_gdn_gate_controls",test_roof_gdn_gate_controls)&&ok;
 ok=run_test("roof_controls",test_roof_controls)&&ok;

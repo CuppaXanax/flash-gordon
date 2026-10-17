@@ -249,7 +249,7 @@ cancel)
 evidence)
     cd "$root"
     shopt -s nullglob
-    hashfiles=(capture/hc-* capture/routes-*)
+    hashfiles=(capture/hc-* capture/routes-* capture/verify-routes-*)
     : > capture-hashes.sha256
     if [[ "${#hashfiles[@]}" -gt 0 ]]; then sha256sum "${hashfiles[@]}" > capture-hashes.sha256; fi
     files=(capture/*.json capture/*.jsonl capture/*.u32 capture/routes-*.coverage

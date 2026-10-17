@@ -230,6 +230,7 @@ vulkan/fg_roof_down_split.spv vulkan/fg_roof_down_split_w64.spv: shaders/fg_moe_
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_down_slots*.comp)): shaders/fg_moe_decode_down_reduce.glsl
 vulkan/fg_roof_down_rows1.spv vulkan/fg_roof_down_rows2.spv: shaders/fg_roof_down_rows.glsl
 vulkan/fg_roof_hc_up_mix_iq4.spv vulkan/fg_roof_hc_up_mix_q8.spv: shaders/fg_roof_hc_up_mix.glsl
+vulkan/fg_small_hc_up_mix_iq4.spv vulkan/fg_small_hc_up_mix_q8.spv: shaders/fg_small_hc_up_mix.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_hc_down[48]*.comp shaders/fg_roof_hc_down_single*.comp)): shaders/fg_dense_soa_impl.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_stream*.comp)): shaders/fg_roof_stream.glsl
 vulkan/fg_qsa_decode_attention_split.spv vulkan/fg_roof_qsa_h1.spv vulkan/fg_roof_qsa_h3.spv vulkan/fg_roof_qsa_h6.spv: shaders/fg_qsa_decode_attention_split.glsl
