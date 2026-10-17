@@ -1645,6 +1645,13 @@ windows and byte-weights the actual per-layer gate/up/down bank strides.
 Accepted-prefix restore replays are excluded. Aggregate every owning rank;
 teacher sliding windows and draft-head routing remain different observations.
 Pass `--mtp-capture-dir` to **both the API coordinator and every worker**.
+`make test-mtp-capture-ring` exercises the real eight-rank runtime/fabric and
+append-only capture writer on one Linux host, including all48 layers and N4
+frame coverage. It uses explicit deterministic expert/compute doubles, not
+trained-model routes or acceptance evidence. The fixture's optional final
+`CAPTURE_DIR` argument enables this diagnostic; ordinary ring tests stay
+capture-disabled. Rehearse the serving CLI options and capture client too:
+the CPU ring fixture does not load the production model or run its HTTP API.
 It formerly parsed only for `rank`, so a serving capture failed before its
 coordinator started; the API parser and no-model CLI regression now cover
 this integration point. An existing writable directory is required; the

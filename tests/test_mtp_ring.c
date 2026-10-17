@@ -27,6 +27,16 @@ struct fg_mtp_head {uint32_t frontier,step;fg_vk_tensor *next,*hidden;};
 static uint32_t rejection=FG_MTP_MAX_DRAFT;
 static uint32_t fixture_eos=FG_Q38_VOCAB_SIZE-1u;
 static bool local_chain;
+fg_status __wrap_fg_expert_route_trace_enable(fg_expert_executor *executor,fg_error *err){
+    (void)executor;(void)err;return FG_OK;
+}
+fg_status __wrap_fg_expert_route_trace_read(fg_expert_executor *executor,
+    uint32_t layer,uint32_t tokens,uint32_t *selected,fg_error *err){
+    (void)executor;(void)err;
+    for(uint32_t t=0;t<tokens;t++)for(uint32_t e=0;e<FG_TOP_K;e++)
+        selected[t*FG_TOP_K+e]=(layer*13u+t*7u+e)%FG_EXPERT_COUNT;
+    return FG_OK;
+}
 fg_status __wrap_fg_mtp_vocab_open(fg_mtp_vocab **out,fg_vk_context *vk,const char *path,
     const uint32_t *ids,uint32_t rows,fg_error *err){
     (void)vk;(void)path;(void)ids;(void)rows;(void)err;
@@ -621,7 +631,12 @@ static void stop_children(int signal){
     for(sig_atomic_t i=0;i<child_count;i++)if(children[i]>0)kill(children[i],SIGTERM);
 }
 int main(int argc,char **argv){
-    if(argc<6||argc>8){fprintf(stderr,"usage: test_mtp_ring HOST0 HOST1 BASEPORT REJECT(0..3) PARITY(0..1|2=local) [NATIVE_OWNER [LOCAL_CHAIN]]\n");return 2;}
+    if(argc==9){
+        fg_error capture_error={0};
+        require(fg_mtp_capture_configure(argv[8],&capture_error),&capture_error);
+        argc--;
+    }
+    if(argc<6||argc>8){fprintf(stderr,"usage: test_mtp_ring HOST0 HOST1 BASEPORT REJECT(0..3) PARITY(0..1|2=local) [NATIVE_OWNER [LOCAL_CHAIN [CAPTURE_DIR]]]\n");return 2;}
     uint32_t base=(uint32_t)strtoul(argv[3],NULL,10);
     rejection=(uint32_t)strtoul(argv[4],NULL,10);
     uint32_t parity=(uint32_t)strtoul(argv[5],NULL,10);

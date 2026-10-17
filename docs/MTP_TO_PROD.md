@@ -27,6 +27,22 @@ Real chat/code union-byte ratios and the corresponding op-weighted floor
 remain **unmeasured**, requiring a fresh short capture grant.
 See [capture and pressure receipts](../results/hillclimb/MTP_CAPTURE_PRESSURE.md).
 
+The renewed01:37:00Z grant also produced **zero real verifier routes**.
+`.51` passed all candidate CLI option checks,960 capture records through the
+real eight-rank runtime with compute doubles, and four unchanged capture-client
+requests against an HTTP protocol double. These are **component rehearsals,
+not the requested trained end-to-end API/worker/cold-prefill rehearsal**;
+they were insufficient as a live readiness gate. The first actual `chat-0`
+request exceeded the remaining work budget during cold prefill. The last
+coordinator trace completed its6..11 block; this does not identify the
+root cause or prove another rank/kernel failed.
+All production identities, API/greedy sanity and governor inventory were
+restored/verified; owned roots absent twice at **2026-10-17T01:50:21Z**,
+inside15minutes. `.51` was clean/released at01:50:29Z.
+The private launcher now blocks `Run`; **do not request another lease until
+the genuine trained cold-prefill/capture path is reproduced and rehearsed**.
+See [renewed capture and scale-hoist receipts](../results/hillclimb/MTP_CAPTURE_REHEARSAL.md).
+
 The earlier authorized 2026-10-16 diagnostic lease
 ended with all eight original services restored, pinned and verified, and
 owned scratch/processes removed. Final independent release verification was
@@ -353,6 +369,19 @@ owned processes zero, unchanged governor inventory and scratch absent twice.
 Next: capture authentic unions, then use measured memory/issue/occupancy
 counters before another dense/HC topology change. Smaller register counts
 alone are not a selection criterion. Full draft vocabulary remains preferred.
+
+The subsequent dequant audit found dense `reuse_weight` already performs
+bit extraction, scale decode and qlo/qhi scaling **before** the column
+accumulations. Compiled N2/N4 dense conversion counts remain64 integer-to-float
+conversions and8+8 scale-code conversions. HC similarly decodes quants and
+its half scale outside the token loop; only the dot-result scale FMA is
+per token. A timestamp A/B explicitly scaling HC q0/q1 before all columns
+does **not** improve service: N4 median B/A **1.001426x**, N1 **0.999308x**,
+three brackets. HC VALU instructions rise1034→1098, VMEM46 unchanged,
+VGPR84 unchanged;12 component cases pass. It is rejected and no shader ships.
+Queried `rocprof`/RGP executables were not on `.51`'s PATH; **VALU/memory busy counters
+were not measured**. Static opcode counts are not busy percentages and this
+negative A/B does not establish ALU-bound service.
 
 ## Ranked experiments
 

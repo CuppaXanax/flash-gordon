@@ -1,0 +1,480 @@
+{
+  "base_commit": "69ca796144ca33fa126735cddcc521016d94aa0b",
+  "default_off": true,
+  "promotion": false,
+  "rehearsal": {
+    "target": "192.168.42.51",
+    "CLI_all_candidate_options_pass": true,
+    "runtime_numeric_double": {
+      "scope": "numerical-double ring",
+      "records": 960,
+      "layers": 48
+    },
+    "capture_client_four_HTTP_protocol_double_cases_pass": true,
+    "trained_same_command_end_to_end_rehearsal": false,
+    "limitation": "Component rehearsals were NOT a full trained API/worker/prefill capture rehearsal and were insufficient as fleet readiness.",
+    "persistent_test": "make test-mtp-capture-ring; all48 layers, complete per-window multiplicities, N4, top10 validity"
+  },
+  "lease": {
+    "grant_utc": "2026-10-17T01:37:00.395Z",
+    "maximum_minutes": 15,
+    "private_work_deadline_utc": "2026-10-17T01:49:00Z",
+    "production_released_utc": "2026-10-17T01:50:21Z",
+    "outcome": {
+      "diagnosticOnly": true,
+      "finalizationErrors": [],
+      "failure": "HTTP client timed out; restore production.",
+      "complete": false,
+      "productionVerified": true,
+      "elapsedSeconds": 801.8345535,
+      "scratchRemoved": true,
+      "lease": "union-20261017-0145"
+    },
+    "cleanup_receipts": [
+      {
+        "IP": "192.168.42.42",
+        "ExitCode": 0,
+        "Stdout": "owned processes absent; governor inventory unchanged\nhc-mtp absent twice RELEASED 2026-10-17T01:50:21Z",
+        "Stderr": ""
+      },
+      {
+        "IP": "192.168.42.43",
+        "ExitCode": 0,
+        "Stdout": "owned processes absent; governor inventory unchanged\nhc-mtp absent twice RELEASED 2026-10-17T01:50:21Z",
+        "Stderr": ""
+      },
+      {
+        "IP": "192.168.42.44",
+        "ExitCode": 0,
+        "Stdout": "owned processes absent; governor inventory unchanged\nhc-mtp absent twice RELEASED 2026-10-17T01:50:21Z",
+        "Stderr": ""
+      },
+      {
+        "IP": "192.168.42.45",
+        "ExitCode": 0,
+        "Stdout": "owned processes absent; governor inventory unchanged\nhc-mtp absent twice RELEASED 2026-10-17T01:50:21Z",
+        "Stderr": ""
+      },
+      {
+        "IP": "192.168.42.46",
+        "ExitCode": 0,
+        "Stdout": "owned processes absent; governor inventory unchanged\nhc-mtp absent twice RELEASED 2026-10-17T01:50:21Z",
+        "Stderr": ""
+      },
+      {
+        "IP": "192.168.42.47",
+        "ExitCode": 0,
+        "Stdout": "owned processes absent; governor inventory unchanged\nhc-mtp absent twice RELEASED 2026-10-17T01:50:21Z",
+        "Stderr": ""
+      },
+      {
+        "IP": "192.168.42.48",
+        "ExitCode": 0,
+        "Stdout": "owned processes absent; governor inventory unchanged\nhc-mtp absent twice RELEASED 2026-10-17T01:50:21Z",
+        "Stderr": ""
+      },
+      {
+        "IP": "192.168.42.49",
+        "ExitCode": 0,
+        "Stdout": "owned processes absent; governor inventory unchanged\nhc-mtp absent twice RELEASED 2026-10-17T01:50:21Z",
+        "Stderr": ""
+      }
+    ],
+    "actual_verify_route_records": 0,
+    "measured_union_ratio": null,
+    "measured_union_weighted_floor": null,
+    "completed_HTTP_cases": 0,
+    "first_requested_case": "chat-0",
+    "last_logged_prefill": "chunk0, owner0 layers6..11 completed; no verifier routes",
+    "root_cause": "unresolved; client exceeded remaining work budget during cold first request, not a proven kernel/transport diagnosis",
+    "stage_receipt_local_write_utc": [
+      {
+        "file": "001-create-owned-scratch.json",
+        "utc": "2026-10-17T01:46:02.732187+00:00"
+      },
+      {
+        "file": "002-upload-guard.json",
+        "utc": "2026-10-17T01:46:03.537427+00:00"
+      },
+      {
+        "file": "003-preflight-production.json",
+        "utc": "2026-10-17T01:46:04.500015+00:00"
+      },
+      {
+        "file": "004-stage-release.json",
+        "utc": "2026-10-17T01:46:06.369537+00:00"
+      },
+      {
+        "file": "005-stage-serving.json",
+        "utc": "2026-10-17T01:46:15.143886+00:00"
+      },
+      {
+        "file": "006-preflight-capture-parsers.json",
+        "utc": "2026-10-17T01:46:15.734512+00:00"
+      },
+      {
+        "file": "007-stage-native-final-owner.json",
+        "utc": "2026-10-17T01:47:04.625273+00:00"
+      },
+      {
+        "file": "008-fetch-exact-embedding.json",
+        "utc": "2026-10-17T01:47:15.112828+00:00"
+      },
+      {
+        "file": "009-stage-exact-embedding-final-owner.json",
+        "utc": "2026-10-17T01:47:26.447199+00:00"
+      },
+      {
+        "file": "010-arm-worker-watchdogs.json",
+        "utc": "2026-10-17T01:47:27.199808+00:00"
+      },
+      {
+        "file": "011-arm-coordinator-watchdog.json",
+        "utc": "2026-10-17T01:47:27.750293+00:00"
+      },
+      {
+        "file": "012-stop-production.json",
+        "utc": "2026-10-17T01:47:29.404286+00:00"
+      },
+      {
+        "file": "013-stage-n4-local-head.json",
+        "utc": "2026-10-17T01:47:39.492321+00:00"
+      },
+      {
+        "file": "014-start-workers-F3.json",
+        "utc": "2026-10-17T01:47:40.315889+00:00"
+      },
+      {
+        "file": "015-start-coordinator-F3.json",
+        "utc": "2026-10-17T01:47:41.071570+00:00"
+      },
+      {
+        "file": "016-remove-loaded-n4-weight-copies.json",
+        "utc": "2026-10-17T01:48:58.250890+00:00"
+      },
+      {
+        "file": "017-stop-candidates.json",
+        "utc": "2026-10-17T01:49:01.578301+00:00"
+      },
+      {
+        "file": "018-restore-workers.json",
+        "utc": "2026-10-17T01:49:04.359522+00:00"
+      },
+      {
+        "file": "019-restore-coordinator.json",
+        "utc": "2026-10-17T01:49:07.086898+00:00"
+      },
+      {
+        "file": "020-verify-pinned-production.json",
+        "utc": "2026-10-17T01:50:08.846616+00:00"
+      },
+      {
+        "file": "021-cancel-watchdogs.json",
+        "utc": "2026-10-17T01:50:09.408464+00:00"
+      },
+      {
+        "file": "022-evidence-192.168.42.42.json",
+        "utc": "2026-10-17T01:50:09.844528+00:00"
+      },
+      {
+        "file": "023-download-evidence-192.168.42.42.json",
+        "utc": "2026-10-17T01:50:10.400958+00:00"
+      },
+      {
+        "file": "024-evidence-192.168.42.43.json",
+        "utc": "2026-10-17T01:50:10.809910+00:00"
+      },
+      {
+        "file": "025-download-evidence-192.168.42.43.json",
+        "utc": "2026-10-17T01:50:11.297037+00:00"
+      },
+      {
+        "file": "026-evidence-192.168.42.44.json",
+        "utc": "2026-10-17T01:50:11.739592+00:00"
+      },
+      {
+        "file": "027-download-evidence-192.168.42.44.json",
+        "utc": "2026-10-17T01:50:12.319577+00:00"
+      },
+      {
+        "file": "028-evidence-192.168.42.45.json",
+        "utc": "2026-10-17T01:50:12.701318+00:00"
+      },
+      {
+        "file": "029-download-evidence-192.168.42.45.json",
+        "utc": "2026-10-17T01:50:13.254823+00:00"
+      },
+      {
+        "file": "030-evidence-192.168.42.46.json",
+        "utc": "2026-10-17T01:50:13.658117+00:00"
+      },
+      {
+        "file": "031-download-evidence-192.168.42.46.json",
+        "utc": "2026-10-17T01:50:14.168361+00:00"
+      },
+      {
+        "file": "032-evidence-192.168.42.47.json",
+        "utc": "2026-10-17T01:50:14.605741+00:00"
+      },
+      {
+        "file": "033-download-evidence-192.168.42.47.json",
+        "utc": "2026-10-17T01:50:15.205481+00:00"
+      },
+      {
+        "file": "034-evidence-192.168.42.48.json",
+        "utc": "2026-10-17T01:50:15.635990+00:00"
+      },
+      {
+        "file": "035-download-evidence-192.168.42.48.json",
+        "utc": "2026-10-17T01:50:16.177986+00:00"
+      },
+      {
+        "file": "036-evidence-192.168.42.49.json",
+        "utc": "2026-10-17T01:50:16.587894+00:00"
+      },
+      {
+        "file": "037-download-evidence-192.168.42.49.json",
+        "utc": "2026-10-17T01:50:17.132332+00:00"
+      },
+      {
+        "file": "038-remove-owned-scratch.json",
+        "utc": "2026-10-17T01:50:21.831953+00:00"
+      }
+    ],
+    "future_lease_readiness": "blocked until genuine trained cold-prefill/capture end-to-end rehearsal, not additional parser mocks"
+  },
+  "dequant_audit": {
+    "dense": "reuse_weight performs bit extraction, scale decode and qlo/qhi FMA before all token-column accumulations",
+    "HC": "quants/LUT lookup and d decode are outside token loop; d multiplies each token dot in one FMA",
+    "static_conversion_counts": {
+      "2": {
+        "fg_small_hc_up_mix_iq4.spv": {
+          "s_bfe_u32": 1,
+          "v_bfe_u32": 32,
+          "v_cvt_f32_f16_sdwa": 8,
+          "v_cvt_f32_f16_e32": 8,
+          "v_mul_f32_e32": 16
+        },
+        "fg_small_reuse8_q4_n2.spv": {
+          "v_cvt_f32_i32_sdwa": 64,
+          "v_cvt_f32_ubyte0_e32": 8,
+          "v_cvt_f32_ubyte1_e32": 8,
+          "v_mul_f32_e32": 16
+        }
+      },
+      "4": {
+        "fg_small_hc_up_mix_iq4.spv": {
+          "s_bfe_u32": 1,
+          "v_bfe_u32": 32,
+          "v_cvt_f32_f16_sdwa": 8,
+          "v_cvt_f32_f16_e32": 8,
+          "v_mul_f32_e32": 32
+        },
+        "fg_small_reuse8_q4_n4.spv": {
+          "v_cvt_f32_i32_sdwa": 64,
+          "v_cvt_f32_ubyte0_e32": 8,
+          "v_cvt_f32_ubyte1_e32": 8,
+          "v_mul_f32_e32": 32
+        }
+      }
+    },
+    "counter_tools_found": [],
+    "VALU_or_memory_busy_counters_measured": false,
+    "alternative": "timestamp A/B with HC qlo/qhi scaled once before token loop",
+    "compiler_stock": {
+      "VALU": 1034,
+      "VMEM": 46,
+      "VGPRs": 84
+    },
+    "compiler_hoisted": {
+      "VALU": 1098,
+      "VMEM": 46,
+      "VGPRs": 84
+    },
+    "brackets": [
+      {
+        "bracket": 1,
+        "1": {
+          "median_us": {
+            "A0": 2296.844,
+            "B": 2294.9235,
+            "A1": 2296.5895
+          },
+          "B_over_bracket": 0.9992192115113889,
+          "parity": {
+            "A0": {
+              "kind": "parity",
+              "output_hash": "b06afd2760646dd1",
+              "gdn_state_hash": "0ffd8effe54b3697"
+            },
+            "B": {
+              "kind": "parity",
+              "output_hash": "b06afd2760646dd1",
+              "gdn_state_hash": "0ffd8effe54b3697"
+            },
+            "A1": {
+              "kind": "parity",
+              "output_hash": "b06afd2760646dd1",
+              "gdn_state_hash": "0ffd8effe54b3697"
+            }
+          }
+        },
+        "4": {
+          "median_us": {
+            "A0": 4944.9755000000005,
+            "B": 4965.4175,
+            "A1": 4971.72
+          },
+          "B_over_bracket": 1.0014258277870887,
+          "parity": {
+            "A0": {
+              "kind": "parity",
+              "output_hash": "cf88618527e461e8",
+              "gdn_state_hash": "dee15a9dccc1efe0"
+            },
+            "B": {
+              "kind": "parity",
+              "output_hash": "a1fc05a8f0ecd023",
+              "gdn_state_hash": "c8c44649e4baa614"
+            },
+            "A1": {
+              "kind": "parity",
+              "output_hash": "cf88618527e461e8",
+              "gdn_state_hash": "dee15a9dccc1efe0"
+            }
+          }
+        }
+      },
+      {
+        "bracket": 2,
+        "1": {
+          "median_us": {
+            "A0": 2301.4530000000004,
+            "B": 2298.424,
+            "A1": 2298.5784999999996
+          },
+          "B_over_bracket": 0.9993079395217185,
+          "parity": {
+            "A0": {
+              "kind": "parity",
+              "output_hash": "b06afd2760646dd1",
+              "gdn_state_hash": "0ffd8effe54b3697"
+            },
+            "B": {
+              "kind": "parity",
+              "output_hash": "b06afd2760646dd1",
+              "gdn_state_hash": "0ffd8effe54b3697"
+            },
+            "A1": {
+              "kind": "parity",
+              "output_hash": "b06afd2760646dd1",
+              "gdn_state_hash": "0ffd8effe54b3697"
+            }
+          }
+        },
+        "4": {
+          "median_us": {
+            "A0": 4985.5745,
+            "B": 4985.6775,
+            "A1": 4984.235000000001
+          },
+          "B_over_bracket": 1.0001550180071144,
+          "parity": {
+            "A0": {
+              "kind": "parity",
+              "output_hash": "cf88618527e461e8",
+              "gdn_state_hash": "dee15a9dccc1efe0"
+            },
+            "B": {
+              "kind": "parity",
+              "output_hash": "a1fc05a8f0ecd023",
+              "gdn_state_hash": "c8c44649e4baa614"
+            },
+            "A1": {
+              "kind": "parity",
+              "output_hash": "cf88618527e461e8",
+              "gdn_state_hash": "dee15a9dccc1efe0"
+            }
+          }
+        }
+      },
+      {
+        "bracket": 3,
+        "1": {
+          "median_us": {
+            "A0": 2298.696,
+            "B": 2304.5935,
+            "A1": 2295.483
+          },
+          "B_over_bracket": 1.0032667425452948,
+          "parity": {
+            "A0": {
+              "kind": "parity",
+              "output_hash": "b06afd2760646dd1",
+              "gdn_state_hash": "0ffd8effe54b3697"
+            },
+            "B": {
+              "kind": "parity",
+              "output_hash": "b06afd2760646dd1",
+              "gdn_state_hash": "0ffd8effe54b3697"
+            },
+            "A1": {
+              "kind": "parity",
+              "output_hash": "b06afd2760646dd1",
+              "gdn_state_hash": "0ffd8effe54b3697"
+            }
+          }
+        },
+        "4": {
+          "median_us": {
+            "A0": 4993.4605,
+            "B": 5266.5595,
+            "A1": 4998.715
+          },
+          "B_over_bracket": 1.0541367092681668,
+          "parity": {
+            "A0": {
+              "kind": "parity",
+              "output_hash": "cf88618527e461e8",
+              "gdn_state_hash": "dee15a9dccc1efe0"
+            },
+            "B": {
+              "kind": "parity",
+              "output_hash": "a1fc05a8f0ecd023",
+              "gdn_state_hash": "c8c44649e4baa614"
+            },
+            "A1": {
+              "kind": "parity",
+              "output_hash": "cf88618527e461e8",
+              "gdn_state_hash": "dee15a9dccc1efe0"
+            }
+          }
+        }
+      }
+    ],
+    "median_N4_B_over_A": 1.0014258277870887,
+    "median_N1_B_over_A": 0.9993079395217185,
+    "selected": false,
+    "limitation": "Static opcodes are NOT achieved busy counters; no proof of ALU-bound service",
+    "oracle_cases_passed": 12,
+    "target_precision": "unchanged >=Q4"
+  },
+  "offline_release": {
+    "IP": "192.168.42.51",
+    "ExitCode": 0,
+    "Stdout": "{\"owned_processes\": 0, \"governors_unchanged\": true, \"entries\": [\".fleet-30c6fe51e8ca4471b564a600a39e04e2.sh\", \"capture-client.py\", \"client-rehearsal.py\", \"client-rehearsal.tar\", \"hc-scale-hoisted.glsl\", \"rehearsal\", \"rehearsal-assets.tar.gz\", \"rehearsal-source.tar.gz\", \"rehearsal-update.tar\"]}\nRELEASED_51 owned_root_absent_twice 2026-10-17T01:50:29Z",
+    "Stderr": ""
+  },
+  "offline_released_utc": "2026-10-17T01:50:29Z",
+  "validation": {
+    "Linux_ring_capture_regression": "pass",
+    "Linux_capture_tests": 8,
+    "C17_Werror_build": "pass",
+    "flag_registry": "pass"
+  },
+  "evidence": {
+    "path": "mtp-capture-rehearsal-evidence.tar.gz",
+    "sha256": "1fd912051359a50944e1add770bf7c9ddaf93658d70be9f9a2cb041fbcc08dd6",
+    "bytes": 1362045
+  }
+}

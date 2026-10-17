@@ -35,7 +35,7 @@ MTP_RING_WRAPS = fg_vk_tensor_create fg_vk_tensor_destroy fg_vk_tensor_write fg_
  fg_mtp_head_check_residency \
  fg_expert_prepare_small_n_scratch fg_vk_get_memory_stats \
  fg_mtp_head_frontier fg_mtp_head_reset fg_mtp_head_truncate fg_mtp_head_warm_replay \
- fg_mtp_head_step_replay fg_mtp_vocab_open fg_mtp_vocab_open_draft fg_mtp_vocab_close fg_mtp_vocab_check fg_mtp_vocab_argmax
+ fg_mtp_head_step_replay fg_mtp_vocab_open fg_mtp_vocab_open_draft fg_mtp_vocab_close fg_mtp_vocab_check fg_mtp_vocab_argmax fg_expert_route_trace_read fg_expert_route_trace_enable
 comma := ,
 
 .PHONY: all clean test test-sampler test-mtp test-mtp-capture test-ngram-deployment test-vulkan test-qsa-fleet test-gdn-fleet test-fg-profile-analysis test-tower test-decode-batch shaders
@@ -62,6 +62,10 @@ test-mtp-vocab: tests/test_mtp_vocab
 .PHONY: test-mtp-ring
 test-mtp-ring: tests/test_mtp_ring
 	@for native in 7 6; do for reject in 0 1 2 3; do ./tests/test_mtp_ring 127.0.0.1 127.0.0.1 $$((29600+reject*20+(7-native)*100)) $$reject 2 $$native || exit; done; done
+
+.PHONY: test-mtp-capture-ring
+test-mtp-capture-ring: tests/test_mtp_ring
+	python3 -m unittest discover -s tests -p test_mtp_capture_ring.py
 
 tests/test_core: tests/test_core.o $(TEST_COMMON)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
