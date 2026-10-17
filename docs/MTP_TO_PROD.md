@@ -97,6 +97,16 @@ target/native sessions**, final N1..4 target and k3 native graph warmup gives:
 |106,299 CJK /440 MiB |14,634,324,460 before second native session |−138,809,836 |Target admission rejects |
 |40,525 English /440 MiB |14,455,019,092 before second native session |40,495,532 available vs50,348,032 reserved |Native admission rejects |
 
+The subsequent whole-block experiment also admits the **full248,320-row head
+with sessions2 at128 MiB worker cache**:14,427,790,128 requested bytes,
+67,724,496 bytes below the unchanged cap, after both target N1..4 and native
+k3 graph warmups. This uses authenticated real rank7 weights but synthetic
+HC inputs/zero ngram over480 tokens; it is **short-context offline fit only**.
+It does not solve full-head sessions2 at the production440 MiB cache budget
+or qualify long-context QSA performance. Prefer the full head unless the
+agreed context/admission budget actually requires restriction.
+See [whole-block receipts](../results/hillclimb/MTP_BLOCK_GAPS.md).
+
 The cap is unchanged at14,495,514,624 bytes. These are **different explicit
 cache configurations**: neither subset alone proves the440 MiB configuration
 fits. Graph warmup adds further allocations, so an earlier
@@ -261,8 +271,23 @@ prove state restoration after warmup. No further production access is implied.
    win. Forcing wave32 made representative Q4 worse and was rejected.
    This is a measured partial kernel-path improvement, not the requested
    whole-rank result or a credited5–15 ms serving gain.
-3. **Restricted draft-only vocabulary: target1–7 ms/round;387–566 MB
-   rank7 saving.**
+   The subsequent [whole-block gap search](../results/hillclimb/MTP_BLOCK_GAPS.md)
+   corrects the intrusive operation scopes and targets the largest measured
+   excess: expert gate/up, dense/shared, HC, then expert down. A new default-off
+   Q8 expert-down union kernel reuses each decoded fragment across token pairs
+   without extra scratch; three synthetic replay brackets reduce N4 cost
+   about4%, with unchanged N1, but whole-block N4/N1 remains about2.23×.
+   Authentic rank7/full-head/sessions2 measurements give about3.7% N4 cost
+   reduction and warmed second-slot N4/N1≈2.024×. The compact-HC guard
+   regresses slightly and is removed; seven dense/GU variants, eight-way
+   GDN and a marginal exact-FP16-operands/FP32-accumulator GU probe exhaust
+   this bounded search without reaching1.5×. These are not authentic
+   whole-ring milliseconds or a credited serving gain.
+3. **Restricted draft-only vocabulary: fit-only contingency; potential
+   387–566 MB rank7 saving and1–7 ms/round research range.**
+   **Prefer the full head for yield.** Use a restricted vocabulary only if it
+   is required for the agreed sessions2 residency/context budget; do not
+   trade acceptance for its isolated head benchmark alone.
    Keep a locally resident authenticated subset of target Q8 rows, mapping
    selected IDs back to full vocabulary. The audit's40,525-ID English/code
    and106,299-ID CJK-inclusive examples are≈110.5/289.8 MB instead of676.9 MB.
@@ -284,15 +309,18 @@ prove state restoration after warmup. No further production access is implied.
    containers.    Complete rank7 graph fit and retained40-case N1-teacher acceptance are
    now measured above. Actual N4 serving acceptance/performance and
    multilingual/tool coverage remain separate evidence requirements.
-4. **Partition GDN recurrent state across cooperating threads: target2–8
-   ms/round research range, included in the target-service bundle.**
-   Replace each lane's128-float private column with four cooperating groups
-   owning32 values each. The audited FG kernel's256 VGPR/130 spilled registers
-   and33,792 scratch bytes/wave are a concrete target, not successful
-   register retention. Requalify reassociated reductions. Saved-input
-   state-only retention and remote-first fanout already exist; do not count
-   their implementation again or regress to whole-transformer repair.
-   This overlaps item2's≈25 ms bundle and is **not an extra2–8 ms credit**.
+4. **Further GDN partitioning: deprioritized; selected path already has
+   zero spills.** The audit describes the old unpartitioned kernel:
+   256 VGPR,130 spilled VGPR and33,792 scratch bytes. Selected mask330 already
+   partitions each128-value column into four32-value groups, using128 VGPR
+   and **zero spilled registers/scratch** on the measured GFX1013 driver.
+   GDN accounts for only63 µs of the six-layer intrusive excess above1.5×,
+   versus2,674 µs in gate/up, dense/shared, HC and down combined.
+   An eight-way16-value variant lowers registers to64 and the four-GDN
+   core196.88→175.72 µs, but gives no robust whole-block win in three
+   brackets; it was removed. The old2–8 ms budget is **not a measured or
+   additional available saving**. Keep state-only retention and remote-first
+   fanout; do not regress to whole-transformer repair.
 5. **Batch target vocabulary: target≈2 ms critical-path saving.**
    The current verify head performs four serial calls/slice. Reduce the
    measured≈3.10 ms maximum per-head-rank compute to≈1.1 ms by loading each
@@ -306,7 +334,8 @@ prove state restoration after warmup. No further production access is implied.
    reads; expert-only Q2 is primarily a residency lever. Native packed storage
    and kernels are required—dequantizing whole weights back to Q8 would erase
    the residency benefit. See the format/acceptance requirements below.
-   Restricted vocabulary is the lower-integration-risk alternative in item3;
+   Restricted vocabulary is a lower-integration-risk **fit-only** alternative
+   in item3, not the preferred yield-preserving choice;
    **do not add its1–7 ms to the same head's5.35 ms low-bit saving**.
 7. **Actual N4 framing/amortization: target3.22 ms saving.**
    Improve the measured pair-transfer model14.216→11 ms with frame/header

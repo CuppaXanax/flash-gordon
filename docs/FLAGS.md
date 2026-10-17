@@ -64,6 +64,13 @@ profile, the combined research mask is4426. A representative2560×6144
 Q8 matrix measured N4/N1≈1.44 on the24-CU .51; this is not a whole-rank
 or model-quality pass. N1 and ordinary prefill remain unchanged.
 
+Additional default-off bit `131072` reuses cooked-Q8 expert-down weights across each GPU union's token
+pairs, then uses the existing per-token gated four-part reduction. Its
+FP32 reassociation requires the component tolerance gate; no precision drops.
+Scheduling remains GPU-only, existing scratch is reused, and per-token
+gates/IDs are unchanged. N1 is unchanged. This is not a whole-block≤1.5×,
+full-model quality or serving qualification; `330+131072=131402`.
+
 Small-N bit `512` is a **rejected precision experiment**, not a qualified
 selection: packed FP16 GU accumulation enables `shaderFloat16` only when
 requested and supported, but fails the independent `1e-4` CPU component gate.

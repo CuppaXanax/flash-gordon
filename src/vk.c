@@ -84,7 +84,7 @@ struct fg_vk_context {
     fg_vk_kernel argmax,dense_subgroup,dense_cooked,dense_cooked_r8,mtp_vocab,mtp_fc,mtp_norm,dense_quant[37];
     bool small_n;
     uint32_t small_workgroup,small_rows;
-    fg_vk_kernel small_dense[300],small_gate_up[8],small_down,small_down_q8,small_down_reduce,small_shared,small_union,small_gdn;
+    fg_vk_kernel small_dense[300],small_gate_up[8],small_down,small_down_q8,small_down_q8_union,small_down_reduce,small_shared,small_union,small_gdn;
     fg_vk_kernel small_plain[9];
     /* Decomposition benchmark kernels */
     fg_vk_kernel bench_stream,bench_dequant,bench_dot_nored;
@@ -274,6 +274,7 @@ static void destroy_kernel(fg_vk_context *context,fg_vk_kernel *kernel){
         for(uint32_t i=0;i<8u;i++)destroy_kernel(context,&context->small_gate_up[i]);
         destroy_kernel(context,&context->small_down);
         destroy_kernel(context,&context->small_down_q8);
+        destroy_kernel(context,&context->small_down_q8_union);
         destroy_kernel(context,&context->small_down_reduce);
         destroy_kernel(context,&context->small_shared);
         destroy_kernel(context,&context->small_union);
@@ -2686,6 +2687,37 @@ fg_status fg_vk_small_n_q8_down(fg_vk_context *c,fg_vk_tensor *output,
     return dispatch(c,&c->small_down_q8,b,&p,rows/(c->subgroup_expert_q8?2u:8u),
         tokens,1u,err);
 }
+fg_status fg_vk_small_n_q8_down_union(fg_vk_context *c,fg_vk_tensor *output,
+    fg_vk_tensor *parts,const fg_vk_tensor *weights,const fg_vk_tensor *tiles,
+    const fg_vk_tensor *input,const fg_vk_tensor *gates,uint32_t stride,
+    uint32_t tokens,fg_error *err){
+    uint32_t rows=FG_HIDDEN_SIZE,in=640u;
+    if(!c||tokens<2u||tokens>4u||
+       stride!=fg_q8_0_cooked_matrix_bytes(in,rows)||
+       fg_vk_tensor_get_format(weights)!=FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED||
+       !tensor_range(weights,0,(uint64_t)stride*FG_EXPERT_COUNT)||
+       !tensor_range(tiles,0,(uint64_t)tokens*FG_TOP_K*5u*4u)||
+       !tensor_range(input,0,(uint64_t)tokens*FG_TOP_K*in*4u)||
+       !tensor_range(gates,0,(uint64_t)tokens*FG_TOP_K*4u)||
+       !tensor_range(parts,0,(uint64_t)tokens*FG_TOP_K*rows*4u*4u)||
+       !tensor_range(output,0,(uint64_t)tokens*rows*4u)){
+        fg_error_set(err,FG_ERR_ARGUMENT,"invalid cooked-Q8 union-down dispatch");
+        return FG_ERR_ARGUMENT;
+    }
+    if(!c->small_down_q8_union.file)c->small_down_q8_union=(fg_vk_kernel){
+        .file="fg_small_down_q8_union.spv",.bindings=4u,.push_bytes=20u};
+    if(!c->small_down_reduce.file)c->small_down_reduce=(fg_vk_kernel){
+        .file="fg_small_down_reduce.spv",.bindings=3u,.push_bytes=4u};
+    struct{uint32_t rows,in,blocks,tile,stride;}p={
+        rows,in,in/32u,(uint32_t)fg_q8_0_cooked_tile_bytes(in),stride};
+    const fg_vk_tensor *b[]={weights,tiles,input,parts};
+    fg_status status=dispatch(c,&c->small_down_q8_union,b,&p,
+        rows/4u,tokens*FG_TOP_K,1u,err);
+    const fg_vk_tensor *rb[]={parts,gates,output};
+    if(status==FG_OK)status=dispatch(c,&c->small_down_reduce,rb,&rows,
+        rows/32u,tokens,1u,err);
+    return status;
+}
 fg_status fg_vk_small_n_experts(fg_vk_context *c,fg_vk_tensor *mid,fg_vk_tensor *down_parts,
     fg_vk_tensor *reduced,const fg_vk_tensor *gate,const fg_vk_tensor *up,
     const fg_vk_tensor *down,const fg_vk_tensor *activation,
@@ -2740,6 +2772,11 @@ fg_status fg_vk_small_n_experts(fg_vk_context *c,fg_vk_tensor *mid,fg_vk_tensor 
     const fg_vk_tensor *gb[]={gate,up,activation,tiles,mid};
     fg_status status=dispatch(c,gate_up,gb,&gp,80u,tokens*FG_TOP_K,1u,err);
     if(q8_down){
+        if(small_kernel_enabled(c,131072u)){
+            if(status==FG_OK)status=fg_vk_small_n_q8_down_union(c,reduced,
+                down_parts,down,tiles,mid,gates,ds,tokens,err);
+            return status;
+        }
         if(status==FG_OK)status=fg_vk_small_n_q8_down(c,reduced,down,selected,mid,
             gates,ds,tokens,err);
         return status;

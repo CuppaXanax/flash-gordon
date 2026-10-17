@@ -3129,7 +3129,9 @@ static fg_status residency_verify_bench(fg_model *model,fg_owner_executor *owner
     for(uint32_t n=1;status==FG_OK&&n<=FG_MTP_MAX_VERIFY;n++){
         status=fg_owner_set_active_session(owner,slot,err);
         if(status==FG_OK)status=fg_owner_reset_session(owner,slot,err);
-        for(uint32_t turn=0;status==FG_OK&&turn<56u;turn++){
+        /* Keep the causal input/prefix window identical across N. */
+        uint32_t warmup=264u/n,turns=(264u+216u)/n;
+        for(uint32_t turn=0;status==FG_OK&&turn<turns;turn++){
             uint32_t positions[FG_MTP_MAX_VERIFY*3u];
             for(uint32_t t=0;t<n;t++){
                 for(uint32_t axis=0;axis<3u;axis++)positions[t*3u+axis]=turn*n+t;
@@ -3152,11 +3154,12 @@ static fg_status residency_verify_bench(fg_model *model,fg_owner_executor *owner
                     fg_error_set(err,FG_ERR_FORMAT,"nonfinite residency target probe");
                     status=FG_ERR_FORMAT;
                 }
-            if(status==FG_OK&&turn>=24u)printf(
+            if(status==FG_OK&&turn>=warmup)printf(
                 "{\"kind\":\"authentic_weight_synthetic_hc_block\",\"slot\":%u,"
                 "\"rank\":%u,\"first_layer\":%u,\"last_layer\":%u,\"n\":%u,"
-                "\"sample\":%u,\"ms\":%.6f,\"zero_ngram\":true}\n",
-                slot,rank,lo,hi,n,turn-24u,ms);
+                "\"sample\":%u,\"first_token\":%u,\"warmup_tokens\":264,"
+                "\"timed_tokens\":216,\"ms\":%.6f,\"zero_ngram\":true}\n",
+                slot,rank,lo,hi,n,turn-warmup,turn*n,ms);
         }
         if(status==FG_OK)residency_stage(model,owner,"target_graph_warmed");
     }

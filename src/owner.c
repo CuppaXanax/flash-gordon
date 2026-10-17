@@ -2009,26 +2009,31 @@ static fg_status small_record_layer(fg_owner_executor *e,uint32_t layer,
     uint32_t first,const uint32_t *positions,uint32_t n,const fg_vk_tensor *ngram,
     fg_owner_expert_small_fn expert,void *context,fg_vk_tensor **current,fg_error *err){
     fg_vk_context *vk=fg_model_vk(e->model);
+    bool profiling=fg_vk_profile_active(vk);
     fg_status status=ensure_decode_batch(vk,err);
     const fg_vk_tensor *input=*current;
     fg_owner_mtp_journal *journal=&e->mtp_journal[e->active_session];
     if(status==FG_OK&&layer==1u){
+        if(profiling)status=fg_vk_profile_set_scope(vk,"ple_small",err);
         fg_vk_tensor *ple=NULL;
         fg_vk_tensor *old_gated=e->ple_gated,*old_norm=e->ple_gated_norm;
         if(journal->enabled){
             e->ple_gated=journal->ple_gated;e->ple_gated_norm=journal->ple_normalized;
         }
-        status=fg_owner_ple_prefill(e,input,ngram,n,&ple,err);
+        if(status==FG_OK)status=fg_owner_ple_prefill(e,input,ngram,n,&ple,err);
         e->ple_gated=old_gated;e->ple_gated_norm=old_norm;
         input=ple;
     }
     fg_vk_tensor *mixed=NULL,*injection=NULL,*block=NULL,*after=NULL;
     const fg_vk_tensor *residual=NULL;
+    if(status==FG_OK&&profiling)status=fg_vk_profile_set_scope(vk,"gr_attn_read_small",err);
     if(status==FG_OK)status=gr_read_batch_into(e,layer,false,input,n,e->injection,
         &mixed,&residual,&injection,err);
     if(status==FG_OK){
-        if((layer&3u)==3u)
-            status=fg_qsa_session_small_n(OWNER_QSA(e),layer,first,positions,n,mixed,&block,err);
+        if((layer&3u)==3u){
+            if(profiling)status=fg_vk_profile_set_scope(vk,"qsa_small",err);
+            if(status==FG_OK)status=fg_qsa_session_small_n(OWNER_QSA(e),layer,first,positions,n,mixed,&block,err);
+        }
         else{
             fg_vk_tensor *qkv=e->gdn_qkv,*z=e->gdn_z,*alpha=e->gdn_alpha,*beta=e->gdn_beta;
             if(journal->enabled){
@@ -2039,23 +2044,31 @@ static fg_status small_record_layer(fg_owner_executor *e,uint32_t layer,
             e->gdn_qkv=qkv;e->gdn_z=z;e->gdn_alpha=alpha;e->gdn_beta=beta;
         }
     }
+    if(status==FG_OK&&profiling)status=fg_vk_profile_set_scope(vk,"gr_attn_write_small",err);
     if(status==FG_OK)status=gr_write_batch_into(e,residual,block,injection,n,
         e->hyper_output,e->hyper_output_b,&after,err);
+    if(status==FG_OK&&profiling)status=fg_vk_profile_set_scope(vk,"gr_ffn_read_small",err);
     if(status==FG_OK)status=gr_read_batch_into(e,layer,true,after,n,e->injection,
         &mixed,&residual,&injection,err);
     fg_vk_tensor *router=status==FG_OK?weight(e,layer,"ffn_gate_inp.weight",err):NULL;
     if(status==FG_OK&&!router)status=FG_ERR_MISMATCH;
+    if(status==FG_OK&&profiling)status=fg_vk_profile_set_scope(vk,"router_small",err);
     if(status==FG_OK)status=fg_vk_dense_f32(vk,e->router_logits,router,mixed,
         FG_HIDDEN_SIZE,FG_EXPERT_COUNT,n,err);
+    if(status==FG_OK&&profiling)status=fg_vk_profile_set_scope(vk,"router_quantization_small",err);
     if(status==FG_OK)status=fg_vk_quantize_q8_k(vk,e->activation_q8k,mixed,
         FG_HIDDEN_SIZE,n,err);
     shared_expert_work shared={e,mixed,e->shared_output,e->shared_scalar,layer,n};
+    if(status==FG_OK&&profiling)status=fg_vk_profile_set_scope(vk,"shared_expert_small",err);
     if(status==FG_OK)status=owner_shared_expert(&shared,err);
     fg_vk_tensor *routed=NULL;
+    if(status==FG_OK&&profiling)status=fg_vk_profile_set_scope(vk,"expert_small",err);
     if(status==FG_OK)status=expert(context,layer,e->activation_q8k,e->router_logits,
         n,&routed,err);
+    if(status==FG_OK&&profiling)status=fg_vk_profile_set_scope(vk,"moe_reduce_small",err);
     if(status==FG_OK)status=fg_vk_small_n_shared(vk,e->reduced,routed,
         e->shared_output,e->shared_scalar,n,err);
+    if(status==FG_OK&&profiling)status=fg_vk_profile_set_scope(vk,"gr_ffn_write_small",err);
     if(status==FG_OK)status=gr_write_batch_into(e,residual,e->reduced,injection,n,
         e->hyper_output,e->hyper_output_b,current,err);
     return status;

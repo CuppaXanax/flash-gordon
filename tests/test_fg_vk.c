@@ -2433,7 +2433,7 @@ static void expert_down_block(const uint8_t *matrix,uint32_t row,uint32_t block,
     }
 }
 
-static int test_small_q8_down_native(void){
+static int run_small_q8_down_native(bool union_mode){
     enum{MID=640,ROWS=2560,PAIRS=40,EXPERTS=16};
     uint32_t stride=(uint32_t)fg_q8_0_cooked_matrix_bytes(MID,ROWS);
     uint8_t *raw=malloc(stride),*cooked=malloc(stride);
@@ -2441,6 +2441,7 @@ static int test_small_q8_down_native(void){
         native_output[ROWS],gates[PAIRS];
     uint32_t selected[PAIRS],schedule[90];
     fg_vk_tensor *weights=NULL,*x=NULL,*s=NULL,*g=NULL,*out=NULL,*one=NULL,*tiles=NULL;
+    fg_vk_tensor *union_tiles=NULL,*parts=NULL;
     FILE *file=NULL;
     const char *path=getenv("FG_TEST_Q8_DOWN_TENSOR");
     int ok=raw&&cooked&&input&&actual;
@@ -2450,8 +2451,20 @@ static int test_small_q8_down_native(void){
     g=tensor(NULL,sizeof(gates));out=tensor(NULL,4u*ROWS*4u);
     one=tensor(NULL,sizeof(native_output));tiles=tensor(NULL,sizeof(schedule));
     ok=weights&&x&&s&&g&&out&&one&&tiles;
+    if(ok&&union_mode){
+        union_tiles=tensor(NULL,PAIRS*5u*4u);
+        parts=tensor(NULL,PAIRS*ROWS*4u*4u);
+        ok=union_tiles&&parts;
+    }
     if(!ok)goto done;
     fg_vk_tensor_set_format(weights,FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED);
+    if(union_mode){
+        ok=fg_vk_small_n_q8_down_union(context,out,parts,weights,union_tiles,
+            x,g,stride-1u,2u,&error)==FG_ERR_ARGUMENT;
+        if(ok)ok=fg_vk_small_n_q8_down_union(context,out,one,weights,union_tiles,
+            x,g,stride,2u,&error)==FG_ERR_ARGUMENT;
+        if(!ok)goto done;
+    }
     if(path){
         file=fopen(path,"rb");ok=file!=NULL;
         for(uint32_t expert=0;ok&&expert<FG_EXPERT_COUNT;expert++)
@@ -2474,12 +2487,16 @@ static int test_small_q8_down_native(void){
         fg_vk_tensor_set_format(short_weights,FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED);
         ok=fg_vk_small_n_q8_down(context,out,short_weights,s,x,g,stride,2u,
             &error)==FG_ERR_ARGUMENT;
+        if(ok&&union_mode)ok=fg_vk_small_n_q8_down_union(context,out,parts,
+            short_weights,union_tiles,x,g,stride,2u,&error)==FG_ERR_ARGUMENT;
     }
     fg_vk_tensor_destroy(short_weights);
     if(ok){
         fg_vk_tensor_set_format(weights,FG_VK_TENSOR_FORMAT_Q5_1_EXPERT_COOKED);
         ok=fg_vk_small_n_q8_down(context,out,weights,s,x,g,stride,2u,
             &error)==FG_ERR_ARGUMENT;
+        if(ok&&union_mode)ok=fg_vk_small_n_q8_down_union(context,out,parts,
+            weights,union_tiles,x,g,stride,2u,&error)==FG_ERR_ARGUMENT;
         fg_vk_tensor_set_format(weights,FG_VK_TENSOR_FORMAT_Q8_0_EXPERT_COOKED);
     }
     for(uint32_t pattern=0;ok&&pattern<3u;pattern++){
@@ -2497,10 +2514,13 @@ static int test_small_q8_down_native(void){
             fg_vk_tensor_write(g,0,gates,sizeof(gates),&error)==FG_OK;
         for(uint32_t n=2u;ok&&n<=4u;n++){
             for(uint32_t i=0;i<4u*ROWS;i++)actual[i]=NAN;
-            ok=fg_vk_tensor_write(out,0,actual,4u*ROWS*4u,&error)==FG_OK&&
-                fg_vk_small_n_q8_down(context,out,weights,s,x,g,stride,n,&error)==FG_OK&&
-                fg_vk_tensor_read(out,0,actual,n*ROWS*4u,&error)==FG_OK;
-            double maximum=0;
+            ok=fg_vk_tensor_write(out,0,actual,4u*ROWS*4u,&error)==FG_OK;
+            if(ok&&union_mode)ok=fg_vk_small_n_schedule(context,union_tiles,s,n,&error)==FG_OK&&
+                fg_vk_small_n_q8_down_union(context,out,parts,weights,union_tiles,
+                    x,g,stride,n,&error)==FG_OK;
+            else if(ok)ok=fg_vk_small_n_q8_down(context,out,weights,s,x,g,stride,n,&error)==FG_OK;
+            if(ok)ok=fg_vk_tensor_read(out,0,actual,n*ROWS*4u,&error)==FG_OK;
+            double maximum=0,native_maximum=0;bool bit_exact=true;
             for(uint32_t token=0;ok&&token<n;token++){
                 for(uint32_t i=0;i<90u;i++)schedule[i]=UINT32_MAX;
                 for(uint32_t k=0;k<10u;k++){
@@ -2514,18 +2534,25 @@ static int test_small_q8_down_native(void){
                         ROWS,MID,stride,10u,8u,&error)==FG_OK&&
                     fg_vk_tensor_read(one,0,native_output,sizeof(native_output),&error)==FG_OK;
                 if(ok&&memcmp(native_output,actual+token*ROWS,sizeof(native_output))){
-                    for(uint32_t row=0;row<ROWS;row++)
+                    bit_exact=false;
+                    for(uint32_t row=0;!union_mode&&row<ROWS;row++)
                         if(native_output[row]!=actual[token*ROWS+row]){
                             fprintf(stderr,"small Q8 down mismatch pattern=%u n=%u token=%u row=%u small=%g native=%g\n",
                                 pattern,n,token,row,actual[token*ROWS+row],native_output[row]);
                             break;
                         }
-                    ok=0;
+                    if(!union_mode)ok=0;
                 }
                 fg_vk_tensor_destroy(gv);fg_vk_tensor_destroy(iv);
                 for(uint32_t row=0;ok&&row<ROWS;row++){
                     double got=actual[token*ROWS+row];
                     if(!isfinite(got)){ok=0;break;}
+                    if(union_mode){
+                        double relative=fabs(got-native_output[row])/
+                            fmax(1.0,fabs(native_output[row]));
+                        native_maximum=fmax(native_maximum,relative);
+                        if(relative>1e-4){ok=0;break;}
+                    }
                     if(pattern==2u){
                         double expected=0;
                         for(uint32_t k=0;k<10u;k++){
@@ -2542,17 +2569,22 @@ static int test_small_q8_down_native(void){
                     }
                 }
             }
-            fprintf(stderr,"SMALL_Q8_DOWN source=%s pattern=%u n=%u bit_exact=%d cpu_basis_max_rel=%.9g\n",
-                path?"real":"synthetic",pattern,n,ok,maximum);
+            fprintf(stderr,"SMALL_Q8_DOWN%s source=%s pattern=%u n=%u bit_exact=%d cpu_basis_max_rel=%.9g native_max_rel=%.9g\n",
+                union_mode?"_UNION":"",path?"real":"synthetic",pattern,n,
+                bit_exact,maximum,native_maximum);
         }
     }
 done:
     if(file)fclose(file);
+    fg_vk_tensor_destroy(parts);fg_vk_tensor_destroy(union_tiles);
     fg_vk_tensor_destroy(tiles);fg_vk_tensor_destroy(one);fg_vk_tensor_destroy(out);
     fg_vk_tensor_destroy(g);fg_vk_tensor_destroy(s);fg_vk_tensor_destroy(x);
     fg_vk_tensor_destroy(weights);free(actual);free(input);free(cooked);free(raw);
     return ok;
 }
+
+static int test_small_q8_down_native(void){return run_small_q8_down_native(false);}
+static int test_small_q8_down_union(void){return run_small_q8_down_native(true);}
 
 static int test_expert_decode_down_exact(void){
     enum{WIDTH=640,ROWS=2560};
@@ -5068,6 +5100,7 @@ ok=run_test_i("expert_decode_fused_q8_0_cooked",test_expert_decode_fused_q8_0_co
 ok=run_test("expert_decode_fused_q8_gates",test_expert_decode_fused_q8_gates)&&ok;
 ok=run_test("expert_small_component",test_expert_small_component)&&ok;
 ok=run_test("small_q8_down_native",test_small_q8_down_native)&&ok;
+ok=run_test("small_q8_down_union",test_small_q8_down_union)&&ok;
 ok=run_test("expert_decode_fused_random",test_expert_decode_fused_random)&&ok;
 ok=run_test("expert_decode_fused_wide",test_expert_decode_fused_wide)&&ok;
 ok=run_test_i("expert_graph_fused",test_expert_graph_fused_i,7)&&ok;

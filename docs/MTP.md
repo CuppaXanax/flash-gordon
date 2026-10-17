@@ -5,6 +5,10 @@ fallback, size-guarded Q8 column reuse, authenticated real Strata ID sets and
 local-head/deferred-graph residency probes. **No new serving TPS or promotion
 claim:** chat noninferiority, whole-rank N4/N1≤1.5 and numerical qualification
 remain gates. See the latest section of [MTP_TO_PROD.md](MTP_TO_PROD.md).
+The latest [whole-block gap search](../results/hillclimb/MTP_BLOCK_GAPS.md)
+adds trustworthy operation scopes and default-off Q8 expert-down union
+reuse. It finds the selected GDN path already has zero spills and preserves
+the full draft vocabulary; the1.5× whole-block target is not yet met.
 
 Latest: [production roadmap and authorized diagnostic](MTP_TO_PROD.md).
 The subsequent user-granted **a038dec A0/F3/A1** diagnostic completed:
