@@ -1644,6 +1644,11 @@ and explicit session→case/category provenance; it rejects duplicate/incomplete
 windows and byte-weights the actual per-layer gate/up/down bank strides.
 Accepted-prefix restore replays are excluded. Aggregate every owning rank;
 teacher sliding windows and draft-head routing remain different observations.
+Pass `--mtp-capture-dir` to **both the API coordinator and every worker**.
+It formerly parsed only for `rank`, so a serving capture failed before its
+coordinator started; the API parser and no-model CLI regression now cover
+this integration point. An existing writable directory is required; the
+flag remains absent/default-off in ordinary serving.
 
 Provenance JSON has this shape (replace placeholders with authenticated capture
 metadata and bind every included request/session):

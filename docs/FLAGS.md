@@ -14,11 +14,14 @@ same binary, and test/packer tooling. No environment variable may be required to
 reach the validated operating point.
 
 MTP uses the existing `--experimental-mtp` **CLI** flag, not an environment
-variable. It is default-off and still fails closed: the GPU-routed replay core
-and explicit vocabulary-shard argmax are benchmarked, but serving integration
-and exact batched ring verification are not linked. See [MTP.md](MTP.md) for the audited weights and qualification
-gates. The source exporter and
-causal benchmark use command-line arguments; they introduce no new `FG_*` flags.
+variable. It is default-off; native serving and batched ring verification
+are implemented but remain research-only, not production-qualified.
+See [MTP.md](MTP.md) for audited weights and qualification gates.
+`--mtp-capture-dir DIR` is an explicit diagnostic CLI option for both `api`
+and `rank`; pass it on every owner, with an existing directory. Capture
+readbacks perturb timing and must not supply performance evidence.
+The source exporter, capture and causal benchmark introduce no new `FG_*`
+flags.
 
 Status values:
 

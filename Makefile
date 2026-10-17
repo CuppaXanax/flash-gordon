@@ -188,7 +188,7 @@ tests/test_mtp_capture_io: tests/test_mtp_capture_io.c src/mtp_capture.o src/uti
 
 -include tests/test_mtp_capture_io.d
 
-test-mtp-capture: tests/test_mtp_capture_io
+test-mtp-capture: tests/test_mtp_capture_io flash-gordon
 	mkdir -p .build
 	./tests/test_mtp_capture_io .build/capture-io-test
 	python3 -m unittest discover -s tests -p test_mtp_capture.py

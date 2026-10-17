@@ -2,6 +2,8 @@ import importlib.util
 import hashlib
 import json
 import shutil
+import subprocess
+import sys
 import unittest
 import uuid
 from pathlib import Path
@@ -20,6 +22,28 @@ def fixture(reject=False):
 
 
 class CaptureTests(unittest.TestCase):
+    @unittest.skipIf(sys.platform == "win32", "native CLI binary is built on Linux")
+    def test_serving_and_worker_capture_cli(self):
+        root = Path(__file__).parents[1]
+        directory = root / ".build" / ("capture-cli-" + uuid.uuid4().hex)
+        directory.mkdir(parents=True)
+        try:
+            for command in ("api", "rank"):
+                for path, expected in (
+                    (directory, f"{command} requires --manifest"),
+                    (directory / "missing", "MTP capture requires an existing directory"),
+                ):
+                    with self.subTest(command=command, path=path):
+                        result = subprocess.run(
+                            [str(root / "flash-gordon"), command, "--mtp-capture-dir", str(path)],
+                            capture_output=True, text=True, timeout=10,
+                        )
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn(expected, result.stderr)
+                        self.assertNotIn("unknown", result.stderr)
+        finally:
+            directory.rmdir()
+
     def test_corpus(self):
         # Project-local scratch, never the system temporary directory.
         root = Path(__file__).parents[1] / ".build"

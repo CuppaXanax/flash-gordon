@@ -42,6 +42,7 @@ static void usage(FILE *file) {
             "  --mtp-fixed-draft 1..3 (disable adaptive width; clamp at generation limit)\n"
             "  --mtp-native-rank N (opt-in final-block predecessor placement)\n"
             "  --mtp-local-head FILE (sealed Q8 or authenticated FGDVOC1 draft subset)\n"
+            "  --mtp-capture-dir DIR (api/rank diagnostic; existing directory required)\n"
             "  --no-prefix-cont (force a cold reset instead of resuming an exact prefix)\n"
             "Deployment profiles:\n"
             "  --profile " FG_RUNTIME_PROFILE_NATIVE_262K_MICROBATCH_128_NAME
@@ -389,6 +390,10 @@ static fg_status api_cmd(int argc, char **argv, fg_error *err) {
             const char *text=arg_value(&i,argc,argv,"--sessions",err);
             if(!text||parse_u32(text,"--sessions",1u,2u,&runtime_options.sessions,err)!=FG_OK)
                 return FG_ERR_ARGUMENT;
+        } else if (!strcmp(argv[i], "--mtp-capture-dir")) {
+            const char *directory=arg_value(&i,argc,argv,argv[i],err);
+            if(!directory||fg_mtp_capture_configure(directory,err)!=FG_OK)
+                return err->code;
         } else {
             bool handled = false;
             fg_status status =

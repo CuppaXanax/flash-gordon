@@ -2,7 +2,7 @@
 
 ## Status and binding policy
 
-**Default off; no promotion.** The latest user-granted a038dec diagnostic
+**Default off; no promotion.** The latest paired-TPS a038dec diagnostic
 completed A0/F3/A1 and released all eight owners after independent verification
 at **21:15:32Z**, within its conservative21:03:03Z–21:48:03Z lease envelope.
 Current production is restored to the pinned **sessions2 / wide1** stack.
@@ -13,6 +13,19 @@ per-request paired ratios0.736×/1.074×. Mean warm round stages total
 See [paired receipts and stage ledger](../results/hillclimb/MTP_RETAIN_SERVING.md).
 Future lease requests go directly to the user/delegated authority, not
 sol-abqual.
+
+The subsequent **capture-only** lease, granted2026-10-17T00:54:23Z for15minutes,
+obtained **no real verifier routes**. A flattened private PowerShell phase
+failed the worker guard; the corrected attempt exposed a missing API parser
+for `--mtp-capture-dir`. Both failures were restored and verified; all eight
+owned roots were absent twice by **01:06:07Z**, inside the lease.
+The API parser is now repaired, with eight passing Linux capture tests,
+including API/rank directory checks before any model/GPU initialization.
+A prepared capture-only launcher also checks both parsers before stopping
+production. No retry is authorized by the expired lease.
+Real chat/code union-byte ratios and the corresponding op-weighted floor
+remain **unmeasured**, requiring a fresh short capture grant.
+See [capture and pressure receipts](../results/hillclimb/MTP_CAPTURE_PRESSURE.md).
 
 The earlier authorized 2026-10-16 diagnostic lease
 ended with all eight original services restored, pinned and verified, and
@@ -285,7 +298,7 @@ under this model even after dense/HC reach1.1x. It would **not** prove every
 3x GU/down service ratio inherent: compare byte growth, FP32 arithmetic,
 launch/occupancy and physical traffic separately. The1.1x dense/HC prices and
 unchanged-other price are assumptions, not hardware lower bounds; N4 still
-does four sets of FMAs and quantization/dequantization work. Current-other
+does four tokens' FMAs, activation traffic and per-column work. Current-other
 retains measured N4 GDN/QSA/routing/gap prices. Actual cooked format mix,
 per-layer service prices, union observations and full-ring validation are
 needed before calling either row an attainable TPS ceiling.
@@ -305,6 +318,41 @@ These are not authentic union, rank7/full-head or serving results.
 Its independently checked outputs and replay evidence are in
 `results/hillclimb/MTP_UNION_KERNELS.md`. Shared-LDS dense and HC prototypes
 were measured, regressed and removed; the dense gap is **not closed**.
+
+### Compiled-kernel pressure diagnosis
+
+Before further variants, `.51` ISA captures confirmed that the selected HC
+IQ4 loop has **16 weight-load instruction sites at N1/N2/N4**, while activation
+sites grow2/4/8. Dense reuse8 has **18 weight-load sites at both N2/N4**.
+These kernels already share each loaded weight fragment across columns;
+the sampled loops do **not** perform one weight scan per token.
+These are static instruction counts, not physical DRAM traffic counters.
+Neither sampled kernel spills VGPRs/SGPRs or uses scratch.
+
+HC compiler VGPRs rise40→64→84 at N1→N2→N4; dense rises from64 in native N1
+to100 in N4 reuse8. The associated compiler `Subgroups per SIMD` fields are
+24/16/12 for HC and16/10 for dense. **They are not measured achieved hardware
+occupancy**, and their ratios must not be called an occupancy measurement.
+Register pressure, increasing arithmetic/activation issue and predicated
+epilogues are candidates; this does not establish which dominates elapsed time.
+
+Profile-led alternatives did not close the gap:
+
+- Half-wave HC reduces N4 VGPRs84→64 but regresses whole-block cost0.56%
+  and changes terminal hashes: rejected.
+- Dense row4 reduces N4 VGPRs100→72 but doubles workgroups and regresses
+  whole-block cost4.95% over three A/B/A brackets: rejected.
+- Parallel-token HC epilogue preserves hashes. Its initial1.00% median saving
+  shrinks to0.50% in six confirmatory brackets (0.22% using process means);
+  it is held unselected rather than credited as a material block improvement.
+
+Shipping shaders remain unchanged from9eea42f; the prior synthetic whole-block
+N4/N1 result remains **2.167x**, not a new authentic serving measurement.
+`.51` was cleaned and released **2026-10-17T01:28:40Z**, with root-visible
+owned processes zero, unchanged governor inventory and scratch absent twice.
+Next: capture authentic unions, then use measured memory/issue/occupancy
+counters before another dense/HC topology change. Smaller register counts
+alone are not a selection criterion. Full draft vocabulary remains preferred.
 
 ## Ranked experiments
 

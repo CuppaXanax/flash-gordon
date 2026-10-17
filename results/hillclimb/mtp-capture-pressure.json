@@ -1,0 +1,1119 @@
+{
+  "base_commit": "9eea42f10b02044798d10327927094a9c80ff8d3",
+  "default_off": true,
+  "promotion": false,
+  "capture": {
+    "grant_utc": "2026-10-17T00:54:23Z",
+    "lease_minutes": 15,
+    "production_released_utc": "2026-10-17T01:06:07Z",
+    "outcomes": [
+      {
+        "failure": "Fleet step 013-start-workers-F failed.",
+        "diagnosticOnly": true,
+        "productionVerified": true,
+        "lease": "union-20261017-0058",
+        "complete": false,
+        "finalizationErrors": [],
+        "scratchRemoved": true,
+        "elapsedSeconds": 481.0498739
+      },
+      {
+        "lease": "union-20261017-0102",
+        "finalizationErrors": [],
+        "scratchRemoved": true,
+        "diagnosticOnly": true,
+        "complete": false,
+        "productionVerified": true,
+        "failure": "Fleet step 014-start-coordinator-F3 failed.",
+        "elapsedSeconds": 704.9521061
+      }
+    ],
+    "verified_rounds": 0,
+    "measured_real_union_ratios": null,
+    "measured_union_weighted_floor": null,
+    "first_failure": "single nested PowerShell phase flattened; worker guard rejected",
+    "second_failure": "flash-gordon: unknown api option: --mtp-capture-dir",
+    "repair": "API parser accepts diagnostic capture directory; eight Linux capture tests pass",
+    "restored_source": "31508eea70025a14fde14340c1b66cb4867536d9",
+    "restored_binary_sha256": "02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0"
+  },
+  "offline": {
+    "target": "192.168.42.51",
+    "device": "AMD BC-250 (RADV GFX1013)",
+    "released_utc": "2026-10-17T01:28:40Z",
+    "release": {
+      "IP": "192.168.42.51",
+      "ExitCode": 0,
+      "Stdout": "CPU governor node inventory unchanged: empty before/after\n{\"owned_processes\": 0, \"governors_match_reservation\": true, \"root_entries_before_removal\": [\".fleet-3182c2cf4e374484b1d14f0355fdc81d.sh\", \"api-source.tar.gz\", \"epilogue.sh\", \"finish-update.tar\", \"hc-parallel-epilogue.glsl\", \"pressure\", \"pressure-next.tar\", \"pressure-update.tar\", \"profile-release.tar.gz\"]}\nRELEASED_51 owned_root_absent_twice 2026-10-17T01:28:40Z",
+      "Stderr": ""
+    },
+    "isa": {
+      "1": {
+        "hc": {
+          "pipeline": "fg_roof_hc_up_mix_iq4.spv",
+          "compiler": {
+            "VGPRs": 40,
+            "Spilled VGPRs": 0,
+            "Spilled SGPRs": 0,
+            "Scratch size": 0,
+            "Subgroups per SIMD": 24,
+            "Instructions": 744,
+            "VALU": 434,
+            "VMEM": 25
+          },
+          "weight_load_sites": 16,
+          "activation_load_sites": 2
+        },
+        "dense": {
+          "pipeline": "fg_roof_dense_l2.spv",
+          "compiler": {
+            "VGPRs": 64,
+            "Spilled VGPRs": 0,
+            "Spilled SGPRs": 0,
+            "Scratch size": 0,
+            "Subgroups per SIMD": 16,
+            "Instructions": 882,
+            "VALU": 553,
+            "VMEM": 31
+          }
+        }
+      },
+      "2": {
+        "hc": {
+          "pipeline": "fg_small_hc_up_mix_iq4.spv",
+          "compiler": {
+            "VGPRs": 64,
+            "Spilled VGPRs": 0,
+            "Spilled SGPRs": 0,
+            "Scratch size": 0,
+            "Subgroups per SIMD": 16,
+            "Instructions": 1033,
+            "VALU": 642,
+            "VMEM": 34
+          },
+          "weight_load_sites": 16,
+          "activation_load_sites": 4
+        },
+        "dense": {
+          "pipeline": "fg_small_reuse8_q4_n2.spv",
+          "compiler": {
+            "VGPRs": 64,
+            "Spilled VGPRs": 0,
+            "Spilled SGPRs": 0,
+            "Scratch size": 0,
+            "Subgroups per SIMD": 16,
+            "Instructions": 689,
+            "VALU": 542,
+            "VMEM": 38
+          },
+          "weight_load_sites": 18,
+          "activation_load_sites": 4
+        }
+      },
+      "4": {
+        "hc": {
+          "pipeline": "fg_small_hc_up_mix_iq4.spv",
+          "compiler": {
+            "VGPRs": 84,
+            "Spilled VGPRs": 0,
+            "Spilled SGPRs": 0,
+            "Scratch size": 0,
+            "Subgroups per SIMD": 12,
+            "Instructions": 1571,
+            "VALU": 1034,
+            "VMEM": 46
+          },
+          "weight_load_sites": 16,
+          "activation_load_sites": 8
+        },
+        "dense": {
+          "pipeline": "fg_small_reuse8_q4_n4.spv",
+          "compiler": {
+            "VGPRs": 100,
+            "Spilled VGPRs": 0,
+            "Spilled SGPRs": 0,
+            "Scratch size": 0,
+            "Subgroups per SIMD": 10,
+            "Instructions": 1022,
+            "VALU": 797,
+            "VMEM": 58
+          },
+          "weight_load_sites": 18,
+          "activation_load_sites": 8
+        }
+      }
+    },
+    "isa_limitations": [
+      "Static load instruction sites, not DRAM bytes or execution counters",
+      "Compiler Subgroups per SIMD is not measured achieved hardware occupancy",
+      "RADV debug/cache disable used only for ISA, not wall timing"
+    ],
+    "half_wave_hc": {
+      "selected": false,
+      "reason": "slower and terminal hashes changed",
+      "brackets": [
+        {
+          "bracket": 1,
+          "4": {
+            "process_median_us": {
+              "A0": 5261.958500000001,
+              "B": 5294.0085,
+              "A1": 5267.034
+            },
+            "process_mean_us": {
+              "A0": 5201.711555555556,
+              "B": 5435.033925925926,
+              "A1": 5271.689222222222
+            },
+            "B_over_bracket_medians": 1.0056059019891979,
+            "B_over_bracket_means": 1.0378737606332906,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "1dbd43a7ec2c6acc",
+                "gdn_state_hash": "2d47d17d6b47a951"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              }
+            },
+            "same_terminal_hashes": false
+          }
+        },
+        {
+          "bracket": 2,
+          "4": {
+            "process_median_us": {
+              "A0": 5249.6145,
+              "B": 5276.2119999999995,
+              "A1": 5268.3135
+            },
+            "process_mean_us": {
+              "A0": 5171.367425925926,
+              "B": 5382.228759259259,
+              "A1": 5274.694444444444
+            },
+            "B_over_bracket_medians": 1.0032797334227805,
+            "B_over_bracket_means": 1.030479969590383,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "1dbd43a7ec2c6acc",
+                "gdn_state_hash": "2d47d17d6b47a951"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              }
+            },
+            "same_terminal_hashes": false
+          }
+        },
+        {
+          "bracket": 3,
+          "4": {
+            "process_median_us": {
+              "A0": 5262.4275,
+              "B": 5299.0685,
+              "A1": 5264.6675
+            },
+            "process_mean_us": {
+              "A0": 5213.544462962963,
+              "B": 5435.9995,
+              "A1": 5227.935444444444
+            },
+            "B_over_bracket_medians": 1.006748490442995,
+            "B_over_bracket_means": 1.0412316162469626,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "1dbd43a7ec2c6acc",
+                "gdn_state_hash": "2d47d17d6b47a951"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              }
+            },
+            "same_terminal_hashes": false
+          }
+        }
+      ]
+    },
+    "dense_row4": {
+      "selected": false,
+      "reason": "4.95% whole-block regression",
+      "brackets": [
+        {
+          "bracket": 1,
+          "1": {
+            "process_median_us": {
+              "A0": 2294.659,
+              "B": 2298.2309999999998,
+              "A1": 2295.5715
+            },
+            "process_mean_us": {
+              "A0": 2311.414263888889,
+              "B": 2315.087282407407,
+              "A1": 2309.259384259259
+            },
+            "B_over_bracket_medians": 1.001357557098712,
+            "B_over_bracket_means": 1.0020561756553559,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              }
+            },
+            "same_terminal_hashes": true
+          },
+          "4": {
+            "process_median_us": {
+              "A0": 4982.047500000001,
+              "B": 5216.913500000001,
+              "A1": 4960.1630000000005
+            },
+            "process_mean_us": {
+              "A0": 5117.081425925926,
+              "B": 5298.5403703703705,
+              "A1": 5050.266407407407
+            },
+            "B_over_bracket_medians": 1.0494474040757837,
+            "B_over_bracket_means": 1.042265978744087,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              }
+            },
+            "same_terminal_hashes": true
+          }
+        },
+        {
+          "bracket": 2,
+          "1": {
+            "process_median_us": {
+              "A0": 2295.197,
+              "B": 2296.584,
+              "A1": 2293.8355
+            },
+            "process_mean_us": {
+              "A0": 2310.6153703703703,
+              "B": 2312.035365740741,
+              "A1": 2305.7336712962965
+            },
+            "B_over_bracket_medians": 1.0009011703447295,
+            "B_over_bracket_means": 1.00167268327094,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              }
+            },
+            "same_terminal_hashes": true
+          },
+          "4": {
+            "process_median_us": {
+              "A0": 4964.6305,
+              "B": 5206.18,
+              "A1": 4956.907999999999
+            },
+            "process_mean_us": {
+              "A0": 5052.2993703703705,
+              "B": 5263.3012407407405,
+              "A1": 5020.291296296296
+            },
+            "B_over_bracket_medians": 1.049470301405372,
+            "B_over_bracket_means": 1.0450739864092045,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              }
+            },
+            "same_terminal_hashes": true
+          }
+        },
+        {
+          "bracket": 3,
+          "1": {
+            "process_median_us": {
+              "A0": 2295.068,
+              "B": 2293.996,
+              "A1": 2293.9004999999997
+            },
+            "process_mean_us": {
+              "A0": 2307.153138888889,
+              "B": 2308.484578703704,
+              "A1": 2306.9744953703703
+            },
+            "B_over_bracket_medians": 0.9997872070815044,
+            "B_over_bracket_means": 1.0006158310678384,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              }
+            },
+            "same_terminal_hashes": true
+          },
+          "4": {
+            "process_median_us": {
+              "A0": 4962.3715,
+              "B": 5209.2955,
+              "A1": 4959.171
+            },
+            "process_mean_us": {
+              "A0": 5034.821833333333,
+              "B": 5270.897870370371,
+              "A1": 5029.6945
+            },
+            "B_over_bracket_medians": 1.0500979056432003,
+            "B_over_bracket_means": 1.0474219914400333,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              }
+            },
+            "same_terminal_hashes": true
+          }
+        }
+      ],
+      "isolated_shapes": {
+        "393546": [
+          {
+            "kind": "dense_cost",
+            "type": 12,
+            "in": 2560,
+            "rows": 6144,
+            "compact": 1,
+            "n": 1,
+            "us": 41.039,
+            "ratio": 1.0
+          },
+          {
+            "kind": "dense_cost",
+            "type": 12,
+            "in": 2560,
+            "rows": 6144,
+            "compact": 1,
+            "n": 2,
+            "us": 53.426,
+            "ratio": 1.3018
+          },
+          {
+            "kind": "dense_cost",
+            "type": 12,
+            "in": 2560,
+            "rows": 6144,
+            "compact": 1,
+            "n": 3,
+            "us": 67.36,
+            "ratio": 1.6414
+          },
+          {
+            "kind": "dense_cost",
+            "type": 12,
+            "in": 2560,
+            "rows": 6144,
+            "compact": 1,
+            "n": 4,
+            "us": 64.463,
+            "ratio": 1.5708
+          }
+        ],
+        "393418": [
+          {
+            "kind": "dense_cost",
+            "type": 12,
+            "in": 2560,
+            "rows": 6144,
+            "compact": 1,
+            "n": 1,
+            "us": 36.178,
+            "ratio": 1.0
+          },
+          {
+            "kind": "dense_cost",
+            "type": 12,
+            "in": 2560,
+            "rows": 6144,
+            "compact": 1,
+            "n": 2,
+            "us": 57.003,
+            "ratio": 1.5756
+          },
+          {
+            "kind": "dense_cost",
+            "type": 12,
+            "in": 2560,
+            "rows": 6144,
+            "compact": 1,
+            "n": 3,
+            "us": 65.859,
+            "ratio": 1.8204
+          },
+          {
+            "kind": "dense_cost",
+            "type": 12,
+            "in": 2560,
+            "rows": 6144,
+            "compact": 1,
+            "n": 4,
+            "us": 75.166,
+            "ratio": 2.0777
+          }
+        ]
+      }
+    },
+    "parallel_token_hc_epilogue": {
+      "selected": false,
+      "reason": "only 0.50% confirmatory median/0.22% mean signal; prioritize larger measured gaps",
+      "initial_brackets": [
+        {
+          "bracket": 1,
+          "4": {
+            "process_median_us": {
+              "A0": 5298.8675,
+              "B": 5244.0845,
+              "A1": 5311.4075
+            },
+            "process_mean_us": {
+              "A0": 5442.891074074074,
+              "B": 5239.184648148148,
+              "A1": 5473.482870370371
+            },
+            "B_over_bracket_medians": 0.988491721468105,
+            "B_over_bracket_means": 0.9598763609255931,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              }
+            },
+            "same_terminal_hashes": true
+          }
+        },
+        {
+          "bracket": 2,
+          "4": {
+            "process_median_us": {
+              "A0": 5262.8435,
+              "B": 5218.6425,
+              "A1": 5279.932000000001
+            },
+            "process_mean_us": {
+              "A0": 5280.0787037037035,
+              "B": 5137.6544629629625,
+              "A1": 5362.820296296296
+            },
+            "B_over_bracket_medians": 0.9899940485311481,
+            "B_over_bracket_means": 0.9654614711579923,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              }
+            },
+            "same_terminal_hashes": true
+          }
+        },
+        {
+          "bracket": 3,
+          "4": {
+            "process_median_us": {
+              "A0": 5251.241,
+              "B": 5273.354,
+              "A1": 5258.07
+            },
+            "process_mean_us": {
+              "A0": 5202.9333518518515,
+              "B": 5400.404425925926,
+              "A1": 5230.392796296296
+            },
+            "B_over_bracket_medians": 1.0035584635377144,
+            "B_over_bracket_means": 1.0352220086370951,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              }
+            },
+            "same_terminal_hashes": true
+          }
+        }
+      ],
+      "confirmatory_brackets": [
+        {
+          "bracket": 1,
+          "1": {
+            "process_median_us": {
+              "A0": 2299.504,
+              "B": 2294.5755,
+              "A1": 2297.1580000000004
+            },
+            "process_mean_us": {
+              "A0": 2314.2781944444446,
+              "B": 2309.4121712962965,
+              "A1": 2311.808162037037
+            },
+            "B_over_bracket_medians": 0.9983659881888204,
+            "B_over_bracket_means": 0.9984302035610049,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              }
+            },
+            "same_terminal_hashes": true
+          },
+          "4": {
+            "process_median_us": {
+              "A0": 4963.021500000001,
+              "B": 4942.800499999999,
+              "A1": 4970.604
+            },
+            "process_mean_us": {
+              "A0": 5047.284481481482,
+              "B": 5040.7125,
+              "A1": 5063.349462962963
+            },
+            "B_over_bracket_medians": 0.9951654609890414,
+            "B_over_bracket_means": 0.9971110669612863,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              }
+            },
+            "same_terminal_hashes": true
+          }
+        },
+        {
+          "bracket": 2,
+          "1": {
+            "process_median_us": {
+              "A0": 2292.876,
+              "B": 2297.974,
+              "A1": 2297.7775
+            },
+            "process_mean_us": {
+              "A0": 2309.4779166666667,
+              "B": 2312.5290833333333,
+              "A1": 2314.9452962962964
+            },
+            "B_over_bracket_medians": 1.0011533216349262,
+            "B_over_bracket_means": 1.0001373044106179,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              }
+            },
+            "same_terminal_hashes": true
+          },
+          "4": {
+            "process_median_us": {
+              "A0": 4966.6285,
+              "B": 4942.822,
+              "A1": 4966.686
+            },
+            "process_mean_us": {
+              "A0": 5066.985703703704,
+              "B": 5054.870129629629,
+              "A1": 5060.713018518519
+            },
+            "B_over_bracket_medians": 0.9952009472769637,
+            "B_over_bracket_means": 0.9982267972759142,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              }
+            },
+            "same_terminal_hashes": true
+          }
+        },
+        {
+          "bracket": 3,
+          "1": {
+            "process_median_us": {
+              "A0": 2297.085,
+              "B": 2293.923,
+              "A1": 2299.761
+            },
+            "process_mean_us": {
+              "A0": 2312.2861064814815,
+              "B": 2308.7369166666667,
+              "A1": 2315.50287037037
+            },
+            "B_over_bracket_medians": 0.9980421358470569,
+            "B_over_bracket_means": 0.9977710428089711,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              }
+            },
+            "same_terminal_hashes": true
+          },
+          "4": {
+            "process_median_us": {
+              "A0": 4962.6990000000005,
+              "B": 4948.3415,
+              "A1": 4960.8105
+            },
+            "process_mean_us": {
+              "A0": 5060.94324074074,
+              "B": 5055.776907407408,
+              "A1": 5045.844925925926
+            },
+            "B_over_bracket_medians": 0.9972966721098016,
+            "B_over_bracket_means": 1.0004715294383895,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              }
+            },
+            "same_terminal_hashes": true
+          }
+        },
+        {
+          "bracket": 4,
+          "1": {
+            "process_median_us": {
+              "A0": 2299.9855,
+              "B": 2296.601,
+              "A1": 2298.8935
+            },
+            "process_mean_us": {
+              "A0": 2314.1248935185185,
+              "B": 2311.0299444444445,
+              "A1": 2314.4538055555554
+            },
+            "B_over_bracket_medians": 0.9987655687396864,
+            "B_over_bracket_means": 0.9985916172957177,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              }
+            },
+            "same_terminal_hashes": true
+          },
+          "4": {
+            "process_median_us": {
+              "A0": 4970.252,
+              "B": 4941.8205,
+              "A1": 4963.8275
+            },
+            "process_mean_us": {
+              "A0": 5065.858462962963,
+              "B": 5040.6675,
+              "A1": 5042.684222222222
+            },
+            "B_over_bracket_medians": 0.9949226800530436,
+            "B_over_bracket_means": 0.9973084463277718,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              }
+            },
+            "same_terminal_hashes": true
+          }
+        },
+        {
+          "bracket": 5,
+          "1": {
+            "process_median_us": {
+              "A0": 2296.375,
+              "B": 2296.867,
+              "A1": 2296.5190000000002
+            },
+            "process_mean_us": {
+              "A0": 2311.171759259259,
+              "B": 2312.319800925926,
+              "A1": 2312.289162037037
+            },
+            "B_over_bracket_medians": 1.0001828912228325,
+            "B_over_bracket_means": 1.0002549346854273,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              }
+            },
+            "same_terminal_hashes": true
+          },
+          "4": {
+            "process_median_us": {
+              "A0": 4968.3465,
+              "B": 4937.877,
+              "A1": 4965.9095
+            },
+            "process_mean_us": {
+              "A0": 5060.896314814815,
+              "B": 5049.2510555555555,
+              "A1": 5050.505925925926
+            },
+            "B_over_bracket_medians": 0.9941110839100584,
+            "B_over_bracket_means": 0.9987241997378313,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              }
+            },
+            "same_terminal_hashes": true
+          }
+        },
+        {
+          "bracket": 6,
+          "1": {
+            "process_median_us": {
+              "A0": 2292.0285000000003,
+              "B": 2292.0,
+              "A1": 2291.233
+            },
+            "process_mean_us": {
+              "A0": 2306.0219166666666,
+              "B": 2305.3130185185187,
+              "A1": 2305.548990740741
+            },
+            "B_over_bracket_medians": 1.0001611297980706,
+            "B_over_bracket_means": 0.9997951087841125,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "b06afd2760646dd1",
+                "gdn_state_hash": "0ffd8effe54b3697"
+              }
+            },
+            "same_terminal_hashes": true
+          },
+          "4": {
+            "process_median_us": {
+              "A0": 4970.662,
+              "B": 4938.326,
+              "A1": 4962.646
+            },
+            "process_mean_us": {
+              "A0": 5054.853944444444,
+              "B": 5035.615240740741,
+              "A1": 5072.034740740741
+            },
+            "B_over_bracket_medians": 0.9942963612927335,
+            "B_over_bracket_means": 0.9945039186828303,
+            "parity": {
+              "A0": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "B": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              },
+              "A1": {
+                "kind": "parity",
+                "output_hash": "cf88618527e461e8",
+                "gdn_state_hash": "dee15a9dccc1efe0"
+              }
+            },
+            "same_terminal_hashes": true
+          }
+        }
+      ]
+    },
+    "shipping_whole_block_N4_over_N1": 2.166612,
+    "shipping_ratio_provenance": "prior 9eea42f synthetic replay, unchanged shaders"
+  },
+  "op_weighted_floor": {
+    "real_union_input": null,
+    "status": "conditional planning proxy, NOT a measured/physical floor",
+    "N1_proxy_us": 2693.88,
+    "N4_proxy_formula": "437.84*R_GU+296.16*R_down+1.1*(854.20+434.44)+671.24",
+    "hypothetical_R_GU_and_R_down": 3,
+    "hypothetical_ideal_other_ratio": 1.5927747338411509,
+    "hypothetical_current_other_ratio": 1.735498240456145
+  },
+  "validation": {
+    "C17_Werror_build": "pass",
+    "Linux_capture_tests": 8,
+    "CPU_MTP_suite": "pass",
+    "lease_identity_tests": 2,
+    "flags_registry": "pass",
+    "native_lease_guard_syntax": "pass",
+    "component_HC_cases_per_variant": 12,
+    "target_precision": "unchanged >=Q4",
+    "draft_head": "unchanged full Q8",
+    "new_serving_quality_TPS_or_acceptance_claim": false
+  },
+  "candidate_inputs": {
+    "flash-gordon": {
+      "compiled_sha256": "772cf9c5805ca6d70558919728364eefc8d1b5509a9abd70df341ee96c96f7c4",
+      "local_input_matches": true
+    },
+    "src/main.c": {
+      "compiled_sha256": "a5726df746c7d8ab5aa539bd144804bf74e3fe659dde7d1c87b34a801a3f5d46",
+      "local_input_matches": true
+    },
+    "Makefile": {
+      "compiled_sha256": "5ca80c98f24a0c1c8a33c03498f13867210ed38b366199f31afbac0697d72b28",
+      "local_input_matches": true
+    },
+    "tests/test_mtp_capture.py": {
+      "compiled_sha256": "d011811b43bcea43a6ab76ced35192a58777f03579cdd4d74968901d26045ea8",
+      "local_input_matches": true
+    }
+  },
+  "prepared_release_sha256": "41f4dccca6459ca7888323fc48be55f1e1c6759853e1020937802f185a38e79d",
+  "source_patch_sha256": "d7ab3107d7a8dd2df6877e1010fdea5afe6405d09afb03034d67e431dc987da6",
+  "evidence": {
+    "path": "mtp-capture-pressure-evidence.tar.gz",
+    "sha256": "a747dde7f3ed23b81c4ab39c07b842cb3deaf06c4a147df2c52da8acd38d7714",
+    "bytes": 8055064
+  }
+}
