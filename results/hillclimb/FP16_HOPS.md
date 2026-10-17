@@ -8,6 +8,16 @@ the incremental or cumulative model-quality gate.
 incremental KL/top-1, but the historical-original-Q8 cumulative gate is not met,
 including by the unchanged f32 baseline. Matched-reference control is separate.
 
+**Reconciled scope:** [QUALITY_RECONCILIATION.md](QUALITY_RECONCILIATION.md)
+replays both the same 80 forced-prefix contexts and the original 480 natural
+frontiers through cold N1 and native prefill. Historical Q8/mix-04/stack
+captures reproduce byte-for-byte. Mix-04 passes the original native
+Natural480 gate (0.003128578 / 98.9583%), but fails Forced80 even with the
+original method (0.059809481 / 85%). Stack's 0.000246 is incremental versus
+mix-04; direct cumulative stack/Q8 is 0.003084267 / 98.75% on Natural480.
+The baseline discrepancy is chiefly cohort sensitivity, not a bad Q8 control.
+The Forced80 failures below remain valid; mask 224 is still unqualified.
+
 ## Codec and safety
 
 `FG_FP16_HOPS=1` uses one f32 scale per work message, independently per batch

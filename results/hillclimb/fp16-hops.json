@@ -1,4 +1,11 @@
 {
+  "quality_reconciliation": {
+    "report": "QUALITY_RECONCILIATION.md",
+    "metrics": "quality-reconciliation.json",
+    "finding": "Historical captures reproduce byte-for-byte. Natural480 qualification passes, but Forced80 fails even with original native prefill; the primary discrepancy is cohort sensitivity, with additional path/profile effects.",
+    "stack_000246_reference": "mix04, not Q8",
+    "mask224_promoted": false
+  },
   "reference": {
     "corpus_sha256": "ad99ce71c9f87edc6e876fa956223b058036ebb718c9a198f9c908023011446c",
     "manifest_sha256": "35678c379786df939d5b75ac393fa90b3924bed0942ebebe565cea7d517f4bcb",

@@ -45,6 +45,32 @@ static fg_status expert(void *opaque,uint32_t layer,const fg_vk_tensor *activati
                          const fg_vk_tensor *logits,fg_vk_tensor **out,fg_error *err){
     return fg_expert_decode_chain(opaque,layer,activation,logits,out,err);
 }
+typedef struct prefill_experts {
+    fg_expert_executor *executor;
+    uint32_t rank;
+    fg_prefill_pair pairs[FG_PREFILL_MAX_PAIRS];
+    fg_prefill_result_pair result_pairs[FG_PREFILL_MAX_PAIRS];
+    float *outputs;
+} prefill_experts;
+static fg_status prefill_dispatch(void *opaque,uint32_t layer,uint32_t first,
+    uint16_t count,const uint16_t *ids,const float *gates,const uint8_t *activations,
+    fg_owner_prefill_shared_fn shared,void *shared_context,
+    fg_prefill_result results[FG_GROUP_SIZE],uint32_t *result_count,fg_error *err){
+    prefill_experts *e=opaque;
+    for(uint32_t i=0;i<(uint32_t)count*FG_TOP_K;i++)
+        e->pairs[i]=(fg_prefill_pair){.token_slot=i/FG_TOP_K,.expert_id=ids[i],
+            .routing_slot=i%FG_TOP_K,.gate=gates[i]};
+    fg_prefill_work work={.layer=(uint8_t)layer,.source_rank=(uint8_t)e->rank,
+        .destination_rank=(uint8_t)e->rank,.first_position=first,
+        .token_count=count,.pair_count=count*FG_TOP_K,
+        .activations_q8k=(uint8_t *)activations,.pairs=e->pairs};
+    fg_status status=shared(shared_context,err);
+    if(status==FG_OK)status=fg_expert_prefill(e->executor,&work,&results[0],
+        e->result_pairs,FG_PREFILL_MAX_PAIRS,e->outputs,
+        (uint64_t)FG_PREFILL_MAX_TOKENS*FG_HIDDEN_SIZE,err);
+    if(status==FG_OK)*result_count=1;
+    return status;
+}
 static FILE *frames(const char *prefix,const char *variant,const char *mode){
     char path[2048];need(snprintf(path,sizeof(path),"%s.%s",prefix,variant)<(int)sizeof(path),"frame path");
     FILE *f=fopen(path,mode);need(f!=NULL,path);return f;
@@ -115,13 +141,24 @@ static void stage(const char *mp,const char *pack,uint32_t first,uint32_t last,
     for(uint32_t l=first;l<=last;l++)need(m->layer_owner[l]==rank,"stage crosses rank");
     sample *cases=calloc(MAX_CASES,sizeof(*cases));need(cases!=NULL,"cases allocation");
     uint32_t count=load_cases(pack,cases);
+    const char *path=getenv("HOP_OFFLINE_PATH");
+    bool prefill=path&&!strcmp(path,"prefill");
+    need(!path||prefill||!strcmp(path,"decode"),"offline arithmetic path");
+    need(!prefill||!strcmp(codec,"f32"),"prefill control must use f32 boundaries");
     /* Decode schedules use nine words/pair versus five for prefill scratch. */
-    m->prefill_microbatch=2u;
+    if(!prefill)m->prefill_microbatch=2u;
     fg_model *model=NULL;check(fg_model_open(&model,m,pack,rank,&error));
     fg_vk_context *vk=fg_model_vk(model);fg_owner_executor *owner=NULL;
     check(fg_owner_executor_create_worker_slots(&owner,model,2u,&error));
     fg_expert_executor *ex=NULL;check(fg_expert_executor_create(&ex,model,&error));
-    for(uint32_t l=first;l<=last;l++)check(fg_expert_decode_chain_ready(ex,l,&error));
+    if(!prefill)for(uint32_t l=first;l<=last;l++)
+        check(fg_expert_decode_chain_ready(ex,l,&error));
+    prefill_experts *pe=prefill?calloc(1,sizeof(*pe)):NULL;
+    if(prefill){
+        need(pe!=NULL,"prefill dispatch allocation");pe->executor=ex;pe->rank=rank;
+        pe->outputs=malloc((size_t)FG_PREFILL_MAX_TOKENS*FG_HIDDEN_SIZE*4u);
+        need(pe->outputs!=NULL,"prefill expert output allocation");
+    }
     char states[2][2048];
     uint8_t layers[FG_LAYER_COUNT];uint32_t layer_count=0;
     for(uint32_t l=3u;l<FG_LAYER_COUNT;l+=4u)
@@ -135,10 +172,11 @@ static void stage(const char *mp,const char *pack,uint32_t first,uint32_t last,
         check(fg_qsa_state_open(&state,states[s],layers,layer_count,MAX_TOKENS,true,&error));
         fg_qsa_state_close(state);
         check(fg_owner_qsa_open_state_mirror_slot(owner,s,states[s],MAX_TOKENS,MAX_TOKENS,
-            cache_pages,1u,true,NULL,NULL,&error));
+            cache_pages,prefill?m->prefill_microbatch:1u,true,NULL,NULL,&error));
     }
     fg_vk_tensor *ngram=NULL;
-    if(!first)check(fg_vk_tensor_create(vk,FG_NGRAM_EMBED_VALUES*4u,&ngram,&error));
+    if(!first)check(fg_vk_tensor_create(vk,
+        (uint64_t)FG_NGRAM_EMBED_VALUES*4u*(prefill?m->prefill_microbatch:1u),&ngram,&error));
     FILE *inputs[2]={frames(in,"teacher","rb"),frames(in,"candidate","rb")};
     FILE *outputs[2]={frames(out,"teacher","wbx"),frames(out,"candidate","wbx")};
     const char *saved_teacher=getenv("HOP_OFFLINE_TEACHER");
@@ -161,6 +199,29 @@ static void stage(const char *mp,const char *pack,uint32_t first,uint32_t last,
             }
             check(fg_owner_reset_session(owner,s,&error));
             check(fg_owner_set_active_session(owner,s,&error));
+            if(prefill){
+                fg_vk_tensor *input=fg_owner_prefill_input(owner);
+                for(uint32_t p=0;p<nt;){
+                    uint32_t batch=nt-p;
+                    if(batch>m->prefill_microbatch)batch=m->prefill_microbatch;
+                    uint32_t positions[FG_PREFILL_MAX_TOKENS*3u];
+                    for(uint32_t i=0;i<batch;i++)for(uint32_t axis=0;axis<3;axis++)
+                        positions[3u*i+axis]=p+i;
+                    check(fg_vk_tensor_write(input,0,h[s]+(size_t)p*FG_HYPER_WIDTH,
+                        (uint64_t)batch*FG_HYPER_WIDTH*4u,&error));
+                    if(ngram)check(fg_vk_tensor_write(ngram,0,n+(size_t)p*FG_NGRAM_EMBED_VALUES,
+                        (uint64_t)batch*FG_NGRAM_EMBED_VALUES*4u,&error));
+                    fg_vk_tensor *output=input;
+                    for(uint32_t l=first;l<=last;l++)
+                        check(fg_owner_prefill_layer(owner,l,p,positions,(uint16_t)batch,
+                            output,l==1u?ngram:NULL,prefill_dispatch,pe,NULL,NULL,&output,&error));
+                    check(fg_vk_tensor_read(output,0,h[s]+(size_t)p*FG_HYPER_WIDTH,
+                        (uint64_t)batch*FG_HYPER_WIDTH*4u,&error));
+                    p+=batch;
+                }
+                write_data(outputs[s],h[s],(size_t)nt*FG_HYPER_WIDTH*4u);
+                continue;
+            }
             fg_vk_tensor *input=fg_owner_session_input(owner,s);
             for(uint32_t p=0;p<nt;p++){
                 bool compressed=s&&p>=nt-4u&&(mask&(1ul<<rank))&&strcmp(codec,"f32");
@@ -208,14 +269,17 @@ static void stage(const char *mp,const char *pack,uint32_t first,uint32_t last,
     if(ng)fclose(ng);
     if(saved){need(fgetc(saved)==EOF,"saved teacher trailing frames");fclose(saved);}
     free(n);free(cases);
+    if(pe){free(pe->outputs);free(pe);}
     fg_vk_tensor_destroy(ngram);fg_expert_executor_destroy(ex);
     fg_owner_executor_destroy(owner);fg_model_close(model);
     for(uint32_t s=0;s<2;s++)unlink(states[s]);
     printf("{\"kind\":\"stage_complete\",\"first\":%u,\"last\":%u,\"rank\":%u,"
         "\"rounded_boundaries\":%llu,\"prefix_max_relative\":%.12g,"
-        "\"codec\":\"%s\",\"hop_mask\":%lu,\"wire_hyper_relative_l2\":%.12g,"
+        "\"codec\":\"%s\",\"hop_mask\":%lu,\"arithmetic_path\":\"%s\",\"microbatch\":%u,"
+        "\"wire_hyper_relative_l2\":%.12g,"
         "\"wire_ngram_relative_l2\":%.12g}\n",
         first,last,rank,(unsigned long long)rounded,prefix_error,codec,mask,
+        prefill?"prefill":"decode",m->prefill_microbatch,
         square_reference[0]?sqrt(square_error[0]/square_reference[0]):0,
         square_reference[1]?sqrt(square_error[1]/square_reference[1]):0);free(m);
 }
