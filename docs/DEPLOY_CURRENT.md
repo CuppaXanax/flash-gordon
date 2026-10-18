@@ -1,49 +1,33 @@
 # Current production deployment
 
-**Latest robustness requalification, 2026-10-18: no runtime promotion.**
-Five new pairs pass 32K decode, TTFT and all 25 canonical greedy comparisons,
-but short decode's paired-median benefit is **0.965996**, below the explicit
-0.97 floor (CI [0.879970, 1.016834]: not a demonstrated statistical regression).
-The exact stack baseline below was restored and all eight identities, health,
-models and five real greedy API generations verified at
-**2026-10-18 22:05:49 UTC**. The new 60-minute lease was released after
-**36.23 minutes**. Main was not advanced. Production's cold-32K loaded chat
-already falls to **8.37 TPS**, with **200.07 ms p95 event gaps**; QoS was not
-this run's veto. Replay/transport/SIGKILL rechecks were skipped on fail-fast
-restoration after the solo guard failed.
-[Full new results on the incident branch](https://github.com/CuppaXanax/flash-gordon/blob/cuppaxanax/multi-session-int/results/hillclimb/MULTI_SESSION_ROBUSTNESS.md).
+**Current selection: robustness source `11c7e39` on stack-1, sealed mix-04,
+sessions 2, plus the ordered watchdog.** The lease authority explicitly
+overrode the prior **0.965996x short-decode paired median**
+(95% CI **[0.879970, 1.016834]**). This remains an **open performance item**,
+not a statistical pass; no deployed binary/kernel change was made to hide it.
 
-**Current selection: stack-1/adaptive integration `31508ee` plus sealed
-mix-04, sessions 2, with the explicit full flag recipe below.** Five paired
-rounds against previous production `2d0f8a7` passed all six primary guards:
-paired median gains include short decode 12.0%, 32K decode 11.1%, 32K prefill
-5.4%, and concurrent aggregate 15.3%. Full-vocabulary KL/top-1 and exact
-same-kernel submission-group hashes passed.
-**Tradeoff: secondary cached-prefix TTFT is 4.35% slower by paired median
-latency ratio.** It is descriptive, not a veto under the user's new policy.
-[Full decision, spreads and marginal CIs](../results/hillclimb/STACK_FLEET.md).
-The underlying adaptive scheduler's earlier loaded-QoS/mixed-prefill
-limitations are not requalified here. No near-262K memory forensic was run.
-The sealed pack, historical `AB_QUALIFY.md` and `PROD_GAP.md` remain unchanged.
+Fresh functional gates pass: a 44-message approximately 44K agent retains
+**44398 tokens** across a separate two-message title request;
+worker loss fails the request while preserving the API PID and recovers;
+coordinator SIGKILL triggers watchdog-only ordered restart. Next generations
+succeed, all eight pinned identities match, and five real canonical greedy
+outputs match production. Watchdog boot-enabled/active; memlock unlimited.
 
-**2026-10-18 incident follow-up: runtime selection remains this exact stack
-baseline; incident runtime fixes are NOT promoted.** An ordered ring watchdog
-is now installed, boot-enabled and restart-tested on rank 0. Incident evidence
-and the final routing follow-up are on `cuppaxanax/multi-session-int`, in
-`results/hillclimb/MULTI_SESSION_INCIDENT.md`. The old baseline still has its
-prefix-routing limitation; supervision does not turn it into the new runtime.
-Restoration/API identity was verified at 21:18:28 UTC. The single validation
-lease overran to 47.17 minutes while correcting cold-start memlock inheritance;
-the fleet is released, with no runtime promotion.
+Production also misses loaded cold-32K chat QoS (8.37 TPS, p95 event gap
+200.07 ms); the override does not claim that target is solved.
+[Decision, functional receipts and open item](https://github.com/CuppaXanax/flash-gordon/blob/cuppaxanax/multi-session-int/results/hillclimb/MULTI_SESSION_OVERRIDE.md).
+
+Final persistence/API verification: `2026-10-18T22:16:59.0970135+00:00`.
+Exclusive lease released after **5.99 minutes** of 45.
 
 | Item | Current value |
 |---|---|
 | Owners | 192.168.42.42–192.168.42.49; ranks 0–7 |
 | API | `http://192.168.42.42:8080/v1` |
 | Model | `Qwen3.8-Flash-Next-Uncensored` |
-| Release | `/home/xander/flash-gordon-live/20261016-abq-stack-adaptive` |
-| Binary SHA256 | `02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0` |
-| Source | Runtime build `31508ee`; branch tip `7381f93` changes only build-product ignores |
+| Release | `/home/xander/flash-gordon-live/20261018-abq-session-recovery-r2` |
+| Binary SHA256 | `3405c8976eca580ca2e8690bb336b0ca13e69ab761dbd7bffee590bb280cad17` |
+| Source | Robustness source `11c7e39`; runtime C tree `182d47e` |
 | Shader-tree SHA256 | `5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633` |
 | Manifest | `/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm` |
 | Manifest SHA256 | `0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252` |
@@ -56,12 +40,13 @@ Operator scripts, logs and PID records are outside that release. The same
 `flash-gordon-ring.service` on .42 now provides ordered failure/boot recovery:
 stop coordinator, stop workers, start workers, start coordinator. It uses the
 same pinned `launch-current.sh`/`current.json`, dedicated restricted SSH and
-strict host keys. The old baseline needs a full coordinator restart on a
-transport fault; listener-preserving recovery belongs to the unpromoted code.
+strict host keys. Worker transport faults preserve the API while workers
+reconnect; coordinator death triggers the full ordered restart.
 The unit must retain `LimitMEMLOCK=infinity`: the default systemd allowance
 caused `register fixed buffer: Cannot allocate memory` during the cold restart.
-After correcting it, ordered startup reached `ring_ready` at 21:17:37 UTC.
-This was a cold process restart, not a host reboot.
+The initial baseline restoration reached `ring_ready` at 21:17:37 UTC after
+correcting it. The new candidate's SIGKILL restart is recorded above.
+These were cold process restarts, not host reboots.
 
 ## Required supervision pause for every future fleet lease
 
@@ -89,8 +74,8 @@ Restarting this unit alone does not restart an already healthy serving ring.
 
 ## Persistent launcher and exact commands
 
-Each owner retains `launch-current.sh`, `launch-stack-3bac55ceb9c2.sh`,
-`ab-instance-stack-3bac55ceb9c2.sh` and `current.json` in
+Each owner retains `launch-current.sh`, `launch-incident-r2.sh`,
+`ab-instance-incident-r2.sh` and `current.json` in
 the operator directory. The launcher pins the exact release/manifest, checks
 the launcher body, binary, manifest and shader-tree hashes before start, and
 derives its rank only from .42–.49.
@@ -98,7 +83,7 @@ The pinned instance script refuses duplicate serving processes. Stop enumerates 
 numeric PIDs and requires the exact executable and `--manifest` argument before
 TERM/wait; there is no name kill, forced kill, or floating "latest" symlink.
 Current launcher and complete restart/identity/health receipts are in the
-[qualification archive](../results/hillclimb/stack-fleet-20261016/selected).
+[override archive](https://github.com/CuppaXanax/flash-gordon/tree/cuppaxanax/multi-session-int/results/hillclimb/multi-session-override-20261018).
 The earlier `prod-gap\current` and `ab-current` receipts are historical.
 
 Run as `xander`. Coordinator command, from the immutable release directory:
@@ -106,12 +91,12 @@ Run as `xander`. Coordinator command, from the immutable release directory:
 ```bash
 ulimit -c 0
 nohup env \
-  FG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/vulkan \
+  FG_SHADER_DIR=/home/xander/flash-gordon-live/20261018-abq-session-recovery-r2/vulkan \
   FG_EXPERT_Q8_WIDE=1 FG_RING_TRACE=1 \
   FG_ROOFLINE=2047 FG_ROOF_DENSE=19 FG_ROOF_QSA=3 FG_ROOF_EXPERT=33024 \
   FG_ROOF_HC=96 FG_ROOF_RECURRENT=3 FG_ROOF_GDN=1 \
   FG_NGRAM_LOCAL_CACHE=1 FG_DECODE_SUBMIT_GROUP=2 \
-  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon api \
+  /home/xander/flash-gordon-live/20261018-abq-session-recovery-r2/flash-gordon api \
   --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm \
   --model-name Qwen3.8-Flash-Next-Uncensored \
   --host 0.0.0.0 --port 8080 \
@@ -127,12 +112,12 @@ Workers use the following command with `N=1` on .43 through `N=7` on .49:
 ```bash
 ulimit -c 0
 nohup env \
-  FG_SHADER_DIR=/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/vulkan \
+  FG_SHADER_DIR=/home/xander/flash-gordon-live/20261018-abq-session-recovery-r2/vulkan \
   FG_EXPERT_Q8_WIDE=1 \
   FG_ROOFLINE=2047 FG_ROOF_DENSE=19 FG_ROOF_QSA=3 FG_ROOF_EXPERT=33024 \
   FG_ROOF_HC=96 FG_ROOF_RECURRENT=3 FG_ROOF_GDN=1 \
   FG_NGRAM_LOCAL_CACHE=1 FG_DECODE_SUBMIT_GROUP=2 \
-  /home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon rank \
+  /home/xander/flash-gordon-live/20261018-abq-session-recovery-r2/flash-gordon rank \
   --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank "$N" \
   >"/home/xander/flash-gordon-live/20261015-abq-operator/rank-$N.log" \
   2>&1 </dev/null &
@@ -143,11 +128,31 @@ Do not enable `FG_DECODE_PROFILE`; it disables static replay and changes the
 measurement. No fusion/MTP or additional unlisted switches are part of this
 deployment. The pinned script scrubs profiling/other experiment flags before
 supplying the explicit recipe above. Only the coordinator receives `--sessions 2`. The QSA cache budget
-is per session. Clients need stable, distinct top-level OpenAI `user` values
-(for example `chat` and `agent`) for resident prefix affinity; omitting `user`
-does not provide durable conversation affinity.
+is per session. Routing uses longest matching public-message prefixes, independent of the optional
+`user` hint. Send exact assistant/tool transcripts for forward state reuse.
+A system prompt alone is not affinity; shortened replays reset GDN state.
 
-## Roll back to pre-stack adaptive production (sessions 2)
+## Immediate rollback: preceding stack-1 baseline
+
+Pause/stop supervision as above. Stop current coordinator, then workers.
+On all eight owners:
+
+```bash
+op=/home/xander/flash-gordon-live/20261015-abq-operator
+cp "$op/launch-pre-robustness-20261018.sh" "$op/launch-current.sh"
+cp "$op/pre-robustness-20261018.json" "$op/current.json"
+```
+
+Start workers 1–7 before coordinator 0 with
+`bash "$op/launch-current.sh" start`, verify real generation, then resume
+supervision. This returns to immutable stack binary
+`02930a164e38c9c5ee50ae11bf0a746601cc587fdff4e31205da6861e850a6e0`,
+release `20261016-abq-stack-adaptive`, same mix-04 and sessions 2. It
+reintroduces the old routing and listener-recovery defects.
+Do not overwrite the dated rollback files during later leases.
+
+The older pre-stack rollback below is historical, not the immediate target.
+## Historical pre-stack adaptive rollback (sessions 2)
 
 With the exclusive fleet lease:
 
