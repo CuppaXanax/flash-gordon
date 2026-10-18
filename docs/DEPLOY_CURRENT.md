@@ -13,6 +13,16 @@ The underlying adaptive scheduler's earlier loaded-QoS/mixed-prefill
 limitations are not requalified here. No near-262K memory forensic was run.
 The sealed pack, historical `AB_QUALIFY.md` and `PROD_GAP.md` remain unchanged.
 
+**2026-10-18 incident follow-up: runtime selection remains this exact stack
+baseline; incident runtime fixes are NOT promoted.** An ordered ring watchdog
+is now installed, boot-enabled and restart-tested on rank 0. Incident evidence
+and the final routing follow-up are on `cuppaxanax/multi-session-int`, in
+`results/hillclimb/MULTI_SESSION_INCIDENT.md`. The old baseline still has its
+prefix-routing limitation; supervision does not turn it into the new runtime.
+Restoration/API identity was verified at 21:18:28 UTC. The single validation
+lease overran to 47.17 minutes while correcting cold-start memlock inheritance;
+the fleet is released, with no runtime promotion.
+
 | Item | Current value |
 |---|---|
 | Owners | 192.168.42.42–192.168.42.49; ranks 0–7 |
@@ -29,9 +39,40 @@ The sealed pack, historical `AB_QUALIFY.md` and `PROD_GAP.md` remain unchanged.
 
 The binary, weights and manifest of the original release are unchanged.
 Operator scripts, logs and PID records are outside that release. The same
-`nohup` launch semantics as the original are retained: this survives SSH/client
-logout, **not host reboot automatically**. No boot-start systemd service is
-claimed. After reboot, run the persistent launcher on workers, then coordinator.
+`nohup` launch semantics as the original are retained. The enabled
+`flash-gordon-ring.service` on .42 now provides ordered failure/boot recovery:
+stop coordinator, stop workers, start workers, start coordinator. It uses the
+same pinned `launch-current.sh`/`current.json`, dedicated restricted SSH and
+strict host keys. The old baseline needs a full coordinator restart on a
+transport fault; listener-preserving recovery belongs to the unpromoted code.
+The unit must retain `LimitMEMLOCK=infinity`: the default systemd allowance
+caused `register fixed buffer: Cannot allocate memory` during the cold restart.
+After correcting it, ordered startup reached `ring_ready` at 21:17:37 UTC.
+This was a cold process restart, not a host reboot.
+
+## Required supervision pause for every future fleet lease
+
+Before any deployment, rollback or manual restart, run on .42:
+
+```bash
+op=/home/xander/flash-gordon-live/20261015-abq-operator
+touch "$op/supervisor.pause"
+sudo systemctl stop flash-gordon-ring.service
+sudo systemctl is-active flash-gordon-ring.service  # must report inactive
+```
+
+Stopping this watchdog deliberately leaves serving processes alone
+(`KillMode=process`). After restoring/pinning and verifying the selected ring:
+
+```bash
+rm -f "$op/supervisor.pause"
+sudo systemctl start flash-gordon-ring.service
+sudo systemctl is-enabled flash-gordon-ring.service
+sudo systemctl is-active flash-gordon-ring.service
+```
+
+Do not leave a qualification deadline timer armed when releasing a fleet lease.
+Restarting this unit alone does not restart an already healthy serving ring.
 
 ## Persistent launcher and exact commands
 
