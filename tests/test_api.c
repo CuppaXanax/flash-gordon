@@ -3634,6 +3634,18 @@ static void test_session_affinity(void){
     CHECK(api_session_select(&new_long,sessions,active,ages)==0u);
     ages[0]=3u;
     CHECK(api_session_select(&new_long,sessions,active,ages)==1u); /* True LRU on no match. */
+    api_chat_request replay={.messages=messages,.message_count=1u};
+    CHECK(api_session_select(&replay,sessions,active,ages)==1u); /* Equal prefix: spare longer cache. */
+    sessions[1]=&(api_public_session){0};
+    CHECK(api_session_select(&replay,sessions,active,ages)==0u); /* Replayed primer stays with agent. */
+    api_public_session cleared={0};
+    api_public_session in_flight=api_session_routing_view(&cleared,&title,true);
+    sessions[1]=&in_flight;active[1]=true;
+    CHECK(api_session_select(&title,sessions,active,ages)==2u);
+    fg_chat_message other_side={.role="user",.content="different short side request"};
+    api_chat_request other_title={.messages=&other_side,.message_count=1u};
+    CHECK(api_session_select(&other_title,sessions,active,ages)==2u);
+    active[1]=false;
 
     api_engine_queue queue;api_engine_queue_init(&queue);queue.multiplexed=true;
     api_connection connection={0};

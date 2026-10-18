@@ -3322,6 +3322,33 @@ static size_t api_transcript_bytes(const api_chat_request *request){
     return bytes;
 }
 
+static size_t api_session_match_bytes(const api_public_session *session,
+                                      const api_chat_request *request){
+    if(!session->valid||!request)return 0;
+    if(session->media_count||request->media_count)
+        return api_public_session_prefix(session,request,NULL,0u)?
+            api_transcript_bytes(&session->transcript)+1u:0u;
+    size_t old=fg_chat_leading_system_count(session->transcript.messages,
+        session->transcript.message_count);
+    size_t current=fg_chat_leading_system_count(request->messages,request->message_count);
+    size_t start=old;
+    while(old<session->transcript.message_count&&current<request->message_count&&
+          api_message_equal(current,&session->transcript.messages[old],
+              &request->messages[current],NULL,0u)){
+        old++;current++;
+    }
+    if(old==start)return 0; /* A generic system prompt alone is not affinity. */
+    api_chat_request prefix={.messages=session->transcript.messages+start,
+        .message_count=old-start};
+    return api_transcript_bytes(&prefix)+prefix.message_count;
+}
+
+static api_public_session api_session_routing_view(const api_public_session *cached,
+    const api_chat_request *request,bool active){
+    if(active&&request)return (api_public_session){.valid=true,.transcript=*request};
+    return *cached;
+}
+
 static uint32_t api_session_select(const api_chat_request *request,
     const api_public_session *const sessions[2],const bool active[2],
     const uint64_t used[2]){
@@ -3329,10 +3356,11 @@ static uint32_t api_session_select(const api_chat_request *request,
     size_t longest=0u,sizes[2]={0};
     for(uint32_t i=0;i<2u;i++){
         sizes[i]=sessions[i]->valid?api_transcript_bytes(&sessions[i]->transcript):0u;
-        if(request&&api_public_session_prefix(sessions[i],request,NULL,0u)&&
-           (best>=2u||sizes[i]>longest||
-            (sizes[i]==longest&&active[best]&&!active[i]))){
-            best=i;longest=sizes[i];
+        size_t matched=api_session_match_bytes(sessions[i],request);
+        if(matched&&(best>=2u||matched>longest||
+            (matched==longest&&(sizes[i]<sizes[best]||
+             (sizes[i]==sizes[best]&&active[best]&&!active[i]))))){
+            best=i;longest=matched;
         }
     }
     /* An active matching conversation must finish before its continuation;
@@ -4341,8 +4369,10 @@ static fg_status api_pipeline_engine(fg_runtime *runtime,api_engine_queue *queue
                 api_engine_request *request=&queue->entries[entry];
                 const char *key=request->session_key[0]?request->session_key:NULL;
                 bool busy[2]={pipeline.slots[0].active,pipeline.slots[1].active};
-                const api_public_session *sessions[2]={
-                    &jobs[0].public_session,&jobs[1].public_session};
+                api_public_session views[2];
+                for(uint32_t v=0;v<2u;v++)views[v]=api_session_routing_view(
+                    &jobs[v].public_session,jobs[v].request.routing,busy[v]);
+                const api_public_session *sessions[2]={&views[0],&views[1]};
                 uint64_t ages[2]={jobs[0].used,jobs[1].used};
                 uint32_t selected=api_session_select(request->routing,sessions,busy,ages);
                 if(selected<FG_PIPELINE_SESSIONS&&!pipeline.slots[selected].active){
