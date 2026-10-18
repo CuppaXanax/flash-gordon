@@ -35,10 +35,12 @@ expected_code="$(printf '%s\n' \
     FG_DENSE_K_COOKED \
     FG_DENSE_SOA \
     FG_DECODE_MS \
+    FG_DECODE_FUSION \
     FG_DECODE_PROFILE \
     FG_DECODE_RING \
     FG_DECODE_RING_TRACE \
     FG_DECODE_STATIC \
+    FG_DECODE_SUBMIT_GROUP \
     FG_EVAL_LOGITS \
     FG_EVAL_LOGITS_DIR \
     FG_EXPERT_Q8_WIDE \
@@ -51,6 +53,7 @@ expected_code="$(printf '%s\n' \
     FG_MULTI_PREFILL_TOKENS \
     FG_MULTI_PREFILL_WINDOW \
     FG_NGRAM_LOCALITY_TRACE \
+    FG_NGRAM_LOCAL_CACHE \
     FG_NGRAM_PAGEABLE \
     FG_NGRAM_VERIFY \
     FG_NUMERICS_TRACE \
@@ -67,6 +70,13 @@ expected_code="$(printf '%s\n' \
     FG_QSA_PREFETCH_TRACE \
     FG_QSA_WARM_TRACE \
     FG_RING_TRACE \
+    FG_ROOFLINE \
+    FG_ROOF_DENSE \
+    FG_ROOF_EXPERT \
+    FG_ROOF_GDN \
+    FG_ROOF_HC \
+    FG_ROOF_QSA \
+    FG_ROOF_RECURRENT \
     FG_SET_TRACE \
     FG_SHADER_DIR \
     FG_STATIC_CHECK \
@@ -76,6 +86,7 @@ expected_code="$(printf '%s\n' \
     FG_WORKER_OWNER | LC_ALL=C sort -u)"
 
 expected_test="$(printf '%s\n' \
+    FG_NGRAM_LOCAL_CACHE \
     FG_BENCH_DENSE_COMPACT \
     FG_BENCH_DENSE_COOKED \
     FG_BENCH_DENSE_GGUF \
@@ -103,7 +114,11 @@ expected_test="$(printf '%s\n' \
     FG_BENCH_ROUTER_N \
     FG_EXPERT_BOUND_DUMP \
     FG_EXPERT_PARITY_DUMP \
-    FG_RMS_HASH | LC_ALL=C sort -u)"
+    FG_RMS_HASH \
+    FG_ROOFLINE \
+    FG_ROOF_DENSE \
+    FG_ROOF_HC \
+    FG_ROOF_QSA | LC_ALL=C sort -u)"
 
 actual_code="$(extract src include)"
 actual_test="$(extract tests)"

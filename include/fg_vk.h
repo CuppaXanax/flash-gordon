@@ -93,6 +93,19 @@ bool fg_vk_integer_dot_product_enabled(const fg_vk_context *context);
 uint32_t fg_vk_active_compute_units(const fg_vk_context *context);
 uint32_t fg_vk_subgroup_size(const fg_vk_context *context);
 uint32_t fg_vk_hc_inject_pieces(const fg_vk_context *context);
+bool fg_vk_hc_up_mix_supported(const fg_vk_context *context,const fg_vk_tensor *weights);
+bool fg_vk_hc_down_inject_supported(const fg_vk_context *context,const fg_vk_tensor *weights);
+bool fg_vk_gdn_gate_controls_supported(const fg_vk_context *context,const fg_vk_tensor *weights);
+fg_status fg_vk_gdn_gate_controls(fg_vk_context *context,fg_vk_tensor *gate,
+    fg_vk_tensor *alpha,fg_vk_tensor *beta,const fg_vk_tensor *weights,
+    const fg_vk_tensor *alpha_weight,const fg_vk_tensor *beta_weight,
+    const fg_vk_tensor *hidden,fg_error *err);
+fg_status fg_vk_hc_down_inject(fg_vk_context *context,fg_vk_tensor *low,fg_vk_tensor *activated,
+    fg_vk_tensor *partials,const fg_vk_tensor *weights,const fg_vk_tensor *input,
+    const fg_vk_tensor *inject_weights,uint32_t pieces,fg_error *err);
+fg_status fg_vk_hc_up_mix(fg_vk_context *context,fg_vk_tensor *mixed,fg_vk_tensor *injection,
+    const fg_vk_tensor *weights,const fg_vk_tensor *input,const fg_vk_tensor *normalized,
+    const fg_vk_tensor *partials,uint32_t input_width,uint32_t hidden,uint32_t pieces,fg_error *err);
 
 fg_status fg_vk_profile_begin(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_profile_set_scope(fg_vk_context *context,const char *scope,fg_error *err);
@@ -100,6 +113,36 @@ fg_status fg_vk_profile_end(fg_vk_context *context,fg_vk_profile *profile,fg_err
 bool fg_vk_profile_active(const fg_vk_context *context);
 void fg_vk_get_counters(const fg_vk_context *context,fg_vk_counters *counters);
 void fg_vk_get_memory_stats(const fg_vk_context *context,fg_vk_memory_stats *stats);
+
+#define FG_VK_LAYER_DISPATCHES 96u
+typedef struct fg_vk_layer_dispatch {
+    const char *name;
+    uint32_t grid[3],push[32],push_words,bindings;
+    uint64_t bytes[16];
+    bool barrier;
+} fg_vk_layer_dispatch;
+typedef struct fg_vk_layer_sample {
+    double gpu_us;
+    uint32_t dispatch_count;
+    fg_vk_layer_dispatch dispatches[FG_VK_LAYER_DISPATCHES];
+} fg_vk_layer_sample;
+/* Enable before recording static runs; query resets and two timestamps per
+ * layer are replayed with the original command buffers. Read after draining. */
+fg_status fg_vk_layer_clock_enable(fg_vk_context *context,fg_error *err);
+fg_status fg_vk_layer_clock_mark(fg_vk_context *context,uint32_t layer,bool end,fg_error *err);
+fg_status fg_vk_layer_clock_read(fg_vk_context *context,uint32_t layer,
+                                  fg_vk_layer_sample *sample,fg_error *err);
+
+/* FG_DECODE_FUSION bitmask: routing schedule, shared residual, shared SwiGLU. */
+uint32_t fg_vk_decode_fusion_mask(void);
+fg_status fg_vk_router_top10_tiles(fg_vk_context *context,fg_vk_tensor *selected,
+    fg_vk_tensor *gates,fg_vk_tensor *tiles,const fg_vk_tensor *logits,fg_error *err);
+fg_status fg_vk_moe_shared_gr_write(fg_vk_context *context,fg_vk_tensor *output,
+    const fg_vk_tensor *hyper,const fg_vk_tensor *reduced,const fg_vk_tensor *shared,
+    const fg_vk_tensor *scalar,const fg_vk_tensor *injection,fg_error *err);
+bool fg_vk_shared_swiglu_supported(const fg_vk_tensor *gate,const fg_vk_tensor *up);
+fg_status fg_vk_shared_swiglu(fg_vk_context *context,fg_vk_tensor *output,
+    const fg_vk_tensor *gate,const fg_vk_tensor *up,const fg_vk_tensor *input,fg_error *err);
 
 fg_status fg_vk_begin(fg_vk_context *context,fg_error *err);
 fg_status fg_vk_end(fg_vk_context *context,fg_error *err);
@@ -111,6 +154,16 @@ fg_status fg_vk_static_submit(fg_vk_context *context,uint32_t slot,fg_error *err
 fg_status fg_vk_static_wait(fg_vk_context *context,uint32_t slot,fg_error *err);
 fg_status fg_vk_static_drain(fg_vk_context *context,fg_error *err);
 bool fg_vk_static_recorded(const fg_vk_context *context,uint32_t slot);
+/* Opt-in submission scope: flush records ahead, end/readback still waits.
+ * Mapped inputs must remain immutable until end; use ordered writes for
+ * mutable per-dispatch inputs shared by several recorded command buffers.
+ * Publish optionally starts the queued prefix while recording the suffix;
+ * at most one prefix may be in flight, and end still drains all work. */
+fg_status fg_vk_submit_group_begin(fg_vk_context *context,fg_error *err);
+fg_status fg_vk_submit_group_publish(fg_vk_context *context,fg_error *err);
+fg_status fg_vk_submit_group_end(fg_vk_context *context,fg_error *err);
+void fg_vk_submit_group_abort(fg_vk_context *context);
+bool fg_vk_submit_group_active(const fg_vk_context *context);
 fg_status fg_vk_abort(fg_vk_context *context,fg_error *err);
 bool fg_vk_batch_active(const fg_vk_context *context);
 void fg_vk_next_dispatch_independent(fg_vk_context *context);
@@ -166,6 +219,8 @@ const void *fg_vk_tensor_const_map(const fg_vk_tensor *tensor);
 void fg_vk_tensor_set_format(fg_vk_tensor *tensor,fg_vk_tensor_format format);
 fg_vk_tensor_format fg_vk_tensor_get_format(const fg_vk_tensor *tensor);
 fg_status fg_vk_tensor_write(fg_vk_tensor *tensor,uint64_t offset,const void *data,uint64_t bytes,fg_error *err);
+fg_status fg_vk_tensor_write_ordered(fg_vk_tensor *tensor,uint64_t offset,
+    const void *data,uint64_t bytes,fg_error *err);
 fg_status fg_vk_tensor_read(const fg_vk_tensor *tensor,uint64_t offset,void *data,uint64_t bytes,fg_error *err);
 /* Device-side tensor copy: `count` equal-sized (dst[i],src[i]) pairs copied with
  * vkCmdCopyBuffer on the context queue.  Drains pending submissions first and

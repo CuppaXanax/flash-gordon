@@ -1,0 +1,8 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_KHR_shader_subgroup_shuffle_relative : require
+#extension GL_EXT_control_flow_attributes : require
+#define FG_ROOF_EXPERT
+#define FG_EXPERT_WG 32
+#define FG_PREFETCH 2
+#include "fg_moe_decode_gate_up.glsl"

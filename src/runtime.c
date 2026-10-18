@@ -4817,6 +4817,9 @@ static fg_status resident_ngram_lookup(
 static fg_status coordinator_ngram_resident(
     fg_coordinator *coordinator,const int32_t *history,size_t history_count,
     uint32_t token_index,fg_vk_tensor **embedding,fg_error *err){
+    if(fg_ngram_local_cache_enabled())
+        return fg_ngram_store_lookup(coordinator->ngram,history,history_count,
+                                     embedding,err);
     return resident_ngram_lookup(coordinator->fabric,coordinator->ngram,
         coordinator->session_id,&coordinator->transport_state,FG_FABRIC_BULK,history,
         history_count,token_index,embedding,err);

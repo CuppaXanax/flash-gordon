@@ -3,6 +3,22 @@
 set -euo pipefail
 action=${1:?action}
 release=${2:?release}
+if [[ $action == replay ]]; then
+  [[ $release =~ ^/home/xander/flash-gordon-live/[0-9]{8}-host-overhead[-a-zA-Z0-9]*$ ]]
+  blade=$(ip -4 addr show | grep -oP '192\.168\.42\.\K[0-9]+' | head -1)
+  [[ $blade =~ ^5[0-3]$ ]]
+  cd "$release"
+  mkdir -p .build-scratch
+  export TMPDIR="$PWD/.build-scratch"
+  trap 'rmdir "$TMPDIR"' EXIT
+  DS4_REMOTE_TEST_FILTER=submit_group ./tests/test_fg_vk
+  for filter in batch_submission_parity pipeline_flush_parity static_batch_replay gpu_profile; do
+    DS4_REMOTE_TEST_FILTER="$filter" ./tests/test_fg_vk
+  done
+  ./tests/test_qsa_prefill
+  DS4_REMOTE_TEST_FILTER=submit_group_benchmark ./tests/test_fg_vk
+  exit
+fi
 mode=${3:-plain}
 manifest=${4:-/home/xander/fg-ring-pack-abliterated/manifest.fgm}
 tag=${5:-run}

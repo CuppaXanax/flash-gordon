@@ -1,0 +1,48 @@
+#version 450
+#extension GL_KHR_shader_subgroup_basic : enable
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+layout(local_size_x=64) in;
+layout(set=0,binding=0,std430) buffer Data {uint data[];};
+layout(push_constant) uniform Push {uint n;uint stride;uint steps;uint unused;} p;
+shared uint partial[64];
+void main() {
+#if MODE == 0
+#elif MODE == 1
+    if(gl_GlobalInvocationID.x==0)data[0]=data[0]+1;
+#elif MODE == 2
+    uint lane=gl_LocalInvocationID.x;
+    partial[lane]=lane;
+    barrier();
+    for(uint s=32;s>0;s>>=1) {
+        if(lane<s)partial[lane]+=partial[lane+s];
+        barrier();
+    }
+    if(lane==0)data[4194303-gl_WorkGroupID.x]=partial[0];
+#elif MODE == 3
+    uint sum=0;
+    for(uint i=gl_GlobalInvocationID.x;i<p.n;i+=p.stride)sum+=data[i];
+    uint lane=gl_LocalInvocationID.x;
+    partial[lane]=sum;
+    barrier();
+    for(uint s=32;s>0;s>>=1) {
+        if(lane<s)partial[lane]+=partial[lane+s];
+        barrier();
+    }
+    if(lane==0)data[4194303-gl_WorkGroupID.x]=partial[0];
+#elif MODE == 4
+    if(gl_GlobalInvocationID.x==0) {
+        uint index=0;
+        for(uint i=0;i<p.steps;i++)index=data[index];
+        data[4194303]=index;
+    }
+#elif MODE == 5
+    uint sum=subgroupAdd(gl_LocalInvocationID.x);
+    if(subgroupElect())partial[gl_SubgroupID]=sum;
+    barrier();
+    if(gl_LocalInvocationID.x==0) {
+        uint total=0;
+        for(uint i=0;i<gl_NumSubgroups;i++)total+=partial[i];
+        data[4194303-gl_WorkGroupID.x]=total;
+    }
+#endif
+}

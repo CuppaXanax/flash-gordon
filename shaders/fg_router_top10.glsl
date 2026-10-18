@@ -1,0 +1,101 @@
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Logits { float logits[]; };
+layout(set = 0, binding = 1) writeonly buffer Selected { uint selected[]; };
+layout(set = 0, binding = 2) writeonly buffer Gates { float gates[]; };
+#ifdef FG_ROUTER_TILES
+layout(set = 0, binding = 3) writeonly buffer Tiles { uint tiles[]; };
+void write_tile(uint slot,uint expert) {
+    for(uint word=0u;word<9u;word++)tiles[slot*9u+word]=0xffffffffu;
+    tiles[slot*9u]=expert;
+    tiles[slot*9u+1u]=slot;
+}
+#endif
+
+layout(push_constant) uniform Push {
+    uint experts;
+    uint tokens;
+} pc;
+
+const uint TOP_K = 10u;
+shared float values[512];
+shared float reduced_values[512];
+shared uint reduced_ids[512];
+shared uint taken[512];
+shared float winners[TOP_K];
+shared uint winner_ids[TOP_K];
+shared uint invalid_logits;
+
+void main() {
+    uint token = gl_WorkGroupID.x;
+    uint lid = gl_LocalInvocationID.x;
+    if (token >= pc.tokens) return;
+    if (lid == 0u) invalid_logits = 0u;
+    barrier();
+    for (uint segment = 0u; segment < 2u; segment++) {
+        uint expert = lid + segment * 256u;
+        taken[expert] = 0u;
+        values[expert] = expert < pc.experts ?
+            logits[token * pc.experts + expert] : -1.0 / 0.0;
+        if (isnan(values[expert]) || (isinf(values[expert]) && values[expert] > 0.0))
+            atomicOr(invalid_logits, 1u);
+    }
+    barrier();
+    if (invalid_logits != 0u) {
+        if (lid < TOP_K) {
+            selected[token * TOP_K + lid] = 0xffffffffu;
+            gates[token * TOP_K + lid] = 0.0;
+#ifdef FG_ROUTER_TILES
+            write_tile(lid,0xffffffffu);
+#endif
+        }
+        return;
+    }
+
+    for (uint slot = 0u; slot < TOP_K; slot++) {
+        for (uint segment = 0u; segment < 2u; segment++) {
+            uint expert = lid + segment * 256u;
+            reduced_values[expert] = values[expert];
+            reduced_ids[expert] = taken[expert] != 0u ? 0xffffffffu : expert;
+        }
+        barrier();
+        for (uint stride = 256u; stride > 0u; stride >>= 1u) {
+            if (lid < stride) {
+                float left = reduced_values[lid];
+                float right = reduced_values[lid + stride];
+                uint left_id = reduced_ids[lid];
+                uint right_id = reduced_ids[lid + stride];
+                if (right > left || (right == left && right_id < left_id)) {
+                    reduced_values[lid] = right;
+                    reduced_ids[lid] = right_id;
+                }
+            }
+            barrier();
+        }
+        if (lid == 0u) {
+            winner_ids[slot] = reduced_ids[0];
+            winners[slot] = reduced_values[0];
+            taken[reduced_ids[0]] = 1u;
+            values[reduced_ids[0]] = -1.0 / 0.0;
+        }
+        barrier();
+    }
+
+    if (lid == 0u) {
+        float maximum = winners[0];
+        float denominator = 0.0;
+        float probabilities[TOP_K];
+        for (uint slot = 0u; slot < TOP_K; slot++) {
+            probabilities[slot] = exp(winners[slot] - maximum);
+            denominator += probabilities[slot];
+        }
+        for (uint slot = 0u; slot < TOP_K; slot++) {
+            selected[token * TOP_K + slot] = winner_ids[slot];
+            gates[token * TOP_K + slot] = probabilities[slot] / denominator;
+        }
+    }
+#ifdef FG_ROUTER_TILES
+    barrier();
+    if(lid<TOP_K)write_tile(lid,winner_ids[lid]);
+#endif
+}

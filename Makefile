@@ -85,6 +85,22 @@ vulkan/%.spv: shaders/%.comp
 	$(GLSLC) -O --target-env=vulkan1.1 -o $@ $<
 
 vulkan/fg_dense_q4_k.spv vulkan/fg_dense_q5_k.spv vulkan/fg_dense_q6_k.spv vulkan/fg_dense_iq4_nl.spv: shaders/fg_dense_quant_impl.glsl
+vulkan/fg_router_top10.spv vulkan/fg_router_top10_tiles.spv: shaders/fg_router_top10.glsl
+vulkan/fg_dense_q8_0_cooked_r8.spv vulkan/fg_shared_swiglu_q8.spv: shaders/fg_dense_q8_0_cooked_r8.glsl
+vulkan/fg_shared_swiglu_q4.spv: shaders/fg_dense_soa_impl.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_gdn_gate_controls*.comp)): shaders/fg_dense_soa_impl.glsl shaders/fg_dense_compact_gemv.glsl
+vulkan/fg_moe_decode_gate_up.spv vulkan/fg_roof_expert.spv: shaders/fg_moe_decode_gate_up.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_expert*.comp)): shaders/fg_moe_decode_gate_up.glsl
+vulkan/fg_moe_decode_down_reduce.spv vulkan/fg_roof_down_w32.spv vulkan/fg_roof_down_w64.spv: shaders/fg_moe_decode_down_reduce.glsl
+vulkan/fg_roof_down_split.spv vulkan/fg_roof_down_split_w64.spv: shaders/fg_moe_decode_down_reduce.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_down_slots*.comp)): shaders/fg_moe_decode_down_reduce.glsl
+vulkan/fg_roof_down_rows1.spv vulkan/fg_roof_down_rows2.spv: shaders/fg_roof_down_rows.glsl
+vulkan/fg_roof_hc_up_mix_iq4.spv vulkan/fg_roof_hc_up_mix_q8.spv: shaders/fg_roof_hc_up_mix.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_hc_down[48]*.comp shaders/fg_roof_hc_down_single*.comp)): shaders/fg_dense_soa_impl.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_stream*.comp)): shaders/fg_roof_stream.glsl
+vulkan/fg_qsa_decode_attention_split.spv vulkan/fg_roof_qsa_h1.spv vulkan/fg_roof_qsa_h3.spv vulkan/fg_roof_qsa_h6.spv: shaders/fg_qsa_decode_attention_split.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_dense*.comp)): shaders/fg_dense_soa_impl.glsl shaders/fg_dense_compact_gemv.glsl
+$(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_roof_dense_rows*.comp)): shaders/fg_roof_dense_rows.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_dense_soa*.comp)): shaders/fg_dense_soa_impl.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_dense_soa*tile*.comp)): shaders/fg_dense_soa_tile_impl.glsl
 $(patsubst shaders/%.comp,vulkan/%.spv,$(wildcard shaders/fg_dense_compact*.comp)): shaders/fg_dense_soa_impl.glsl shaders/fg_dense_compact_gemv.glsl
@@ -99,7 +115,17 @@ test-fg-profile-analysis:
 test-fg-dense-rates:
 	python3 -m unittest tools/test_fg_dense_rates.py
 
+.PHONY: test-fusion-ledger
+test-fusion-ledger:
+	python3 -m unittest tools/test_fusion_ledger.py
+
 tools/q4-repack: tools/q4_repack.c $(TEST_COMMON)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
+tools/bench-ngram-latency: tools/bench_ngram_latency.c $(TEST_COMMON) | shaders
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
+tools/bench-fabric-latency: tools/bench_fabric_latency.c src/fabric.o $(TEST_COMMON)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
 
 tools/q4-extract-pack: tools/q4_extract_pack.c $(TEST_COMMON)
@@ -110,6 +136,9 @@ tools/q4-compare-packs: tools/q4_compare_packs.c $(TEST_COMMON)
 
 tools/q4-eval-batch: tools/q4_eval_batch.c $(filter-out src/main.o,$(OBJ))
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.o,$^) $(LDLIBS)
+
+tools/bench-decode-fusion: tools/bench_decode_fusion.c src/model.c src/owner.o src/expert.o src/qsa.o $(TEST_COMMON) | shaders
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tools/bench_decode_fusion.c src/owner.o src/expert.o src/qsa.o $(TEST_COMMON) $(LDLIBS)
 
 tests/test_q4_repack: tests/test_q4_repack.c tools/q4_repack.c $(TEST_COMMON)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_q4_repack.c $(TEST_COMMON) $(LDLIBS)
@@ -189,8 +218,9 @@ test-gdn-fleet: tests/test_fg_vk
 	done
 
 clean:
+	rm -f tools/bench-decode-fusion tools/bench-decode-fusion.d
 	rm -f tests/test_q4_repack tests/test_q4_repack.d tools/q4-repack tools/q4-repack.d tools/q4-extract-pack tools/q4-extract-pack.d tools/q4-compare-packs tools/q4-compare-packs.d tools/q4-eval-batch tools/q4-eval-batch.d
 	rm -f tests/test_multi_session
 	rm -f tests/test_prefill_collective flash-gordon $(OBJ) $(DEP) vendor/*.o vendor/*.d tests/*.o tests/test_core tests/test_session tests/test_prefix tests/test_chat tests/test_chat_runtime tests/test_api tests/test_sampler tests/test_ngram_deployment tests/test_expert_prefill tests/test_qsa_prefill tests/test_owner_reduce tests/test_prefill_dispatch tests/test_decode_batch tests/test_expert_prefill.d tests/test_prefill_dispatch.d tests/test_decode_batch.d tests/test_fg_vk tests/test_hc_down_split tests/test_model_load tests/test_qsa_model_load tests/test_tokenizer tests/test_fabric tests/test_video vulkan/*.spv
 
--include $(DEP) tests/test_expert_prefill.d tests/test_prefill_dispatch.d tests/test_decode_batch.d tests/test_q4_repack.d tools/q4-repack.d tools/q4-extract-pack.d tools/q4-compare-packs.d tools/q4-eval-batch.d
+-include $(DEP) tests/test_expert_prefill.d tests/test_prefill_dispatch.d tests/test_decode_batch.d tests/test_q4_repack.d tools/q4-repack.d tools/q4-extract-pack.d tools/q4-compare-packs.d tools/q4-eval-batch.d tools/bench-decode-fusion.d

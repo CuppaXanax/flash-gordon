@@ -1,0 +1,12 @@
+#version 460
+layout(local_size_x=128)in;
+layout(set=0,binding=0)readonly buffer Partials{float x[];};
+layout(set=0,binding=1)writeonly buffer Low{float low[];};
+layout(set=0,binding=2)writeonly buffer Activated{float y[];};
+layout(push_constant)uniform Push{uint width,splits;}pc;
+void main(){
+    uint at=gl_GlobalInvocationID.x;if(at>=pc.width)return;
+    float v=0.0;
+    for(uint s=0u;s<pc.splits;s++)v+=x[s*pc.width+at];
+    low[at]=v;v*=0.25;y[at]=v/(1.0+exp(-v));
+}

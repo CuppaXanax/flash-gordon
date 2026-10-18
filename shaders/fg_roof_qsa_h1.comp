@@ -1,0 +1,4 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define HEADS_PER_WG 1u
+#include "fg_qsa_decode_attention_split.glsl"

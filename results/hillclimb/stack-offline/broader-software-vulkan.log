@@ -1,0 +1,92 @@
+FGFLAGS code=49 test=33 doc=77 removed=18 status=PASS
+Flash Gordon Vulkan device: llvmpipe (LLVM 20.1.2, 256 bits)
+  [roof_qsa] ... ROOF_QSA count=1 variant=1 splits=2 max_abs=5.96046e-08 PASS
+ROOF_QSA count=1 variant=1 splits=4 max_abs=5.96046e-08 PASS
+ROOF_QSA count=1 variant=1 splits=8 max_abs=5.96046e-08 PASS
+ROOF_QSA count=1 variant=2 splits=2 max_abs=5.96046e-08 PASS
+ROOF_QSA count=1 variant=2 splits=4 max_abs=5.96046e-08 PASS
+ROOF_QSA count=1 variant=2 splits=8 max_abs=5.96046e-08 PASS
+ROOF_QSA count=1 variant=3 splits=2 max_abs=5.96046e-08 PASS
+ROOF_QSA count=1 variant=3 splits=4 max_abs=5.96046e-08 PASS
+ROOF_QSA count=1 variant=3 splits=8 max_abs=5.96046e-08 PASS
+ROOF_QSA count=1 variant=4 splits=2 max_abs=5.96046e-08 PASS
+ROOF_QSA count=1 variant=4 splits=4 max_abs=5.96046e-08 PASS
+ROOF_QSA count=1 variant=4 splits=8 max_abs=5.96046e-08 PASS
+ROOF_QSA count=7 variant=1 splits=2 max_abs=4.76837e-07 PASS
+ROOF_QSA count=7 variant=1 splits=4 max_abs=4.76837e-07 PASS
+ROOF_QSA count=7 variant=1 splits=8 max_abs=4.76837e-07 PASS
+ROOF_QSA count=7 variant=2 splits=2 max_abs=4.76837e-07 PASS
+ROOF_QSA count=7 variant=2 splits=4 max_abs=4.76837e-07 PASS
+ROOF_QSA count=7 variant=2 splits=8 max_abs=4.76837e-07 PASS
+ROOF_QSA count=7 variant=3 splits=2 max_abs=4.76837e-07 PASS
+ROOF_QSA count=7 variant=3 splits=4 max_abs=4.76837e-07 PASS
+ROOF_QSA count=7 variant=3 splits=8 max_abs=4.76837e-07 PASS
+ROOF_QSA count=7 variant=4 splits=2 max_abs=4.76837e-07 PASS
+ROOF_QSA count=7 variant=4 splits=4 max_abs=4.76837e-07 PASS
+ROOF_QSA count=7 variant=4 splits=8 max_abs=4.76837e-07 PASS
+ROOF_QSA count=8 variant=1 splits=2 max_abs=5.96046e-07 PASS
+ROOF_QSA count=8 variant=1 splits=4 max_abs=5.96046e-07 PASS
+ROOF_QSA count=8 variant=1 splits=8 max_abs=4.76837e-07 PASS
+ROOF_QSA count=8 variant=2 splits=2 max_abs=5.96046e-07 PASS
+ROOF_QSA count=8 variant=2 splits=4 max_abs=5.96046e-07 PASS
+ROOF_QSA count=8 variant=2 splits=8 max_abs=4.76837e-07 PASS
+ROOF_QSA count=8 variant=3 splits=2 max_abs=5.96046e-07 PASS
+ROOF_QSA count=8 variant=3 splits=4 max_abs=5.96046e-07 PASS
+ROOF_QSA count=8 variant=3 splits=8 max_abs=4.76837e-07 PASS
+ROOF_QSA count=8 variant=4 splits=2 max_abs=5.96046e-07 PASS
+ROOF_QSA count=8 variant=4 splits=4 max_abs=5.96046e-07 PASS
+ROOF_QSA count=8 variant=4 splits=8 max_abs=4.76837e-07 PASS
+ROOF_QSA count=31 variant=1 splits=2 max_abs=7.15256e-07 PASS
+ROOF_QSA count=31 variant=1 splits=4 max_abs=9.53674e-07 PASS
+ROOF_QSA count=31 variant=1 splits=8 max_abs=8.34465e-07 PASS
+ROOF_QSA count=31 variant=2 splits=2 max_abs=7.15256e-07 PASS
+ROOF_QSA count=31 variant=2 splits=4 max_abs=9.53674e-07 PASS
+ROOF_QSA count=31 variant=2 splits=8 max_abs=8.34465e-07 PASS
+ROOF_QSA count=31 variant=3 splits=2 max_abs=7.15256e-07 PASS
+ROOF_QSA count=31 variant=3 splits=4 max_abs=9.53674e-07 PASS
+ROOF_QSA count=31 variant=3 splits=8 max_abs=8.34465e-07 PASS
+ROOF_QSA count=31 variant=4 splits=2 max_abs=7.15256e-07 PASS
+ROOF_QSA count=31 variant=4 splits=4 max_abs=9.53674e-07 PASS
+ROOF_QSA count=31 variant=4 splits=8 max_abs=8.34465e-07 PASS
+ROOF_QSA count=257 variant=1 splits=2 max_abs=0 PASS
+ROOF_QSA count=257 variant=1 splits=4 max_abs=1.19209e-06 PASS
+ROOF_QSA count=257 variant=1 splits=8 max_abs=1.43051e-06 PASS
+ROOF_QSA count=257 variant=2 splits=2 max_abs=0 PASS
+ROOF_QSA count=257 variant=2 splits=4 max_abs=1.19209e-06 PASS
+ROOF_QSA count=257 variant=2 splits=8 max_abs=1.43051e-06 PASS
+ROOF_QSA count=257 variant=3 splits=2 max_abs=0 PASS
+ROOF_QSA count=257 variant=3 splits=4 max_abs=1.19209e-06 PASS
+ROOF_QSA count=257 variant=3 splits=8 max_abs=1.43051e-06 PASS
+ROOF_QSA count=257 variant=4 splits=2 max_abs=0 PASS
+ROOF_QSA count=257 variant=4 splits=4 max_abs=1.19209e-06 PASS
+ROOF_QSA count=257 variant=4 splits=8 max_abs=1.43051e-06 PASS
+ROOF_QSA count=513 variant=1 splits=2 max_abs=1.07288e-06 PASS
+ROOF_QSA count=513 variant=1 splits=4 max_abs=9.53674e-07 PASS
+ROOF_QSA count=513 variant=1 splits=8 max_abs=1.54972e-06 PASS
+ROOF_QSA count=513 variant=2 splits=2 max_abs=1.07288e-06 PASS
+ROOF_QSA count=513 variant=2 splits=4 max_abs=9.53674e-07 PASS
+ROOF_QSA count=513 variant=2 splits=8 max_abs=1.54972e-06 PASS
+ROOF_QSA count=513 variant=3 splits=2 max_abs=1.07288e-06 PASS
+ROOF_QSA count=513 variant=3 splits=4 max_abs=9.53674e-07 PASS
+ROOF_QSA count=513 variant=3 splits=8 max_abs=1.54972e-06 PASS
+ROOF_QSA count=513 variant=4 splits=2 max_abs=1.07288e-06 PASS
+ROOF_QSA count=513 variant=4 splits=4 max_abs=9.53674e-07 PASS
+ROOF_QSA count=513 variant=4 splits=8 max_abs=1.54972e-06 PASS
+ROOF_QSA count=2051 variant=1 splits=2 max_abs=5.66244e-06 PASS
+ROOF_QSA count=2051 variant=1 splits=4 max_abs=2.02656e-06 PASS
+ROOF_QSA count=2051 variant=1 splits=8 max_abs=0 PASS
+ROOF_QSA count=2051 variant=2 splits=2 max_abs=5.66244e-06 PASS
+ROOF_QSA count=2051 variant=2 splits=4 max_abs=2.02656e-06 PASS
+ROOF_QSA count=2051 variant=2 splits=8 max_abs=0 PASS
+ROOF_QSA count=2051 variant=3 splits=2 max_abs=5.66244e-06 PASS
+ROOF_QSA count=2051 variant=3 splits=4 max_abs=2.02656e-06 PASS
+ROOF_QSA count=2051 variant=3 splits=8 max_abs=0 PASS
+ROOF_QSA count=2051 variant=4 splits=2 max_abs=5.66244e-06 PASS
+ROOF_QSA count=2051 variant=4 splits=4 max_abs=2.02656e-06 PASS
+ROOF_QSA count=2051 variant=4 splits=8 max_abs=0 PASS
+ok
+Flash Gordon native Vulkan production-dimension oracles: PASS
+Flash Gordon Vulkan device: llvmpipe (LLVM 20.1.2, 256 bits)
+  [roof_hc_up_mix] ... HC_UP_MIX k=320 q8=0 output_max=0 invalid fused HC up/mix dispatch
+FAIL
+native Vulkan oracle failed: invalid fused HC up/mix dispatch

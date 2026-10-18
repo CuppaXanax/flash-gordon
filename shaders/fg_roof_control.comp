@@ -1,0 +1,19 @@
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x=256)in;
+layout(set=0,binding=0)readonly buffer Weights{vec4 w[];};
+layout(set=0,binding=1)readonly buffer Input{vec4 x[];};
+layout(set=0,binding=2)writeonly buffer Output{float y[];};
+layout(push_constant)uniform Push{uint input_width;uint output_width;uint tokens;}pc;
+shared float partials[4];
+void main(){
+    uint lid=gl_LocalInvocationID.x,row=gl_WorkGroupID.x,token=gl_WorkGroupID.y;
+    vec4 acc=vec4(0.0);
+    for(uint i=lid;i<pc.input_width/4u;i+=256u)
+        acc=fma(w[row*(pc.input_width/4u)+i],x[token*(pc.input_width/4u)+i],acc);
+    float sum=subgroupAdd((acc.x+acc.y)+(acc.z+acc.w));
+    if(subgroupElect())partials[gl_SubgroupID]=sum;
+    barrier();
+    if(lid==0u)y[token*pc.output_width+row]=((partials[0]+partials[1])+partials[2])+partials[3];
+}

@@ -1,0 +1,23 @@
+test_aliases (test_roofline_ledger.RooflineAnalysisTests.test_aliases) ... ok
+test_block_drift_is_diagnostic (test_roofline_ledger.RooflineAnalysisTests.test_block_drift_is_diagnostic) ... ok
+test_exact (test_roofline_ledger.RooflineAnalysisTests.test_exact) ... ok
+test_expert_split_and_recurrent_normalization_are_not_free (test_roofline_ledger.RooflineAnalysisTests.test_expert_split_and_recurrent_normalization_are_not_free) ... ok
+test_grouped_controls_count_both_alpha_and_beta (test_roofline_ledger.RooflineAnalysisTests.test_grouped_controls_count_both_alpha_and_beta) ... ok
+test_grouping_preserves_unrelated_repeated_dispatches (test_roofline_ledger.RooflineAnalysisTests.test_grouping_preserves_unrelated_repeated_dispatches) ... ok
+test_hc_fusion_groups_do_not_drop_removed_dispatches (test_roofline_ledger.RooflineAnalysisTests.test_hc_fusion_groups_do_not_drop_removed_dispatches) ... ok
+test_incremental_dense_dispatch_scope (test_roofline_ledger.RooflineAnalysisTests.test_incremental_dense_dispatch_scope) ... ok
+test_nonfinite (test_roofline_ledger.RooflineAnalysisTests.test_nonfinite) ... ok
+test_round_resampling (test_roofline_ledger.RooflineAnalysisTests.test_round_resampling) ... ok
+test_split_profile_includes_merge (test_roofline_ledger.RooflineAnalysisTests.test_split_profile_includes_merge) ... ok
+test_tolerance (test_roofline_ledger.RooflineAnalysisTests.test_tolerance) ... ok
+test_wrong_length (test_roofline_ledger.RooflineAnalysisTests.test_wrong_length) ... ok
+test_expert_traffic_is_selected_not_full_slab (test_fusion_ledger.FusionLedgerTests.test_expert_traffic_is_selected_not_full_slab) ... ok
+test_load_rejects_missing_static_replay (test_fusion_ledger.FusionLedgerTests.test_load_rejects_missing_static_replay) ... ok
+test_norm_traffic_is_logical_not_scratch_capacity (test_fusion_ledger.FusionLedgerTests.test_norm_traffic_is_logical_not_scratch_capacity) ... ok
+test_pairing_averages_both_baselines_and_rejects_parity (test_fusion_ledger.FusionLedgerTests.test_pairing_averages_both_baselines_and_rejects_parity) ... ok
+test_unknown_traffic_is_not_zero (test_fusion_ledger.FusionLedgerTests.test_unknown_traffic_is_not_zero) ... ok
+
+----------------------------------------------------------------------
+Ran 18 tests in 0.379s
+
+OK

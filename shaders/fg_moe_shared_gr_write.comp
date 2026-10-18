@@ -1,0 +1,21 @@
+#version 460
+layout(local_size_x=256)in;
+layout(set=0,binding=0)readonly buffer Hyper{vec4 hyper[];};
+layout(set=0,binding=1)readonly buffer Reduced{vec4 reduced[];};
+layout(set=0,binding=2)readonly buffer Shared{vec4 shared_value[];};
+layout(set=0,binding=3)readonly buffer Scalar{float scalar[];};
+layout(set=0,binding=4)readonly buffer Injection{float injection[];};
+layout(set=0,binding=5)writeonly buffer Output{vec4 output_value[];};
+layout(push_constant)uniform Push{uint hidden;uint groups;}pc;
+void main(){
+    uint index=gl_GlobalInvocationID.x*4u;
+    if(index>=pc.hidden*pc.groups)return;
+    uint feature=index%pc.hidden,group=index/pc.hidden;
+    // Preserve the materialized shared-add rounding before the residual FMA.
+    precise vec4 block=reduced[feature/4u]+
+        (1.0/(1.0+exp(-scalar[0])))*shared_value[feature/4u];
+    vec4 h=hyper[index/4u];
+    float scale=injection[group];
+    output_value[index/4u]=vec4(h.x+block.x*scale,h.y+block.y*scale,
+        h.z+block.z*scale,h.w+block.w*scale);
+}

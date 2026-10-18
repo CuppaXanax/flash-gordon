@@ -1,0 +1,7 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define TYPE 20
+#define WG 64
+#define WAVE 64
+#define PREFETCH 4
+#include "fg_roof_stream.glsl"

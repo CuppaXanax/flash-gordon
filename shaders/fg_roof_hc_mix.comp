@@ -1,0 +1,36 @@
+#version 460
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x=256)in;
+layout(set=0,binding=0)readonly buffer Normed{float normed[];};
+layout(set=0,binding=1)readonly buffer UpLogits{float up[];};
+layout(set=0,binding=2)readonly buffer Partials{float partials[];};
+layout(set=0,binding=3)writeonly buffer Mixed{float mixed[];};
+layout(set=0,binding=4)writeonly buffer Injection{float injection[];};
+layout(push_constant)uniform Push{uint hidden;uint groups;uint tokens;uint pieces;}pc;
+float sigmoid(float value){return 1.0/(1.0+exp(-value));}
+void main(){
+    uint lane=gl_LocalInvocationID.x,workers=(pc.hidden+255u)/256u;
+    uint token=gl_WorkGroupID.x/workers,chunk=gl_WorkGroupID.x-token*workers;
+    if(token>=pc.tokens)return;
+    uint index=chunk*256u+lane;
+    if(index<pc.hidden){
+        float value=0.0;
+        [[unroll]] for(uint group=0u;group<4u;group++){
+            uint offset=(token*4u+group)*pc.hidden+index;
+            value=fma(sigmoid(up[offset]),normed[offset],value);
+        }
+        mixed[token*pc.hidden+index]=value*0.25;
+    }
+    if(chunk==0u&&lane<4u){
+        float dot=0.0;
+        // Prefetch four independent partial loads before each dependent sum.
+        uint piece=0u;
+        for(;piece+4u<=pc.pieces;piece+=4u){
+            uint at=(token*pc.pieces+piece)*4u+lane;
+            float a=partials[at],b=partials[at+4u],c=partials[at+8u],d=partials[at+12u];
+            dot+=a;dot+=b;dot+=c;dot+=d;
+        }
+        for(;piece<pc.pieces;piece++)dot+=partials[(token*pc.pieces+piece)*4u+lane];
+        injection[token*4u+lane]=2.0*sigmoid(dot*0.25);
+    }
+}

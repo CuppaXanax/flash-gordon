@@ -69,6 +69,30 @@ uint64_t fg_q8_0_cooked_tile_bytes(uint32_t input_width){if(!input_width||input_
 
 uint64_t fg_q8_0_cooked_matrix_bytes(uint32_t input_width,uint32_t rows){uint64_t tile_bytes=fg_q8_0_cooked_tile_bytes(input_width),tiles=((uint64_t)rows+FG_Q8_0_COOK_ROWS-1u)/FG_Q8_0_COOK_ROWS;if(!tile_bytes||!rows||tiles>UINT64_MAX/tile_bytes)return 0;return tiles*tile_bytes;}
 
+bool fg_expand_iq4_q8_cooked(const void *input,void *output,uint64_t output_bytes,
+    uint32_t input_width,uint32_t rows,bool dense_layout){
+    static const int8_t grid[16]={-127,-104,-83,-65,-49,-35,-22,-10,1,13,25,38,53,69,89,113};
+    uint64_t tile_bytes=fg_q8_0_cooked_tile_bytes(input_width),required=fg_q8_0_cooked_matrix_bytes(input_width,rows);
+    if(!input||!output||!required||required>SIZE_MAX||output_bytes<required)return false;
+    uint32_t groups=input_width/32u;
+    uint64_t quant_offset=((uint64_t)groups*32u+63u)&~UINT64_C(63);
+    const uint8_t *src=input;uint8_t *dst=output;
+    memset(dst,0,(size_t)required);
+    for(uint32_t row=0;row<rows;row++)for(uint32_t g=0;g<groups;g++){
+        const uint8_t *scale,*q;
+        if(dense_layout){
+            const uint8_t *tile=src+(uint64_t)(row/8u)*groups*144u;
+            scale=tile+((uint64_t)g*8u+row%8u)*2u;
+            q=tile+(uint64_t)groups*16u+((uint64_t)(row%8u)*groups+g)*16u;
+        }else{scale=src+((uint64_t)row*groups+g)*18u;q=scale+2u;}
+        uint8_t *tile=dst+(uint64_t)(row/16u)*tile_bytes;
+        memcpy(tile+((uint64_t)g*16u+row%16u)*2u,scale,2u);
+        int8_t *target=(int8_t *)(tile+quant_offset+((uint64_t)(row%16u)*groups+g)*32u);
+        for(uint32_t j=0;j<16u;j++){target[j]=grid[q[j]&15u];target[j+16u]=grid[q[j]>>4u];}
+    }
+    return true;
+}
+
 bool fg_cook_q8_0_rows(const void *input,void *output,uint64_t output_bytes,uint32_t input_width,uint32_t rows){uint64_t tile_bytes=fg_q8_0_cooked_tile_bytes(input_width),required=fg_q8_0_cooked_matrix_bytes(input_width,rows);if(!input||!output||!tile_bytes||!required||output_bytes<required)return false;uint32_t blocks=input_width/FG_QK8_0;uint64_t mask=FG_Q8_0_COOK_ALIGNMENT-1u,quant_offset=(FG_Q8_0_COOK_ROWS*(uint64_t)blocks*sizeof(uint16_t)+mask)&~mask;const uint8_t *source=input;uint8_t *destination=output;memset(destination,0,(size_t)required);for(uint32_t row=0;row<rows;row++)for(uint32_t block=0;block<blocks;block++){const uint8_t *src=source+((uint64_t)row*blocks+block)*FG_Q8_0_BLOCK_BYTES;uint8_t *dst=destination+(uint64_t)(row/FG_Q8_0_COOK_ROWS)*tile_bytes;uint32_t tile_row=row%FG_Q8_0_COOK_ROWS;memcpy(dst+((uint64_t)block*FG_Q8_0_COOK_ROWS+tile_row)*sizeof(uint16_t),src,sizeof(uint16_t));memcpy(dst+quant_offset+((uint64_t)tile_row*blocks+block)*FG_QK8_0,src+sizeof(uint16_t),FG_QK8_0);}return true;}
 
 bool fg_uncook_q8_0_rows(const void *input,void *output,uint64_t output_bytes,

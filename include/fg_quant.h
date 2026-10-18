@@ -24,6 +24,10 @@ uint64_t fg_q8_0_cooked_tile_bytes(uint32_t input_width);
 uint64_t fg_q8_0_cooked_matrix_bytes(uint32_t input_width,uint32_t rows);
 bool fg_cook_q8_0_rows(const void *input,void *output,uint64_t output_bytes,
 					   uint32_t input_width,uint32_t rows);
+/* Lossless IQ4_NL integer-grid expansion; preserves each original half scale.
+ * dense_layout accepts the eight-row SoA/compact IQ4 layout instead of GGML. */
+bool fg_expand_iq4_q8_cooked(const void *input,void *output,uint64_t output_bytes,
+    uint32_t input_width,uint32_t rows,bool dense_layout);
 bool fg_uncook_q8_0_rows(const void *input,void *output,uint64_t output_bytes,
 					     uint32_t input_width,uint32_t rows);
 uint64_t fg_q5_1_cooked_tile_bytes(uint32_t input_width);

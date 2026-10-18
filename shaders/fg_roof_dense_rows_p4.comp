@@ -1,0 +1,5 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define FG_ROWS_WG 64
+#define FG_ROWS_PREFETCH 4
+#include "fg_roof_dense_rows.glsl"

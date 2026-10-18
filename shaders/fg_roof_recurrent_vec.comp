@@ -1,0 +1,58 @@
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x=128)in;
+layout(set=0,binding=0)readonly buffer QKV{float qkv[];};
+layout(set=0,binding=0)readonly buffer QKVVector{vec4 qkv4[];};
+layout(set=0,binding=1)readonly buffer ZGate{float z[];};
+layout(set=0,binding=2)readonly buffer Alpha{float alpha[];};
+layout(set=0,binding=3)readonly buffer Beta{float beta[];};
+layout(set=0,binding=4)readonly buffer ADecay{float a_decay[];};
+layout(set=0,binding=5)readonly buffer DtBias{float dt_bias[];};
+layout(set=0,binding=6)readonly buffer NormWeight{float norm_weight[];};
+layout(set=0,binding=7)buffer State{vec4 state[];};
+layout(set=0,binding=8)writeonly buffer Output{vec4 result[];};
+layout(push_constant)uniform Push{uint value_heads,key_heads,head_dim;float epsilon;}pc;
+shared float query[128],key[128],qk[2];
+shared vec2 norms[2];
+shared vec4 memories[16],priors[16],delta[8];
+void main(){
+    uint lid=gl_LocalInvocationID.x,head=gl_WorkGroupID.x,kh=head%pc.key_heads;
+    uint kw=pc.key_heads*128u;
+    float q=qkv[kh*128u+lid],k=qkv[kw+kh*128u+lid];
+    vec2 norm=vec2(subgroupAdd(q*q),subgroupAdd(k*k));
+    if(subgroupElect())norms[gl_SubgroupID]=norm;
+    barrier();
+    q*=inversesqrt(norms[0].x+norms[1].x+pc.epsilon)/sqrt(128.0);
+    k*=inversesqrt(norms[0].y+norms[1].y+pc.epsilon);
+    query[lid]=q;key[lid]=k;
+    float dot_value=subgroupAdd(q*k);
+    if(subgroupElect())qk[gl_SubgroupID]=dot_value;
+    barrier();
+    uint column=lid%8u,part=lid/8u;
+    uint base=head*4096u+gl_WorkGroupID.y*8u+column;
+    float a=alpha[head]+dt_bias[head];
+    float decay=exp(a_decay[head]*(max(a,0.0)+log(1.0+exp(-abs(a)))));
+    vec4 cached[8],m=vec4(0.0),p=vec4(0.0);
+    [[unroll]]for(uint i=0u;i<8u;i++)cached[i]=state[base+(part*8u+i)*32u]*decay;
+    [[unroll]]for(uint i=0u;i<8u;i++){
+        m=fma(cached[i],vec4(key[part*8u+i]),m);
+        p=fma(cached[i],vec4(query[part*8u+i]),p);
+    }
+    m+=subgroupShuffleXor(m,8u);p+=subgroupShuffleXor(p,8u);
+    m+=subgroupShuffleXor(m,16u);p+=subgroupShuffleXor(p,16u);
+    m+=subgroupShuffleXor(m,32u);p+=subgroupShuffleXor(p,32u);
+    if(gl_SubgroupInvocationID<8u){
+        memories[gl_SubgroupID*8u+column]=m;priors[gl_SubgroupID*8u+column]=p;
+    }
+    barrier();
+    if(lid<8u){
+        vec4 total=memories[lid]+memories[lid+8u],old=priors[lid]+priors[lid+8u];
+        delta[lid]=(qkv4[2u*(kw/4u)+head*32u+gl_WorkGroupID.y*8u+lid]-total)/(1.0+exp(-beta[head]));
+        result[head*32u+gl_WorkGroupID.y*8u+lid]=fma(delta[lid],vec4(qk[0]+qk[1]),old);
+    }
+    barrier();
+    [[unroll]]for(uint i=0u;i<8u;i++)
+        state[base+(part*8u+i)*32u]=cached[i]+vec4(key[part*8u+i])*delta[column];
+}
