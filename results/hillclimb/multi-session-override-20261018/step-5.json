@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\nSTOPPED rank=0 pid=261414",
+    "Stderr": "touch: cannot touch '/home/xander/flash-gordon-live/20261015-abq-operator/supervisor.pause': Permission denied\n"
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\nSTOPPED rank=1 pid=185246",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\nSTOPPED rank=2 pid=181234",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\nSTOPPED rank=3 pid=180834",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\nSTOPPED rank=4 pid=183812",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\nSTOPPED rank=5 pid=180567",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\nSTOPPED rank=6 pid=181047",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\nSTOPPED rank=7 pid=185276",
+    "Stderr": ""
+  }
+]

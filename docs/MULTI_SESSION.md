@@ -1,5 +1,13 @@
 # Independent sessions through the ring
 
+**Current production: robustness source `11c7e39`, stack-1/mix-04, sessions 2,
+plus the watchdog**, promoted under the lease authority's explicit override.
+Fresh 44K/title replay, transport recovery and coordinator-SIGKILL checks pass.
+The prior **0.965996x short-decode point remains open**, not relabeled a pass.
+See [`MULTI_SESSION_OVERRIDE.md`](../results/hillclimb/MULTI_SESSION_OVERRIDE.md).
+
+## Historical qualification decisions
+
 Latest revised robustness-only gate:
 [`MULTI_SESSION_ROBUSTNESS.md`](../results/hillclimb/MULTI_SESSION_ROBUSTNESS.md).
 Five fresh pairs pass 32K decode, TTFT and greedy checks, but short decode's

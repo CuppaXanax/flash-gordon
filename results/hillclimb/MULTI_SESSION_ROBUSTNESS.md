@@ -1,5 +1,11 @@
 # Multi-session robustness qualification — 2026-10-18
 
+**Subsequently superseded for deployment only:**
+[`MULTI_SESSION_OVERRIDE.md`](MULTI_SESSION_OVERRIDE.md).
+The lease authority accepted the open short-decode point and the candidate was
+promoted after fresh functional gates. The failed statistical screen below is
+unchanged historical evidence.
+
 ## Decision: RESTORED BASELINE
 
 All five fresh pairs completed, but the short-decode paired-median guard failed. The exact original stack baseline A was restored and remains selected. Error: Revised solo/TTFT/greedy gate failed

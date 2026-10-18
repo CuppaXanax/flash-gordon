@@ -1,0 +1,1 @@
+systemctl start flash-gordon-ring.service; systemctl is-active flash-gordon-ring.service

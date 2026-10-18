@@ -1,0 +1,395 @@
+{
+  "method": "Nine alternating local WSL CPU-only paired processes; actual matching pipeline.c/header from production31508ee and candidate11c7e39, fake immediately ready fabric; no GPU, network or model",
+  "summary": [
+    {
+      "mode": "receive",
+      "prod_median_ns": 1468.53377,
+      "new_median_ns": 1458.543165,
+      "paired_delta_median_ns": -18.513879999999972,
+      "prod_range_ns": [
+        1439.8409,
+        1592.863015
+      ],
+      "new_range_ns": [
+        1445.38842,
+        1522.385315
+      ]
+    },
+    {
+      "mode": "budget",
+      "prod_median_ns": 2.962361,
+      "new_median_ns": 3.644325,
+      "paired_delta_median_ns": 0.7351920000000001,
+      "prod_range_ns": [
+        2.896477,
+        3.118269
+      ],
+      "new_range_ns": [
+        3.618474,
+        4.034544
+      ]
+    }
+  ],
+  "samples": [
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 308182313,
+      "ns_per_op": 1540.911565,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "prod",
+      "round": 0
+    },
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 290181059,
+      "ns_per_op": 1450.905295,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "new",
+      "round": 0
+    },
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 293887502,
+      "ns_per_op": 1469.43751,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "new",
+      "round": 1
+    },
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 293066682,
+      "ns_per_op": 1465.33341,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "prod",
+      "round": 1
+    },
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 318572603,
+      "ns_per_op": 1592.863015,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "prod",
+      "round": 2
+    },
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 289077684,
+      "ns_per_op": 1445.38842,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "new",
+      "round": 2
+    },
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 290003978,
+      "ns_per_op": 1450.01989,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "new",
+      "round": 3
+    },
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 293706754,
+      "ns_per_op": 1468.53377,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "prod",
+      "round": 3
+    },
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 299108387,
+      "ns_per_op": 1495.541935,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "prod",
+      "round": 4
+    },
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 291708633,
+      "ns_per_op": 1458.543165,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "new",
+      "round": 4
+    },
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 290107105,
+      "ns_per_op": 1450.535525,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "new",
+      "round": 5
+    },
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 300103146,
+      "ns_per_op": 1500.51573,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "prod",
+      "round": 5
+    },
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 287968180,
+      "ns_per_op": 1439.8409,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "prod",
+      "round": 6
+    },
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 301298814,
+      "ns_per_op": 1506.49407,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "new",
+      "round": 6
+    },
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 304477063,
+      "ns_per_op": 1522.385315,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "new",
+      "round": 7
+    },
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 290464688,
+      "ns_per_op": 1452.32344,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "prod",
+      "round": 7
+    },
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 293413835,
+      "ns_per_op": 1467.069175,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "prod",
+      "round": 8
+    },
+    {
+      "mode": "receive",
+      "iterations": 200000,
+      "elapsed_ns": 294702290,
+      "ns_per_op": 1473.51145,
+      "polls": 200000,
+      "checksum": 200000,
+      "arm": "new",
+      "round": 8
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 30505650,
+      "ns_per_op": 3.050565,
+      "polls": 0,
+      "checksum": 1290000000,
+      "arm": "prod",
+      "round": 0
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 40345441,
+      "ns_per_op": 4.034544,
+      "polls": 0,
+      "checksum": 1320000000,
+      "arm": "new",
+      "round": 0
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 36995427,
+      "ns_per_op": 3.699543,
+      "polls": 0,
+      "checksum": 1320000000,
+      "arm": "new",
+      "round": 1
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 29623613,
+      "ns_per_op": 2.962361,
+      "polls": 0,
+      "checksum": 1290000000,
+      "arm": "prod",
+      "round": 1
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 29017939,
+      "ns_per_op": 2.901794,
+      "polls": 0,
+      "checksum": 1290000000,
+      "arm": "prod",
+      "round": 2
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 37270994,
+      "ns_per_op": 3.727099,
+      "polls": 0,
+      "checksum": 1320000000,
+      "arm": "new",
+      "round": 2
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 37203565,
+      "ns_per_op": 3.720356,
+      "polls": 0,
+      "checksum": 1320000000,
+      "arm": "new",
+      "round": 3
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 29282632,
+      "ns_per_op": 2.928263,
+      "polls": 0,
+      "checksum": 1290000000,
+      "arm": "prod",
+      "round": 3
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 29835725,
+      "ns_per_op": 2.983573,
+      "polls": 0,
+      "checksum": 1290000000,
+      "arm": "prod",
+      "round": 4
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 36443247,
+      "ns_per_op": 3.644325,
+      "polls": 0,
+      "checksum": 1320000000,
+      "arm": "new",
+      "round": 4
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 36184744,
+      "ns_per_op": 3.618474,
+      "polls": 0,
+      "checksum": 1320000000,
+      "arm": "new",
+      "round": 5
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 29090460,
+      "ns_per_op": 2.909046,
+      "polls": 0,
+      "checksum": 1290000000,
+      "arm": "prod",
+      "round": 5
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 28964771,
+      "ns_per_op": 2.896477,
+      "polls": 0,
+      "checksum": 1290000000,
+      "arm": "prod",
+      "round": 6
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 36316689,
+      "ns_per_op": 3.631669,
+      "polls": 0,
+      "checksum": 1320000000,
+      "arm": "new",
+      "round": 6
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 36272122,
+      "ns_per_op": 3.627212,
+      "polls": 0,
+      "checksum": 1320000000,
+      "arm": "new",
+      "round": 7
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 30324337,
+      "ns_per_op": 3.032434,
+      "polls": 0,
+      "checksum": 1290000000,
+      "arm": "prod",
+      "round": 7
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 31182687,
+      "ns_per_op": 3.118269,
+      "polls": 0,
+      "checksum": 1290000000,
+      "arm": "prod",
+      "round": 8
+    },
+    {
+      "mode": "budget",
+      "iterations": 10000000,
+      "elapsed_ns": 36232930,
+      "ns_per_op": 3.623293,
+      "polls": 0,
+      "checksum": 1320000000,
+      "arm": "new",
+      "round": 8
+    }
+  ]
+}

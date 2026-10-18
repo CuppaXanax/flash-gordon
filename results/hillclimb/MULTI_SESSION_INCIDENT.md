@@ -1,5 +1,10 @@
 # Concurrent-prefill incident: 2026-10-18
 
+**Later deployment:** [`MULTI_SESSION_OVERRIDE.md`](MULTI_SESSION_OVERRIDE.md)
+records the explicit lease-authority override and fresh passing functional
+checks. The unchanged robustness candidate is now production; the historical
+NO-GO decisions and their measurements below are preserved.
+
 Follow-up under the user's revised robustness-only gate:
 [`MULTI_SESSION_ROBUSTNESS.md`](MULTI_SESSION_ROBUSTNESS.md).
 All five new pairs completed, but short decode missed its 0.97 paired-median

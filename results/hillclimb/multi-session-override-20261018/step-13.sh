@@ -1,0 +1,1 @@
+cat '/home/xander/flash-gordon-live/20261015-abq-operator/rank-0.pid'
