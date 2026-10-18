@@ -1,0 +1,6 @@
+{
+  "IP": "192.168.42.42",
+  "ExitCode": 0,
+  "Stdout": "/usr/sbin/setpriv\nactive",
+  "Stderr": "Running timer as unit: flash-gordon-robust-deadline.timer\nWill run service as unit: flash-gordon-robust-deadline.service\n"
+}

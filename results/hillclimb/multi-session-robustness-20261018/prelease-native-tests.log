@@ -1,0 +1,73 @@
+Adaptive prefill, streamed decode priority, fair turns and variable chunks: PASS
+Independent QSA namespaces, retained inode and reset isolation: PASS
+Real prefill wire: unequal concurrent quanta, short tail -> output, long survivor: PASS
+Offline old fatal boundary reproduced: output fault with other prefill in flight
+Contaminated ring: both coroutines unwound without another send/reset: PASS
+Independent two-session eight-rank pipeline: PASS
+request chatcmpl-fg-1792358551-1: mode expert-parallel, prefix miss, reused 0, reset none, prefill 60/60 tokens 60.00 tok/s, generation 1 tokens 2.00 tok/s, context 83/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-2: mode expert-parallel, prefix miss, reused 0, reset none, prefill 76/76 tokens 76.00 tok/s, generation 1 tokens 2.00 tok/s, context 114/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-3: mode expert-parallel, prefix miss, reused 0, reset none, prefill 81/81 tokens 81.00 tok/s, generation 1 tokens 2.00 tok/s, context 85/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-4: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 60/60 tokens 60.00 tok/s, generation 1 tokens 2.00 tok/s, context 65/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=2->1
+request chatcmpl-fg-1792358551-5: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 60/60 tokens 60.00 tok/s, generation 1 tokens 2.00 tok/s, context 65/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-6: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 101/101 tokens 101.00 tok/s, generation 1 tokens 2.00 tok/s, context 124/8192 media 1 image-tokens 4 video-tokens 0 video-frames 0 tower 1.10 s
+request chatcmpl-fg-1792358551-7: mode expert-parallel, prefix hit, reused 124, reset none, prefill 77/201 tokens 77.00 tok/s, generation 1 tokens 2.00 tok/s, context 224/8192 media 1 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-8: mode expert-parallel, prefix hit, reused 224, reset none, prefill 112/336 tokens 112.00 tok/s, generation 1 tokens 2.00 tok/s, context 359/8192 media 2 image-tokens 4 video-tokens 0 video-frames 0 tower 0.50 s
+request chatcmpl-fg-1792358551-9: mode expert-parallel, prefix hit, reused 359, reset none, prefill 73/432 tokens 73.00 tok/s, generation 1 tokens 2.00 tok/s, context 455/8192 media 2 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH message[0].media[0] kind=1->1 digest
+request chatcmpl-fg-1792358551-10: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 429/429 tokens 429.00 tok/s, generation 1 tokens 2.00 tok/s, context 452/8192 media 2 image-tokens 4 video-tokens 0 video-frames 0 tower 1.10 s
+request chatcmpl-fg-1792358551-11: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 101/101 tokens 101.00 tok/s, generation 1 tokens 2.00 tok/s, context 124/8192 media 1 image-tokens 4 video-tokens 0 video-frames 0 tower 1.10 s
+request chatcmpl-fg-1792358551-12: mode expert-parallel, prefix miss, reused 0, reset explicit, prefill 211/211 tokens 211.00 tok/s, generation 1 tokens 2.00 tok/s, context 234/8192 media 2 image-tokens 4 video-tokens 0 video-frames 0 tower 1.10 s
+request chatcmpl-fg-1792358551-13: mode expert-parallel, prefix miss, reused 0, reset explicit, prefill 282/282 tokens 282.00 tok/s, generation 1 tokens 2.00 tok/s, context 305/8192 media 2 image-tokens 4 video-tokens 0 video-frames 0 tower 1.10 s
+request chatcmpl-fg-1792358551-14: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 63/63 tokens 63.00 tok/s, generation 1 tokens 2.00 tok/s, context 86/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-15: mode expert-parallel, prefix hit, reused 86, reset none, prefill 73/159 tokens 73.00 tok/s, generation 1 tokens 2.00 tok/s, context 182/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=4->1
+request chatcmpl-fg-1792358551-16: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 67/67 tokens 67.00 tok/s, generation 1 tokens 2.00 tok/s, context 90/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-17: mode expert-parallel, prefix miss, reused 0, reset explicit, prefill 69/69 tokens 69.00 tok/s, generation 1 tokens 2.00 tok/s, context 92/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-18: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 1422/1422 tokens 1422.00 tok/s, generation 1 tokens 2.00 tok/s, context 1530/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-19: mode expert-parallel, prefix hit, reused 1530, reset none, prefill 106/1636 tokens 106.00 tok/s, generation 1 tokens 2.00 tok/s, context 1662/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-20: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 66/66 tokens 66.00 tok/s, generation 1 tokens 2.00 tok/s, context 89/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-21: mode expert-parallel, prefix miss, reused 0, reset explicit, prefill 139/139 tokens 139.00 tok/s, generation 1 tokens 2.00 tok/s, context 162/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=4->1
+request chatcmpl-fg-1792358551-22: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 1422/1422 tokens 1422.00 tok/s, generation 1 tokens 2.00 tok/s, context 1531/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-23: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 1422/1422 tokens 1422.00 tok/s, generation 1 tokens 2.00 tok/s, context 1445/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-24: mode expert-parallel, prefix hit, reused 1445, reset none, prefill 249/1694 tokens 249.00 tok/s, generation 1 tokens 2.00 tok/s, context 1802/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-25: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 1422/1422 tokens 1422.00 tok/s, generation 1 tokens 2.00 tok/s, context 1445/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-26: mode expert-parallel, prefix hit, reused 1445, reset none, prefill 331/1776 tokens 331.00 tok/s, generation 1 tokens 2.00 tok/s, context 1799/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-27: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 1507/1507 tokens 1507.00 tok/s, generation 1 tokens 2.00 tok/s, context 1530/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-28: mode expert-parallel, prefix hit, reused 1530, reset none, prefill 210/1740 tokens 210.00 tok/s, generation 1 tokens 2.00 tok/s, context 1763/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-29: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 1422/1422 tokens 1422.00 tok/s, generation 1 tokens 2.00 tok/s, context 1445/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=2->1
+request chatcmpl-fg-1792358551-30: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 1511/1511 tokens 1511.00 tok/s, generation 1 tokens 2.00 tok/s, context 1534/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-31: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 104/104 tokens 104.00 tok/s, generation 1 tokens 2.00 tok/s, context 127/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-32: mode expert-parallel, prefix hit, reused 127, reset none, prefill 175/302 tokens 175.00 tok/s, generation 1 tokens 2.00 tok/s, context 325/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-33: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 63/63 tokens 63.00 tok/s, generation 1 tokens 2.00 tok/s, context 86/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-34: mode expert-parallel, prefix hit, reused 86, reset none, prefill 113/199 tokens 113.00 tok/s, generation 1 tokens 2.00 tok/s, context 222/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-35: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 103/103 tokens 103.00 tok/s, generation 1 tokens 2.00 tok/s, context 126/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-36: mode expert-parallel, prefix hit, reused 126, reset none, prefill 155/281 tokens 155.00 tok/s, generation 1 tokens 2.00 tok/s, context 304/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-37: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 104/104 tokens 104.00 tok/s, generation 1 tokens 2.00 tok/s, context 127/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-38: mode expert-parallel, prefix hit, reused 127, reset none, prefill 73/200 tokens 73.00 tok/s, generation 1 tokens 2.00 tok/s, context 223/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-39: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 104/104 tokens 104.00 tok/s, generation 1 tokens 2.00 tok/s, context 127/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH message[1].content@0 stored="hello" echoed="tampered"
+request chatcmpl-fg-1792358551-40: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 177/177 tokens 177.00 tok/s, generation 1 tokens 2.00 tok/s, context 200/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-41: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 1435/1435 tokens 1435.00 tok/s, generation 1 tokens 2.00 tok/s, context 1458/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-42: mode expert-parallel, prefix hit, reused 1458, reset none, prefill 424/1882 tokens 424.00 tok/s, generation 1 tokens 2.00 tok/s, context 1905/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-43: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 104/104 tokens 104.00 tok/s, generation 1 tokens 2.00 tok/s, context 127/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+SESSION_MISMATCH messages=3->1
+request chatcmpl-fg-1792358551-44: mode expert-parallel, prefix miss, reused 0, reset public-history-mismatch, prefill 70/70 tokens 70.00 tok/s, generation 1 tokens 2.00 tok/s, context 93/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-45: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 114/114 tokens 114.00 tok/s, generation 1 tokens 2.00 tok/s, context 137/8192 media 1 image-tokens 4 video-tokens 0 video-frames 0 tower 1.10 s
+request chatcmpl-fg-1792358551-46: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 114/114 tokens 114.00 tok/s, generation 1 tokens 2.00 tok/s, context 137/8192 media 1 image-tokens 4 video-tokens 0 video-frames 0 tower 1.10 s
+request chatcmpl-fg-1792358551-48: mode expert-parallel, prefix miss, reused 0, reset failure, prefill 63/63 tokens 63.00 tok/s, generation 1 tokens 2.00 tok/s, context 72/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-49: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 114/114 tokens 114.00 tok/s, generation 1 tokens 2.00 tok/s, context 137/8192 media 1 image-tokens 4 video-tokens 0 video-frames 0 tower 1.10 s
+request chatcmpl-fg-1792358551-50: mode expert-parallel, prefix miss, reused 0, reset cold-start, prefill 62/62 tokens 62.00 tok/s, generation 1 tokens 2.00 tok/s, context 85/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-52: mode expert-parallel, prefix miss, reused 0, reset failure, prefill 134/134 tokens 134.00 tok/s, generation 1 tokens 2.00 tok/s, context 157/8192 media 0 image-tokens 0 video-tokens 0 video-frames 0 tower 0.00 s
+request chatcmpl-fg-1792358551-53: prefill interrupted after 512/2048 tokens, frontier 512, 2.0 s, client_failed 0
+session contracts: PASS
+{"event": "ring_ready", "kept_api": false, "at": 1792358552.3256936}
+.........{"event": "ring_ready", "kept_api": true, "at": 1792358552.3358326}
+.{"event": "ring_ready", "kept_api": true, "at": 1792358552.3385882}
+.
+----------------------------------------------------------------------
+Ran 11 tests in 0.019s
+
+OK

@@ -1,0 +1,6 @@
+{
+  "IP": "192.168.42.42",
+  "ExitCode": 0,
+  "Stdout": "/home/xander/flash-gordon-live/20261015-abq-operator/ab-instance-stack-3bac55ceb9c2.sh: OK\n/home/xander/flash-gordon-live/20261016-abq-stack-adaptive/flash-gordon: OK\n/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm: OK\nSTARTED rank=0 pid=259820",
+  "Stderr": ""
+}

@@ -1,5 +1,12 @@
 # Independent sessions through the ring
 
+Latest revised robustness-only gate:
+[`MULTI_SESSION_ROBUSTNESS.md`](../results/hillclimb/MULTI_SESSION_ROBUSTNESS.md).
+Five fresh pairs pass 32K decode, TTFT and greedy checks, but short decode's
+paired median is **0.965996x**, below the explicit 0.97 floor. Production was
+restored; the robustness runtime remains unpromoted. Production itself also
+fails the loaded cold-32K QoS target.
+
 Latest production incident follow-up:
 [`MULTI_SESSION_INCIDENT.md`](../results/hillclimb/MULTI_SESSION_INCIDENT.md).
 Recovery/routing fixes are **not promoted**; stack-1 plus mix-04, sessions 2

@@ -1,0 +1,1 @@
+touch '/home/xander/flash-gordon-live/20261015-abq-operator/supervisor.pause'; bash '/home/xander/flash-gordon-live/20261015-abq-operator/launch-current.sh' stop

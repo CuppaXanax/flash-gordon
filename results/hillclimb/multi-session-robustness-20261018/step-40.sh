@@ -1,0 +1,1 @@
+rm -f '/home/xander/flash-gordon-live/20261015-abq-operator/lease-active.json' '/home/xander/flash-gordon-live/20261015-abq-operator/supervisor.pause'

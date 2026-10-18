@@ -1,5 +1,12 @@
 # Concurrent-prefill incident: 2026-10-18
 
+Follow-up under the user's revised robustness-only gate:
+[`MULTI_SESSION_ROBUSTNESS.md`](MULTI_SESSION_ROBUSTNESS.md).
+All five new pairs completed, but short decode missed its 0.97 paired-median
+floor at 0.965996; the exact stack baseline was restored again. That follow-up
+also directly demonstrates production's loaded-prefill QoS miss. The original
+window and decision below remain historical and unchanged.
+
 ## Scope and causal confidence
 
 Baseline: stack/adaptive `31508ee`, mix-04, sessions 2; immutable release
