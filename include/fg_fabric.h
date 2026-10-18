@@ -13,6 +13,7 @@ void fg_fabric_set_receiver(fg_fabric *,fg_fabric_receiver,void *);
 void fg_fabric_set_slot(fg_fabric *,uint32_t);
 uint32_t fg_fabric_slot(const fg_fabric *);
 bool fg_fabric_multiplexed(const fg_fabric *);
+bool fg_fabric_connected(const fg_fabric *);
 uint32_t fg_frame_session_slot(const fg_frame_header *);
 fg_status fg_fabric_poll_slot(fg_fabric *,uint32_t,uint32_t,fg_fabric_class,
     uint32_t *,fg_frame_header *,void *,uint32_t,uint32_t *,fg_error *);

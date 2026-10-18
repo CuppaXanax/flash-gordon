@@ -3596,16 +3596,44 @@ static void test_model_name_admission(void) {
 }
 
 static void test_session_affinity(void){
-    const char *keys[2]={"chat","agent"};
-    bool active[2]={true,false};
-    CHECK(api_session_select("chat",keys,active)==0u);
-    CHECK(api_session_select("agent",keys,active)==1u);
-    CHECK(api_session_select("third",keys,active)==1u);
+    fg_chat_message messages[45];
+    char content[45][64];
+    for(size_t i=0;i<45u;i++){
+        snprintf(content[i],sizeof(content[i]),"agent conversation turn %zu",i);
+        messages[i]=(fg_chat_message){.role=i%2u?"assistant":"user",.content=content[i]};
+    }
+    api_public_session long_session={.valid=true,
+        .transcript={.messages=messages,.message_count=44u}};
+    fg_chat_message title_messages[2]={{.role="user",.content="What is going on owo"},
+        {.role="assistant",.content="side"}};
+    api_public_session short_session={0};
+    const api_public_session *sessions[2]={&long_session,&short_session};
+    api_chat_request continuation={.messages=messages,.message_count=45u};
+    api_chat_request title={.messages=title_messages,.message_count=2u};
+    bool active[2]={false,false};
+    uint64_t ages[2]={1u,2u};
+    CHECK(api_session_select(&title,sessions,active,ages)==1u); /* Free beats old agent. */
+    CHECK(api_session_select(&continuation,sessions,active,ages)==0u);
+    active[0]=true;
+    CHECK(api_session_select(&continuation,sessions,active,ages)==2u);
+    CHECK(api_session_select(&title,sessions,active,ages)==1u);
+    active[0]=false;
+    short_session=(api_public_session){.valid=true,
+        .transcript={.messages=messages,.message_count=2u}};
+    CHECK(api_session_select(&continuation,sessions,active,ages)==0u); /* Longest, not first. */
+    sessions[0]=&short_session;sessions[1]=&long_session;
+    CHECK(api_session_select(&continuation,sessions,active,ages)==1u);
+    sessions[0]=&long_session;sessions[1]=&short_session;
+    CHECK(api_session_select(&title,sessions,active,ages)==1u); /* Shorter beats LRU agent. */
     active[1]=true;
-    CHECK(api_session_select("third",keys,active)==2u);
-    keys[1]=NULL;active[0]=false;active[1]=false;
-    CHECK(api_session_select("new",keys,active)==1u);
-    CHECK(api_session_select(NULL,keys,active)==1u);
+    CHECK(api_session_select(&title,sessions,active,ages)==2u); /* Don't evict agent while side busy. */
+    active[1]=false;
+    char large[4096];memset(large,'x',sizeof(large)-1u);large[sizeof(large)-1u]=0;
+    fg_chat_message unrelated={.role="user",.content=large};
+    api_chat_request new_long={.messages=&unrelated,.message_count=1u};
+    CHECK(api_session_select(&new_long,sessions,active,ages)==0u);
+    ages[0]=3u;
+    CHECK(api_session_select(&new_long,sessions,active,ages)==1u); /* True LRU on no match. */
 
     api_engine_queue queue;api_engine_queue_init(&queue);queue.multiplexed=true;
     api_connection connection={0};
@@ -3621,6 +3649,11 @@ static void test_session_affinity(void){
     request.body=strdup(body);request.body_length=strlen(body);
     CHECK(api_engine_queue_try_push(&queue,&connection,&request)==API_ENGINE_ADMIT_QUEUED);
     CHECK(strcmp(hash,queue.entries[2].session_key));
+    body="{\"messages\":[{\"role\":\"user\",\"content\":\"/no_think side\"}]}";
+    request.body=strdup(body);request.body_length=strlen(body);
+    CHECK(api_engine_queue_try_push(&queue,&connection,&request)==API_ENGINE_ADMIT_QUEUED);
+    CHECK(queue.entries[3].routing&&
+          !strcmp(queue.entries[3].routing->messages[0].content,"side"));
     api_engine_queue_destroy(&queue);
 }
 

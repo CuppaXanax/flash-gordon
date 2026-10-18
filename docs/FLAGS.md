@@ -109,7 +109,8 @@ back. Idle resident slots do not count as contenders.
 | Flag | Default | Effect | Status |
 |---|---|---|---|
 | `FG_MULTI_PREFILL_TOKENS` | `128` | Contended prefill quantum, integer 32–256, capped by the sealed microbatch. With no other active request, use the full sealed microbatch instead. | variant (opt-in) |
-| `FG_MULTI_PREFILL_WINDOW` | `1` | Contended frames in flight, integer 1–8, capped by the full frame window. With no other active request, restore all eight frames. Raising this increases decode head-of-line blocking. | variant (opt-in) |
+| `FG_MULTI_PREFILL_WINDOW` | `1` | Frames in flight when a decoder is active, integer 1–8, capped by the full frame window. With no other active request, restore all eight frames. Raising this increases decode head-of-line blocking. Already-issued frames drain when a decoder arrives. | variant (opt-in) |
+| `FG_MULTI_PREFILL_ONLY_WINDOW` | `4` | Frames per session when both jobs are prefilling, integer 1–4. The default fills the shared eight-frame ring instead of sending one quantum per ring round trip; `1` reproduces the old two-prefill window. A transition to decode uses `FG_MULTI_PREFILL_WINDOW` without discarding outstanding frames. | variant (opt-in) |
 | `FG_MULTI_PREFILL_SLICE_US` | `15000` | Soft rank-service budget while another session decodes, integer 0–1000000 microseconds. Shrinks the token cap using the worst observed coordinator prefill-block cost per token, including its outgoing send. Starts conservatively at one token without a sample; never below one. `0` disables service-time sizing for fixed-cap bisection. Other ranks, fixed costs and already-issued frames can exceed the estimate; this is not a deadline guarantee. | variant (opt-in) |
 | `FG_MULTI_DECODE_PRIORITY` | `1` | Ready streamed decode, then other ready decode, then prefill; round-robin ties. `0` bisects to ready round-robin scheduling. Only `0` and `1` are accepted. | variant (opt-in) |
 

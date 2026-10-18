@@ -4226,6 +4226,10 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
     bool aborted=false;
     double ring_t0=dispatch_ts();
     while(status==FG_OK&&prefilled<token_count){
+        if(fg_pipeline_failed()){
+            fg_error_set(err,FG_ERR_UNAVAILABLE,"ring recovery interrupted prefill");
+            status=FG_ERR_UNAVAILABLE;break;
+        }
         fg_pipeline_budget budget=fg_pipeline_prefill_budget(microbatch,FG_PREFILL_FRAMES);
         if(issued_tokens<token_count&&in_flight<budget.frames){
             if(!aborted&&interrupted&&interrupted(interrupt_context))aborted=true;
@@ -4273,12 +4277,14 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
                 (uint16_t)chunk_tokens,slot->positions,hyper_host,
                 ngram_view?ngram_host:NULL,work_wire,work_capacity,err);
             if(status==FG_OK){
+                transport_pending(&coordinator->transport_state);
                 next_chunk++;in_flight++;issued_tokens+=chunk_tokens;
                 if(ring_trace){struct timespec issue_end;clock_gettime(CLOCK_MONOTONIC,&issue_end);
                     fprintf(stderr,
-                    "RING_ISSUE chunk=%u first=%u in_flight=%u issue_ms=%.1f t=%.3f\n",
+                    "RING_ISSUE chunk=%u first=%u in_flight=%u issue_ms=%.1f t=%.3f slot=%u session=%llu\n",
                     chunk,chunk_first,in_flight,
-                    elapsed_seconds(&issue_start,&issue_end)*1000.0,dispatch_ts()-ring_t0);}
+                    elapsed_seconds(&issue_start,&issue_end)*1000.0,dispatch_ts()-ring_t0,
+                    coordinator->output_session,(unsigned long long)coordinator->session_id);}
                 fg_pipeline_checkpoint();
             }
             continue;
@@ -4296,9 +4302,11 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
                 (uint64_t)microbatch*FG_HYPER_WIDTH,ngram_host,
                 (uint64_t)microbatch*FG_NGRAM_EMBED_VALUES,receive_wire,bytes,err);
             if(decode_status!=FG_OK){status=decode_status;break;}
-            if(work.destination_rank!=0u||manifest->layer_owner[work.layer]!=0u||
+            if(work.destination_rank!=0u||work.source_rank!=peer||
+               manifest->layer_owner[work.layer]!=0u||
                (work.layer>0u&&peer!=manifest->layer_owner[work.layer-1u])||
                fg_frame_request_id(&header)!=coordinator->session_id||
+               fg_frame_session_slot(&header)!=coordinator->output_session||
                fg_frame_sequence(&header)!=work.first_token*FG_LAYER_COUNT+work.layer||
                work.first_token<first_token||
                work.first_token+work.token_count>first_token+token_count){
@@ -4316,8 +4324,9 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
             }
             uint32_t chunk=slot->chunk_index;
             if(ring_trace)fprintf(stderr,
-                "RING_STAGE chunk=%u layer=%u in_flight=%u t=%.3f\n",
-                chunk,work.layer,in_flight,dispatch_ts()-ring_t0);
+                "RING_STAGE chunk=%u layer=%u in_flight=%u t=%.3f slot=%u session=%llu\n",
+                chunk,work.layer,in_flight,dispatch_ts()-ring_t0,
+                coordinator->output_session,(unsigned long long)coordinator->session_id);
             struct timespec own_start={0};
             if(ring_trace||coordinator->multi_session)
                 clock_gettime(CLOCK_MONOTONIC,&own_start);
@@ -4369,17 +4378,21 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
                 double seconds=elapsed_seconds(&own_start,&own_end);
                 if(status==FG_OK)fg_pipeline_observe_prefill(work.token_count,
                     (uint64_t)(seconds*1e9));
-                if(ring_trace)fprintf(stderr,"RING_OWN_BLOCK chunk=%u layers=%u..%u ms=%.1f\n",
-                    chunk,work.layer,last,seconds*1000.0);
+                if(ring_trace)fprintf(stderr,"RING_OWN_BLOCK chunk=%u layers=%u..%u ms=%.1f slot=%u session=%llu\n",
+                    chunk,work.layer,last,seconds*1000.0,coordinator->output_session,
+                    (unsigned long long)coordinator->session_id);
             }
         }else if(type==FG_MSG_PREFILL_LAYER_RESULT){
             fg_prefill_layer_result result={0};
             fg_status decode_status=fg_prefill_layer_result_decode(&result,hyper_host,
                 (uint64_t)microbatch*FG_HYPER_WIDTH,receive_wire,bytes,err);
             if(decode_status!=FG_OK){status=decode_status;break;}
-            if(result.destination_rank!=0u||
+            if(result.destination_rank!=0u||result.source_rank!=peer||
                result.source_rank!=manifest->layer_owner[FG_LAYER_COUNT-1u]||
                fg_frame_request_id(&header)!=coordinator->session_id||
+               fg_frame_session_slot(&header)!=coordinator->output_session||
+               fg_frame_sequence(&header)!=result.first_token*FG_LAYER_COUNT+
+                   FG_LAYER_COUNT-1u||
                result.first_token<first_token||
                result.first_token+result.token_count>first_token+token_count){
                 fg_error_set(err,FG_ERR_MISMATCH,"misrouted ring result");
@@ -4413,9 +4426,10 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
                 result.first_token,result.token_count,err);
             if(ring_trace){struct timespec result_end;clock_gettime(CLOCK_MONOTONIC,&result_end);
                 fprintf(stderr,
-                "RING_DONE chunk=%u in_flight=%u completed=%u handle_ms=%.1f t=%.3f\n",
+                "RING_DONE chunk=%u in_flight=%u completed=%u handle_ms=%.1f t=%.3f slot=%u session=%llu\n",
                 chunk,in_flight,completed,
-                elapsed_seconds(&result_start,&result_end)*1000.0,dispatch_ts()-ring_t0);}
+                elapsed_seconds(&result_start,&result_end)*1000.0,dispatch_ts()-ring_t0,
+                coordinator->output_session,(unsigned long long)coordinator->session_id);}
         }else if(type==FG_MSG_QSA_PAGE_RESULT){
             status=coordinator_warm_qsa_result(coordinator,peer,&header,receive_wire,bytes,err);
         }else{
@@ -4433,6 +4447,9 @@ static fg_status coordinator_prefill_pipeline_ring(fg_coordinator *coordinator,
         fg_status drain=coordinator_warm_qsa_drain(coordinator,err);
         if(drain!=FG_OK)status=drain;
     }
+    if((status==FG_OK||status==FG_ERR_INTERRUPTED)&&!in_flight)
+        transport_complete(&coordinator->transport_state);
+    else transport_poison(&coordinator->transport_state);
     if(status==FG_OK)prefilled=token_count;
     if(status==FG_OK)*output=last_output;
     /* Decode on rank 0 attaches to owners' committed state; the mirror did not
@@ -5665,6 +5682,11 @@ static fg_status runtime_reserve_history(fg_runtime *runtime,size_t count,fg_err
 static fg_status runtime_reset_state(fg_runtime *runtime,fg_prefix_reset_reason reason,
                                      fg_error *err){
     fg_status status=FG_OK;
+    if(fg_pipeline_failed()){
+        runtime->state_ready=false;
+        fg_error_set(err,FG_ERR_UNAVAILABLE,"ring recovery in progress");
+        return FG_ERR_UNAVAILABLE;
+    }
 
     if(!transport_ready(&runtime->coordinator.transport_state)&&
        runtime->coordinator.qsa_pages.warm_outstanding){
@@ -5786,6 +5808,7 @@ fg_status fg_runtime_set_sampler(fg_runtime *runtime,const fg_sampler_config *co
 void fg_runtime_close(fg_runtime *runtime){
     if(!runtime)return;
     if(runtime->shared_coordinator){
+        qsa_page_transport_destroy(&runtime->coordinator.qsa_pages);
         free(runtime->coordinator.decode_work_wire);
         free(runtime->coordinator.decode_result_wire);
         for(uint32_t i=0;i<FG_PREFILL_FRAMES;i++)
@@ -5811,6 +5834,41 @@ fg_status fg_runtime_activate(fg_runtime *runtime,fg_error *err){
 
 fg_fabric *fg_runtime_fabric(fg_runtime *runtime){return runtime->coordinator.fabric;}
 
+bool fg_runtime_transport_ready(const fg_runtime *runtime){
+    return runtime&&runtime->state_ready&&transport_ready(&runtime->coordinator.transport_state);
+}
+
+fg_status fg_runtime_reconnect(fg_runtime *runtime,fg_runtime *second,fg_error *err){
+    fg_runtime *sessions[2]={runtime,second};
+    fg_fabric *old=runtime->coordinator.fabric;
+    for(uint32_t i=0;i<2u;i++){
+        if(!sessions[i])continue;
+        qsa_page_transport_destroy(&sessions[i]->coordinator.qsa_pages);
+        sessions[i]->coordinator.fabric=NULL;
+        sessions[i]->state_ready=false;
+    }
+    fg_fabric_close(old);
+    fg_fabric *fabric=NULL;
+    fg_status status=fg_fabric_open(&fabric,runtime->manifest,0u,err);
+    if(status==FG_OK)status=rank_ready(fabric,0u,err);
+    if(status!=FG_OK){fg_fabric_close(fabric);return status;}
+    for(uint32_t i=0;i<2u;i++){
+        if(!sessions[i])continue;
+        fg_coordinator *c=&sessions[i]->coordinator;
+        c->fabric=fabric;c->session_id=0u;
+        atomic_store(&c->transport_state,FG_TRANSPORT_READY);
+        status=qsa_page_transport_create(&c->qsa_pages,fabric,&c->transport_state,err);
+        if(status==FG_OK)status=fg_runtime_activate(sessions[i],err);
+        if(status==FG_OK)status=runtime_reset_state(sessions[i],FG_PREFIX_RESET_FAILURE,err);
+        if(status!=FG_OK)break;
+    }
+    /* Both handles must retain the same fabric even if the second session's
+     * handshake failed, so the next retry closes it exactly once. */
+    runtime->coordinator.fabric=fabric;
+    if(second)second->coordinator.fabric=fabric;
+    return status;
+}
+
 fg_status fg_runtime_enable_pipeline(fg_runtime *runtime,fg_runtime **second,fg_error *err){
     *second=NULL;
     fg_coordinator *base=&runtime->coordinator;
@@ -5831,6 +5889,12 @@ fg_status fg_runtime_enable_pipeline(fg_runtime *runtime,fg_runtime **second,fg_
     if(!copy){fg_error_set(err,FG_ERR_OOM,"allocate second session");return FG_ERR_OOM;}
     base->multi_session=true;
     memcpy(&copy->coordinator,base,sizeof(*base));
+    atomic_init(&copy->coordinator.transport_state,FG_TRANSPORT_READY);
+    /* This contains callbacks into its owning coordinator, not shared model
+     * weights. A shallow copy makes slot 1 poison slot 0 on a transport fault. */
+    memset(&copy->coordinator.qsa_pages,0,sizeof(copy->coordinator.qsa_pages));
+    qsa_page_transport_create(&copy->coordinator.qsa_pages,base->fabric,
+        &copy->coordinator.transport_state,err);
     for(uint32_t i=0;i<FG_PREFILL_FRAMES;i++)
         copy->coordinator.prefill_expert[i].result_wire=NULL;
     copy->shared_coordinator=true;copy->manifest=runtime->manifest;

@@ -1,0 +1,21 @@
+[Unit]
+Description=Flash Gordon ordered ring supervisor
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=xander
+WorkingDirectory=/home/xander/flash-gordon-live/20261015-abq-operator
+ExecStart=/usr/bin/python3 /home/xander/flash-gordon-live/20261015-abq-operator/fg_ring_supervisor.py --config /home/xander/flash-gordon-live/20261015-abq-operator/supervisor.json
+Restart=always
+RestartSec=5
+TimeoutStopSec=50
+# Serving children are managed by their exact pinned executable/PID, not by
+# killing this watchdog's process group during maintenance.
+KillMode=process
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

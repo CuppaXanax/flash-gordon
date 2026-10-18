@@ -23,6 +23,10 @@ struct fg_fabric;
 fg_status fg_runtime_enable_pipeline(fg_runtime *runtime,fg_runtime **second,fg_error *err);
 fg_status fg_runtime_activate(fg_runtime *runtime,fg_error *err);
 struct fg_fabric *fg_runtime_fabric(fg_runtime *runtime);
+bool fg_runtime_transport_ready(const fg_runtime *runtime);
+/* Call only after all pipeline jobs have unwound and its receiver is detached.
+ * Rank supervision restarts workers when the old fabric closes. */
+fg_status fg_runtime_reconnect(fg_runtime *runtime,fg_runtime *second,fg_error *err);
 #define FG_RUNTIME_BOOT_CONTEXT_TOKENS FG_MANIFEST_DEFAULT_CONTEXT_TOKENS
 #define FG_RUNTIME_QSA_HOT_TOKENS 8192u
 #define FG_RUNTIME_QSA_CACHE_MIN_BYTES (UINT64_C(16) << 20u)

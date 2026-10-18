@@ -24,6 +24,16 @@ void fg_fabric_set_receiver(fg_fabric *f,fg_fabric_receiver receiver,void *conte
 void fg_fabric_set_slot(fg_fabric *f,uint32_t slot){if(f){f->slot=slot;if(slot)f->multiplexed=true;}}
 uint32_t fg_fabric_slot(const fg_fabric *f){return f?f->slot:0u;}
 bool fg_fabric_multiplexed(const fg_fabric *f){return f&&f->multiplexed;}
+bool fg_fabric_connected(const fg_fabric *f){
+    if(!f)return false;
+    for(uint32_t rank=0;rank<FG_RANK_COUNT;rank++)if(rank!=f->rank)
+        for(uint32_t cls=0;cls<2u;cls++){
+            uint8_t byte;
+            ssize_t n=recv(f->peer[rank][cls].fd,&byte,1u,MSG_PEEK|MSG_DONTWAIT);
+            if(n==0||(n<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK&&errno!=EINTR))return false;
+        }
+    return true;
+}
 uint32_t fg_frame_session_slot(const fg_frame_header *h){return ntohl(h->flags_be)>>24u;}
 typedef struct fabric_hello{uint32_t magic_be;uint16_t version_be;uint8_t rank;uint8_t channel;uint8_t manifest_sha256[32];}fabric_hello;
 

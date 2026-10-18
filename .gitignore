@@ -60,5 +60,6 @@ vulkan/*.spv
 .DS_Store
 
 tests/test_prefill_collective
+tests/test_pipeline_wire
 vendor/*.o
 vendor/*.d

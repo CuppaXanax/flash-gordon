@@ -13,7 +13,7 @@ typedef enum fg_pipeline_phase {
     FG_PIPELINE_DECODE
 } fg_pipeline_phase;
 typedef struct fg_pipeline_options {
-    uint32_t prefill_tokens,prefill_frames,prefill_slice_us;
+    uint32_t prefill_tokens,prefill_frames,prefill_slice_us,prefill_only_frames;
     bool decode_priority;
 } fg_pipeline_options;
 typedef struct fg_pipeline_budget {
@@ -44,6 +44,8 @@ typedef struct fg_pipeline {
     uint32_t next;
     fg_pipeline_options options;
     uint64_t prefill_ns_per_token;
+    bool failed;
+    fg_error failure;
 } fg_pipeline;
 
 fg_status fg_pipeline_options_load(fg_pipeline_options *options,fg_error *err);
@@ -60,5 +62,7 @@ void fg_pipeline_set_streaming(bool streaming);
 void fg_pipeline_checkpoint(void);
 fg_pipeline_budget fg_pipeline_prefill_budget(uint32_t tokens,uint32_t frames);
 void fg_pipeline_observe_prefill(uint32_t tokens,uint64_t service_ns);
+void fg_pipeline_abort(fg_pipeline *pipeline,const fg_error *error);
+bool fg_pipeline_failed(void);
 
 #endif

@@ -213,6 +213,7 @@ typedef struct api_engine_request {
     api_connection *connection;
     http_request http;
     char session_key[65];
+    api_chat_request *routing;
 } api_engine_request;
 
 /* Bounded FIFO transport queue (M2 admission policy).  A chat request is
@@ -229,6 +230,8 @@ typedef struct api_engine_queue {
     size_t outstanding;
     bool stopping;
     bool multiplexed;
+    atomic_bool recovering;
+    atomic_uint recovery_epoch;
 } api_engine_queue;
 
 typedef enum api_engine_admission {
@@ -1281,6 +1284,29 @@ static void api_public_session_free(api_public_session *session) {
     session->valid = false;
 }
 
+static bool api_request_no_think(api_chat_request *request){
+    bool disabled=false;
+    for(size_t i=0;i<request->message_count;i++){
+        fg_chat_message *message=&request->messages[i];
+        if(!message->content||strcmp(message->role,"user"))continue;
+        char *content=(char *)message->content;
+        size_t offset=0;
+        while(content[offset]&&isspace((unsigned char)content[offset]))offset++;
+        if(strncmp(content+offset,"/no_think",9u))continue;
+        size_t rest=offset+9u;
+        while(content[rest]&&isspace((unsigned char)content[rest]))rest++;
+        memmove(content,content+rest,strlen(content+rest)+1u);
+        disabled=true;
+    }
+    return disabled;
+}
+
+static void api_routing_free(api_engine_request *request){
+    if(!request->routing)return;
+    api_chat_request_free(request->routing);
+    free(request->routing);request->routing=NULL;
+}
+
 static bool api_text_equal(const char *left,const char *right) {
     return !strcmp(left ? left : "",right ? right : "");
 }
@@ -1422,6 +1448,12 @@ static bool api_public_session_prefix(const api_public_session *session,
                                                         session->transcript.message_count);
     size_t current_system=fg_chat_leading_system_count(request->messages,
                                                        request->message_count);
+    if(request->message_count-current_system<
+       session->transcript.message_count-previous_system){
+        api_mismatch(reason,reason_size,"messages=%zu->%zu",
+            session->transcript.message_count,request->message_count);
+        return false;
+    }
     /* The leading system run is delta-eligible and is not compared here, so a
      * media marker inside it would desynchronize the per-message media index
      * from the request media list.  Refuse the continuation instead (the
@@ -3254,6 +3286,8 @@ static bool api_connection_detect_client_gone(api_connection *conn) {
 
 static void api_engine_queue_init(api_engine_queue *queue) {
     memset(queue, 0, sizeof(*queue));
+    atomic_init(&queue->recovering,false);
+    atomic_init(&queue->recovery_epoch,0u);
     pthread_mutex_init(&queue->mutex, NULL);
     pthread_cond_init(&queue->cond, NULL);
 }
@@ -3263,6 +3297,7 @@ static void api_engine_queue_destroy(api_engine_queue *queue) {
     for (size_t i = 0; i < queue->count; i++) {
         size_t slot = (queue->head + i) % FG_API_ENGINE_QUEUE_CAPACITY;
         free(queue->entries[slot].http.body);
+        api_routing_free(&queue->entries[slot]);
         queue->entries[slot].http.body = NULL;
     }
     queue->head = 0;
@@ -3273,15 +3308,46 @@ static void api_engine_queue_destroy(api_engine_queue *queue) {
     pthread_cond_destroy(&queue->cond);
 }
 
-static uint32_t api_session_select(const char *key,const char *const keys[2],
-                                    const bool active[2]){
-    for(uint32_t slot=0;slot<2u;slot++)
-        if(key&&keys[slot]&&!strcmp(key,keys[slot]))return slot;
-    for(uint32_t slot=0;slot<2u;slot++)
-        if(!active[slot]&&!keys[slot])return slot;
-    for(uint32_t slot=0;slot<2u;slot++)
-        if(!active[slot])return slot;
-    return 2u;
+static size_t api_transcript_bytes(const api_chat_request *request){
+    size_t bytes=0;
+    if(!request)return 0;
+    for(size_t i=0;i<request->message_count;i++){
+        const fg_chat_message *m=&request->messages[i];
+        bytes+=m->content?strlen(m->content):0u;
+        for(size_t j=0;j<m->tool_call_count;j++){
+            const char *arguments=m->tool_calls[j].arguments_json;
+            bytes+=arguments?strlen(arguments):0u;
+        }
+    }
+    return bytes;
+}
+
+static uint32_t api_session_select(const api_chat_request *request,
+    const api_public_session *const sessions[2],const bool active[2],
+    const uint64_t used[2]){
+    uint32_t best=2u;
+    size_t longest=0u,sizes[2]={0};
+    for(uint32_t i=0;i<2u;i++){
+        sizes[i]=sessions[i]->valid?api_transcript_bytes(&sessions[i]->transcript):0u;
+        if(request&&api_public_session_prefix(sessions[i],request,NULL,0u)&&
+           (best>=2u||sizes[i]>longest||
+            (sizes[i]==longest&&active[best]&&!active[i]))){
+            best=i;longest=sizes[i];
+        }
+    }
+    /* An active matching conversation must finish before its continuation;
+     * sending it to the other slot duplicates work and loses resident state. */
+    if(best<2u)return active[best]?2u:best;
+    for(uint32_t i=0;i<2u;i++)
+        if(!active[i]&&!sessions[i]->valid)return i;
+    size_t requested=api_transcript_bytes(request);
+    for(uint32_t i=0;i<2u;i++){
+        if(active[i])continue;
+        uint32_t other=1u-i;
+        if(sizes[i]>requested&&sessions[other]->valid&&sizes[other]<sizes[i])continue;
+        if(best>=2u||used[i]<used[best])best=i;
+    }
+    return best;
 }
 
 /* The bound counts running plus queued requests, not physical ring occupancy. */
@@ -3290,11 +3356,22 @@ static api_engine_admission api_engine_queue_try_push(api_engine_queue *queue,
                                                       http_request *http) {
     api_engine_admission admission = API_ENGINE_ADMIT_FULL;
     char session_key[65]={0};
+    api_chat_request *routing=NULL;
     if(queue->multiplexed){
         fg_error ignored={0};
         json_parser parser={.cursor=http->body,.end=http->body+http->body_length,.err=&ignored};
         json_value *root=json_parse_value(&parser);
         json_value *user=json_object_get(root,"user");
+        json_value *model=json_object_get(root,"model");
+        if(root){
+            routing=calloc(1,sizeof(*routing));
+            if(routing&&parse_chat_request(root,
+                model&&model->type==JSON_STRING?model->as.string:"",
+                routing,&ignored)!=FG_OK){
+                api_chat_request_free(routing);free(routing);routing=NULL;
+            }
+            if(routing)api_request_no_think(routing);
+        }
         if(user&&user->type==JSON_STRING){
             fg_sha256 hash;uint8_t digest[32];
             fg_sha256_init(&hash);
@@ -3312,6 +3389,7 @@ static api_engine_admission api_engine_queue_try_push(api_engine_queue *queue,
         size_t slot = (queue->head + queue->count) % FG_API_ENGINE_QUEUE_CAPACITY;
         queue->entries[slot].connection = connection;
         queue->entries[slot].http = *http;
+        queue->entries[slot].routing=routing;
         memcpy(queue->entries[slot].session_key,session_key,sizeof(session_key));
         queue->count++;
         queue->outstanding++;
@@ -3319,6 +3397,9 @@ static api_engine_admission api_engine_queue_try_push(api_engine_queue *queue,
         pthread_cond_signal(&queue->cond);
     }
     pthread_mutex_unlock(&queue->mutex);
+    if(admission!=API_ENGINE_ADMIT_QUEUED&&routing){
+        api_chat_request_free(routing);free(routing);
+    }
     return admission;
 }
 
@@ -3335,6 +3416,7 @@ static bool api_engine_queue_cancel(api_engine_queue *queue, api_connection *con
         size_t slot = (queue->head + i) % FG_API_ENGINE_QUEUE_CAPACITY;
         api_engine_request *entry = &queue->entries[slot];
         if (entry->connection == connection) {
+            api_routing_free(entry);
             free(entry->http.body);
             entry->http.body = NULL;
             entry->connection = NULL;
@@ -3512,10 +3594,27 @@ static bool api_frontend_dispatch(api_frontend *frontend, api_connection *conn,
         handle_models(&sink, frontend->runtime, conn->keep_alive, &err);
         api_connection_complete_response(conn, !conn->keep_alive);
     } else if (!strcmp(http->method, "GET") && !strcmp(http->path, "/health")) {
-        handle_health(&sink, api_engine_queue_busy(frontend->engine), conn->keep_alive, &err);
+        if(frontend->engine->multiplexed){
+            bool recovering=atomic_load(&frontend->engine->recovering);
+            char body[160];
+            snprintf(body,sizeof(body),"{\"status\":\"%s\",\"busy\":%s,"
+                "\"ring_recovery\":true,\"recovery_epoch\":%u}",
+                recovering?"recovering":"ok",
+                api_engine_queue_busy(frontend->engine)?"true":"false",
+                atomic_load(&frontend->engine->recovery_epoch));
+            api_send_response(&sink,recovering?503u:200u,"application/json",
+                body,strlen(body),conn->keep_alive,&err);
+        }else handle_health(&sink, api_engine_queue_busy(frontend->engine), conn->keep_alive, &err);
         api_connection_complete_response(conn, !conn->keep_alive);
     } else if (!strcmp(http->method, "POST") &&
                !strcmp(http->path, "/v1/chat/completions")) {
+        if(atomic_load(&frontend->engine->recovering)){
+            api_send_error_response(&sink,503u,"ring recovery in progress",
+                conn->keep_alive,&err);
+            api_connection_complete_response(conn,!conn->keep_alive);
+            free(http->body);http->body=NULL;
+            return false;
+        }
         /* Ownership of the request body moves to the engine queue on success. */
         api_engine_admission admission =
             api_engine_queue_try_push(frontend->engine, conn, http);
@@ -3801,20 +3900,7 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
     /* Honor the /no_think directive: render an already-closed think block and
      * drop the directive from the user text, so short answers arrive without
      * spending the completion budget on stripped reasoning tokens. */
-    for (size_t i = 0; i < request.message_count; i++) {
-        if (!request.messages[i].content ||
-            strcmp(request.messages[i].role, "user") != 0) continue;
-        char *content = (char *)request.messages[i].content;
-        size_t offset = 0;
-        while (content[offset] == ' ' || content[offset] == '\n' ||
-               content[offset] == '\t' || content[offset] == '\r') offset++;
-        if (strncmp(content + offset, "/no_think", 9u) != 0) continue;
-        render_options.think_mode = FG_CHAT_THINK_OFF;
-        size_t rest = offset + 9u;
-        while (content[rest] == ' ' || content[rest] == '\n' ||
-               content[rest] == '\t' || content[rest] == '\r') rest++;
-        memmove(content, content + rest, strlen(content + rest) + 1u);
-    }
+    if(api_request_no_think(&request))render_options.think_mode=FG_CHAT_THINK_OFF;
     status = fg_chat_render(request.messages, request.message_count, &render_options,
                             &rendered, err);
     char session_mismatch[512]={0};
@@ -4058,7 +4144,11 @@ static fg_status handle_chat_completions(api_sink *sink, fg_runtime *runtime,
         api_public_session_free(public_session);
         if(status!=FG_ERR_INTERRUPTED&&
            fg_runtime_reset_failure(runtime,&reset_error)!=FG_OK){
-            *err=reset_error;
+            fprintf(stderr,"REQUEST_FAULT original=%d %s; reset=%d %s\n",
+                status,err->message,reset_error.code,reset_error.message);
+            /* Keep the first wire/GPU error: replacing it by a generic reset
+             * failure made the production incident impossible to diagnose. */
+            if(err->code==FG_OK)*err=reset_error;
             return reset_error.code;
         }
     }
@@ -4145,6 +4235,7 @@ typedef struct api_pipeline_job {
     fg_error error;
     char *key;
     bool reassigned;
+    uint64_t used;
 } api_pipeline_job;
 
 static void api_pipeline_generate(void *argument){
@@ -4154,6 +4245,11 @@ static void api_pipeline_generate(void *argument){
         api_public_session_free(&job->public_session);
         job->status=fg_runtime_reset(job->runtime,&job->error);
     }
+    if(job->status!=FG_OK){
+        api_sink sink={.fd=connection->fd,.connection=connection};
+        fg_error ignored={0};
+        api_send_error_response(&sink,503u,job->error.message,connection->keep_alive,&ignored);
+    }
     if(job->status==FG_OK&&!atomic_load(&connection->client_gone)){
         api_sink sink={.fd=connection->fd,.connection=connection};
         job->status=handle_chat_completions(&sink,job->runtime,&job->public_session,
@@ -4161,6 +4257,7 @@ static void api_pipeline_generate(void *argument){
     }
     api_connection_complete_response(connection,!connection->keep_alive);
     free(job->request.http.body);job->request.http.body=NULL;
+    api_routing_free(&job->request);
     api_engine_queue_complete(job->queue);
 }
 
@@ -4178,20 +4275,63 @@ static fg_status api_pipeline_engine(fg_runtime *runtime,api_engine_queue *queue
         pipeline.options.prefill_frames,pipeline.options.prefill_slice_us,
         pipeline.options.decode_priority?1u:0u);
     uint32_t active_slot=FG_PIPELINE_SESSIONS;
+    uint64_t used=0u;
+    double next_probe=0.0;
     while(status==FG_OK){
         bool active=pipeline.slots[0].active||pipeline.slots[1].active;
+        if(!active&&!pipeline.failed&&api_monotonic_seconds()>=next_probe){
+            next_probe=api_monotonic_seconds()+0.25;
+            if(!fg_fabric_connected(fg_runtime_fabric(runtime))){
+                fg_error fault={0};
+                fg_error_set(&fault,FG_ERR_IO,"idle ring peer disconnected");
+                atomic_fetch_add(&queue->recovery_epoch,1u);
+                atomic_store(&queue->recovering,true);
+                fg_pipeline_abort(&pipeline,&fault);
+            }
+        }
         bool progress=false;
         uint32_t slot=fg_pipeline_pick(&pipeline);
         if(slot<FG_PIPELINE_SESSIONS){
-            if(active_slot!=slot){
+            if(active_slot!=slot&&!pipeline.failed){
                 status=fg_runtime_activate(jobs[slot].runtime,err);
                 if(status!=FG_OK)break;
                 active_slot=slot;
             }
             progress=fg_pipeline_turn(&pipeline,slot);
-            if(!pipeline.slots[slot].active&&jobs[slot].status!=FG_OK){
-                status=jobs[slot].status;*err=jobs[slot].error;break;
+            if(!pipeline.slots[slot].active){
+                jobs[slot].used=++used;
+                if(jobs[slot].status!=FG_OK||
+                   !fg_runtime_transport_ready(jobs[slot].runtime)){
+                    fg_error fault=jobs[slot].error;
+                    if(fault.code==FG_OK)fg_error_set(&fault,FG_ERR_UNAVAILABLE,
+                        "request ended with an incomplete ring transaction");
+                    fprintf(stderr,"MULTI_SESSION_FAULT slot=%u code=%d %s\n",
+                        slot,fault.code,fault.message);
+                    if(!pipeline.failed)atomic_fetch_add(&queue->recovery_epoch,1u);
+                    atomic_store(&queue->recovering,true);
+                    fg_pipeline_abort(&pipeline,&fault);
+                }
             }
+        }
+        if(pipeline.failed){
+            if(pipeline.slots[0].active||pipeline.slots[1].active)continue;
+            fg_pipeline_destroy(&pipeline);
+            for(uint32_t i=0;i<FG_PIPELINE_SESSIONS;i++)
+                api_public_session_free(&jobs[i].public_session);
+            do{
+                status=fg_runtime_reconnect(runtime,jobs[1].runtime,err);
+                if(status!=FG_OK){
+                    fprintf(stderr,"RING_RECOVERY_RETRY %s\n",err->message);
+                    struct timespec pause={.tv_sec=2};nanosleep(&pause,NULL);
+                }
+            }while(status!=FG_OK&&!api_stop_requested);
+            if(status!=FG_OK)break;
+            status=fg_pipeline_init(&pipeline,fg_runtime_fabric(runtime),err);
+            if(status!=FG_OK)break;
+            active_slot=FG_PIPELINE_SESSIONS;
+            atomic_store(&queue->recovering,false);
+            fprintf(stderr,"RING_RECOVERED sessions=2\n");
+            continue;
         }
         if(status!=FG_OK||(!active&&api_stop_requested))break;
         if(!api_stop_requested){
@@ -4200,14 +4340,15 @@ static fg_status api_pipeline_engine(fg_runtime *runtime,api_engine_queue *queue
                 size_t entry=(queue->head+i)%FG_API_ENGINE_QUEUE_CAPACITY;
                 api_engine_request *request=&queue->entries[entry];
                 const char *key=request->session_key[0]?request->session_key:NULL;
-                const char *keys[2]={jobs[0].key,jobs[1].key};
                 bool busy[2]={pipeline.slots[0].active,pipeline.slots[1].active};
-                uint32_t selected=api_session_select(key,keys,busy);
+                const api_public_session *sessions[2]={
+                    &jobs[0].public_session,&jobs[1].public_session};
+                uint64_t ages[2]={jobs[0].used,jobs[1].used};
+                uint32_t selected=api_session_select(request->routing,sessions,busy,ages);
                 if(selected<FG_PIPELINE_SESSIONS&&!pipeline.slots[selected].active){
                     api_pipeline_job *job=&jobs[selected];
-                    job->reassigned=(job->key&&(!key||strcmp(key,job->key)))||
-                        (!job->key&&key&&job->public_session.valid);
-                    if(job->reassigned){free(job->key);job->key=NULL;}
+                    job->reassigned=false;
+                    if(job->key&&(!key||strcmp(key,job->key))){free(job->key);job->key=NULL;}
                     if(key&&!job->key)job->key=strdup(key);
                     if(key&&!job->key){
                         fg_error_set(err,FG_ERR_OOM,"allocate API session key");

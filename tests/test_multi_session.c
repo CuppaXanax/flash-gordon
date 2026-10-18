@@ -36,9 +36,17 @@ static int test_scheduler(void){
     unsetenv("FG_MULTI_PREFILL_TOKENS");unsetenv("FG_MULTI_PREFILL_WINDOW");
     unsetenv("FG_MULTI_DECODE_PRIORITY");
     unsetenv("FG_MULTI_PREFILL_SLICE_US");
+    unsetenv("FG_MULTI_PREFILL_ONLY_WINDOW");
     REQUIRE(fg_pipeline_options_load(&options,&error)==FG_OK);
     REQUIRE(options.prefill_tokens==128u&&options.prefill_frames==1u&&options.decode_priority);
     REQUIRE(options.prefill_slice_us==15000u);
+    REQUIRE(options.prefill_only_frames==4u);
+    const char *bad_windows[]={"0","5","x","-1"};
+    for(size_t i=0;i<sizeof(bad_windows)/sizeof(bad_windows[0]);i++){
+        setenv("FG_MULTI_PREFILL_ONLY_WINDOW",bad_windows[i],1);
+        REQUIRE(fg_pipeline_options_load(&options,&error)==FG_ERR_ARGUMENT);
+    }
+    unsetenv("FG_MULTI_PREFILL_ONLY_WINDOW");
     setenv("FG_MULTI_PREFILL_TOKENS","256",1);
     setenv("FG_MULTI_PREFILL_WINDOW","2",1);setenv("FG_MULTI_DECODE_PRIORITY","0",1);
     REQUIRE(fg_pipeline_options_load(&options,&error)==FG_OK);
@@ -69,7 +77,7 @@ static int test_scheduler(void){
     REQUIRE(prefill.budgets[0].tokens==512u&&prefill.budgets[0].frames==FG_PREFILL_FRAMES);
     REQUIRE(fg_pipeline_start(&pipeline,1u,scheduler_run,&decode,&error)==FG_OK);
     REQUIRE(fg_pipeline_turn(&pipeline,0u));
-    REQUIRE(prefill.budgets[1].tokens==128u&&prefill.budgets[1].frames==1u);
+    REQUIRE(prefill.budgets[1].tokens==128u&&prefill.budgets[1].frames==4u);
     REQUIRE(fg_pipeline_turn(&pipeline,1u));
     REQUIRE(pipeline.slots[1].streaming&&pipeline.slots[1].phase==FG_PIPELINE_DECODE);
     REQUIRE(fg_pipeline_turn(&pipeline,0u));

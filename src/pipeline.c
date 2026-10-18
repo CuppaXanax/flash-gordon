@@ -25,6 +25,8 @@ fg_status fg_pipeline_options_load(fg_pipeline_options *options,fg_error *err){
         &options->prefill_tokens,err);
     if(status==FG_OK)status=pipeline_option(getenv("FG_MULTI_PREFILL_WINDOW"),1u,1u,8u,
         &options->prefill_frames,err);
+    if(status==FG_OK)status=pipeline_option(getenv("FG_MULTI_PREFILL_ONLY_WINDOW"),4u,1u,4u,
+        &options->prefill_only_frames,err);
     if(status==FG_OK)status=pipeline_option(getenv("FG_MULTI_PREFILL_SLICE_US"),15000u,
         0u,1000000u,&options->prefill_slice_us,err);
     if(status==FG_OK)status=pipeline_option(getenv("FG_MULTI_DECODE_PRIORITY"),1u,0u,1u,
@@ -54,8 +56,10 @@ fg_pipeline_budget fg_pipeline_prefill_budget(uint32_t tokens,uint32_t frames){
         if(i==running->current||!running->slots[i].active)continue;
         if(budget.tokens>running->options.prefill_tokens)
             budget.tokens=running->options.prefill_tokens;
-        if(budget.frames>running->options.prefill_frames)
-            budget.frames=running->options.prefill_frames;
+        uint32_t window=running->slots[running->current].phase==FG_PIPELINE_PREFILL&&
+            running->slots[i].phase==FG_PIPELINE_PREFILL?
+            running->options.prefill_only_frames:running->options.prefill_frames;
+        if(budget.frames>window)budget.frames=window;
         if(running->slots[i].phase==FG_PIPELINE_DECODE&&running->options.prefill_slice_us){
             uint64_t limit=running->prefill_ns_per_token?
                 (uint64_t)running->options.prefill_slice_us*1000u/running->prefill_ns_per_token:1u;
@@ -91,6 +95,7 @@ static fg_status pipeline_receive(void *context,uint32_t wanted_peer,
     fg_fabric_class cls,int32_t timeout,uint32_t *peer,fg_frame_header *header,
     void *payload,uint32_t capacity,uint32_t *bytes,fg_error *err){
     fg_pipeline *pipeline=context;
+    if(pipeline->failed){if(err)*err=pipeline->failure;return pipeline->failure.code;}
     fg_pipeline_slot *slot=&pipeline->slots[pipeline->current];
     slot->wanted_peer=wanted_peer;slot->cls=cls;slot->peer=peer;
     slot->header=header;slot->payload=payload;slot->capacity=capacity;
@@ -100,6 +105,22 @@ static fg_status pipeline_receive(void *context,uint32_t wanted_peer,
     return slot->result;
 }
 
+bool fg_pipeline_failed(void){return running&&running->failed;}
+
+void fg_pipeline_abort(fg_pipeline *pipeline,const fg_error *error){
+    if(pipeline->failed)return;
+    pipeline->failed=true;
+    pipeline->failure=*error;
+    if(pipeline->failure.code==FG_OK)
+        fg_error_set(&pipeline->failure,FG_ERR_UNAVAILABLE,"ring recovery in progress");
+    for(uint32_t i=0;i<FG_PIPELINE_SESSIONS;i++){
+        fg_pipeline_slot *slot=&pipeline->slots[i];
+        if(!slot->active||!slot->waiting)continue;
+        if(slot->error)*slot->error=pipeline->failure;
+        slot->result=pipeline->failure.code;
+        slot->waiting=false;
+    }
+}
 fg_status fg_pipeline_init(fg_pipeline *pipeline,fg_fabric *fabric,fg_error *err){
     memset(pipeline,0,sizeof(*pipeline));
     fg_status status=fg_pipeline_options_load(&pipeline->options,err);
