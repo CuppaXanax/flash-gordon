@@ -1,5 +1,18 @@
 # Current production deployment
 
+**Latest robustness requalification, 2026-10-18: no runtime promotion.**
+Five new pairs pass 32K decode, TTFT and all 25 canonical greedy comparisons,
+but short decode's paired-median benefit is **0.965996**, below the explicit
+0.97 floor (CI [0.879970, 1.016834]: not a demonstrated statistical regression).
+The exact stack baseline below was restored and all eight identities, health,
+models and five real greedy API generations verified at
+**2026-10-18 22:05:49 UTC**. The new 60-minute lease was released after
+**36.23 minutes**. Main was not advanced. Production's cold-32K loaded chat
+already falls to **8.37 TPS**, with **200.07 ms p95 event gaps**; QoS was not
+this run's veto. Replay/transport/SIGKILL rechecks were skipped on fail-fast
+restoration after the solo guard failed.
+[Full new results on the incident branch](https://github.com/CuppaXanax/flash-gordon/blob/cuppaxanax/multi-session-int/results/hillclimb/MULTI_SESSION_ROBUSTNESS.md).
+
 **Current selection: stack-1/adaptive integration `31508ee` plus sealed
 mix-04, sessions 2, with the explicit full flag recipe below.** Five paired
 rounds against previous production `2d0f8a7` passed all six primary guards:
