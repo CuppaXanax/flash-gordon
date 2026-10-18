@@ -84,6 +84,33 @@ class SupervisorTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 control.control(".", "status")
 
+    def test_service_preserves_pinned_buffer_memlock(self):
+        unit = Path(__file__).with_name("flash-gordon-ring.service").read_text()
+        self.assertIn("LimitMEMLOCK=infinity", unit)
+
+    def test_restore_requires_active_lease(self):
+        with patch.object(control.Path, "read_text", return_value="1"), \
+                patch.object(control.Path, "is_file", return_value=False), \
+                patch.object(control.subprocess, "run") as run:
+            with self.assertRaises(ValueError):
+                control.control(".", "restore")
+            run.assert_not_called()
+
+    def test_restore_stops_before_copying_fixed_baseline(self):
+        events = []
+        with patch.object(control.Path, "read_text", return_value="1"), \
+                patch.object(control.Path, "is_file", return_value=True), \
+                patch.object(control.subprocess, "run",
+                             side_effect=lambda *args, **kwargs: events.append("stop")), \
+                patch.object(control.shutil, "copyfile",
+                             side_effect=lambda source, target:
+                             events.append((source.name, target.name))):
+            control.control(".", "restore")
+        self.assertEqual(events, [
+            "stop", ("launch-lease-baseline.sh", "launch-current.sh"),
+            ("lease-baseline.json", "current.json"),
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()

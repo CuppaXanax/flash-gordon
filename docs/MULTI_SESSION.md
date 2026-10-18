@@ -1,5 +1,10 @@
 # Independent sessions through the ring
 
+Latest production incident follow-up:
+[`MULTI_SESSION_INCIDENT.md`](../results/hillclimb/MULTI_SESSION_INCIDENT.md).
+Recovery/routing fixes are **not promoted**; stack-1 plus mix-04, sessions 2
+remains selected. Ordered supervision is installed and restart-tested.
+
 Current adaptive-scheduler qualification and deployment decision:
 [`MULTI_SESSION_FLEET.md`](../results/hillclimb/MULTI_SESSION_FLEET.md).
 That report distinguishes the user's revised solo/aggregate promotion rule
@@ -46,17 +51,26 @@ left unchanged; redesign power before another qualification run.
 ## Contract
 
 Start the API with `--sessions 2`; the default remains `--sessions 1` and its M2
-FIFO engine. Supply a stable, distinct top-level OpenAI `user` string for each
-conversation, for example `"user":"chat"` and `"user":"agent"`. The server hashes
-that string for affinity; it is not an authentication/tenant-security boundary.
+FIFO engine. Requests are routed by the longest matching canonical public
+message prefix, not by the optional OpenAI `user` field. A shortened replay or
+edited history stays in its closest slot but resets that slot: GDN state cannot
+rewind. Only a complete cached prefix qualifies for forward state reuse.
+A shared leading system prompt alone does not establish affinity. `user` is not
+an authentication/tenant-security boundary.
 Clients must still send the complete canonical conversation, including exact
 assistant/tool messages, to retain prefix reuse.
 
 There are two resident state slots, not an unbounded cache. Requests for the
-same identity serialize; a queued request for a busy identity does not prevent
-another identity using the other slot. A new identity can evict an **idle**
-slot, resetting only that slot. Missing `user` gets an idle slot without durable
-affinity; do not omit it for the two-user workload. The existing bound remains
+same resident conversation serialize; unrelated work can use the other slot.
+An unused slot wins before eviction. With no reusable prefix, eviction is LRU,
+except a short request waits for a free/shorter slot rather than evicting a
+longer conversation. A busy best-prefix match waits instead of duplicating
+resident state. Exact prefix reuse works without `user`, including side/title
+requests between agent turns. Busy slots are scored from their admitted request
+even while a mismatch has invalidated their old public cache. Protecting an idle
+long conversation can serialize two unrelated short requests: those represent
+three resident conversations, not the qualified two-user continuation workload.
+The existing bound remains
 four outstanding requests (running plus queued), with `429` on overflow.
 
 Only protocol-6 ring prefill/decode with complete expert slabs on block owners
@@ -64,6 +78,77 @@ is admitted. Legacy EP fan-out is not a supported two-session configuration.
 Deploy the same binary on every rank: the protocol version did not change, but
 old workers ignore the new frame-slot convention and are unsafe to mix.
 MTP and multimodal concurrency are not qualified by this text-serving change.
+
+## Transport recovery and supervision
+
+Ring-prefill sends mark their session transport pending until every issued
+frame drains. Failed or incomplete transactions poison it; no reset may mutate
+a failed pipeline. Each session owns its QSA transport callbacks and failure
+state, even though model weights and physical sockets are shared. Header checks
+include slot, nonce, source, token frontier and sequence. Ring traces identify
+the slot and nonce; request cleanup preserves the original wire/GPU error.
+
+A physical transport failure invalidates **both** in-flight computations and
+resident worker caches: unaffected streaming requests cannot continue across
+worker replacement. The coordinator unwinds both jobs, fails affected requests,
+keeps its listener/queue, and reconnects after workers restart. New generations
+and `/health` return HTTP 503 while recovering. Healthy multiplexed responses
+include `ring_recovery:true` and a monotonic `recovery_epoch`.
+
+Install `tools/fg_ring_control.py` on every owner beside the existing
+hash-pinned `launch-current.sh`/`current.json`, and write its numeric rank to
+`supervisor-rank`. Install `fg_ring_supervisor.py` and its JSON configuration on
+rank 0. The configuration supplies `operator`, contiguous `nodes` with `rank`
+and `host`, `user`, `identity`, `known_hosts`, `health`, `interval`, and
+`startup_timeout`. Use a dedicated coordinator SSH identity: authorize only
+`start`, `stop`, `status` (and active-lease rollback) through the forced control
+entry point, `from="192.168.42.42",restrict`. Provision host public keys through
+the trusted operator transport; strict host-key checking is mandatory. Never
+copy the private identity into source or qualification evidence.
+
+On rank 0, after provisioning, run:
+
+```bash
+op=/home/xander/flash-gordon-live/20261015-abq-operator
+python3 "$op/fg_ring_supervisor.py" --config "$op/supervisor.json" --check
+sudo install -m 644 tools/flash-gordon-ring.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now flash-gordon-ring.service
+sudo systemctl is-enabled flash-gordon-ring.service
+sudo systemctl is-active flash-gordon-ring.service
+```
+
+Keep `LimitMEMLOCK=infinity` in the unit: serving children must inherit the
+same pinned-buffer allowance as the production SSH launcher. The systemd
+default can make coordinator io_uring registration fail with `Cannot allocate
+memory`, even though the model itself loaded.
+
+Cold/failed API recovery stops rank 0, stops workers, starts workers, then starts
+rank 0. A live recovery-capable API only restarts workers and waits for a new
+healthy epoch; failed handshakes fall back to a complete ordered restart.
+Service startup after reboot uses this same ordering, not separate competing
+rank units.
+
+**Before taking a fleet lease**, create `$op/supervisor.pause` on rank 0 and
+stop `flash-gordon-ring.service`; check it is inactive before experiments.
+Stopping this unit deliberately leaves serving processes alone. Remove the
+sentinel and start the unit only after restoring/pinning the selected recipe.
+Do not leave a qualification deadline timer armed after returning the lease.
+
+Offline regressions (no model, GPU or fleet required):
+
+```bash
+export TMPDIR="$PWD/.build"
+make test-multi-session
+FG_MULTI_PREFILL_ONLY_WINDOW=1 ./tests/test_pipeline_wire
+bash tools/check-flags.sh
+```
+
+The synthetic wire test executes production prefill/output coroutines,
+framing and demultiplexing: unequal prefills, short tail, 128-to-1-token
+quantum transition, fault injection, poisoned reset and survivor unwind.
+Injected faults reproduce the old fatal **handling path**, not the unknown
+first physical/protocol fault in the preserved production log.
 
 ## Scheduling and ownership
 
@@ -106,8 +191,10 @@ output request before another job can overwrite it.
 With only one active request, prefill uses the **full sealed microbatch and all
 eight frames**, exactly as the single-session issue pipeline. An idle resident
 conversation does not throttle another request. With two active requests, the
-default is a maximum **128-token quantum and one frame per session**. While
-another session decodes, a **15 ms soft rank-service budget** can shrink that
+default is a maximum **128-token quantum**. Two prefills use **four frames
+per session**, filling an eight-frame steady-state ring instead of exposing
+round-trip latency with only two frames total. With a decoder active, prefill
+is limited to **one frame**. A **15 ms soft rank-service budget** can shrink that
 cap further, down to one token. It uses the worst observed coordinator
 prefill-block wall cost per token (including its outgoing send), learned also
 during idle/full-depth prefill. Without a sample it starts at one token rather

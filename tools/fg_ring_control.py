@@ -5,15 +5,23 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 
 
 def control(operator, action):
-    if action not in ("start", "stop", "status"):
-        raise ValueError("only start, stop and status are allowed")
+    if action not in ("start", "stop", "status", "restore"):
+        raise ValueError("only start, stop, status and lease restore are allowed")
     directory = Path(operator).resolve(strict=True)
     rank = int((directory / "supervisor-rank").read_text().strip())
     if rank < 0:
         raise ValueError("invalid local rank")
+    if action == "restore":
+        if not (directory / "lease-active.json").is_file():
+            raise ValueError("no active fleet lease")
+        subprocess.run(["bash", str(directory / "launch-current.sh"), "stop"], check=True)
+        shutil.copyfile(directory / "launch-lease-baseline.sh", directory / "launch-current.sh")
+        shutil.copyfile(directory / "lease-baseline.json", directory / "current.json")
+        return
     if action != "status":
         subprocess.run(["bash", str(directory / "launch-current.sh"), action], check=True)
         return
@@ -37,6 +45,6 @@ def control(operator, action):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--operator", required=True)
-    parser.add_argument("--action", choices=("start", "stop", "status"))
+    parser.add_argument("--action", choices=("start", "stop", "status", "restore"))
     args = parser.parse_args()
     control(args.operator, args.action or os.environ.get("SSH_ORIGINAL_COMMAND", ""))

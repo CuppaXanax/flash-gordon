@@ -1,0 +1,6 @@
+{
+  "IP": "192.168.42.42",
+  "ExitCode": 0,
+  "Stdout": "enabled\nactive\nOct 18 16:31:24 bc250-59b36574 systemd[1]: Started flash-gordon-ring.service - Flash Gordon ordered ring supervisor.\nOct 18 16:37:31 bc250-59b36574 python3[253823]: {\"event\": \"ring_ready\", \"kept_api\": true, \"at\": 1792355851.5207975}\nOct 18 17:14:26 bc250-59b36574 python3[253823]: {\"event\": \"recovery_failed\", \"error\": \"ring readiness deadline exceeded\"}\nOct 18 17:16:30 bc250-59b36574 systemd[1]: Stopping flash-gordon-ring.service - Flash Gordon ordered ring supervisor...\nOct 18 17:16:30 bc250-59b36574 python3[253823]: {\"event\": \"supervisor_retry\", \"error\": \"supervisor stopped or paused\"}\nOct 18 17:16:30 bc250-59b36574 systemd[1]: flash-gordon-ring.service: Deactivated successfully.\nOct 18 17:16:30 bc250-59b36574 systemd[1]: Stopped flash-gordon-ring.service - Flash Gordon ordered ring supervisor.\nOct 18 17:16:30 bc250-59b36574 systemd[1]: flash-gordon-ring.service: Consumed 17.405s CPU time over 45min 5.916s wall clock time, 3.5G memory peak, 3.6M memory swap peak.\nOct 18 17:16:30 bc250-59b36574 systemd[1]: Started flash-gordon-ring.service - Flash Gordon ordered ring supervisor.\nOct 18 17:17:37 bc250-59b36574 python3[256780]: {\"event\": \"ring_ready\", \"kept_api\": false, \"at\": 1792358257.5716484}",
+  "Stderr": ""
+}

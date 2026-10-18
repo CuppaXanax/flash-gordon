@@ -16,6 +16,7 @@ TimeoutStopSec=50
 # killing this watchdog's process group during maintenance.
 KillMode=process
 UMask=0077
+LimitMEMLOCK=infinity
 
 [Install]
 WantedBy=multi-user.target

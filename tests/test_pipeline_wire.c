@@ -16,11 +16,13 @@
 #define fg_uring_recv_all wire_recv_all
 #include "../src/runtime.c"
 #include "../src/fabric.c"
+#include <sys/resource.h>
 
 struct fg_vk_tensor {uint8_t *data;uint64_t size;};
 static fg_vk_tensor inputs[2],weights;
 static uint32_t selected;
 static bool inject_fault;
+static atomic_bool saw_single;
 static fg_vk_tensor tensor_new(uint64_t size){
     return (fg_vk_tensor){.data=calloc(1,size),.size=size};
 }
@@ -135,6 +137,7 @@ static void *receive_packets(void *argument){
                 abort();
             fg_output_result result={.source_rank=4u,.destination_rank=0u,
                 .token_index=work.token_index,.token=123u+work.session_slot,.logit=1.0f};
+            while(work.session_slot==0u&&!atomic_load(&saw_single))usleep(100);
             p->size=FG_OUTPUT_RESULT_BYTES;
             status=fg_output_result_encode(p->data,&result,&error);
             if(inject_fault&&fg_frame_session_slot(&header)==0u){
@@ -147,6 +150,8 @@ static void *receive_packets(void *argument){
                 128u*3u,hyper,128u*FG_HYPER_WIDTH,ngram,128u*FG_NGRAM_EMBED_VALUES,
                 wire,size,&error);
             if(status!=FG_OK)abort();
+            if(input->rank==1u&&fg_frame_session_slot(&header)==1u&&work.token_count==1u)
+                atomic_store(&saw_single,true);
             if(input->rank==1u){
                 work.source_rank=1u;work.destination_rank=0u;work.layer=6u;
                 work.flags=0u;work.ngram_embeddings=NULL;
@@ -191,6 +196,7 @@ static void prefill_job(void *argument){
         &profiled,NULL,NULL,&output,&probe->prefilled,&probe->error);
     if(probe->status==FG_OK){
         fg_pipeline_set_phase(FG_PIPELINE_DECODE);
+        fg_pipeline_observe_prefill(128u,UINT64_C(2560000000));
         probe->status=coordinator_output(&probe->coordinator,probe->count-1u,
             output,&probe->next,NULL,&probe->error);
     }
@@ -199,6 +205,8 @@ static void prefill_job(void *argument){
 
 int main(int argc,char **argv){
     inject_fault=argc==2&&!strcmp(argv[1],"--fault-output");
+    struct rlimit no_core={0};
+    if(setrlimit(RLIMIT_CORE,&no_core))abort();
     alarm(30);
     fg_error error={0};
     fg_manifest *manifest=calloc(1,sizeof(*manifest));
@@ -229,8 +237,7 @@ int main(int argc,char **argv){
     for(uint32_t i=0;i<3;i++)pthread_create(&sources[i].thread,NULL,receive_packets,&sources[i]);
     fg_pipeline pipeline;
     if(fg_pipeline_init(&pipeline,&fabric,&error)!=FG_OK)abort();
-    prefill_probe probes[2]={{.count=14u*128u+28u},
-        {.count=inject_fault?64u*128u:20u*128u}};
+    prefill_probe probes[2]={{.count=14u*128u+28u},{.count=64u*128u}};
     for(uint32_t i=0;i<2;i++){
         inputs[i]=tensor_new(128u*FG_HYPER_WIDTH*4u);
         probes[i].coordinator=(fg_coordinator){.manifest=manifest,.fabric=&fabric,
@@ -286,5 +293,25 @@ int main(int argc,char **argv){
         pthread_cond_signal(&outputs[i].cond);pthread_mutex_unlock(&outputs[i].mutex);
         pthread_join(outputs[i].thread,NULL);
     }
+    if(!atomic_load(&saw_single))abort();
+    for(uint32_t i=0;i<2u;i++){
+        free(inputs[i].data);
+        for(uint32_t f=0;f<FG_PREFILL_FRAMES;f++){
+            fg_vk_tensor *token=probes[i].coordinator.prefill_layer[f].token_tensor;
+            free(token->data);free(token);
+            if(f<2u){
+                fg_vk_tensor *output=probes[i].coordinator.ring_output[f];
+                free(output->data);free(output);
+            }
+        }
+        packet *p=outputs[i].head;
+        while(p){packet *next=p->next;free(p->data);free(p);p=next;}
+        pthread_mutex_destroy(&outputs[i].mutex);pthread_cond_destroy(&outputs[i].cond);
+    }
+    for(uint32_t rank=1;rank<FG_RANK_COUNT;rank++)for(uint32_t cls=0;cls<2;cls++){
+        close(fabric.peer[rank][cls].fd);close(peers[rank][cls]);
+        pthread_mutex_destroy(&fabric.peer[rank][cls].send_mutex);
+    }
+    free(manifest);
     return 0;
 }

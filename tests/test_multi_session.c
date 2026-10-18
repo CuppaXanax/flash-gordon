@@ -119,6 +119,18 @@ static int test_scheduler(void){
     REQUIRE(outside.tokens==64u&&outside.frames==FG_PREFILL_FRAMES);
     fg_pipeline_observe_prefill(1u,UINT64_MAX);
     REQUIRE(pipeline.prefill_ns_per_token==10000000u);
+    fg_coordinator original={0},copy={0};
+    atomic_init(&original.transport_state,FG_TRANSPORT_READY);
+    REQUIRE(qsa_page_transport_create(&original.qsa_pages,NULL,
+        &original.transport_state,&error)==FG_OK);
+    memcpy(&copy,&original,sizeof(copy));
+    atomic_init(&copy.transport_state,FG_TRANSPORT_READY);
+    REQUIRE(copy.qsa_pages.transport_state==&original.transport_state);
+    REQUIRE(qsa_page_transport_create(&copy.qsa_pages,NULL,
+        &copy.transport_state,&error)==FG_OK);
+    transport_poison(copy.qsa_pages.transport_state);
+    REQUIRE(!transport_ready(&copy.transport_state));
+    REQUIRE(transport_ready(&original.transport_state));
     ring_slot slots[FG_PREFILL_FRAMES]={0};
     uint32_t frontier=0u,first=17u;
     const uint16_t counts[]={128u,32u,1u,6u,256u,19u};

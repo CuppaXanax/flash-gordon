@@ -1,0 +1,6 @@
+{
+  "IP": "192.168.42.42",
+  "ExitCode": 0,
+  "Stdout": "active\nOct 18 17:16:30 bc250-59b36574 systemd[1]: flash-gordon-ring.service: Deactivated successfully.\nOct 18 17:16:30 bc250-59b36574 systemd[1]: Stopped flash-gordon-ring.service - Flash Gordon ordered ring supervisor.\nOct 18 17:16:30 bc250-59b36574 systemd[1]: flash-gordon-ring.service: Consumed 17.405s CPU time over 45min 5.916s wall clock time, 3.5G memory peak, 3.6M memory swap peak.\nOct 18 17:16:30 bc250-59b36574 systemd[1]: Started flash-gordon-ring.service - Flash Gordon ordered ring supervisor.\nOct 18 17:17:37 bc250-59b36574 python3[256780]: {\"event\": \"ring_ready\", \"kept_api\": false, \"at\": 1792358257.5716484}\n[rank 0] QSA decode session: 262144 logical, 131072 cache pages, 2 layers, 37.0 MiB eager index, 618.0 MiB record cache\n[rank 0] Vulkan memory: live_requested=12646718264 live_allocated=12646718288 peak_requested=12646718264 peak_allocated=12646718288 live_allocations=74\nFG_MULTI_SESSION sessions=2 idle_prefill=full quantum=128 window=1 slice_us=15000 decode_priority=1",
+  "Stderr": ""
+}

@@ -3646,6 +3646,15 @@ static void test_session_affinity(void){
     api_chat_request other_title={.messages=&other_side,.message_count=1u};
     CHECK(api_session_select(&other_title,sessions,active,ages)==2u);
     active[1]=false;
+    fg_chat_message system_history[3]={{.role="system",.content="shared system"},
+        {.role="user",.content="agent primer"},{.role="assistant",.content="Ready"}};
+    api_public_session system_session={.valid=true,
+        .transcript={.messages=system_history,.message_count=3u}};
+    api_chat_request primer={.messages=system_history,.message_count=2u};
+    CHECK(api_session_match_bytes(&system_session,&primer)>0u);
+    fg_chat_message system_title[2]={system_history[0],other_side};
+    api_chat_request unrelated_title={.messages=system_title,.message_count=2u};
+    CHECK(api_session_match_bytes(&system_session,&unrelated_title)==0u);
 
     api_engine_queue queue;api_engine_queue_init(&queue);queue.multiplexed=true;
     api_connection connection={0};
