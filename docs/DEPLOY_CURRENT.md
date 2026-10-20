@@ -1,5 +1,44 @@
 # Current production deployment
 
+## Pending misroute candidate (not deployed)
+
+The `cuppaxanax/misroute-fix` candidate is built only on dev host `.50`, in
+`/home/xander/flash-gordon-misroute`; production remains the selection below.
+Do not install/restart any owner until a new deploy lease is granted.
+The candidate needs the new binary on **all eight ranks**, not just rank 0.
+Shaders, weights, manifest and serving flags are unchanged.
+
+The October 20 `06:53:25Z` fault is consistent with an unused output-slice race:
+the old final owner sent split slices even for non-greedy/penalized sampling,
+but rank 4 could return its full-head sample before rank 0 received that slice.
+The next decode then rejected the late slice's **token and sequence**, even with
+the correct session nonce, slot, peer and topology. An offline test exercises
+the real final-owner dispatch and forces this result-before-slice order;
+restoring the old send conditions fails the regression. The fix emits slices
+only when the coordinator requests greedy split output, for both 2/4-way heads.
+Both slice receivers now report all got/expected route fields, including slot.
+
+This was **not the first decode** after prefill: the failed client record
+contains 2,120 characters of already-streamed reasoning. Five prefill chunks
+completed with `in_flight=0`; continuation logs kept the same slot-1 nonce.
+M-RoPE positions travel separately from raw token indices/sequence numbers.
+Worker logs on `.43`–`.49`, including rank 7, contain only post-recovery startup
+at `06:54:31Z`, not per-frame evidence of the fault. The original error lacks
+field values and the client trace lacks sampler parameters, so exact attribution
+of this incident remains unproven; the transport defect itself is reproduced.
+
+Dev validation: release build, `make test-multi-session`, `test_core`, and the
+new model/GPU-free `test_decode_output` pass. The old 4-way send behavior fails
+with token/sequence mismatches; fixed 2/4-way greedy, temperature sampling,
+presence/repetition penalties, compressed positions and all eight diagnostic
+checks pass. AddressSanitizer linking is unavailable on this dev image
+(`libasan.so.8.0.0` missing); the normal release test was rebuilt afterward.
+Candidate binary SHA256:
+`a521cc997b298a96a6f8ac86081697928845f070b9b6916c2e1fc6874980cd56`.
+[Evidence and validation receipt](../results/hillclimb/misroute-20261020/validation.json).
+
+## Live selection
+
 **Current selection: vision-text fix source `e66ff47` (production source
 `7490482` plus the chat-render fix) on stack-1, sealed mix-04, sessions 2,
 plus the ordered watchdog.** The prior lease authority explicitly

@@ -763,10 +763,63 @@ static fg_status validate_block_hidden(uint32_t rank,uint32_t token,
     return FG_OK;
 }
 
-/* Execute this rank's whole layer block for one decode token and hand the hyper
- * state to the next block owner (or back to rank 0 as the final result).  The
- * block owner's own GDN/QSA/PLE state was advanced by ring prefill, so no
- * state is shipped: only the 40 KiB hyper vector moves. */
+static fg_status worker_decode_output(fg_fabric *fabric,const fg_manifest *manifest,
+    uint32_t self,uint64_t request,const fg_layer_work *work,uint32_t last,
+    layer_work_context *context,fg_error *err){
+    fg_status status=FG_OK;
+    uint32_t output_owner=fg_output_owner_rank(manifest);
+    bool direct=decode_direct_output_eligible(manifest)&&output_owner!=self;
+    bool split=direct&&
+        (work->flags&FG_LAYER_WORK_FLAG_OUTPUT_SPLIT_GREEDY)!=0u;
+    bool skip_hidden=split&&context->output_split_ways==FG_OUTPUT_SPLIT_WAYS_MAX;
+    fg_layer_result *result=&context->decode_result;
+    memset(result,0,sizeof(*result));
+    result->layer=(uint8_t)last;result->source_rank=(uint8_t)self;
+    result->destination_rank=(uint8_t)(direct?output_owner:0u);
+    result->token_index=work->token_index;
+    memcpy(result->hyper,context->hyper_out,sizeof(result->hyper));
+    if(skip_hidden)output_split_trace("hidden-suppressed",self,work->token_index,
+        context->output_split_ways);
+    if(!skip_hidden){
+        uint32_t result_bytes=0u;
+        status=fg_decode_layer_result_encode(context->result_wire,result,&result_bytes,err);
+        if(status==FG_OK)status=fg_fabric_send(fabric,direct?output_owner:0u,FG_FABRIC_BULK,
+            direct?FG_MSG_OUTPUT_HIDDEN:FG_MSG_DECODE_LAYER_RESULT,request,
+            work->token_index*FG_LAYER_COUNT+last,0,context->result_wire,result_bytes,err);
+    }
+    /* Unsplit sampling can finish before a slice reaches rank 0. Emitting
+     * unused slices would leave stale frames for the next token/request. */
+    if(status==FG_OK&&split&&context->output_split_ways==FG_OUTPUT_SPLIT_WAYS_MIN){
+        uint32_t slice_bytes=0u;
+        status=fg_output_slice_encode(context->result_wire,result,&slice_bytes,err);
+        if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,
+            FG_MSG_OUTPUT_SLICE,request,work->token_index*FG_LAYER_COUNT+last,0,
+            context->result_wire,slice_bytes,err);
+    }else if(status==FG_OK&&split&&context->output_split_ways==FG_OUTPUT_SPLIT_WAYS_MAX){
+        float hidden[FG_HIDDEN_SIZE];
+        if(!context->output_hc){
+            fg_error_set(err,FG_ERR_MISMATCH,
+                "rank %u is the final block owner without a 4-way output HC executor",self);
+            status=FG_ERR_MISMATCH;
+        }else status=fg_output_hc_run(context->output_hc,result->hyper,hidden,err);
+        if(status==FG_OK)output_split_trace("hc",self,work->token_index,0u);
+        for(uint32_t way=0;status==FG_OK&&way<FG_OUTPUT_SPLIT_WAYS_MAX;way++){
+            uint32_t destination=fg_output_split_rank(context->output_split_ways,way);
+            if(destination==UINT32_MAX||destination==self)continue;
+            fg_output_slice_hidden slice={.source_rank=(uint8_t)self,
+                .destination_rank=(uint8_t)destination,.token_index=work->token_index};
+            memcpy(slice.hidden,hidden,sizeof(slice.hidden));
+            uint32_t hidden_bytes=0u;
+            status=fg_output_slice_hidden_encode(context->result_wire,&slice,&hidden_bytes,err);
+            if(status==FG_OK)status=fg_fabric_send(fabric,destination,FG_FABRIC_BULK,
+                FG_MSG_OUTPUT_SLICE_HIDDEN,request,work->token_index*FG_LAYER_COUNT+last,
+                0,context->result_wire,hidden_bytes,err);
+        }
+    }
+    return status;
+}
+
+/* Execute the whole owner block, forwarding only its hyper state. */
 static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *owner,
     const fg_manifest *manifest,uint32_t self,uint64_t session_id,uint32_t peer,
     const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,
@@ -886,7 +939,7 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
         fg_layer_work next={.layer=(uint8_t)(last+1u),.source_rank=(uint8_t)self,
             .destination_rank=manifest->layer_owner[last+1u],
             .token_index=work->token_index,.position_mode=FG_POSITION_TEXT,
-            .flags=(uint8_t)(work->flags&FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY)};
+            .flags=(uint8_t)(work->flags&FG_LAYER_WORK_FLAG_OUTPUT_SPLIT_GREEDY)};
         for(uint32_t axis=0;axis<3u;axis++)next.position[axis]=work->position[axis];
         memcpy(next.hyper,context->hyper_out,(uint64_t)FG_HYPER_WIDTH*4u);
         uint32_t wire_bytes=0;
@@ -896,57 +949,10 @@ static fg_status handle_decode_layer_work(fg_fabric *fabric,fg_owner_executor *o
             FG_MSG_DECODE_LAYER_WORK,request,
             work->token_index*FG_LAYER_COUNT+next.layer,0,context->work_wire,wire_bytes,err);
     }else if(status==FG_OK){
-        uint32_t output_owner=fg_output_owner_rank(manifest);
-        bool direct=decode_direct_output_eligible(manifest)&&output_owner!=self;
-        bool skip_hidden=direct&&context->output_split_ways==FG_OUTPUT_SPLIT_WAYS_MAX&&
-            (work->flags&FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY)!=0u;
-        fg_layer_result *result=&context->decode_result;
-        memset(result,0,sizeof(*result));
-        result->layer=(uint8_t)last;result->source_rank=(uint8_t)self;
-        result->destination_rank=(uint8_t)(direct?output_owner:0u);result->token_index=work->token_index;
-        memcpy(result->hyper,context->hyper_out,sizeof(result->hyper));
-        if(skip_hidden)output_split_trace("hidden-suppressed",self,work->token_index,
-            context->output_split_ways);
-        if(!skip_hidden){
-            uint32_t result_bytes=0u;
-            status=fg_decode_layer_result_encode(context->result_wire,result,&result_bytes,err);
-            if(status==FG_OK)status=fg_fabric_send(fabric,direct?output_owner:0u,FG_FABRIC_BULK,
-                direct?FG_MSG_OUTPUT_HIDDEN:FG_MSG_DECODE_LAYER_RESULT,request,
-                work->token_index*FG_LAYER_COUNT+last,0,context->result_wire,
-                result_bytes,err);
-        }
-        if(status==FG_OK&&direct&&context->output_split_ways==FG_OUTPUT_SPLIT_WAYS_MIN){
-            uint32_t slice_bytes=0u;
-            status=fg_output_slice_encode(context->result_wire,result,&slice_bytes,err);
-            if(status==FG_OK)status=fg_fabric_send(fabric,0u,FG_FABRIC_BULK,
-                FG_MSG_OUTPUT_SLICE,request,
-                work->token_index*FG_LAYER_COUNT+last,0,context->result_wire,
-                slice_bytes,err);
-        }else if(status==FG_OK&&direct&&context->output_split_ways==FG_OUTPUT_SPLIT_WAYS_MAX){
-            float hidden[FG_HIDDEN_SIZE];
-            if(!context->output_hc){
-                fg_error_set(err,FG_ERR_MISMATCH,
-                    "rank %u is the final block owner without a 4-way output HC executor",self);
-                status=FG_ERR_MISMATCH;
-            }else status=fg_output_hc_run(context->output_hc,result->hyper,hidden,err);
-            if(status==FG_OK)output_split_trace("hc",self,work->token_index,0u);
-            for(uint32_t way=0;status==FG_OK&&way<FG_OUTPUT_SPLIT_WAYS_MAX;way++){
-                uint32_t destination=fg_output_split_rank(context->output_split_ways,way);
-                if(destination==UINT32_MAX||destination==self)continue;
-                fg_output_slice_hidden slice={.source_rank=(uint8_t)self,
-                    .destination_rank=(uint8_t)destination,.token_index=work->token_index};
-                memcpy(slice.hidden,hidden,sizeof(slice.hidden));
-                uint32_t hidden_bytes=0u;
-                status=fg_output_slice_hidden_encode(context->result_wire,&slice,&hidden_bytes,err);
-                if(status==FG_OK)status=fg_fabric_send(fabric,destination,FG_FABRIC_BULK,
-                    FG_MSG_OUTPUT_SLICE_HIDDEN,request,
-                    work->token_index*FG_LAYER_COUNT+last,0,context->result_wire,
-                    hidden_bytes,err);
-            }
-        }
-        if(direct&&trace&&status==FG_OK)
+        status=worker_decode_output(fabric,manifest,self,request,work,last,context,err);
+        if(decode_direct_output_eligible(manifest)&&trace&&status==FG_OK)
             fprintf(stderr,"RING_DECODE_HANDOFF rank=%u token=%u output_rank=%u\n",
-                self,work->token_index,output_owner);
+                self,work->token_index,fg_output_owner_rank(manifest));
     }
     if(trace&&status==FG_OK){struct timespec t_end;clock_gettime(CLOCK_MONOTONIC,&t_end);
         fprintf(stderr,"RING_DECODE_BLOCK rank=%u token=%u layers=%u..%u write_ms=%.3f "
@@ -2390,10 +2396,13 @@ static void output_split_trace(const char *what,uint32_t rank,uint32_t token,uin
                 rank,token,what,detail);
 }
 
+static bool output_split_greedy(const fg_sampler_config *sampler){
+    return sampler->temperature==0.0f&&!fg_sampler_penalties_active(sampler);
+}
+
 static bool worker_output_split_active(const fg_output_handoff *state){
     return state&&(state->config.flags&FG_OUTPUT_CONFIG_FLAG_SPLIT)!=0u&&
-        state->config.sampler.temperature==0.0f&&
-        !fg_sampler_penalties_active(&state->config.sampler);
+        output_split_greedy(&state->config.sampler);
 }
 
 static uint32_t worker_output_split_ways(const fg_output_handoff *state){
@@ -4847,10 +4856,33 @@ static fg_status coordinator_ngram_resident(
  * authoritative GDN/QSA/PLE state and forwards the state along the chain.
  * Rank 0 executes its own block when the chain reaches it, then samples the
  * token from the final block owner's result exactly like the legacy path. */
+static fg_status coordinator_output_slice_route(const fg_coordinator *coordinator,
+    uint32_t peer,const fg_frame_header *header,uint32_t destination,uint32_t source,
+    int32_t layer,uint32_t token,uint32_t expected_token,fg_error *err){
+    uint32_t owner=coordinator->manifest->layer_owner[FG_LAYER_COUNT-1u];
+    uint32_t sequence=expected_token*FG_LAYER_COUNT+FG_LAYER_COUNT-1u;
+    if(destination!=0u||(layer>=0&&(uint32_t)layer!=FG_LAYER_COUNT-1u)||
+       source!=owner||source!=peer||token!=expected_token||
+       fg_frame_request_id(header)!=coordinator->session_id||
+       fg_frame_sequence(header)!=sequence||
+       fg_frame_session_slot(header)!=coordinator->output_session){
+        fg_error_set(err,FG_ERR_MISMATCH,
+            "misrouted ring decode output slice: got/expected dst=%u/0 layer=%d/%d "
+            "src=%u/%u peer=%u/%u token=%u/%u request=%llu/%llu seq=%u/%u slot=%u/%u",
+            destination,layer,layer<0?-1:(int32_t)(FG_LAYER_COUNT-1u),
+            source,owner,peer,owner,token,expected_token,
+            (unsigned long long)fg_frame_request_id(header),
+            (unsigned long long)coordinator->session_id,
+            fg_frame_sequence(header),sequence,fg_frame_session_slot(header),
+            coordinator->output_session);
+        return FG_ERR_MISMATCH;
+    }
+    return FG_OK;
+}
+
 static fg_status coordinator_output_slice(fg_coordinator *coordinator,uint32_t peer,
     const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,
     uint32_t token_index,fg_error *err){
-    const fg_manifest *manifest=coordinator->manifest;
     fg_status status=fg_output_split_require_slice(coordinator->output_slice!=NULL,
         FG_OUTPUT_SPLIT_WAYS_MIN,0u,err);
     if(status!=FG_OK)return status;
@@ -4862,14 +4894,9 @@ static fg_status coordinator_output_slice(fg_coordinator *coordinator,uint32_t p
     }
     fg_layer_result slice;
     status=fg_decode_layer_result_decode(&slice,payload,bytes,err);
-    if(status==FG_OK&&(slice.destination_rank!=0u||slice.layer!=FG_LAYER_COUNT-1u||
-       slice.source_rank!=manifest->layer_owner[FG_LAYER_COUNT-1u]||
-       slice.source_rank!=peer||slice.token_index!=token_index||
-       fg_frame_request_id(header)!=coordinator->session_id||
-       fg_frame_sequence(header)!=token_index*FG_LAYER_COUNT+FG_LAYER_COUNT-1u)){
-        fg_error_set(err,FG_ERR_MISMATCH,"misrouted ring decode output slice");
-        status=FG_ERR_MISMATCH;
-    }
+    if(status==FG_OK)status=coordinator_output_slice_route(coordinator,peer,header,
+        slice.destination_rank,slice.source_rank,slice.layer,slice.token_index,
+        token_index,err);
     fg_output_partial partial={.token_index=token_index};
     if(status==FG_OK)status=fg_output_slice_run(coordinator->output_slice,slice.hyper,
         &partial.value,&partial.id,err);
@@ -4884,7 +4911,6 @@ static fg_status coordinator_output_slice(fg_coordinator *coordinator,uint32_t p
 static fg_status coordinator_output_slice_hidden(fg_coordinator *coordinator,uint32_t peer,
     const fg_frame_header *header,const uint8_t *payload,uint32_t bytes,
     uint32_t token_index,fg_error *err){
-    const fg_manifest *manifest=coordinator->manifest;
     fg_status status=fg_output_split_require_slice(coordinator->output_slice!=NULL,
         FG_OUTPUT_SPLIT_WAYS_MAX,0u,err);
     if(status!=FG_OK)return status;
@@ -4896,14 +4922,8 @@ static fg_status coordinator_output_slice_hidden(fg_coordinator *coordinator,uin
     }
     fg_output_slice_hidden slice;
     status=fg_output_slice_hidden_decode(&slice,payload,bytes,err);
-    if(status==FG_OK&&(slice.destination_rank!=0u||
-       slice.source_rank!=manifest->layer_owner[FG_LAYER_COUNT-1u]||
-       slice.source_rank!=peer||slice.token_index!=token_index||
-       fg_frame_request_id(header)!=coordinator->session_id||
-       fg_frame_sequence(header)!=token_index*FG_LAYER_COUNT+FG_LAYER_COUNT-1u)){
-        fg_error_set(err,FG_ERR_MISMATCH,"misrouted ring decode output slice");
-        status=FG_ERR_MISMATCH;
-    }
+    if(status==FG_OK)status=coordinator_output_slice_route(coordinator,peer,header,
+        slice.destination_rank,slice.source_rank,-1,slice.token_index,token_index,err);
     fg_output_partial partial={.token_index=token_index};
     if(status==FG_OK)status=fg_output_slice_run_hidden(coordinator->output_slice,
         slice.hidden,&partial.value,&partial.id,err);
@@ -5314,11 +5334,8 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
     memset(work,0,sizeof(*work));
     work->layer=0u;work->source_rank=0u;work->destination_rank=manifest->layer_owner[0u];
     work->flags=ngram_view?FG_LAYER_WORK_HAS_NGRAM:0u;work->position_mode=FG_POSITION_TEXT;
-    if(direct&&coordinator->output_slice&&
-       fg_output_slice_ways(coordinator->output_slice)==FG_OUTPUT_SPLIT_WAYS_MAX&&
-       coordinator->sampler.temperature==0.0f&&
-       !fg_sampler_penalties_active(&coordinator->sampler))
-        work->flags|=FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY;
+    if(direct&&coordinator->output_slice&&output_split_greedy(&coordinator->sampler))
+        work->flags|=FG_LAYER_WORK_FLAG_OUTPUT_SPLIT_GREEDY;
     work->token_index=token_index;
     /* Decode carries the M-RoPE cursor, not the raw token index, so a token
      * generated after a vision span sits at the position a cold prefill of the
@@ -5449,7 +5466,7 @@ static fg_status coordinator_decode_token_ring(fg_coordinator *coordinator,
                 fg_layer_work next={.layer=(uint8_t)(last+1u),.source_rank=0u,
                     .destination_rank=manifest->layer_owner[last+1u],
                     .token_index=work->token_index,.position_mode=FG_POSITION_TEXT,
-                    .flags=(uint8_t)(work->flags&FG_LAYER_WORK_FLAG_OUTPUT_4WAY_GREEDY)};
+                    .flags=(uint8_t)(work->flags&FG_LAYER_WORK_FLAG_OUTPUT_SPLIT_GREEDY)};
                 for(uint32_t axis=0;axis<3u;axis++)next.position[axis]=work->position[axis];
                 memcpy(next.hyper,work->hyper,(uint64_t)FG_HYPER_WIDTH*4u);
                 uint32_t next_bytes=0;
