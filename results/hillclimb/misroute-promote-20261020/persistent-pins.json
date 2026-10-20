@@ -1,0 +1,50 @@
+[
+  {
+    "IP": "192.168.42.42",
+    "ExitCode": 0,
+    "Stdout": "{\"current_json_sha256\": \"c67dcf8f86f62b82f8336762a1c6fc42669c42e5af6edf5b710fe2830a62d6db\", \"launcher_sha256\": \"c91f8ade4ae1a96a3e298e89d35b130d0e931b4004bd721ca9903d39cdaf5088\", \"instance_sha256\": \"eaf6f550207b5dfd57f839be416ef633db0cb661edeadc5dbd15a30bd7c7eda1\", \"rollback_launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"rollback_json_sha256\": \"cc88219e554433de4801520480ab1550db34c8a01d26a10a1e42a53d715f7347\", \"rollback_binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"immutable_release\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.43",
+    "ExitCode": 0,
+    "Stdout": "{\"current_json_sha256\": \"c67dcf8f86f62b82f8336762a1c6fc42669c42e5af6edf5b710fe2830a62d6db\", \"launcher_sha256\": \"c91f8ade4ae1a96a3e298e89d35b130d0e931b4004bd721ca9903d39cdaf5088\", \"instance_sha256\": \"eaf6f550207b5dfd57f839be416ef633db0cb661edeadc5dbd15a30bd7c7eda1\", \"rollback_launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"rollback_json_sha256\": \"cc88219e554433de4801520480ab1550db34c8a01d26a10a1e42a53d715f7347\", \"rollback_binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"immutable_release\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.44",
+    "ExitCode": 0,
+    "Stdout": "{\"current_json_sha256\": \"c67dcf8f86f62b82f8336762a1c6fc42669c42e5af6edf5b710fe2830a62d6db\", \"launcher_sha256\": \"c91f8ade4ae1a96a3e298e89d35b130d0e931b4004bd721ca9903d39cdaf5088\", \"instance_sha256\": \"eaf6f550207b5dfd57f839be416ef633db0cb661edeadc5dbd15a30bd7c7eda1\", \"rollback_launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"rollback_json_sha256\": \"cc88219e554433de4801520480ab1550db34c8a01d26a10a1e42a53d715f7347\", \"rollback_binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"immutable_release\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.45",
+    "ExitCode": 0,
+    "Stdout": "{\"current_json_sha256\": \"c67dcf8f86f62b82f8336762a1c6fc42669c42e5af6edf5b710fe2830a62d6db\", \"launcher_sha256\": \"c91f8ade4ae1a96a3e298e89d35b130d0e931b4004bd721ca9903d39cdaf5088\", \"instance_sha256\": \"eaf6f550207b5dfd57f839be416ef633db0cb661edeadc5dbd15a30bd7c7eda1\", \"rollback_launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"rollback_json_sha256\": \"cc88219e554433de4801520480ab1550db34c8a01d26a10a1e42a53d715f7347\", \"rollback_binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"immutable_release\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.46",
+    "ExitCode": 0,
+    "Stdout": "{\"current_json_sha256\": \"c67dcf8f86f62b82f8336762a1c6fc42669c42e5af6edf5b710fe2830a62d6db\", \"launcher_sha256\": \"c91f8ade4ae1a96a3e298e89d35b130d0e931b4004bd721ca9903d39cdaf5088\", \"instance_sha256\": \"eaf6f550207b5dfd57f839be416ef633db0cb661edeadc5dbd15a30bd7c7eda1\", \"rollback_launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"rollback_json_sha256\": \"cc88219e554433de4801520480ab1550db34c8a01d26a10a1e42a53d715f7347\", \"rollback_binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"immutable_release\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.47",
+    "ExitCode": 0,
+    "Stdout": "{\"current_json_sha256\": \"c67dcf8f86f62b82f8336762a1c6fc42669c42e5af6edf5b710fe2830a62d6db\", \"launcher_sha256\": \"c91f8ade4ae1a96a3e298e89d35b130d0e931b4004bd721ca9903d39cdaf5088\", \"instance_sha256\": \"eaf6f550207b5dfd57f839be416ef633db0cb661edeadc5dbd15a30bd7c7eda1\", \"rollback_launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"rollback_json_sha256\": \"cc88219e554433de4801520480ab1550db34c8a01d26a10a1e42a53d715f7347\", \"rollback_binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"immutable_release\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.48",
+    "ExitCode": 0,
+    "Stdout": "{\"current_json_sha256\": \"c67dcf8f86f62b82f8336762a1c6fc42669c42e5af6edf5b710fe2830a62d6db\", \"launcher_sha256\": \"c91f8ade4ae1a96a3e298e89d35b130d0e931b4004bd721ca9903d39cdaf5088\", \"instance_sha256\": \"eaf6f550207b5dfd57f839be416ef633db0cb661edeadc5dbd15a30bd7c7eda1\", \"rollback_launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"rollback_json_sha256\": \"cc88219e554433de4801520480ab1550db34c8a01d26a10a1e42a53d715f7347\", \"rollback_binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"immutable_release\": true}",
+    "Stderr": ""
+  },
+  {
+    "IP": "192.168.42.49",
+    "ExitCode": 0,
+    "Stdout": "{\"current_json_sha256\": \"c67dcf8f86f62b82f8336762a1c6fc42669c42e5af6edf5b710fe2830a62d6db\", \"launcher_sha256\": \"c91f8ade4ae1a96a3e298e89d35b130d0e931b4004bd721ca9903d39cdaf5088\", \"instance_sha256\": \"eaf6f550207b5dfd57f839be416ef633db0cb661edeadc5dbd15a30bd7c7eda1\", \"rollback_launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"rollback_json_sha256\": \"cc88219e554433de4801520480ab1550db34c8a01d26a10a1e42a53d715f7347\", \"rollback_binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"immutable_release\": true}",
+    "Stderr": ""
+  }
+]

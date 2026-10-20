@@ -1,12 +1,42 @@
 # Current production deployment
 
-## Pending misroute candidate (not deployed)
+## Misroute fix promoted (2026-10-20)
 
-The `cuppaxanax/misroute-fix` candidate is built only on dev host `.50`, in
-`/home/xander/flash-gordon-misroute`; production remains the selection below.
-Do not install/restart any owner until a new deploy lease is granted.
-The candidate needs the new binary on **all eight ranks**, not just rank 0.
-Shaders, weights, manifest and serving flags are unchanged.
+Source **`aecd105`** is live on **all eight ranks**, in immutable release
+`/home/xander/flash-gordon-live/20261020-abq-misroute`. Build on dev host `.50`,
+same Makefile release flags; shaders, weights, manifest and serving flags are
+unchanged. Final acceptance completed at **`2026-10-20T07:22:55Z`**.
+
+All acceptance gates pass:
+
+* Temperature **0.7**, top-p **0.95**: one conversation generates **352 tokens
+  × 3**; continuations reuse **405**, then **791** tokens.
+* Two conversations each generate **256 tokens**, then **256 more** on exact
+  continuations (reusing **4629 / 5586** tokens). Both slots decode, with
+  measured stream overlap **1.89 s** initially and **9.77 s** on continuations.
+* Greedy short answer remains **`12`**, and all three 320-token greedy outputs
+  are byte-identical to the pre-promotion capture. Median streamed decode TPS
+  is **29.78 vs 30.10** before (**0.9895x**, approximately 1% difference).
+* Text-before-image probe returns **`BANANA-SEVEN, red`** (100 prompt tokens).
+* No `REQUEST_FAULT` or `misrouted` entries after the final restart.
+
+All eight live executable/manifest/shader hashes, argv, environment, persistent
+pins, immutable release permissions and unlimited memlock match. Watchdog is
+**enabled/active**, `KillMode=process`, `LimitMEMLOCK=infinity`; no pause marker
+or deadline timer remains. Transfer helpers are stopped. The vision-text
+release and dated rollback pins are preserved and verified.
+[Promotion/identity receipt](../results/hillclimb/misroute-promote-20261020/verification.json),
+[persistent pin hashes](../results/hillclimb/misroute-promote-20261020/persistent-pins.json),
+[final state](../results/hillclimb/misroute-promote-20261020/final-state.json).
+
+The old ring faulted during the initial baseline attempt with
+`pipeline peer 4 disconnected`; its logs were preserved, supervision paused,
+and the unchanged vision-text ring restarted before the successful capture.
+An initial candidate attempt passed single-session/greedy gates but the
+concurrency test's short unrelated prompts were serialized by the existing
+large-prefix preservation policy. It was rolled back, as required. The final
+test used larger distinct transcripts to admit both slots and passed every
+gate; no serving-code change was needed between attempts.
 
 The October 20 `06:53:25Z` fault is consistent with an unused output-slice race:
 the old final owner sent split slices even for non-greedy/penalized sampling,
@@ -33,14 +63,14 @@ with token/sequence mismatches; fixed 2/4-way greedy, temperature sampling,
 presence/repetition penalties, compressed positions and all eight diagnostic
 checks pass. AddressSanitizer linking is unavailable on this dev image
 (`libasan.so.8.0.0` missing); the normal release test was rebuilt afterward.
-Candidate binary SHA256:
+Production binary SHA256:
 `a521cc997b298a96a6f8ac86081697928845f070b9b6916c2e1fc6874980cd56`.
 [Evidence and validation receipt](../results/hillclimb/misroute-20261020/validation.json).
 
 ## Live selection
 
-**Current selection: vision-text fix source `e66ff47` (production source
-`7490482` plus the chat-render fix) on stack-1, sealed mix-04, sessions 2,
+**Current selection: misroute fix source `aecd105` (vision-text source
+`e66ff47` plus the output-slice fix) on stack-1, sealed mix-04, sessions 2,
 plus the ordered watchdog.** The prior lease authority explicitly
 overrode the prior **0.965996x short-decode paired median**
 (95% CI **[0.879970, 1.016834]**). This remains an **open performance item**,
@@ -57,7 +87,7 @@ Production also misses loaded cold-32K chat QoS (8.37 TPS, p95 event gap
 200.07 ms); the override does not claim that target is solved.
 [Decision, functional receipts and open item](https://github.com/CuppaXanax/flash-gordon/blob/cuppaxanax/multi-session-int/results/hillclimb/MULTI_SESSION_OVERRIDE.md).
 
-Vision-text promotion verified on **2026-10-20 UTC**: all eight live identities,
+The preceding vision-text promotion verified on **2026-10-20 UTC**: all eight live identities,
 argv, FG environment, binary/manifest/shader hashes and unlimited process
 memlock match the pinned selection. Health is `ok`; watchdog is enabled/active,
 with `LimitMEMLOCK=infinity` and `KillMode=process`; no deadline timer is armed.
@@ -80,9 +110,12 @@ from the preceding immutable release, not rebuilt.
 | Owners | 192.168.42.42–192.168.42.49; ranks 0–7 |
 | API | `http://192.168.42.42:8080/v1` |
 | Model | `Qwen3.8-Flash-Next-Uncensored` |
-| Release | `/home/xander/flash-gordon-live/20261020-abq-vision-text` |
-| Binary SHA256 | `686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5` |
-| Source | `e66ff47`; parent production source `7490482` |
+| Release | `/home/xander/flash-gordon-live/20261020-abq-misroute` |
+| Binary SHA256 | `a521cc997b298a96a6f8ac86081697928845f070b9b6916c2e1fc6874980cd56` |
+| Source | `aecd105`; preceding production source `e66ff47` |
+| Launcher SHA256 | `c91f8ade4ae1a96a3e298e89d35b130d0e931b4004bd721ca9903d39cdaf5088` |
+| Instance script SHA256 | `eaf6f550207b5dfd57f839be416ef633db0cb661edeadc5dbd15a30bd7c7eda1` |
+| `current.json` SHA256 | `c67dcf8f86f62b82f8336762a1c6fc42669c42e5af6edf5b710fe2830a62d6db` |
 | Shader-tree SHA256 | `5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633` |
 | Manifest | `/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm` |
 | Manifest SHA256 | `0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252` |
@@ -139,8 +172,8 @@ Restarting this unit alone does not restart an already healthy serving ring.
 
 ## Persistent launcher and exact commands
 
-Each owner retains `launch-current.sh`, `launch-vision-text.sh`,
-`ab-instance-vision-text.sh` and `current.json` in
+Each owner retains `launch-current.sh`, `launch-misroute.sh`,
+`ab-instance-misroute.sh` and `current.json` in
 the operator directory. The launcher pins the exact release/manifest, checks
 the launcher body, binary, manifest and shader-tree hashes before start, and
 derives its rank only from .42–.49.
@@ -157,12 +190,12 @@ Run as `xander`. Coordinator command, from the immutable release directory:
 ```bash
 ulimit -c 0
 nohup env \
-  FG_SHADER_DIR=/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan \
+  FG_SHADER_DIR=/home/xander/flash-gordon-live/20261020-abq-misroute/vulkan \
   FG_EXPERT_Q8_WIDE=1 FG_RING_TRACE=1 \
   FG_ROOFLINE=2047 FG_ROOF_DENSE=19 FG_ROOF_QSA=3 FG_ROOF_EXPERT=33024 \
   FG_ROOF_HC=96 FG_ROOF_RECURRENT=3 FG_ROOF_GDN=1 \
   FG_NGRAM_LOCAL_CACHE=1 FG_DECODE_SUBMIT_GROUP=2 \
-  /home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon api \
+  /home/xander/flash-gordon-live/20261020-abq-misroute/flash-gordon api \
   --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm \
   --model-name Qwen3.8-Flash-Next-Uncensored \
   --host 0.0.0.0 --port 8080 \
@@ -178,12 +211,12 @@ Workers use the following command with `N=1` on .43 through `N=7` on .49:
 ```bash
 ulimit -c 0
 nohup env \
-  FG_SHADER_DIR=/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan \
+  FG_SHADER_DIR=/home/xander/flash-gordon-live/20261020-abq-misroute/vulkan \
   FG_EXPERT_Q8_WIDE=1 \
   FG_ROOFLINE=2047 FG_ROOF_DENSE=19 FG_ROOF_QSA=3 FG_ROOF_EXPERT=33024 \
   FG_ROOF_HC=96 FG_ROOF_RECURRENT=3 FG_ROOF_GDN=1 \
   FG_NGRAM_LOCAL_CACHE=1 FG_DECODE_SUBMIT_GROUP=2 \
-  /home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon rank \
+  /home/xander/flash-gordon-live/20261020-abq-misroute/flash-gordon rank \
   --manifest /home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm --rank "$N" \
   >"/home/xander/flash-gordon-live/20261015-abq-operator/rank-$N.log" \
   2>&1 </dev/null &
@@ -198,7 +231,28 @@ is per session. Routing uses longest matching public-message prefixes, independe
 `user` hint. Send exact assistant/tool transcripts for forward state reuse.
 A system prompt alone is not affinity; shortened replays reset GDN state.
 
-## Immediate rollback: preceding robustness release
+## Immediate rollback: vision-text release
+
+Pause/stop supervision as above. Stop coordinator .42, then workers .43–.49
+using the current pinned launcher. On all eight owners:
+
+```bash
+op=/home/xander/flash-gordon-live/20261015-abq-operator
+cp "$op/launch-pre-misroute-20261020.sh" "$op/launch-current.sh"
+cp "$op/pre-misroute-20261020.json" "$op/current.json"
+```
+
+Start workers 1–7 before coordinator 0 with
+`bash "$op/launch-current.sh" start`, verify identities/health/real generation,
+then resume supervision. This restores immutable
+`/home/xander/flash-gordon-live/20261020-abq-vision-text`, binary
+`686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5`,
+same mix-04, sessions 2, flags and shader hash. This exact rollback was exercised
+during the misroute lease after the preliminary concurrency-test failure.
+It reintroduces the non-greedy output-slice race.
+Do not overwrite these dated rollback files during later leases.
+
+## Historical rollback: preceding robustness release
 
 Pause/stop supervision as above. Stop coordinator .42, then workers .43–.49
 using the current pinned launcher. On all eight owners:
@@ -215,7 +269,7 @@ then resume supervision. This restores
 `/home/xander/flash-gordon-live/20261018-abq-session-recovery-r2`, binary
 `3405c8976eca580ca2e8690bb336b0ca13e69ab761dbd7bffee590bb280cad17`,
 same mix-04, sessions 2, flags and shader hash. This exact rollback was exercised
-twice during this lease; it reintroduces the text-before-vision rendering bug.
+twice during the vision-text lease; it reintroduces the text-before-vision rendering bug.
 Do not overwrite these dated rollback files during later leases.
 
 ## Historical rollback: pre-robustness stack-1 baseline

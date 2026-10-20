@@ -1,0 +1,97 @@
+{
+  "captured_utc": "2026-10-20T07:12:22.001154+00:00",
+  "short": {
+    "id": "chatcmpl-fg-1792480341-1",
+    "message": {
+      "role": "assistant",
+      "content": "12"
+    },
+    "usage": {
+      "prompt_tokens": 26,
+      "completion_tokens": 2,
+      "total_tokens": 28
+    },
+    "finish": "stop",
+    "started": 1792480342.0011547,
+    "ended": 1792480343.1456292,
+    "first_token": 1792480343.0014246,
+    "last_token": 1792480343.111137,
+    "delta_events": 2,
+    "tps": 9.114743125865175,
+    "flash_gordon": {
+      "reused_tokens": 0,
+      "prefilled_tokens": 26
+    }
+  },
+  "greedy": [
+    {
+      "id": "chatcmpl-fg-1792480342-2",
+      "message": {
+        "role": "assistant",
+        "content": "To understand the intricate ballet of gears, springs, and escapements that constitutes a mechanical clock, one must first appreciate the fundamental challenge it solves: the conversion of potential energy into a steady, rhythmic release of kinetic energy. Unlike an electronic clock, which relies on the precise oscillation of a quartz crystal or the atomic vibrations of cesium, a mechanical clock is a purely physical machine governed by the laws of classical mechanics. It is a device that must fight against friction, gravity, and the natural tendency of energy to dissipate, all while maintaining a temporal accuracy that, in its finest iterations, rivals the most sophisticated digital instruments. The operation of such a device is not merely a sequence of movements but a complex interplay of forces, where every component serves a dual purpose: to store energy and to regulate its expenditure.\n\nAt the very heart of the mechanical clock lies the power source, the engine that drives the entire system. In the earliest clocks, this was a heavy weight suspended by a cord or chain, pulled downward by the relentless force of gravity. As the weight descends, it unwinds the cord from a drum, known as the barrel or fusee, converting gravitational potential energy into rotational torque. This method, while simple and robust, requires the clock to be tall enough to accommodate the drop of the weight, which is why many grandfather clocks are so imposing in stature. However, as horology evolved, particularly with the advent of portable timepieces, the weight was replaced by the mainspring. The mainspring is a coiled strip of high-carbon steel, wound tightly"
+      },
+      "usage": {
+        "prompt_tokens": 44,
+        "completion_tokens": 320,
+        "total_tokens": 364
+      },
+      "finish": "length",
+      "started": 1792480343.1456292,
+      "ended": 1792480355.6453726,
+      "first_token": 1792480344.3140218,
+      "last_token": 1792480355.6321585,
+      "delta_events": 319,
+      "tps": 28.184851330179708,
+      "flash_gordon": {
+        "reused_tokens": 0,
+        "prefilled_tokens": 44
+      }
+    },
+    {
+      "id": "chatcmpl-fg-1792480355-3",
+      "message": {
+        "role": "assistant",
+        "content": "To understand the intricate ballet of gears, springs, and escapements that constitutes a mechanical clock, one must first appreciate the fundamental challenge it solves: the conversion of potential energy into a steady, rhythmic release of kinetic energy. Unlike an electronic clock, which relies on the precise oscillation of a quartz crystal or the atomic vibrations of cesium, a mechanical clock is a purely physical machine governed by the laws of classical mechanics. It is a device that must fight against friction, gravity, and the natural tendency of energy to dissipate, all while maintaining a temporal accuracy that, in its finest iterations, rivals the most sophisticated digital instruments. The operation of such a device is not merely a sequence of movements but a complex interplay of forces, where every component serves a dual purpose: to store energy and to regulate its expenditure.\n\nAt the very heart of the mechanical clock lies the power source, the engine that drives the entire system. In the earliest clocks, this was a heavy weight suspended by a cord or chain, pulled downward by the relentless force of gravity. As the weight descends, it unwinds the cord from a drum, known as the barrel or fusee, converting gravitational potential energy into rotational torque. This method, while simple and robust, requires the clock to be tall enough to accommodate the drop of the weight, which is why many grandfather clocks are so imposing in stature. However, as horology evolved, particularly with the advent of portable timepieces, the weight was replaced by the mainspring. The mainspring is a coiled strip of high-carbon steel, wound tightly"
+      },
+      "usage": {
+        "prompt_tokens": 44,
+        "completion_tokens": 320,
+        "total_tokens": 364
+      },
+      "finish": "length",
+      "started": 1792480355.6453726,
+      "ended": 1792480367.359171,
+      "first_token": 1792480356.7513547,
+      "last_token": 1792480367.349062,
+      "delta_events": 319,
+      "tps": 30.100850290098947,
+      "flash_gordon": {
+        "reused_tokens": 0,
+        "prefilled_tokens": 44
+      }
+    },
+    {
+      "id": "chatcmpl-fg-1792480367-4",
+      "message": {
+        "role": "assistant",
+        "content": "To understand the intricate ballet of gears, springs, and escapements that constitutes a mechanical clock, one must first appreciate the fundamental challenge it solves: the conversion of potential energy into a steady, rhythmic release of kinetic energy. Unlike an electronic clock, which relies on the precise oscillation of a quartz crystal or the atomic vibrations of cesium, a mechanical clock is a purely physical machine governed by the laws of classical mechanics. It is a device that must fight against friction, gravity, and the natural tendency of energy to dissipate, all while maintaining a temporal accuracy that, in its finest iterations, rivals the most sophisticated digital instruments. The operation of such a device is not merely a sequence of movements but a complex interplay of forces, where every component serves a dual purpose: to store energy and to regulate its expenditure.\n\nAt the very heart of the mechanical clock lies the power source, the engine that drives the entire system. In the earliest clocks, this was a heavy weight suspended by a cord or chain, pulled downward by the relentless force of gravity. As the weight descends, it unwinds the cord from a drum, known as the barrel or fusee, converting gravitational potential energy into rotational torque. This method, while simple and robust, requires the clock to be tall enough to accommodate the drop of the weight, which is why many grandfather clocks are so imposing in stature. However, as horology evolved, particularly with the advent of portable timepieces, the weight was replaced by the mainspring. The mainspring is a coiled strip of high-carbon steel, wound tightly"
+      },
+      "usage": {
+        "prompt_tokens": 44,
+        "completion_tokens": 320,
+        "total_tokens": 364
+      },
+      "finish": "length",
+      "started": 1792480367.3601716,
+      "ended": 1792480379.0346107,
+      "first_token": 1792480368.4281142,
+      "last_token": 1792480379.027093,
+      "delta_events": 319,
+      "tps": 30.09723929897374,
+      "flash_gordon": {
+        "reused_tokens": 0,
+        "prefilled_tokens": 44
+      }
+    }
+  ]
+}
