@@ -1,0 +1,291 @@
+{
+  "source": "e66ff47",
+  "release": "/home/xander/flash-gordon-live/20261020-abq-vision-text",
+  "binary_sha256": "686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5",
+  "started": "2026-10-19T23:22:13.0141358-07:00",
+  "success": true,
+  "health": {
+    "status": "ok",
+    "busy": false,
+    "ring_recovery": true,
+    "recovery_epoch": 0
+  },
+  "identities": [
+    {
+      "IP": "192.168.42.42",
+      "ExitCode": 0,
+      "Stdout": "{\"rank\": 0, \"pid\": 620078, \"argv\": [\"/home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon\", \"api\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--model-name\", \"Qwen3.8-Flash-Next-Uncensored\", \"--host\", \"0.0.0.0\", \"--port\", \"8080\", \"--context-tokens\", \"262144\", \"--gpu-index-tokens\", \"262144\", \"--qsa-hot-tokens\", \"0\", \"--qsa-page-cache-mib\", \"700\", \"--sessions\", \"2\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_RING_TRACE\": \"1\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_ROOFLINE\": \"2047\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOF_QSA\": \"3\"}, \"binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"persistent_identity_verified\": true}",
+      "Stderr": ""
+    },
+    {
+      "IP": "192.168.42.43",
+      "ExitCode": 0,
+      "Stdout": "{\"rank\": 1, \"pid\": 967562, \"argv\": [\"/home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"1\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_ROOFLINE\": \"2047\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOF_QSA\": \"3\"}, \"binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"persistent_identity_verified\": true}",
+      "Stderr": ""
+    },
+    {
+      "IP": "192.168.42.44",
+      "ExitCode": 0,
+      "Stdout": "{\"rank\": 2, \"pid\": 963520, \"argv\": [\"/home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"2\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_ROOFLINE\": \"2047\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOF_QSA\": \"3\"}, \"binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"persistent_identity_verified\": true}",
+      "Stderr": ""
+    },
+    {
+      "IP": "192.168.42.45",
+      "ExitCode": 0,
+      "Stdout": "{\"rank\": 3, \"pid\": 963210, \"argv\": [\"/home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"3\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_ROOFLINE\": \"2047\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOF_QSA\": \"3\"}, \"binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"persistent_identity_verified\": true}",
+      "Stderr": ""
+    },
+    {
+      "IP": "192.168.42.46",
+      "ExitCode": 0,
+      "Stdout": "{\"rank\": 4, \"pid\": 966097, \"argv\": [\"/home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"4\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_ROOFLINE\": \"2047\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOF_QSA\": \"3\"}, \"binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"persistent_identity_verified\": true}",
+      "Stderr": ""
+    },
+    {
+      "IP": "192.168.42.47",
+      "ExitCode": 0,
+      "Stdout": "{\"rank\": 5, \"pid\": 962875, \"argv\": [\"/home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"5\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_ROOFLINE\": \"2047\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOF_QSA\": \"3\"}, \"binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"persistent_identity_verified\": true}",
+      "Stderr": ""
+    },
+    {
+      "IP": "192.168.42.48",
+      "ExitCode": 0,
+      "Stdout": "{\"rank\": 6, \"pid\": 963351, \"argv\": [\"/home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"6\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_ROOFLINE\": \"2047\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOF_QSA\": \"3\"}, \"binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"persistent_identity_verified\": true}",
+      "Stderr": ""
+    },
+    {
+      "IP": "192.168.42.49",
+      "ExitCode": 0,
+      "Stdout": "{\"rank\": 7, \"pid\": 967602, \"argv\": [\"/home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"7\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_ROOFLINE\": \"2047\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOF_QSA\": \"3\"}, \"binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"persistent_identity_verified\": true}",
+      "Stderr": ""
+    }
+  ],
+  "text_before": {
+    "id": "chatcmpl-fg-1792476857-46",
+    "object": "chat.completion",
+    "created": 1792476857,
+    "model": "Qwen3.8-Flash-Next-Uncensored",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "12"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 26,
+      "completion_tokens": 2,
+      "total_tokens": 28
+    }
+  },
+  "text_after": {
+    "id": "chatcmpl-fg-1792477401-1",
+    "object": "chat.completion",
+    "created": 1792477401,
+    "model": "Qwen3.8-Flash-Next-Uncensored",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "12"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 26,
+      "completion_tokens": 2,
+      "total_tokens": 28
+    }
+  },
+  "text_then_image": {
+    "id": "chatcmpl-fg-1792477402-2",
+    "object": "chat.completion",
+    "created": 1792477402,
+    "model": "Qwen3.8-Flash-Next-Uncensored",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "reasoning_content": "The user wants the password and the image color. The password is given as BANANA-SEVEN. The image is a solid red square. I need to reply with only these two pieces of information, no extra text.\n",
+          "content": "BANANA-SEVEN, red"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 100,
+      "completion_tokens": 55,
+      "total_tokens": 155
+    }
+  },
+  "image_then_text": {
+    "id": "chatcmpl-fg-1792477415-3",
+    "object": "chat.completion",
+    "created": 1792477415,
+    "model": "Qwen3.8-Flash-Next-Uncensored",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "reasoning_content": "The user wants the password and the image color. The password is BANANA-SEVEN. The image is solid red. I need to reply with only these two pieces of information, no extra text.\n",
+          "content": "BANANA-SEVEN, Red"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 100,
+      "completion_tokens": 51,
+      "total_tokens": 151
+    }
+  },
+  "image_only": {
+    "id": "chatcmpl-fg-1792477419-4",
+    "object": "chat.completion",
+    "created": 1792477419,
+    "model": "Qwen3.8-Flash-Next-Uncensored",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "reasoning_content": "The user has provided an image that appears to be a solid red square. There's no text, no question, no additional context. Just a red square.\n\nLet me consider what's happening here. The image is a uniform red color, roughly RGB (255, 0, 0) or close to it. There's no hidden content, no pattern, no text overlay.\n\nWhat could the user want? Possibilities:\n1. They want a description of the image.\n2. They're testing whether I can see the image at all.\n3. They want me to identify the color.\n4. It's a placeholder and they expect me to comment.\n\nSince there's no explicit question, the most helpful response is to describe what I see concisely and offer to help further. I shouldn't overthink or hallucinate details. The image is a plain, solid red square with no other elements.\n\nI'll keep the response short and direct, noting the solid red color and inviting a follow-up question. No need for elaborate structure given the simplicity.\n",
+          "content": "The image is a plain, solid red square — a uniform red fill (approximately RGB 255, 0, 0) with no text, shapes, gradients, or other details.\n\nIs there something specific you'd like me to do with it (e.g., identify the color, describe it, or use it as part of a larger task)?"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 76,
+      "completion_tokens": 300,
+      "total_tokens": 376
+    }
+  },
+  "models": {
+    "object": "list",
+    "data": [
+      {
+        "id": "Qwen3.8-Flash-Next-Uncensored",
+        "object": "model",
+        "created": 0,
+        "owned_by": "flash-gordon",
+        "capabilities": {
+          "native_context": 262144,
+          "experimental_context": 0,
+          "tools": true,
+          "mtp": false,
+          "image": true,
+          "video": true,
+          "video_frames": true
+        }
+      }
+    ]
+  },
+  "completed": "2026-10-19T23:23:53.5496427-07:00",
+  "final_identity_and_supervision": [
+    {
+      "IP": "192.168.42.42",
+      "ExitCode": 0,
+      "Stdout": "{\"rank\": 0, \"pid\": 620078, \"argv\": [\"/home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon\", \"api\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--model-name\", \"Qwen3.8-Flash-Next-Uncensored\", \"--host\", \"0.0.0.0\", \"--port\", \"8080\", \"--context-tokens\", \"262144\", \"--gpu-index-tokens\", \"262144\", \"--qsa-hot-tokens\", \"0\", \"--qsa-page-cache-mib\", \"700\", \"--sessions\", \"2\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_RING_TRACE\": \"1\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_ROOFLINE\": \"2047\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOF_QSA\": \"3\"}, \"binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"persistent_identity_verified\": true}\nMax locked memory         unlimited            unlimited            bytes     \nenabled\nactive\n{\"status\":\"ok\",\"busy\":false,\"ring_recovery\":true,\"recovery_epoch\":0}",
+      "Stderr": ""
+    },
+    {
+      "IP": "192.168.42.43",
+      "ExitCode": 0,
+      "Stdout": "{\"rank\": 1, \"pid\": 967562, \"argv\": [\"/home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"1\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_ROOFLINE\": \"2047\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOF_QSA\": \"3\"}, \"binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"persistent_identity_verified\": true}\nMax locked memory         unlimited            unlimited            bytes     ",
+      "Stderr": ""
+    },
+    {
+      "IP": "192.168.42.44",
+      "ExitCode": 0,
+      "Stdout": "{\"rank\": 2, \"pid\": 963520, \"argv\": [\"/home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"2\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_ROOFLINE\": \"2047\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOF_QSA\": \"3\"}, \"binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"persistent_identity_verified\": true}\nMax locked memory         unlimited            unlimited            bytes     ",
+      "Stderr": ""
+    },
+    {
+      "IP": "192.168.42.45",
+      "ExitCode": 0,
+      "Stdout": "{\"rank\": 3, \"pid\": 963210, \"argv\": [\"/home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"3\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_ROOFLINE\": \"2047\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOF_QSA\": \"3\"}, \"binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"persistent_identity_verified\": true}\nMax locked memory         unlimited            unlimited            bytes     ",
+      "Stderr": ""
+    },
+    {
+      "IP": "192.168.42.46",
+      "ExitCode": 0,
+      "Stdout": "{\"rank\": 4, \"pid\": 966097, \"argv\": [\"/home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"4\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_ROOFLINE\": \"2047\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOF_QSA\": \"3\"}, \"binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"persistent_identity_verified\": true}\nMax locked memory         unlimited            unlimited            bytes     ",
+      "Stderr": ""
+    },
+    {
+      "IP": "192.168.42.47",
+      "ExitCode": 0,
+      "Stdout": "{\"rank\": 5, \"pid\": 962875, \"argv\": [\"/home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"5\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_ROOFLINE\": \"2047\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOF_QSA\": \"3\"}, \"binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"persistent_identity_verified\": true}\nMax locked memory         unlimited            unlimited            bytes     ",
+      "Stderr": ""
+    },
+    {
+      "IP": "192.168.42.48",
+      "ExitCode": 0,
+      "Stdout": "{\"rank\": 6, \"pid\": 963351, \"argv\": [\"/home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"6\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_ROOFLINE\": \"2047\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOF_QSA\": \"3\"}, \"binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"persistent_identity_verified\": true}\nMax locked memory         unlimited            unlimited            bytes     ",
+      "Stderr": ""
+    },
+    {
+      "IP": "192.168.42.49",
+      "ExitCode": 0,
+      "Stdout": "{\"rank\": 7, \"pid\": 967602, \"argv\": [\"/home/xander/flash-gordon-live/20261020-abq-vision-text/flash-gordon\", \"rank\", \"--manifest\", \"/home/xander/fg-ring-pack-abliterated-q4-ablate-mix-04/manifest.fgm\", \"--rank\", \"7\"], \"flags\": {\"FG_SHADER_DIR\": \"/home/xander/flash-gordon-live/20261020-abq-vision-text/vulkan\", \"FG_EXPERT_Q8_WIDE\": \"1\", \"FG_NGRAM_LOCAL_CACHE\": \"1\", \"FG_ROOF_DENSE\": \"19\", \"FG_DECODE_SUBMIT_GROUP\": \"2\", \"FG_ROOFLINE\": \"2047\", \"FG_ROOF_HC\": \"96\", \"FG_ROOF_GDN\": \"1\", \"FG_ROOF_EXPERT\": \"33024\", \"FG_ROOF_RECURRENT\": \"3\", \"FG_ROOF_QSA\": \"3\"}, \"binary_sha256\": \"686490e614a1296ea17a00871c1cf958542dae82b6d611882a274c79d71424c5\", \"shader_tree_sha256\": \"5b7551d49ae10081e29e87aae59d289b1eff7479931d0986425803258d0dc633\", \"manifest_sha256\": \"0898fe90f71deb6e9498451bd5fb827a128079e9881f204787b94a933f8e5252\", \"launcher_sha256\": \"19078f56229d5d372bf05e957d36b743a8fa4b8b00bfe2aa66d907483df087b3\", \"persistent_identity_verified\": true}\nMax locked memory         unlimited            unlimited            bytes     ",
+      "Stderr": ""
+    }
+  ],
+  "source_full": "e66ff47c8abee218c325e3d3132d99d7d84a79dd",
+  "build": {
+    "command": "make -j6 flash-gordon tests/test_api tests/test_chat",
+    "kernel_shader_protocol_changes": false,
+    "host": "192.168.42.42",
+    "directory": "/home/xander/fg-build-vision-text-20261020",
+    "exit_code": 0,
+    "tests": [
+      "./tests/test_api",
+      "./tests/test_chat"
+    ],
+    "shaders": "copied unchanged from 20261018-abq-session-recovery-r2"
+  },
+  "fixture": {
+    "height": 224,
+    "image_only_max_tokens": 512,
+    "temperature": 0,
+    "message_count": 1,
+    "color": "RGB(255,0,0)",
+    "text": "The secret password is BANANA-SEVEN. Reply with only the password and the image color. /no_think",
+    "width": 224,
+    "png_color_type": 2,
+    "vision_max_tokens": 96
+  },
+  "preliminary_rollbacks": [
+    {
+      "health": {
+        "status": "ok",
+        "busy": false,
+        "ring_recovery": true,
+        "recovery_epoch": 0
+      },
+      "reason": "Expected 101 vision prompt tokens",
+      "rolled_back": true,
+      "completed": "2026-10-19T23:18:45.5552662-07:00"
+    },
+    {
+      "health": {
+        "status": "ok",
+        "busy": false,
+        "ring_recovery": true,
+        "recovery_epoch": 0
+      },
+      "reason": "Image-only answer failed",
+      "rolled_back": true,
+      "completed": "2026-10-19T23:21:53.7992127-07:00"
+    }
+  ],
+  "final_verified": "2026-10-20T06:25:26.9594200+00:00"
+}
