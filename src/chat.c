@@ -294,7 +294,8 @@ static fg_status buffer_append_text(fg_text_buffer *buffer, const char *text, fg
         }
         if (allowed) {
             const size_t marker_bytes = strlen(allowed);
-            fg_status status = buffer_append_n(buffer, marker, marker_bytes, err);
+            fg_status status = buffer_append_n(buffer, cursor,
+                                               (size_t)(marker - cursor) + marker_bytes, err);
             if (status != FG_OK) return status;
             cursor = marker + marker_bytes;
             continue;

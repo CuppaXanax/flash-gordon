@@ -267,6 +267,7 @@ static uint32_t test_vision_videos = 0;
 static uint32_t test_vision_video_frames = 0;
 static uint32_t test_vision_video_frame_count = 0;
 static size_t test_vision_bytes = 0;
+static char test_vision_transcript[8192];
 
 bool fg_runtime_vision_available(const fg_runtime *runtime) {
     return runtime != NULL && test_vision_available;
@@ -287,6 +288,8 @@ fg_status fg_runtime_generate_vision(fg_runtime *runtime,const char *transcript,
                                      void *interrupt_context,fg_generation_stats *stats,
                                      fg_error *err) {
     test_vision_calls++;
+    snprintf(test_vision_transcript, sizeof(test_vision_transcript), "%s",
+             transcript ? transcript : "");
     test_vision_media = media_count;
     test_vision_images = 0;
     test_vision_videos = 0;
@@ -2225,6 +2228,32 @@ static void test_image_http_flow(void) {
     test_vision_available = false;
 }
 
+static void test_image_text_before_media_reaches_transcript(void) {
+    char body[4096];
+    snprintf(body, sizeof(body),
+             "{\"messages\":[{\"role\":\"user\",\"content\":["
+             "{\"type\":\"text\",\"text\":\"secret BANANA-SEVEN\"},"
+             "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%s\"}}]}]}",
+             test_png_base64);
+    fg_runtime runtime = {.empty_reason = FG_PREFIX_RESET_COLD_START};
+    api_public_session session = {0};
+    fg_status status = FG_OK;
+    test_vision_available = true;
+    test_vision_calls = 0;
+    test_vision_transcript[0] = 0;
+    char *response = run_chat_request(&runtime, &session, body, &status);
+    CHECK(status == FG_OK);
+    CHECK(response && strstr(response, "200 OK"));
+    CHECK(test_vision_calls == 1u);
+    CHECK(strstr(test_vision_transcript,
+                 "user\nsecret BANANA-SEVEN<|vision_start|><|image_pad|><|vision_end|>"));
+    if (!strstr(test_vision_transcript, "BANANA-SEVEN"))
+        fprintf(stderr, "vision transcript: %s\n", test_vision_transcript);
+    api_public_session_free(&session);
+    free(response);
+    test_vision_available = false;
+}
+
 static void test_media_prefix_continuation_and_identity(void) {
     /* Same base64 length, different decoded bytes (valid padding, no '='). */
     static const char second_png_base64[] =
@@ -3733,6 +3762,7 @@ int main(void) {
     test_system_and_tool_change_continues_prefix();
     test_system_shrink_resets();
     test_image_http_flow();
+    test_image_text_before_media_reaches_transcript();
     test_video_http_flow();
     test_vision_failure_fails_soft();
     test_video_frames_http_flow();
