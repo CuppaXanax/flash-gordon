@@ -1,0 +1,73 @@
+{
+  "base_commit": "2180508",
+  "branch": "cuppaxanax/misroute-fix",
+  "deployment": "not deployed; awaiting lease",
+  "production_access": "read-only logs on .42-.49; no process or file mutations",
+  "incident": {
+    "client_error_utc": "2026-10-20T06:53:25.900Z",
+    "slot": 1,
+    "session_nonce": "7698637730828577217",
+    "prefill_chunk_first_tokens": [58998, 59126, 59254, 59382, 59510],
+    "prefill_final_in_flight": 0,
+    "streamed_reasoning_characters_in_failed_client_record": 2120,
+    "first_decode_failure": false,
+    "worker_log_evidence": "All .43-.49 logs contain startup only, mtime 2026-10-20 02:54:31 -0400, after recovery; no per-frame fault evidence.",
+    "attribution_limit": "Original error omits mismatched fields; client record omits sampler parameters. Reproduced code defect is consistent with the incident, not conclusively its cause."
+  },
+  "reproduced_defect": {
+    "condition": "Non-greedy or penalized sampling uses the full output head while the old final owner still emits unused split slices.",
+    "ordering": "Rank 4 OUTPUT_RESULT can reach rank 0 before rank 7 OUTPUT_SLICE_HIDDEN. Coordinator returns; next decode receives stale slice.",
+    "mismatched_fields": ["token_index", "sequence"],
+    "matching_fields": ["destination_rank", "source_rank", "peer", "session_id", "session_slot"],
+    "vision_position_effect": "None required: token index and M-RoPE cursor are separate; the test uses unequal values.",
+    "negative_control": {
+      "method": "Temporarily restore the exact old final-owner send/skip-hidden conditions in the isolated .50 worktree, compile regression, then restore fixed runtime and rebuild.",
+      "four_way_exit": 1,
+      "diagnostic": "misrouted ring decode output slice: got/expected dst=0/0 layer=-1/-1 src=7/7 peer=7/7 token=59599/59600 request=7698637730828577217/7698637730828577217 seq=2860799/2860847 slot=1/1"
+    }
+  },
+  "fix": {
+    "dispatch": "Only emit split slices when greedy split output is explicitly requested. Keep full hidden for non-greedy/penalized sampling.",
+    "wire": "Reuse flag bit 2 with generalized OUTPUT_SPLIT_GREEDY name; retain OUTPUT_4WAY_GREEDY alias. No frame format or protocol version change.",
+    "diagnostics": "Both coordinator slice receivers report got/expected destination, layer (not carried for hidden slices), source, peer, token, request, sequence and slot."
+  },
+  "validation": {
+    "host": "192.168.42.50",
+    "worktree": "/home/xander/flash-gordon-misroute",
+    "compiler": "GCC 16.1.1 20260515 (Red Hat 16.1.1-2)",
+    "build": "Makefile release defaults: -O3 -g -std=c17 -Wall -Wextra -Wpedantic -Werror",
+    "passed": [
+      "make -s -j8 flash-gordon test-multi-session tests/test_core",
+      "./tests/test_core",
+      "./tests/test_decode_output",
+      "./tests/test_multi_session",
+      "./tests/test_pipeline_wire",
+      "./tests/test_pipeline_wire --fault-output",
+      "./tests/test_fabric --pipeline-only",
+      "./tests/test_api",
+      "./tests/test_session",
+      "python3 tools/test_fg_ring_supervisor.py",
+      "git diff --check"
+    ],
+    "regression_coverage": [
+      "2-way and 4-way greedy output",
+      "temperature=1",
+      "presence_penalty=0.2",
+      "repetition_penalty=1.1",
+      "slot 1 with 64-bit session nonce",
+      "M-RoPE position unequal to token index",
+      "all eight independent diagnostic field mismatches",
+      "no unused output slices or HC work on the unsplit path",
+      "result-before-late-slice negative control"
+    ],
+    "sanitizer": "Attempted; link failed because /usr/lib64/libasan.so.8.0.0 is missing. Restored normal release test object and reran successfully.",
+    "core_expected_negative": "Core suite deliberately corrupts a vision SHA-256 and prints VERIFICATION FAILED for that fixture; overall core tests: PASS, exit 0.",
+    "gpu_model_generation": "Not run; production lease not held."
+  },
+  "candidate": {
+    "binary": "/home/xander/flash-gordon-misroute/flash-gordon",
+    "sha256": "a521cc997b298a96a6f8ac86081697928845f070b9b6916c2e1fc6874980cd56",
+    "shader_changes": false,
+    "requires_all_rank_binary_update": true
+  }
+}
